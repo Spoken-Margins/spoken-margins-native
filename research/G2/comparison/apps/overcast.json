@@ -264,7 +264,7 @@
       "note": "Checked home page and App Store listing; nothing either way."
     },
     "on_device_privacy": {
-      "value": "yes",
+      "value": "partial",
       "detail": "Accounts are anonymous by default (no email/password), and the app has no third-party analytics, ad services or tracking code.",
       "sources": [
         {
@@ -282,7 +282,7 @@
           "quote": "Overcast has world-class privacy, with no third-party analytics, ad services, or tracking code."
         }
       ],
-      "note": "Listening data (podcasts, episodes, activity) is still synced to Overcast servers; this is no-account-required privacy, not on-device-only storage."
+      "note": "Listening data (podcasts, episodes, activity) is still synced to Overcast servers; this is no-account-required privacy, not on-device-only storage. Rated partial under FIELDS.md's definition: no-account use, but listening data syncs to Overcast's servers."
     },
     "account_required": {
       "value": "no",
@@ -295,7 +295,8 @@
           "checked": "2026-09-28",
           "quote": "New Overcast accounts are created anonymously, without email addresses or passwords."
         }
-      ]
+      ],
+      "note": "Accounts are anonymous by default; see the on_device_privacy detail."
     }
   }
 }

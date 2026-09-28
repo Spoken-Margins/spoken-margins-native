@@ -196,10 +196,10 @@
           "title": "Bookmarks on the iOS and Android Mobile Apps – Pocket Casts Support",
           "published": null,
           "checked": "2026-09-28",
-          "quote": ""
+          "quote": "On the iOS and Android mobile apps, you can add a bookmark using your Bluetooth headphones or speaker"
         }
       ],
-      "note": "Plus/Patron feature. Apple Watch and CarPlay bookmark capture not confirmed in pages read."
+      "note": "The 2023 blog post introduced bookmarks for Plus and Patron. The current support page names no paid tier, so whether it's paid-only needs re-checking. Apple Watch and CarPlay capture not confirmed in the pages read."
     },
     "transcripts": {
       "value": "yes",
@@ -223,8 +223,8 @@
       "note": "Generated transcripts only for select popular shows and episodes under 2 hours."
     },
     "ai_summaries": {
-      "value": "partial",
-      "detail": "AI-generated chapters were launched in July 2026 but the support site says they are temporarily turned off; no AI episode summaries found.",
+      "value": "no",
+      "detail": "AI-generated chapters launched on 2026-07-07 but are currently switched off; no AI episode summaries found.",
       "sources": [
         {
           "url": "https://support.pocketcasts.com/knowledge-base/chapters/",
@@ -240,7 +240,8 @@
           "checked": "2026-09-28",
           "quote": "Pocket Casts now supports AI generated Chapters on Android, Web, Desktop and (coming very soon…) iOS."
         }
-      ]
+      ],
+      "note": "Rated no while the vendor says the feature is unavailable. Re-check monthly: it may come back."
     },
     "export_markdown_pkm": {
       "value": "no",

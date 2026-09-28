@@ -54,5 +54,5 @@ Capability fields take `yes | partial | no | unknown`.
 | `export_markdown_pkm` | Can notes/highlights go to Obsidian, Notion, Readwise, Logseq or plain Markdown? |
 | `share_note_at_moment` | Can a listener share a note or clip that another person opens at that moment in the source? |
 | `group_listening` | Does it support groups, book clubs or shared annotations among several people? |
-| `on_device_privacy` | Does it state that notes/processing stay on the device, or that it has no account requirement? |
+| `on_device_privacy` | Does the vendor state that the listener's notes and content stay on the device or in the listener's own storage (such as iCloud Drive), not on the vendor's servers? `yes`: stated. `partial`: some of it stays local or use is anonymous, but content or listening data syncs to the vendor. `no`: stored on the vendor's servers under an account. Whether an account is needed is `account_required`, not this field. |
 | `account_required` | Is an account required to use it? (`yes` means an account is required) |

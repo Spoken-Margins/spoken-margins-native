@@ -54,7 +54,8 @@ Every page, whatever its type, has these fixed parts:
 4. **"When Spoken Margins isn't the right choice"**: platform limits (iPhone and iPad on iOS 26+ only), missing features, and where a competitor leads, all from the data file.
 5. **Checked-on date** for the table, plus a short change log at the bottom.
 6. **No reviews, ratings or testimonials** unless a named person gave written permission for that exact quote. No invented usage numbers.
-7. **Screenshots of Spoken Margins only**, taken from the shipped build (stream G1 can generate them). No screenshots of other apps.
+7. **Public sources for our own claims.** The Spoken Margins row cites this private repository, so a published page cites the App Store listing or public release notes instead.
+8. **Screenshots of Spoken Margins only**, taken from the shipped build (stream G1 can generate them). No screenshots of other apps.
 
 The three templates:
 

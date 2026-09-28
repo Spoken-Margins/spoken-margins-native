@@ -79,6 +79,8 @@ def validate_app(app: dict, stem: str, today: datetime.date | None = None, max_a
                 errs.append(f"{where}: source {i} quote over 40 words")
         if value == "unknown" and not claim.get("note"):
             errs.append(f"{where}: unknown needs a note saying what was checked")
+        if value == "no" and field != "account_required" and not claim.get("note"):
+            errs.append(f"{where}: no needs a note naming the vendor statement or the complete feature list it rests on")
         if max_age is not None and newest is not None and (today - newest).days > max_age:
             errs.append(f"{where}: stale, last checked {newest}")
     return errs

@@ -68,7 +68,7 @@
       ]
     },
     "reads_web_articles_aloud": {
-      "value": "no",
+      "value": "unknown",
       "detail": "Podcasts-only app; no article reading.",
       "sources": [
         {
@@ -79,10 +79,10 @@
           "quote": "Apple Podcasts offers millions of shows completely free."
         }
       ],
-      "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature."
+      "note": "Apple's Podcasts pages describe a podcast app and don't mention this feature, but no page states it's absent, so it isn't marked no. The quote shows the page checked, not the absence."
     },
     "reads_pdfs_aloud": {
-      "value": "no",
+      "value": "unknown",
       "detail": "Podcasts-only app; no PDF reading.",
       "sources": [
         {
@@ -93,10 +93,10 @@
           "quote": "Apple Podcasts offers millions of shows completely free."
         }
       ],
-      "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature."
+      "note": "Apple's Podcasts pages describe a podcast app and don't mention this feature, but no page states it's absent, so it isn't marked no. The quote shows the page checked, not the absence."
     },
     "voice_notes_anchored": {
-      "value": "no",
+      "value": "unknown",
       "detail": "No note-taking in the app.",
       "sources": [
         {
@@ -114,11 +114,11 @@
           "quote": ""
         }
       ],
-      "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature. The iPhone transcript guide offers play, share and select text only."
+      "note": "Apple's Podcasts pages describe a podcast app and don't mention this feature, but no page states it's absent, so it isn't marked no. The quote shows the page checked, not the absence."
     },
     "text_notes_anchored": {
-      "value": "partial",
-      "detail": "No notes, but selected transcript text (up to 200 words) can be shared to Notes or another app with its timestamp.",
+      "value": "no",
+      "detail": "Podcasts has no notes. Selected transcript text (up to 200 words) can be shared to Notes or another app with its timestamp; the note then lives in that other app.",
       "sources": [
         {
           "url": "https://support.apple.com/en-us/guide/iphone/iph9426049e9/ios",
@@ -132,13 +132,20 @@
           "title": "Share podcasts on Mac - Apple Support",
           "published": null,
           "checked": "2026-09-28",
+          "quote": "Select up to 200 words within the transcript."
+        },
+        {
+          "url": "https://support.apple.com/guide/podcasts/share-podcasts-pod96aaf8353/mac",
+          "title": "Share podcasts on Mac - Apple Support",
+          "published": null,
+          "checked": "2026-09-28",
           "quote": "Control-click the text, then choose 'Share from [timestamp].'"
         }
       ],
-      "note": "The note lives in the other app (e.g. Apple Notes), not in Podcasts. The 200-word limit is from the Mac guide as summarised by WebFetch."
+      "note": "Rated no because the listener can't write a note in Podcasts; sharing transcript text out is covered under share_note_at_moment."
     },
     "hands_free_capture": {
-      "value": "no",
+      "value": "unknown",
       "detail": "No capture of moments by headphone gesture, Watch or CarPlay.",
       "sources": [
         {
@@ -149,7 +156,7 @@
           "quote": "Apple Podcasts offers millions of shows completely free."
         }
       ],
-      "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature."
+      "note": "Apple's Podcasts pages describe a podcast app and don't mention this feature, but no page states it's absent, so it isn't marked no. The quote shows the page checked, not the absence."
     },
     "transcripts": {
       "value": "yes",
@@ -198,10 +205,10 @@
           "quote": "Select text, then choose to play from that point, copy text, or share from that point."
         }
       ],
-      "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature."
+      "note": "Judged from the iPhone transcript guide, which lists the transcript actions (play, copy, share) and no export. Apple's product page lists no export either."
     },
     "share_note_at_moment": {
-      "value": "yes",
+      "value": "partial",
       "detail": "Share an episode from a point in the transcript; the link starts at that timestamp.",
       "sources": [
         {
@@ -219,10 +226,10 @@
           "quote": "Control-click the text, then choose 'Share from [timestamp].'"
         }
       ],
-      "note": "Shares a timestamp and quoted text, not a listener's own note or recording. Recipient experience is not described on the pages read."
+      "note": "Shares a timestamp and quoted transcript text, not the listener's own note or recording. The pages read don't describe what the recipient sees. Rated partial, like Pocket Casts' bookmark share."
     },
     "group_listening": {
-      "value": "no",
+      "value": "unknown",
       "detail": "No groups or shared annotations; Family Sharing covers subscriptions only.",
       "sources": [
         {
@@ -233,7 +240,7 @@
           "quote": "share your Apple Podcasts subscriptions with up to five people through Family Sharing"
         }
       ],
-      "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature."
+      "note": "Apple's Podcasts pages describe a podcast app and don't mention this feature, but no page states it's absent, so it isn't marked no. The quote shows the page checked, not the absence."
     },
     "on_device_privacy": {
       "value": "unknown",

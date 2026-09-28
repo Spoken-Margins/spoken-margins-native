@@ -73,7 +73,7 @@
           ]
         },
         "reads_web_articles_aloud": {
-          "value": "no",
+          "value": "unknown",
           "detail": "Podcasts-only app; no article reading.",
           "sources": [
             {
@@ -84,10 +84,10 @@
               "quote": "Apple Podcasts offers millions of shows completely free."
             }
           ],
-          "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature."
+          "note": "Apple's Podcasts pages describe a podcast app and don't mention this feature, but no page states it's absent, so it isn't marked no. The quote shows the page checked, not the absence."
         },
         "reads_pdfs_aloud": {
-          "value": "no",
+          "value": "unknown",
           "detail": "Podcasts-only app; no PDF reading.",
           "sources": [
             {
@@ -98,10 +98,10 @@
               "quote": "Apple Podcasts offers millions of shows completely free."
             }
           ],
-          "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature."
+          "note": "Apple's Podcasts pages describe a podcast app and don't mention this feature, but no page states it's absent, so it isn't marked no. The quote shows the page checked, not the absence."
         },
         "voice_notes_anchored": {
-          "value": "no",
+          "value": "unknown",
           "detail": "No note-taking in the app.",
           "sources": [
             {
@@ -119,11 +119,11 @@
               "quote": ""
             }
           ],
-          "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature. The iPhone transcript guide offers play, share and select text only."
+          "note": "Apple's Podcasts pages describe a podcast app and don't mention this feature, but no page states it's absent, so it isn't marked no. The quote shows the page checked, not the absence."
         },
         "text_notes_anchored": {
-          "value": "partial",
-          "detail": "No notes, but selected transcript text (up to 200 words) can be shared to Notes or another app with its timestamp.",
+          "value": "no",
+          "detail": "Podcasts has no notes. Selected transcript text (up to 200 words) can be shared to Notes or another app with its timestamp; the note then lives in that other app.",
           "sources": [
             {
               "url": "https://support.apple.com/en-us/guide/iphone/iph9426049e9/ios",
@@ -137,13 +137,20 @@
               "title": "Share podcasts on Mac - Apple Support",
               "published": null,
               "checked": "2026-09-28",
+              "quote": "Select up to 200 words within the transcript."
+            },
+            {
+              "url": "https://support.apple.com/guide/podcasts/share-podcasts-pod96aaf8353/mac",
+              "title": "Share podcasts on Mac - Apple Support",
+              "published": null,
+              "checked": "2026-09-28",
               "quote": "Control-click the text, then choose 'Share from [timestamp].'"
             }
           ],
-          "note": "The note lives in the other app (e.g. Apple Notes), not in Podcasts. The 200-word limit is from the Mac guide as summarised by WebFetch."
+          "note": "Rated no because the listener can't write a note in Podcasts; sharing transcript text out is covered under share_note_at_moment."
         },
         "hands_free_capture": {
-          "value": "no",
+          "value": "unknown",
           "detail": "No capture of moments by headphone gesture, Watch or CarPlay.",
           "sources": [
             {
@@ -154,7 +161,7 @@
               "quote": "Apple Podcasts offers millions of shows completely free."
             }
           ],
-          "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature."
+          "note": "Apple's Podcasts pages describe a podcast app and don't mention this feature, but no page states it's absent, so it isn't marked no. The quote shows the page checked, not the absence."
         },
         "transcripts": {
           "value": "yes",
@@ -203,10 +210,10 @@
               "quote": "Select text, then choose to play from that point, copy text, or share from that point."
             }
           ],
-          "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature."
+          "note": "Judged from the iPhone transcript guide, which lists the transcript actions (play, copy, share) and no export. Apple's product page lists no export either."
         },
         "share_note_at_moment": {
-          "value": "yes",
+          "value": "partial",
           "detail": "Share an episode from a point in the transcript; the link starts at that timestamp.",
           "sources": [
             {
@@ -224,10 +231,10 @@
               "quote": "Control-click the text, then choose 'Share from [timestamp].'"
             }
           ],
-          "note": "Shares a timestamp and quoted text, not a listener's own note or recording. Recipient experience is not described on the pages read."
+          "note": "Shares a timestamp and quoted transcript text, not the listener's own note or recording. The pages read don't describe what the recipient sees. Rated partial, like Pocket Casts' bookmark share."
         },
         "group_listening": {
-          "value": "no",
+          "value": "unknown",
           "detail": "No groups or shared annotations; Family Sharing covers subscriptions only.",
           "sources": [
             {
@@ -238,7 +245,7 @@
               "quote": "share your Apple Podcasts subscriptions with up to five people through Family Sharing"
             }
           ],
-          "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature."
+          "note": "Apple's Podcasts pages describe a podcast app and don't mention this feature, but no page states it's absent, so it isn't marked no. The quote shows the page checked, not the absence."
         },
         "on_device_privacy": {
           "value": "unknown",
@@ -1157,7 +1164,8 @@
               "checked": "2026-09-28",
               "quote": "By upgrading to Glasp Pro, you gain access to unlimited private highlights and notes"
             }
-          ]
+          ],
+          "note": "Rated no: highlights are stored in Glasp's cloud under an account, and are public by default."
         },
         "account_required": {
           "value": "yes",
@@ -1528,7 +1536,8 @@
               "checked": "2026-09-28",
               "quote": "Margin is not a podcast player. Import a Spotify episode link, choose a timestamp, and record your note. Playback stays in Spotify."
             }
-          ]
+          ],
+          "note": "Vendor statement: playback stays in Spotify; the app imports Spotify episode links."
         },
         "reads_web_articles_aloud": {
           "value": "no",
@@ -2643,7 +2652,8 @@
               "checked": "2026-09-28",
               "quote": "Free without limits. No sign-up required."
             }
-          ]
+          ],
+          "note": "The app works without an account; an account is needed only for paid Sync or Publish."
         }
       }
     },
@@ -2913,7 +2923,7 @@
           "note": "Checked home page and App Store listing; nothing either way."
         },
         "on_device_privacy": {
-          "value": "yes",
+          "value": "partial",
           "detail": "Accounts are anonymous by default (no email/password), and the app has no third-party analytics, ad services or tracking code.",
           "sources": [
             {
@@ -2931,7 +2941,7 @@
               "quote": "Overcast has world-class privacy, with no third-party analytics, ad services, or tracking code."
             }
           ],
-          "note": "Listening data (podcasts, episodes, activity) is still synced to Overcast servers; this is no-account-required privacy, not on-device-only storage."
+          "note": "Listening data (podcasts, episodes, activity) is still synced to Overcast servers; this is no-account-required privacy, not on-device-only storage. Rated partial under FIELDS.md's definition: no-account use, but listening data syncs to Overcast's servers."
         },
         "account_required": {
           "value": "no",
@@ -2944,7 +2954,8 @@
               "checked": "2026-09-28",
               "quote": "New Overcast accounts are created anonymously, without email addresses or passwords."
             }
-          ]
+          ],
+          "note": "Accounts are anonymous by default; see the on_device_privacy detail."
         }
       }
     },
@@ -3146,10 +3157,10 @@
               "title": "Bookmarks on the iOS and Android Mobile Apps – Pocket Casts Support",
               "published": null,
               "checked": "2026-09-28",
-              "quote": ""
+              "quote": "On the iOS and Android mobile apps, you can add a bookmark using your Bluetooth headphones or speaker"
             }
           ],
-          "note": "Plus/Patron feature. Apple Watch and CarPlay bookmark capture not confirmed in pages read."
+          "note": "The 2023 blog post introduced bookmarks for Plus and Patron. The current support page names no paid tier, so whether it's paid-only needs re-checking. Apple Watch and CarPlay capture not confirmed in the pages read."
         },
         "transcripts": {
           "value": "yes",
@@ -3173,8 +3184,8 @@
           "note": "Generated transcripts only for select popular shows and episodes under 2 hours."
         },
         "ai_summaries": {
-          "value": "partial",
-          "detail": "AI-generated chapters were launched in July 2026 but the support site says they are temporarily turned off; no AI episode summaries found.",
+          "value": "no",
+          "detail": "AI-generated chapters launched on 2026-07-07 but are currently switched off; no AI episode summaries found.",
           "sources": [
             {
               "url": "https://support.pocketcasts.com/knowledge-base/chapters/",
@@ -3190,7 +3201,8 @@
               "checked": "2026-09-28",
               "quote": "Pocket Casts now supports AI generated Chapters on Android, Web, Desktop and (coming very soon…) iOS."
             }
-          ]
+          ],
+          "note": "Rated no while the vendor says the feature is unavailable. Re-check monthly: it may come back."
         },
         "export_markdown_pkm": {
           "value": "no",
@@ -3578,7 +3590,7 @@
           "detail": "App Store lists iPhone, iPad, Apple Watch, Mac and Apple Vision; an Android app is on Google Play.",
           "sources": [
             {
-              "url": "https://apps.apple.com/us/app/snipd-podcast-ai-player/id1557206126",
+              "url": "https://apps.apple.com/us/app/snipd-ai-podcast-player/id1557206126",
               "title": "Snipd | AI Podcast Player - App Store (US)",
               "published": null,
               "checked": "2026-09-28",
@@ -3615,7 +3627,7 @@
           ]
         },
         "price_paid": {
-          "value": "USD 6.99/month (Premium, US pricing page); annual option exists but price not shown on page",
+          "value": "USD 6.99/month (Premium, US pricing page); US App Store lists Premium purchases from USD 11.90 to 95.90",
           "detail": "Premium adds unlimited AI features, chat with episode, file/YouTube import, custom prompts and 900 AI minutes/month.",
           "sources": [
             {
@@ -3623,17 +3635,17 @@
               "title": "Snipd Pricing",
               "published": null,
               "checked": "2026-09-28",
-              "quote": "Prices may vary by country. For exact pricing, please check the App Store in your region."
+              "quote": "Monthly Annual $ 6.99 /month"
             },
             {
-              "url": "https://apps.apple.com/us/app/snipd-podcast-ai-player/id1557206126",
+              "url": "https://apps.apple.com/us/app/snipd-ai-podcast-player/id1557206126",
               "title": "Snipd | AI Podcast Player - App Store (US)",
               "published": null,
               "checked": "2026-09-28",
-              "quote": "Snipd Premium"
+              "quote": "Snipd Premium $11.90"
             }
           ],
-          "note": "Pricing page shows $6.99/month (USD, currency of page as served to a US request) with a Monthly/Annual toggle whose annual figure did not render. US App Store lists Premium in-app purchases from USD 11.90 to 95.90, periods not shown."
+          "note": "The pricing page's annual figure didn't render. The App Store shows no billing periods. The pricing page adds: 'Prices may vary by country.'"
         },
         "plays_podcasts": {
           "value": "yes",
@@ -4179,21 +4191,21 @@
       "vendor": "Spoken Margins (the owner)",
       "category": "podcast",
       "website": "https://github.com/uncomposed/spoken-margins-native",
-      "why_listed": "Our own row, held to the same sourcing rule: every claim points at the repo at a pinned commit, so a comparison page can't overstate what the app does.",
+      "why_listed": "Our own row, held to the same sourcing rule: every claim points at the repo at a pinned commit, so a comparison page can't overstate what the app does. The repository is private, so before any public page uses this row, its claims need a public source (App Store listing or release notes).",
       "claims": {
         "platforms": {
           "value": "iOS and iPadOS 26 or later",
           "detail": "iPhone and iPad only.",
           "sources": [
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/project.yml",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/project.yml",
               "title": "XcodeGen spec (repo)",
               "published": null,
               "checked": "2026-09-28",
               "quote": "iOS: \"26.0\""
             },
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/AGENTS.md",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
               "title": "Agent guide (repo)",
               "published": null,
               "checked": "2026-09-28",
@@ -4216,11 +4228,11 @@
           "note": "Update when the App Store release (#175) happens."
         },
         "price_paid": {
-          "value": "None",
+          "value": "None (not publicly available: internal TestFlight only)",
           "detail": "No paid tier.",
           "sources": [
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/docs/pkm-product-plan-2026-09-12.md",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/docs/pkm-product-plan-2026-09-12.md",
               "title": "PKM product plan (repo)",
               "published": null,
               "checked": "2026-09-28",
@@ -4233,7 +4245,7 @@
           "detail": "Follows podcast feeds and plays episodes.",
           "sources": [
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/AGENTS.md",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
               "title": "Agent guide (repo)",
               "published": null,
               "checked": "2026-09-28",
@@ -4246,7 +4258,7 @@
           "detail": "Reads saved articles with on-device voices.",
           "sources": [
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/AGENTS.md",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
               "title": "Agent guide (repo)",
               "published": null,
               "checked": "2026-09-28",
@@ -4259,7 +4271,7 @@
           "detail": "Reads PDFs aloud; scientific-PDF quality is being improved (stream C1).",
           "sources": [
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/AGENTS.md",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
               "title": "Agent guide (repo)",
               "published": null,
               "checked": "2026-09-28",
@@ -4280,7 +4292,7 @@
           "detail": "Record a spoken Margin anchored to the moment.",
           "sources": [
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/AGENTS.md",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
               "title": "Agent guide (repo)",
               "published": null,
               "checked": "2026-09-28",
@@ -4293,7 +4305,7 @@
           "detail": "Type a Margin anchored to the moment.",
           "sources": [
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/AGENTS.md",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
               "title": "Agent guide (repo)",
               "published": null,
               "checked": "2026-09-28",
@@ -4306,7 +4318,7 @@
           "detail": "Capture needs the phone screen today; Live Activity buttons control playback and shared Margins, not new capture.",
           "sources": [
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/App/Gate2Shared/Sources/Gate2LiveActivityIntents.swift",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/App/Gate2Shared/Sources/Gate2LiveActivityIntents.swift",
               "title": "Live Activity intents (repo)",
               "published": null,
               "checked": "2026-09-28",
@@ -4320,14 +4332,14 @@
           "detail": "On-device Speech transcription of source context around a Margin; no full episode transcript reader.",
           "sources": [
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/Contracts/docs/recovery-mvp.md",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/Contracts/docs/recovery-mvp.md",
               "title": "Recovery MVP product boundary (repo)",
               "published": null,
               "checked": "2026-09-28",
               "quote": "on-device Speech.framework transcription"
             },
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/Contracts/docs/recovery-mvp.md",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/Contracts/docs/recovery-mvp.md",
               "title": "Recovery MVP product boundary (repo)",
               "published": null,
               "checked": "2026-09-28",
@@ -4341,14 +4353,14 @@
           "detail": "On-device summaries of Margins where Apple Foundation Models are available; listening maps come from source headings or the listener's own model via Shortcuts.",
           "sources": [
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/Contracts/docs/recovery-mvp.md",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/Contracts/docs/recovery-mvp.md",
               "title": "Recovery MVP product boundary (repo)",
               "published": null,
               "checked": "2026-09-28",
               "quote": "Apple Foundation Models for scoped interjection summaries when available"
             },
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/docs/pkm-workflows.md",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/docs/pkm-workflows.md",
               "title": "Personal knowledge workflows (repo)",
               "published": null,
               "checked": "2026-09-28",
@@ -4361,14 +4373,14 @@
           "detail": "Writes each typed Margin as a Markdown file into a chosen Files folder such as an Obsidian vault, while the app is open. Spoken Margins are not exported yet.",
           "sources": [
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/PKMSettingsViews.swift",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/App/SpokenMarginsApp/Sources/SpokenMarginsApp/PKMSettingsViews.swift",
               "title": "Margin Output settings copy (repo)",
               "published": null,
               "checked": "2026-09-28",
               "quote": "Writes each text Margin as a Markdown note in the folder you choose, such as an Obsidian vault."
             },
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/docs/pkm-workflows.md",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/docs/pkm-workflows.md",
               "title": "Personal knowledge workflows (repo)",
               "published": null,
               "checked": "2026-09-28",
@@ -4382,7 +4394,7 @@
           "detail": "Share Margins as a .spokenmargins file; the recipient imports it and hears each Margin at that place in their own copy. Not yet a link.",
           "sources": [
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/AGENTS.md",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
               "title": "Agent guide (repo)",
               "published": null,
               "checked": "2026-09-28",
@@ -4407,23 +4419,24 @@
         },
         "on_device_privacy": {
           "value": "yes",
-          "detail": "Processing is on device by default; remote model calls are off in the release profile.",
+          "detail": "Source text and Margins aren't sent to a third-party model provider; summaries use on-device models where available.",
           "sources": [
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/Contracts/docs/recovery-mvp.md",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/Contracts/docs/recovery-mvp.md",
               "title": "Recovery MVP product boundary (repo)",
               "published": null,
               "checked": "2026-09-28",
-              "quote": "proof that remote model calls, on-device AI map generation, and full native-audio transcript disclosure are impossible in the default release profile"
+              "quote": "source material and interjections are not sent to a third-party model provider"
             }
-          ]
+          ],
+          "note": "The network is still used for feeds, web pages, and read-later services the listener connects (with their own token). A listener's own Ask ChatGPT shortcut sends text to OpenAI under the listener's account, outside the app."
         },
         "account_required": {
           "value": "no",
           "detail": "No Spoken Margins account; read-later services use the listener's own token.",
           "sources": [
             {
-              "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/docs/pkm-workflows.md",
+              "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/docs/pkm-workflows.md",
               "title": "Personal knowledge workflows (repo)",
               "published": null,
               "checked": "2026-09-28",

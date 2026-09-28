@@ -11,7 +11,7 @@
       "detail": "App Store lists iPhone, iPad, Apple Watch, Mac and Apple Vision; an Android app is on Google Play.",
       "sources": [
         {
-          "url": "https://apps.apple.com/us/app/snipd-podcast-ai-player/id1557206126",
+          "url": "https://apps.apple.com/us/app/snipd-ai-podcast-player/id1557206126",
           "title": "Snipd | AI Podcast Player - App Store (US)",
           "published": null,
           "checked": "2026-09-28",
@@ -48,7 +48,7 @@
       ]
     },
     "price_paid": {
-      "value": "USD 6.99/month (Premium, US pricing page); annual option exists but price not shown on page",
+      "value": "USD 6.99/month (Premium, US pricing page); US App Store lists Premium purchases from USD 11.90 to 95.90",
       "detail": "Premium adds unlimited AI features, chat with episode, file/YouTube import, custom prompts and 900 AI minutes/month.",
       "sources": [
         {
@@ -56,17 +56,17 @@
           "title": "Snipd Pricing",
           "published": null,
           "checked": "2026-09-28",
-          "quote": "Prices may vary by country. For exact pricing, please check the App Store in your region."
+          "quote": "Monthly Annual $ 6.99 /month"
         },
         {
-          "url": "https://apps.apple.com/us/app/snipd-podcast-ai-player/id1557206126",
+          "url": "https://apps.apple.com/us/app/snipd-ai-podcast-player/id1557206126",
           "title": "Snipd | AI Podcast Player - App Store (US)",
           "published": null,
           "checked": "2026-09-28",
-          "quote": "Snipd Premium"
+          "quote": "Snipd Premium $11.90"
         }
       ],
-      "note": "Pricing page shows $6.99/month (USD, currency of page as served to a US request) with a Monthly/Annual toggle whose annual figure did not render. US App Store lists Premium in-app purchases from USD 11.90 to 95.90, periods not shown."
+      "note": "The pricing page's annual figure didn't render. The App Store shows no billing periods. The pricing page adds: 'Prices may vary by country.'"
     },
     "plays_podcasts": {
       "value": "yes",

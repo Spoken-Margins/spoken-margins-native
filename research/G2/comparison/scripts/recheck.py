@@ -51,7 +51,11 @@ def main() -> int:
         for field, claim in app["claims"].items():
             for src in claim["sources"]:
                 url, quote = src["url"], src.get("quote", "")
-                if "github.com/uncomposed/spoken-margins-native" in url or not quote:
+                if "github.com/uncomposed/spoken-margins-native" in url:
+                    continue
+                if not quote:
+                    # Unknowns and supporting links have no quote to test; list them so a person re-reads them.
+                    rows.append(("NO-QUOTE", app["id"], field, src["checked"], url, claim["value"]))
                     continue
                 if url not in pages:
                     try:

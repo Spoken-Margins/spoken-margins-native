@@ -258,7 +258,8 @@
           "checked": "2026-09-28",
           "quote": "Free without limits. No sign-up required."
         }
-      ]
+      ],
+      "note": "The app works without an account; an account is needed only for paid Sync or Publish."
     }
   }
 }

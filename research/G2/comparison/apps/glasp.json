@@ -308,7 +308,8 @@
           "checked": "2026-09-28",
           "quote": "By upgrading to Glasp Pro, you gain access to unlimited private highlights and notes"
         }
-      ]
+      ],
+      "note": "Rated no: highlights are stored in Glasp's cloud under an account, and are public by default."
     },
     "account_required": {
       "value": "yes",

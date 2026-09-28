@@ -4,21 +4,21 @@
   "vendor": "Spoken Margins (the owner)",
   "category": "podcast",
   "website": "https://github.com/uncomposed/spoken-margins-native",
-  "why_listed": "Our own row, held to the same sourcing rule: every claim points at the repo at a pinned commit, so a comparison page can't overstate what the app does.",
+  "why_listed": "Our own row, held to the same sourcing rule: every claim points at the repo at a pinned commit, so a comparison page can't overstate what the app does. The repository is private, so before any public page uses this row, its claims need a public source (App Store listing or release notes).",
   "claims": {
     "platforms": {
       "value": "iOS and iPadOS 26 or later",
       "detail": "iPhone and iPad only.",
       "sources": [
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/project.yml",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/project.yml",
           "title": "XcodeGen spec (repo)",
           "published": null,
           "checked": "2026-09-28",
           "quote": "iOS: \"26.0\""
         },
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/AGENTS.md",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
           "title": "Agent guide (repo)",
           "published": null,
           "checked": "2026-09-28",
@@ -41,11 +41,11 @@
       "note": "Update when the App Store release (#175) happens."
     },
     "price_paid": {
-      "value": "None",
+      "value": "None (not publicly available: internal TestFlight only)",
       "detail": "No paid tier.",
       "sources": [
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/docs/pkm-product-plan-2026-09-12.md",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/docs/pkm-product-plan-2026-09-12.md",
           "title": "PKM product plan (repo)",
           "published": null,
           "checked": "2026-09-28",
@@ -58,7 +58,7 @@
       "detail": "Follows podcast feeds and plays episodes.",
       "sources": [
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/AGENTS.md",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
           "title": "Agent guide (repo)",
           "published": null,
           "checked": "2026-09-28",
@@ -71,7 +71,7 @@
       "detail": "Reads saved articles with on-device voices.",
       "sources": [
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/AGENTS.md",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
           "title": "Agent guide (repo)",
           "published": null,
           "checked": "2026-09-28",
@@ -84,7 +84,7 @@
       "detail": "Reads PDFs aloud; scientific-PDF quality is being improved (stream C1).",
       "sources": [
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/AGENTS.md",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
           "title": "Agent guide (repo)",
           "published": null,
           "checked": "2026-09-28",
@@ -105,7 +105,7 @@
       "detail": "Record a spoken Margin anchored to the moment.",
       "sources": [
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/AGENTS.md",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
           "title": "Agent guide (repo)",
           "published": null,
           "checked": "2026-09-28",
@@ -118,7 +118,7 @@
       "detail": "Type a Margin anchored to the moment.",
       "sources": [
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/AGENTS.md",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
           "title": "Agent guide (repo)",
           "published": null,
           "checked": "2026-09-28",
@@ -131,7 +131,7 @@
       "detail": "Capture needs the phone screen today; Live Activity buttons control playback and shared Margins, not new capture.",
       "sources": [
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/App/Gate2Shared/Sources/Gate2LiveActivityIntents.swift",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/App/Gate2Shared/Sources/Gate2LiveActivityIntents.swift",
           "title": "Live Activity intents (repo)",
           "published": null,
           "checked": "2026-09-28",
@@ -145,14 +145,14 @@
       "detail": "On-device Speech transcription of source context around a Margin; no full episode transcript reader.",
       "sources": [
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/Contracts/docs/recovery-mvp.md",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/Contracts/docs/recovery-mvp.md",
           "title": "Recovery MVP product boundary (repo)",
           "published": null,
           "checked": "2026-09-28",
           "quote": "on-device Speech.framework transcription"
         },
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/Contracts/docs/recovery-mvp.md",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/Contracts/docs/recovery-mvp.md",
           "title": "Recovery MVP product boundary (repo)",
           "published": null,
           "checked": "2026-09-28",
@@ -166,14 +166,14 @@
       "detail": "On-device summaries of Margins where Apple Foundation Models are available; listening maps come from source headings or the listener's own model via Shortcuts.",
       "sources": [
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/Contracts/docs/recovery-mvp.md",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/Contracts/docs/recovery-mvp.md",
           "title": "Recovery MVP product boundary (repo)",
           "published": null,
           "checked": "2026-09-28",
           "quote": "Apple Foundation Models for scoped interjection summaries when available"
         },
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/docs/pkm-workflows.md",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/docs/pkm-workflows.md",
           "title": "Personal knowledge workflows (repo)",
           "published": null,
           "checked": "2026-09-28",
@@ -186,14 +186,14 @@
       "detail": "Writes each typed Margin as a Markdown file into a chosen Files folder such as an Obsidian vault, while the app is open. Spoken Margins are not exported yet.",
       "sources": [
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/PKMSettingsViews.swift",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/App/SpokenMarginsApp/Sources/SpokenMarginsApp/PKMSettingsViews.swift",
           "title": "Margin Output settings copy (repo)",
           "published": null,
           "checked": "2026-09-28",
           "quote": "Writes each text Margin as a Markdown note in the folder you choose, such as an Obsidian vault."
         },
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/docs/pkm-workflows.md",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/docs/pkm-workflows.md",
           "title": "Personal knowledge workflows (repo)",
           "published": null,
           "checked": "2026-09-28",
@@ -207,7 +207,7 @@
       "detail": "Share Margins as a .spokenmargins file; the recipient imports it and hears each Margin at that place in their own copy. Not yet a link.",
       "sources": [
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/AGENTS.md",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
           "title": "Agent guide (repo)",
           "published": null,
           "checked": "2026-09-28",
@@ -232,23 +232,24 @@
     },
     "on_device_privacy": {
       "value": "yes",
-      "detail": "Processing is on device by default; remote model calls are off in the release profile.",
+      "detail": "Source text and Margins aren't sent to a third-party model provider; summaries use on-device models where available.",
       "sources": [
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/Contracts/docs/recovery-mvp.md",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/Contracts/docs/recovery-mvp.md",
           "title": "Recovery MVP product boundary (repo)",
           "published": null,
           "checked": "2026-09-28",
-          "quote": "proof that remote model calls, on-device AI map generation, and full native-audio transcript disclosure are impossible in the default release profile"
+          "quote": "source material and interjections are not sent to a third-party model provider"
         }
-      ]
+      ],
+      "note": "The network is still used for feeds, web pages, and read-later services the listener connects (with their own token). A listener's own Ask ChatGPT shortcut sends text to OpenAI under the listener's account, outside the app."
     },
     "account_required": {
       "value": "no",
       "detail": "No Spoken Margins account; read-later services use the listener's own token.",
       "sources": [
         {
-          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/docs/pkm-workflows.md",
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/docs/pkm-workflows.md",
           "title": "Personal knowledge workflows (repo)",
           "published": null,
           "checked": "2026-09-28",

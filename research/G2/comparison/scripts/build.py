@@ -20,7 +20,7 @@ COLUMNS = [
     ("voice_notes_anchored", "Spoken note at moment"), ("text_notes_anchored", "Typed note at moment"),
     ("hands_free_capture", "Hands-free capture"), ("transcripts", "Transcripts"), ("ai_summaries", "AI summaries"),
     ("export_markdown_pkm", "Export to notes"), ("share_note_at_moment", "Share note at moment"),
-    ("group_listening", "Groups"), ("on_device_privacy", "On-device"), ("account_required", "Account needed"),
+    ("group_listening", "Groups"), ("on_device_privacy", "Content stays on device"), ("account_required", "Account needed"),
 ]
 
 
@@ -28,6 +28,9 @@ def render_table(apps: list[dict], checked: list[str]) -> str:
     """A phone-readable view of comparison.json. Every cell's source is in the JSON."""
     lines = [
         "# App comparison (generated)",
+        "",
+        "Compiled by the maker of Spoken Margins, one of the apps listed. It is not a neutral review: it compares documented capabilities, "
+        "each with a source a reader can check, and doesn't rate quality.",
         "",
         f"Generated from `comparison.json` by `comparison/scripts/build.py`; don't edit by hand. Sources checked {checked[0]} to {checked[-1]}. "
         "Every cell has a source, date and quote in `comparison/apps/<id>.json`, and the notes there carry caveats this table drops.",

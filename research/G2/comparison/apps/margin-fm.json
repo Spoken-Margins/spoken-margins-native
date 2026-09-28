@@ -80,7 +80,8 @@
           "checked": "2026-09-28",
           "quote": "Margin is not a podcast player. Import a Spotify episode link, choose a timestamp, and record your note. Playback stays in Spotify."
         }
-      ]
+      ],
+      "note": "Vendor statement: playback stays in Spotify; the app imports Spotify episode links."
     },
     "reads_web_articles_aloud": {
       "value": "no",
