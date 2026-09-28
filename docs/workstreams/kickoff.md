@@ -16,8 +16,11 @@ exists, and put lane requests on that PR.
 
 Work milestone by milestone. For each milestone:
 1. Say in two or three sentences how you intend to reach it and what you will measure.
-   If the brief lists an owner decision this milestone needs, stop and ask on the
-   stream's tracking issue instead of guessing.
+   For a choice the brief leaves open, or an owner decision it lists: if it's
+   reversible, post it on the tracking issue under "Default taken" (options, your
+   pick, why) and keep going on your pick. Stop and ask only when it touches the
+   owner's data, packet or database compatibility, money, anything public, main or a
+   release, or taste (design, voice).
 2. Work until the milestone's "Done when" items hold, leaving out items marked (owner)
    or (Mac), and show the evidence for each one. If 40 turns pass without progress,
    stop and report on the tracking issue.
@@ -34,8 +37,45 @@ Why it's shaped this way:
 - **`/goal` holds the agent to the endpoint.** It's a command the person who started the session types, not something the agent can run. After the agent posts its approach, send `/goal <the milestone's "Done when", minus (owner) and (Mac) items>` as the next message. After each turn, a separate evaluator checks the condition against what the agent has shown in the transcript, and the agent keeps working until it's met ([docs](https://code.claude.com/docs/en/goal)). Without it, the agent still works toward the same list; `/goal` just stops it from declaring victory early. That's why every "Done when" in the briefs is written as something the agent can *demonstrate* (a test output, a measured number, a tap count, a lane report), not something it can merely assert.
 - **Items marked (owner) stay out of the goal.** Listening by ear, measurements on the owner's phone, and data only the owner has can't be demonstrated by an agent. The agent prepares them (a build, exact steps, what to look for) and the milestone waits on the owner.
 - **Stating the approach first** gives the owner a moment to redirect from the phone before hours go into the wrong idea. It isn't a request for approval; the agent continues unless redirected.
+- **Defaults instead of waits.** On 2026-09-28 about 15 owner decisions reached the owner one at a time, and several were reversible: which simulator the lane uses, C3's pause behavior, whether author names are read aloud. Streams now take a default for those and keep going. The lead session collects each "Default taken" so the owner can veto in one batch.
 - **A turn cap** stops a stuck stream from burning a day. Blocked is a legitimate outcome if it's reported.
 - **A fresh-context review** before a milestone catches the "looks done" failure without an auditor agent chain ([best practices](https://code.claude.com/docs/en/best-practices#add-an-adversarial-review-step)). Tell the reviewer to flag only gaps against the brief's "Done when" and "Must not break", or it will invent work.
+
+## The lead session
+
+One session a day coordinates the streams: it batches decisions for the owner, relays answers, and merges on green. It writes no feature code. Start it fresh each morning, because a long coordinating session degrades, and the issues and PRs carry the state. Paste:
+
+```text
+You are today's lead session for Spoken Margins' parallel streams. You coordinate;
+you don't write feature code. Read AGENTS.md, docs/workstreams/README.md,
+docs/workstreams/test-lane.md, and "The lead session" in docs/workstreams/kickoff.md.
+
+1. Survey, read-only: open PRs into next and their latest lane reports; the latest
+   comment on each stream tracking issue (label stream:*); local sessions and
+   `git worktree list`; booted simulators; free disk (`df -h /`).
+2. Give the owner one digest, short and written for the ear:
+   - Decisions only the owner can make, numbered, each with your recommendation,
+     what it blocks, and a link.
+   - Every "Default taken" since the last digest, numbered, so the owner can veto
+     by number.
+   - What merged, what's waiting on the lane, and what's stuck and why.
+3. Merge on green (the owner allows this). When a PR's lane report is PASS for its
+   current head, merge current next into a temporary worktree of it and re-run the
+   tests for what it touches, plus anything on next that uses it. Add T2 through
+   scripts/xcodebuild-lane for App/ changes. Then `gh pr ready` and
+   `gh pr merge --merge --match-head-commit <full sha>`. A conflict or a failing
+   combination goes back to the owning session with the exact failing test. Squash
+   only where the PR says so.
+4. Keep streams moving. Relay owner answers to the stream as a message, and quote
+   them on its tracking issue. Wake idle cloud streams whose gate has opened. Tell
+   the Test Desk your session's name, and ask it to message "PASS #<pr> <sha>"
+   after each PASS.
+5. Guardrails: without an explicit owner yes in this session, never touch the
+   owner's phone, Library, main, the VPS, or simulators. Use one temporary worktree
+   per job and remove it afterwards.
+
+Repeat the digest mid-afternoon, or whenever the owner asks what's waiting on them.
+```
 
 ## Model and effort
 

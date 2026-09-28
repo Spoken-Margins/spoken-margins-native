@@ -145,7 +145,7 @@ The reach pass (#141, #145–#149, #151) moves into B1, D3, D4 and D5.
     3. The Build 30 quick wins, one after another in one session: C3 M1 → C2 M1 → B2 M1 → B1 M1.
   - C4 `anchors` takes the next free slot. If the owner wants anchors to keep priority, it takes slot 3 and the quick wins wait.
 - **Cloud:** no practical limit beyond attention. Six to eight at once is a reasonable start: every Wave 0 cloud stream.
-- **Owner attention** is the real limit. Streams ping the owner only for decisions, owner-only checks, and FAIL reports on gate streams ([test-lane.md](test-lane.md)).
+- **Owner attention** is the real limit. Streams stop for the owner only under the reversible-decision rule in [kickoff.md](kickoff.md) (owner data, packets and databases, money, anything public, `main` and releases, taste), for owner-only checks, and for FAIL reports on gate streams ([test-lane.md](test-lane.md)). A daily lead session ([kickoff.md](kickoff.md#the-lead-session)) batches the rest into one digest.
 
 ## Branches and merging
 
