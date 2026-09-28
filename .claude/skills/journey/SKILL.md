@@ -15,6 +15,9 @@ That worktree is the desk's home, not a test subject: keep it detached at `origi
 
 ## Setup for one request
 
+The Test Desk takes **T4 and T5** requests. T2 and T3 go to the self-hosted runner (`.github/workflows/lane.yml`), so skip those even when they carry `lane:queued`.
+
+
 1. **Worktree at the requested commit.** Never test in a stream's worktree or the owner's checkout:
    `git worktree add --detach .claude/worktrees/lane-<id> <sha>`
 2. **Build** there with the wrapper, which queues for a Mac-wide build slot and uses `.build/dd` in that worktree:
