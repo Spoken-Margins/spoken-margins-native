@@ -20,8 +20,7 @@ smclient="${work}/bin/smclient"
 
 echo "== fake Apple CA, manifest fixture"
 "${smserver}" make-test-ca "${work}/ca"
-cp "${here}/contracts/fixtures/bridge-manifest.example.json" "${work}/public/bridge/v1/manifest.json"
-"${smserver}" validate-manifest "${work}/public/bridge/v1/manifest.json"
+"${smserver}" publish-manifest -public "${work}/public" "${here}/contracts/fixtures/bridge-manifest.example.json"
 
 echo "== start server"
 "${smserver}" serve -listen "127.0.0.1:${port}" -state "${work}/state" -public "${work}/public" \
@@ -55,13 +54,17 @@ echo "-- install B (expect 503 disabled; health and config still answer)"
 echo "-- install B after switching back on (expect 200)"
 "${smclient}" -base "${base}" -ca "${work}/ca" -device "${work}/device-b.json"
 
+echo "== stop the server (it writes its hourly summary and install records on shutdown)"
+kill -TERM "${server_pid}"
+wait "${server_pid}" || true
+
 echo "== what the server kept"
-echo "-- request log (every line):"
+echo "-- request log (every line; one per route/status per hour, with a count):"
 cat "${work}/request.log"
 echo "-- install records:"
 for f in "${work}"/state/installs/*.json; do echo "$(basename "$f"): $(cat "$f")"; done
 echo "-- block list: $(ls "${work}/state/blocked")"
-echo "-- abuse log lines: $(wc -l <"${work}/state/abuse.log")"
+echo "-- abuse log lines: $(cat "${work}/state/abuse.log" 2>/dev/null | wc -l)"
 echo "-- server stderr:"
 cat "${work}/server.err"
 echo "work directory: ${work}"

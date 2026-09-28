@@ -35,7 +35,7 @@ Deploy templates are in `deploy/` (Caddy snippet, systemd unit, journald retenti
 ## 2. Attestation, and blocking one install
 
 - **What:** Apple App Attest (`DCAppAttestService`). On first need, the app generates a Secure Enclave key, asks the server for a one-time challenge, and has Apple certify the key (`attestKey`). The server checks the certificate chain against Apple's App Attestation Root CA (embedded, fingerprint pinned in a test), the challenge nonce, our App ID `J8SWC6J3VY.com.spokenmargins.native`, the environment, a zero counter, and that the key id matches. After that, every attested request carries an assertion over `method, path, time, SHA-256(body)` (exact bytes: `api.ClientData`). The server rejects any assertion whose counter hasn't increased, so a captured request can't be replayed.
-- **What the server keeps per install:** the public key, the counter, the environment, and the created and last-seen dates *at day precision*. That's all: no IP, device model, receipt, or anything Apple's fraud metric could link. The key is random per install and dies with the app. Apple does not tell us which device made it.
+- **What the server keeps per install:** the public key, the counter, the environment, and the created and last-seen dates *at day precision*. That's all: no IP, device model, receipt, or anything Apple's fraud metric could link. Records change in memory and are written in one hourly batch, and each file's times are then set to midnight of its last-seen day. So neither the record nor its file times say when a request happened. A crash loses at most an hour of counter updates. The key is random per install and dies with the app. Apple does not tell us which device made it.
 - **Blocking one install:** the owner runs `smserver block TAG` on the box, where the tag is 16 hex characters derived from the key id. Blocks live in their own directory, which only the CLI writes, so they survive record expiry and can't be raced by a request in flight. A blocked install gets a vague `403 refused`. Where the owner gets a tag from: the **abuse log**, which records hour, tag and reason only when an install exceeds its rate limit, and is pruned after 30 days. Admin is CLI-only on the box; there is no remote admin endpoint.
 - **Expiry:** records unused for 90 days are deleted daily. An app told `unknown_key` simply attests a new key, so losing or purging the store is harmless and needs no backups.
 - **Lazy, not at launch:** the app attests only when it first uses an attested feature. An install that never sends anything never appears on the server. This also stays within Apple's guidance to ramp `attestKey` calls gradually.
@@ -75,14 +75,15 @@ F1 club membership is linked by nature; a member of a club is known to that club
 | --- | --- | --- |
 | Caddy access log | Nothing. The site block has no `log` directive; keep it that way | — |
 | Caddy error log | Method, host, URI of a failed request. The IP, headers and TLS fields are stripped by the global filter in `deploy/Caddyfile.snippet`. Checked locally: without the filter, a 502 logged the request's key-id header | journald default |
-| smserver request log | `{"hour":"2026-09-28T12","method":"POST","route":"/api/v1/ping","status":200,"latency":"under50ms"}`. Unknown paths log as `"other"` | 14 days (own journal namespace) |
-| smserver abuse log | Hour, install tag, reason. Only for installs over their rate limit | 30 days |
-| Install records | Public key, counter, environment, two day-precision dates | Until 90 days idle |
+| smserver request log | An hourly summary, written once an hour: `{"hour":"2026-09-28T12","method":"POST","route":"/api/v1/ping","status":200,"latency":"under50ms","count":4}`. Unknown paths log as `"other"`. Nothing is written per request, so even the journal's own timestamps only mark the hour | 14 days (own journal namespace, files closed daily so the limit applies, no syslog forwarding) |
+| smserver abuse log | Hour, install tag, reason, count. Only for installs over their rate limit, also written hourly | 30 days |
+| Install records | Public key, counter, environment, two day-precision dates. Written hourly, file times set to midnight | Until 90 days idle |
 | Rate limiter | IPs HMAC'd with a per-process random secret, in memory only, reset hourly | 1 hour, never on disk |
 
 Why this can't reconstruct a listener's follows or reading:
-- **Follows never reach the server.** Every install downloads the same manifest bytes, and the ETag is a content hash, so it can't act as a per-install cookie. Whether a shared link is bridgeable is matched *on the phone* against each source's `match.hosts`/`pathPrefixes`. Nothing is fetched from our server per source: no icons, no per-source feeds. The manifest gate refuses any such field.
-- **Reading never reaches the server.** The phone fetches articles from publishers directly, as it does today. Manifest URLs must be https on the source's own hosts, so a bad manifest can't point a phone somewhere the listener didn't choose.
+- **Follows never reach the server.** Every install downloads the same manifest bytes. Caddy's ETag is built from the file's modification time and size, so every install gets the same one and it can't act as a per-install cookie. Whether a shared link is bridgeable is matched *on the phone* against each source's `match.hosts`/`pathPrefixes`. Nothing is fetched from our server per source: no icons, no per-source feeds. The manifest gate refuses any such field.
+- **Reading never reaches the server.** The phone fetches articles from publishers directly, as it does today.
+- **A bad manifest can't redirect phones.** The gate requires item URLs to be https on the source's `match.hosts`, and refuses any Spoken Margins domain as a host. But the manifest sets those hosts itself, so the real boundary is on the phone. **App rule (B4 M3, must not break):** at follow time the app records the host of the link the listener actually shared. It fetches only items on that host, and asks the listener before accepting a source whose hosts changed. Otherwise a compromised manifest could add a tracker as a host and learn which IPs follow a source.
 - **Manifest downloads carry no identity.** No attestation and no cookies. Even an IP log, which we don't keep, would only say "an install exists".
 - **Sharding, if the manifest ever gets big:** the phone fetches every shard, never only the ones it needs. Fetching only the shards you need would leak follows. The gate caps the manifest at 4 MB, roughly 700 sources at 20 items each; past that, shard.
 - Tests enforce the logging rules. An end-to-end test fails if a key id, install tag, `127.0.0.1` or the Go user agent appears in either log. Adding the peer address to the log line made it fail, as intended.
@@ -104,7 +105,7 @@ Fixture: `contracts/fixtures/bridge-manifest.example.json`. The publish gate is 
                 "published": { "selector": "time[datetime]", "attribute": "datetime" } } }] }
 ```
 
-- **Items are links, not content.** An item has only `url`, `title`, `publishedAt` and `firstSeenAt`. The gate refuses unknown fields, so `content`, `summary`, `html` and `icon` can't be published by accident. `updatedAt` is the per-source change marker.
+- **Items are links, not content.** An item has only `url`, `title`, `publishedAt` and `firstSeenAt`. The gate refuses unknown fields, so `content`, `summary`, `html` and `icon` can't be published by accident. This holds only if every write goes through the gate. `smserver publish-manifest` (`manifest.Publish`) validates, then replaces the file atomically, and leaves the live file untouched when validation fails. The M2 watcher and any deploy script must publish through it, never by copying a file into place. `updatedAt` is the per-source change marker.
 - **Recipes are data (Guideline 2.5.2).** `extract` is `"readable"` (the Defuddle script bundled in the app) or `"selectors"` (CSS selector lists applied with `querySelectorAll`). There are no scripts, regexes, templates or expressions. Every behavior is code already in the reviewed app binary, and the recipe only picks which parts of the page to keep. Apple's own Safari content-blocker rules are the precedent: JSON with CSS selectors, downloaded and applied by shipped code. The gate also refuses selectors containing `{ } ; < \` `` ` ``, comments, `url(`, `expression(`, `javascript:` or `@import`, caps lists at 10 selectors of 200 bytes each, and allows only https item URLs on the source's own hosts.
 - **App-side rule (B4 M3, must not break):** selectors reach the page only as *arguments* to `callAsyncJavaScript(_:arguments:in:contentWorld:)` in an isolated content world, never spliced into a JavaScript string. Splicing would turn a selector into code. The server gate is defense in depth, not the boundary.
 - **Versioning:** the server's gate is strict, and the app's decoder ignores unknown fields. A recipe whose `version` is newer than the app understands falls back to `"readable"`. Adding a field never breaks an old build.
@@ -124,7 +125,7 @@ Add a section:
 >
 > *Sending something to the server.* Some features send something to the server, such as asking for a new site to be supported. The first time you use one, your device creates a random key for this installation of the app, and Apple confirms to our server that the key belongs to a genuine copy of Spoken Margins. Apple does not tell us who you are or which device you use. The server stores that key's public half, a counter, and the dates it was created and last used. We use it only to prevent abuse, and it is deleted after 90 days without use. Deleting the app deletes the key. Requests that reveal your interests, like a site suggestion, are sent without that key, so they can't be connected to your installation.
 >
-> *What the server records.* The server does not keep IP addresses. Its logs record which service was used, the hour, and whether it worked, and are deleted after 14 days. If an installation sends more requests than the service allows, the server notes that installation's random key for 30 days so repeated abuse can be blocked.
+> *What the server records.* The server does not keep IP addresses. Its logs are an hourly count of which services were used and whether they worked, and are deleted after 14 days. If an installation sends more requests than the service allows, the server notes that installation's random key for 30 days so repeated abuse can be blocked.
 >
 > *If the server is unavailable.* Everything else in Spoken Margins keeps working. Sites that depend on the server show "Not updating" until it's back.
 
@@ -140,7 +141,7 @@ Add a section:
 - `internal/store`: install records and the block list.
 - `internal/config`: the kill switch.
 - `internal/manifest`: the I3 gate.
-- `cmd/smserver`: serve plus the admin CLI.
+- `cmd/smserver`: serve plus the admin CLI, including `publish-manifest`.
 - `cmd/smclient`: the test client.
 - `scripts/demo.sh`: runs the whole M1 path locally.
 

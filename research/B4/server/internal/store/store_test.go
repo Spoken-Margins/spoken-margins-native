@@ -31,6 +31,25 @@ func TestRegisterAdvanceBlockPurge(t *testing.T) {
 		t.Fatalf("stale counter accepted: %v", err)
 	}
 
+	// Nothing reaches disk until the hourly flush, and then the file's times
+	// are midnight of the last-seen day, not the time of the request.
+	if _, err := os.Stat(s.path(key)); !os.IsNotExist(err) {
+		t.Fatalf("record written before flush: %v", err)
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(s.path(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC); !info.ModTime().Equal(want) {
+		t.Fatalf("file mtime %v, want %v", info.ModTime().UTC(), want)
+	}
+	if got, err := s.Get(key); err != nil || got.Counter != 1 {
+		t.Fatalf("after flush: %+v %v", got, err)
+	}
+
 	// The record holds nothing but what the struct declares.
 	raw, _ := os.ReadFile(s.path(key))
 	for _, forbidden := range []string{"ip", "name", "email", "model", "follow"} {
@@ -67,6 +86,7 @@ func TestRegisterAdvanceBlockPurge(t *testing.T) {
 	}
 
 	// A block outlives the record, so an expired record doesn't lift it.
+	s.Flush()
 	os.Remove(s.path(key))
 	if !s.IsBlocked(key) {
 		t.Fatal("block lost with record")

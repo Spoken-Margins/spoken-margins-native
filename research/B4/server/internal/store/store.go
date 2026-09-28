@@ -47,6 +47,11 @@ type Install struct {
 type Store struct {
 	dir string
 	mu  sync.Mutex
+	// pending holds records changed since the last Flush, keyed by the hex
+	// hash of the key id. Writing them in one hourly batch means a record's
+	// file times say at most "active in this hour", never the second of a
+	// request, which would let a log or a later feature be matched by time.
+	pending map[string]*Install
 }
 
 func Open(dir string) (*Store, error) {
@@ -55,7 +60,7 @@ func Open(dir string) (*Store, error) {
 			return nil, err
 		}
 	}
-	return &Store{dir: dir}, nil
+	return &Store{dir: dir, pending: map[string]*Install{}}, nil
 }
 
 func hashHex(keyID []byte) string {
@@ -93,6 +98,10 @@ func writeAtomic(path string, data []byte) error {
 }
 
 func (s *Store) read(keyID []byte) (*Install, error) {
+	if in, ok := s.pending[hashHex(keyID)]; ok {
+		c := *in
+		return &c, nil
+	}
 	data, err := os.ReadFile(s.path(keyID))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotFound
@@ -107,12 +116,34 @@ func (s *Store) read(keyID []byte) (*Install, error) {
 	return &in, nil
 }
 
-func (s *Store) write(keyID []byte, in *Install) error {
-	data, err := json.Marshal(in)
-	if err != nil {
-		return err
+func (s *Store) write(keyID []byte, in *Install) {
+	c := *in
+	s.pending[hashHex(keyID)] = &c
+}
+
+// Flush writes every changed record, then sets each file's access and
+// modification times to midnight UTC of its last-seen day. The server calls
+// it hourly and on shutdown. A crash loses at most an hour of counter
+// advances; replaying an assertion from that hour would still need the
+// attacker to have broken TLS to capture it.
+func (s *Store) Flush() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for h, in := range s.pending {
+		data, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		p := filepath.Join(s.dir, "installs", h+".json")
+		if err := writeAtomic(p, data); err != nil {
+			return err
+		}
+		if day, err := time.Parse(DayFormat, in.LastSeenDay); err == nil {
+			os.Chtimes(p, day, day)
+		}
+		delete(s.pending, h)
 	}
-	return writeAtomic(s.path(keyID), data)
+	return nil
 }
 
 func (s *Store) Get(keyID []byte) (*Install, error) {
@@ -130,7 +161,8 @@ func (s *Store) Register(keyID []byte, in Install) error {
 	} else if !errors.Is(err, ErrNotFound) {
 		return err
 	}
-	return s.write(keyID, &in)
+	s.write(keyID, &in)
+	return nil
 }
 
 // Advance records a verified assertion's counter. It re-checks the counter
@@ -147,7 +179,8 @@ func (s *Store) Advance(keyID []byte, counter uint32, now time.Time) error {
 	}
 	in.Counter = counter
 	in.LastSeenDay = now.UTC().Format(DayFormat)
-	return s.write(keyID, in)
+	s.write(keyID, in)
+	return nil
 }
 
 func (s *Store) blockPath(tag string) string { return filepath.Join(s.dir, "blocked", tag) }
@@ -183,6 +216,9 @@ func (s *Store) Unblock(tag string) error {
 // Purge deletes records not seen for the given number of days. An app whose
 // record was purged is told its key is unknown and attests a new one.
 func (s *Store) Purge(now time.Time, idleDays int) (int, error) {
+	if err := s.Flush(); err != nil {
+		return 0, err
+	}
 	cutoff := now.UTC().AddDate(0, 0, -idleDays).Format(DayFormat)
 	s.mu.Lock()
 	defer s.mu.Unlock()

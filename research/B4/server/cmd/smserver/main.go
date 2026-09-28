@@ -6,6 +6,7 @@
 //	smserver switch  -public DIR SERVICE on|off   the kill switch
 //	smserver purge   -state DIR [-idle-days 90]
 //	smserver validate-manifest FILE
+//	smserver publish-manifest -public DIR FILE   the only way the manifest should change
 //	smserver make-test-ca DIR            a fake Apple CA for local testing
 //
 // Admin is CLI-only, on the box: there is no remote admin endpoint to attack.
@@ -56,6 +57,8 @@ func main() {
 		err = purge(args)
 	case "validate-manifest":
 		err = validateManifest(args)
+	case "publish-manifest":
+		err = publishManifest(args)
 	case "make-test-ca":
 		err = makeTestCA(args)
 	default:
@@ -68,7 +71,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|make-test-ca [flags]")
+	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca [flags]")
 	os.Exit(2)
 }
 
@@ -160,6 +163,21 @@ func serve(args []string) error {
 		}
 	}()
 	go func() {
+		// Logs and install records are written once an hour, never per request.
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if err := srv.Flush(); err != nil {
+					log.Printf("hourly flush failed: %v", err)
+				}
+			}
+		}
+	}()
+	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -169,7 +187,7 @@ func serve(args []string) error {
 	if err := httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-	return nil
+	return srv.Flush()
 }
 
 // appendFile opens the file for each write, so the daily prune can replace
@@ -259,6 +277,24 @@ func validateManifest(args []string) error {
 	}
 	fmt.Printf("ok: %d sources\n", len(m.Sources))
 	return nil
+}
+
+func publishManifest(args []string) error {
+	fs := flag.NewFlagSet("publish-manifest", flag.ExitOnError)
+	public := fs.String("public", "public", "web root")
+	fs.Parse(args)
+	if fs.NArg() != 1 {
+		return errors.New("usage: smserver publish-manifest -public DIR FILE")
+	}
+	data, err := os.ReadFile(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	m, err := manifest.Publish(filepath.Join(*public, filepath.FromSlash(strings.TrimPrefix(api.PathManifest, "/"))), data)
+	if err == nil {
+		fmt.Printf("published: %d sources\n", len(m.Sources))
+	}
+	return err
 }
 
 func makeTestCA(args []string) error {

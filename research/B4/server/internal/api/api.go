@@ -1,12 +1,14 @@
 // Package api is the HTTP surface of the Spoken Margins server (seam I11).
 //
 // Privacy rules this file enforces, not just documents:
-//   - The request log holds the hour, route, status and a latency bucket.
-//     Never an IP address, key id, install tag, header, query or body.
+//   - The request log is an hourly summary: hour, route, status, latency
+//     bucket and a count. Never an IP address, key id, install tag, header,
+//     query or body, and never one line per request.
 //   - Client IPs are used only in memory, keyed through an HMAC with a
 //     per-process secret, for rate limiting the unauthenticated endpoints.
-//   - The abuse log holds hour, install tag and reason, and only for
-//     over-limit installs, so the owner has something to block.
+//   - The abuse log holds hour, install tag, reason and a count, only for
+//     over-limit installs, so the owner has something to block. It is also
+//     written at the hourly flush.
 //   - Public documents (config, bridge manifest) are identical for everyone
 //     and need no attestation, so fetching them reveals nothing but "an app
 //     is running".
@@ -21,7 +23,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -82,13 +83,15 @@ type Server struct {
 	ChallengesPerIPPerHour  int
 	RequestsPerInstallPerHr int
 
-	once       sync.Once
-	ipSecret   []byte
-	mu         sync.Mutex
-	challenges map[string]time.Time
-	ipWindow   window
-	keyWindow  window
-	logMu      sync.Mutex
+	once          sync.Once
+	ipSecret      []byte
+	mu            sync.Mutex
+	challenges    map[string]time.Time
+	ipWindow      window
+	keyWindow     window
+	logMu         sync.Mutex
+	requestCounts map[logKey]int
+	abuseCounts   map[abuseKey]int
 }
 
 func (s *Server) init() {
@@ -168,6 +171,54 @@ func latencyBucket(d time.Duration) string {
 	}
 }
 
+// logKey is one row of the hourly request summary.
+type logKey struct {
+	hour, method, route, latency string
+	status                       int
+}
+
+type abuseKey struct{ hour, tag, reason string }
+
+func (s *Server) count(k logKey) {
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
+	if s.requestCounts == nil {
+		s.requestCounts = map[logKey]int{}
+	}
+	s.requestCounts[k]++
+}
+
+func (s *Server) countAbuse(k abuseKey) {
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
+	if s.abuseCounts == nil {
+		s.abuseCounts = map[abuseKey]int{}
+	}
+	s.abuseCounts[k]++
+}
+
+// Flush writes the hour's request summary (one line per route, status and
+// latency bucket, with a count) and any abuse lines, then persists install
+// records. The server calls it hourly and on shutdown. Nothing is written
+// per request, so neither the journal's own timestamps nor file times can
+// say when a particular request happened.
+func (s *Server) Flush() error {
+	s.logMu.Lock()
+	requests, abuse := s.requestCounts, s.abuseCounts
+	s.requestCounts, s.abuseCounts = nil, nil
+	s.logMu.Unlock()
+	for k, n := range requests {
+		s.writeLine(s.RequestLog, map[string]any{
+			"hour": k.hour, "method": k.method, "route": k.route,
+			"status": k.status, "latency": k.latency, "count": n,
+		})
+	}
+	for k, n := range abuse {
+		s.writeLine(s.AbuseLog, map[string]any{"hour": k.hour, "tag": k.tag, "reason": k.reason, "count": n})
+	}
+	return s.Store.Flush()
+}
+
 func (s *Server) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -176,22 +227,23 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 		if !loggedRoutes[route] {
 			route = "other"
 		}
+		method := r.Method
+		if method != http.MethodGet && method != http.MethodPost {
+			method = "other"
+		}
 		defer func() {
 			// net/http's own panic message names the peer address, so recover
-			// here and log only the route.
+			// here and count it as a 500 on its route.
 			if p := recover(); p != nil {
-				s.writeLine(s.RequestLog, map[string]any{"hour": s.Now().UTC().Format("2006-01-02T15"), "route": route, "panic": fmt.Sprint(p)})
+				rec.status = http.StatusInternalServerError
 				fail(rec, http.StatusInternalServerError, "internal")
 			}
+			s.count(logKey{
+				hour: s.Now().UTC().Format("2006-01-02T15"), method: method, route: route,
+				status: rec.status, latency: latencyBucket(time.Since(start)),
+			})
 		}()
 		next.ServeHTTP(rec, r)
-		s.writeLine(s.RequestLog, map[string]any{
-			"hour":    s.Now().UTC().Format("2006-01-02T15"),
-			"method":  r.Method,
-			"route":   route,
-			"status":  rec.status,
-			"latency": latencyBucket(time.Since(start)),
-		})
 	})
 }
 
@@ -429,9 +481,7 @@ func (s *Server) attested(h func(http.ResponseWriter, *http.Request, []byte)) ht
 		}
 		tag := store.Tag(keyID)
 		if !s.keyWindow.hit(tag, now, s.RequestsPerInstallPerHr) {
-			s.writeLine(s.AbuseLog, map[string]any{
-				"hour": now.UTC().Format("2006-01-02T15"), "tag": tag, "reason": "rate_limited",
-			})
+			s.countAbuse(abuseKey{hour: now.UTC().Format("2006-01-02T15"), tag: tag, reason: "rate_limited"})
 			fail(w, http.StatusTooManyRequests, "rate_limited")
 			return
 		}

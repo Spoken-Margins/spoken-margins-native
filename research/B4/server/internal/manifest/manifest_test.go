@@ -66,6 +66,9 @@ func TestRefusals(t *testing.T) {
 		"ip address host": {func(m map[string]any) {
 			firstSource(m)["match"].(map[string]any)["hosts"] = []any{"10.0.0.1"}
 		}, "not a lowercase DNS name"},
+		"our own domain as a source host": {func(m map[string]any) {
+			firstSource(m)["match"].(map[string]any)["hosts"] = []any{"essays.example.org", "spokenmargins.proximitytoprogress.com"}
+		}, "is a Spoken Margins domain"},
 		"unknown extract mode": {func(m map[string]any) {
 			firstSource(m)["recipe"].(map[string]any)["extract"] = "eval"
 		}, `extract "eval"`},
@@ -81,5 +84,24 @@ func TestRefusals(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: want error containing %q, got %v", name, c.want, err)
 		}
+	}
+}
+
+func TestPublishRefusesWithoutTouchingTheLiveFile(t *testing.T) {
+	dir := t.TempDir()
+	live := dir + "/bridge/v1/manifest.json"
+	good, _ := os.ReadFile(fixture)
+	if _, err := Publish(live, good); err != nil {
+		t.Fatal(err)
+	}
+	m := load(t)
+	firstSource(m)["items"].([]any)[0].(map[string]any)["content"] = "body"
+	bad, _ := json.Marshal(m)
+	if _, err := Publish(live, bad); err == nil {
+		t.Fatal("bad manifest published")
+	}
+	now, _ := os.ReadFile(live)
+	if string(now) != string(good) {
+		t.Fatal("refused publish changed the live manifest")
 	}
 }

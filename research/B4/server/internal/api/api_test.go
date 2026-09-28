@@ -202,6 +202,9 @@ func TestSkeletonEndToEnd(t *testing.T) {
 	expect(t, "ping after revive", r, err, 200, "")
 
 	// Nothing that identifies an install or a client reaches the logs.
+	if err := h.srv.Flush(); err != nil {
+		t.Fatal(err)
+	}
 	logs := h.reqLog.String() + h.abuseLog.String()
 	forbidden := []string{
 		base64.StdEncoding.EncodeToString(c.Device.KeyID),
@@ -214,7 +217,8 @@ func TestSkeletonEndToEnd(t *testing.T) {
 			t.Fatalf("logs contain %q:\n%s", f, logs)
 		}
 	}
-	if !strings.Contains(h.reqLog.String(), `"route":"/api/v1/ping"`) {
+	// One summary line per route/status/latency with a count, not one per request.
+	if !strings.Contains(h.reqLog.String(), `"route":"/api/v1/ping"`) || !strings.Contains(h.reqLog.String(), `"count":`) {
 		t.Fatalf("request log missing expected route lines:\n%s", h.reqLog.String())
 	}
 }
@@ -223,6 +227,10 @@ func TestUnknownPathsAreNotLoggedVerbatim(t *testing.T) {
 	h := newHarness(t)
 	c := h.client()
 	c.Get("/api/v1/users/alice?follow=example.com")
+	if h.reqLog.String() != "" {
+		t.Fatal("request log must not be written per request")
+	}
+	h.srv.Flush()
 	if s := h.reqLog.String(); strings.Contains(s, "alice") || strings.Contains(s, "example.com") || !strings.Contains(s, `"route":"other"`) {
 		t.Fatalf("request log: %s", s)
 	}
@@ -242,6 +250,10 @@ func TestPerInstallRateLimitWritesTagToAbuseLogOnly(t *testing.T) {
 		t.Fatalf("sixth request: %s", last)
 	}
 	tag := store.Tag(c.Device.KeyID)
+	if h.abuseLog.String() != "" {
+		t.Fatal("abuse lines must wait for the hourly flush")
+	}
+	h.srv.Flush()
 	if !strings.Contains(h.abuseLog.String(), tag) {
 		t.Fatalf("abuse log should name the tag so the owner can block it: %s", h.abuseLog.String())
 	}

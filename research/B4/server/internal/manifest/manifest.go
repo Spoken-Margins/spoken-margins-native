@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -96,6 +98,9 @@ var (
 	idPattern        = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}$`)
 	hostPattern      = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
 	attributePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,40}$`)
+	// Our own domains can never be a source's host: a phone following that
+	// source would then fetch from us, telling us who follows it.
+	ownDomains = []string{"proximitytoprogress.com", "spokenmargins.com", "spokenmargins.app"}
 	// Characters and fragments no CSS selector needs but an injection would.
 	selectorForbidden = []string{"{", "}", ";", "<", "`", "\\", "/*", "*/", "url(", "expression(", "javascript:", "@import"}
 )
@@ -148,6 +153,11 @@ func Validate(data []byte) (*Manifest, error) {
 			if !hostPattern.MatchString(h) || net.ParseIP(h) != nil {
 				p.add("%s: match host %q is not a lowercase DNS name", where, h)
 			}
+			for _, own := range ownDomains {
+				if h == own || strings.HasSuffix(h, "."+own) {
+					p.add("%s: match host %q is a Spoken Margins domain", where, h)
+				}
+			}
 			hosts[h] = true
 		}
 		if len(s.Match.PathPrefixes) > 10 {
@@ -182,6 +192,37 @@ func Validate(data []byte) (*Manifest, error) {
 		return nil, p
 	}
 	return &m, nil
+}
+
+// Publish validates data and, only if it passes, replaces the manifest at
+// path atomically. Anything that writes the public manifest (the M2 watcher,
+// a deploy script, the CLI) must go through here, so the gate can't be
+// skipped and a phone never sees a half-written file.
+func Publish(path string, data []byte) (*Manifest, error) {
+	m, err := Validate(data)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".manifest-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	return m, os.Rename(tmp.Name(), path)
 }
 
 func checkTime(p *Problems, where, v string, required bool) {
