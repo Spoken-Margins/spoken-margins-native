@@ -139,6 +139,16 @@ public protocol FollowedSourceRepository {
     func loadSourceSuggestionDecision(sourceId: String) throws -> SourceSuggestionDecision?
 }
 
+/// I13 structured documents (C1 M3), stored beside their item as their own
+/// record kind, one per extraction version, never inside `Item`. A build that
+/// predates them never reads that kind, so it still opens the database (I13
+/// rule 1c). Stores that don't adopt this simply keep no documents.
+public protocol StructuredDocumentRepository {
+    func saveStructuredDocument(_ document: StructuredDocument, itemId: String) throws
+    /// The newest extraction version stored for the item, if any.
+    func loadStructuredDocument(itemId: String) throws -> StructuredDocument?
+}
+
 public protocol SessionRepository: AnyObject, Sendable,
     ItemRepository,
     ListeningSessionRepository,

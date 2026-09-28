@@ -1015,3 +1015,26 @@ private struct ImportedWatchSyncEvent: Codable {
     var id: String
     var importedAt: Date
 }
+
+/// I13 documents live in the existing records table as kind
+/// "structured_document", one row per item and extraction version. No table or
+/// column changes, and schema_version stays 5: Build 29 selects records by kind
+/// and never reads this one, and deleting the item removes its rows.
+extension SQLiteSessionStore: StructuredDocumentRepository {
+    static let structuredDocumentKind = "structured_document"
+
+    public func saveStructuredDocument(_ document: StructuredDocument, itemId: String) throws {
+        try save(
+            kind: Self.structuredDocumentKind,
+            id: "\(itemId)#v\(document.extraction.version)",
+            sessionId: nil,
+            itemId: itemId,
+            value: document
+        )
+    }
+
+    public func loadStructuredDocument(itemId: String) throws -> StructuredDocument? {
+        let documents: [StructuredDocument] = try loadByItem(kind: Self.structuredDocumentKind, itemId: itemId)
+        return documents.max { $0.extraction.version < $1.extraction.version }
+    }
+}

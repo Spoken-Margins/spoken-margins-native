@@ -32,6 +32,8 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     public var feedEntries: [String: FeedEntry]
     public var feedRefreshStates: [String: FeedRefreshState]
     public var sourceSuggestionDecisions: [String: SourceSuggestionDecision]
+    /// I13 documents by item id, then extraction version.
+    public var structuredDocuments: [String: [Int: StructuredDocument]] = [:]
 
     public init(
         items: [String: Item] = [:],
@@ -374,4 +376,14 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     public func loadFeedRefreshState(subscriptionId: String) throws -> FeedRefreshState? { feedRefreshStates[subscriptionId] }
     public func saveSourceSuggestionDecision(_ decision: SourceSuggestionDecision) throws { sourceSuggestionDecisions[decision.sourceId] = decision }
     public func loadSourceSuggestionDecision(sourceId: String) throws -> SourceSuggestionDecision? { sourceSuggestionDecisions[sourceId] }
+}
+
+extension InMemorySessionRepository: StructuredDocumentRepository {
+    public func saveStructuredDocument(_ document: StructuredDocument, itemId: String) throws {
+        structuredDocuments[itemId, default: [:]][document.extraction.version] = document
+    }
+
+    public func loadStructuredDocument(itemId: String) throws -> StructuredDocument? {
+        structuredDocuments[itemId]?.max { $0.key < $1.key }?.value
+    }
 }
