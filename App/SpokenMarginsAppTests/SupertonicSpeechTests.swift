@@ -17,18 +17,89 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertFalse(backoff.isActive(now: 210))
     }
 
+    /// C2 M1 (#183): Low Power Mode alone no longer blocks Supertonic; heat and memory
+    /// pressure do, and the listener is told which one and when the voice comes back.
     func testResourceFallbackExplainsObservedCauseAndRecovery() {
-        let lowPower = SupertonicResourcePolicy.fallbackMessage(
-            lowPowerMode: true, memoryPressure: false, thermalState: .nominal)
-        XCTAssertTrue(lowPower.contains("Turn off Low Power Mode"))
-        XCTAssertFalse(lowPower.contains("memory warning"))
-        let memory = SupertonicResourcePolicy.fallbackMessage(
-            lowPowerMode: true, memoryPressure: true, thermalState: .nominal)
+        XCTAssertEqual(SupertonicResourcePolicy.thermalLevel(.serious), .serious)
+        XCTAssertEqual(SupertonicResourcePolicy.thermalLevel(.critical), .critical)
+        XCTAssertEqual(SupertonicResourcePolicy.thermalLevel(.fair), .fair)
+        XCTAssertNil(SpeechEnginePolicy.onDeviceRenderingBlock(
+            SpeechEngineConditions(thermal: .nominal, isLowPowerModeEnabled: true)))
+        let memory = SpeechFallbackReason.memoryWarning.listenerExplanation
         XCTAssertTrue(memory.contains("iOS memory warning"))
-        XCTAssertFalse(memory.contains("Turn off Low Power Mode"))
-        let thermal = SupertonicResourcePolicy.fallbackMessage(
-            lowPowerMode: false, memoryPressure: false, thermalState: .serious)
-        XCTAssertTrue(thermal.contains("cool down"))
+        XCTAssertFalse(memory.contains("Low Power Mode"))
+        let thermal = SpeechFallbackReason.deviceTooWarm.listenerExplanation
+        XCTAssertTrue(thermal.contains("too warm"))
+        XCTAssertTrue(thermal.contains("comes back"))
+    }
+
+    /// C2 M1 (#183, I14): after a heat or memory fallback, the chosen voice comes back at the
+    /// next play once the condition clears, without the listener reselecting it.
+    func testResourceFallbackReturnsToSupertonicAtTheNextPlayOnceTheConditionClears() async throws {
+        let template = try makeTestWAV(duration: 0.2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let condition = ResourceConditionSwitch(allowed: false)
+        let fallback = RecordingFallbackAudioClient()
+        let fellBack = expectation(description: "resource fallback")
+        let restored = expectation(description: "chosen voice restored")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in }, observesPlayerLifecycle: false,
+            onDeviceRenderingAllowed: { condition.allowed },
+            fallbackClient: fallback,
+            onFallback: { reason, _, _ in
+                XCTAssertEqual(reason, "supertonic_resource_pressure")
+                fellBack.fulfill()
+            },
+            onRestore: { targetId in
+                XCTAssertEqual(targetId, "warm-phone")
+                restored.fulfill()
+            }
+        )
+        _ = try client.prepareSpeechText("The phone is warm, so the iOS voice reads this until it cools. Then the chosen voice returns.")
+        try client.play(targetId: "warm-phone")
+        await fulfillment(of: [fellBack], timeout: 2)
+        XCTAssertEqual(fallback.playedOffsets, [0])
+
+        try client.pause()
+        try client.play(targetId: "warm-phone", from: 10)
+        XCTAssertEqual(fallback.playedOffsets, [0, 10], "still warm: the iOS voice continues")
+        let rendersWhileWarm = await renderer.renderCount
+        XCTAssertEqual(rendersWhileWarm, 0)
+
+        try client.pause()
+        condition.allowed = true
+        try client.play(targetId: "warm-phone", from: 10)
+        await fulfillment(of: [restored], timeout: 2)
+        let rendersAfterCooling = await waitForRenderCount(renderer, minimum: 1)
+        XCTAssertGreaterThanOrEqual(rendersAfterCooling, 1, "Supertonic renders again")
+        XCTAssertEqual(fallback.playedOffsets, [0, 10], "the iOS voice isn't started again")
+        try client.stop()
+    }
+
+    /// A slow render would likely be slow again, so that fallback waits for Retry.
+    func testSlowRenderFallbackWaitsForRetryInsteadOfReturningAtTheNextPlay() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template, firstRenderDelay: .seconds(1))
+        let fallback = RecordingFallbackAudioClient()
+        let timedOut = expectation(description: "bounded fallback")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in }, observesPlayerLifecycle: false,
+            fallbackClient: fallback,
+            onFallback: { _, _, _ in timedOut.fulfill() },
+            onRestore: { _ in XCTFail("a slow render must not switch back by itself") },
+            renderWaitLimit: .milliseconds(100)
+        )
+        _ = try client.prepareSpeechText("A long response that must remain playable when generation does not finish promptly.")
+        try client.play(targetId: "slow", from: 17)
+        await fulfillment(of: [timedOut], timeout: 2)
+        try client.pause()
+        try client.play(targetId: "slow", from: 20)
+        XCTAssertEqual(fallback.playedOffsets, [17, 20])
+        try client.stop()
     }
 
     func testPreparedAudioPlaysWithoutInferenceWhenResourcesDisallowRendering() async throws {
@@ -1594,6 +1665,18 @@ private actor CancellationAwareSupertonicRenderer: SupertonicRendering {
 
     func discardGeneratedAudio(at url: URL) async {
         try? FileManager.default.removeItem(at: url)
+    }
+}
+
+private final class ResourceConditionSwitch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isAllowed: Bool
+
+    init(allowed: Bool) { isAllowed = allowed }
+
+    var allowed: Bool {
+        get { lock.withLock { isAllowed } }
+        set { lock.withLock { isAllowed = newValue } }
     }
 }
 

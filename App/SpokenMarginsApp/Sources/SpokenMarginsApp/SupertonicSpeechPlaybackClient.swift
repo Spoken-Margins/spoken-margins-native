@@ -4,6 +4,9 @@ import Foundation
 import SessionKit
 import SessionKitAudio
 import SessionKitSupertonic
+#if canImport(UIKit)
+import UIKit
+#endif
 
 protocol SupertonicRendering: Sendable {
     func render(
@@ -341,40 +344,59 @@ final class SupertonicMemoryBackoff: @unchecked Sendable {
     }
 }
 
+/// Applies I14 (`SpeechEnginePolicy`) to the device: heat and memory pressure stop new
+/// Supertonic inference; Low Power Mode and charging alone don't (#183).
 enum SupertonicResourcePolicy {
     static let memoryBackoff = SupertonicMemoryBackoff()
 
     static func allowsRendering(processInfo: ProcessInfo = .processInfo) -> Bool {
-        guard !memoryBackoff.isActive() else { return false }
-        #if os(iOS)
-        return !processInfo.isLowPowerModeEnabled
-            && processInfo.thermalState != .serious
-            && processInfo.thermalState != .critical
+        SpeechEnginePolicy.onDeviceRenderingBlock(currentConditions(processInfo: processInfo)) == nil
+    }
+
+    /// `isOnExternalPower` is for logging only; rendering never depends on it.
+    static func currentConditions(
+        processInfo: ProcessInfo = .processInfo,
+        isOnExternalPower: Bool? = nil
+    ) -> SpeechEngineConditions {
+        SpeechEngineConditions(
+            thermal: thermalLevel(processInfo.thermalState),
+            isLowPowerModeEnabled: processInfo.isLowPowerModeEnabled,
+            isOnExternalPower: isOnExternalPower,
+            isRecoveringFromMemoryWarning: memoryBackoff.isActive()
+        )
+    }
+
+    /// Whether the device is charging or full on power, for the fallback log. Nil off iOS.
+    @MainActor
+    static func isOnExternalPower() -> Bool? {
+        #if canImport(UIKit) && os(iOS)
+        let device = UIDevice.current
+        if !device.isBatteryMonitoringEnabled { device.isBatteryMonitoringEnabled = true }
+        switch device.batteryState {
+        case .charging, .full: return true
+        case .unplugged: return false
+        case .unknown: return nil
+        @unknown default: return nil
+        }
         #else
-        return true
+        return nil
         #endif
     }
 
-    static func fallbackMessage(
-        lowPowerMode: Bool = ProcessInfo.processInfo.isLowPowerModeEnabled,
-        memoryPressure: Bool = memoryBackoff.isActive(),
-        thermalState: ProcessInfo.ThermalState = ProcessInfo.processInfo.thermalState
-    ) -> String {
-        if memoryPressure {
-            return "Supertonic paused after an iOS memory warning. Using your configured iOS voice. Try the higher-quality voice again after the device has recovered."
+    static func thermalLevel(_ state: ProcessInfo.ThermalState) -> SpeechThermalLevel {
+        switch state {
+        case .nominal: .nominal
+        case .fair: .fair
+        case .serious: .serious
+        case .critical: .critical
+        @unknown default: .serious
         }
-        if lowPowerMode {
-            return "Supertonic paused because Low Power Mode is on. Using your configured iOS voice. Turn off Low Power Mode, then retry Supertonic for the higher-quality voice."
-        }
-        if thermalState == .serious || thermalState == .critical {
-            return "Supertonic paused because the device is too warm. Using your configured iOS voice. Let the device cool down, then retry Supertonic."
-        }
-        return "Supertonic paused to reduce resource use. Using your configured iOS voice."
     }
 }
 
 final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unchecked Sendable {
     typealias FallbackHandler = @Sendable (_ reason: String, _ charOffset: Int, _ targetId: String) -> Void
+    typealias RestoreHandler = @Sendable (_ targetId: String) -> Void
     typealias GenerationStateHandler = @Sendable (RenderedSpeechGenerationState) -> Void
     typealias GenerationProgressHandler = @Sendable (RenderedSpeechGenerationProgress) -> Void
     typealias PreparedAudioHandler = @Sendable (_ itemId: String, _ prepared: PreparedTextAudio) -> Void
@@ -498,6 +520,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var initialPlaybackOffset: Int?
     private var initialRequestedSpokenOffset: Int?
     private var failedRenderReasons: [Int: String] = [:]
+    /// Targets in the system voice because of heat or memory pressure (I14: these come back
+    /// to Supertonic at the next play once the condition clears).
+    private var resourceFallbackTargetIds: Set<String> = []
+    private let onRestore: RestoreHandler?
     private var preparedAudioAssemblyStarted = false
     private var generationState = RenderedSpeechGenerationState.inactive
     private var shouldResumeAfterInterruption = false
@@ -544,6 +570,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         preparedChunkLookup: PreparedChunkLookup? = nil,
         onPreparedAudio: PreparedAudioHandler? = nil,
         onFallback: FallbackHandler? = nil,
+        onRestore: RestoreHandler? = nil,
         renderWaitLimit: Duration = .seconds(15)
     ) {
         self.renderer = renderer
@@ -580,6 +607,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.preparedChunkLookup = preparedChunkLookup
         self.onPreparedAudio = onPreparedAudio
         self.onFallback = onFallback
+        self.onRestore = onRestore
         self.renderWaitLimit = renderWaitLimit
         super.init()
         installAudioSessionObservers()
@@ -615,6 +643,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     func play(targetId: String, from charOffset: Int) throws {
         try activateAudioSession(forPlayback: false)
+        restoreOnDeviceRenderingIfConditionCleared(targetId: targetId)
         let usesStoppedGeneration = lock.withLock {
             shouldResumeAfterInterruption = false
             return generationDisabledTargetIds.contains(targetId)
@@ -660,6 +689,20 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             throw SessionKitError.invalidCommandForState("supertonic_playback_text_empty")
         }
         enqueueRender(request, shouldPlayWhenReady: false)
+    }
+
+    /// I14: the chosen voice comes back once the condition that forced the fallback clears.
+    /// It switches at a play (resume, seek, next item), never mid-sentence.
+    private func restoreOnDeviceRenderingIfConditionCleared(targetId: String) {
+        guard lock.withLock({ resourceFallbackTargetIds.contains(targetId) }),
+              onDeviceRenderingAllowed() else { return }
+        try? fallback.pause()
+        lock.withLock {
+            resourceFallbackTargetIds.remove(targetId)
+            generationDisabledTargetIds.remove(targetId)
+            fallbackIsActive = false
+        }
+        onRestore?(targetId)
     }
 
     func currentCharOffset() -> Int? {
@@ -896,6 +939,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             transportIntent = .stopped
             shouldResumeAfterInterruption = false
             generationDisabledTargetIds.removeAll()
+            resourceFallbackTargetIds.removeAll()
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
             generationResults.removeAll()
@@ -916,11 +960,20 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// playback moving with the iOS system voice. The synchronous ONNX call
     /// already in progress cannot be interrupted, but its result is discarded
     /// and no following chunk is scheduled.
+    /// `returnsAutomatically`: true for a memory warning, whose fallback ends by itself (I14);
+    /// false when the listener chose to stop generation.
     @discardableResult
-    func stopOnDeviceRenderingAndUseSystemSpeech() throws -> Bool {
+    func stopOnDeviceRenderingAndUseSystemSpeech(returnsAutomatically: Bool = false) throws -> Bool {
         let offset = currentCharOffset() ?? currentRecoveryCharOffset() ?? 0
         let state = lock.withLock { (currentTargetId, transportIntent, fallbackIsActive) }
         guard let targetId = state.0 else { return false }
+        lock.withLock {
+            if returnsAutomatically {
+                resourceFallbackTargetIds.insert(targetId)
+            } else {
+                resourceFallbackTargetIds.remove(targetId)
+            }
+        }
         if state.2 {
             _ = lock.withLock { generationDisabledTargetIds.insert(targetId) }
             reportGenerationState(.stopped)
@@ -989,6 +1042,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         try fallback.stop()
         lock.withLock {
             generationDisabledTargetIds.remove(target)
+            resourceFallbackTargetIds.remove(target)
             fallbackIsActive = false
         }
         guard let request = nextRequest(targetId: target, fromSpokenOffset: spokenOffset(forSourceOffset: offset)) else { return false }
@@ -1483,6 +1537,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 let renderControl = activeRenderControl
                 activeRenderControl = nil
                 generationDisabledTargetIds.insert(targetId)
+                if reason == "supertonic_resource_pressure" {
+                    resourceFallbackTargetIds.insert(targetId)
+                } else {
+                    resourceFallbackTargetIds.remove(targetId)
+                }
                 player?.pause()
                 player?.replaceCurrentItem(with: nil)
                 player = nil

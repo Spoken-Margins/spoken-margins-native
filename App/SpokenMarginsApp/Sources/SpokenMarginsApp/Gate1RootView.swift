@@ -2215,7 +2215,7 @@ private struct PlaybackScreen: View {
             }
             playbackTransport
             if !dynamicTypeSize.isAccessibilitySize {
-                HStack(spacing: 24) {
+                PlaybackSecondaryControlsRow {
                     Button(model.compactPlaybackRateDescription, action: model.cyclePlaybackRate)
                         .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
                         .accessibilityIdentifier("playback.rate.button")
@@ -2230,7 +2230,6 @@ private struct PlaybackScreen: View {
                     }
                     listeningOptionsButton
                 }
-                .font(.subheadline.weight(.medium))
                 .foregroundStyle(.white)
                 .buttonStyle(.plain)
                 .frame(minHeight: 44)
@@ -5534,7 +5533,11 @@ private struct PlaybackControlLabel: View {
                     .multilineTextAlignment(.center)
             }
         } else {
+            // Short control words ("Sleep", "Mix") shrink a little rather than wrap mid-word
+            // when a wide rate label ("2.00×") squeezes the row.
             Label(title, systemImage: systemImage)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
     }
 }

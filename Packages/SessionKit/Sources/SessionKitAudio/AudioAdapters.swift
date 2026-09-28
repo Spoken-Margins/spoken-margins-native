@@ -814,7 +814,10 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
     private var playbackStartFailure: String?
     private var paused = false
     private var voiceIdentifier: String?
+    /// The listener's speed as `multiplier × 0.5` (the app's stored "speechRate" units), not an
+    /// `AVSpeechUtterance.rate`: `SpeechRateRule` converts it when an utterance is made (I14).
     private var speechRate: Float
+    private var hasExplicitSpeechRate = false
     private var mixesWithOtherAudio = false
     private var lowersBackgroundAudio = false
     private var playbackVolume: Float = 1
@@ -883,15 +886,13 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
 
     public func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws {
         self.voiceIdentifier = voiceIdentifier?.isEmpty == true ? nil : voiceIdentifier
-        speechRate = max(AVSpeechUtteranceMinimumSpeechRate, min(AVSpeechUtteranceMaximumSpeechRate, rate))
+        speechRate = Float(SpeechRateRule.multiplier(forStoredRate: rate)) * SpeechRateRule.systemDefaultRate
+        hasExplicitSpeechRate = true
     }
 
     public func setPlaybackRate(_ rate: Double) throws {
-        let multiplier = Float(max(0.25, min(2.0, rate)))
-        let updatedRate = max(
-            AVSpeechUtteranceMinimumSpeechRate,
-            min(AVSpeechUtteranceMaximumSpeechRate, AVSpeechUtteranceDefaultSpeechRate * multiplier)
-        )
+        let updatedRate = Float(SpeechRateRule.clampedMultiplier(rate)) * SpeechRateRule.systemDefaultRate
+        hasExplicitSpeechRate = true
         guard speechRate != updatedRate else { return }
         speechRate = updatedRate
         #if canImport(AVFoundation)
@@ -939,7 +940,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         playbackStartFailure = nil
         paused = false
         chunksByUtteranceId.removeAll(keepingCapacity: true)
-        let mode = try playbackSpeechPreviewMode()
+        let mode = try narrationMode()
         for chunk in chunks {
             let utterance = makeUtterance(chunk.spokenText, mode: mode)
             let identifier = ObjectIdentifier(utterance)
@@ -1094,10 +1095,9 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         }
         let storedVoice = UserDefaults.standard.string(forKey: "speechVoiceIdentifier")
         let storedRate = UserDefaults.standard.double(forKey: "speechRate")
-        return (
-            storedVoice?.isEmpty == true ? nil : storedVoice,
-            storedRate == 0 ? AVSpeechUtteranceDefaultSpeechRate : Float(storedRate)
-        )
+        // A rate set on this client (the player's speed control) wins over the stored default.
+        let rate = hasExplicitSpeechRate || storedRate == 0 ? speechRate : Float(storedRate)
+        return (storedVoice?.isEmpty == true ? nil : storedVoice, rate)
     }
 
     #if canImport(AVFoundation)
@@ -1127,16 +1127,23 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         paused = false
     }
 
-    private func playbackSpeechPreviewMode() throws -> SpeechPreviewMode {
+    /// Narration always speaks as `.appVoice`: never with the Accessibility settings, which
+    /// multiplied the listener's speed by the Accessibility speaking rate (#183, I14). With no
+    /// voice chosen, it uses the best voice installed for the listener's language.
+    private func narrationMode() throws -> SpeechPreviewMode {
         let speechSettings = currentSpeechSettings()
-        if readsSpeechSettingsAtPlayback, speechSettings.voiceIdentifier == nil {
-            return .spokenContent
-        }
         if let voiceIdentifier = speechSettings.voiceIdentifier,
            !isVoiceAvailable(voiceIdentifier) {
             throw SessionKitError.persistenceFailed("selected_speech_voice_unavailable")
         }
-        return .appVoice(voiceIdentifier: speechSettings.voiceIdentifier, rate: speechSettings.rate)
+        let voiceIdentifier = speechSettings.voiceIdentifier
+            ?? (readsSpeechSettingsAtPlayback ? SystemSpeechVoiceChoice.preferredInstalledVoiceIdentifier() : nil)
+        return .appVoice(voiceIdentifier: voiceIdentifier, rate: speechSettings.rate)
+    }
+
+    /// The utterance narration would speak `text` with. Tests read its rate and settings.
+    func makeNarrationUtterance(_ text: String) throws -> AVSpeechUtterance {
+        makeUtterance(text, mode: try narrationMode())
     }
 
     private func makeUtterance(_ text: String, mode: SpeechPreviewMode) -> AVSpeechUtterance {
@@ -1147,7 +1154,9 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
             utterance.rate = currentSpeechSettings().rate
             utterance.prefersAssistiveTechnologySettings = true
         case .appVoice(let voiceIdentifier, let rate):
-            utterance.rate = rate
+            utterance.rate = SpeechRateRule.systemSpeechRate(
+                forMultiplier: SpeechRateRule.multiplier(forStoredRate: rate)
+            )
             if let voiceIdentifier,
                let configuredVoice = AVSpeechSynthesisVoice(identifier: voiceIdentifier) {
                 utterance.voice = configuredVoice
@@ -1159,6 +1168,60 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
     }
     #endif
 
+}
+
+/// Picks the system voice narration uses when the listener hasn't chosen one: the best quality
+/// installed for their language. Novelty and Personal Voices are never picked.
+public enum SystemSpeechVoiceChoice {
+    public struct Candidate: Equatable, Sendable {
+        public var identifier: String
+        public var language: String
+        /// 1 default, 2 enhanced, 3 premium.
+        public var qualityRank: Int
+        public var isLanguageDefault: Bool
+
+        public init(identifier: String, language: String, qualityRank: Int, isLanguageDefault: Bool = false) {
+            self.identifier = identifier
+            self.language = language
+            self.qualityRank = qualityRank
+            self.isLanguageDefault = isLanguageDefault
+        }
+    }
+
+    public static func preferredVoiceIdentifier(among candidates: [Candidate], preferredLanguages: [String]) -> String? {
+        for language in preferredLanguages {
+            let tag = language.replacingOccurrences(of: "_", with: "-").lowercased()
+            let base = tag.split(separator: "-").first.map(String.init) ?? tag
+            let exact = candidates.filter { $0.language.lowercased() == tag }
+            let sameLanguage = candidates.filter {
+                ($0.language.lowercased().split(separator: "-").first.map(String.init) ?? "") == base
+            }
+            for pool in [exact, sameLanguage] where !pool.isEmpty {
+                return pool.max { lhs, rhs in
+                    (lhs.qualityRank, lhs.isLanguageDefault ? 1 : 0) < (rhs.qualityRank, rhs.isLanguageDefault ? 1 : 0)
+                }?.identifier
+            }
+        }
+        return nil
+    }
+
+    #if canImport(AVFoundation)
+    static func preferredInstalledVoiceIdentifier(preferredLanguages: [String] = Locale.preferredLanguages) -> String? {
+        let voices = AVSpeechSynthesisVoice.speechVoices().filter {
+            !$0.voiceTraits.contains(.isNoveltyVoice) && !$0.voiceTraits.contains(.isPersonalVoice)
+        }
+        let defaults = Set(preferredLanguages.compactMap { AVSpeechSynthesisVoice(language: $0)?.identifier })
+        let candidates = voices.map { voice in
+            Candidate(
+                identifier: voice.identifier,
+                language: voice.language,
+                qualityRank: voice.quality == .premium ? 3 : voice.quality == .enhanced ? 2 : 1,
+                isLanguageDefault: defaults.contains(voice.identifier)
+            )
+        }
+        return preferredVoiceIdentifier(among: candidates, preferredLanguages: preferredLanguages)
+    }
+    #endif
 }
 
 #if canImport(AVFoundation)
