@@ -24,6 +24,7 @@ import json
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -110,6 +111,26 @@ def now_iso() -> str:
 
 def slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:48] or "podcast"
+
+
+# Catalogs never carry private feeds (#168). Mirrors ShareableLinkPolicy's host and
+# query checks; its opaque-path check is left out because it flags public
+# Amperwave feeds, whose paths end in 32 hex digits.
+PRIVATE_HOST_SUFFIXES = ("patreon.com", "patreonusercontent.com", "supercast.com", "supercast.tech",
+                         "supportingcast.fm", "memberful.com", "memberfulcontent.com")
+CREDENTIAL_QUERY_FRAGMENTS = ("token", "auth", "key", "secret", "sig", "hash", "pass", "pwd",
+                              "session", "credential", "jwt", "expire", "policy", "hmac", "access")
+
+
+def looks_private(url: str) -> bool:
+    parts = urllib.parse.urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.username or parts.password:
+        return True
+    if any(host == suffix or host.endswith("." + suffix) for suffix in PRIVATE_HOST_SUFFIXES):
+        return True
+    return any(any(f in name.lower() for f in CREDENTIAL_QUERY_FRAGMENTS)
+               for name, _ in urllib.parse.parse_qsl(parts.query, keep_blank_values=True))
 
 
 FEED_MARKERS = (b"<rss", b"<feed", b"<channel", b"<rdf:RDF")
@@ -231,6 +252,9 @@ def main() -> int:
             if row["appleId"] in taken:
                 continue
             check = meta["feedChecks"].get(lookup[row["appleId"]]["feedUrl"], {})
+            if looks_private(lookup[row["appleId"]]["feedUrl"]):
+                dropped.append({"subject": subject_id, "name": row["name"], "feed": lookup[row["appleId"]]["feedUrl"], "status": "private"})
+                continue
             if not check.get("looksLikeFeed"):
                 dropped.append({"subject": subject_id, "name": row["name"], "feed": lookup[row["appleId"]]["feedUrl"], "status": check.get("status")})
                 continue
