@@ -313,14 +313,21 @@ def wait_for_simulator_room(count=booted_simulators, max_wait: float = SIMULATOR
 def first_boot(udid: str, log, runner=run_bounded) -> str | None:
     """Boot a new simulator and wait out its first-boot migration. None when ready, else why not.
 
-    verify-tests.py then finds the device booted, so it only checks readiness and doesn't boot it.
+    It holds the Mac-wide simulator-boot lock throughout: two simulators booting at once crash-flooded
+    SpringBoard onto the owner's screen (#184). verify-tests.py then finds the device booted, so it
+    only checks readiness and doesn't boot it.
     """
-    booted = runner(['xcrun', 'simctl', 'boot', udid], log, 120)
-    if booted != 0:
-        return 'simctl boot ' + ('timed out' if booted is None else f'exited {booted}')
-    ready = runner(['xcrun', 'simctl', 'bootstatus', udid], log, FIRST_BOOT_TIMEOUT)
-    if ready != 0:
-        return f'not ready after {duration(FIRST_BOOT_TIMEOUT)}' if ready is None else f'bootstatus exited {ready}'
+    from lane_slots import simulator_boot_lock
+    try:
+        with simulator_boot_lock(f'runner boot {udid}', out=log, max_wait=SIMULATOR_WAIT):
+            booted = runner(['xcrun', 'simctl', 'boot', udid], log, 120)
+            if booted != 0:
+                return 'simctl boot ' + ('timed out' if booted is None else f'exited {booted}')
+            ready = runner(['xcrun', 'simctl', 'bootstatus', udid], log, FIRST_BOOT_TIMEOUT)
+            if ready != 0:
+                return f'not ready after {duration(FIRST_BOOT_TIMEOUT)}' if ready is None else f'bootstatus exited {ready}'
+    except TimeoutError as error:
+        return f'another simulator kept booting: {error}'
     return None
 
 

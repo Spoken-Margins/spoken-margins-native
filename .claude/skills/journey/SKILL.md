@@ -26,6 +26,8 @@ The Test Desk takes **T4 and T5** requests. T2 and T3 go to the self-hosted runn
 3. **Simulator.** Journeys run on the lane's standing simulator, on **iOS 26.5**. That is the same device the Test Desk uses for its own T3 runs. Don't use iOS 27: its Apple Intelligence services crash-flood on this Mac (#184).
    - A second device, when a journey needs one (J5), is a temporary simulator created for the job and deleted afterwards. Never create another long-lived simulator; that's the owner's disk rule.
    - The lane runner's T3 jobs use their own temporary simulator (named `SM Lane Runner …`), so at most two lane simulators run at once. Before booting a second device, run `xcrun simctl list devices booted`, and wait if two are already booted.
+   - **Boot only with `scripts/lane-sim-boot <udid>`.** It waits for the Mac-wide simulator-boot lock, which the runner and `verify-tests.py` also hold while they boot. Two simulators booting at once crash-flooded SpringBoard onto the owner's screen (#184). It then waits until the device is ready; a first boot migrates data for several minutes.
+   - Never let `xcodebuild` or `verify-tests.py --device` start from a shut-down device you haven't booted this way: boot it first. The guard sends a raw `simctl boot` to the helper.
 4. **Install the build.** `--plan app` wipes the app's data on the standing device, so a lane journey starts from an empty Library and builds the history it needs within the job (J2, J3 and J5 do this). J4 installs the previous shipped build first. Journeys over real long-lived history belong to the owner's device pass.
 5. Evidence goes in `artifacts/lane/<id>/` in the main checkout. It is git-ignored, so the PR gets paths, not images.
 
