@@ -1,6 +1,6 @@
 // smserver is the Spoken Margins server (bridge stream, M1 skeleton).
 //
-//	smserver serve   -state DIR -public DIR [-listen 127.0.0.1:8787] [-attest-root PEM] [-allow-development]
+//	smserver serve   -state DIR -public DIR [-listen 127.0.0.1:8795] [-attest-root PEM] [-allow-development]
 //	smserver block   -state DIR TAG      refuse one install from now on
 //	smserver unblock -state DIR TAG
 //	smserver switch  -public DIR SERVICE on|off   the kill switch
@@ -81,7 +81,7 @@ func configPath(public string) string {
 
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	listen := fs.String("listen", "127.0.0.1:8787", "address to listen on (keep it loopback behind Caddy)")
+	listen := fs.String("listen", "127.0.0.1:8795", "address to listen on (keep it loopback behind Caddy)")
 	stateDir := fs.String("state", "state", "directory for install records and the block list")
 	public := fs.String("public", "public", "web root holding api/v1/config.json and bridge/v1/manifest.json")
 	appID := fs.String("app-id", defaultAppID, "TeamID.bundleID the attestations must name")

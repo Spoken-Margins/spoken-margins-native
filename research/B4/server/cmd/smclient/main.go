@@ -3,7 +3,7 @@
 // so repeated runs are the same install, which is how the demo shows a
 // block taking effect.
 //
-//	smclient -base http://127.0.0.1:8787 -ca DIR -device FILE
+//	smclient -base http://127.0.0.1:8795 -ca DIR -device FILE
 package main
 
 import (
@@ -64,7 +64,7 @@ func save(path string, d *fakeattest.Device) error {
 }
 
 func main() {
-	base := flag.String("base", "http://127.0.0.1:8787", "server base URL")
+	base := flag.String("base", "http://127.0.0.1:8795", "server base URL")
 	caDir := flag.String("ca", "", "directory from smserver make-test-ca")
 	devicePath := flag.String("device", "device.json", "file holding this test install's key")
 	appID := flag.String("app-id", "J8SWC6J3VY.com.spokenmargins.native", "TeamID.bundleID")

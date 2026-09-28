@@ -32,7 +32,7 @@ The Fly.io and Cloud Run prices are approximate list prices from memory, not che
 - A daily cron on the VPS reads `vnstat` and pings a second Healthchecks check *only* when monthly transfer passes 50% of the plan's allowance. That check alerts if it gets pinged.
 - If the owner picks a metered host instead, set that provider's budget alert at 50% and 90% of the ceiling.
 
-Deploy templates are in `deploy/` (Caddy snippet, systemd unit, journald retention). **Nothing is deployed.** Deploying is an owner decision and a Mac/VPS step.
+**Deploy** (`deploy/deploy.sh <ssh-host>`, run from the Mac; `--dry-run` first). smserver listens on `127.0.0.1:8795` (8787 is taken on the box; `SM_SERVER_PORT` changes it). Its public documents live in their own root, `/srv/www/spokenmargins-server`, because the site deploy's `rsync --delete` into `/srv/www/spokenmargins` would otherwise delete the kill switch. Caddy serves those two paths from that root inside the site block's `route`. The script edits only the `spokenmargins.proximitytoprogress.com` block and a new global log block, refusing if either isn't what it expects. It runs `caddy validate` first, backs up the Caddyfile, reloads Caddy (never restarts it), checks the sites and health, and rolls back on any failure. `deploy/test-edit-caddyfile.sh` tests the Caddyfile edit against Caddy 2.10.2, the box's version.
 
 ## 2. Attestation, and blocking one install
 
@@ -64,7 +64,7 @@ F1 club membership is linked by nature; a member of a club is known to that club
   "services": { "attest": { "enabled": true }, "bridge": { "enabled": true, "minimumBuild": 30 } } }
 ```
 
-- **Owner:** `smserver switch -public /srv/www/spokenmargins attest off` (or `bridge off`). This bumps `serial`. Attested endpoints return `503 disabled` immediately, while health and the public documents keep answering. `minimumBuild` switches a feature off for one misbehaving build.
+- **Owner:** `runuser -u smserver -- smserver switch -public /srv/www/spokenmargins-server attest off` (or `bridge off`). This bumps `serial`. Attested endpoints return `503 disabled` immediately, while health and the public documents keep answering. `minimumBuild` switches a feature off for one misbehaving build.
 - **App rules (B4 M3 builds these):**
   - Fetch the config at most every `checkAfterSeconds`, and only when about to use a server feature. Use an ephemeral `URLSession`: no cookies, no custom headers except `If-None-Match`. Pin the host, require https, and cap the size (16 KB), the same pattern `GuidedOnboardingCoordinator` already uses.
   - Ignore a document whose `serial` is lower than the cached one.
@@ -76,7 +76,7 @@ F1 club membership is linked by nature; a member of a club is known to that club
 | Where | What | Kept |
 | --- | --- | --- |
 | Caddy access log | Nothing. The site block has no `log` directive; keep it that way | — |
-| Caddy error log | Method, host, URI of a failed request. The IP, headers and TLS fields are stripped by the global filter in `deploy/Caddyfile.snippet`. Checked locally: without the filter, a 502 logged the request's key-id header | journald default |
+| Caddy error log | Method, host, URI of a failed request. The IP, headers and TLS fields are stripped by the global filter in `deploy/caddy-global.caddy` (JSON, matching the box's journald format). Checked locally: without the filter, a 502 logged the request's key-id header | journald default |
 | smserver request log | An hourly summary, written once an hour: `{"hour":"2026-09-28T12","method":"POST","route":"/api/v1/ping","status":200,"latency":"under50ms","count":4}`. Unknown paths log as `"other"`. Nothing is written per request, so even the journal's own timestamps only mark the hour | 14 days (own journal namespace, files closed daily so the limit applies, no syslog forwarding) |
 | smserver abuse log | Hour, install tag, reason, count. Only for installs over their rate limit, also written hourly | 30 days |
 | Install records | Public key, counter, environment, two day-precision dates. Written hourly, file times set to midnight | Until 90 days idle |

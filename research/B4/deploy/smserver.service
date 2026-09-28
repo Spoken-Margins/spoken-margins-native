@@ -1,9 +1,8 @@
-# NOT DEPLOYED. systemd unit template for the owner's VPS.
-# Install: useradd --system --home /var/lib/smserver --shell /usr/sbin/nologin smserver
-#          install -m 0755 smserver /usr/local/bin/smserver
-#          install -d -o smserver -g smserver -m 0755 /srv/www/spokenmargins/api/v1 /srv/www/spokenmargins/bridge/v1
-# Admin:   sudo -u smserver smserver block -state /var/lib/smserver TAG
-#          sudo -u smserver smserver switch -public /srv/www/spokenmargins attest off
+# Rendered and installed by research/B4/deploy/deploy.sh (@PORT@ and
+# @SERVER_ROOT@ are filled in there). Admin, on the box:
+#   runuser -u smserver -- smserver block -state /var/lib/smserver TAG
+#   runuser -u smserver -- smserver switch -public @SERVER_ROOT@ attest off
+#   runuser -u smserver -- smserver publish-manifest -public @SERVER_ROOT@ FILE
 [Unit]
 Description=Spoken Margins server (bridge and attestation)
 After=network-online.target
@@ -12,25 +11,26 @@ Wants=network-online.target
 [Service]
 User=smserver
 Group=smserver
-ExecStart=/usr/local/bin/smserver serve -listen 127.0.0.1:8787 -state /var/lib/smserver -public /srv/www/spokenmargins -behind-proxy
+ExecStart=/usr/local/bin/smserver serve -listen 127.0.0.1:@PORT@ -state /var/lib/smserver -public @SERVER_ROOT@ -behind-proxy
 StateDirectory=smserver
 StateDirectoryMode=0700
 Restart=on-failure
 RestartSec=5
 
-# Request log lines (hour, route, status, latency bucket) go to their own
-# journal namespace so their retention can be 14 days without touching the
-# rest of the box. See journald@smserver.conf.
+# The hourly request summary goes to its own journal namespace, so its
+# retention (journald@smserver.conf) doesn't touch the rest of the box.
 LogNamespace=smserver
 
-# Keep a small service small, and contained if it is ever compromised.
+# Keep a small service small, and contained if it is ever compromised. The
+# public root is read-only to the service: config.json is created at install
+# and changed only by the admin CLI running as smserver outside this sandbox.
 MemoryMax=128M
 CPUQuota=50%
 TasksMax=64
 NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/smserver
-ReadOnlyPaths=/srv/www/spokenmargins
+ReadOnlyPaths=@SERVER_ROOT@
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
