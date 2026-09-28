@@ -1,0 +1,13 @@
+{
+ "url": "https://substack.com/app-link/post?publication_id=89120&post_id=210681369",
+ "kind": "feed",
+ "status": 302,
+ "headers": {
+  "location": "https://open.substack.com/pub/astralcodexten/p/your-book-review-lee-kuan-yews-memoirs?publication_id=89120&post_id=210681369",
+  "x-served-by": "Substack",
+  "content-length": "0"
+ },
+ "body": "",
+ "original_bytes": 0,
+ "trimmed": false
+}
