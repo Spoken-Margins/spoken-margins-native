@@ -150,9 +150,14 @@ func NewDevice(appID string) (*Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	pub, _ := appattest.MarshalPublicKey(&k.PublicKey)
-	id := sha256.Sum256(pub)
-	return &Device{AppID: appID, KeyID: id[:], Key: k}, nil
+	return &Device{AppID: appID, KeyID: KeyIDFor(&k.PublicKey), Key: k}, nil
+}
+
+// KeyIDFor derives the key id as App Attest does: SHA-256 of the public point.
+func KeyIDFor(pub *ecdsa.PublicKey) []byte {
+	b, _ := appattest.MarshalPublicKey(pub)
+	id := sha256.Sum256(b)
+	return id[:]
 }
 
 // Options lets tests produce deliberately wrong attestations.

@@ -159,11 +159,11 @@ func (r *statusRecorder) WriteHeader(code int) {
 func latencyBucket(d time.Duration) string {
 	switch {
 	case d < 50*time.Millisecond:
-		return "<50ms"
+		return "under50ms"
 	case d < 500*time.Millisecond:
-		return "<500ms"
+		return "under500ms"
 	default:
-		return ">=500ms"
+		return "over500ms"
 	}
 }
 
