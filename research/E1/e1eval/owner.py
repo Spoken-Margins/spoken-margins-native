@@ -7,7 +7,8 @@ rather than the text itself:
   id | capture | kind | referent | entities (start:end:type;...) | topics (start:end;...) | follows_up
 
 Two export shapes are read (see SessionKit/SessionExport.swift):
-  - Notes folder, one `Margin-<sha>.md` per Margin (`renderMargin`): has `Margin: <id>`.
+  - Notes folder, one `Margin-<sha>.md` per Margin (`renderMargin`): the key is `m-` + the
+    first 16 hex of that sha, sha256("<Session>:<Margin>"), since `Margin:` ids repeat per session.
   - Margins tab → Export Sessions, one `<title> — <date>.md` per session: has no Margin id,
     so the key is `x-` + sha256(file name, position heading, ordinal)[:16], stable across runs.
 """
@@ -37,14 +38,17 @@ def _section(md, heading):
 
 def read_margin_note(path):
     md = path.read_text(encoding="utf-8")
-    mid = re.search(r"^Margin: (.+)$", md, re.M).group(1).strip()
-    sess = re.search(r"^Session: (.+)$", md, re.M)
+    # `Margin:` ids (ij-001, ...) repeat across sessions. The app names the file
+    # Margin-<sha256(session:margin)>.md (AutomaticMarginNoteGatherer), so key on that digest.
+    local = re.search(r"^Margin: (.+)$", md, re.M).group(1).strip()
+    sess = re.search(r"^Session: (.+)$", md, re.M).group(1).strip()
+    mid = "m-" + hashlib.sha256(f"{sess}:{local}".encode()).hexdigest()[:16]
     title = md.splitlines()[0].lstrip("# ").strip()
     written = "## Written Margin" in md
     text = _section(md, "Written Margin" if written else "Listener Margin")
     sents, anchor = _window(_section(md, "Context before"), _section(md, "Context after"))
     src = hashlib.sha256(title.encode()).hexdigest()[:12]
-    return [dict(id=mid, source_id=src, session=sess.group(1).strip() if sess else src,
+    return [dict(id=mid, source_id=src, session=sess,
                  capture="written" if written else "spoken", text=text, sentences=sents, anchor_index=anchor)]
 
 
