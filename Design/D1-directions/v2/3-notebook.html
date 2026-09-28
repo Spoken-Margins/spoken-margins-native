@@ -1,0 +1,1051 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Notebook Direction</title>
+<meta name="description" content="Spoken Margins design direction 3: your Margins are the home screen, Listen is the second tab, the mic sits between them.">
+<style>
+/* Shared shell for the D1 round-two prototypes: outer page, phone frame,
+   screen/sheet mechanics, the tap counter, and the system surfaces (share
+   sheet, Messages, incoming packet, export note) that look the same in every
+   direction so the comparison stays about navigation and disclosure.
+
+   Colour rule: status uses blue (within target) and orange (at or over the
+   ceiling), never red/green, and every state also has a word. */
+
+:root {
+  --pg-bg: #eceeea;
+  --pg-panel: #f8f9f6;
+  --pg-ink: #171d1a;
+  --pg-muted: #5c665f;
+  --pg-line: #d5dad2;
+  --pg-accent: #1b4f7a;
+  --pg-good: #0072b2;   /* Okabe-Ito blue */
+  --pg-warn: #e69f00;   /* Okabe-Ito orange */
+  --pg-over: #b5541a;
+  --pg-chip: #e0e5dd;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --pg-bg: #0f1312; --pg-panel: #171c1a; --pg-ink: #e7ebe8; --pg-muted: #9aa49e; --pg-line: #2b332f;
+    --pg-accent: #8ec1ea; --pg-good: #56b4e9; --pg-warn: #f0b760; --pg-over: #e8894a; --pg-chip: #232b28;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --pg-bg: #0f1312; --pg-panel: #171c1a; --pg-ink: #e7ebe8; --pg-muted: #9aa49e; --pg-line: #2b332f;
+  --pg-accent: #8ec1ea; --pg-good: #56b4e9; --pg-warn: #f0b760; --pg-over: #e8894a; --pg-chip: #232b28;
+  color-scheme: dark;
+}
+
+[hidden] { display: none !important; }
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--pg-bg);
+  color: var(--pg-ink);
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--pg-accent); outline-offset: 2px; }
+.i { width: 22px; height: 22px; flex: none; }
+
+/* ---------- outer page ---------- */
+.app { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.strip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; min-height: 44px;
+  border-bottom: 1px solid var(--pg-line);
+  background: var(--pg-panel);
+}
+.strip .dir { font-weight: 650; white-space: nowrap; font-size: 14px; }
+.strip .dir small { color: var(--pg-muted); font-weight: 450; }
+.hud { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--pg-muted); }
+.hud .hud-task { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hud .count {
+  font-variant-numeric: tabular-nums; font-weight: 700; color: var(--pg-ink);
+  background: var(--pg-chip); border-radius: 99px; padding: 2px 9px; white-space: nowrap;
+}
+.hud.done .count { background: var(--pg-good); color: #fff; }
+.hud.edge .count { background: var(--pg-warn); color: #1a1a1a; }
+.hud.over .count { background: var(--pg-over); color: #fff; }
+.strip .btn {
+  min-height: 34px; padding: 0 12px; border-radius: 99px;
+  border: 1px solid var(--pg-line); font-size: 13px; font-weight: 600; white-space: nowrap;
+}
+.stage { flex: 1; min-height: 0; display: flex; justify-content: center; gap: 32px; padding: 24px 16px; }
+.device { flex: none; display: flex; align-items: flex-start; }
+.phone {
+  position: relative; overflow: hidden;
+  width: 390px; height: min(844px, calc(100vh - 110px)); min-height: 600px;
+  border-radius: 46px; border: 10px solid #0b0d0c;
+  box-shadow: 0 30px 60px -30px rgba(0,0,0,.45);
+  display: flex; flex-direction: column;
+  isolation: isolate;
+}
+.phone .statusbar {
+  flex: none; height: 44px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 28px; font-size: 14px; font-weight: 650;
+}
+.phone .statusbar i { font-style: normal; letter-spacing: 1px; font-size: 12px; }
+
+/* ---------- the guide beside (or over) the phone ---------- */
+.guide {
+  width: 460px; max-width: 100%; overflow: auto;
+  background: var(--pg-panel); border: 1px solid var(--pg-line); border-radius: 18px;
+  padding: 22px 22px 28px;
+}
+.guide h1 { font-size: 22px; line-height: 1.2; margin: 0 0 6px; text-wrap: balance; }
+.guide h2 { font-size: 12px; letter-spacing: .09em; text-transform: uppercase; color: var(--pg-muted); margin: 26px 0 10px; }
+.guide p, .guide li { color: var(--pg-ink); max-width: 62ch; }
+.guide .lede { color: var(--pg-muted); margin: 0; font-size: 15.5px; }
+.guide ul, .guide ol { padding-left: 18px; margin: 6px 0; }
+.guide li { margin: 5px 0; }
+.guide .close-guide { display: none; }
+.tasks { display: grid; gap: 8px; }
+.task {
+  display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center;
+  border: 1px solid var(--pg-line); border-radius: 12px; padding: 10px 12px;
+}
+.task b { font-weight: 620; }
+.task .meta { grid-column: 1; font-size: 13px; color: var(--pg-muted); }
+.task .meta .res { color: var(--pg-good); font-weight: 650; }
+.task .meta .res.edge { color: var(--pg-warn); }
+.task .meta .res.over { color: var(--pg-over); }
+.task button {
+  grid-row: 1 / span 2; grid-column: 2;
+  min-height: 44px; padding: 0 14px; border-radius: 99px;
+  background: var(--pg-accent); color: #fff; font-weight: 650; font-size: 14px;
+}
+.tapwrap { overflow-x: auto; }
+table.taps { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.taps th, table.taps td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--pg-line); vertical-align: top; }
+table.taps th { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--pg-muted); font-weight: 600; }
+table.taps td.n { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
+table.taps td.n.edge { color: var(--pg-warn); }
+table.taps td.from { color: var(--pg-muted); }
+.tiers { display: grid; gap: 6px; font-size: 13.5px; }
+.tiers div { display: grid; grid-template-columns: 74px 1fr; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--pg-bg); }
+.tiers b { font-weight: 700; }
+.note { font-size: 13px; color: var(--pg-muted); }
+.legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--pg-muted); margin-top: 8px; }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+.legend .l-good::before { background: var(--pg-good); }
+.legend .l-edge::before { background: var(--pg-warn); }
+.legend .l-over::before { background: var(--pg-over); }
+
+/* phone-width: the page is the phone */
+@media (max-width: 860px) {
+  .stage { padding: 0; gap: 0; min-width: 0; overflow: hidden; }
+  .device { flex: 1; min-width: 0; align-items: stretch; }
+  .phone { width: 100%; height: 100%; min-height: 0; border: 0; border-radius: 0; box-shadow: none; }
+  .phone .statusbar { display: none; }
+  .guide {
+    position: fixed; inset: 0; z-index: 50; width: auto; border-radius: 0; border: 0;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(28px + env(safe-area-inset-bottom, 0px));
+  }
+  .guide .close-guide {
+    display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; float: right;
+    border-radius: 99px; border: 1px solid var(--pg-line); font-weight: 600;
+  }
+  .strip .dir small { display: none; }
+}
+@media (min-width: 861px) { #guideBtn { display: none; } .guide[hidden] { display: block !important; } }
+
+/* ---------- screen + sheet mechanics (inside the phone) ---------- */
+.screens { position: relative; flex: 1; min-height: 0; }
+.scr { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
+.scr > .body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.phone [data-when] { display: none; }
+.phone[data-chrome~="tabs"] [data-when~="tabs"],
+.phone[data-chrome~="mini"] [data-when~="mini"] { display: flex; }
+
+.sheet { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; justify-content: flex-end; }
+.sheet > .scrim { position: absolute; inset: 0; background: rgba(0,0,0,.38); opacity: 0; transition: opacity .2s; }
+.sheet > .card {
+  position: relative; max-height: 92%; display: flex; flex-direction: column;
+  transform: translateY(100%); transition: transform .24s cubic-bezier(.2,.8,.2,1);
+  border-radius: 22px 22px 0 0; overflow: hidden;
+}
+.sheet > .card.full { height: 94%; }
+.sheet.open > .scrim { opacity: 1; }
+.sheet.open > .card { transform: none; }
+.sheet .card > .scroll { overflow-y: auto; flex: 1; min-height: 0; }
+.grab { width: 38px; height: 5px; border-radius: 3px; background: currentColor; opacity: .25; margin: 8px auto 2px; flex: none; }
+@media (prefers-reduced-motion: reduce) {
+  .sheet > .card, .sheet > .scrim, .toast { transition: none !important; }
+}
+
+.toast {
+  position: absolute; left: 12px; right: 12px; bottom: 96px; z-index: 30;
+  display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 16px; min-height: 52px;
+  border-radius: 16px; background: #101412; color: #f1f4ef; font-size: 14px;
+  box-shadow: 0 12px 30px -12px rgba(0,0,0,.5);
+  transform: translateY(20px); opacity: 0; pointer-events: none; transition: .2s;
+}
+.toast.show { transform: none; opacity: 1; pointer-events: auto; }
+.toast .t-msg { flex: 1; }
+.toast .t-act { min-height: 44px; padding: 0 16px; border-radius: 99px; background: #9fd1ff; color: #0b2233; font-weight: 700; }
+
+/* ---------- system share sheet (iOS look, same in every direction) ---------- */
+.ios { background: #f2f2f6; color: #111; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+.ios .sh-head { display: flex; gap: 12px; align-items: center; padding: 10px 16px 12px; }
+.ios .pkt-icon { width: 44px; height: 44px; border-radius: 11px; background: #1b4f7a; color: #dff0ff; display: grid; place-items: center; font-weight: 800; font-size: 12px; flex: none; }
+.ios .sh-title { font-weight: 650; font-size: 15px; line-height: 1.25; }
+.ios .sh-sub { font-size: 13px; color: #6d6d72; }
+.ios .sh-x { margin-left: auto; width: 44px; height: 44px; border-radius: 50%; background: #e3e3e8; color: #6d6d72; font-weight: 700; flex: none; }
+.ios .preview { margin: 0 16px 6px; background: #fff; border-radius: 14px; padding: 10px 14px; font-size: 13px; color: #444; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.ios .preview b { color: #111; }
+.ios .preview .off { text-decoration: line-through; color: #8a8a8f; }
+.ios .preview .pv-change { color: #0a64d8; font-weight: 600; margin-left: auto; min-height: 44px; min-width: 44px; margin-top: -8px; margin-bottom: -8px; }
+.ios .people { display: flex; gap: 14px; padding: 12px 16px 8px; overflow-x: auto; scrollbar-width: none; }
+.ios .person { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 66px; flex: none; font-size: 11.5px; text-align: center; }
+.ios .person .av { width: 60px; height: 60px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 20px; position: relative; }
+.ios .person .av::after { content: ""; position: absolute; right: -2px; bottom: -2px; width: 22px; height: 22px; border-radius: 6px; background: #34c759; border: 2px solid #f2f2f6; }
+.ios .apps { display: flex; gap: 16px; padding: 10px 16px 14px; border-top: 1px solid #d9d9de; overflow-x: auto; scrollbar-width: none; }
+.ios .appi { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11.5px; width: 60px; flex: none; }
+.ios .appi span.ic { width: 56px; height: 56px; border-radius: 13px; display: grid; place-items: center; color: #fff; font-weight: 700; }
+.ios .acts { margin: 0 16px 20px; background: #fff; border-radius: 12px; }
+.ios .acts button { display: flex; width: 100%; justify-content: space-between; padding: 0 16px; min-height: 46px; align-items: center; font-size: 16px; border-bottom: 1px solid #ececf0; }
+.ios .acts button:last-child { border-bottom: 0; }
+
+/* ---------- Messages (for "open a shared packet") ---------- */
+.msgs { background: #fff; color: #111; }
+.msgs .m-top { flex: none; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 0 8px; border-bottom: 1px solid #e5e5ea; font-size: 12px; background: #f7f7f9; }
+.msgs .m-top .av { width: 44px; height: 44px; border-radius: 50%; background: #6b5bd6; color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 17px; }
+.msgs .m-body { padding: 16px 12px; display: flex; flex-direction: column; gap: 8px; }
+.msgs .bub { max-width: 76%; padding: 8px 13px; border-radius: 18px; background: #e9e9eb; font-size: 15.5px; line-height: 1.3; }
+.msgs .attach { max-width: 78%; border-radius: 18px; background: #e9e9eb; overflow: hidden; text-align: left; }
+.msgs .attach .a-art { background: #1b4f7a; color: #dff0ff; padding: 16px 14px; font-size: 13px; }
+.msgs .attach .a-art b { display: block; font-size: 17px; color: #fff; margin-top: 4px; line-height: 1.25; }
+.msgs .attach .a-meta { padding: 8px 14px 10px; font-size: 12.5px; color: #555; }
+.msgs .hint { align-self: center; font-size: 12px; color: #8a8a8f; margin-top: 10px; text-align: center; max-width: 30ch; }
+
+/* ---------- export note sheet (shared content, direction tokens) ---------- */
+.exp { background: var(--sheet, #fff); color: var(--ink, #111); }
+.exp .ex-head { padding: 6px 18px 10px; }
+.exp .ex-head h3 { margin: 0; font-size: 19px; }
+.exp .ex-head p { margin: 2px 0 0; font-size: 13px; opacity: .7; }
+.exp pre.note-md {
+  margin: 0 16px; padding: 12px 14px; border-radius: 12px; background: rgba(127,127,127,.1);
+  font: 12px/1.5 ui-monospace, "JetBrains Mono", Menlo, monospace; white-space: pre-wrap; max-height: 220px; overflow: auto;
+}
+.exp .ex-dest { display: flex; gap: 8px; align-items: center; padding: 12px 18px 0; font-size: 13px; }
+.exp .ex-dest b { font-weight: 650; }
+.exp .ex-dest .chg { margin-left: auto; font-weight: 650; color: var(--accent, #1b4f7a); min-height: 44px; }
+.exp .ex-actions { display: grid; gap: 8px; padding: 12px 16px calc(18px + env(safe-area-inset-bottom, 0px)); }
+.exp .ex-actions .primary { min-height: 52px; border-radius: 14px; background: var(--accent, #1b4f7a); color: var(--on-accent, #fff); font-weight: 700; font-size: 16px; }
+.exp .ex-actions .secondary { min-height: 46px; border-radius: 14px; border: 1px solid rgba(127,127,127,.35); font-weight: 600; }
+
+/* ---------- incoming packet sheet ---------- */
+.pkt { background: var(--sheet, #fff); color: var(--ink, #111); padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
+.pkt .pk-who { display: flex; gap: 12px; align-items: center; padding: 8px 18px 4px; }
+.pkt .pk-who .av { width: 44px; height: 44px; border-radius: 50%; background: #6b5bd6; color: #fff; display: grid; place-items: center; font-weight: 700; }
+.pkt .pk-who b { display: block; font-size: 17px; }
+.pkt .pk-who span { font-size: 13px; opacity: .7; }
+.pkt blockquote { margin: 12px 18px; padding: 12px 14px; border-radius: 14px; background: rgba(107,91,214,.1); border-left: 3px solid #6b5bd6; font-size: 15.5px; line-height: 1.4; }
+.pkt .pk-src { margin: 0 18px; font-size: 13px; opacity: .8; }
+.pkt .pk-note { margin: 10px 18px 0; font-size: 12.5px; opacity: .7; }
+.pkt .pk-actions { display: grid; gap: 8px; padding: 16px 16px 0; }
+.pkt .pk-actions .primary { min-height: 54px; border-radius: 14px; background: #6b5bd6; color: #fff; font-weight: 700; font-size: 16px; }
+.pkt .pk-actions .secondary { min-height: 44px; border-radius: 14px; font-weight: 600; opacity: .8; }
+
+
+/* ===== Direction 3: Notebook. What you said is the home. Listening is the other tab. ===== */
+.phone.d3 {
+  --bg: #fbf9f3; --panel: #ffffff; --ink: #1f2224; --muted: #6b6f6a; --line: #e9e5da; --soft: #efeef8; --rule: #e6c3b6;
+  --accent: #3f3d99; --on-accent: #ffffff; --rec: #c2552b; --friend: #1c6e8c; --friend-soft: #e3f1f6; --sheet: #ffffff;
+  background: var(--bg); color: var(--ink);
+}
+.d3 .serif { font-family: "New York", "Iowan Old Style", Georgia, serif; }
+.d3 .navbar { flex: none; display: flex; align-items: center; min-height: 56px; padding: 6px 8px 0 20px; gap: 4px; }
+.d3 .navbar h1 { flex: 1; margin: 0; font-family: "New York", Georgia, serif; font-size: 30px; font-weight: 600; letter-spacing: -.015em; }
+.d3 .navbar h1 small { display: block; font-family: -apple-system, system-ui, sans-serif; font-size: 12.5px; font-weight: 600; color: var(--muted); margin-top: -2px; }
+.d3 .navbar .av { width: 44px; height: 44px; border-radius: 50%; background: var(--ink); color: #fff; display: grid; place-items: center; font-weight: 700; }
+.d3 .navbar .ib { width: 44px; height: 44px; display: grid; place-items: center; color: var(--accent); }
+.d3 .navbar .nb-back { display: flex; align-items: center; min-height: 44px; min-width: 44px; padding-right: 10px; margin-left: -12px; color: var(--accent); font-weight: 600; font-size: 16px; }
+.d3 .navbar.sub h1 { font-size: 22px; }
+.d3 .cv { width: 44px; height: 44px; border-radius: 10px; display: grid; place-items: center; font-family: "New York", Georgia, serif; font-size: 18px; flex: none; background: #3f3d99; color: #e6e5ff; }
+.d3 .cv.art { background: #efdcb6; color: #6c4a12; } .d3 .cv.pdf { background: #e7e1f3; color: #4b3f93; } .d3 .cv.sub { background: #f3d9cf; color: #8a3423; } .d3 .cv.fn { background: #d8e6ef; color: #23506e; }
+.d3 .pill { min-height: 44px; padding: 0 14px; border-radius: 99px; font-weight: 650; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; flex: none; border: 1.5px solid var(--accent); color: var(--accent); }
+.d3 .pill.on { background: var(--accent); color: #fff; }
+
+/* the notebook page: a ruled margin down the left */
+.d3 .page { position: relative; padding: 0 8px 20px 54px; }
+.d3 .page::before { content: ""; position: absolute; left: 38px; top: 0; bottom: 0; width: 1.5px; background: var(--rule); }
+.d3 .week { display: flex; align-items: center; gap: 10px; padding: 10px 8px 6px 20px; }
+.d3 .week .t { flex: 1; font-size: 14px; color: var(--muted); }
+.d3 .week .t b { color: var(--ink); font-weight: 650; }
+.d3 .friends { display: flex; gap: 12px; align-items: center; width: calc(100% - 32px); text-align: left; margin: 4px 16px 6px; padding: 10px 12px; border-radius: 14px; background: var(--friend-soft); color: #123f50; }
+.d3 .friends .faces { display: flex; }
+.d3 .friends .faces span { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 11.5px; font-weight: 700; border: 2px solid var(--friend-soft); margin-left: -8px; background: var(--friend); }
+.d3 .friends .faces span:first-child { margin-left: 0; }
+.d3 .friends .t { font-weight: 650; font-size: 14px; }
+.d3 .friends .s { font-size: 12.5px; opacity: .8; }
+.d3 .dayh { font-size: 12px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); padding: 16px 0 2px; }
+.d3 .ent { position: relative; display: flex; gap: 6px; align-items: flex-start; padding: 10px 0 10px; border-bottom: 1px dashed var(--line); }
+.d3 .ent::before { content: ""; position: absolute; left: -21px; top: 18px; width: 9px; height: 9px; background: var(--rec); transform: rotate(45deg); }
+.d3 .ent.fr::before { background: var(--friend); border-radius: 50%; transform: none; }
+.d3 .ent .g { flex: 1; min-width: 0; }
+.d3 .ent .q { font-family: "New York", Georgia, serif; font-size: 17.5px; line-height: 1.35; }
+.d3 .ent .src { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+.d3 .ent .who { font-size: 12px; font-weight: 700; color: var(--friend); }
+.d3 .ent .ib { width: 44px; height: 44px; display: grid; place-items: center; color: var(--accent); flex: none; margin-top: -6px; }
+.d3 .ent.fr .ib { color: var(--friend); }
+
+/* Listen */
+.d3 .hero { margin: 6px 16px 4px; padding: 14px; border-radius: 18px; background: #2a2860; color: #eeedff; display: flex; gap: 14px; align-items: center; width: calc(100% - 32px); text-align: left; }
+.d3 .hero .cv { width: 58px; height: 58px; background: #c9c6ff; color: #2a2860; font-size: 24px; }
+.d3 .hero .g { flex: 1; min-width: 0; }
+.d3 .hero .k { font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; opacity: .7; font-weight: 700; }
+.d3 .hero .t { font-weight: 650; line-height: 1.25; margin-top: 2px; }
+.d3 .hero .s { font-size: 12.5px; opacity: .75; margin-top: 3px; }
+.d3 .hero .pb { width: 50px; height: 50px; border-radius: 50%; background: #c9c6ff; color: #2a2860; display: grid; place-items: center; flex: none; }
+.d3 .sec { display: flex; align-items: baseline; justify-content: space-between; padding: 18px 20px 4px; }
+.d3 .sec h3 { margin: 0; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.d3 .sec .all { color: var(--accent); font-weight: 650; font-size: 14px; min-height: 44px; min-width: 44px; justify-content: flex-end; display: inline-flex; align-items: center; margin: -12px 0; }
+.d3 .row { display: flex; gap: 12px; align-items: center; padding: 10px 20px; min-height: 68px; width: 100%; text-align: left; }
+.d3 .row + .row { border-top: 1px solid var(--line); }
+.d3 .row .g { flex: 1; min-width: 0; }
+.d3 .row .t { font-weight: 650; font-size: 15.5px; line-height: 1.25; }
+.d3 .row .s { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.d3 .row .ib { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: var(--accent); flex: none; }
+.d3 .search { display: flex; align-items: center; gap: 8px; margin: 6px 16px 0; min-height: 44px; padding: 0 12px; border-radius: 12px; background: #efece3; color: var(--muted); }
+.d3 .chips { display: flex; gap: 8px; overflow-x: auto; padding: 10px 16px 4px; scrollbar-width: none; }
+.d3 .chip { flex: none; min-height: 44px; padding: 0 14px; border-radius: 99px; border: 1px solid var(--line); background: var(--panel); font-size: 14px; font-weight: 600; }
+.d3 .chip.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.d3 .foot-link { display: flex; width: 100%; align-items: center; justify-content: center; gap: 6px; min-height: 52px; margin: 8px 0 16px; color: var(--accent); font-weight: 650; }
+.d3 .rvh { padding: 4px 20px 8px; }
+.d3 .rvh .k { font-size: 12.5px; color: var(--muted); }
+.d3 .rvh h2 { font-family: "New York", Georgia, serif; font-size: 22px; line-height: 1.15; margin: 4px 0; font-weight: 600; }
+.d3 .rvplay { margin: 8px 16px; width: calc(100% - 32px); min-height: 54px; border-radius: 16px; background: var(--friend); color: #fff; font-weight: 700; font-size: 16px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+/* mini-player and the tab bar with the mic in the middle */
+.d3 .mini { flex: none; margin: 0 10px 6px; padding: 6px 6px 6px 8px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line); align-items: center; gap: 8px; box-shadow: 0 8px 20px -14px rgba(0,0,0,.35); }
+.d3 .mini .mo { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 48px; text-align: left; }
+.d3 .mini .cv { width: 40px; height: 40px; font-size: 16px; }
+.d3 .mini .mt { font-size: 13.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.d3 .mini .ms { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.d3 .mini .pp { width: 48px; height: 48px; display: grid; place-items: center; }
+.d3 .tabbar { flex: none; border-top: 1px solid var(--line); background: rgba(251,249,243,.96); padding: 2px 18px calc(4px + env(safe-area-inset-bottom, 0px)); align-items: center; justify-content: space-between; }
+.d3 .tabbar .tb { width: 96px; display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 52px; justify-content: center; font-size: 11.5px; font-weight: 650; color: #929a94; }
+.d3 .tabbar .tb.on { color: var(--ink); }
+.d3 .tabbar .rec { width: 68px; height: 68px; margin-top: -22px; border-radius: 50%; background: var(--rec); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; letter-spacing: .04em; box-shadow: 0 0 0 5px var(--bg), 0 10px 20px -8px rgba(194,85,43,.6); touch-action: none; user-select: none; -webkit-user-select: none; }
+.d3 .tabbar .rec .i { width: 26px; height: 26px; }
+.phone.holding .rec, .phone.holding .recb { transform: scale(1.08); box-shadow: 0 0 0 8px rgba(194,85,43,.25); }
+
+/* Now Playing */
+.d3 .np .head { padding: 0 20px; }
+.d3 .np .showline { display: flex; align-items: center; gap: 10px; }
+.d3 .np .showline .cv { width: 36px; height: 36px; font-size: 15px; }
+.d3 .np .showline .s { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--muted); }
+.d3 .follow { min-height: 44px; padding: 0 14px; border-radius: 99px; border: 1.5px solid var(--accent); color: var(--accent); font-weight: 700; font-size: 14px; flex: none; }
+.d3 .follow.on { background: var(--accent); color: #fff; }
+.d3 .np h2 { font-family: "New York", Georgia, serif; font-size: 23px; line-height: 1.15; margin: 10px 0 4px; font-weight: 600; }
+.d3 .tx { position: relative; padding: 8px 20px 12px 58px; }
+.d3 .tx::before { content: ""; position: absolute; left: 42px; top: 0; bottom: 0; width: 1.5px; background: var(--rule); }
+.d3 .tx p { font-family: "New York", Georgia, serif; font-size: 17.5px; line-height: 1.5; margin: 0 0 14px; color: #9a9c98; position: relative; }
+.d3 .tx p.now { color: var(--ink); }
+.d3 .tx time { position: absolute; left: -48px; width: 36px; text-align: right; font: 600 11px/1.9 -apple-system, system-ui, sans-serif; color: var(--muted); font-variant-numeric: tabular-nums; }
+.d3 .mg { position: relative; margin: -6px 0 16px; padding: 10px 6px 10px 12px; border-radius: 12px; background: #fbeee9; display: flex; gap: 8px; align-items: center; }
+.d3 .mg::before { content: ""; position: absolute; left: -21px; top: 14px; width: 9px; height: 9px; background: var(--rec); transform: rotate(45deg); }
+.d3 .mg .g { flex: 1; min-width: 0; }
+.d3 .mg .k { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--rec); }
+.d3 .mg .q { font-size: 14.5px; line-height: 1.35; }
+.d3 .mg.fr { background: var(--friend-soft); }
+.d3 .mg.fr::before { background: var(--friend); border-radius: 50%; transform: none; }
+.d3 .mg.fr .k { color: var(--friend); }
+.d3 .mg .ib { width: 44px; height: 44px; display: grid; place-items: center; color: var(--accent); flex: none; }
+.d3 .mg.fr .ib { color: var(--friend); }
+.d3 .banner { margin: 6px 16px 8px; padding: 10px 12px; border-radius: 12px; background: var(--friend-soft); color: var(--friend); font-size: 13.5px; font-weight: 600; }
+.d3 .ctl { flex: none; border-top: 1px solid var(--line); background: var(--panel); padding: 8px 16px calc(10px + env(safe-area-inset-bottom, 0px)); }
+.d3 .ahead { margin: 0 0 6px; display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 12px; border-radius: 14px; border: 1px dashed var(--line); font-size: 13px; color: var(--muted); }
+.d3 .ahead b { color: var(--ink); font-weight: 650; }
+.d3 .ahead .skim { margin-left: auto; min-height: 44px; padding: 0 14px; border-radius: 99px; background: var(--friend-soft); color: var(--friend); font-weight: 700; display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.d3 .ctl .scrub { height: 4px; border-radius: 2px; background: var(--soft); position: relative; margin: 6px 4px 4px; }
+.d3 .ctl .scrub i { position: absolute; left: 0; top: 0; bottom: 0; width: 35%; background: var(--accent); border-radius: 2px; }
+.d3 .ctl .scrub b { position: absolute; left: 35%; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: var(--accent); }
+.d3 .ctl .times { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; padding: 0 4px; }
+.d3 .ctl .row3 { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
+.d3 .ctl .tb { width: 52px; height: 52px; display: grid; place-items: center; color: var(--ink); }
+.d3 .ctl .tb .i { width: 30px; height: 30px; }
+.d3 .ctl .ppb { width: 62px; height: 62px; border-radius: 50%; background: var(--ink); color: #fff; display: grid; place-items: center; }
+.d3 .ctl .ppb .i { width: 30px; height: 30px; }
+.d3 .ctl .recb { width: 62px; height: 62px; border-radius: 50%; background: var(--rec); color: #fff; display: grid; place-items: center; box-shadow: 0 8px 18px -8px rgba(194,85,43,.7); touch-action: none; user-select: none; -webkit-user-select: none; }
+.d3 .ctl .recb .i { width: 28px; height: 28px; }
+.d3 .ctl .hint { text-align: center; font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+
+/* First run */
+.d3 .fr-h { padding: 26px 22px 8px; }
+.d3 .fr-h .wm { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.d3 .fr-h h1 { font-family: "New York", Georgia, serif; font-size: 32px; line-height: 1.1; margin: 8px 0 10px; font-weight: 600; letter-spacing: -.015em; }
+.d3 .fr-h h1 em { color: var(--rec); font-style: italic; font-weight: 400; }
+.d3 .fr-h p { margin: 0; color: var(--muted); font-size: 15.5px; max-width: 32ch; line-height: 1.4; }
+.d3 .fr-foot { flex: none; padding: 10px 16px calc(14px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); display: grid; gap: 8px; background: var(--panel); }
+.d3 .primary { min-height: 54px; border-radius: 14px; background: var(--accent); color: #fff; font-weight: 700; font-size: 16px; }
+.d3 .ghost { min-height: 44px; color: var(--accent); font-weight: 650; }
+
+/* Settings */
+.d3 .sh { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 18px 20px 6px; font-weight: 700; }
+.d3 .sg { margin: 0 16px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); overflow: hidden; }
+.d3 .set { display: flex; align-items: center; min-height: 52px; padding: 0 14px; width: 100%; text-align: left; border-top: 1px solid var(--line); font-size: 15.5px; gap: 10px; }
+.d3 .set:first-child { border-top: 0; }
+.d3 .set .v { margin-left: auto; color: var(--muted); font-size: 14px; }
+.d3 .sf { margin: 8px 20px 0; font-size: 12.5px; color: var(--muted); }
+
+/* Recording sheet, Add sheet */
+.d3 .recs { background: var(--panel); color: var(--ink); }
+.d3 .recs .rt { display: flex; align-items: center; padding: 4px 8px 0; }
+.d3 .recs .rt .cancel { min-height: 44px; padding: 0 12px; color: var(--muted); }
+.d3 .recs .rt .s { margin-left: auto; margin-right: 12px; font-size: 13px; color: var(--muted); }
+.d3 .recs .quote { margin: 8px 20px 0; padding-left: 14px; border-left: 2px solid var(--rule); font-family: "New York", Georgia, serif; font-style: italic; font-size: 15.5px; color: var(--muted); line-height: 1.45; }
+.d3 .recs .draft { margin: 18px 20px 0; font-family: "New York", Georgia, serif; font-size: 22px; line-height: 1.35; min-height: 90px; }
+.d3 .recs .lvl { margin: 14px 20px 0; display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--rec); font-weight: 700; font-variant-numeric: tabular-nums; }
+.d3 .recs .lvl i { flex: 1; height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--rec) 60%, #f3d9cf 60%); }
+.d3 .recs .rf { padding: 18px 16px calc(20px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 8px; }
+.d3 .recs .save { min-height: 62px; border-radius: 18px; background: var(--rec); color: #fff; font-weight: 750; font-size: 17.5px; }
+.d3 .recs .alt { min-height: 44px; color: var(--muted); font-weight: 600; }
+.d3 .sheet .card.c { background: var(--sheet); color: var(--ink); }
+.d3 .shh { padding: 4px 18px 8px; font-size: 18px; font-weight: 700; }
+.d3 .intake { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 8px 16px calc(20px + env(safe-area-inset-bottom, 0px)); }
+.d3 .intake button { min-height: 92px; border-radius: 16px; background: var(--bg); border: 1px solid var(--line); text-align: left; padding: 12px; display: flex; flex-direction: column; justify-content: space-between; font-weight: 650; }
+.d3 .intake button span { font-size: 12.5px; color: var(--muted); font-weight: 500; }
+.d3 .toast { bottom: 150px; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z" fill="currentColor"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4.5" width="4" height="15" rx="1" fill="currentColor"/><rect x="14" y="4.5" width="4" height="15" rx="1" fill="currentColor"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M5 9l7 7 7-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-skim" viewBox="0 0 24 24"><path d="M4 6l6 6-6 6M11 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="20.5" cy="12" r="1.8" fill="currentColor"/></symbol>
+    <symbol id="i-rw" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.5-5.8M4 4v4.5h4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="15.5" font-size="7.5" text-anchor="middle" fill="currentColor" font-family="system-ui" font-weight="700">15</text></symbol>
+    <symbol id="i-ff" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.5-5.8M20 4v4.5h-4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="15.5" font-size="7.5" text-anchor="middle" fill="currentColor" font-family="system-ui" font-weight="700">30</text></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="18.5" cy="12" r="1.8" fill="currentColor"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-6.5 8 6.5V20h-5.5v-5h-5v5H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-rss" viewBox="0 0 24 24"><path d="M5 5a14 14 0 0 1 14 14M5 11a8 8 0 0 1 8 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="6" cy="18" r="2" fill="currentColor"/></symbol>
+    <symbol id="i-books" viewBox="0 0 24 24"><path d="M4 4.5h4v15H4zM10 4.5h4v15h-4zM15.5 5.5l3.8-1 3.2 14.6-3.8 1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-quote" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-headph" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="14" width="5" height="7" rx="1.5" fill="currentColor"/><rect x="16" y="14" width="5" height="7" rx="1.5" fill="currentColor"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 3h8l5 5v13H6z M14 3v5h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-reply" viewBox="0 0 24 24"><path d="M10 6L4 12l6 6M4 12h10a6 6 0 0 1 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+  <header class="strip">
+    <div class="dir">3 · Notebook <small>direction 3 of 3</small></div>
+    <div class="hud" id="hud"></div>
+    <button class="btn" id="resetBtn">Reset</button>
+    <button class="btn" id="guideBtn">Tasks</button>
+  </header>
+  <main class="stage">
+    <div class="device">
+      <div class="phone d3" id="phone">
+        <div class="statusbar"><span>9:41</span><i>&#9679;&#9679;&#9679; &#9646;</i></div>
+        <div class="screens">
+
+<!-- ============ FIRST RUN ============ -->
+<section class="scr" data-id="welcome" data-chrome="">
+  <div class="fr-h">
+    <div class="wm">Spoken Margins</div>
+    <h1>A notebook that fills <em>while you listen.</em></h1>
+    <p>Follow one show. When something makes you think, hold the mic and say it. It lands here, at the exact moment.</p>
+  </div>
+  <div class="body">
+    <div class="sec"><h3>Popular this week</h3></div>
+    <div class="row"><span class="cv">L</span><div class="g"><div class="t">The Long Middle</div><div class="s">Reading, attention, ideas &middot; weekly</div></div><button class="pill" data-toggle data-on-text="Following" data-emit="fr-followed">Follow</button></div>
+    <div class="row"><span class="cv fn">F</span><div class="g"><div class="t">Field Notes Radio</div><div class="s">Science stories &middot; twice a week</div></div><button class="pill" data-toggle data-on-text="Following" data-emit="fr-followed">Follow</button></div>
+    <div class="row"><span class="cv sub">S</span><div class="g"><div class="t">Small Engines</div><div class="s">Substack &middot; essays on maintenance</div></div><button class="pill" data-toggle data-on-text="Following" data-emit="fr-followed">Follow</button></div>
+    <div class="row"><span class="cv art">H</span><div class="g"><div class="t">Harbor Review</div><div class="s">Long reads, narrated &middot; daily</div></div><button class="pill" data-toggle data-on-text="Following" data-emit="fr-followed">Follow</button></div>
+    <div class="row"><span class="cv pdf">D</span><div class="g"><div class="t">Deep Time</div><div class="s">Geology and history &middot; fortnightly</div></div><button class="pill" data-toggle data-on-text="Following" data-emit="fr-followed">Follow</button></div>
+  </div>
+  <div class="fr-foot">
+    <button class="primary" data-tabgo="listen">Start listening</button>
+    <button class="ghost" data-sheet="add">I have a link or a file instead</button>
+  </div>
+</section>
+
+<!-- ============ NOTEBOOK (home) ============ -->
+<section class="scr" data-id="notebook" data-tab="notebook" data-chrome="tabs mini">
+  <div class="navbar"><h1>Notebook<small>What you said this week</small></h1><button class="av" data-go="settings" aria-label="Settings">C</button></div>
+  <div class="body">
+    <div class="week"><div class="t"><b>This week</b> · 7 Margins from 4 items</div><button class="pill" data-sheet="export">Export</button></div>
+    <button class="friends" data-go="review"><div class="faces"><span>P</span><span style="background:#0072b2">S</span></div><div><div class="t">Tuesday Readers</div><div class="s">3 new Margins on “Why we stopped reading slowly”</div></div></button>
+    <div class="page">
+      <div class="dayh">Today</div>
+      <div class="ent"><div class="g"><div class="q">Attention is a budget you spend twice: once reading, once re-reading.</div><div class="src">Why we stopped reading slowly · 18:12 · voice</div></div><button class="ib" data-share="m1" aria-label="Share"><svg class="i"><use href="#i-share"/></svg></button></div>
+      <div class="ent"><div class="g"><div class="q">Find the 1978 study he cites before Tuesday.</div><div class="src">Why we stopped reading slowly · 31:40 · written</div></div><button class="ib" data-share="m2" aria-label="Share"><svg class="i"><use href="#i-share"/></svg></button></div>
+      <div class="dayh">Yesterday</div>
+      <div class="ent"><div class="g"><div class="q">Boredom as a waiting room for ideas. The kids’ car rides were exactly this.</div><div class="src">The case for boredom · 6:05 · voice</div></div><button class="ib" data-share="m3" aria-label="Share"><svg class="i"><use href="#i-share"/></svg></button></div>
+      <div class="dayh">Thursday</div>
+      <div class="ent"><div class="g"><div class="q">Figure 3 seems to contradict the abstract. Ask Sam.</div><div class="src">Sleep spindles and memory consolidation · Fig. 3 · voice</div></div><button class="ib" data-share="m4" aria-label="Share"><svg class="i"><use href="#i-share"/></svg></button></div>
+      <div class="ent fr"><div class="g"><div class="who">Sam replied</div><div class="q">I think you pay three times, actually.</div><div class="src">Why we stopped reading slowly · 18:12</div></div><button class="ib" data-go="player" data-act="playPacket" aria-label="Play in place"><svg class="i"><use href="#i-play"/></svg></button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ LISTEN ============ -->
+<section class="scr" data-id="listen" data-tab="listen" data-chrome="tabs mini">
+  <div class="navbar"><h1>Listen<small>Continue, new, saved</small></h1><button class="ib" data-sheet="add" aria-label="Add"><svg class="i"><use href="#i-plus"/></svg></button><button class="av" data-go="settings" aria-label="Settings">C</button></div>
+  <div class="body">
+    <button class="hero" data-go="player"><span class="cv">L</span><div class="g"><div class="k">Continue</div><div class="t">Why we stopped reading slowly</div><div class="s">The Long Middle &middot; 33 min left</div></div><span class="pb"><svg class="i"><use href="#i-play"/></svg></span></button>
+    <div class="sec"><h3>New from your shows</h3><button class="all" data-go="new">All 23</button></div>
+    <button class="row" data-go="player" data-toast="(Sketch) Plays the new episode"><span class="cv fn">F</span><div class="g"><div class="t">The frog that survives freezing</div><div class="s">Field Notes Radio &middot; 28 min</div></div></button>
+    <button class="row" data-go="player" data-toast="(Sketch) Plays the new essay"><span class="cv sub">S</span><div class="g"><div class="t">On fixing what isn’t broken yet</div><div class="s">Small Engines &middot; 9 min read</div></div></button>
+    <button class="row" data-go="player" data-toast="(Sketch) Plays the new episode"><span class="cv pdf">D</span><div class="g"><div class="t">The Missoula floods, part 2</div><div class="s">Deep Time &middot; 52 min</div></div></button>
+    <div class="sec"><h3>Saved</h3><button class="all" data-go="library">All 41</button></div>
+    <button class="row" data-go="player" data-toast="(Sketch) Reads the PDF aloud"><span class="cv pdf">P</span><div class="g"><div class="t">Sleep spindles and memory consolidation</div><div class="s">PDF &middot; 22 pages &middot; 1 Margin</div></div></button>
+    <button class="row" data-go="player" data-toast="(Sketch) Reads the article aloud"><span class="cv art">A</span><div class="g"><div class="t">What the tide tables knew</div><div class="s">Article &middot; 14 min</div></div></button>
+    <button class="foot-link" data-go="shows">Manage 60 shows</button>
+  </div>
+</section>
+
+<!-- ============ NEW ============ -->
+<section class="scr" data-id="new" data-chrome="mini">
+  <div class="navbar sub"><button class="nb-back" data-back><svg class="i"><use href="#i-back"/></svg>Listen</button><h1>New</h1><button class="pill" data-go="shows">60 shows</button></div>
+  <div class="body" id="newList"></div>
+</section>
+
+<!-- ============ SHOWS ============ -->
+<section class="scr" data-id="shows" data-chrome="mini">
+  <div class="navbar sub"><button class="nb-back" data-back><svg class="i"><use href="#i-back"/></svg>Back</button><h1>Shows</h1><button class="ib" data-sheet="add" aria-label="Add a show"><svg class="i"><use href="#i-plus"/></svg></button></div>
+  <div class="search"><svg class="i"><use href="#i-search"/></svg>Search 60 shows</div>
+  <div class="body" id="showList"></div>
+</section>
+
+<!-- ============ SAVED ============ -->
+<section class="scr" data-id="library" data-chrome="mini">
+  <div class="navbar sub"><button class="nb-back" data-back><svg class="i"><use href="#i-back"/></svg>Listen</button><h1>Saved</h1><button class="ib" data-sheet="add" aria-label="Add"><svg class="i"><use href="#i-plus"/></svg></button></div>
+  <div class="search"><svg class="i"><use href="#i-search"/></svg>Search 41 saved items</div>
+  <div class="chips"><button class="chip on" data-tap>All</button><button class="chip" data-tap>Articles</button><button class="chip" data-tap>PDFs</button><button class="chip" data-tap>Episodes</button><button class="chip" data-tap>With Margins</button></div>
+  <div class="body">
+    <button class="row" data-go="player" data-toast="(Sketch) Reads the PDF aloud"><span class="cv pdf">P</span><div class="g"><div class="t">Sleep spindles and memory consolidation</div><div class="s">PDF &middot; 22 pages &middot; 1 Margin</div></div></button>
+    <button class="row" data-go="player" data-toast="(Sketch) Reads the article aloud"><span class="cv art">A</span><div class="g"><div class="t">What the tide tables knew</div><div class="s">Article &middot; 14 min</div></div></button>
+    <button class="row" data-go="player"><span class="cv">L</span><div class="g"><div class="t">Why we stopped reading slowly</div><div class="s">Episode &middot; 33 min left &middot; 3 Margins</div></div></button>
+    <button class="row" data-go="player" data-toast="(Sketch) Resumes"><span class="cv art">H</span><div class="g"><div class="t">The case for boredom</div><div class="s">Episode &middot; 12 min left &middot; 1 Margin</div></div></button>
+    <button class="row" data-go="player" data-toast="(Sketch) Reads the PDF aloud"><span class="cv pdf">G</span><div class="g"><div class="t">Glacial lake outburst floods: a review</div><div class="s">PDF &middot; 41 pages</div></div></button>
+    <button class="row" data-go="player" data-toast="(Sketch) Reads the article aloud"><span class="cv sub">S</span><div class="g"><div class="t">The maintenance mindset</div><div class="s">Substack &middot; 7 min</div></div></button>
+  </div>
+</section>
+
+<!-- ============ REVIEW ============ -->
+<section class="scr" data-id="review" data-chrome="mini">
+  <div class="navbar sub"><button class="nb-back" data-back><svg class="i"><use href="#i-back"/></svg>Notebook</button><h1>Tuesday Readers</h1></div>
+  <div class="body">
+    <div class="rvh"><div class="k">Since you last listened</div><h2>Why we stopped reading slowly</h2></div>
+    <button class="rvplay" data-go="player" data-act="playPacket"><svg class="i"><use href="#i-play"/></svg>Play the 3 new Margins in place</button>
+    <div class="page">
+      <div class="ent fr"><div class="g"><div class="who">Priya · 22:05 · voice 0:31</div><div class="q">He’s wrong about audiobooks. Listening is reading, you just can’t skim it.</div></div><button class="ib" data-go="player" data-act="playPacket" aria-label="Play in place"><svg class="i"><use href="#i-play"/></svg></button></div>
+      <div class="ent fr"><div class="g"><div class="who">Sam · 40:10 · written</div><div class="q">The 1978 study is Kintsch. He has the finding backwards.</div></div><button class="ib" data-tap data-toast="(Sketch) Jumps to 40:10" aria-label="Play in place"><svg class="i"><use href="#i-play"/></svg></button></div>
+      <div class="ent fr"><div class="g"><div class="who">Sam · 18:12 · reply to you</div><div class="q">I think you pay three times, actually.</div></div><button class="ib" data-tap data-toast="(Sketch) Jumps to 18:12" aria-label="Play in place"><svg class="i"><use href="#i-play"/></svg></button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ NOW PLAYING ============ -->
+<section class="scr np" data-id="player" data-chrome="">
+  <div class="navbar sub"><button class="nb-back" data-back aria-label="Back"><svg class="i"><use href="#i-down"/></svg></button><h1 style="text-align:center;font-family:-apple-system,system-ui,sans-serif;font-size:13px;font-weight:600;color:var(--muted)">Playing</h1><span style="width:44px"></span></div>
+  <div class="body">
+    <div class="head">
+      <div class="showline"><span class="cv">L</span><div class="s">The Long Middle &middot; Ep. 41</div><button class="follow" data-toggle data-on-text="Following" data-emit="followed">Follow</button></div>
+      <h2>Why we stopped reading slowly</h2>
+    </div>
+    <div class="banner" id="pktBanner" hidden>Playing Priya’s Margin in place · 22:05</div>
+    <div class="tx">
+      <p><time>17:50</time>…and the thing nobody says out loud is that the skim is a habit we learned, not a limit we have.</p>
+      <p class="now"><time>18:12</time>Attention is a budget. You spend it once when you read and again when you go back, and most of us only pay the first time.</p>
+      <div class="mg"><div class="g"><div class="k">Your Margin · 18:12 · voice</div><div class="q">Attention is a budget you spend twice: once reading, once re-reading.</div></div><button class="ib" data-share="m1" aria-label="Share this Margin"><svg class="i"><use href="#i-share"/></svg></button></div>
+      <p><time>18:40</time>So slow reading isn’t nostalgia. It’s paying the second time on purpose.</p>
+      <div class="mg fr" id="pktMargin" hidden><div class="g"><div class="k">Priya · 22:05 · voice</div><div class="q">He’s wrong about audiobooks. Listening is reading, you just can’t skim it.</div></div><button class="ib" data-tap data-toast="(Sketch) Reply to Priya with a Margin" aria-label="Reply"><svg class="i"><use href="#i-reply"/></svg></button></div>
+      <p><time>19:05</time>Let’s take the 1978 study, because it gets quoted wrong in both directions…</p>
+    </div>
+  </div>
+  <div class="ctl">
+    <div class="ahead"><span>Ahead: <b>Priya’s Margin</b> in 3:53</span><button class="skim" data-tap data-toast="Skimmed to 22:05, Priya’s Margin plays"><svg class="i"><use href="#i-skim"/></svg>Skim</button></div>
+    <div class="scrub"><i></i><b></b></div>
+    <div class="times"><span>18:12</span><span>−33:48</span></div>
+    <div class="row3">
+      <button class="tb" data-tap aria-label="Back 15 seconds"><svg class="i"><use href="#i-rw"/></svg></button>
+      <button class="ppb" data-toggle aria-label="Pause"><svg class="i"><use href="#i-pause"/></svg></button>
+      <button class="tb" data-tap aria-label="Forward 30 seconds"><svg class="i"><use href="#i-ff"/></svg></button>
+      <button class="recb" data-hold aria-label="Hold to record a Margin, tap to type one"><svg class="i"><use href="#i-mic"/></svg></button>
+    </div>
+    <div class="hint">Hold the mic to talk · tap to type</div>
+  </div>
+</section>
+
+<!-- ============ SETTINGS ============ -->
+<section class="scr" data-id="settings" data-chrome="">
+  <div class="navbar sub"><button class="nb-back" data-back><svg class="i"><use href="#i-back"/></svg>Back</button><h1>Settings</h1></div>
+  <div class="body">
+    <div class="sh">Listening</div>
+    <div class="sg"><button class="set" data-tap>Voice <span class="v">Ava (on device)</span></button><button class="set" data-tap>Speed <span class="v">1.2×</span></button></div>
+    <div class="sh">Notebook</div>
+    <div class="sg"><button class="set" data-tap>Notes folder <span class="v">Obsidian › Spoken Margins</span></button><button class="set" data-tap>Weekly note <span class="v">Sundays</span></button></div>
+    <div class="sh">Sharing</div>
+    <div class="sg"><button class="set" data-tap>What a Margin includes <span class="v">Voice + transcript</span></button><button class="set" data-tap>Your handle <span class="v">cole.spokenmargins</span></button></div>
+    <div class="sh">More</div>
+    <div class="sg"><button class="set" data-go="welcome">Show first run again</button><button class="set" data-go="diag">For testers <span class="v">Diagnostics</span></button></div>
+    <div class="sf">Build 30 · Nothing here is on by default that you didn’t choose.</div>
+  </div>
+</section>
+<section class="scr" data-id="diag" data-chrome="">
+  <div class="navbar sub"><button class="nb-back" data-back><svg class="i"><use href="#i-back"/></svg>Settings</button><h1>For testers</h1></div>
+  <div class="body">
+    <div class="sg" style="margin-top:12px"><button class="set" data-tap>Playback diagnostics</button><button class="set" data-tap>Speech engine log</button><button class="set" data-tap>Export a bug report</button><button class="set" data-tap>Reset packet cache</button></div>
+    <div class="sf">These exist for TestFlight. They never change how the app behaves unless you ask.</div>
+  </div>
+</section>
+
+        </div>
+
+        <div class="mini" data-when="mini">
+          <button class="mo" data-go="player"><span class="cv">L</span><div style="min-width:0"><div class="mt">Why we stopped reading slowly</div><div class="ms">18:12 · The Long Middle</div></div></button>
+          <button class="pp" data-toggle aria-label="Pause"><svg class="i"><use href="#i-pause"/></svg></button>
+        </div>
+        <nav class="tabbar" data-when="tabs">
+          <button class="tb" data-tabgo="notebook"><svg class="i"><use href="#i-quote"/></svg>Notebook</button>
+          <button class="rec" data-hold aria-label="Hold to record a Margin, tap to type one"><svg class="i"><use href="#i-mic"/></svg>HOLD</button>
+          <button class="tb" data-tabgo="listen"><svg class="i"><use href="#i-headph"/></svg>Listen</button>
+        </nav>
+
+        <div class="sheet" data-id="rec" hidden>
+          <div class="scrim" data-close></div>
+          <div class="card recs full" role="dialog" aria-label="Recording a Margin">
+            <div class="rt"><button class="cancel" data-close>Cancel</button><span class="s">Paused at 18:12</span></div>
+            <div class="quote">…and again when you go back, and most of us only pay the first time.</div>
+            <div class="draft">Listening…</div>
+            <div class="lvl">0:04 <i></i></div>
+            <div class="scroll"></div>
+            <div class="rf"><button class="save" data-close data-emit="recorded" data-act="saved">Save &amp; resume</button><button class="alt" data-tap data-toast="(Sketch) Keyboard opens; the Margin is written instead">Type instead</button></div>
+          </div>
+        </div>
+        <div class="sheet" data-id="add" hidden>
+          <div class="scrim" data-close></div>
+          <div class="card c" role="dialog" aria-label="Add">
+            <div class="grab"></div>
+            <div class="shh">Add something to listen to</div>
+            <div class="intake">
+              <button data-close data-toast="(Sketch) Pasted link is fetched and read aloud">Paste a link<span>Article, Substack, episode, YouTube</span></button>
+              <button data-close data-toast="(Sketch) Files picker opens">Open a file<span>PDF or EPUB</span></button>
+              <button data-close data-go="shows">Find a show<span>Search podcasts</span></button>
+              <button data-close data-toast="(Sketch) Or share to Spoken Margins from Safari">From Safari<span>Share sheet</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="guide" id="guide" hidden>
+      <button class="close-guide">Close</button>
+      <h1>3 · Notebook</h1>
+      <p class="lede">What you said is the home screen. Listening is the other tab. The mic sits between them and never moves.</p>
+
+      <h2>What you see first</h2>
+      <p><b>Notebook</b>: this week’s Margins, one line each, with a share icon. One row for the week (Export) and one for friends, only when they’ve said something new. Two tabs, Notebook and Listen, with the mic in the middle. The mini-player sits above them while something plays.</p>
+
+      <h2>Disclosure tiers</h2>
+      <div class="tiers">
+        <div><b>On screen</b><span>Your Margins with share, Export, friends’ new Margins, hold to record, the mini-player.</span></div>
+        <div><b>One tap</b><span>Listen (Continue, New, Saved), the player, Settings, the club’s review.</span></div>
+        <div><b>Two taps</b><span>All 23 new, all Saved, manage 60 shows, add a link, diagnostics, first run again.</span></div>
+        <div><b>Never on landing</b><span>Feed management, browsing, settings, anything about listening that isn’t a Margin.</span></div>
+      </div>
+
+      <h2>Theory of mind</h2>
+      <ul>
+        <li><b>First minute.</b> Follow one show, Start listening. The Notebook is empty on day one, so first run says what fills it and the Listen tab is where you land.</li>
+        <li><b>Most days.</b> Listen tab: Continue is the top card. Say something with the mic; the Notebook fills.</li>
+        <li><b>The sharing moment.</b> Every Margin on the home screen has a share icon. Tap it, tap the person.</li>
+        <li><b>Sunday.</b> Export is the first row of the home screen.</li>
+      </ul>
+
+      <h2>Try the tasks</h2>
+      <p class="note">The counter in the strip counts every tap from the task’s start screen until it’s done. Target 2, ceiling 3.</p>
+      <div class="tasks" id="taskList"></div>
+
+      <h2>Tap budget</h2>
+      <div class="tapwrap"><table class="taps">
+        <tr><th>Task</th><th>Taps</th><th>Path</th></tr>
+        <tr><td>Share a Margin to a friend</td><td class="n">2</td><td class="from">share icon › person</td></tr>
+        <tr><td>Follow what’s playing</td><td class="n">1</td><td class="from">Follow pill</td></tr>
+        <tr><td>Follow a podcast on first run</td><td class="n">1</td><td class="from">Follow</td></tr>
+        <tr><td>Record a Margin</td><td class="n">1</td><td class="from">hold the mic, anywhere</td></tr>
+        <tr><td>Export this week as a note</td><td class="n">2</td><td class="from">Export › Save</td></tr>
+        <tr><td>Open a shared packet and hear it</td><td class="n">2</td><td class="from">attachment › Play</td></tr>
+      </table></div>
+      <div class="legend"><span class="l-good">within target</span><span class="l-edge">at the ceiling, review</span><span class="l-over">over</span></div>
+
+      <h2>Where it strains</h2>
+      <ul>
+        <li>Day one is an empty notebook. First run and the Listen tab have to carry the first week.</li>
+        <li>Following and Library share the Listen tab. At 60 shows and a big Library, Saved may want its own tab.</li>
+        <li>A listener who never records sees a home screen that isn’t for them.</li>
+      </ul>
+    </aside>
+  </main>
+</div>
+
+<script>
+/* Click-through engine shared by the D1 round-two prototypes.
+   Screens are <section class="scr" data-id>, sheets are <div class="sheet" data-id>.
+   Anything with data-go / data-tabgo / data-back / data-sheet / data-close /
+   data-share / data-toggle / data-emit / data-act / data-tap counts as one tap.
+   A task starts from a known screen and ends when its goal event is emitted,
+   so the counter in the strip is the tap budget, measured.
+
+   Budget words: every task has a target (1 or 2 taps). Three taps is the
+   ceiling: reaching it is "at the ceiling" and flagged for review. More than
+   three is "over". */
+(function () {
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const CEILING = 3;
+
+  // Sample content. Every show, person and quote here is made up.
+  const DATA = {
+    margins: {
+      m1: { who: 'You', item: 'Why we stopped reading slowly', show: 'The Long Middle', at: '18:12', kind: 'Voice · 0:24',
+            text: 'Attention is a budget you spend twice: once reading, once re-reading.' },
+      m2: { who: 'You', item: 'Why we stopped reading slowly', show: 'The Long Middle', at: '31:40', kind: 'Written',
+            text: 'Find the 1978 study he cites before Tuesday.' },
+      m3: { who: 'You', item: 'The case for boredom', show: 'Harbor Review', at: '6:05', kind: 'Voice · 0:41',
+            text: 'Boredom as a waiting room for ideas. The kids’ car rides were exactly this.' },
+      m4: { who: 'You', item: 'Sleep spindles and memory consolidation', show: 'Ramírez et al. · PDF', at: 'Fig. 3', kind: 'Voice · 0:18',
+            text: 'Figure 3 seems to contradict the abstract. Ask Sam.' },
+      m0: { who: 'You', item: 'Why we stopped reading slowly', show: 'The Long Middle', at: '18:40', kind: 'Voice · 0:12',
+            text: 'Just recorded: “the skim is the enemy, not the screen.”' },
+    },
+  };
+
+  const COMMON = `
+  <section class="scr msgs" data-id="messages" data-chrome="">
+    <div class="m-top"><div class="av">P</div><div>Priya</div></div>
+    <div class="body"><div class="m-body">
+      <div class="bub">ok this bit at 22 min is exactly what we argued about</div>
+      <button class="attach" data-act="openPacket" aria-label="Open Priya's Margin in Spoken Margins">
+        <div class="a-art">SPOKEN MARGINS · Margin<b>Priya on “Why we stopped reading slowly”</b></div>
+        <div class="a-meta">Voice · 0:31 · at 22:05 · priya.spokenmargins</div>
+      </button>
+      <div class="bub">listen to it where it happens</div>
+      <div class="hint">This is Messages, outside the app. Tap the attachment.</div>
+    </div></div>
+  </section>
+
+  <div class="sheet" data-id="share" hidden>
+    <div class="scrim" data-close></div>
+    <div class="card ios" role="dialog" aria-label="Share sheet">
+      <div class="grab"></div>
+      <div class="sh-head">
+        <div class="pkt-icon">SM</div>
+        <div><div class="sh-title" data-f="title">Your Margin</div><div class="sh-sub" data-f="sub">Spoken Margins packet</div></div>
+        <button class="sh-x" data-close aria-label="Close">✕</button>
+      </div>
+      <div class="scroll">
+        <div class="preview">
+          <span>They get: <b data-f="kind">voice</b>, transcript, plays at <b data-f="at"></b>.</span>
+          <span class="off">Your private feed link</span>
+          <button class="pv-change" data-tap data-toast="(Sketch) Choose: voice + transcript, transcript only, or with 20 s of source audio">Change</button>
+        </div>
+        <div class="people">
+          <button class="person" data-emit="shared" data-close data-act="sent" data-arg="Priya"><span class="av" style="background:#6b5bd6">P</span>Priya</button>
+          <button class="person" data-emit="shared" data-close data-act="sent" data-arg="Tuesday Readers"><span class="av" style="background:#b5541a">TR</span>Tuesday Readers</button>
+          <button class="person" data-emit="shared" data-close data-act="sent" data-arg="Sam"><span class="av" style="background:#0072b2">S</span>Sam</button>
+          <button class="person" data-emit="shared" data-close data-act="sent" data-arg="Mum"><span class="av" style="background:#8a6a12">M</span>Mum</button>
+        </div>
+        <div class="apps">
+          <button class="appi" data-emit="shared" data-close data-act="sent" data-arg="Messages"><span class="ic" style="background:#34c759">✉</span>Messages</button>
+          <button class="appi" data-emit="shared" data-close data-act="sent" data-arg="Mail"><span class="ic" style="background:#1f8cf5">@</span>Mail</button>
+          <button class="appi" data-emit="shared" data-close data-act="sent" data-arg="WhatsApp"><span class="ic" style="background:#25a35a">W</span>WhatsApp</button>
+          <button class="appi" data-close data-toast="Saved to Files"><span class="ic" style="background:#3b82f6">F</span>Files</button>
+        </div>
+        <div class="acts">
+          <button data-close data-toast="Copied transcript and timestamp">Copy text <span>⧉</span></button>
+          <button data-close data-toast="Saved to Files">Save to Files <span>⤓</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sheet" data-id="packet" hidden>
+    <div class="scrim" data-close></div>
+    <div class="card pkt" role="dialog" aria-label="Shared Margin">
+      <div class="grab"></div>
+      <div class="pk-who"><div class="av">P</div><div><b>Priya shared a Margin</b><span>Voice · 0:31 · recorded Saturday</span></div></div>
+      <blockquote>“He’s wrong about audiobooks. Listening is reading, you just can’t skim it, and that’s the point.”</blockquote>
+      <p class="pk-src">On <b>Why we stopped reading slowly</b> · The Long Middle · at 22:05</p>
+      <p class="pk-note">You don’t have this episode yet. Play adds it to your Library and starts ten seconds before her Margin.</p>
+      <div class="pk-actions">
+        <button class="primary" data-act="playPacket" data-emit="packet-played">▶︎  Play her Margin in place</button>
+        <button class="secondary" data-close data-toast="Saved to Margins · From friends">Save for later</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sheet" data-id="export" hidden>
+    <div class="scrim" data-close></div>
+    <div class="card exp" role="dialog" aria-label="Export this week">
+      <div class="grab"></div>
+      <div class="ex-head"><h3>This week as a note</h3><p>7 Margins from 4 items · Sep 22–28</p></div>
+      <pre class="note-md"># Week of Sep 22 – Listening notes
+
+## Why we stopped reading slowly — The Long Middle
+- **18:12** (voice) Attention is a budget you spend twice.
+- **31:40** Find the 1978 study he cites before Tuesday.
+- **40:10** → Sam: “The 1978 study is Kintsch.”
+
+## The case for boredom — Harbor Review
+- **6:05** (voice) Boredom as a waiting room for ideas.
+
+## Sleep spindles and memory consolidation — PDF
+- **Fig. 3** (voice) Figure 3 seems to contradict the abstract. Ask Sam.
+…</pre>
+      <div class="ex-dest"><span>Saves to</span><b>Obsidian › Spoken Margins</b><button class="chg" data-tap data-toast="(First time only) the Files picker opens to choose a folder: +2 taps, once">Change</button></div>
+      <div class="ex-actions">
+        <button class="primary" data-emit="exported" data-close data-toast="Saved “Week of Sep 22.md” to Obsidian">Save note</button>
+        <button class="secondary" data-close data-share="week">Share as file…</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" role="status" aria-live="polite"><span class="t-msg"></span><button class="t-act" hidden></button></div>`;
+
+  const S = { stack: [], task: null, taps: 0, results: {} };
+  let phone, initial, hooks, hud;
+  const ACTION = '[data-go],[data-tabgo],[data-back],[data-sheet],[data-close],[data-emit],[data-toast],[data-act],[data-share],[data-toggle],[data-tap]';
+
+  function show(id, push = true) {
+    const el = $(`.scr[data-id="${id}"]`, phone);
+    if (!el) { console.warn('no screen', id); return; }
+    $$('.scr', phone).forEach(s => { s.hidden = s !== el; });
+    if (push && S.stack[S.stack.length - 1] !== id) S.stack.push(id);
+    phone.dataset.chrome = el.dataset.chrome || '';
+    phone.dataset.screen = id;
+    if (el.dataset.tab) $$('[data-tabgo]', phone).forEach(t => t.classList.toggle('on', t.dataset.tabgo === el.dataset.tab));
+    const b = $('.body', el); if (b && push) b.scrollTop = 0;
+    hooks.onShow && hooks.onShow(id, el, api);
+  }
+  function tabgo(id) { S.stack = []; show(id); }
+  function back() { if (S.stack.length > 1) { S.stack.pop(); show(S.stack[S.stack.length - 1], false); } }
+  function openSheet(id) {
+    const sh = $(`.sheet[data-id="${id}"]`, phone); if (!sh) { console.warn('no sheet', id); return; }
+    sh.hidden = false; sh.offsetHeight; sh.classList.add('open');
+    hooks.onSheet && hooks.onSheet(id, sh, api);
+  }
+  function closeSheet(id) {
+    const list = id ? [$(`.sheet[data-id="${id}"]`, phone)] : $$('.sheet.open', phone).slice(-1);
+    list.forEach(sh => { if (!sh) return; sh.classList.remove('open'); setTimeout(() => { if (!sh.classList.contains('open')) sh.hidden = true; }, 230); });
+  }
+  function closeAll() { $$('.sheet', phone).forEach(sh => { sh.classList.remove('open'); sh.hidden = true; }); }
+  let tt;
+  function toast(msg, action) {
+    const t = $('.toast', phone), a = $('.t-act', t);
+    $('.t-msg', t).textContent = msg;
+    Array.from(a.attributes).forEach(at => { if (at.name.startsWith('data-')) a.removeAttribute(at.name); });
+    a.hidden = !action;
+    if (action) { a.textContent = action.label; Object.entries(action.attrs || {}).forEach(([k, v]) => a.setAttribute(k, v)); }
+    t.classList.add('show'); clearTimeout(tt);
+    tt = setTimeout(() => t.classList.remove('show'), action ? 6000 : 2600);
+  }
+  function share(id) {
+    const m = DATA.margins[id];
+    const sh = $('.sheet[data-id="share"]', phone);
+    const f = k => $(`[data-f="${k}"]`, sh);
+    if (id === 'week') {
+      f('title').textContent = 'Week of Sep 22.md'; f('sub').textContent = 'Markdown note · 7 Margins';
+      f('kind').textContent = 'a note'; f('at').textContent = '—';
+    } else if (m) {
+      f('title').textContent = `${m.who === 'You' ? 'Your' : m.who + '’s'} Margin on “${m.item}”`;
+      f('sub').textContent = `${m.show} · Spoken Margins packet`;
+      f('kind').textContent = m.kind.toLowerCase().replace(' · ', ' '); f('at').textContent = m.at;
+    }
+    openSheet('share');
+  }
+  function emit(name) {
+    hooks.onEmit && hooks.onEmit(name, api);
+    if (S.task && !S.task.done && S.task.goal === name) {
+      S.task.done = true;
+      const prev = S.results[S.task.id];
+      S.results[S.task.id] = prev == null ? S.taps : Math.min(prev, S.taps);
+      renderHud(); renderTasks();
+    }
+  }
+  function countTap() { if (S.task && !S.task.done) { S.taps++; renderHud(); } }
+
+  function grade(n, target) { return n <= target ? 'done' : n <= CEILING ? 'edge' : 'over'; }
+  function word(g, n) { return g === 'done' ? 'within target' : g === 'edge' ? (n >= CEILING ? 'at the ceiling' : 'over target') : 'over the ceiling'; }
+  function renderHud() {
+    hud.classList.remove('done', 'edge', 'over');
+    if (!S.task) { hud.innerHTML = '<span class="hud-task">Exploring freely</span>'; return; }
+    const t = S.task, g = grade(S.taps, t.target);
+    if (t.done || S.taps > t.target) hud.classList.add(g);
+    const label = t.done ? `Done, ${word(g, S.taps)}: ${t.name}` : t.name;
+    hud.innerHTML = `<span class="count">${S.taps} tap${S.taps === 1 ? '' : 's'} · target ${t.target}</span><span class="hud-task">${label}</span>`;
+  }
+  function renderTasks() {
+    const list = $('#taskList'); if (!list) return;
+    list.innerHTML = hooks.tasks.map(t => {
+      const r = S.results[t.id];
+      const res = r != null ? ` · <span class="res ${grade(r, t.target)}">you did it in ${r}, ${word(grade(r, t.target), r)}</span>` : '';
+      return `<div class="task"><b>${t.name}</b><button data-task="${t.id}">Try</button>
+        <span class="meta">Target ${t.target} tap${t.target > 1 ? 's' : ''} · starts at ${t.from}${res}</span></div>`;
+    }).join('');
+  }
+  function startTask(id) {
+    const t = hooks.tasks.find(x => x.id === id);
+    phone.innerHTML = initial; S.stack = [];
+    S.task = Object.assign({}, t, { done: false }); S.taps = 0;
+    t.start(api);
+    renderHud(); closeGuide();
+  }
+  function reset() { phone.innerHTML = initial; S.stack = []; S.task = null; S.taps = 0; hooks.home(api); renderHud(); }
+  function openGuide() { $('#guide').hidden = false; }
+  function closeGuide() { if (window.matchMedia('(max-width: 860px)').matches) $('#guide').hidden = true; }
+
+  const api = { show, tabgo, back, openSheet, closeSheet, closeAll, toast, share, emit, $, $$, get phone() { return phone; }, DATA };
+
+  function init(dir) {
+    hooks = dir;
+    phone = $('#phone'); hud = $('#hud');
+    phone.insertAdjacentHTML('beforeend', COMMON);
+    initial = phone.innerHTML;
+
+    hooks.openPacket = hooks.openPacket || function (el, arg, a) { a.show(hooks.packetLanding || 'home'); a.openSheet('packet'); };
+    hooks.sent = hooks.sent || function (el, who, a) { setTimeout(() => a.toast(`Sent to ${who}`), 120); };
+
+    phone.addEventListener('click', e => {
+      const el = e.target.closest(ACTION);
+      if (!el || !phone.contains(el) || el.hasAttribute('data-hold')) return;
+      e.preventDefault();
+      countTap();
+      const d = el.dataset;
+      if (d.act && hooks[d.act]) hooks[d.act](el, d.arg, api);
+      let togOn = true;
+      if ('toggle' in d) {
+        el.classList.toggle('on'); togOn = el.classList.contains('on');
+        if (d.onText) { if (d.offText == null) d.offText = el.textContent; el.textContent = togOn ? d.onText : d.offText; }
+        el.setAttribute('aria-pressed', togOn);
+      }
+      if ('close' in d) closeSheet(d.close || undefined);
+      if ('back' in d) back();
+      if (d.tabgo) { closeAll(); tabgo(d.tabgo); }
+      if (d.go) { if (!('keep' in d)) closeAll(); show(d.go); }
+      if (d.sheet) openSheet(d.sheet);
+      if (d.share) share(d.share);
+      if (d.toast) toast(d.toast);
+      if (d.emit && togOn) d.emit.split(' ').forEach(emit);
+    });
+
+    // Press-and-hold controls (recording by holding). A short press counts as
+    // a tap and calls hooks.holdTap; a long press counts as one tap and calls
+    // hooks.holdEnd(el, true).
+    let holding = null, t0 = 0;
+    phone.addEventListener('pointerdown', e => {
+      const el = e.target.closest('[data-hold]'); if (!el) return;
+      e.preventDefault(); holding = el; t0 = Date.now();
+      phone.classList.add('holding'); hooks.holdStart && hooks.holdStart(el, api);
+    });
+    const end = () => {
+      if (!holding) return; const el = holding; holding = null;
+      phone.classList.remove('holding');
+      const long = Date.now() - t0 > 450;
+      countTap();
+      hooks.holdEnd && hooks.holdEnd(el, long, api);
+    };
+    window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
+    phone.addEventListener('contextmenu', e => { if (e.target.closest('[data-hold]')) e.preventDefault(); });
+
+    document.addEventListener('click', e => {
+      const b = e.target.closest('[data-task]'); if (b) { startTask(b.dataset.task); return; }
+      if (e.target.closest('#guideBtn')) openGuide();
+      if (e.target.closest('.close-guide')) $('#guide').hidden = true;
+      if (e.target.closest('#resetBtn')) reset();
+    });
+    if (window.matchMedia('(max-width: 860px)').matches) $('#guide').hidden = true;
+    renderTasks(); hooks.home(api); renderHud();
+  }
+
+  // Test helper: start a task and click a list of selectors (visible match),
+  // 'hold:<sel>' for a long press. Returns the measured taps and done flag.
+  async function walk(taskId, steps) {
+    startTask(taskId);
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    await wait(80);
+    const vis = sel => $$(sel, phone).find(el => el.offsetParent !== null && !el.closest('[hidden]'));
+    for (const s of steps) {
+      if (s.startsWith('hold:')) {
+        const el = vis(s.slice(5)); if (!el) return { error: 'not visible: ' + s };
+        el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        await wait(600);
+        window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      } else {
+        const el = vis(s); if (!el) return { error: 'not visible: ' + s, taps: S.taps };
+        el.click();
+      }
+      await wait(120);
+    }
+    return { taps: S.taps, done: !!(S.task && S.task.done), screen: phone.dataset.screen };
+  }
+
+  window.Engine = { init, DATA, walk, get state() { return S; } };
+})();
+
+</script>
+<script>
+(function () {
+  const SHOWS = ['The Long Middle','Field Notes Radio','Harbor Review','Small Engines','Deep Time','Open Questions','Slow Science','The Night Library','Common Ground','Kitchen Table Economics','Ordinary Machines','Paper Trail','North Sea Stories','The Archive Hour','Second Draft','Weather & Climate Weekly','Soft Power','The Tinkerer','Old Maps','Quiet Rooms','Brain Matters','Garden Variety','Signal Path','Bookish','Unsettled','Long Now Talks','Tidewater','The Margins Club','Useful Fictions','Mud & Stone','Night Shift','A Public Square','Plain Numbers','The Repair Shop','Field Guide','Glass Half','Low Tide','City Rooms','Parallax','First Principles','Keel & Rudder','Mothlight','The Commons','Hinterland','Small Wonders','Crosswind','The Reading Room','Open Water','Overstory','Salt & Iron','Late Style','Halflife','Moonlit Maths','The Understory','Common Place','Straight Lines','Wild Card','Tuning Fork','Nightjar','Afterword'];
+  const EPS = ['The frog that survives freezing','On fixing what isn’t broken yet','The Missoula floods, part 2','A short history of the pause','Why maps lie a little','The last lighthouse keeper','Numbers that changed their minds','What the archive forgot','Second drafts of famous letters','Rain on a tin roof, explained','Soft power in small towns','The tinkerer’s dilemma','Old maps of new places','Quiet rooms for loud minds','Brains at 4 a.m.','Weeds, reconsidered','Signal, noise, and gardens','Books nobody finishes','Unsettled ground','The long now, briefly','Tides and tables','A club for margins','Useful fictions about money'];
+  const initial = s => s.startsWith('The ') ? s[4] : s[0];
+  const kinds = ['', 'fn', 'art', 'sub', 'pdf'];
+  const tasks = [
+    { id: 'share', name: 'Share a Margin to a friend', target: 2, goal: 'shared', from: 'Notebook (home)', start: a => a.tabgo('notebook') },
+    { id: 'followp', name: 'Follow what’s playing', target: 1, goal: 'followed', from: 'Now Playing', start: a => { a.tabgo('listen'); a.show('player'); } },
+    { id: 'first', name: 'Follow a podcast on first run', target: 1, goal: 'fr-followed', from: 'first launch', start: a => a.show('welcome') },
+    { id: 'record', name: 'Record a Margin', target: 1, goal: 'recorded', from: 'Now Playing', start: a => { a.tabgo('listen'); a.show('player'); } },
+    { id: 'export', name: 'Export this week’s Margins as a note', target: 2, goal: 'exported', from: 'Notebook (home)', start: a => a.tabgo('notebook') },
+    { id: 'packet', name: 'Open a shared packet and hear it', target: 2, goal: 'packet-played', from: 'Messages', start: a => a.show('messages') },
+  ];
+  Engine.init({
+    tasks,
+    home: a => a.tabgo('notebook'),
+    packetLanding: 'notebook',
+    onShow(id, el, a) {
+      if (id === 'new') {
+        const list = a.$('#newList', a.phone);
+        if (!list.children.length) list.innerHTML = ['Today', 'Yesterday', 'Earlier this week'].map((d, di) =>
+          `<div class="dayh" style="padding-left:20px">${d}</div>` + EPS.slice(di * 8, di * 8 + (di === 2 ? 7 : 8)).map((t, i) => { const s = SHOWS[(di * 8 + i) % SHOWS.length]; return `<button class="row" data-go="player" data-toast="(Sketch) Plays ${t.replace(/"/g, '')}"><span class="cv ${kinds[(di * 8 + i) % 5]}">${initial(s)}</span><div class="g"><div class="t">${t}</div><div class="s">${s} &middot; ${20 + ((di * 8 + i) * 7) % 40} min</div></div></button>`; }).join('')).join('');
+      }
+      if (id === 'shows') {
+        const list = a.$('#showList', a.phone);
+        if (!list.children.length) list.innerHTML = SHOWS.map((s, i) =>
+          `<div class="row" style="min-height:60px"><span class="cv ${kinds[i % 5]}">${initial(s)}</span><div class="g"><div class="t">${s}</div><div class="s">${i < 23 ? 'New today' : (i % 7) + 2 + ' days ago'}${i % 9 === 4 ? ' &middot; muted' : ''}</div></div><button class="ib" data-tap data-toast="(Sketch) Mute, notify, unfollow ${s}" aria-label="Options for ${s}"><svg class="i"><use href="#i-more"/></svg></button></div>`).join('');
+      }
+    },
+    playPacket(el, arg, a) { a.closeAll(); a.show('player'); a.$('#pktBanner', a.phone).hidden = false; a.$('#pktMargin', a.phone).hidden = false; a.$('.ahead span', a.phone).innerHTML = 'Ahead: <b>Sam’s Margin</b> in 18:05'; },
+    holdStart(el, a) { a.toast('Recording… let go to save'); },
+    holdEnd(el, long, a) {
+      if (long) { a.emit('recorded'); setTimeout(() => a.toast('Margin saved at 18:12', { label: 'Share', attrs: { 'data-share': 'm0' } }), 60); }
+      else { a.$('.toast', a.phone).classList.remove('show'); a.openSheet('rec'); }
+    },
+    saved(el, arg, a) { setTimeout(() => a.toast('Margin saved at 18:12', { label: 'Share', attrs: { 'data-share': 'm0' } }), 150); },
+  });
+})();
+</script>
+</body>
+</html>
