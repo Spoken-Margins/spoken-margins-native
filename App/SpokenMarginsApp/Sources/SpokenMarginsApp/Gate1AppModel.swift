@@ -15626,7 +15626,7 @@ final class Gate1AppModel: ObservableObject {
                 self.followedSourceCoordinator = coordinator
                 let candidates = try await coordinator.discover(urlString: value)
                 self.diagnostics["followedSourceNetworkHosts"] = await coordinator.contactedHosts.sorted().joined(separator: ",")
-                guard candidates.count == 1, let candidate = candidates.first else {
+                guard candidates.count == 1, let candidate = candidates.first, !candidate.needsConfirmation else {
                     self.followedSourceCandidates = candidates
                     self.reportConfirmation("Choose which feed to follow.")
                     return
@@ -15667,7 +15667,9 @@ final class Gate1AppModel: ObservableObject {
     var canManuallyFollowSelectedSource: Bool {
         guard sourceFollowSuggestionCandidates.isEmpty,
               let row = libraryItems.first(where: { $0.id == selectedItem.id }),
-              ["podcast", TargetType.transcriptBackedMedia.rawValue].contains(row.mediaType.lowercased()) else {
+              ManualFollowPolicy.offersFollow(
+                mediaType: row.mediaType, sourceURL: row.sourceURL, sourceReference: row.sourceReference
+              ) else {
             return false
         }
         return !Self.isSourceAlreadyFollowed(
@@ -15755,7 +15757,7 @@ final class Gate1AppModel: ObservableObject {
                     coordinator: coordinator
                 )
                 guard let candidate = candidates.first else { throw FollowedSourceError.noFeedCandidates }
-                guard candidates.count == 1 else {
+                guard candidates.count == 1, !candidate.needsConfirmation else {
                     self.followedSourceCandidates = candidates
                     self.reportConfirmation("Choose the source feed to follow.")
                     return
