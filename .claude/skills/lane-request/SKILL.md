@@ -34,9 +34,20 @@ It compares your branch (uncommitted files included) with `origin/next`, prints 
    ```
 
    Keep it short. `run:` names journeys (`J1, J7`) or `tests: <Class>/<method>` for T3. Use `scenario:` only for a one-off check, with numbered steps and what passing looks like. `watch for:` names the specific risk. `not needed:` lists what you already ran on this commit.
-3. On the Mac you may also message the `test-desk` session as a doorbell ("lane request on PR #N"). The PR comment is always the real request.
+3. For T4/T5 on the Mac, you may also message the `test-desk` session as a doorbell ("lane request on PR #N"). The PR comment is always the real request.
 
-A newer push to the same PR replaces a queued request: the lane tests only the newest commit.
+**Who takes it.**
+- **T2 and T3** go to the self-hosted runner. It starts within a minute or so of the label, or later if other PRs are queued. It tests your PR merged into `next`, on a temporary iOS 26.5 simulator for T3.
+- **T4 and T5** go to the Test Desk.
+- Ask for each tier in its own comment. The runner answers the newest T2/T3 request it hasn't reported on, and leaves `lane:queued` in place while a T4/T5 request is waiting.
+
+**When nothing happens.**
+- GitHub doesn't run the lane for a PR that conflicts with `next`. Merge `next` in and push.
+- Adding a label that is already on the PR doesn't trigger anything. If `lane:queued` is already there (a T4 waiting), remove it and add it again after posting a T2/T3 request.
+
+**Newer pushes and repeats.**
+- A newer push replaces a queued request: the lane tests only the newest commit.
+- Asking again for the same commit, tier and tests after a PASS or FAIL gets a link to that report, not a rerun. After INCONCLUSIVE, asking again does run again.
 
 ## 4. Read the report
 

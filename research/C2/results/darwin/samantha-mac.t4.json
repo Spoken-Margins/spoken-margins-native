@@ -1,0 +1,25 @@
+{
+  "engine": "samantha-mac",
+  "passages": {
+    "p1-narrative": {
+      "render_s": 1.091,
+      "audio_s": 12.34,
+      "rtf": 0.088,
+      "chunks": 1
+    },
+    "p2-scientific": {
+      "render_s": 1.116,
+      "audio_s": 25.11,
+      "rtf": 0.044,
+      "chunks": 1
+    },
+    "p3-conversational": {
+      "render_s": 1.006,
+      "audio_s": 11.61,
+      "rtf": 0.087,
+      "chunks": 1
+    }
+  },
+  "speed_x": 15.27,
+  "ttfa_s_median": null
+}

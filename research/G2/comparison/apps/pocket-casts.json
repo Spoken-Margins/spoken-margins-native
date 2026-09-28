@@ -1,0 +1,331 @@
+{
+  "id": "pocket-casts",
+  "name": "Pocket Casts",
+  "vendor": "Automattic, Inc.",
+  "category": "podcast",
+  "website": "https://pocketcasts.com",
+  "why_listed": "Cross-platform podcast listeners who want bookmarks and timestamp sharing inside a mainstream player would use Pocket Casts instead of Spoken Margins.",
+  "claims": {
+    "platforms": {
+      "value": "iOS, iPadOS, watchOS, Android, web, macOS, Windows (plus Apple TV, CarPlay)",
+      "detail": "Mobile apps on iOS/Android, a web player, and Mac and Windows desktop apps.",
+      "sources": [
+        {
+          "url": "https://blog.pocketcasts.com/2025/03/11/webplayer/",
+          "title": "Pocket Casts’ Web Player Is Now Available to All – Pocket Casts Blog",
+          "published": "2025-03-11",
+          "checked": "2026-09-28",
+          "quote": "These changes also apply to our Mac and Windows Desktop Apps, giving you more ways to listen on your terms."
+        },
+        {
+          "url": "https://support.pocketcasts.com/knowledge-base/episode-transcripts/",
+          "title": "Episode Transcripts – Pocket Casts Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "All Pocket Casts users on Android and iOS can access transcripts directly within the app"
+        },
+        {
+          "url": "https://apps.apple.com/us/app/pocket-casts-podcast-player/id414834813",
+          "title": "Pocket Casts: Podcast Player - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Everywhere: CarPlay, AirPlay, Chromecast and Sonos."
+        }
+      ],
+      "note": "App Store listing (via WebFetch summary) lists iPhone, iPad, Apple TV and Apple Watch."
+    },
+    "price_free_tier": {
+      "value": "Free podcast player on mobile, web and desktop; bookmarks, generated transcripts and synced transcript highlighting need Plus.",
+      "detail": "Core listening is free; web and desktop no longer need a subscription.",
+      "sources": [
+        {
+          "url": "https://blog.pocketcasts.com/2025/03/11/webplayer/",
+          "title": "Pocket Casts’ Web Player Is Now Available to All – Pocket Casts Blog",
+          "published": "2025-03-11",
+          "checked": "2026-09-28",
+          "quote": "the Pocket Casts Web Player is now accessible to all, no subscription required"
+        },
+        {
+          "url": "https://support.pocketcasts.com/knowledge-base/episode-transcripts/",
+          "title": "Episode Transcripts – Pocket Casts Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "As of May 2025 Pocket Casts Plus and Patron subscribers can also see automatically generated transcripts for select podcasts."
+        }
+      ],
+      "note": "pocketcasts.com/plus and /plans returned 403, so the free/Plus feature split is assembled from support and blog pages."
+    },
+    "price_paid": {
+      "value": "USD 3.99/month or 39.99/year (Plus); Patron USD 9.99/month or 99.99/year",
+      "detail": "Plus is the cheapest paid plan.",
+      "sources": [
+        {
+          "url": "https://support.pocketcasts.com/knowledge-base/pocket-casts-plus-pricing/",
+          "title": "Pocket Casts Plus Pricing – Pocket Casts Support",
+          "published": "2024-05-10",
+          "checked": "2026-09-28",
+          "quote": "If you see a price higher than USD 39.99, our payment processors are likely charging you taxes and fees based on your location."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/pocket-casts-podcast-player/id414834813",
+          "title": "Pocket Casts: Podcast Player - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Plus Monthly $3.99"
+        }
+      ],
+      "note": "Support page (US dollars, base rates; last updated 2024-05-10) and US App Store in-app purchase list. pocketcasts.com/plans returned 403."
+    },
+    "plays_podcasts": {
+      "value": "yes",
+      "detail": "Full podcast player that subscribes to and streams/downloads feeds.",
+      "sources": [
+        {
+          "url": "https://blog.pocketcasts.com/2025/03/11/webplayer/",
+          "title": "Pocket Casts’ Web Player Is Now Available to All – Pocket Casts Blog",
+          "published": "2025-03-11",
+          "checked": "2026-09-28",
+          "quote": "Starting today, anyone can stream any podcast episode directly from our Web Player, no account or subscription needed."
+        }
+      ]
+    },
+    "reads_web_articles_aloud": {
+      "value": "unknown",
+      "detail": "No article text-to-speech feature found.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/pocket-casts-podcast-player/id414834813",
+          "title": "Pocket Casts: Podcast Player - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://pocketcasts.com/plus/",
+          "title": "Pocket Casts Plus",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked App Store listing; pocketcasts.com/plus returned 403. No mention of reading articles aloud, but no comprehensive feature list was readable."
+    },
+    "reads_pdfs_aloud": {
+      "value": "unknown",
+      "detail": "No PDF reading feature found.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/pocket-casts-podcast-player/id414834813",
+          "title": "Pocket Casts: Podcast Player - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://pocketcasts.com/plus/",
+          "title": "Pocket Casts Plus",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked App Store listing; pocketcasts.com/plus returned 403. No mention of PDFs."
+    },
+    "voice_notes_anchored": {
+      "value": "no",
+      "detail": "Bookmarks save a timestamp (with optional title); there is no note-taking, spoken or typed, on bookmarks.",
+      "sources": [
+        {
+          "url": "https://forums.pocketcasts.com/forums/topic/bookmarks-notes-and-sharing/",
+          "title": "Bookmarks, notes, and sharing | Pocket Casts Forum",
+          "published": "2025-05-23",
+          "checked": "2026-09-28",
+          "quote": "We log every feature requests made here, including the note-taking and exporting features. We don't have immediate plans to implement them at the moment"
+        },
+        {
+          "url": "https://support.pocketcasts.com/knowledge-base/bookmarks-on-the-mobile-apps/",
+          "title": "Bookmarks on the iOS and Android Mobile Apps – Pocket Casts Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Based on a staff reply in the official forum (2025-05-23) and the bookmarks help page, which mentions no voice notes."
+    },
+    "text_notes_anchored": {
+      "value": "partial",
+      "detail": "A bookmark at a timestamp can carry an optional typed title; Smart Bookmarks (iOS, Plus) auto-fill a title and transcript passage. No free-form note field.",
+      "sources": [
+        {
+          "url": "https://support.pocketcasts.com/knowledge-base/bookmarks-on-the-mobile-apps/",
+          "title": "Bookmarks on the iOS and Android Mobile Apps – Pocket Casts Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "You will be prompted to enter an optional title to identify the bookmark you're adding."
+        },
+        {
+          "url": "https://blog.pocketcasts.com/2026/09/03/smart-bookmarks-save-the-words-not-the-timestamp/",
+          "title": "Smart Bookmarks: save the words, not the timestamp – Pocket Casts Blog",
+          "published": "2026-09-03",
+          "checked": "2026-09-28",
+          "quote": "A title, written for you. The passage from the transcript, captured around the moment you tapped."
+        },
+        {
+          "url": "https://forums.pocketcasts.com/forums/topic/bookmarks-notes-and-sharing/",
+          "title": "Bookmarks, notes, and sharing | Pocket Casts Forum",
+          "published": "2025-05-23",
+          "checked": "2026-09-28",
+          "quote": "We log every feature requests made here, including the note-taking and exporting features."
+        }
+      ],
+      "note": "Bookmarks require Plus or Patron per the 2023 launch post."
+    },
+    "hands_free_capture": {
+      "value": "yes",
+      "detail": "Headphone previous/next actions can be set to Add Bookmark, with a confirmation sound.",
+      "sources": [
+        {
+          "url": "https://blog.pocketcasts.com/2023/12/13/bookmarks/",
+          "title": "Bookmarks, no longer just for books! – Pocket Casts Blog",
+          "published": "2023-12-13",
+          "checked": "2026-09-28",
+          "quote": "you can also add them straight from your headphones using our highly customizable Headphone Action settings"
+        },
+        {
+          "url": "https://support.pocketcasts.com/knowledge-base/bookmarks-on-the-mobile-apps/",
+          "title": "Bookmarks on the iOS and Android Mobile Apps – Pocket Casts Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "On the iOS and Android mobile apps, you can add a bookmark using your Bluetooth headphones or speaker"
+        }
+      ],
+      "note": "The 2023 blog post introduced bookmarks for Plus and Patron. The current support page names no paid tier, so whether it's paid-only needs re-checking. Apple Watch and CarPlay capture not confirmed in the pages read."
+    },
+    "transcripts": {
+      "value": "yes",
+      "detail": "Creator transcripts for everyone; auto-generated transcripts for select shows and synced highlighting on Plus/Patron.",
+      "sources": [
+        {
+          "url": "https://support.pocketcasts.com/knowledge-base/episode-transcripts/",
+          "title": "Episode Transcripts – Pocket Casts Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "All Pocket Casts users on Android and iOS can access transcripts directly within the app"
+        },
+        {
+          "url": "https://blog.pocketcasts.com/2026/06/24/highlighted-transcripts/",
+          "title": "Read along as you listen: Highlighted Transcripts are here! – Pocket Casts Blog",
+          "published": "2026-06-24",
+          "checked": "2026-09-28",
+          "quote": "Pocket Casts generated transcripts are available for Plus and Patron users."
+        }
+      ],
+      "note": "Generated transcripts only for select popular shows and episodes under 2 hours."
+    },
+    "ai_summaries": {
+      "value": "no",
+      "detail": "AI-generated chapters launched on 2026-07-07 but are currently switched off; no AI episode summaries found.",
+      "sources": [
+        {
+          "url": "https://support.pocketcasts.com/knowledge-base/chapters/",
+          "title": "Chapters – Pocket Casts Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "AI-generated chapters are temporarily unavailable."
+        },
+        {
+          "url": "https://blog.pocketcasts.com/2026/07/07/ai-generated-chapters-are-here/",
+          "title": "AI Generated Chapters Are Here – Pocket Casts Blog",
+          "published": "2026-07-07",
+          "checked": "2026-09-28",
+          "quote": "Pocket Casts now supports AI generated Chapters on Android, Web, Desktop and (coming very soon…) iOS."
+        }
+      ],
+      "note": "Rated no while the vendor says the feature is unavailable. Re-check monthly: it may come back."
+    },
+    "export_markdown_pkm": {
+      "value": "no",
+      "detail": "No export of bookmarks to note apps; staff say it is a logged request with no immediate plans.",
+      "sources": [
+        {
+          "url": "https://forums.pocketcasts.com/forums/topic/bookmarks-notes-and-sharing/",
+          "title": "Bookmarks, notes, and sharing | Pocket Casts Forum",
+          "published": "2025-05-23",
+          "checked": "2026-09-28",
+          "quote": "We log every feature requests made here, including the note-taking and exporting features. We don't have immediate plans to implement them at the moment"
+        }
+      ],
+      "note": "Staff forum reply dated 2025-05-23; not re-confirmed against a newer changelog."
+    },
+    "share_note_at_moment": {
+      "value": "partial",
+      "detail": "Sharing a bookmark gives a link that opens the episode at the bookmark's timestamp; no note content travels with it.",
+      "sources": [
+        {
+          "url": "https://support.pocketcasts.com/knowledge-base/bookmarks-on-the-mobile-apps/",
+          "title": "Bookmarks on the iOS and Android Mobile Apps – Pocket Casts Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Sharing a bookmark gives you a link to the episode that opens at the bookmark's timestamp"
+        }
+      ],
+      "note": "Bookmarks on private podcasts or uploaded files cannot be shared (per help page summary)."
+    },
+    "group_listening": {
+      "value": "unknown",
+      "detail": "No group, club or shared-annotation feature found.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/pocket-casts-podcast-player/id414834813",
+          "title": "Pocket Casts: Podcast Player - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://pocketcasts.com/plus/",
+          "title": "Pocket Casts Plus",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked App Store listing and blog posts; /plus page returned 403. Nothing found either way."
+    },
+    "on_device_privacy": {
+      "value": "partial",
+      "detail": "The web player works with no account; the app syncs subscriptions, history and bookmarks to Pocket Casts' cloud when signed in.",
+      "sources": [
+        {
+          "url": "https://blog.pocketcasts.com/2025/03/11/webplayer/",
+          "title": "Pocket Casts’ Web Player Is Now Available to All – Pocket Casts Blog",
+          "published": "2025-03-11",
+          "checked": "2026-09-28",
+          "quote": "Starting today, anyone can stream any podcast episode directly from our Web Player, no account or subscription needed."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/pocket-casts-podcast-player/id414834813",
+          "title": "Pocket Casts: Podcast Player - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Subscriptions, Up Next, listening history, playback and filters are all securely stored in the cloud."
+        }
+      ],
+      "note": "No on-device processing claim; generated transcripts are made on Pocket Casts' servers per press coverage."
+    },
+    "account_required": {
+      "value": "no",
+      "detail": "Listening needs no account; a free account adds cross-device sync, and Plus features need a subscription.",
+      "sources": [
+        {
+          "url": "https://blog.pocketcasts.com/2025/03/11/webplayer/",
+          "title": "Pocket Casts’ Web Player Is Now Available to All – Pocket Casts Blog",
+          "published": "2025-03-11",
+          "checked": "2026-09-28",
+          "quote": "Starting today, anyone can stream any podcast episode directly from our Web Player, no account or subscription needed."
+        }
+      ],
+      "note": "The source is explicit for the web player; mobile use without an account is described in third-party coverage, not a vendor page read here."
+    }
+  }
+}

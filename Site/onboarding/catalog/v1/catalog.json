@@ -1,0 +1,5416 @@
+{
+ "schemaVersion": "source-catalog.v1",
+ "catalogId": "onboarding-top-podcasts",
+ "contentVersion": 1,
+ "title": "Popular podcasts",
+ "generatedAt": "2026-09-28T12:19:05Z",
+ "locale": "en-US",
+ "provenance": [
+  {
+   "id": "apple-top-us-news",
+   "kind": "apple_top_chart",
+   "url": "https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=1489/json",
+   "country": "us",
+   "appleGenreId": 1489,
+   "chartUpdatedAt": "2026-09-28T05:17:56-07:00",
+   "fetchedAt": "2026-09-28T12:19:01Z"
+  },
+  {
+   "id": "apple-top-us-society-culture",
+   "kind": "apple_top_chart",
+   "url": "https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=1324/json",
+   "country": "us",
+   "appleGenreId": 1324,
+   "chartUpdatedAt": "2026-09-28T05:17:56-07:00",
+   "fetchedAt": "2026-09-28T12:19:02Z"
+  },
+  {
+   "id": "apple-top-us-comedy",
+   "kind": "apple_top_chart",
+   "url": "https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=1303/json",
+   "country": "us",
+   "appleGenreId": 1303,
+   "chartUpdatedAt": "2026-09-28T05:17:57-07:00",
+   "fetchedAt": "2026-09-28T12:19:02Z"
+  },
+  {
+   "id": "apple-top-us-true-crime",
+   "kind": "apple_top_chart",
+   "url": "https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=1488/json",
+   "country": "us",
+   "appleGenreId": 1488,
+   "chartUpdatedAt": "2026-09-28T05:17:57-07:00",
+   "fetchedAt": "2026-09-28T12:19:02Z"
+  },
+  {
+   "id": "apple-top-us-business",
+   "kind": "apple_top_chart",
+   "url": "https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=1321/json",
+   "country": "us",
+   "appleGenreId": 1321,
+   "chartUpdatedAt": "2026-09-28T05:17:58-07:00",
+   "fetchedAt": "2026-09-28T12:19:02Z"
+  },
+  {
+   "id": "apple-top-us-science",
+   "kind": "apple_top_chart",
+   "url": "https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=1533/json",
+   "country": "us",
+   "appleGenreId": 1533,
+   "chartUpdatedAt": "2026-09-28T05:17:58-07:00",
+   "fetchedAt": "2026-09-28T12:19:03Z"
+  },
+  {
+   "id": "apple-top-us-history",
+   "kind": "apple_top_chart",
+   "url": "https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=1487/json",
+   "country": "us",
+   "appleGenreId": 1487,
+   "chartUpdatedAt": "2026-09-28T05:18:00-07:00",
+   "fetchedAt": "2026-09-28T12:19:03Z"
+  },
+  {
+   "id": "apple-top-us-health-fitness",
+   "kind": "apple_top_chart",
+   "url": "https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=1512/json",
+   "country": "us",
+   "appleGenreId": 1512,
+   "chartUpdatedAt": "2026-09-28T05:18:01-07:00",
+   "fetchedAt": "2026-09-28T12:19:03Z"
+  },
+  {
+   "id": "apple-top-us-technology",
+   "kind": "apple_top_chart",
+   "url": "https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=1318/json",
+   "country": "us",
+   "appleGenreId": 1318,
+   "chartUpdatedAt": "2026-09-28T05:18:01-07:00",
+   "fetchedAt": "2026-09-28T12:19:03Z"
+  },
+  {
+   "id": "apple-top-us-sports",
+   "kind": "apple_top_chart",
+   "url": "https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=1545/json",
+   "country": "us",
+   "appleGenreId": 1545,
+   "chartUpdatedAt": "2026-09-28T05:18:02-07:00",
+   "fetchedAt": "2026-09-28T12:19:04Z"
+  },
+  {
+   "id": "apple-top-us-education",
+   "kind": "apple_top_chart",
+   "url": "https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=1304/json",
+   "country": "us",
+   "appleGenreId": 1304,
+   "chartUpdatedAt": "2026-09-28T05:18:02-07:00",
+   "fetchedAt": "2026-09-28T12:19:04Z"
+  },
+  {
+   "id": "apple-top-us-arts",
+   "kind": "apple_top_chart",
+   "url": "https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=1301/json",
+   "country": "us",
+   "appleGenreId": 1301,
+   "chartUpdatedAt": "2026-09-28T05:18:03-07:00",
+   "fetchedAt": "2026-09-28T12:19:04Z"
+  },
+  {
+   "id": "itunes-lookup",
+   "kind": "itunes_lookup",
+   "url": "https://itunes.apple.com/lookup",
+   "country": "us",
+   "fetchedAt": "2026-09-28T12:19:05Z"
+  }
+ ],
+ "subjects": [
+  {
+   "id": "news",
+   "title": "News",
+   "appleGenreId": 1489
+  },
+  {
+   "id": "society-culture",
+   "title": "Society & Culture",
+   "appleGenreId": 1324
+  },
+  {
+   "id": "comedy",
+   "title": "Comedy",
+   "appleGenreId": 1303
+  },
+  {
+   "id": "true-crime",
+   "title": "True Crime",
+   "appleGenreId": 1488
+  },
+  {
+   "id": "business",
+   "title": "Business",
+   "appleGenreId": 1321
+  },
+  {
+   "id": "science",
+   "title": "Science",
+   "appleGenreId": 1533
+  },
+  {
+   "id": "history",
+   "title": "History",
+   "appleGenreId": 1487
+  },
+  {
+   "id": "health-fitness",
+   "title": "Health & Fitness",
+   "appleGenreId": 1512
+  },
+  {
+   "id": "technology",
+   "title": "Technology",
+   "appleGenreId": 1318
+  },
+  {
+   "id": "sports",
+   "title": "Sports",
+   "appleGenreId": 1545
+  },
+  {
+   "id": "education",
+   "title": "Education",
+   "appleGenreId": 1304
+  },
+  {
+   "id": "arts",
+   "title": "Arts",
+   "appleGenreId": 1301
+  }
+ ],
+ "starterRows": [
+  {
+   "subjectId": "news",
+   "title": "Start with News",
+   "entryIds": [
+    "apple-1200361736",
+    "apple-1192761536",
+    "apple-1222114325",
+    "apple-1510240831",
+    "apple-1532976305"
+   ],
+   "curatedBy": "chart-seed"
+  },
+  {
+   "subjectId": "society-culture",
+   "title": "Start with Society & Culture",
+   "entryIds": [
+    "apple-201671138",
+    "apple-1548604447",
+    "apple-278981407",
+    "apple-1896943121",
+    "apple-1492492083"
+   ],
+   "curatedBy": "chart-seed"
+  },
+  {
+   "subjectId": "comedy",
+   "title": "Start with Comedy",
+   "entryIds": [
+    "apple-360084272",
+    "apple-1795483480",
+    "apple-121493804",
+    "apple-1345682353",
+    "apple-1536352412"
+   ],
+   "curatedBy": "chart-seed"
+  },
+  {
+   "subjectId": "true-crime",
+   "title": "Start with True Crime",
+   "entryIds": [
+    "apple-1322200189",
+    "apple-1464919521",
+    "apple-1379959217",
+    "apple-987967575",
+    "apple-1074507850"
+   ],
+   "curatedBy": "chart-seed"
+  },
+  {
+   "subjectId": "business",
+   "title": "Start with Business",
+   "entryIds": [
+    "apple-1012570406",
+    "apple-1844970260",
+    "apple-985396258",
+    "apple-1368888880",
+    "apple-1744386875"
+   ],
+   "curatedBy": "chart-seed"
+  },
+  {
+   "subjectId": "science",
+   "title": "Start with Science",
+   "entryIds": [
+    "apple-1150124880",
+    "apple-152249110",
+    "apple-1028908750",
+    "apple-1783430373",
+    "apple-1278815517"
+   ],
+   "curatedBy": "chart-seed"
+  },
+  {
+   "subjectId": "history",
+   "title": "Start with History",
+   "entryIds": [
+    "apple-1537788786",
+    "apple-1492797340",
+    "apple-1896760409",
+    "apple-1520403988",
+    "apple-1435516849"
+   ],
+   "curatedBy": "chart-seed"
+  },
+  {
+   "subjectId": "health-fitness",
+   "title": "Start with Health & Fitness",
+   "entryIds": [
+    "apple-1780873400",
+    "apple-1553279283",
+    "apple-1545953110",
+    "apple-1768651631",
+    "apple-1688757384"
+   ],
+   "curatedBy": "chart-seed"
+  },
+  {
+   "subjectId": "technology",
+   "title": "Start with Technology",
+   "entryIds": [
+    "apple-1848156557",
+    "apple-1502871393",
+    "apple-1896801264",
+    "apple-1050462261",
+    "apple-6812430636"
+   ],
+   "curatedBy": "chart-seed"
+  },
+  {
+   "subjectId": "sports",
+   "title": "Start with Sports",
+   "entryIds": [
+    "apple-1089022756",
+    "apple-1043699613",
+    "apple-1837044678",
+    "apple-1685093486",
+    "apple-934820588"
+   ],
+   "curatedBy": "chart-seed"
+  },
+  {
+   "subjectId": "education",
+   "title": "Start with Education",
+   "entryIds": [
+    "apple-1731755953",
+    "apple-1646101002",
+    "apple-1728723635",
+    "apple-1852217479",
+    "apple-6786047115"
+   ],
+   "curatedBy": "chart-seed"
+  },
+  {
+   "subjectId": "arts",
+   "title": "Start with Arts",
+   "entryIds": [
+    "apple-214089682",
+    "apple-275699983",
+    "apple-394775318",
+    "apple-1677004555",
+    "apple-1649630933"
+   ],
+   "curatedBy": "chart-seed"
+  }
+ ],
+ "entries": [
+  {
+   "id": "apple-1200361736",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Daily",
+   "author": "The New York Times",
+   "feedURL": "https://feeds.simplecast.com/Sl5CSM3S",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/ab/64/66/ab6466a9-9a7d-e20e-7a3d-bc5be37d29ce/mza_15084852813176276273.jpg/600x600bb.jpg",
+   "subjects": [
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 1
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1200361736"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1192761536",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Pod Save America",
+   "author": "Pod Save America",
+   "feedURL": "https://audioboom.com/channels/5166624.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/44/dc/61/44dc6141-25e9-5bb3-e19e-a2337233d19e/mza_5506771870755587769.jpg/600x600bb.jpg",
+   "subjects": [
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 2
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1192761536"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1222114325",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Up First from NPR",
+   "author": "NPR",
+   "feedURL": "https://feeds.npr.org/510318/podcast.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/0e/35/25/0e352569-e694-81d9-ea55-5f935981c15a/mza_1788275989855583986.png/600x600bb.jpg",
+   "subjects": [
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 3
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1222114325"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1510240831",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The MeidasTouch Podcast",
+   "author": "MeidasTouch Network",
+   "feedURL": "https://rss.amperwave.net/v2/feed/audacynetwork/16aa3c6bf526fae9db63070c73cad09f",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts122/v4/73/32/80/733280d2-330a-2f24-c600-bc1088f9f899/mza_17833502176263457882.jpeg/600x600bb.jpg",
+   "subjects": [
+    "news"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 4
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1510240831"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1532976305",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Megyn Kelly Show",
+   "author": "SiriusXM",
+   "feedURL": "https://feeds.simplecast.com/RV1USAfC",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/3e/9f/c1/3e9fc13c-8030-b57e-f29e-0f14dc8db10d/mza_602213930944272333.jpg/600x600bb.jpg",
+   "subjects": [
+    "news",
+    "society-culture"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 5
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1532976305"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-121493675",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "NPR News Now",
+   "author": "NPR",
+   "feedURL": "https://feeds.npr.org/500005/podcast.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/27/a0/ab/27a0abb7-817f-d80c-4fed-6fd04d424333/mza_16804553558295235422.jpg/600x600bb.jpg",
+   "subjects": [
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 6
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "121493675"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1346207297",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Today, Explained",
+   "author": "Vox",
+   "feedURL": "https://feeds.megaphone.fm/VMP5705694065",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/57/bc/e4/57bce477-b6e7-ba7d-5bca-6289f3f32e26/mza_17986217629149107841.jpeg/600x600bb.jpg",
+   "subjects": [
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 7
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1346207297"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1719657632",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Tucker Carlson Show",
+   "author": "Tucker Carlson Network",
+   "feedURL": "https://feeds.megaphone.fm/RSV1597324942",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/1a/1f/9c/1a1f9c6d-67fd-0e33-cdf3-4b62617ea9a6/mza_9226157347267917930.jpg/600x600bb.jpg",
+   "subjects": [
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 8
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1719657632"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1750591415",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Candace",
+   "author": "Candace Owens",
+   "feedURL": "https://feeds.megaphone.fm/candace",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/33/6f/c6/336fc616-d502-e275-2b71-7cb67da75009/mza_4089989466656231139.jpeg/600x600bb.jpg",
+   "subjects": [
+    "news",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 9
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1750591415"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1447684472",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Bulwark Daily",
+   "author": "The Bulwark",
+   "feedURL": "https://audioboom.com/channels/5114286.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/93/4f/85/934f8542-7a14-cf77-7d0e-63604579de3c/mza_4576536635025194283.jpg/600x600bb.jpg",
+   "subjects": [
+    "news",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 10
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1447684472"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1761444284",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "IHIP News",
+   "author": "Jennifer Welch & Angie Sullivan",
+   "feedURL": "https://feeds.megaphone.fm/QCD4780700649",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/82/c4/db/82c4db43-0931-f605-ec53-518d44e015ea/mza_12211092097858487461.jpeg/600x600bb.jpg",
+   "subjects": [
+    "news"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 11
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1761444284"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1469394914",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Journal.",
+   "author": "The Wall Street Journal & Spotify Studios",
+   "feedURL": "https://video-api.shdsvc.dowjones.io/api/podcasts/feed/the%20journal",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/91/0e/ca/910eca32-75a3-48b6-9be7-f45799ef5f2f/mza_9869666721903280546.jpg/600x600bb.jpg",
+   "subjects": [
+    "news",
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 12
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1469394914"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1073226719",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Pivot",
+   "author": "New York Magazine",
+   "feedURL": "https://feeds.megaphone.fm/pivot",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/13/22/39/1322397a-976e-3c8f-7764-91cc38d0dd70/mza_12130189257448841692.jpeg/600x600bb.jpg",
+   "subjects": [
+    "news",
+    "technology"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 13
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1073226719"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-135067274",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Global News Podcast",
+   "author": "BBC World Service",
+   "feedURL": "https://podcasts.files.bbci.co.uk/p02nq0gn.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/f1/4f/d1/f14fd1cf-7b5c-0bb7-683d-325c83bb089e/mza_17540730169954302156.jpg/600x600bb.jpg",
+   "subjects": [
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 15
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "135067274"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1730358737",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Letters from an American",
+   "author": "Heather Cox Richardson",
+   "feedURL": "https://api.substack.com/feed/podcast/20533.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/b8/79/98/b879989a-43d3-2ed3-7384-3cdfe77d5736/mza_3088248024937929702.jpg/600x600bb.jpg",
+   "subjects": [
+    "news",
+    "history"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 16
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1730358737"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1794450472",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Bulwark Takes",
+   "author": "The Bulwark",
+   "feedURL": "https://audioboom.com/channels/5149464.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/3c/45/d3/3c45d370-be2e-2324-9c77-ffab1b7d6a8c/mza_5731835704910824301.jpg/600x600bb.jpg",
+   "subjects": [
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 17
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1794450472"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-201671138",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "This American Life",
+   "author": "This American Life",
+   "feedURL": "https://www.thisamericanlife.org/podcast/rss.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/f2/74/1f/f2741f77-1c20-b058-a845-f261c819fe80/mza_557469201745576820.png/600x600bb.jpg",
+   "subjects": [
+    "society-culture",
+    "arts"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-society-culture",
+     "rank": 1
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "201671138"
+   },
+   "provenanceIds": [
+    "apple-top-us-society-culture",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1548604447",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Ezra Klein Show",
+   "author": "New York Times Opinion",
+   "feedURL": "https://feeds.simplecast.com/kEKXbjuJ",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/9d/ca/35/9dca35d8-e7d2-7e4f-63b5-c2ff4973a3f5/mza_16891544429738729361.jpg/600x600bb.jpg",
+   "subjects": [
+    "society-culture",
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-society-culture",
+     "rank": 2
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1548604447"
+   },
+   "provenanceIds": [
+    "apple-top-us-society-culture",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-278981407",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Stuff You Should Know",
+   "author": "iHeartPodcasts",
+   "feedURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/a91018a4-ea4f-4130-bf55-ae270180c327/44710ecc-10bb-48d1-93c7-ae270180c33e/podcast.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/aa/82/91/aa82912f-23ee-6f6a-583c-a4e993164d0e/mza_12111158076643383507.jpg/600x600bb.jpg",
+   "subjects": [
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-society-culture",
+     "rank": 3
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "278981407"
+   },
+   "provenanceIds": [
+    "apple-top-us-society-culture",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1896943121",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Notes from the Edge",
+   "author": "Gamut Podcast Network",
+   "feedURL": "https://rss.art19.com/notes-from-the-edge",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/0d/05/8b/0d058b4b-e722-7328-aba0-eb3a69848b7c/mza_13626234271195180876.jpeg/600x600bb.jpg",
+   "subjects": [
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-society-culture",
+     "rank": 4
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1896943121"
+   },
+   "provenanceIds": [
+    "apple-top-us-society-culture",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1492492083",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Shawn Ryan Show",
+   "author": "Shawn Ryan",
+   "feedURL": "https://rss.pdrl.fm/ac69ac/feeds.megaphone.fm/WWO7410387571",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts112/v4/d0/b3/2d/d0b32d7f-ab2d-5791-83b0-854f698a9184/mza_13561258173056659752.jpg/600x600bb.jpg",
+   "subjects": [
+    "society-culture"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-society-culture",
+     "rank": 5
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1492492083"
+   },
+   "provenanceIds": [
+    "apple-top-us-society-culture",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-6805930852",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Happy Hour with Ina Garten",
+   "author": "Vox Media",
+   "feedURL": "https://feeds.megaphone.fm/VMP2612107147",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/63/95/85/63958592-550c-9c6c-8319-2818cd10a3ad/mza_15908877599917864646.jpg/600x600bb.jpg",
+   "subjects": [
+    "society-culture",
+    "arts"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-society-culture",
+     "rank": 6
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "6805930852"
+   },
+   "provenanceIds": [
+    "apple-top-us-society-culture",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1676849476",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Miss Understood with Rachel Uchitel",
+   "author": "Rachel Uchitel",
+   "feedURL": "https://feeds.simplecast.com/RvDGWRIs",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/ad/06/81/ad0681b9-830a-bf07-aaf7-cc1bdcefd5c8/mza_13129750340714703871.jpg/600x600bb.jpg",
+   "subjects": [
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-society-culture",
+     "rank": 7
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1676849476"
+   },
+   "provenanceIds": [
+    "apple-top-us-society-culture",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-354668519",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Freakonomics Radio",
+   "author": "Freakonomics Radio + Stitcher",
+   "feedURL": "https://feeds.simplecast.com/Y8lFbOT4",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts115/v4/f7/0c/c5/f70cc540-ce36-d96f-b111-c970aad5505c/mza_17703422762227531425.jpg/600x600bb.jpg",
+   "subjects": [
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-society-culture",
+     "rank": 8
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "354668519"
+   },
+   "provenanceIds": [
+    "apple-top-us-society-culture",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1782960381",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Oprah Podcast",
+   "author": "Harpo",
+   "feedURL": "https://rss.art19.com/the-oprah-podcast",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/0f/e3/21/0fe32103-63b9-c890-308e-e8aa3b89090b/mza_17611356982334262758.jpeg/600x600bb.jpg",
+   "subjects": [
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-society-culture",
+     "rank": 9
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1782960381"
+   },
+   "provenanceIds": [
+    "apple-top-us-society-culture",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1373812661",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Behind the Bastards",
+   "author": "Cool Zone Media and iHeartPodcasts",
+   "feedURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/e5f91208-cc7e-4726-a312-ae280140ad11/d64f756d-6d5e-4fae-b24f-ae280140ad36/podcast.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/ee/82/58/ee8258d4-32a6-eae8-ddde-d13113a6baee/mza_2590417236454661582.jpg/600x600bb.jpg",
+   "subjects": [
+    "society-culture",
+    "history"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-society-culture",
+     "rank": 10
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1373812661"
+   },
+   "provenanceIds": [
+    "apple-top-us-society-culture",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1756171805",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Dream Life Club",
+   "author": "Sumi Krishnan",
+   "feedURL": "https://feeds.captivate.fm/dreamlifeclubpodcast/",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/dc/a7/c1/dca7c18a-9400-1bbe-8fdf-50dba9c82c06/mza_1622306291388302510.jpg/600x600bb.jpg",
+   "subjects": [
+    "society-culture",
+    "education"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-society-culture",
+     "rank": 11
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1756171805"
+   },
+   "provenanceIds": [
+    "apple-top-us-society-culture",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-6794415936",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The ManFlu | Exploring Gender Dynamics, Partnerships & Raising Boys Who Care",
+   "author": "Lucy McAfee",
+   "feedURL": "https://feeds.acast.com/public/shows/68f8549a8125b849f8604300",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/30/32/81/303281dd-4dd9-aebb-9cc5-6fed6b9678a7/mza_7127203241314914654.jpeg/600x600bb.jpg",
+   "subjects": [
+    "society-culture"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-society-culture",
+     "rank": 12
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "6794415936"
+   },
+   "provenanceIds": [
+    "apple-top-us-society-culture",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1896058335",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Paper Trail",
+   "author": "ProPublica",
+   "feedURL": "https://publicfeeds.net/f/16890/feed-rss.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/af/f0/65/aff065ce-8f59-7a18-8402-5ae1b8e5efa7/mza_1290832703236762863.jpeg/600x600bb.jpg",
+   "subjects": [
+    "society-culture",
+    "news"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-society-culture",
+     "rank": 13
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1896058335"
+   },
+   "provenanceIds": [
+    "apple-top-us-society-culture",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1624946521",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Interview",
+   "author": "The New York Times",
+   "feedURL": "https://feeds.simplecast.com/HpGMoS4g",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/5b/83/08/5b830874-2a38-e2bf-eafb-61c7efe6dee4/mza_1847005937748297273.jpg/600x600bb.jpg",
+   "subjects": [
+    "society-culture",
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-society-culture",
+     "rank": 14
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1624946521"
+   },
+   "provenanceIds": [
+    "apple-top-us-society-culture",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1347973549",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Modern Wisdom",
+   "author": "Chris Williamson",
+   "feedURL": "https://feeds.megaphone.fm/SIXMSB5088139739",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/7f/73/99/7f739968-f65e-f679-d1fd-c727118c69f0/mza_17156407142775783271.jpg/600x600bb.jpg",
+   "subjects": [
+    "society-culture",
+    "health-fitness"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-society-culture",
+     "rank": 15
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1347973549"
+   },
+   "provenanceIds": [
+    "apple-top-us-society-culture",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1271249164",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Two Girls One Ghost",
+   "author": "Sony Music Entertainment",
+   "feedURL": "https://feeds.megaphone.fm/twogirlsoneghost",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/77/07/ee/7707ee37-5a35-63a9-f5c2-1f6c8df90300/mza_3178827590310487665.jpg/600x600bb.jpg",
+   "subjects": [
+    "society-culture",
+    "true-crime"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-society-culture",
+     "rank": 16
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1271249164"
+   },
+   "provenanceIds": [
+    "apple-top-us-society-culture",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-360084272",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Joe Rogan Experience",
+   "author": "Joe Rogan",
+   "feedURL": "https://feeds.megaphone.fm/GLT1412515089",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/ac/39/c4/ac39c4f9-9a22-06b4-442e-ed5d9715b09f/mza_16971090484056979646.jpg/600x600bb.jpg",
+   "subjects": [
+    "comedy"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 1
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "360084272"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1795483480",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Good Hang with Amy Poehler",
+   "author": "The Ringer",
+   "feedURL": "https://feeds.megaphone.fm/good-hang-with-amy-poehler",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/2b/94/bb/2b94bb6e-44f1-9d57-7748-b7456072806d/mza_1064202164981856225.jpg/600x600bb.jpg",
+   "subjects": [
+    "comedy"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 2
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1795483480"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-121493804",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Wait Wait... Don't Tell Me!",
+   "author": "NPR",
+   "feedURL": "https://feeds.npr.org/344098539/podcast.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/e9/94/fe/e994fed6-50a1-6519-9b84-b0beaa205242/mza_2290751556169099993.jpg/600x600bb.jpg",
+   "subjects": [
+    "comedy"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 3
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "121493804"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1345682353",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Armchair Expert with Dax Shepard",
+   "author": "Armchair Umbrella",
+   "feedURL": "https://rss.art19.com/armchair-expert",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/f0/13/8f/f0138f4b-8bc3-0a64-2c11-ef566840f60f/mza_3062409012210474882.jpeg/600x600bb.jpg",
+   "subjects": [
+    "comedy"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 4
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1345682353"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1536352412",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Giggly Squad",
+   "author": "Hannah Berner & Paige DeSorbo",
+   "feedURL": "https://feeds.acast.com/public/shows/780a3042-864b-40fa-ae09-4557aec621c3",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/b1/0a/29/b10a293d-31bf-0e82-dd54-50452336f4c1/mza_908601013238146456.jpeg/600x600bb.jpg",
+   "subjects": [
+    "comedy"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 5
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1536352412"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1521578868",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "SmartLess",
+   "author": "Jason Bateman, Sean Hayes, Will Arnett",
+   "feedURL": "https://feeds.simplecast.com/hNaFxXpO",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/b1/93/5f/b1935f9f-35be-9144-e813-626bd8dabfb4/mza_4132654708551836825.jpg/600x600bb.jpg",
+   "subjects": [
+    "comedy",
+    "education"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 6
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1521578868"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1190981360",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "This Past Weekend w/ Theo Von",
+   "author": "Theo Von",
+   "feedURL": "https://feeds.megaphone.fm/thispastweekend",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/9c/f6/5a/9cf65abb-f8db-fb7b-984f-b4276a1e8c85/mza_2107148709996282347.jpg/600x600bb.jpg",
+   "subjects": [
+    "comedy"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 7
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1190981360"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1135137367",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Tim Dillon Show",
+   "author": "The Tim Dillon Show",
+   "feedURL": "https://audioboom.com/channels/5093219.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/b2/64/34/b264343a-cd58-e5d0-a77d-9d802d4e156a/mza_8004434530174910890.jpg/600x600bb.jpg",
+   "subjects": [
+    "comedy",
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 8
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1135137367"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1438054347",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Conan O’Brien Needs A Friend",
+   "author": "Team Coco & Earwolf",
+   "feedURL": "https://feeds.simplecast.com/dHoohVNH",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/c6/02/8a/c6028ab7-bffd-db83-53e4-34a4ea9bef21/mza_16944101310108746053.jpg/600x600bb.jpg",
+   "subjects": [
+    "comedy"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 9
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1438054347"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1368081567",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Toast",
+   "author": "Dear Media",
+   "feedURL": "https://feeds.megaphone.fm/DEARMEDIALLC7892434789",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/4e/3d/5e/4e3d5eb1-5b47-8723-f3c0-8ecf7e25d198/mza_14233415616171199300.jpeg/600x600bb.jpg",
+   "subjects": [
+    "comedy"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 10
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1368081567"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1697425543",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Smosh Reads Reddit Stories",
+   "author": "Smosh",
+   "feedURL": "https://rss.pdrl.fm/ff8ba6/audioboom.com/channels/5148149.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/ea/e9/98/eae99878-5ee5-915b-0c0a-46cf2b275f91/mza_13860666952263637735.jpg/600x600bb.jpg",
+   "subjects": [
+    "comedy",
+    "society-culture"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 11
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1697425543"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1194755213",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Small Town Murder",
+   "author": "James Pietragallo, Jimmie Whisman",
+   "feedURL": "https://rss.libsyn.com/shows/580095/destinations/5028715.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/24/84/f4/2484f48c-4321-ef18-10ef-ac164cc80272/mza_5585431776803613938.png/600x600bb.jpg",
+   "subjects": [
+    "comedy",
+    "true-crime"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 12
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1194755213"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1177068388",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Matt and Shane's Secret Podcast",
+   "author": "Matt McCusker & Shane Gillis",
+   "feedURL": "https://feeds.megaphone.fm/GLT1158789509",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/fa/b5/66/fab56692-7e81-cc26-c781-75b47c8d92d3/mza_7469845485865207311.jpg/600x600bb.jpg",
+   "subjects": [
+    "comedy",
+    "society-culture"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 13
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1177068388"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1553199104",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Two Hot Takes",
+   "author": "Morgan Absher",
+   "feedURL": "https://feeds.megaphone.fm/GLT3561373177",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/d7/7c/0d/d77c0d52-44a4-602d-5546-5bb4efe638e4/mza_3929223515890523957.jpg/600x600bb.jpg",
+   "subjects": [
+    "comedy",
+    "society-culture"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 14
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1553199104"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-306390087",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Adam Carolla Show",
+   "author": "PodcastOne / Carolla Digital",
+   "feedURL": "https://rss.pdrl.fm/c1114b/rss.art19.com/adam-carolla-show",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/02/83/42/028342dc-0471-f698-83c8-369bae7401b7/mza_16605990669344553550.jpeg/600x600bb.jpg",
+   "subjects": [
+    "comedy"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 15
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "306390087"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1583132133",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Weekly Show with Jon Stewart",
+   "author": "Comedy Central",
+   "feedURL": "https://feeds.megaphone.fm/BVLLC2163264914",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/f1/f3/f6/f1f3f6e9-71b2-2965-5b92-a294e04e9646/mza_12649236828332054745.jpg/600x600bb.jpg",
+   "subjects": [
+    "comedy",
+    "news"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 16
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1583132133"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1322200189",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Crime Junkie",
+   "author": "Audiochuck",
+   "feedURL": "https://feeds.simplecast.com/qm_9xx0g",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts126/v4/8c/35/04/8c350430-2fbf-98d0-0a25-00b76550ffeb/mza_13445204151221888086.jpg/600x600bb.jpg",
+   "subjects": [
+    "true-crime"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-true-crime",
+     "rank": 1
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1322200189"
+   },
+   "provenanceIds": [
+    "apple-top-us-true-crime",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1464919521",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Dateline NBC",
+   "author": "NBC News",
+   "feedURL": "https://podcastfeeds.nbcnews.com/HL4TzgYC",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts115/v4/8c/00/7a/8c007a42-e550-0214-d4cb-b59cd7edf194/mza_5305664083935674472.jpeg/600x600bb.jpg",
+   "subjects": [
+    "true-crime",
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-true-crime",
+     "rank": 2
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1464919521"
+   },
+   "provenanceIds": [
+    "apple-top-us-true-crime",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1379959217",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Morbid",
+   "author": "Ash Kelley & Alaina Urquhart",
+   "feedURL": "https://feeds.simplecast.com/ohmVlJZQ",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/78/e9/0e/78e90ee0-567d-1ad8-17a0-17d7c988c4bd/mza_8425901783365617933.jpg/600x600bb.jpg",
+   "subjects": [
+    "true-crime",
+    "comedy"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-true-crime",
+     "rank": 3
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1379959217"
+   },
+   "provenanceIds": [
+    "apple-top-us-true-crime",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-987967575",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "20/20",
+   "author": "ABC News",
+   "feedURL": "https://feeds.megaphone.fm/ESP3456903052",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/81/6c/5d/816c5d57-7c3f-3df9-1557-08e17469dfe4/mza_1433648970787567135.jpg/600x600bb.jpg",
+   "subjects": [
+    "true-crime"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-true-crime",
+     "rank": 4
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "987967575"
+   },
+   "provenanceIds": [
+    "apple-top-us-true-crime",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1074507850",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "My Favorite Murder with Karen Kilgariff and Georgia Hardstark",
+   "author": "Exactly Right and iHeartPodcasts",
+   "feedURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/bdde8bb3-169d-43b1-91d3-b24c0047969c/f450d41f-16bc-4ecd-8f6c-b24c004796e2/podcast.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/1b/80/b1/1b80b146-8608-f76f-97e7-7a2317549c35/mza_14115126871478479568.jpg/600x600bb.jpg",
+   "subjects": [
+    "true-crime"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-true-crime",
+     "rank": 5
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1074507850"
+   },
+   "provenanceIds": [
+    "apple-top-us-true-crime",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-965818306",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "48 Hours",
+   "author": "48 Hours",
+   "feedURL": "https://rss.amperwave.net/v2/feed/audacynetwork/496099a4061493caac75b71a6c26b8fb",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/c8/4f/8f/c84f8fa2-074d-6023-7f31-9c781b80dedc/mza_7616553513239265555.jpeg/600x600bb.jpg",
+   "subjects": [
+    "true-crime"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-true-crime",
+     "rank": 6
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "965818306"
+   },
+   "provenanceIds": [
+    "apple-top-us-true-crime",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1148175292",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "In The Dark",
+   "author": "The New Yorker",
+   "feedURL": "https://feeds.megaphone.fm/CNE3915766304",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/67/d5/37/67d537b9-b27e-240b-b9a2-43c13bdfd7fb/mza_4163719876671560348.jpeg/600x600bb.jpg",
+   "subjects": [
+    "true-crime",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-true-crime",
+     "rank": 7
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1148175292"
+   },
+   "provenanceIds": [
+    "apple-top-us-true-crime",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1615637724",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Betrayal Season 6",
+   "author": "iHeartPodcasts | Glass Podcasts",
+   "feedURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/7b1f0895-f595-4c38-afb6-ae6001531610/f1aae979-82f6-402c-8906-ae6001537b33/podcast.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/45/c0/ce/45c0cec7-f08f-a48c-505f-0796c7f75401/mza_6343213902657514244.jpg/600x600bb.jpg",
+   "subjects": [
+    "true-crime",
+    "society-culture"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-true-crime",
+     "rank": 8
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1615637724"
+   },
+   "provenanceIds": [
+    "apple-top-us-true-crime",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1608813794",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "MrBallen Podcast: Strange, Dark & Mysterious Stories",
+   "author": "Ballen Studios",
+   "feedURL": "https://feeds.simplecast.com/dloY8UYJ",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/a5/9c/8a/a59c8a0a-0cb2-9862-e0d6-7b5ee4e9e157/mza_12554888833857337425.jpg/600x600bb.jpg",
+   "subjects": [
+    "true-crime"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-true-crime",
+     "rank": 9
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1608813794"
+   },
+   "provenanceIds": [
+    "apple-top-us-true-crime",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1145089790",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Snapped: Women Who Murder",
+   "author": "Oxygen",
+   "feedURL": "https://rss.art19.com/snapped-women-who-murder",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts125/v4/d4/ef/ff/d4efff91-8a69-ba8a-b5a8-634c029af6ff/mza_14265882527940743554.jpeg/600x600bb.jpg",
+   "subjects": [
+    "true-crime"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-true-crime",
+     "rank": 10
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1145089790"
+   },
+   "provenanceIds": [
+    "apple-top-us-true-crime",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1878220033",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Love Trapped",
+   "author": "iHeartPodcasts and Glass Podcasts",
+   "feedURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/20968bfe-1a62-450f-a762-b3de0110281c/1c0ae3b2-ec1e-4a0c-a144-b3de01102fb1/podcast.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/b5/ad/82/b5ad82a9-b29a-1411-1506-05f9f3ad5d6b/mza_17395607531155205240.jpg/600x600bb.jpg",
+   "subjects": [
+    "true-crime"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-true-crime",
+     "rank": 11
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1878220033"
+   },
+   "provenanceIds": [
+    "apple-top-us-true-crime",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1578324041",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Binge Crimes: What Happened to the Harrisons?",
+   "author": "Sony Music Entertainment",
+   "feedURL": "https://rss.pdrl.fm/ca33ec/feeds.megaphone.fm/witnessed",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/39/7c/65/397c65ea-ce5e-578a-41c8-cd8be12570ae/mza_2676083626680413532.jpeg/600x600bb.jpg",
+   "subjects": [
+    "true-crime",
+    "society-culture"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-true-crime",
+     "rank": 12
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1578324041"
+   },
+   "provenanceIds": [
+    "apple-top-us-true-crime",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-790487079",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Sword and Scale",
+   "author": "Sword and Scale",
+   "feedURL": "https://www.spreaker.com/show/5895676/episodes/feed",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/23/1d/66/231d66c8-fbc1-7b1f-3342-03c709291529/mza_15856950583949291523.jpg/600x600bb.jpg",
+   "subjects": [
+    "true-crime",
+    "society-culture"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-true-crime",
+     "rank": 13
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "790487079"
+   },
+   "provenanceIds": [
+    "apple-top-us-true-crime",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1517954480",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Rotten Mango",
+   "author": "Stephanie Soo",
+   "feedURL": "https://feeds.simplecast.com/6Qp23t6h",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/13/8f/fa/138ffad5-1aee-a955-b73b-6aea47b55197/mza_13457757566766616901.jpg/600x600bb.jpg",
+   "subjects": [
+    "true-crime",
+    "comedy"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-true-crime",
+     "rank": 14
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1517954480"
+   },
+   "provenanceIds": [
+    "apple-top-us-true-crime",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-6809864042",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Woman in the Woods",
+   "author": "48 Hours",
+   "feedURL": "https://rss.amperwave.net/v2/feed/audacynetwork/91ac7984b8d3ba72de60858d5e6155bd",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/7a/a2/63/7aa26315-a471-10d2-eb09-23583f07f0dd/mza_13135717494208594853.jpg/600x600bb.jpg",
+   "subjects": [
+    "true-crime",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-true-crime",
+     "rank": 15
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "6809864042"
+   },
+   "provenanceIds": [
+    "apple-top-us-true-crime",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-809264944",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Criminal",
+   "author": "Vox Media Podcast Network",
+   "feedURL": "https://feeds.megaphone.fm/VMP7924981569",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/bd/98/22/bd9822cc-b8e0-59de-5809-45926a0ee5f3/mza_2331604259390110897.jpeg/600x600bb.jpg",
+   "subjects": [
+    "true-crime",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-true-crime",
+     "rank": 16
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "809264944"
+   },
+   "provenanceIds": [
+    "apple-top-us-true-crime",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1012570406",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "REAL AF with Andy Frisella",
+   "author": "Andy Frisella",
+   "feedURL": "https://rss.libsyn.com/shows/67940/destinations/278377.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts115/v4/55/21/67/55216775-731a-1a0b-6c2a-81923902f058/mza_11706571282358600140.jpeg/600x600bb.jpg",
+   "subjects": [
+    "business"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-business",
+     "rank": 1
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1012570406"
+   },
+   "provenanceIds": [
+    "apple-top-us-business",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1844970260",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Unblinded with Sean Callagy",
+   "author": "Sean Callagy",
+   "feedURL": "https://anchor.fm/s/10a340624/podcast/rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/fe/73/39/fe733903-aac9-857a-7e0d-97da75f26739/mza_7400622169884755798.jpg/600x600bb.jpg",
+   "subjects": [
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-business",
+     "rank": 2
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1844970260"
+   },
+   "provenanceIds": [
+    "apple-top-us-business",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-985396258",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Learning Leader Show With Ryan Hawk",
+   "author": "Ryan Hawk",
+   "feedURL": "https://rss.libsyn.com/shows/65162/destinations/259291.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/fb/3c/0e/fb3c0e91-f0a8-44ef-403f-1ec20bece9e0/mza_454404552678702443.png/600x600bb.jpg",
+   "subjects": [
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-business",
+     "rank": 3
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "985396258"
+   },
+   "provenanceIds": [
+    "apple-top-us-business",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1368888880",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Young and Profiting (YAP) with Hala Taha: Entrepreneurship and Self-Improvement Podcast",
+   "author": "Hala Taha | Entrepreneurship, Sales, Marketing | YAP Media Network",
+   "feedURL": "https://rss.introcast.io/1368888880/feeds.megaphone.fm/yap",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/80/c1/bd/80c1bd2c-eac4-bdb6-f8cb-ac980b4ad473/mza_16051863235006465622.jpeg/600x600bb.jpg",
+   "subjects": [
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-business",
+     "rank": 4
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1368888880"
+   },
+   "provenanceIds": [
+    "apple-top-us-business",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1744386875",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Proven Podcast",
+   "author": "Charles Schwartz",
+   "feedURL": "https://rss.libsyn.com/shows/526583/destinations/4528548.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/79/33/d2/7933d22b-9392-7d2c-714f-9a4c624003e5/mza_1012289391812617337.png/600x600bb.jpg",
+   "subjects": [
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-business",
+     "rank": 5
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1744386875"
+   },
+   "provenanceIds": [
+    "apple-top-us-business",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1837193185",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Vault Unlocked",
+   "author": "Kayvon Kay",
+   "feedURL": "https://rss.libsyn.com/shows/591700/destinations/5140720.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/d3/f9/28/d3f928ee-3a7f-0ac6-e841-342b3be2ba68/mza_15071551835075158095.png/600x600bb.jpg",
+   "subjects": [
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-business",
+     "rank": 6
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1837193185"
+   },
+   "provenanceIds": [
+    "apple-top-us-business",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1451897026",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Habits and Hustle",
+   "author": "Jen Cohen",
+   "feedURL": "https://rss.libsyn.com/shows/624375/destinations/5495160.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/ba/d2/09/bad209e9-7b0d-66b8-14fe-207a69d9397b/mza_12651442554869510823.jpeg/600x600bb.jpg",
+   "subjects": [
+    "business"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-business",
+     "rank": 7
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1451897026"
+   },
+   "provenanceIds": [
+    "apple-top-us-business",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1453389736",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "the bossbabe podcast",
+   "author": "Natalie Ellis",
+   "feedURL": "https://feeds.megaphone.fm/GRWD2947998660",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/52/a1/ab/52a1abee-87c4-c0b8-d242-a041522add49/mza_11816846594555703738.jpg/600x600bb.jpg",
+   "subjects": [
+    "business"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-business",
+     "rank": 8
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1453389736"
+   },
+   "provenanceIds": [
+    "apple-top-us-business",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1726674707",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Coffeez with Joe Shalaby",
+   "author": "Joseph Shalaby",
+   "feedURL": "https://feeds.captivate.fm/coffeez-with-joe-shalaby/",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/16/b1/d0/16b1d00a-50a8-2cdd-8a24-b6d36cc300af/mza_4046403334673274826.jpg/600x600bb.jpg",
+   "subjects": [
+    "business"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-business",
+     "rank": 9
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1726674707"
+   },
+   "provenanceIds": [
+    "apple-top-us-business",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-6788010464",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Business MVP",
+   "author": "Sammy Peterson",
+   "feedURL": "https://feeds.megaphone.fm/YAP2427560641",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/ea/c3/a5/eac3a50c-4096-9e8a-2976-ba56927f07cc/mza_5580212575802116973.jpeg/600x600bb.jpg",
+   "subjects": [
+    "business",
+    "education"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-business",
+     "rank": 10
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "6788010464"
+   },
+   "provenanceIds": [
+    "apple-top-us-business",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1733135157",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Level Up Podcast w/ Paul Alex",
+   "author": "Paul Alex Espinoza",
+   "feedURL": "https://rss.pdrl.fm/0c37ea/feeds.megaphone.fm/ARML5552075612",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/50/e3/b3/50e3b35c-d901-0f91-60e8-c5d9f7d945ca/mza_3986309763540703267.png/600x600bb.jpg",
+   "subjects": [
+    "business"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-business",
+     "rank": 11
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1733135157"
+   },
+   "provenanceIds": [
+    "apple-top-us-business",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1664983297",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Money Mondays",
+   "author": "Dan Fleyshman",
+   "feedURL": "https://anchor.fm/s/d9265370/podcast/rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts126/v4/a8/60/49/a860491e-a48a-2016-55c4-5426c7998dc9/mza_12477201885067188723.jpg/600x600bb.jpg",
+   "subjects": [
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-business",
+     "rank": 12
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1664983297"
+   },
+   "provenanceIds": [
+    "apple-top-us-business",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1341478446",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Home Service Expert Podcast",
+   "author": "Tommy Mello: $200 Million Founder|Forbes, Inc., Entrepreneur Columnist",
+   "feedURL": "https://rss.libsyn.com/shows/105472/destinations/567121.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/4a/61/3d/4a613d98-7530-ac40-a8df-79f0c08bd64a/mza_17092466455454967949.png/600x600bb.jpg",
+   "subjects": [
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-business",
+     "rank": 13
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1341478446"
+   },
+   "provenanceIds": [
+    "apple-top-us-business",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1526080983",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "3 Takeaways™",
+   "author": "Lynn Thoman",
+   "feedURL": "https://rss.buzzsprout.com/1236866.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/fa/0f/52/fa0f52a1-b4b7-f8cc-3504-cfb00fdf8668/mza_8714663391479120517.jpg/600x600bb.jpg",
+   "subjects": [
+    "business",
+    "education"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-business",
+     "rank": 14
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1526080983"
+   },
+   "provenanceIds": [
+    "apple-top-us-business",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1765605600",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "We Fixed It, You're Welcome",
+   "author": "We Fixed It, You're Welcome",
+   "feedURL": "https://feeds.megaphone.fm/RHAPSODYVOICES4270090158",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/f4/48/8f/f4488fc1-0a7e-8708-de74-037adb94c814/mza_12133068273087875781.jpg/600x600bb.jpg",
+   "subjects": [
+    "business",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-business",
+     "rank": 16
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1765605600"
+   },
+   "provenanceIds": [
+    "apple-top-us-business",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1291423644",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Diary Of A CEO with Steven Bartlett",
+   "author": "DOAC",
+   "feedURL": "https://rss2.flightcast.com/xmsftuzjjykcmqwolaqn6mdn",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/69/af/0d/69af0ddd-1e0f-7ae3-c84b-88f18e31ad0c/mza_14445920128472365296.png/600x600bb.jpg",
+   "subjects": [
+    "business",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-business",
+     "rank": 17
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1291423644"
+   },
+   "provenanceIds": [
+    "apple-top-us-business",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1150124880",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Something You Should Know",
+   "author": "Mike Carruthers | OmniCast Media",
+   "feedURL": "https://rss.pdrl.fm/60a606/feeds.megaphone.fm/WWO9761275037",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/96/57/ca/9657caf6-6375-d5ba-585b-eb2f5c9fbf8e/mza_3992023160251207455.jpeg/600x600bb.jpg",
+   "subjects": [
+    "science",
+    "education"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 1
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1150124880"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-152249110",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Radiolab",
+   "author": "WNYC Studios",
+   "feedURL": "https://feeds.simplecast.com/EmVW7VGp",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/2b/b2/4d/2bb24d28-f3bb-916f-6bf3-9e125ba5219b/mza_4476298389845914795.jpg/600x600bb.jpg",
+   "subjects": [
+    "science",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 2
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "152249110"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1028908750",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Hidden Brain",
+   "author": "Hidden Brain, Shankar Vedantam",
+   "feedURL": "https://feeds.simplecast.com/kwWc0lhf",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/e2/18/b8/e218b838-b790-3a33-441f-c3772d9abbbf/mza_6896085647855199484.jpg/600x600bb.jpg",
+   "subjects": [
+    "science",
+    "arts"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 3
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1028908750"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1783430373",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Science of Perception Box",
+   "author": "Unlikely Collaborators | Pod People",
+   "feedURL": "https://feeds.megaphone.fm/PDP7113651254",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/ad/59/05/ad590545-0cea-12c2-07f0-5a063c77d11b/mza_17798297345030142677.jpg/600x600bb.jpg",
+   "subjects": [
+    "science",
+    "health-fitness"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 4
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1783430373"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1278815517",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Ologies with Alie Ward",
+   "author": "Alie Ward",
+   "feedURL": "https://feeds.simplecast.com/FO6kxYGj",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts125/v4/44/4e/42/444e42f6-1ce8-1e7b-2d50-4ed506c27004/mza_18370866018545460916.jpg/600x600bb.jpg",
+   "subjects": [
+    "science",
+    "comedy"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 5
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1278815517"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-325404506",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "StarTalk with Neil deGrasse Tyson",
+   "author": "Neil deGrasse Tyson",
+   "feedURL": "https://feeds.simplecast.com/4T39_jAj",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/d7/88/9b/d7889bab-dca5-77ba-3d0c-7fae8f16ab11/mza_8810454848871508.jpg/600x600bb.jpg",
+   "subjects": [
+    "science",
+    "education"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 6
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "325404506"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1820703126",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Boring History for Sleep",
+   "author": "Velvet",
+   "feedURL": "https://anchor.fm/s/104e3eb08/podcast/rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/62/a6/37/62a63720-ae50-b8c6-6282-b62a41e54588/mza_4071962011418281551.jpg/600x600bb.jpg",
+   "subjects": [
+    "science"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 7
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1820703126"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1766302914",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Big Ideas Lab",
+   "author": "Mission.org",
+   "feedURL": "https://feeds.simplecast.com/WfThhbae",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/da/1b/ed/da1bedd0-daa5-5aac-d802-aa465382eef4/mza_5929512303487909442.jpg/600x600bb.jpg",
+   "subjects": [
+    "science",
+    "history"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 8
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1766302914"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1548757282",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Care More Be Better: A Podcast For Sustainable Social Impact and Regeneration",
+   "author": "Corinna Bellizzi",
+   "feedURL": "https://feeds.simplecast.com/RkKDS3Sf",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/44/d6/c4/44d6c400-328c-9675-0c91-2ba8a478f795/mza_9931771251539629382.jpg/600x600bb.jpg",
+   "subjects": [
+    "science",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 9
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1548757282"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-604656349",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Sasquatch Chronicles",
+   "author": "Sasquatch Chronicles - Bigfoot Encounters",
+   "feedURL": "https://rss.libsyn.com/shows/268889/destinations/2049179.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts115/v4/bf/4c/04/bf4c0485-bed0-3206-ce8b-3332433433c0/mza_849656122803846986.png/600x600bb.jpg",
+   "subjects": [
+    "science",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 10
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "604656349"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1559480972",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Get Obsessed : With Living Your Best Life",
+   "author": "Julie Lokun and Mika Altidor",
+   "feedURL": "https://feeds.simplecast.com/Kxn0Lajf",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/8e/d3/a5/8ed3a508-0347-788f-d2f9-40b23040302d/mza_5284682999925399537.jpg/600x600bb.jpg",
+   "subjects": [
+    "science",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 11
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1559480972"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-73329284",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Science Friday",
+   "author": "Science Friday and WNYC Studios",
+   "feedURL": "https://feeds.simplecast.com/h18ZIZD_",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/0a/a3/e2/0aa3e2a9-dda9-a7ea-8711-490d7f6c5c55/mza_1538698271404318803.jpg/600x600bb.jpg",
+   "subjects": [
+    "science"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 12
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "73329284"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1663974629",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Health Optimization Medicine Podcast",
+   "author": "Health Optimization Medicine and Practice",
+   "feedURL": "https://rss.libsyn.com/shows/454677/destinations/3824325.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/0f/0c/94/0f0c9449-70c4-69d5-a3e0-c25df3dcfa30/mza_17754862318168047684.png/600x600bb.jpg",
+   "subjects": [
+    "science",
+    "health-fitness"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 13
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1663974629"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1051557000",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Science Vs",
+   "author": "Spotify Studios",
+   "feedURL": "https://feeds.megaphone.fm/sciencevs",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/62/15/18/621518e5-8eb3-392b-25a7-e7444aab86b6/mza_815589518502039493.jpg/600x600bb.jpg",
+   "subjects": [
+    "science",
+    "education"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 14
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1051557000"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1482575855",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Short Wave",
+   "author": "NPR",
+   "feedURL": "https://feeds.npr.org/510351/podcast.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/17/27/45/17274534-c924-edae-c6ca-c412724c96ae/mza_4098925705315309992.jpg/600x600bb.jpg",
+   "subjects": [
+    "science"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 15
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1482575855"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1526885135",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Blurry Creatures",
+   "author": "Blurry Creatures",
+   "feedURL": "https://rss.pdrl.fm/6f2cf2/feeds.megaphone.fm/blurrycreatures",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/85/25/ad/8525adf3-be9a-7963-a08e-ff24771b9327/mza_14013259081946136509.jpg/600x600bb.jpg",
+   "subjects": [
+    "science"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 16
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1526885135"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1537788786",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Rest Is History",
+   "author": "Goalhanger",
+   "feedURL": "https://feeds.megaphone.fm/GLT4787413333",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/bf/89/a5/bf89a586-3f77-bf37-7ba3-b75f1bca7bfa/mza_1664785978944494824.jpg/600x600bb.jpg",
+   "subjects": [
+    "history"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-history",
+     "rank": 1
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1537788786"
+   },
+   "provenanceIds": [
+    "apple-top-us-history",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1492797340",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Team House",
+   "author": "dee takos",
+   "feedURL": "https://www.spreaker.com/show/5960890/episodes/feed",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/9c/de/05/9cde05f7-8b77-a0a7-f19b-37d29a9dd6bc/mza_15442820465629580994.jpg/600x600bb.jpg",
+   "subjects": [
+    "history"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-history",
+     "rank": 2
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1492797340"
+   },
+   "provenanceIds": [
+    "apple-top-us-history",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1896760409",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "World War II with Tom Hanks",
+   "author": "The HISTORY Channel | Back Pocket Studios | Audacy",
+   "feedURL": "https://rss.amperwave.net/v2/feed/audacynetwork/cc2b59fa44d0151fa8987e1b01e424bc",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/ca/de/71/cade7141-30ec-5437-99aa-4b43a10564f0/mza_7246282932912745813.jpg/600x600bb.jpg",
+   "subjects": [
+    "history"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-history",
+     "rank": 3
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1896760409"
+   },
+   "provenanceIds": [
+    "apple-top-us-history",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1520403988",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Ancients",
+   "author": "History Hit",
+   "feedURL": "https://access.acast.com/rss/f2925f7a-eb08-471a-9958-387cb5ee6353",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts126/v4/6c/94/31/6c943113-5484-a41d-5cb7-bf606ff289ef/mza_6401313720037127611.jpeg/600x600bb.jpg",
+   "subjects": [
+    "history"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-history",
+     "rank": 4
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1520403988"
+   },
+   "provenanceIds": [
+    "apple-top-us-history",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1435516849",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "American Scandal",
+   "author": "Audible",
+   "feedURL": "https://rss.art19.com/american-scandal",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/f7/91/9a/f7919a02-8948-7812-3c35-4c78ceea4815/mza_17740823854183495101.jpeg/600x600bb.jpg",
+   "subjects": [
+    "history",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-history",
+     "rank": 5
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1435516849"
+   },
+   "provenanceIds": [
+    "apple-top-us-history",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1580439220",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Right Answers Mostly",
+   "author": "Claire Donald & Tess Bellomo",
+   "feedURL": "https://feeds.megaphone.fm/ADL8973993370",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/18/35/6e/18356efe-0468-9f8d-6a5d-b908b48cdf70/mza_15782331902007417462.jpeg/600x600bb.jpg",
+   "subjects": [
+    "history",
+    "society-culture"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-history",
+     "rank": 6
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1580439220"
+   },
+   "provenanceIds": [
+    "apple-top-us-history",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1779133177",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Sleepy History",
+   "author": "Slumber Studios",
+   "feedURL": "https://feeds.megaphone.fm/sleepyhistory",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/09/40/e9/0940e9b3-42ff-bdc2-807b-cdd888503f75/mza_10975884687951750557.jpg/600x600bb.jpg",
+   "subjects": [
+    "history",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-history",
+     "rank": 7
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1779133177"
+   },
+   "provenanceIds": [
+    "apple-top-us-history",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1313596069",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "American History Tellers",
+   "author": "Audible",
+   "feedURL": "https://rss.art19.com/american-history-tellers",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/93/37/d8/9337d89a-95d3-8df3-c08a-15408017e408/mza_18105168834619059515.jpeg/600x600bb.jpg",
+   "subjects": [
+    "history"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-history",
+     "rank": 8
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1313596069"
+   },
+   "provenanceIds": [
+    "apple-top-us-history",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1451109634",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Throughline",
+   "author": "NPR",
+   "feedURL": "https://feeds.npr.org/510333/podcast.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/da/c1/8e/dac18e58-b4c2-525a-2322-b4ec96ee5008/mza_3318470252564262999.jpg/600x600bb.jpg",
+   "subjects": [
+    "history",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-history",
+     "rank": 9
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1451109634"
+   },
+   "provenanceIds": [
+    "apple-top-us-history",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1291579828",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "History That Doesn't Suck",
+   "author": "Prof. Greg Jackson",
+   "feedURL": "https://rss.amperwave.net/v2/feed/audacynetwork/e69da14a26973f1dc761432876205254",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/73/50/1f/73501fd7-de66-cdfe-d316-334eae92b855/mza_17847109988024788034.jpg/600x600bb.jpg",
+   "subjects": [
+    "history",
+    "education"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-history",
+     "rank": 10
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1291579828"
+   },
+   "provenanceIds": [
+    "apple-top-us-history",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1042631089",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Dan Snow's History Hit",
+   "author": "History Hit",
+   "feedURL": "https://access.acast.com/rss/c939f8d1-c4bc-478e-8bb9-e5343f9a7ab5",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/0c/d7/01/0cd701da-de4f-9a76-b8bc-eaf886cacb51/mza_5440014230451480464.jpeg/600x600bb.jpg",
+   "subjects": [
+    "history"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-history",
+     "rank": 11
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1042631089"
+   },
+   "provenanceIds": [
+    "apple-top-us-history",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-978052928",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Lore",
+   "author": "Aaron Mahnke",
+   "feedURL": "https://rss.libsyn.com/shows/65267/destinations/259905.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts126/v4/9b/e0/c0/9be0c09c-b803-4774-77d3-85167bc87a31/mza_16743750170316675841.jpg/600x600bb.jpg",
+   "subjects": [
+    "history",
+    "true-crime"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-history",
+     "rank": 12
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "978052928"
+   },
+   "provenanceIds": [
+    "apple-top-us-history",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1579040306",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Short History Of...",
+   "author": "NOISER",
+   "feedURL": "https://feeds.megaphone.fm/NSR8236478683",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts112/v4/57/9e/e8/579ee81e-be15-4b29-1d13-26abd9296e88/mza_9274260941010613844.jpeg/600x600bb.jpg",
+   "subjects": [
+    "history"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-history",
+     "rank": 13
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1579040306"
+   },
+   "provenanceIds": [
+    "apple-top-us-history",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1639561921",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Empire: World History",
+   "author": "Goalhanger",
+   "feedURL": "https://feeds.megaphone.fm/empirepodcast",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/f1/71/89/f17189be-7724-c985-edc7-165a6f5b4dac/mza_2121841180389292796.jpg/600x600bb.jpg",
+   "subjects": [
+    "history"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-history",
+     "rank": 14
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1639561921"
+   },
+   "provenanceIds": [
+    "apple-top-us-history",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-173001861",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Dan Carlin's Hardcore History",
+   "author": "Dan Carlin",
+   "feedURL": "https://feeds.feedburner.com/dancarlin/history?format=xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts115/v4/49/b7/eb/49b7eb32-8f08-6fac-aadb-2f002131fe5f/mza_15196161972010256532.jpg/600x600bb.jpg",
+   "subjects": [
+    "history"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-history",
+     "rank": 15
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "173001861"
+   },
+   "provenanceIds": [
+    "apple-top-us-history",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-6801242598",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "History's Greatest Mysteries",
+   "author": "The HISTORY Channel | Rewind Studios",
+   "feedURL": "https://rss.art19.com/historys-greatest-mysteries",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/12/6f/c8/126fc8cc-1af0-a80b-a285-ec876388aa98/mza_2490395106914128943.jpeg/600x600bb.jpg",
+   "subjects": [
+    "history",
+    "true-crime"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-history",
+     "rank": 16
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "6801242598"
+   },
+   "provenanceIds": [
+    "apple-top-us-history",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1780873400",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Dylan Gemelli Podcast",
+   "author": "Dylan Gemelli",
+   "feedURL": "https://feed.podbean.com/dylangemelli/feed.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/65/4a/f4/654af4a7-d5cd-2317-91a1-b5913de83e6f/mza_12950421134232165951.jpeg/600x600bb.jpg",
+   "subjects": [
+    "health-fitness"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-health-fitness",
+     "rank": 1
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1780873400"
+   },
+   "provenanceIds": [
+    "apple-top-us-health-fitness",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1553279283",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Passion Struck with John R. Miles",
+   "author": "Passion Struck with John R. Miles",
+   "feedURL": "https://feeds.simplecast.com/XYHE1JPs",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/e8/d7/ca/e8d7ca5c-35fa-6e90-42ec-09e168d110cc/mza_400047353205660386.jpg/600x600bb.jpg",
+   "subjects": [
+    "health-fitness"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-health-fitness",
+     "rank": 2
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1553279283"
+   },
+   "provenanceIds": [
+    "apple-top-us-health-fitness",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1545953110",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Huberman Lab",
+   "author": "Scicomm Media",
+   "feedURL": "https://feeds.megaphone.fm/hubermanlab",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/9a/d3/19/9ad31912-0b5a-a16e-2d7c-9fd074698b9c/mza_8994222203629500925.jpg/600x600bb.jpg",
+   "subjects": [
+    "health-fitness",
+    "science"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-health-fitness",
+     "rank": 3
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1545953110"
+   },
+   "provenanceIds": [
+    "apple-top-us-health-fitness",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1768651631",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "We're Out of Time",
+   "author": "Richard Taite",
+   "feedURL": "https://anchor.fm/s/f5dbfa60/podcast/rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/69/75/90/697590b9-dcc7-91c1-a72a-4404c45f56f5/mza_16074264697810172157.jpg/600x600bb.jpg",
+   "subjects": [
+    "health-fitness"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-health-fitness",
+     "rank": 4
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1768651631"
+   },
+   "provenanceIds": [
+    "apple-top-us-health-fitness",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1688757384",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Tony Mantor: Why Not Me ?",
+   "author": "iHeartPodcasts",
+   "feedURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/cd1d67c7-7e36-4004-a3dd-b47100fdf2e3/f88acc7d-0a9e-4ed7-b448-b47100fdf2f0/podcast.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/47/e3/cc/47e3cc28-6d02-6d9f-8b6e-42d6d87e54a6/mza_3766587543936049722.jpg/600x600bb.jpg",
+   "subjects": [
+    "health-fitness"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-health-fitness",
+     "rank": 5
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1688757384"
+   },
+   "provenanceIds": [
+    "apple-top-us-health-fitness",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1378040733",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Nothing much happens: bedtime stories to help you sleep",
+   "author": "Wellness Loud",
+   "feedURL": "https://feeds.megaphone.fm/SSM2868305742",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/87/f2/26/87f226c9-77ac-d4fe-6b98-4da2345de5c0/mza_5833691041544808336.jpg/600x600bb.jpg",
+   "subjects": [
+    "health-fitness"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-health-fitness",
+     "rank": 6
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1378040733"
+   },
+   "provenanceIds": [
+    "apple-top-us-health-fitness",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1450994021",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "On Purpose with Jay Shetty",
+   "author": "Perfect Strangers",
+   "feedURL": "https://feeds.megaphone.fm/on-purpose",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/04/40/b2/0440b2e5-1726-3ba1-e4aa-d8cb31b83c8d/mza_10585468613305307320.jpg/600x600bb.jpg",
+   "subjects": [
+    "health-fitness",
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-health-fitness",
+     "rank": 7
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1450994021"
+   },
+   "provenanceIds": [
+    "apple-top-us-health-fitness",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1773578243",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Extend Podcast with Darshan Shah, MD",
+   "author": "Darshan Shah, MD",
+   "feedURL": "https://rss.libsyn.com/shows/551312/destinations/4758622.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/e2/65/43/e26543c2-2aea-1c7b-774f-71ac705039a5/mza_12440564964874810259.png/600x600bb.jpg",
+   "subjects": [
+    "health-fitness"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-health-fitness",
+     "rank": 8
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1773578243"
+   },
+   "provenanceIds": [
+    "apple-top-us-health-fitness",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1529800263",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Thyroid (and Hormone) Fixer Podcast: Thyropause, Menopause, Metabolism and How to Fix It",
+   "author": "Dr. Amie Hornaman",
+   "feedURL": "https://rss2.flightcast.com/ee1bp3zh9h0d003fe1kvtfgi.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/66/f9/ab/66f9ab37-20bf-ce22-9cda-5d0cf53fc123/mza_12992934777200774032.jpeg/600x600bb.jpg",
+   "subjects": [
+    "health-fitness"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-health-fitness",
+     "rank": 9
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1529800263"
+   },
+   "provenanceIds": [
+    "apple-top-us-health-fitness",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1725306273",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Biohack-it",
+   "author": "Iman Hasan",
+   "feedURL": "https://anchor.fm/s/111cfe150/podcast/rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/f9/13/62/f9136276-eb4f-6c0b-9ce2-3f9edeb12ca2/mza_18164962284283662458.jpg/600x600bb.jpg",
+   "subjects": [
+    "health-fitness"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-health-fitness",
+     "rank": 10
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1725306273"
+   },
+   "provenanceIds": [
+    "apple-top-us-health-fitness",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1795759900",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Decoded | Unlock The Secrets of Human Behavior, Emotion and Motivation",
+   "author": "Elisabeth McKay | Mental Health Innovator and PredictiveMind Founder",
+   "feedURL": "https://feeds.megaphone.fm/ARML6214944307",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/a6/ad/10/a6ad1070-b21c-f9ca-7ace-4b53ec79162e/mza_11497905344217386653.jpg/600x600bb.jpg",
+   "subjects": [
+    "health-fitness"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-health-fitness",
+     "rank": 11
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1795759900"
+   },
+   "provenanceIds": [
+    "apple-top-us-health-fitness",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1487513861",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Get Sleepy: stories for sleep",
+   "author": "Slumber Studios",
+   "feedURL": "https://feeds.megaphone.fm/SGP8517078272",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/32/09/db/3209db97-279d-e296-9046-6c5a59a02993/mza_3744341201616159111.jpeg/600x600bb.jpg",
+   "subjects": [
+    "health-fitness"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-health-fitness",
+     "rank": 12
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1487513861"
+   },
+   "provenanceIds": [
+    "apple-top-us-health-fitness",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1714886566",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Live Beyond the Norms",
+   "author": "Chris Burres",
+   "feedURL": "https://rss2.flightcast.com/l0t0zfky7ymswf6ermvnkmtu.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/29/c7/76/29c776dc-78fe-08f1-9ab0-9084072566e0/mza_9545285277567179185.jpg/600x600bb.jpg",
+   "subjects": [
+    "health-fitness"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-health-fitness",
+     "rank": 13
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1714886566"
+   },
+   "provenanceIds": [
+    "apple-top-us-health-fitness",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1846701533",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "unPAUSED with Dr. Mary Claire Haver",
+   "author": "Audacy | Mary Claire Haver, MD",
+   "feedURL": "https://rss.amperwave.net/v2/feed/audacynetwork/unpaused",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/95/82/fc/9582fc8c-631f-069f-c2d4-e247239c8cd2/mza_3889935836926829193.jpg/600x600bb.jpg",
+   "subjects": [
+    "health-fitness",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-health-fitness",
+     "rank": 14
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1846701533"
+   },
+   "provenanceIds": [
+    "apple-top-us-health-fitness",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1507839530",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Culture Apothecary with Alex Clark",
+   "author": "Turning Point USA",
+   "feedURL": "https://anchor.fm/s/fabf41b8/podcast/rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/d3/d1/35/d3d1352f-35ed-a29a-59c8-79533a91a9cc/mza_1621269775789171090.jpg/600x600bb.jpg",
+   "subjects": [
+    "health-fitness"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-health-fitness",
+     "rank": 15
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1507839530"
+   },
+   "provenanceIds": [
+    "apple-top-us-health-fitness",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1535408667",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Maintenance Phase",
+   "author": "Aubrey Gordon & Michael Hobbes",
+   "feedURL": "https://rss.buzzsprout.com/1411126.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/d3/23/3c/d3233ce4-e1e6-710c-141a-dad45b263c7d/mza_17331100152243008221.jpg/600x600bb.jpg",
+   "subjects": [
+    "health-fitness",
+    "education"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-health-fitness",
+     "rank": 16
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1535408667"
+   },
+   "provenanceIds": [
+    "apple-top-us-health-fitness",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1848156557",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Tomorrow, Today",
+   "author": "Shekhar Natarajan",
+   "feedURL": "https://feeds.simplecast.com/tj_igLD4",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/b2/b4/80/b2b48020-11e7-92a9-db46-b7d475a19757/mza_619091211434212889.jpg/600x600bb.jpg",
+   "subjects": [
+    "technology",
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-technology",
+     "rank": 1
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1848156557"
+   },
+   "provenanceIds": [
+    "apple-top-us-technology",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1502871393",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "All-In with Chamath, Jason, Sacks & Friedberg",
+   "author": "All-In Podcast, LLC",
+   "feedURL": "https://rss.libsyn.com/shows/254861/destinations/1928300.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts124/v4/c7/d2/92/c7d292ea-44b3-47ff-2f5e-74fa5b23db6c/mza_7005270671777648882.png/600x600bb.jpg",
+   "subjects": [
+    "technology",
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-technology",
+     "rank": 2
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1502871393"
+   },
+   "provenanceIds": [
+    "apple-top-us-technology",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1896801264",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "AI Business Daily",
+   "author": "Cast Nexa",
+   "feedURL": "https://feeds.simplecast.com/KH15z61n",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/d6/32/80/d632803f-3ed4-bb1f-cd61-806fca57c005/mza_16471444242429361376.jpg/600x600bb.jpg",
+   "subjects": [
+    "technology",
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-technology",
+     "rank": 3
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1896801264"
+   },
+   "provenanceIds": [
+    "apple-top-us-technology",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1050462261",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Acquired",
+   "author": "Ben Gilbert and David Rosenthal",
+   "feedURL": "https://feeds.transistor.fm/acquired",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/a8/e1/de/a8e1deff-9f88-4e55-a541-b0dc793c0cdc/mza_11539673419613154037.jpg/600x600bb.jpg",
+   "subjects": [
+    "technology",
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-technology",
+     "rank": 4
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1050462261"
+   },
+   "provenanceIds": [
+    "apple-top-us-technology",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-6812430636",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Machine Gods",
+   "author": "NPR",
+   "feedURL": "https://feeds.npr.org/g-s1-143588/podcast.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/3d/ad/5a/3dad5a7c-2993-7992-06ec-671870ed4672/mza_16764932599325750788.jpg/600x600bb.jpg",
+   "subjects": [
+    "technology"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-technology",
+     "rank": 5
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "6812430636"
+   },
+   "provenanceIds": [
+    "apple-top-us-technology",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1827749077",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Inside AsembleAI: DeepTech, AI & Science",
+   "author": "Mac & Sam",
+   "feedURL": "https://media.rss.com/asemble-mac-and-sam/feed.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/71/f8/8d/71f88df3-6ea7-7bd4-7446-9b54b05d84de/mza_1673868774664238951.jpg/600x600bb.jpg",
+   "subjects": [
+    "technology"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-technology",
+     "rank": 6
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1827749077"
+   },
+   "provenanceIds": [
+    "apple-top-us-technology",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1539670094",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Room Podcast",
+   "author": "Claudia Laurie and Madison McIlwain",
+   "feedURL": "https://feeds.simplecast.com/aPz9Qkq6",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/20/c3/77/20c377bc-d9a0-3170-f31b-4ce78860f2a9/mza_11729899785610752318.jpg/600x600bb.jpg",
+   "subjects": [
+    "technology",
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-technology",
+     "rank": 7
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1539670094"
+   },
+   "provenanceIds": [
+    "apple-top-us-technology",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1787830122",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Building AI Boston",
+   "author": "Building AI Boston",
+   "feedURL": "https://feeds.megaphone.fm/CSN8756441179",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/96/51/fb/9651fbb6-beb9-32b5-4daf-807df5b1c2da/mza_12664249370395591139.jpeg/600x600bb.jpg",
+   "subjects": [
+    "technology",
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-technology",
+     "rank": 8
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1787830122"
+   },
+   "provenanceIds": [
+    "apple-top-us-technology",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1528594034",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Hard Fork",
+   "author": "The New York Times",
+   "feedURL": "https://feeds.simplecast.com/6HKOhNgS",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/de/c5/20/dec52092-6be0-9007-875c-6aa8e690a905/mza_12490014444602578825.jpg/600x600bb.jpg",
+   "subjects": [
+    "technology"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-technology",
+     "rank": 9
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1528594034"
+   },
+   "provenanceIds": [
+    "apple-top-us-technology",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1680633614",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The AI Daily Brief: Artificial Intelligence News and Analysis",
+   "author": "Nathaniel Whittemore",
+   "feedURL": "https://anchor.fm/s/f7cac464/podcast/rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/9c/78/d8/9c78d82d-a2d1-a026-6ca2-f92ea61be9ae/mza_18421328158594577747.jpg/600x600bb.jpg",
+   "subjects": [
+    "technology"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-technology",
+     "rank": 10
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1680633614"
+   },
+   "provenanceIds": [
+    "apple-top-us-technology",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-523121474",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "TED Radio Hour",
+   "author": "NPR",
+   "feedURL": "https://feeds.npr.org/510298/podcast.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/94/ea/88/94ea8879-e7f2-378c-231c-c041c7b295b5/mza_9110350352446077100.jpg/600x600bb.jpg",
+   "subjects": [
+    "technology",
+    "science"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-technology",
+     "rank": 11
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "523121474"
+   },
+   "provenanceIds": [
+    "apple-top-us-technology",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1614253637",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Search Engine",
+   "author": "PJ Vogt",
+   "feedURL": "https://rss.amperwave.net/v2/feed/audacynetwork/search-engine",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/90/5b/62/905b6220-b426-6e2d-b97c-9f0a16ed31c4/mza_1372109499010593679.jpeg/600x600bb.jpg",
+   "subjects": [
+    "technology",
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-technology",
+     "rank": 12
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1614253637"
+   },
+   "provenanceIds": [
+    "apple-top-us-technology",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1434243584",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Lex Fridman Podcast",
+   "author": "Lex Fridman",
+   "feedURL": "https://lexfridman.com/feed/podcast/",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts115/v4/3e/e3/9c/3ee39c89-de08-47a6-7f3d-3849cef6d255/mza_16657851278549137484.png/600x600bb.jpg",
+   "subjects": [
+    "technology",
+    "science"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-technology",
+     "rank": 13
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1434243584"
+   },
+   "provenanceIds": [
+    "apple-top-us-technology",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1516093381",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Dwarkesh Podcast",
+   "author": "Dwarkesh Patel",
+   "feedURL": "https://apple.dwarkesh-podcast.workers.dev/feed.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/af/6f/48/af6f4828-86a2-d4c3-b998-de2af1fdc8c0/mza_949624848217027907.jpg/600x600bb.jpg",
+   "subjects": [
+    "technology",
+    "science"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-technology",
+     "rank": 14
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1516093381"
+   },
+   "provenanceIds": [
+    "apple-top-us-technology",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1870310599",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Bourbon with Brad",
+   "author": "Completely Offensively LLC",
+   "feedURL": "https://feeds.redcircle.com/0014bf0e-8db3-483e-b385-a3c2293d71aa",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/9b/0e/b2/9b0eb2b8-2d20-d10e-46db-8f26f445998f/mza_16896880110342389059.jpg/600x600bb.jpg",
+   "subjects": [
+    "technology",
+    "business"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-technology",
+     "rank": 15
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1870310599"
+   },
+   "provenanceIds": [
+    "apple-top-us-technology",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1864969176",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Plaintext with Rich",
+   "author": "Rich Greene",
+   "feedURL": "https://rss.buzzsprout.com/2566974.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/f9/dd/a2/f9dda2b0-14e0-a2a1-874a-f50a90d0d7b2/mza_5550423805592368035.jpg/600x600bb.jpg",
+   "subjects": [
+    "technology"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-technology",
+     "rank": 16
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1864969176"
+   },
+   "provenanceIds": [
+    "apple-top-us-technology",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1089022756",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Pardon My Take",
+   "author": "Barstool Sports",
+   "feedURL": "https://mcsorleys.barstoolsports.com/feed/pardon-my-take",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/35/74/6a/35746a0c-7687-7dde-ff04-338d93e78303/mza_10377078556009223546.jpg/600x600bb.jpg",
+   "subjects": [
+    "sports"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-sports",
+     "rank": 1
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1089022756"
+   },
+   "provenanceIds": [
+    "apple-top-us-sports",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1043699613",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Bill Simmons Podcast",
+   "author": "The Ringer",
+   "feedURL": "https://feeds.megaphone.fm/the-bill-simmons-podcast",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/7a/98/73/7a987302-599c-9285-c210-fca2c83b9450/mza_1946147658144436679.jpg/600x600bb.jpg",
+   "subjects": [
+    "sports"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-sports",
+     "rank": 2
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1043699613"
+   },
+   "provenanceIds": [
+    "apple-top-us-sports",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1837044678",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "DOUBLE COVERAGE PODCAST",
+   "author": "Mystic Zach",
+   "feedURL": "https://feeds.megaphone.fm/YMH1796246858",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/9c/b9/5b/9cb95b2e-a852-1485-3991-058b0a29ec47/mza_17578097386252695842.png/600x600bb.jpg",
+   "subjects": [
+    "sports"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-sports",
+     "rank": 3
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1837044678"
+   },
+   "provenanceIds": [
+    "apple-top-us-sports",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1685093486",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Pablo Torre Finds Out",
+   "author": "The Athletic",
+   "feedURL": "https://feeds.acast.com/public/shows/68b1d0ea993d10acb9c3fe4f",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/6c/e5/27/6ce5278d-5c3f-b992-7ba5-e45811dad115/mza_3053656086025708268.jpeg/600x600bb.jpg",
+   "subjects": [
+    "sports",
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-sports",
+     "rank": 4
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1685093486"
+   },
+   "provenanceIds": [
+    "apple-top-us-sports",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-934820588",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Dan Le Batard Show",
+   "author": "Dan Le Batard",
+   "feedURL": "https://feeds.megaphone.fm/ESP2298543312",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/57/d7/d9/57d7d9e0-cf27-7928-0650-578623e80c29/mza_14930160221470262963.jpg/600x600bb.jpg",
+   "subjects": [
+    "sports"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-sports",
+     "rank": 5
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "934820588"
+   },
+   "provenanceIds": [
+    "apple-top-us-sports",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-917453719",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Fantasy Footballers - Fantasy Football Podcast",
+   "author": "Fantasy Football",
+   "feedURL": "https://feeds.simplecast.com/sw7PGWfw",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/e0/f6/ed/e0f6edb8-b352-1dd1-1836-c77fdf5c6f17/mza_1578365354745278550.jpeg/600x600bb.jpg",
+   "subjects": [
+    "sports"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-sports",
+     "rank": 6
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "917453719"
+   },
+   "provenanceIds": [
+    "apple-top-us-sports",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-6794668286",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "On The Line with Jim Pyne",
+   "author": "Jim",
+   "feedURL": "https://rss.buzzsprout.com/2632213.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/3d/db/41/3ddb4115-4461-1b44-344b-a9280cb59e7b/mza_10892588309988853434.jpg/600x600bb.jpg",
+   "subjects": [
+    "sports",
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-sports",
+     "rank": 7
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "6794668286"
+   },
+   "provenanceIds": [
+    "apple-top-us-sports",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-261735167",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Fantasy Football Today",
+   "author": "CBS Sports",
+   "feedURL": "https://rss.amperwave.net/v2/feed/audacynetwork/38ad78ba12adc2acec34b47b1a455b85",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/6f/01/af/6f01afca-c922-c3e3-1c6a-f992c9628769/mza_2762370248094837037.png/600x600bb.jpg",
+   "subjects": [
+    "sports"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-sports",
+     "rank": 8
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "261735167"
+   },
+   "provenanceIds": [
+    "apple-top-us-sports",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-880837011",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "No Laying Up - Golf Podcast",
+   "author": "NoLayingUp.com",
+   "feedURL": "https://feeds.megaphone.fm/nolayingup",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/e0/85/1e/e0851eda-cc63-baa9-53dd-458a78e2a18f/mza_17861401989170671956.png/600x600bb.jpg",
+   "subjects": [
+    "sports"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-sports",
+     "rank": 9
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "880837011"
+   },
+   "provenanceIds": [
+    "apple-top-us-sports",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1643745036",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "New Heights with Jason & Travis Kelce",
+   "author": "Wondery",
+   "feedURL": "https://rss.art19.com/new-heights",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/4c/b7/1f/4cb71f7e-f5de-ef36-8d69-f1939bb3906d/mza_5353435070899798311.jpeg/600x600bb.jpg",
+   "subjects": [
+    "sports",
+    "comedy"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-sports",
+     "rank": 10
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1643745036"
+   },
+   "provenanceIds": [
+    "apple-top-us-sports",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1375714621",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Brandon Walker College Football Show",
+   "author": "Barstool Sports",
+   "feedURL": "https://mcsorleys.barstoolsports.com/feed/comeback-szn",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/bc/47/1e/bc471eba-78fc-ee3d-e9fd-023ec4c54dd7/mza_649823573164273512.jpg/600x600bb.jpg",
+   "subjects": [
+    "sports"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-sports",
+     "rank": 11
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1375714621"
+   },
+   "provenanceIds": [
+    "apple-top-us-sports",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-960902903",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The MeatEater Podcast",
+   "author": "MeatEater",
+   "feedURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/63aba8bc-2dc8-4f89-807a-ae280065a7cd/3892b9a1-a960-4f9e-bee7-ae280065a7db/podcast.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/ad/27/62/ad2762c4-858d-c42b-0b81-cee586ab597d/mza_12778609106669149114.jpg/600x600bb.jpg",
+   "subjects": [
+    "sports"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-sports",
+     "rank": 12
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "960902903"
+   },
+   "provenanceIds": [
+    "apple-top-us-sports",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1257913963",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Cover 3 College Football",
+   "author": "CBS Sports",
+   "feedURL": "https://rss.amperwave.net/v2/feed/audacynetwork/4d511b61eff9f56a1fca4042ba77c21c",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/d4/6b/d5/d46bd5b3-9eae-a015-2e6e-2cbdf2dc27a7/mza_4739057116628053740.png/600x600bb.jpg",
+   "subjects": [
+    "sports"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-sports",
+     "rank": 13
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1257913963"
+   },
+   "provenanceIds": [
+    "apple-top-us-sports",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1805478723",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Zach Lowe Show",
+   "author": "The Ringer",
+   "feedURL": "https://feeds.megaphone.fm/zach-lowe",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/11/2d/8a/112d8a6b-2e47-2165-d6ef-1d5b4760afb2/mza_6466000752049811680.jpg/600x600bb.jpg",
+   "subjects": [
+    "sports"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-sports",
+     "rank": 14
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1805478723"
+   },
+   "provenanceIds": [
+    "apple-top-us-sports",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1042368254",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Herd with Colin Cowherd",
+   "author": "iHeartPodcasts and The Volume",
+   "feedURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/1508ddb2-0c9a-42f6-aafe-ae3300346aa9/bf391792-153e-41b3-9d3d-ae3300346ad8/podcast.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/fd/7f/46/fd7f46cd-bb2a-b4f6-5dd4-f73ae19f84ba/mza_4512883432061856003.jpg/600x600bb.jpg",
+   "subjects": [
+    "sports"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-sports",
+     "rank": 15
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1042368254"
+   },
+   "provenanceIds": [
+    "apple-top-us-sports",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1845980031",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Ryen Russillo Show",
+   "author": "Barstool Sports",
+   "feedURL": "https://mcsorleys.barstoolsports.com/feed/ryen-russillo-show",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/ac/6e/46/ac6e4654-d8dc-ae6e-e4c6-7636bcf4898f/mza_17415378073775063938.jpg/600x600bb.jpg",
+   "subjects": [
+    "sports"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-sports",
+     "rank": 16
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1845980031"
+   },
+   "provenanceIds": [
+    "apple-top-us-sports",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1731755953",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Mick Unplugged",
+   "author": "Mick Hunt",
+   "feedURL": "https://feeds.megaphone.fm/YAP1844984381",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/f8/75/0c/f8750cf1-ca31-5d55-00a1-ce86329309d5/mza_11785095184998327365.jpeg/600x600bb.jpg",
+   "subjects": [
+    "education",
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-education",
+     "rank": 1
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1731755953"
+   },
+   "provenanceIds": [
+    "apple-top-us-education",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1646101002",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Mel Robbins Podcast",
+   "author": "Mel Robbins",
+   "feedURL": "https://feeds.simplecast.com/UCwaTX1J",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/ab/66/a5/ab66a5f5-b52b-c70a-227b-0721bd9dc660/mza_13546984924981879479.jpg/600x600bb.jpg",
+   "subjects": [
+    "education",
+    "health-fitness"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-education",
+     "rank": 2
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1646101002"
+   },
+   "provenanceIds": [
+    "apple-top-us-education",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1728723635",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Jamie Kern Lima Show",
+   "author": "Jamie Kern Lima",
+   "feedURL": "https://feeds.megaphone.fm/LIFEISLOVELLC4342849321",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/50/66/2e/50662e7d-1f7e-3d9f-1f87-562a90dbdb0c/mza_10576714993608979175.jpeg/600x600bb.jpg",
+   "subjects": [
+    "education",
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-education",
+     "rank": 3
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1728723635"
+   },
+   "provenanceIds": [
+    "apple-top-us-education",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1852217479",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "We!",
+   "author": "Joe Mittiga",
+   "feedURL": "https://rss.buzzsprout.com/2547586.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/5d/51/7a/5d517af1-5ccc-0dbe-4721-4f6371c2db60/mza_8820215126615845960.jpg/600x600bb.jpg",
+   "subjects": [
+    "education",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-education",
+     "rank": 4
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1852217479"
+   },
+   "provenanceIds": [
+    "apple-top-us-education",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-6786047115",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Life is an Inside Job with Coach Mike Basevic",
+   "author": "Coach Mike Basevic",
+   "feedURL": "https://rss2.flightcast.com/a4uhmdooosc09pcyl2h1gfw2.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/a4/7f/09/a47f0908-9851-10d7-1f25-961eca4100c1/mza_8553522895388353058.jpg/600x600bb.jpg",
+   "subjects": [
+    "education",
+    "health-fitness"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-education",
+     "rank": 5
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "6786047115"
+   },
+   "provenanceIds": [
+    "apple-top-us-education",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1794195371",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Living Your Legacy",
+   "author": "Rudy Mawer",
+   "feedURL": "https://feeds.captivate.fm/the-living-your-legacy-podcast/",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/1b/6c/8a/1b6c8a86-092b-343b-c5d9-0f05851189ba/mza_11569768149956520460.jpg/600x600bb.jpg",
+   "subjects": [
+    "education",
+    "business"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-education",
+     "rank": 6
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1794195371"
+   },
+   "provenanceIds": [
+    "apple-top-us-education",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1451224710",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Business Alchemy with Jackie Minsky",
+   "author": "Jackie Minsky",
+   "feedURL": "https://feeds.redcircle.com/4af60a8f-294e-46dc-9810-20d945c75557",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/f1/5d/b9/f15db9db-7485-4c99-d9f7-7a94ed1c4b28/mza_8223369199134464146.jpg/600x600bb.jpg",
+   "subjects": [
+    "education"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-education",
+     "rank": 7
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1451224710"
+   },
+   "provenanceIds": [
+    "apple-top-us-education",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1659231821",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Becoming UnDone® with Dr. Toby Brooks",
+   "author": "Dr. Toby Brooks",
+   "feedURL": "https://feeds.simplecast.com/B3LEO0KQ",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/f7/16/f5/f716f58f-4c11-ad6e-0e0e-42806cb1935f/mza_5220098422377889981.jpg/600x600bb.jpg",
+   "subjects": [
+    "education",
+    "health-fitness"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-education",
+     "rank": 8
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1659231821"
+   },
+   "provenanceIds": [
+    "apple-top-us-education",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1739660144",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Ready For Love with Hilary Silver",
+   "author": "Cloud10",
+   "feedURL": "https://feeds.megaphone.fm/CTL7202879289",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/f6/63/ae/f663ae7f-3f70-70ab-b838-d29ce7a38063/mza_7734964355819115181.jpeg/600x600bb.jpg",
+   "subjects": [
+    "education",
+    "health-fitness"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-education",
+     "rank": 9
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1739660144"
+   },
+   "provenanceIds": [
+    "apple-top-us-education",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-6802939252",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Steady Notes",
+   "author": "Don Hornsby",
+   "feedURL": "https://api.substack.com/feed/podcast/8369475.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/3e/80/75/3e8075b6-ed0b-bf87-74ff-0bc085f27afa/mza_14113185620194162778.jpg/600x600bb.jpg",
+   "subjects": [
+    "education"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-education",
+     "rank": 10
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "6802939252"
+   },
+   "provenanceIds": [
+    "apple-top-us-education",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1543458790",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Table with Anthony ONeal",
+   "author": "The Neatness Network",
+   "feedURL": "https://feeds.redcircle.com/7027e068-3794-4419-bfe5-cbd6f6a7ec5c",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/0d/bc/b2/0dbcb29e-1f83-dd73-caaa-9ee9599ea3d5/mza_2662629166782876942.jpg/600x600bb.jpg",
+   "subjects": [
+    "education",
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-education",
+     "rank": 11
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1543458790"
+   },
+   "provenanceIds": [
+    "apple-top-us-education",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1808243022",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Building Champions for Life",
+   "author": "Kirk Spahn",
+   "feedURL": "https://feeds.simplecast.com/wvPqE7xx",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/d9/9f/a5/d99fa5d9-cc92-a221-2976-3bcee3cb2a45/mza_18090706658966037995.jpg/600x600bb.jpg",
+   "subjects": [
+    "education",
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-education",
+     "rank": 12
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1808243022"
+   },
+   "provenanceIds": [
+    "apple-top-us-education",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1730954168",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Makes Sense - with Dr. JC Doornick",
+   "author": "Dr. JC Doornick \"The Dragon\"",
+   "feedURL": "https://rss.pdrl.fm/10b86f/feeds.simplecast.com/NQa_M9Ny",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/11/12/31/11123104-ca33-d94a-4cd8-207a436d9ad7/mza_9077846304850236016.jpg/600x600bb.jpg",
+   "subjects": [
+    "education"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-education",
+     "rank": 13
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1730954168"
+   },
+   "provenanceIds": [
+    "apple-top-us-education",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1532956108",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "IMO with Michelle Obama and Craig Robinson",
+   "author": "Higher Ground",
+   "feedURL": "https://rss.art19.com/hga-imo",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/8c/ce/36/8cce3648-2e76-735c-f6d8-8e72febc8ed7/mza_13220543383965859061.jpeg/600x600bb.jpg",
+   "subjects": [
+    "education",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-education",
+     "rank": 14
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1532956108"
+   },
+   "provenanceIds": [
+    "apple-top-us-education",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1581114283",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Law of Attraction SECRETS",
+   "author": "Natasha Graziano",
+   "feedURL": "https://feeds.simplecast.com/ii63dDXi",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/87/34/c4/8734c4da-46ed-10eb-deba-4fcd66c83ce6/mza_14056127744054019992.jpg/600x600bb.jpg",
+   "subjects": [
+    "education"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-education",
+     "rank": 15
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1581114283"
+   },
+   "provenanceIds": [
+    "apple-top-us-education",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1596465711",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Women Road Warriors",
+   "author": "WomenRoadWarriors.com",
+   "feedURL": "https://feeds.captivate.fm/women-road-warriors/",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts126/v4/43/06/52/43065247-a240-5dec-5ae7-2cb6ed5db341/mza_11463202700140271457.jpg/600x600bb.jpg",
+   "subjects": [
+    "education",
+    "health-fitness"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-education",
+     "rank": 16
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1596465711"
+   },
+   "provenanceIds": [
+    "apple-top-us-education",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-214089682",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Fresh Air",
+   "author": "NPR",
+   "feedURL": "https://feeds.npr.org/381444908/podcast.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/68/35/32/683532c0-dd91-676a-eeef-3ace951cd6e9/mza_6896198885971355473.jpg/600x600bb.jpg",
+   "subjects": [
+    "arts"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-arts",
+     "rank": 1
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "214089682"
+   },
+   "provenanceIds": [
+    "apple-top-us-arts",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-275699983",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Moth",
+   "author": "The Moth",
+   "feedURL": "https://feeds.feedburner.com/themothpodcast",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/16/39/63/1639632d-7ad2-d87b-d4f7-d0ec95eff386/mza_8915289722686017414.jpg/600x600bb.jpg",
+   "subjects": [
+    "arts"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-arts",
+     "rank": 2
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "275699983"
+   },
+   "provenanceIds": [
+    "apple-top-us-arts",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-394775318",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "99% Invisible",
+   "author": "Roman Mars",
+   "feedURL": "https://feeds.simplecast.com/BqbsxVfO",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/79/d0/35/79d035ea-9043-b43e-7380-33cd47bd968b/mza_2606971010425550919.jpg/600x600bb.jpg",
+   "subjects": [
+    "arts"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-arts",
+     "rank": 3
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "394775318"
+   },
+   "provenanceIds": [
+    "apple-top-us-arts",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1677004555",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The MOOD Podcast",
+   "author": "Matt Jacob",
+   "feedURL": "https://rss.buzzsprout.com/2148781.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/1e/d5/7f/1ed57f42-fa97-64e5-69bb-3ec68ae1fcba/mza_15115101325698176911.jpg/600x600bb.jpg",
+   "subjects": [
+    "arts",
+    "education"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-arts",
+     "rank": 4
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1677004555"
+   },
+   "provenanceIds": [
+    "apple-top-us-arts",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1649630933",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Walk-In Talk Podcast",
+   "author": "Carl Fiadini",
+   "feedURL": "https://rss.libsyn.com/shows/601525/destinations/5234855.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/da/87/31/da873157-29a5-6378-ea0b-d33adfec72ab/mza_1255484124575678714.jpg/600x600bb.jpg",
+   "subjects": [
+    "arts"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-arts",
+     "rank": 5
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1649630933"
+   },
+   "provenanceIds": [
+    "apple-top-us-arts",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1486862782",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The iDesign Lab Podcast | Where Design, Business, and Culture Shape How We Live and Build",
+   "author": "Tiffany Woolley, Scott Woolley",
+   "feedURL": "https://rss.buzzsprout.com/665152.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/60/4f/e2/604fe2cc-1cb0-8cfc-f017-826b532f2242/mza_16532099480405656923.jpg/600x600bb.jpg",
+   "subjects": [
+    "arts",
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-arts",
+     "rank": 6
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1486862782"
+   },
+   "provenanceIds": [
+    "apple-top-us-arts",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1279361017",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Spooked",
+   "author": "KQED and Snap Studios",
+   "feedURL": "https://feeds.simplecast.com/TBotaapn",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/c1/ec/81/c1ec81d0-eb32-2c69-98ff-060640b225fc/mza_14040639844022485645.jpg/600x600bb.jpg",
+   "subjects": [
+    "arts",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-arts",
+     "rank": 7
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1279361017"
+   },
+   "provenanceIds": [
+    "apple-top-us-arts",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-6813196901",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Jeselnik Book Club",
+   "author": "The Ringer",
+   "feedURL": "https://feeds.megaphone.fm/jeselnik-book-club",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/13/12/e3/1312e357-00e8-ba7d-d9ed-6330424716ce/mza_15208206073349305599.jpg/600x600bb.jpg",
+   "subjects": [
+    "arts"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-arts",
+     "rank": 8
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "6813196901"
+   },
+   "provenanceIds": [
+    "apple-top-us-arts",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1095138637",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Magnus Archives",
+   "author": "Rusty Quill",
+   "feedURL": "https://feeds.acast.com/public/shows/b6085bcd-3542-4a43-b6a8-021e3fd251b8",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts115/v4/01/2b/f6/012bf6cf-da73-11a8-4666-d65ad58dcea5/mza_1748774726906212092.jpg/600x600bb.jpg",
+   "subjects": [
+    "arts"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-arts",
+     "rank": 9
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1095138637"
+   },
+   "provenanceIds": [
+    "apple-top-us-arts",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1499244260",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Best 5 Minute Wine Podcast",
+   "author": "Forrest Kelly",
+   "feedURL": "https://feeds.simplecast.com/MTDLdLYl",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/d5/b5/b0/d5b5b0e7-30a7-5d2b-e592-1ae9a2a69620/mza_298491948947098539.jpg/600x600bb.jpg",
+   "subjects": [
+    "arts",
+    "society-culture"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-arts",
+     "rank": 10
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1499244260"
+   },
+   "provenanceIds": [
+    "apple-top-us-arts",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1877705944",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Stories of Art",
+   "author": "HENI Talks",
+   "feedURL": "https://rss2.flightcast.com/mqmgmtnt1tf3r7iyurohb3ib.xml",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/93/d1/9c/93d19ce1-9e66-052b-f6dd-85b04c33ce31/mza_9317689713513636454.jpg/600x600bb.jpg",
+   "subjects": [
+    "arts"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-arts",
+     "rank": 11
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1877705944"
+   },
+   "provenanceIds": [
+    "apple-top-us-arts",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1800735102",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "I Want Her Shoes Podcast",
+   "author": "Anna Anisin",
+   "feedURL": "https://feeds.simplecast.com/sgg05ZHg",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/PodcastSource221/v4/b5/0c/6b/b50c6be6-013d-04aa-691c-9f0814a6a50a/09a3d49b-4bd1-4c4f-9ac0-5770b8395033.jpg/600x600bb.jpg",
+   "subjects": [
+    "arts",
+    "business"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-arts",
+     "rank": 12
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1800735102"
+   },
+   "provenanceIds": [
+    "apple-top-us-arts",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-283657561",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Snap Judgment",
+   "author": "Snap Judgment and PRX",
+   "feedURL": "https://rss.pdrl.fm/9ba5b0/snap.feed.snapjudgment.org",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/42/b6/d4/42b6d4e9-96b7-9617-4772-250ed566587c/mza_8157980712429169894.jpg/600x600bb.jpg",
+   "subjects": [
+    "arts"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-arts",
+     "rank": 13
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "283657561"
+   },
+   "provenanceIds": [
+    "apple-top-us-arts",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1820686169",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Chef's Cut",
+   "author": "Level Media",
+   "feedURL": "https://feeds.megaphone.fm/LMINC5612116895",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/cf/21/18/cf211802-4ce0-bcab-466e-4be28a7f8d8e/mza_3526472160170128360.jpg/600x600bb.jpg",
+   "subjects": [
+    "arts"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-arts",
+     "rank": 14
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1820686169"
+   },
+   "provenanceIds": [
+    "apple-top-us-arts",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1793783665",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Magnificent Others with Billy Corgan",
+   "author": "Billy Corgan",
+   "feedURL": "https://rss.art19.com/the-magnificent-others",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/f1/a2/47/f1a24753-25cd-7a98-f760-3d35f4146042/mza_1920122598419409489.jpeg/600x600bb.jpg",
+   "subjects": [
+    "arts"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-arts",
+     "rank": 15
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1793783665"
+   },
+   "provenanceIds": [
+    "apple-top-us-arts",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-120315179",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Book Review",
+   "author": "The New York Times",
+   "feedURL": "https://feeds.simplecast.com/zyaxg_KL",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/96/e9/9e/96e99e00-7e24-3583-86fa-693b3b174597/mza_16184389970023055458.jpeg/600x600bb.jpg",
+   "subjects": [
+    "arts"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-arts",
+     "rank": 16
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "120315179"
+   },
+   "provenanceIds": [
+    "apple-top-us-arts",
+    "itunes-lookup"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,320 @@
+{
+  "id": "notebooklm",
+  "name": "Google NotebookLM (Gemini Notebook)",
+  "vendor": "Google LLC",
+  "category": "ai-research",
+  "website": "https://notebook.google",
+  "why_listed": "People who want PDFs, articles and YouTube videos turned into AI podcast-style Audio Overviews, summaries and Q&A, and shared as a notebook with collaborators, would use NotebookLM instead of Spoken Margins.",
+  "claims": {
+    "platforms": {
+      "value": "web, iOS, iPadOS, Android",
+      "detail": "Full product in the browser; mobile apps for iPhone/iPad and Android phones and tablets with a reduced feature set.",
+      "sources": [
+        {
+          "url": "https://support.google.com/notebooklm/answer/16296687?hl=en&co=GENIE.Platform%3DiOS",
+          "title": "Get started with the Gemini Notebook mobile app - iPhone & iPad - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "The Gemini Notebook mobile app is available on iPhones and iPads with iOS 17 and higher."
+        },
+        {
+          "url": "https://support.google.com/notebooklm/answer/16296687?hl=en&co=GENIE.Platform%3DAndroid",
+          "title": "Get started with the Gemini Notebook mobile app - Android - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "On Android, the Gemini Notebook mobile app is available on phones and tablets, running Android 10 and up."
+        },
+        {
+          "url": "https://support.google.com/notebooklm/answer/16213268?hl=en",
+          "title": "Upgrade Gemini Notebook - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Gemini Notebook is available in browser to all users above the age of consent"
+        }
+      ],
+      "note": "NotebookLM now appears as 'Gemini Notebook' on Google's help center and App Store (same app id 6737527615 and help URLs under /notebooklm/). notebooklm.google now redirects to notebook.google (checked 2026-09-28)."
+    },
+    "price_free_tier": {
+      "value": "Free with a Google account: 100 notebooks, 50 sources per notebook, 50 chats/day, 3 Audio Overviews/day",
+      "detail": "The standard tier is free; limits moved to compute-based 5-hour windows from 2026-09-02, so per-feature numbers are 'subject to change'.",
+      "sources": [
+        {
+          "url": "https://support.google.com/notebooklm/answer/16213268?hl=en",
+          "title": "Upgrade Gemini Notebook - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Sign up free of charge by using your gmail account."
+        },
+        {
+          "url": "https://support.google.com/notebooklm/answer/16213268?hl=en",
+          "title": "Upgrade Gemini Notebook - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Notebooks 100/user 200/user 500/user 500/user 500/user Sources 50/notebook"
+        }
+      ],
+      "note": "The limits table on the upgrade page is labelled 'Usage Limits (Subject to Change)'."
+    },
+    "price_paid": {
+      "value": "Google AI Plus: USD 4.99 (US App Store in-app purchase; period not shown). Google AI Pro: USD 19.99/month or 199.99/year",
+      "detail": "Higher limits come through Google AI plans (Plus, Pro, Ultra), Workspace or Google Cloud; there is no NotebookLM-only plan.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id6737527615",
+          "title": "Gemini Notebook App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Google AI Plus (400 GB) $4.99"
+        },
+        {
+          "url": "https://one.google.com/about/google-ai-plans/?hl=en-US&gl=US",
+          "title": "Google AI plans with Cloud Storage - Google One",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Monthly ($19.99) Annual ($199.99)"
+        },
+        {
+          "url": "https://support.google.com/notebooklm/answer/16213268?hl=en",
+          "title": "Upgrade Gemini Notebook - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "higher limits and more features through Google AI Plans , Google Cloud , or a qualifying Google Workspace plan"
+        }
+      ],
+      "note": "US App Store and US Google One page, USD. The Google One page did not render the Plus price in static HTML; the $4.99 figure is from the App Store in-app purchase list, which also lists Plus at $49.99 (likely annual) and may reflect an introductory price."
+    },
+    "plays_podcasts": {
+      "value": "no",
+      "detail": "Not a podcast player. Local audio files can be uploaded as sources (transcribed to text); there is no feed subscription. Its own Audio Overviews are generated, not subscribed.",
+      "sources": [
+        {
+          "url": "https://support.google.com/notebooklm/answer/16296687?hl=en&co=GENIE.Platform%3DiOS",
+          "title": "Get started with the Gemini Notebook mobile app - iPhone & iPad - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Only PDF, Website, YouTube, Audio, or Copied Text are supported as source types."
+        }
+      ],
+      "note": "Source-type list in the help center treated as comprehensive."
+    },
+    "reads_web_articles_aloud": {
+      "value": "partial",
+      "detail": "Audio Overviews turn web sources into an AI-hosted discussion or a single-speaker brief; this is a generated summary, not a verbatim reading.",
+      "sources": [
+        {
+          "url": "https://support.google.com/notebooklm/answer/16212820?hl=en",
+          "title": "Generate Audio Overview in Gemini Notebook - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Audio Overviews are deep-dive discussions between AI hosts that provide in-depth summaries of the key topics in your uploaded sources."
+        },
+        {
+          "url": "https://support.google.com/notebooklm/answer/16212820?hl=en",
+          "title": "Generate Audio Overview in Gemini Notebook - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "A single speaker delivers the key takeaways of a document in under two minutes."
+        }
+      ],
+      "note": "No verbatim text-to-speech of an article was found."
+    },
+    "reads_pdfs_aloud": {
+      "value": "partial",
+      "detail": "Same as articles: PDFs can be sources for Audio Overviews (generated discussion), not read verbatim.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id6737527615",
+          "title": "Gemini Notebook App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Upload all your long and complex PDFs, websites, YouTube videos, or text into a notebook."
+        },
+        {
+          "url": "https://support.google.com/notebooklm/answer/16212820?hl=en",
+          "title": "Generate Audio Overview in Gemini Notebook - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Audio Overviews are deep-dive discussions between AI hosts that provide in-depth summaries of the key topics in your uploaded sources."
+        }
+      ]
+    },
+    "voice_notes_anchored": {
+      "value": "no",
+      "detail": "The mobile app can record audio, which becomes a transcribed source; notes are notebook-level text, not tied to a point in a source.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id6737527615",
+          "title": "Gemini Notebook App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Voice Recorder - You can now record audio directly within the mobile app."
+        },
+        {
+          "url": "https://support.google.com/notebooklm/answer/16215270?hl=en&co=GENIE.Platform%3DDesktop",
+          "title": "Add or discover new sources for your notebook - Computer - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "The audio file is transcribed at the time of import and its text is saved to use as a new source."
+        }
+      ],
+      "note": "Inferred from the notes help page (notes are written or saved chat responses) plus the release note; recorded audio is treated as a source."
+    },
+    "text_notes_anchored": {
+      "value": "no",
+      "detail": "Notes are written in the Studio panel or saved from chat; they belong to the notebook, not to a passage or timestamp. Chat answers cite sources inline.",
+      "sources": [
+        {
+          "url": "https://support.google.com/notebooklm/answer/16262519?hl=en",
+          "title": "Create & add notes in Gemini Notebook - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "In the “Studio” panel in the “Notes” section, select Add note . You can write or paste text into this note."
+        },
+        {
+          "url": "https://support.google.com/notebooklm/answer/16262519?hl=en",
+          "title": "Create & add notes in Gemini Notebook - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "The Gemini Notebook mobile app does not support this feature at this time."
+        }
+      ],
+      "note": "The notes help page describes only these two ways to create notes; inline citations link AI answers, not user notes, to source passages."
+    },
+    "hands_free_capture": {
+      "value": "unknown",
+      "detail": "No headphone, Watch, lock-screen or CarPlay capture found. Audio Overviews play in the background, and Live Voice lets you talk to a notebook.",
+      "sources": [
+        {
+          "url": "https://support.google.com/notebooklm/answer/16296687?hl=en&co=GENIE.Platform%3DiOS",
+          "title": "Get started with the Gemini Notebook mobile app - iPhone & iPad - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://apps.apple.com/us/app/id6737527615",
+          "title": "Gemini Notebook App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked the mobile-app help page and App Store description/version history; background playback exists but no capture gesture is described."
+    },
+    "transcripts": {
+      "value": "partial",
+      "detail": "Uploaded audio files and YouTube captions are turned into text sources; there are no podcast feeds, and no transcript view of an Audio Overview was found.",
+      "sources": [
+        {
+          "url": "https://support.google.com/notebooklm/answer/16215270?hl=en&co=GENIE.Platform%3DDesktop",
+          "title": "Add or discover new sources for your notebook - Computer - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "The audio file is transcribed at the time of import and its text is saved to use as a new source."
+        },
+        {
+          "url": "https://support.google.com/notebooklm/answer/16215270?hl=en&co=GENIE.Platform%3DDesktop",
+          "title": "Add or discover new sources for your notebook - Computer - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Only the text transcript of the video is imported as a source."
+        }
+      ]
+    },
+    "ai_summaries": {
+      "value": "yes",
+      "detail": "Summaries of all sources in chat, reports, study guides, mind maps, Audio and Video Overviews.",
+      "sources": [
+        {
+          "url": "https://support.google.com/notebooklm/answer/16206563?hl=en",
+          "title": "Create a notebook in Gemini Notebook - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "The “Chat” panel displays a generated summary of all your sources."
+        }
+      ]
+    },
+    "export_markdown_pkm": {
+      "value": "partial",
+      "detail": "Notes and reports export to Google Docs or Sheets; no Markdown, Obsidian, Notion or Readwise export is documented.",
+      "sources": [
+        {
+          "url": "https://support.google.com/notebooklm/answer/16262519?hl=en",
+          "title": "Create & add notes in Gemini Notebook - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "You can export your notes to Google Docs or Google Sheets."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/id6737527615",
+          "title": "Gemini Notebook App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Users can now view, download, and share .jpg, .png, .md, and .txt files created in the desktop Gemini Notebook app."
+        }
+      ],
+      "note": "Only Google Docs/Sheets export is documented; the .md mention refers to generated files viewable on mobile, not a notes export."
+    },
+    "share_note_at_moment": {
+      "value": "no",
+      "detail": "Sharing is of a whole notebook (or a chat view link); there is no per-note link that opens a source at a moment.",
+      "sources": [
+        {
+          "url": "https://support.google.com/notebooklm/answer/16206563?hl=en",
+          "title": "Create a notebook in Gemini Notebook - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "You can grant “Viewer” or “Editor” access to another user by adding their email address."
+        }
+      ],
+      "note": "Inferred from the notebook sharing and notes help pages, which describe no per-note or timestamp link."
+    },
+    "group_listening": {
+      "value": "partial",
+      "detail": "Notebooks can be shared with up to 50 people (personal accounts); editors' note edits sync in real time. Not group listening or passage-level annotation.",
+      "sources": [
+        {
+          "url": "https://support.google.com/notebooklm/answer/16206563?hl=en",
+          "title": "Create a notebook in Gemini Notebook - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Personal Gmail accounts can share a notebook with up to 50 users but can't share with Google Groups."
+        },
+        {
+          "url": "https://support.google.com/notebooklm/answer/16262519?hl=en",
+          "title": "Create & add notes in Gemini Notebook - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Note edits sync in real-time for all collaborators in the same open notebook."
+        }
+      ]
+    },
+    "on_device_privacy": {
+      "value": "no",
+      "detail": "A cloud AI service that requires a Google account; sources are uploaded to Google.",
+      "sources": [
+        {
+          "url": "https://support.google.com/notebooklm/answer/16213268?hl=en",
+          "title": "Upgrade Gemini Notebook - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Sign up free of charge by using your gmail account."
+        }
+      ],
+      "note": "No on-device processing claim found on the help pages checked."
+    },
+    "account_required": {
+      "value": "yes",
+      "detail": "Requires a Google (personal, Workspace or Education) account.",
+      "sources": [
+        {
+          "url": "https://support.google.com/notebooklm/answer/16213268?hl=en",
+          "title": "Upgrade Gemini Notebook - Gemini Notebook Help",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Sign up free of charge by using your gmail account."
+        }
+      ]
+    }
+  }
+}

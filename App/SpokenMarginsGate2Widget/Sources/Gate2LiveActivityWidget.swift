@@ -6,13 +6,14 @@ import WidgetKit
 struct Gate2LiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: Gate2LiveActivityAttributes.self) { context in
-            Gate2LiveActivityContent(state: context.state)
+            Gate2LiveActivityContent(state: context.state, isStale: context.isStale)
                 .activityBackgroundTint(Color(red: 0.08, green: 0.09, blue: 0.12))
                 .activitySystemActionForegroundColor(.white)
+                .widgetURL(context.state.tapURL(isStale: context.isStale))
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Text(context.state.status.capitalized)
+                    Text(context.state.offersResume(isStale: context.isStale) ? "Paused" : context.state.status.capitalized)
                         .font(.caption)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
@@ -30,7 +31,9 @@ struct Gate2LiveActivityWidget: Widget {
                         }
                     } else {
                         VStack(spacing: 3) {
-                            Text(context.state.chapterTitle)
+                            Text(context.state.offersResume(isStale: context.isStale)
+                                ? Gate2LiveActivityCopy.pausedPrompt
+                                : context.state.chapterTitle)
                                 .font(.caption)
                                 .lineLimit(1)
                             if let next = context.state.nextChapterTitle {
@@ -45,32 +48,57 @@ struct Gate2LiveActivityWidget: Widget {
             } compactLeading: {
                 Image(systemName: context.state.sharedMarginSenderLabel != nil
                     ? "text.bubble.fill"
-                    : (context.state.isRecording ? "record.circle.fill" : "waveform"))
+                    : context.state.surfaceSymbol(isStale: context.isStale))
             } compactTrailing: {
                 Text(context.state.sharedMarginSenderLabel != nil ? "NEW" : "\(context.state.progressPercent)%")
                     .font(.caption2.monospacedDigit())
             } minimal: {
                 Image(systemName: context.state.sharedMarginSenderLabel != nil
                     ? "text.bubble.fill"
-                    : (context.state.isRecording ? "record.circle.fill" : "waveform"))
+                    : context.state.surfaceSymbol(isStale: context.isStale))
             }
+            .widgetURL(context.state.tapURL(isStale: context.isStale))
         }
         .supplementalActivityFamilies([.small])
+    }
+}
+
+enum Gate2LiveActivityCopy {
+    static let pausedPrompt = "Paused — tap to resume"
+}
+
+extension Gate2LiveActivityAttributes.ContentState {
+    /// Paused and not recording, or past its stale date (the app sets one only while paused).
+    /// The card then says how to resume instead of looking like a frozen player.
+    func offersResume(isStale: Bool) -> Bool {
+        guard !isRecording, sharedMarginSenderLabel == nil else { return false }
+        return isStale || status == "paused"
+    }
+
+    /// Tapping a paused card opens the app and resumes; otherwise it just opens the app.
+    func tapURL(isStale: Bool) -> URL? {
+        offersResume(isStale: isStale) ? Gate2CompactCommandURL.url(command: "play") : nil
+    }
+
+    func surfaceSymbol(isStale: Bool) -> String {
+        if isRecording { return "record.circle.fill" }
+        return offersResume(isStale: isStale) ? "pause.fill" : "waveform"
     }
 }
 
 private struct Gate2LiveActivityContent: View {
     @Environment(\.activityFamily) private var activityFamily
     let state: Gate2LiveActivityAttributes.ContentState
+    let isStale: Bool
 
     var body: some View {
         switch activityFamily {
         case .small:
-            Gate2LiveActivitySmallView(state: state)
+            Gate2LiveActivitySmallView(state: state, isStale: isStale)
         case .medium:
-            Gate2LiveActivityView(state: state)
+            Gate2LiveActivityView(state: state, isStale: isStale)
         @unknown default:
-            Gate2LiveActivityView(state: state)
+            Gate2LiveActivityView(state: state, isStale: isStale)
         }
     }
 }
@@ -78,13 +106,15 @@ private struct Gate2LiveActivityContent: View {
 private struct Gate2LiveActivitySmallView: View {
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     let state: Gate2LiveActivityAttributes.ContentState
+    let isStale: Bool
 
     private var isPlaying: Bool {
-        state.status == "playing" || state.status == "starting"
+        !isStale && (state.status == "playing" || state.status == "starting")
     }
 
     private var stateText: String {
         if state.isRecording { return "REC" }
+        if state.offersResume(isStale: isStale) { return "TAP TO RESUME" }
         if isPlaying { return "PLAY" }
         return state.status.uppercased()
     }
@@ -141,6 +171,7 @@ private struct Gate2LiveActivitySmallView: View {
 
 private struct Gate2LiveActivityView: View {
     let state: Gate2LiveActivityAttributes.ContentState
+    let isStale: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -164,7 +195,13 @@ private struct Gate2LiveActivityView: View {
             }
 
             ProgressView(value: Double(max(0, min(100, state.progressPercent))), total: 100)
-                .tint(.green)
+                .tint(state.offersResume(isStale: isStale) ? .white.opacity(0.45) : .green)
+
+            if state.offersResume(isStale: isStale) {
+                Label(Gate2LiveActivityCopy.pausedPrompt, systemImage: "play.circle.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+            }
 
             if let sender = state.sharedMarginSenderLabel {
                 VStack(alignment: .leading, spacing: 7) {
