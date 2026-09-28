@@ -1,0 +1,223 @@
+{
+ "all": {
+  "n": 100,
+  "kind": {
+   "accuracy": 0.4,
+   "question": {
+    "p": 0.333,
+    "r": 0.462,
+    "f1": 0.387,
+    "tp": 6,
+    "fp": 12,
+    "fn": 7
+   },
+   "todo": {
+    "p": 0.057,
+    "r": 1.0,
+    "f1": 0.108,
+    "tp": 2,
+    "fp": 33,
+    "fn": 0
+   },
+   "quote": {
+    "p": 0.0,
+    "r": 0.0,
+    "f1": 0.0,
+    "tp": 0,
+    "fp": 1,
+    "fn": 0
+   },
+   "connection": {
+    "p": 0.0,
+    "r": 0.0,
+    "f1": 0.0,
+    "tp": 0,
+    "fp": 2,
+    "fn": 6
+   },
+   "claim": {
+    "p": 0.721,
+    "r": 0.449,
+    "f1": 0.554,
+    "tp": 31,
+    "fp": 12,
+    "fn": 38
+   },
+   "reaction": {
+    "p": 1.0,
+    "r": 0.1,
+    "f1": 0.182,
+    "tp": 1,
+    "fp": 0,
+    "fn": 9
+   },
+   "confusion": {
+    "question": {
+     "question": 6,
+     "todo": 4,
+     "quote": 0,
+     "connection": 1,
+     "claim": 2,
+     "reaction": 0
+    },
+    "todo": {
+     "question": 0,
+     "todo": 2,
+     "quote": 0,
+     "connection": 0,
+     "claim": 0,
+     "reaction": 0
+    },
+    "quote": {
+     "question": 0,
+     "todo": 0,
+     "quote": 0,
+     "connection": 0,
+     "claim": 0,
+     "reaction": 0
+    },
+    "connection": {
+     "question": 1,
+     "todo": 3,
+     "quote": 0,
+     "connection": 0,
+     "claim": 2,
+     "reaction": 0
+    },
+    "claim": {
+     "question": 11,
+     "todo": 25,
+     "quote": 1,
+     "connection": 1,
+     "claim": 31,
+     "reaction": 0
+    },
+    "reaction": {
+     "question": 0,
+     "todo": 1,
+     "quote": 0,
+     "connection": 0,
+     "claim": 8,
+     "reaction": 1
+    }
+   }
+  },
+  "referent": {
+   "accuracy": 0.44,
+   "within_one_sentence": 0.64,
+   "by_gold_scope": {
+    "span": {
+     "correct": 44,
+     "n": 89
+    },
+    "none": {
+     "correct": 0,
+     "n": 8
+    },
+    "item": {
+     "correct": 0,
+     "n": 3
+    }
+   },
+   "anchor_sentence_baseline": 0.56
+  },
+  "entities": {
+   "person": {
+    "p": 0.3,
+    "r": 0.75,
+    "f1": 0.429,
+    "tp": 3,
+    "fp": 7,
+    "fn": 1
+   },
+   "place": {
+    "p": 0.545,
+    "r": 1.0,
+    "f1": 0.706,
+    "tp": 12,
+    "fp": 10,
+    "fn": 0
+   },
+   "org": {
+    "p": 0.25,
+    "r": 0.294,
+    "f1": 0.27,
+    "tp": 5,
+    "fp": 15,
+    "fn": 12
+   },
+   "work": {
+    "p": 0.0,
+    "r": 0.0,
+    "f1": 0.0,
+    "tp": 0,
+    "fp": 2,
+    "fn": 8
+   },
+   "other": {
+    "p": 0.08,
+    "r": 0.125,
+    "f1": 0.098,
+    "tp": 2,
+    "fp": 23,
+    "fn": 14
+   },
+   "any": {
+    "p": 0.405,
+    "r": 0.561,
+    "f1": 0.471,
+    "tp": 32,
+    "fp": 47,
+    "fn": 25
+   },
+   "typed": {
+    "p": 0.278,
+    "r": 0.386,
+    "f1": 0.324,
+    "tp": 22,
+    "fp": 57,
+    "fn": 35
+   }
+  },
+  "topics": {
+   "p": 0.366,
+   "r": 0.415,
+   "f1": 0.389
+  },
+  "links": {
+   "same_entity": {
+    "p": 0.778,
+    "r": 0.7,
+    "f1": 0.737,
+    "tp": 7,
+    "fp": 2,
+    "fn": 3
+   },
+   "same_referent": {
+    "p": 0.0,
+    "r": 0.0,
+    "f1": 0.0,
+    "tp": 0,
+    "fp": 0,
+    "fn": 0
+   },
+   "related_topic": {
+    "p": 0.107,
+    "r": 0.3,
+    "f1": 0.158,
+    "tp": 9,
+    "fp": 75,
+    "fn": 21
+   },
+   "follows_up": {
+    "p": 0.0,
+    "r": 0.0,
+    "f1": 0.0,
+    "tp": 0,
+    "fp": 15,
+    "fn": 0
+   }
+  }
+ },
+ "tagger": "spaCy en_core_web_md"
+}
