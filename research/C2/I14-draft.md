@@ -1,6 +1,6 @@
-# I14 · Speech engine selection — DRAFT
+# I14 · Speech engine selection (§1–3 draft; §4–5 published)
 
-> **Status: draft from the C2 M2 research session (2026-09-28).** Not published. C2 M1 publishes the real I14 in `docs/workstreams/interfaces.md`, and may change any of this. C1 can read it to see where the rules are heading, but shouldn't build on it as final.
+> **Status:** §4 (roles and markers) and §5 (normalization) are published in `docs/workstreams/interfaces.md` under I14 (2026-09-28). That page is authoritative for them. §1–3 (engine selection, rate, chunk boundaries) remain a draft until C2 M1 (#183).
 
 I14 answers three questions for every narration path: which engine and voice render, and why; how fast they speak; and how each I13 role sounds.
 
