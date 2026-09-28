@@ -31,10 +31,9 @@ class LaneGuardTests(unittest.TestCase):
         for command in ('xcrun simctl boot 31A5C797-9CE5-409F-9C65-4A8D4C339D44',
                         'xcrun simctl install booted App.app',
                         'xcrun simctl launch booted com.example',
-                        'xcrun simctl erase all',
-                        'xcrun --sdk iphonesimulator simctl shutdown all',
+                        'xcrun simctl erase 31A5C797-9CE5-409F-9C65-4A8D4C339D44',
+                        'xcrun --sdk iphonesimulator simctl shutdown booted',
                         '/Applications/Xcode.app/Contents/Developer/usr/bin/simctl boot X',
-                        'xcrun devicectl device install app --device X App.app',
                         'scripts/xcodebuild-lane -scheme SpokenMarginsApp -destination id=X test',
                         '.venv/bin/python scripts/verify-tests.py --plan app',
                         'python3 scripts/verify-tests.py --plan=adapters',
@@ -48,7 +47,19 @@ class LaneGuardTests(unittest.TestCase):
                         'bash -c "xcrun simctl boot X"',
                         'echo $(xcrun simctl boot X)',
                         'echo `xcrun simctl boot X`',
-                        'git status; xcrun simctl boot X 2>&1 | tail -3'):
+                        'git status; xcrun simctl boot X 2>&1 | tail -3',
+                        # Shell syntax an agent would plausibly write (fresh-context review, M1).
+                        "for d in $(xcrun simctl list devices booted | grep -oE '[0-9A-F-]{36}'); "
+                        "do xcrun simctl shutdown $d; done",
+                        'if ! xcrun simctl boot X; then echo failed; fi',
+                        'while true; do xcrun simctl launch booted com.example; sleep 5; done',
+                        '{ xcrun simctl boot X; }',
+                        '! xcrun simctl boot X',
+                        "bash -lc 'xcrun simctl boot X'",
+                        'zsh -ec "scripts/xcodebuild-lane -scheme S test"',
+                        'echo "booting $(xcrun simctl boot X)"',
+                        'UDID="$(xcrun simctl create Temp com.apple.CoreSimulator.SimDeviceType.iPhone-17)"',
+                        'echo "`xcrun simctl boot X`"'):
             with self.subTest(command=command):
                 reason = self.decide(bash(command))
                 self.assertIsNotNone(reason)
@@ -75,6 +86,9 @@ class LaneGuardTests(unittest.TestCase):
                         'grep -rn "xcrun simctl boot" scripts/',
                         'git commit -m "Block xcrun simctl boot in stream sessions"',
                         "git commit -F - <<'EOF'\nGuard the lane\n\nxcrun simctl boot is blocked.\nxcodebuild test too.\nEOF",
+                        "git commit -m 'Block `xcrun simctl boot` in streams'",
+                        "echo '$(xcrun simctl boot X)'",
+                        'command -v xcodebuild', 'xcodebuild -h',
                         'python -u'):
             with self.subTest(command=command):
                 self.assertIsNone(self.decide(bash(command)))
@@ -83,9 +97,41 @@ class LaneGuardTests(unittest.TestCase):
         for environ in (self.stream, self.desk):
             for command in ('xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp build',
                             'xcrun xcodebuild -scheme S archive',
+                            'if ! xcodebuild -scheme S build; then echo failed; fi',
                             'cd App && xcodebuild -scheme S -destination "generic/platform=iOS" build'):
                 with self.subTest(command=command, desk=environ is self.desk):
                     self.assertIn('scripts/xcodebuild-lane', self.decide(bash(command), environ))
+
+    def test_branches_without_the_wrapper_can_still_build(self):
+        # The guard is installed user-wide before every branch has scripts/xcodebuild-lane.
+        main, _ = self.repository_with_test_desk()
+        command = bash('xcodebuild -scheme S build', cwd=main)
+        self.assertIsNone(self.decide(command, repos=(main,)))
+        os.makedirs(os.path.join(main, 'scripts'))
+        open(os.path.join(main, 'scripts', 'xcodebuild-lane'), 'w').close()
+        self.assertIn('scripts/xcodebuild-lane', self.decide(command, repos=(main,)))
+        self.assertIn('Only the Test Desk', self.decide(bash('xcodebuild -scheme S test', cwd=main), repos=(main,)))
+
+    def test_every_device_and_physical_device_changes_are_blocked_even_for_the_desk(self):
+        for command in ('xcrun simctl erase all', 'xcrun simctl shutdown all', 'xcrun simctl delete unavailable',
+                        'xcrun devicectl device install app --device X App.app',
+                        'xcrun devicectl device process launch --device X com.example'):
+            for environ in (self.stream, self.desk):
+                with self.subTest(command=command, desk=environ is self.desk):
+                    self.assertIn('in every session', self.decide(bash(command), environ))
+        self.assertIsNone(self.decide(bash('xcrun simctl shutdown 31A5C797-9CE5-409F-9C65-4A8D4C339D44'), self.desk))
+
+    def test_other_tools_that_run_shell_commands_are_guarded(self):
+        # The terminal tool runs in its own cwd; Monitor runs in the session's.
+        with tempfile.TemporaryDirectory() as other:
+            terminal = {'tool_name': 'mcp__terminal__run_in_terminal', 'cwd': other,
+                        'tool_input': {'command': '.venv/bin/python scripts/verify-tests.py --plan app', 'cwd': REPO}}
+            self.assertIn('Only the Test Desk', self.decide(terminal))
+            elsewhere = {**terminal, 'tool_input': {**terminal['tool_input'], 'cwd': other}}
+            self.assertIsNone(self.decide(elsewhere))
+        monitor = {'tool_name': 'Monitor', 'cwd': REPO,
+                   'tool_input': {'command': 'xcodebuild -scheme S build 2>&1 | grep --line-buffered error'}}
+        self.assertIn('scripts/xcodebuild-lane', self.decide(monitor))
 
     def test_simulator_mcp_tools_are_desk_only(self):
         event = {'tool_name': 'mcp__Claude_Code_iOS_Simulator__control', 'tool_input': {'action': 'launch'},

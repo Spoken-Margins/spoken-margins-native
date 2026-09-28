@@ -7,13 +7,15 @@ sessions working in the guarded repository or one of its worktrees; other projec
 
 In a guarded session it blocks (exit 2, reason on stderr):
 - simulator state changes: `simctl boot|install|launch|shutdown|erase|...`, opening Simulator.app,
-  killing CoreSimulator, simulator MCP tools, installs and launches on a physical device;
+  killing CoreSimulator, simulator MCP tools;
 - simulator test runs: `xcodebuild test|test-without-building`, `verify-tests.py --plan` other
   than fast, and the repo scripts that boot simulators;
 unless the session is the Test Desk: opened on the <repo>-test-desk worktree next to the
 repository, or started with SM_LANE_ROLE=test-desk. In every guarded session, including the Test Desk, it also sends raw
-`xcodebuild` builds to scripts/xcodebuild-lane, the Mac-wide build semaphore. Guarded calls are
-logged to ~/Library/Caches/SpokenMarginsLane/guard.log.
+`xcodebuild` builds to scripts/xcodebuild-lane (when that branch has it), the Mac-wide build semaphore, and it blocks what
+no lane session needs: changes on a physical device (`devicectl`) and `simctl erase|delete|shutdown
+all`. Shell commands are read from any tool's `command` input (Bash, Monitor, the terminal tool).
+Guarded calls are logged to ~/Library/Caches/SpokenMarginsLane/guard.log.
 
 Stdlib only and Python 3.9-compatible: it runs under /usr/bin/python3, outside any checkout.
 Anything unexpected fails open, because a crashing hook must not block every project's shell.
@@ -40,22 +42,25 @@ PREFIX_COMMANDS = {'env', 'command', 'exec', 'time', 'nice', 'nohup', 'caffeinat
 # Options of those wrappers that take a separate value, e.g. `env -u NAME` or `timeout -s KILL`.
 PREFIX_VALUE_OPTIONS = {'-u', '-n', '-s', '-k', '-S', '-C', '-P', '-t', '-w', '-g', '-I', '-L', '-a'}
 SHELLS = {'bash', 'sh', 'zsh', 'dash'}
+SHELL_KEYWORDS = {'if', 'then', 'elif', 'else', 'fi', 'do', 'done', 'while', 'until', '!', '{', '}'}
+SHELL_COMMAND_FLAG = re.compile(r'^-[A-Za-z]*c[A-Za-z]*$')  # -c, -lc, -ec ...
 PYTHON = re.compile(r'python(\d+(\.\d+)*)?$')
 
 SIMCTL_READ_ONLY = {'list', 'help', 'get_app_container', 'appinfo', 'listapps', 'getenv'}
+SIMCTL_EVERY_DEVICE = {'all', 'unavailable'}
 XCRUN_VALUE_OPTIONS = {'--sdk', '-sdk', '--toolchain', '-toolchain'}
 HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 SIM_TEST_ACTIONS = {'test', 'test-without-building'}
 XCODEBUILD_NO_BUILD = {'-version', '-list', '-showsdks', '-showBuildSettings', '-showdestinations',
-                       '-showTestPlans', '-help', '-usage', '-license', '-checkFirstLaunchStatus',
-                       '-exportArchive', '-exportLocalizations', '-importLocalizations',
-                       '-exportNotarizedApp', '-create-xcframework'}
+                       '-showTestPlans', '-help', '-h', '-usage', '-license', '-checkFirstLaunchStatus',
+                       '-exportArchive', '-importLocalizations', '-exportNotarizedApp', '-create-xcframework'}
 HOST_PLANS = {'fast'}
 SIMULATOR_SCRIPTS = {'smoke-simulator.sh', 'check_posterboard_repair.py', 'verify-gate1.sh',
                      'verify-gate1-routine.sh', 'verify-gate1-closeout.sh', 'verify-gate2.sh'}
 
 SIM = 'simulator'
 BUILD = 'build'
+PROTECTED = 'protected'
 
 
 def strip_heredocs(command: str) -> str:
@@ -69,6 +74,37 @@ def strip_heredocs(command: str) -> str:
         kept.append(line)
         pending.extend(match.group(2) for match in HEREDOC.finditer(line))
     return '\n'.join(kept)
+
+
+def substitutions(command: str) -> list[str]:
+    """Commands inside $(...) and backticks outside single quotes, which the shell runs too."""
+    found, index, single, double = [], 0, False, False
+    while index < len(command):
+        char = command[index]
+        if char == '\\' and not single:
+            index += 2
+            continue
+        if char == "'" and not double:
+            single = not single
+        elif char == '"' and not single:
+            double = not double
+        elif not single and command.startswith('$(', index):
+            depth, end = 1, index + 2
+            while end < len(command) and depth:
+                depth += {'(': 1, ')': -1}.get(command[end], 0)
+                end += 1
+            found.append(command[index + 2:end - 1])
+            index = end
+            continue
+        elif not single and char == '`':
+            end = command.find('`', index + 1)
+            if end == -1:
+                break
+            found.append(command[index + 1:end])
+            index = end + 1
+            continue
+        index += 1
+    return found
 
 
 def words(command: str) -> list[str]:
@@ -100,13 +136,15 @@ def simple_commands(command: str) -> list[list[str]]:
 
 
 def strip_prefixes(argv: list[str]) -> list[str]:
-    """Drop VAR=value assignments and wrappers like `env`, `timeout 600` or `caffeinate -i`."""
+    """Drop shell keywords, VAR=value assignments and wrappers like `env`, `timeout 600` or `caffeinate -i`."""
     argv = list(argv)
     while argv:
         head = argv[0]
-        if re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', head):
+        if head in SHELL_KEYWORDS or re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', head):
             argv.pop(0)
         elif os.path.basename(head) in PREFIX_COMMANDS:
+            if head == 'command' and argv[1:2] in (['-v'], ['-V']):
+                return []  # only looks the program up
             argv.pop(0)
             while argv and (argv[0].startswith('-') or re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', argv[0])
                             or re.match(r'^\d+(\.\d+)?[smhd]?$', argv[0])):
@@ -126,9 +164,9 @@ def classify_argv(argv: list[str], depth: int = 0) -> list[tuple[str, str]]:
     program = os.path.basename(argv[0])
     rest = argv[1:]
     if program in SHELLS:
-        if '-c' in rest:
-            index = rest.index('-c')
-            return classify_command(rest[index + 1], depth + 1) if index + 1 < len(rest) and depth < 3 else []
+        for index, arg in enumerate(rest):
+            if SHELL_COMMAND_FLAG.match(arg):
+                return classify_command(rest[index + 1], depth + 1) if index + 1 < len(rest) and depth < 3 else []
         rest = [arg for arg in rest if not arg.startswith('-')]
         if not rest:
             return []
@@ -149,11 +187,13 @@ def classify_argv(argv: list[str], depth: int = 0) -> list[tuple[str, str]]:
             return []
         if sub == 'runtime' and rest[1:2] in (['list'], ['match']):
             return []
+        if sub in ('erase', 'delete', 'shutdown') and SIMCTL_EVERY_DEVICE & set(rest[1:]):
+            return [(PROTECTED, f'simctl {sub} ' + ' '.join(sorted(SIMCTL_EVERY_DEVICE & set(rest[1:]))))]
         return [(SIM, f'simctl {sub}')]
     if program == 'devicectl':
         if rest[:1] == ['list'] or rest[:2] == ['device', 'info'] or not rest or rest[0] in ('help', '--help'):
             return []
-        return [(SIM, 'devicectl ' + ' '.join(rest[:3]))]
+        return [(PROTECTED, 'devicectl ' + ' '.join(rest[:3]))]
     if program in ('xcodebuild', 'xcodebuild-lane'):
         if any(arg in XCODEBUILD_NO_BUILD for arg in rest):
             return []
@@ -196,18 +236,20 @@ def classify_command(command: str, depth: int = 0) -> list[tuple[str, str]]:
     found = []
     for argv in simple_commands(command):
         found.extend(classify_argv(argv, depth))
+    if depth < 3:
+        for inner in substitutions(strip_heredocs(command)):
+            found.extend(classify_command(inner, depth + 1))
     return found
 
 
 def classify_tool(tool_name: str, tool_input: dict) -> list[tuple[str, str]]:
-    if tool_name == 'Bash':
-        command = tool_input.get('command') or ''
-        if not any(keyword in command for keyword in KEYWORDS):
-            return []
-        return classify_command(command)
+    """Simulator tools by name; any tool that runs a shell `command` (Bash, Monitor, the terminal) by its text."""
     if re.search('simulator', tool_name, re.I):
         return [(SIM, f'{tool_name} {tool_input.get("action", "")}'.strip())]
-    return []
+    command = tool_input.get('command')
+    if not isinstance(command, str) or not any(keyword in command for keyword in KEYWORDS):
+        return []
+    return classify_command(command)
 
 
 def same_repository(path: str, repos: list[str]) -> bool:
@@ -227,11 +269,25 @@ def same_repository(path: str, repos: list[str]) -> bool:
 
 
 def in_scope(event: dict, repos: list[str], environ) -> bool:
-    command = (event.get('tool_input') or {}).get('command') or ''
+    tool_input = event.get('tool_input') or {}
+    command = tool_input.get('command') if isinstance(tool_input.get('command'), str) else ''
     if any(os.path.realpath(repo) in command or repo in command for repo in repos):
         return True
-    places = [event.get('cwd'), environ.get('CLAUDE_PROJECT_DIR')]
+    tool_cwd = tool_input.get('cwd') if isinstance(tool_input.get('cwd'), str) else None
+    places = [event.get('cwd'), tool_cwd and os.path.expanduser(tool_cwd), environ.get('CLAUDE_PROJECT_DIR')]
     return any(place and same_repository(place, repos) for place in places)
+
+
+def wrapper_available(event: dict) -> bool:
+    """Whether the worktree this command runs in has scripts/xcodebuild-lane (branches from before it don't)."""
+    tool_input = event.get('tool_input') or {}
+    place = tool_input.get('cwd') if isinstance(tool_input.get('cwd'), str) else event.get('cwd')
+    try:
+        top = subprocess.run(['git', '-C', os.path.expanduser(place or '.'), 'rev-parse', '--show-toplevel'],
+                             capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return bool(top) and os.path.exists(os.path.join(top, 'scripts', 'xcodebuild-lane'))
 
 
 def project_key(path: str) -> str:
@@ -281,15 +337,20 @@ def decide(event: dict, repos: list[str], environ=None) -> str | None:
         return None
     desk = test_desk(event, repos, environ)
     sim = sorted({what for kind, what in found if kind == SIM})
+    protected = sorted({what for kind, what in found if kind == PROTECTED})
     reason = None
-    if sim and not desk:
+    if protected:
+        reason = (f'Spoken Margins lane guard: blocked {", ".join(protected)} in every session, the Test Desk '
+                  'included. It acts on the owner\'s phone or on every simulator, including the owner\'s journey '
+                  'simulator. Target one simulator by its UDID, or ask the owner to run it in their own terminal.')
+    elif sim and not desk:
         reason = (f'Spoken Margins lane guard: blocked {", ".join(sim)}. Only the Test Desk session boots, '
                   'installs on or drives simulators, and runs simulator test plans, so parallel sessions '
                   'cannot start a simulator crash flood. Ask the lane for a T3/T4 run instead: see '
                   '.claude/skills/lane-request/SKILL.md and docs/workstreams/test-lane.md. Host checks '
                   '(verify-tests.py --plan fast, swift test) and builds through scripts/xcodebuild-lane '
                   'are allowed.')
-    elif any(kind == BUILD for kind, _ in found):
+    elif any(kind == BUILD for kind, _ in found) and wrapper_available(event):
         reason = ('Spoken Margins lane guard: run xcodebuild through scripts/xcodebuild-lane with the same '
                   'arguments. It queues for one of the two Mac-wide build slots and uses this worktree\'s '
                   'own DerivedData (.build/dd) unless you pass -derivedDataPath. Information-only calls '

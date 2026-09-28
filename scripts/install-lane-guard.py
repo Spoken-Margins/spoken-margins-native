@@ -28,7 +28,7 @@ def main_checkout():
 
 
 def settings_entry():
-    return {'matcher': 'Bash|mcp__.*[Ss]imulator.*',
+    return {'matcher': 'Bash|Monitor|mcp__terminal__.*|mcp__.*[Ss]imulator.*',
             'hooks': [{'type': 'command', 'timeout': 10,
                        'command': f'{PYTHON} {TARGET} --repo {main_checkout()}'}]}
 
