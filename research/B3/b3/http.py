@@ -53,8 +53,9 @@ def _key(method: str, url: str, body: bytes | None) -> str:
 
 
 # Per-host minimum spacing between live requests. Apple's search API answers
-# 403 with an empty body when called more than ~20 times a minute.
-_SPACING = {"itunes.apple.com": 3.2}
+# 403 with an empty body when over its limit; from this shared cloud IP that is
+# about four or five requests a minute.
+_SPACING = {"itunes.apple.com": 12.0}
 _last: dict[str, float] = {}
 
 
@@ -120,7 +121,7 @@ def _live(url, method, body, headers):
             # Apple's throttle: back off and retry rather than record a 403.
             if e.code in (403, 429) and "itunes.apple.com" in url and attempts < 8:
                 print(f"[http] {e.code} from Apple, backing off (attempt {attempts})", file=sys.stderr)
-                time.sleep(20 * attempts)
+                time.sleep(30 * attempts)
                 continue
             if e.code in (404, 400, 410):
                 return e.read() or b"", e.code

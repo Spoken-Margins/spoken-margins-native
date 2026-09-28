@@ -43,5 +43,6 @@ def items(feed_url: str) -> list[dict]:
             "duration_s": _dur(it.findtext(f"{ITUNES}duration")),
             "audio_url": enc.get("url") if enc is not None else None,
             "link": (it.findtext("link") or "").strip() or None,
+            "description": (it.findtext("description") or "").strip(),
         })
     return out

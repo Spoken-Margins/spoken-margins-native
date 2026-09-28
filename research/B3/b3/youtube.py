@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 import urllib.parse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import http
 
@@ -52,6 +52,7 @@ class VideoEvidence:
     published: str | None = None      # ISO date, YYYY-MM-DD
     duration_s: int | None = None
     description: str = ""
+    links: list[str] = field(default_factory=list)
     is_short: bool = False
     is_live: bool = False
 
@@ -126,14 +127,30 @@ def _trim_next(text: str) -> str:
         if "videoSecondaryInfoRenderer" in o and "secondary" not in out:
             s = o["videoSecondaryInfoRenderer"]
             owner = s.get("owner", {}).get("videoOwnerRenderer", {})
+            desc = s.get("attributedDescription") or {}
             out["secondary"] = {
-                "description": _text(s.get("attributedDescription")) or _text(s.get("description")) or "",
+                "description": _text(desc) or _text(s.get("description")) or "",
+                # Link text in descriptions is shortened ("open.spotify.com/show/01A0..."),
+                # so keep the real targets of the description's links.
+                "links": _description_links(desc),
                 "channel": _text(owner.get("title")),
                 "channelId": owner.get("navigationEndpoint", {}).get("browseEndpoint", {}).get("browseId"),
             }
         if "videoDescriptionHeaderRenderer" in o and "publishDate" not in out:
             out["publishDate"] = _text(o["videoDescriptionHeaderRenderer"].get("publishDate"))
     return json.dumps(out, ensure_ascii=False)
+
+
+def _description_links(desc: dict) -> list[str]:
+    links = []
+    for run in desc.get("commandRuns", []):
+        url = (run.get("onTap", {}).get("innertubeCommand", {})
+               .get("urlEndpoint", {}).get("url"))
+        if not url:
+            continue
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get("q")
+        links.append(q[0] if q else url)
+    return list(dict.fromkeys(links))
 
 
 def _trim_search(text: str) -> str:
@@ -190,6 +207,7 @@ def evidence(link: str) -> VideoEvidence | None:
         published=_iso_date(date_text),
         duration_s=duration_s(vid),
         description=secondary.get("description") or "",
+        links=secondary.get("links") or [],
         is_short="/shorts/" in link,
         is_live=bool(date_text and ("Streamed" in date_text or "live" in date_text.lower())),
     )

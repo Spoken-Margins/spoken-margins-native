@@ -1,0 +1,867 @@
+{
+ "about": "YouTube podcast links labeled with the same episode in the show's own feed, or none. See README.md for categories and how labels were decided.",
+ "labeled_on": "2026-09-28",
+ "cases": [
+  {
+   "id": "s7d2d8FhevU",
+   "url": "https://www.youtube.com/watch?v=s7d2d8FhevU",
+   "category": "full_episode",
+   "show": "Lex Fridman Podcast",
+   "feed_url": "https://lexfridman.com/feed/podcast/",
+   "expected": {
+    "guid": "https://lexfridman.com/?p=6554",
+    "title": "#502 – Psychiatry, Insane Asylums, Mental Illness, ECT, Lobotomies, Freud & Jung",
+    "published": "2026-09-17",
+    "duration_s": null,
+    "audio_url": "https://media.blubrry.com/takeituneasy/ins.blubrry.com/takeituneasy/lex_ai_andrew_scull.mp3"
+   },
+   "note": "#502; episode number in both titles"
+  },
+  {
+   "id": "l6USUAIKJls",
+   "url": "https://www.youtube.com/watch?v=l6USUAIKJls",
+   "category": "full_episode",
+   "show": "Lex Fridman Podcast",
+   "feed_url": "https://lexfridman.com/feed/podcast/",
+   "expected": {
+    "guid": "https://lexfridman.com/?p=6494",
+    "title": "#500 – Khabib Nurmagomedov: Dagestan, MMA, UFC, Islam, Conor, Fedor & Football",
+    "published": "2026-08-12",
+    "duration_s": null,
+    "audio_url": "https://media.blubrry.com/takeituneasy/ins.blubrry.com/takeituneasy/lex_ai_khabib_nurmagomedov.mp3"
+   },
+   "note": "#500; older #421 also mentions Khabib"
+  },
+  {
+   "id": "nk15CT41MFc",
+   "url": "https://www.youtube.com/watch?v=nk15CT41MFc",
+   "category": "full_episode",
+   "show": "Huberman Lab",
+   "feed_url": "https://feeds.megaphone.fm/hubermanlab",
+   "expected": {
+    "guid": "982695aa-badf-11f1-9093-e3267f060ab3",
+    "title": "What Humans, Animals and Plants Tell Us About Consciousness | Michael Pollan",
+    "published": "2026-09-28",
+    "duration_s": 7353,
+    "audio_url": "https://traffic.megaphone.fm/SCIM4063268713.mp3"
+   },
+   "note": "same title and day"
+  },
+  {
+   "id": "Gu04f6aFuBY",
+   "url": "https://www.youtube.com/watch?v=Gu04f6aFuBY",
+   "category": "full_episode",
+   "show": "Huberman Lab",
+   "feed_url": "https://feeds.megaphone.fm/hubermanlab",
+   "expected": {
+    "guid": "3214407a-b7e5-11f1-a48a-3f6aff694931",
+    "title": "Essentials: Optimal Protocols to Build Strength & Grow Muscles | Dr. Andy Galpin",
+    "published": "2026-09-24",
+    "duration_s": 2286,
+    "audio_url": "https://traffic.megaphone.fm/SCIM8443296592.mp3"
+   },
+   "note": "\"Essentials\" re-cut; trap: 2023 full Galpin episode with a near-identical title"
+  },
+  {
+   "id": "6Kq5e49MD6U",
+   "url": "https://www.youtube.com/watch?v=6Kq5e49MD6U",
+   "category": "full_episode",
+   "show": "Acquired",
+   "feed_url": "https://feeds.transistor.fm/acquired",
+   "expected": {
+    "guid": "68b66323-6e74-4c90-8157-ef3f1ed0d042",
+    "title": "The Home Depot",
+    "published": "2026-09-13",
+    "duration_s": 12902,
+    "audio_url": "https://pscrb.fm/rss/p/media.transistor.fm/8ecb4ed4/568b6b7a.mp3"
+   },
+   "note": "feed title is just \"The Home Depot\"; durations equal"
+  },
+  {
+   "id": "u_k8pJ2I9S4",
+   "url": "https://www.youtube.com/watch?v=u_k8pJ2I9S4",
+   "category": "full_episode",
+   "show": "Hard Fork",
+   "feed_url": "https://feeds.simplecast.com/l2i9YnTd",
+   "expected": {
+    "guid": "c196b474-cd43-40c0-ab3a-2bed3756a248",
+    "title": "A.I. Safety Goes Mainstream + a ‘Hard Fork’ Exit AMA",
+    "published": "2026-09-18",
+    "duration_s": 5047,
+    "audio_url": "https://dts.podtrac.com/redirect.mp3/pdst.fm/e/pfx.vpixl.com/6qj4J/pscrb.fm/rss/p/nyt.simplecastaudio.com/3e43d072-f8a5-430f-bc8e-4c70aafdf3c7/episodes/b5fddcd2-e4f2-4f57-8d28-b0a48c5956a8/audio/128/default.mp3?aid=rss_feed&awCollectionId=3e43d072-f8a5-430f-bc8e-4c70aafdf3c7&awEpisodeId=b5fddcd2-e4f2-4f57-8d28-b0a48c5956a8&feed=l2i9YnTd"
+   },
+   "note": "retitled on YouTube; identical description, same day"
+  },
+  {
+   "id": "a_GiFiHXJ6g",
+   "url": "https://www.youtube.com/watch?v=a_GiFiHXJ6g",
+   "category": "full_episode",
+   "show": "The Diary Of A CEO",
+   "feed_url": "https://rss2.flightcast.com/xmsftuzjjykcmqwolaqn6mdn",
+   "expected": {
+    "guid": "flightcast:01M2RHNG0S1MZ1VD7AG18AGCZ7",
+    "title": "Rick Rubin: What Jay-Z Did in 30 Minutes Left Me Speechless!",
+    "published": "2026-09-21",
+    "duration_s": 9985,
+    "audio_url": "https://pdst.fm/e/pscrb.fm/rss/p/mgln.ai/e/1390/claritaspod.com/measure/p.podderapp.com/2544644999/mgln.ai/e/1651/episode.flightcast.com/01M2RHNG0S1MZ1VD7AG18AGCZ7.mp3"
+   },
+   "note": "retitled on YouTube; durations within 5s"
+  },
+  {
+   "id": "5-96FyJFiCA",
+   "url": "https://www.youtube.com/watch?v=5-96FyJFiCA",
+   "category": "full_episode",
+   "show": "Lenny's Podcast",
+   "feed_url": "https://api.substack.com/feed/podcast/10845.rss",
+   "expected": {
+    "guid": "substack:post:214070196",
+    "title": "The grief, loneliness, and burnout sweeping through the tech industry right now | Molly Graham",
+    "published": "2026-09-27",
+    "duration_s": 5654,
+    "audio_url": "https://pscrb.fm/rss/p/api.substack.com/feed/podcast/214070196/06231503de9b46eb77f3540e8404afcf.mp3"
+   },
+   "note": "retitled on YouTube; durations within 1s; trap: older Molly Graham episode"
+  },
+  {
+   "id": "cvP_1jmnkmM",
+   "url": "https://www.youtube.com/watch?v=cvP_1jmnkmM",
+   "category": "full_episode",
+   "show": "All-In",
+   "feed_url": "https://rss.libsyn.com/shows/254861/destinations/1928300.xml",
+   "expected": {
+    "guid": "39dac85d-ab62-45b0-a587-67797ed8f0ee",
+    "title": "Anthropic IPO at Risk, Meta's Muse Pop, Token Prices Fall, Open Source Gains Share, Alignment Fails",
+    "published": "2026-09-26",
+    "duration_s": 5664,
+    "audio_url": "https://dts.podtrac.com/redirect.mp3/traffic.libsyn.com/secure/allinchamathjason/ALLIN-E290_Ch.mp3?dest-id=1928300"
+   },
+   "note": "same title"
+  },
+  {
+   "id": "Gnb-CfNPcPE",
+   "url": "https://www.youtube.com/watch?v=Gnb-CfNPcPE",
+   "category": "full_episode",
+   "show": "All-In",
+   "feed_url": "https://rss.libsyn.com/shows/254861/destinations/1928300.xml",
+   "expected": {
+    "guid": "ebe0e737-5995-476f-8d20-673400e3ec13",
+    "title": "Blake Scholl: Why Plane Speed Stalled, Supersonic Commercial Flight, & Revolutionizing the Engine",
+    "published": "2026-09-22",
+    "duration_s": 1060,
+    "audio_url": "https://dts.podtrac.com/redirect.mp3/traffic.libsyn.com/secure/allinchamathjason/Blake_Scholl_AIS26_AUDIO_v99.mp3?dest-id=1928300"
+   },
+   "note": "short interview episode, same title and duration"
+  },
+  {
+   "id": "ruVJE9po3-U",
+   "url": "https://www.youtube.com/watch?v=ruVJE9po3-U",
+   "category": "full_episode",
+   "show": "The Joe Rogan Experience",
+   "feed_url": "https://feeds.megaphone.fm/GLT1412515089",
+   "expected": {
+    "guid": "fdbc67aa-b7a1-11f1-974a-f3fc61fd3468",
+    "title": "#2558 - Tyler Engle",
+    "published": "2026-09-24",
+    "duration_s": 8983,
+    "audio_url": "https://traffic.megaphone.fm/GLT7969377226.mp3"
+   },
+   "note": "#2558"
+  },
+  {
+   "id": "0MXllsmXWus",
+   "url": "https://www.youtube.com/watch?v=0MXllsmXWus",
+   "category": "full_episode",
+   "show": "The Joe Rogan Experience",
+   "feed_url": "https://feeds.megaphone.fm/GLT1412515089",
+   "expected": {
+    "guid": "78761fec-b0ac-11f1-bdd6-2b4a2c138356",
+    "title": "#2554 - Carlo Rovelli",
+    "published": "2026-09-15",
+    "duration_s": 9494,
+    "audio_url": "https://traffic.megaphone.fm/GLT1673171329.mp3"
+   },
+   "note": "#2554"
+  },
+  {
+   "id": "c628dF5qLzA",
+   "url": "https://www.youtube.com/watch?v=c628dF5qLzA",
+   "category": "full_episode",
+   "show": "Freakonomics Radio",
+   "feed_url": "https://feeds.simplecast.com/Y8lFbOT4",
+   "expected": {
+    "guid": "3f83f1f8-e9e5-4bc7-b9d8-dc1015948aa4",
+    "title": "688. When Is a Bet Not a Bet?",
+    "published": "2026-09-25",
+    "duration_s": 3032,
+    "audio_url": "https://mgln.ai/e/2/pdst.fm/e/dts.podtrac.com/redirect.mp3/stitcher.simplecastaudio.com/2be48404-a43c-4fa8-a32c-760a3216272e/episodes/7cc6e44c-25e8-43a6-907e-778ba898d728/audio/128/default.mp3?aid=rss_feed&awCollectionId=2be48404-a43c-4fa8-a32c-760a3216272e&awEpisodeId=7cc6e44c-25e8-43a6-907e-778ba898d728&feed=Y8lFbOT4"
+   },
+   "note": "688."
+  },
+  {
+   "id": "uTCEZcNIXK0",
+   "url": "https://www.youtube.com/watch?v=uTCEZcNIXK0",
+   "category": "full_episode",
+   "show": "Freakonomics Radio",
+   "feed_url": "https://feeds.simplecast.com/Y8lFbOT4",
+   "expected": {
+    "guid": "75093d30-0cd5-40e4-bfbe-e6505eed3b47",
+    "title": "How to Be a Double Unicorn, with John Urschel | Better in Person",
+    "published": "2026-09-16",
+    "duration_s": 1952,
+    "audio_url": "https://mgln.ai/e/2/pdst.fm/e/dts.podtrac.com/redirect.mp3/stitcher.simplecastaudio.com/2be48404-a43c-4fa8-a32c-760a3216272e/episodes/f563aed8-5f61-457a-9e78-8872917a83a1/audio/128/default.mp3?aid=rss_feed&awCollectionId=2be48404-a43c-4fa8-a32c-760a3216272e&awEpisodeId=f563aed8-5f61-457a-9e78-8872917a83a1&feed=Y8lFbOT4"
+   },
+   "note": "Better in Person; video 8 days before the audio, retitled; same guest and near-identical description"
+  },
+  {
+   "id": "VLI_yo1YNrk",
+   "url": "https://www.youtube.com/watch?v=VLI_yo1YNrk",
+   "category": "full_episode",
+   "show": "Oxide and Friends",
+   "feed_url": "https://feeds.transistor.fm/oxide-and-friends",
+   "expected": {
+    "guid": "c69e7677-0e72-41ae-9b8b-bbbf86341c46",
+    "title": "For Want of a Resistor",
+    "published": "2026-09-16",
+    "duration_s": 5030,
+    "audio_url": "https://media.transistor.fm/27f44a32/c648798d.mp3"
+   },
+   "note": "durations equal"
+  },
+  {
+   "id": "f_6TzmifxnI",
+   "url": "https://www.youtube.com/watch?v=f_6TzmifxnI",
+   "category": "full_episode",
+   "show": "Oxide and Friends",
+   "feed_url": "https://feeds.transistor.fm/oxide-and-friends",
+   "expected": {
+    "guid": "27edfef6-4772-4434-95b9-31e8a373ccf2",
+    "title": "The Open Weight Revolution with Simon Willison",
+    "published": "2026-07-31",
+    "duration_s": 5040,
+    "audio_url": "https://media.transistor.fm/3da80cf3/8a0241f0.mp3"
+   },
+   "note": "trap: 2024 episode with the same guest"
+  },
+  {
+   "id": "B32qsUA30-0",
+   "url": "https://www.youtube.com/watch?v=B32qsUA30-0",
+   "category": "full_episode",
+   "show": "The Changelog",
+   "feed_url": "https://changelog.com/podcast/feed",
+   "expected": {
+    "guid": "changelog.com/1/2817",
+    "title": "Selling SDKs in the era of many Claudes (Interview)",
+    "published": "2026-02-19",
+    "duration_s": 6611,
+    "audio_url": "https://op3.dev/e/https://pscrb.fm/rss/p/https://cdn.changelog.com/uploads/podcast/677/the-changelog-677.mp3"
+   },
+   "note": "same day; feed adds \"(Interview)\""
+  },
+  {
+   "id": "rsp5wJSM7K0",
+   "url": "https://www.youtube.com/watch?v=rsp5wJSM7K0",
+   "category": "full_episode",
+   "show": "Syntax",
+   "feed_url": "https://feed.syntax.fm/rss",
+   "expected": {
+    "guid": "5daa2860-b6b1-11f1-8ef7-bb315dd5dbd1",
+    "title": "1042: Is the Jev Hype Overblown?",
+    "published": "2026-09-28",
+    "duration_s": 4923,
+    "audio_url": "https://traffic.megaphone.fm/FSI8312173039.mp3"
+   },
+   "note": "1042; audio a week after the video, identical description"
+  },
+  {
+   "id": "mQBnjImNOm0",
+   "url": "https://www.youtube.com/watch?v=mQBnjImNOm0",
+   "category": "full_episode",
+   "show": "Sean Carroll's Mindscape",
+   "feed_url": "https://rss.libsyn.com/shows/604590/destinations/5264190.xml",
+   "expected": {
+    "guid": "fbc9810f-f983-49eb-8753-f7d6e4457a80",
+    "title": "369 | Gregg Caruso on Living Well Without Free Will",
+    "published": "2026-09-28",
+    "duration_s": 5011,
+    "audio_url": "https://dts.podtrac.com/redirect.mp3/pscrb.fm/rss/p/traffic.libsyn.com/secure/1d1ac211-8392-45fe-82db-99fa7f77076e/gregg_caruso.mp3?dest-id=5264190"
+   },
+   "note": "369"
+  },
+  {
+   "id": "5vZ01J1mLQA",
+   "url": "https://www.youtube.com/watch?v=5vZ01J1mLQA",
+   "category": "full_episode",
+   "show": "Sean Carroll's Mindscape",
+   "feed_url": "https://rss.libsyn.com/shows/604590/destinations/5264190.xml",
+   "expected": {
+    "guid": "2247d1c8-dcfa-473e-9bfe-7b3cd7bbaaa3",
+    "title": "Mindscape Ask Me Anything, Sean Carroll | September 2026",
+    "published": "2026-09-14",
+    "duration_s": 13926,
+    "audio_url": "https://dts.podtrac.com/redirect.mp3/pscrb.fm/rss/p/traffic.libsyn.com/secure/1d1ac211-8392-45fe-82db-99fa7f77076e/ama_sept_2026.mp3?dest-id=5264190"
+   },
+   "note": "monthly AMA; trap: other months' AMAs differ only by month"
+  },
+  {
+   "id": "j774AFDJqFg",
+   "url": "https://www.youtube.com/watch?v=j774AFDJqFg",
+   "category": "full_episode",
+   "show": "The Tim Ferriss Show",
+   "feed_url": "https://rss.art19.com/tim-ferriss-show",
+   "expected": {
+    "guid": "gid://art19-episode-locator/V0/mbdm7FqApWkMF1leES32j8BmnIVkghmms67B1O_PMMg",
+    "title": "#884: How to Spot 10-Year Trends and Build Billion-Dollar Companies — Kevin Ryan of DoubleClick, MongoDB, Business Insider, and Many More",
+    "published": "2026-09-24",
+    "duration_s": 5180,
+    "audio_url": "https://rss.art19.com/episodes/44f24cf5-59b3-4e96-99b5-13f029b035c6.mp3?rss_browser=BAhJIgtTYWZhcmkGOgZFVA%3D%3D--e8daa48e4e049c2293a0ad1663b4a762c475e386"
+   },
+   "note": "#884; audio 10 minutes longer"
+  },
+  {
+   "id": "dCX4PE2HxMs",
+   "url": "https://www.youtube.com/watch?v=dCX4PE2HxMs",
+   "category": "full_episode",
+   "show": "Latent Space",
+   "feed_url": "https://api.substack.com/feed/podcast/1084089.rss",
+   "expected": {
+    "guid": "substack:post:217456046",
+    "title": "OpenRouter: from Seed to Stripe — with OpenRouter’s Alex Atallah & AMP’s Anjney Midha",
+    "published": "2026-09-25",
+    "duration_s": 4843,
+    "audio_url": "https://api.substack.com/feed/podcast/217456046/4aa3c21486791f6b1b62688971f50a39.mp3"
+   },
+   "note": "retitled on YouTube; same guests and day"
+  },
+  {
+   "id": "wTxb_whJR00",
+   "url": "https://www.youtube.com/watch?v=wTxb_whJR00",
+   "category": "full_episode",
+   "show": "The Twenty Minute VC",
+   "feed_url": "https://rss.libsyn.com/shows/61840/destinations/240976.xml",
+   "expected": {
+    "guid": "ad1ab1b3-e855-4910-8937-65bed31a3de6",
+    "title": "20VC: Five Predictions for a World of Agents | The Ads Business Model Will Die | Biggest Lessons from Working with Elon Musk at Twitter with Parag Agrawal, Parallel",
+    "published": "2026-09-26",
+    "duration_s": 3410,
+    "audio_url": "https://traffic.libsyn.com/secure/thetwentyminutevc/20Product__Parag_Agrawal__Parallel_Web_Systems.mp3?dest-id=240976"
+   },
+   "note": "identical description; audio 12 minutes shorter"
+  },
+  {
+   "id": "72Im-Mm5JKs",
+   "url": "https://www.youtube.com/watch?v=72Im-Mm5JKs",
+   "category": "full_episode",
+   "show": "Machine Learning Street Talk",
+   "feed_url": "https://anchor.fm/s/1e4a0eac/podcast/rss",
+   "expected": {
+    "guid": "992350a1-56bb-4952-8d86-6e53b295a70c",
+    "title": "How Deep Learning Finally Cracked Messy Tables - Frank Hutter",
+    "published": "2026-09-23",
+    "duration_s": 6792,
+    "audio_url": "https://traffic.megaphone.fm/APO9587558249.mp3"
+   },
+   "note": "retitled on YouTube; durations within 1s"
+  },
+  {
+   "id": "BtBeqQl3cyQ",
+   "url": "https://www.youtube.com/watch?v=BtBeqQl3cyQ",
+   "category": "full_episode",
+   "show": "SmartLess",
+   "feed_url": "https://feeds.simplecast.com/hNaFxXpO",
+   "expected": {
+    "guid": "f7bd301c-e15b-4fb9-a7b4-ae1c3a0f255a",
+    "title": "\"Benny Blanco\"",
+    "published": "2026-09-21",
+    "duration_s": 3942,
+    "audio_url": "https://dts.podtrac.com/redirect.mp3/stitcher.simplecastaudio.com/559b7461-a7b0-4341-b142-0ae492cb0a65/episodes/5bf5c7a2-3b81-46af-b222-7b2b9b056358/audio/128/default.mp3?aid=rss_feed&awCollectionId=559b7461-a7b0-4341-b142-0ae492cb0a65&awEpisodeId=5bf5c7a2-3b81-46af-b222-7b2b9b056358&feed=hNaFxXpO"
+   },
+   "note": "guest name only"
+  },
+  {
+   "id": "L9hEK7DFMNY",
+   "url": "https://www.youtube.com/watch?v=L9hEK7DFMNY",
+   "category": "full_episode",
+   "show": "SmartLess",
+   "feed_url": "https://feeds.simplecast.com/hNaFxXpO",
+   "expected": {
+    "guid": "2e0dc94b-26d9-4135-994a-cc7a84263b3d",
+    "title": "\"RE-RELEASE: Matthew Rhys\"",
+    "published": "2026-09-17",
+    "duration_s": 3908,
+    "audio_url": "https://dts.podtrac.com/redirect.mp3/stitcher.simplecastaudio.com/559b7461-a7b0-4341-b142-0ae492cb0a65/episodes/e94e629c-95de-4726-9dc5-0b356d1c2a3c/audio/128/default.mp3?aid=rss_feed&awCollectionId=559b7461-a7b0-4341-b142-0ae492cb0a65&awEpisodeId=e94e629c-95de-4726-9dc5-0b356d1c2a3c&feed=hNaFxXpO"
+   },
+   "note": "re-release; trap: the 2023 original has the same audio length"
+  },
+  {
+   "id": "2JakQDisOlE",
+   "url": "https://www.youtube.com/watch?v=2JakQDisOlE",
+   "category": "full_episode",
+   "show": "Conan O'Brien Needs A Friend",
+   "feed_url": "https://feeds.simplecast.com/dHoohVNH",
+   "expected": {
+    "guid": "3cabf2b0-12ca-4d9d-b8dc-70127f0326d0",
+    "title": "Matthew McConaughey & Woody Harrelson",
+    "published": "2026-09-28",
+    "duration_s": 3883,
+    "audio_url": "https://pdrl.fm/f3efd0/dts.podtrac.com/redirect.mp3/arttrk.com/p/ST44R/claritaspod.com/measure/stitcher.simplecastaudio.com/c945bd13-c7f3-4f22-95b5-4bf98e12b21f/episodes/ec04ee90-4975-4a0c-8501-7adca495f442/audio/128/default.mp3?aid=rss_feed&awCollectionId=c945bd13-c7f3-4f22-95b5-4bf98e12b21f&awEpisodeId=ec04ee90-4975-4a0c-8501-7adca495f442&feed=dHoohVNH"
+   },
+   "note": "uploaded on the Team Coco channel"
+  },
+  {
+   "id": "ZO5aU97fwA4",
+   "url": "https://www.youtube.com/watch?v=ZO5aU97fwA4",
+   "category": "full_episode",
+   "show": "This Past Weekend",
+   "feed_url": "https://feeds.megaphone.fm/thispastweekend",
+   "expected": {
+    "guid": "9b73ee3e-b89f-11f1-93dc-47b81452bc30",
+    "title": "#685 - Joey Diaz",
+    "published": "2026-09-25",
+    "duration_s": 7284,
+    "audio_url": "https://www.podtrac.com/pts/redirect.mp3/pdst.fm/e/mgln.ai/e/94/claritaspod.com/measure/verifi.podscribe.com/rss/p/pfx.vpixl.com/j0JIg/arttrk.com/p/MMN23/traffic.megaphone.fm/ROOSTER5477403327.mp3"
+   },
+   "note": "#685; trap: 2018 Joey Diaz #124"
+  },
+  {
+   "id": "78BsFkDrAr8",
+   "url": "https://www.youtube.com/watch?v=78BsFkDrAr8",
+   "category": "full_episode",
+   "show": "The Mel Robbins Podcast",
+   "feed_url": "https://feeds.simplecast.com/UCwaTX1J",
+   "expected": {
+    "guid": "327dc387-ec6a-4e57-8290-4dacdd495f19",
+    "title": "How to Stop Living Paycheck to Paycheck & Finally Get Ahead",
+    "published": "2026-09-28",
+    "duration_s": 4112,
+    "audio_url": "https://dts.podtrac.com/redirect.mp3/pdst.fm/e/stitcher.simplecastaudio.com/b9de9f5f-6dab-4833-b4c2-05f1d28dd998/episodes/542c0b99-4904-447f-897c-a40590daa7a3/audio/128/default.mp3?aid=rss_feed&awCollectionId=b9de9f5f-6dab-4833-b4c2-05f1d28dd998&awEpisodeId=542c0b99-4904-447f-897c-a40590daa7a3&feed=UCwaTX1J"
+   },
+   "note": "same title and day"
+  },
+  {
+   "id": "N1rjtDs8blY",
+   "url": "https://www.youtube.com/watch?v=N1rjtDs8blY",
+   "category": "full_episode",
+   "show": "No Priors",
+   "feed_url": "https://feeds.megaphone.fm/nopriors",
+   "expected": {
+    "guid": "51c4092c-b309-11f1-8603-fb8d30e1277f",
+    "title": "Why Diffusion Will Win AI Inference with Inception Co-Founder and CEO Stefano Ermon",
+    "published": "2026-09-18",
+    "duration_s": 2293,
+    "audio_url": "https://traffic.megaphone.fm/PDP7720707490.mp3"
+   },
+   "note": "same title"
+  },
+  {
+   "id": "mGJRk43YlAw",
+   "url": "https://www.youtube.com/watch?v=mGJRk43YlAw",
+   "category": "full_episode",
+   "show": "Planet Money",
+   "feed_url": "https://feeds.npr.org/510289/podcast.xml",
+   "expected": {
+    "guid": "278cf0c2-d1cc-46c4-ba0d-cde6a2902f5b",
+    "title": "Is our national debt finally too much? (update)",
+    "published": "2026-09-23",
+    "duration_s": 1789,
+    "audio_url": "https://tracking.swap.fm/track/XvDEoI11TR00olTUO8US/prfx.byspotify.com/e/play.podtrac.com/npr-510289/npr.simplecastaudio.com/43b5acee-463e-4612-95ad-d2596d9dd337/episodes/1dd6863e-9b35-4e1c-9c2e-4437471a1794/audio/128/default.mp3?awCollectionId=43b5acee-463e-4612-95ad-d2596d9dd337&awEpisodeId=1dd6863e-9b35-4e1c-9c2e-4437471a1794&feed=hvWWWzRv&t=podcast&e=nx-s1-5978114&p=510289&d=1789&size=28625693"
+   },
+   "note": "\"(update)\"; trap: 2024 original with a similar title"
+  },
+  {
+   "id": "GBT_XIQl5fg",
+   "url": "https://www.youtube.com/watch?v=GBT_XIQl5fg",
+   "category": "full_episode",
+   "show": "The Indicator from Planet Money",
+   "feed_url": "https://feeds.npr.org/510325/podcast.xml",
+   "expected": {
+    "guid": "15287a67-3eb9-48df-a99c-3fa5ec256699",
+    "title": "Unaffordability index: Rent, GLP-1s, Obamacare",
+    "published": "2026-09-25",
+    "duration_s": 550,
+    "audio_url": "https://prfx.byspotify.com/e/play.podtrac.com/npr-510325/npr.simplecastaudio.com/0a4e8d3b-fe23-4948-9e39-20fcf16f9331/episodes/b8dc01b1-cd99-4240-9bdd-7db713707656/audio/128/default.mp3?awCollectionId=0a4e8d3b-fe23-4948-9e39-20fcf16f9331&awEpisodeId=b8dc01b1-cd99-4240-9bdd-7db713707656&feed=IFy3imsg&t=podcast&e=nx-s1-5980410&p=510325&d=550&size=8807322"
+   },
+   "note": "Planet Money channel, separate Indicator feed"
+  },
+  {
+   "id": "270q4aF0qU8",
+   "url": "https://www.youtube.com/watch?v=270q4aF0qU8",
+   "category": "full_episode",
+   "show": "TED Talks Daily",
+   "feed_url": "https://feeds.feedburner.com/TEDTalks_audio",
+   "expected": {
+    "guid": "6aabff67fa2bb1bafe272880",
+    "title": "How to make AI companies pay your energy bill | Ari Matusiak",
+    "published": "2026-09-18",
+    "duration_s": 910,
+    "audio_url": "https://sphinx.acast.com/p/open/s/67587e77c705e441797aff96/e/6aabff67fa2bb1bafe272880/media.mp3"
+   },
+   "note": "audio 6 days before the video, retitled, identical description"
+  },
+  {
+   "id": "gYEAdTt5-j8",
+   "url": "https://www.youtube.com/watch?v=gYEAdTt5-j8",
+   "category": "full_episode",
+   "show": "Call Her Daddy",
+   "feed_url": "https://feeds.simplecast.com/mKn_QmLS",
+   "expected": {
+    "guid": "eabdaece-226d-4365-af75-002f9ef293fb",
+    "title": "Tinashe: Broke Boys, Golf Bros & Short Kings",
+    "published": "2026-09-23",
+    "duration_s": 3238,
+    "audio_url": "https://dts.podtrac.com/redirect.mp3/stitcher.simplecastaudio.com/f09b6967-f720-4383-a6cf-42d1f475bd95/episodes/86f69f79-8fe8-4fdf-b625-c0ad6f5142b3/audio/128/default.mp3?aid=rss_feed&awCollectionId=f09b6967-f720-4383-a6cf-42d1f475bd95&awEpisodeId=86f69f79-8fe8-4fdf-b625-c0ad6f5142b3&feed=mKn_QmLS"
+   },
+   "note": "same title and day"
+  },
+  {
+   "id": "Q8yFrGwIftE",
+   "url": "https://www.youtube.com/watch?v=Q8yFrGwIftE",
+   "category": "full_episode",
+   "show": "a16z Podcast",
+   "feed_url": "https://feeds.simplecast.com/JGE3yC0V",
+   "expected": {
+    "guid": "ad703a5b-581f-4220-a4aa-55ad60535ace",
+    "title": "Amjad Masad on Rethinking College for the AI Era",
+    "published": "2026-09-23",
+    "duration_s": 2867,
+    "audio_url": "https://mgln.ai/e/1344/afp-848985-injected.calisto.simplecastaudio.com/3f86df7b-51c6-4101-88a2-550dba782de8/episodes/7314ee9a-9c50-4ba1-b44e-55c00ea1f608/audio/128/default.mp3?aid=rss_feed&awCollectionId=3f86df7b-51c6-4101-88a2-550dba782de8&awEpisodeId=7314ee9a-9c50-4ba1-b44e-55c00ea1f608&feed=JGE3yC0V"
+   },
+   "note": "retitled on YouTube; same day"
+  },
+  {
+   "id": "W9-UG1hvMYs",
+   "url": "https://www.youtube.com/watch?v=W9-UG1hvMYs",
+   "category": "full_episode",
+   "show": "The Standup",
+   "feed_url": "https://rss2.flightcast.com/pmgqiszts7kfhopzaq8el6yw.xml",
+   "expected": {
+    "guid": "flightcast:01M3B6HTBBK0QK8JT6SB5Q4XR2",
+    "title": "Casey Muratori Judges Our Digging Games",
+    "published": "2026-09-25",
+    "duration_s": 4549,
+    "audio_url": "https://episode.flightcast.com/01M3B6HTBBK0QK8JT6SB5Q4XR2.mp3"
+   },
+   "note": "same title; YouTube cut is 21 minutes shorter"
+  },
+  {
+   "id": "EmEzGv-i-AQ",
+   "url": "https://www.youtube.com/watch?v=EmEzGv-i-AQ",
+   "category": "full_episode",
+   "show": "Impaulsive",
+   "feed_url": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/acd3f8a1-3824-4e5f-ab92-b4b300f0cf57/f4ff3c4f-5606-4c61-9c5a-b4b300f0cf7a/podcast.rss",
+   "expected": {
+    "guid": "f32877da-178f-4356-a44c-b4bb014df026",
+    "title": "Conor Benn TRASH TALKS Ryan Garcia & Jake Paul, Logan Paul’s Boxing Return, Teases Eubank Jr Trilogy",
+    "published": "2026-09-04",
+    "duration_s": 4014,
+    "audio_url": "https://podtrac.com/pts/redirect.mp3/pscrb.fm/rss/p/mgln.ai/e/441/claritaspod.com/measure/prfx.byspotify.com/e/traffic.omny.fm/d/clips/e73c998e-6e60-432f-8610-ae210140c5b1/acd3f8a1-3824-4e5f-ab92-b4b300f0cf57/f32877da-178f-4356-a44c-b4bb014df026/audio.mp3?utm_source=Podcast&in_playlist=f4ff3c4f-5606-4c61-9c5a-b4b300f0cf7a"
+   },
+   "note": "retitled; durations within 1s"
+  },
+  {
+   "id": "f6cjAEr08qk",
+   "url": "https://www.youtube.com/watch?v=f6cjAEr08qk",
+   "category": "not_in_feed",
+   "show": "Dwarkesh Podcast",
+   "feed_url": "https://api.substack.com/feed/podcast/69345.rss",
+   "expected": null,
+   "note": "not in the feed as of 2026-09-28; trap: older Sarah Paine episodes"
+  },
+  {
+   "id": "7ZWB79HRRUw",
+   "url": "https://www.youtube.com/watch?v=7ZWB79HRRUw",
+   "category": "not_in_feed",
+   "show": "Syntax",
+   "feed_url": "https://feed.syntax.fm/rss",
+   "expected": null,
+   "note": "YouTube-only video; no feed item of its length or topic"
+  },
+  {
+   "id": "2SyX3sudRrY",
+   "url": "https://www.youtube.com/watch?v=2SyX3sudRrY",
+   "category": "not_in_feed",
+   "show": "The Vergecast",
+   "feed_url": "https://feeds.megaphone.fm/vergecast",
+   "expected": null,
+   "note": "not in the feed as of 2026-09-28"
+  },
+  {
+   "id": "HwmqZTnb7Co",
+   "url": "https://www.youtube.com/watch?v=HwmqZTnb7Co",
+   "category": "not_in_feed",
+   "show": "The Standup",
+   "feed_url": "https://rss2.flightcast.com/pmgqiszts7kfhopzaq8el6yw.xml",
+   "expected": null,
+   "note": "ThePrimeagen main channel; his podcast feed exists but this video is not in it"
+  },
+  {
+   "id": "BHPDsGVciDk",
+   "url": "https://www.youtube.com/watch?v=BHPDsGVciDk",
+   "category": "not_in_feed",
+   "show": "The Standup",
+   "feed_url": "https://rss2.flightcast.com/pmgqiszts7kfhopzaq8el6yw.xml",
+   "expected": null,
+   "note": "The PrimeTime channel reaction video; not in The Standup feed"
+  },
+  {
+   "id": "fEXfXqCrZDw",
+   "url": "https://www.youtube.com/watch?v=fEXfXqCrZDw",
+   "category": "clip",
+   "show": "Big Technology Podcast",
+   "feed_url": "https://feeds.megaphone.fm/LI3617121267",
+   "expected": null,
+   "note": "16-minute cut of the 62-minute 2026-09-23 episode, despite \"(Full Conversation)\""
+  },
+  {
+   "id": "ImNEHHLh6-U",
+   "url": "https://www.youtube.com/watch?v=ImNEHHLh6-U",
+   "category": "clip",
+   "show": "Lex Fridman Podcast",
+   "feed_url": "https://lexfridman.com/feed/podcast/",
+   "expected": null,
+   "note": "Lex Clips; parent #502"
+  },
+  {
+   "id": "X0bkKHsCtqs",
+   "url": "https://www.youtube.com/watch?v=X0bkKHsCtqs",
+   "category": "clip",
+   "show": "Huberman Lab",
+   "feed_url": "https://feeds.megaphone.fm/hubermanlab",
+   "expected": null,
+   "note": "Huberman Lab Clips; parent Arthur Brooks episode"
+  },
+  {
+   "id": "4QmsFKyt6UA",
+   "url": "https://www.youtube.com/watch?v=4QmsFKyt6UA",
+   "category": "clip",
+   "show": "The Joe Rogan Experience",
+   "feed_url": "https://feeds.megaphone.fm/GLT1412515089",
+   "expected": null,
+   "note": "JRE Clips; parent #2556"
+  },
+  {
+   "id": "_WX5ij7H-yE",
+   "url": "https://www.youtube.com/watch?v=_WX5ij7H-yE",
+   "category": "clip",
+   "show": "The Joe Rogan Experience",
+   "feed_url": "https://feeds.megaphone.fm/GLT1412515089",
+   "expected": null,
+   "note": "JRE Clips; parent #2554, same day"
+  },
+  {
+   "id": "RHZjeV_iJAQ",
+   "url": "https://www.youtube.com/watch?v=RHZjeV_iJAQ",
+   "category": "clip",
+   "show": "Conan O'Brien Needs A Friend",
+   "feed_url": "https://feeds.simplecast.com/dHoohVNH",
+   "expected": null,
+   "note": "Team Coco clip"
+  },
+  {
+   "id": "djBGFjSAxmI",
+   "url": "https://www.youtube.com/watch?v=djBGFjSAxmI",
+   "category": "clip",
+   "show": "Conan O'Brien Needs A Friend",
+   "feed_url": "https://feeds.simplecast.com/dHoohVNH",
+   "expected": null,
+   "note": "Team Coco clip"
+  },
+  {
+   "id": "l7-EkEnWsg8",
+   "url": "https://www.youtube.com/watch?v=l7-EkEnWsg8",
+   "category": "clip",
+   "show": "Freakonomics Radio",
+   "feed_url": "https://feeds.simplecast.com/Y8lFbOT4",
+   "expected": null,
+   "note": "Better in Person clip; parent is the John Urschel episode"
+  },
+  {
+   "id": "365Z7eSu0Ic",
+   "url": "https://www.youtube.com/watch?v=365Z7eSu0Ic",
+   "category": "clip",
+   "show": "Pod Save America",
+   "feed_url": "https://audioboom.com/channels/5166624.rss",
+   "expected": null,
+   "note": "43-minute YouTube segment; no feed item of that length"
+  },
+  {
+   "id": "MkeARSgbFYw",
+   "url": "https://www.youtube.com/watch?v=MkeARSgbFYw",
+   "category": "clip",
+   "show": "Call Her Daddy",
+   "feed_url": "https://feeds.simplecast.com/mKn_QmLS",
+   "expected": null,
+   "note": "Short; parent Tinashe episode"
+  },
+  {
+   "id": "Dum3Vh6QT5k",
+   "url": "https://www.youtube.com/watch?v=Dum3Vh6QT5k",
+   "category": "clip",
+   "show": "Shawn Ryan Show",
+   "feed_url": "https://rss.pdrl.fm/ac69ac/feeds.megaphone.fm/WWO7410387571",
+   "expected": null,
+   "note": "Short"
+  },
+  {
+   "id": "b0JmVh9S7ls",
+   "url": "https://www.youtube.com/watch?v=b0JmVh9S7ls",
+   "category": "clip",
+   "show": "Shawn Ryan Show",
+   "feed_url": "https://rss.pdrl.fm/ac69ac/feeds.megaphone.fm/WWO7410387571",
+   "expected": null,
+   "note": "\"Official Preview\" of #343"
+  },
+  {
+   "id": "h-dblk5xM8s",
+   "url": "https://www.youtube.com/watch?v=h-dblk5xM8s",
+   "category": "clip",
+   "show": "Shawn Ryan Show",
+   "feed_url": "https://rss.pdrl.fm/ac69ac/feeds.megaphone.fm/WWO7410387571",
+   "expected": null,
+   "note": "9-minute cut"
+  },
+  {
+   "id": "fb-SGTSPkHA",
+   "url": "https://www.youtube.com/watch?v=fb-SGTSPkHA",
+   "category": "clip",
+   "show": "Modern Wisdom",
+   "feed_url": "https://feeds.megaphone.fm/SIXMSB5088139739",
+   "expected": null,
+   "note": "9-minute cut of #1153 (Tony Robbins)"
+  },
+  {
+   "id": "mJJuJiQew68",
+   "url": "https://www.youtube.com/watch?v=mJJuJiQew68",
+   "category": "clip",
+   "show": null,
+   "feed_url": null,
+   "expected": null,
+   "note": "Cleo Abram Short"
+  },
+  {
+   "id": "YqugY2zTIoI",
+   "url": "https://www.youtube.com/watch?v=YqugY2zTIoI",
+   "category": "no_feed",
+   "show": "Hot Ones",
+   "feed_url": null,
+   "expected": null,
+   "note": "no feed in fyyd or Apple for Hot Ones"
+  },
+  {
+   "id": "020ZvO0FbMM",
+   "url": "https://www.youtube.com/watch?v=020ZvO0FbMM",
+   "category": "no_feed",
+   "show": "Jubilee",
+   "feed_url": null,
+   "expected": null,
+   "note": "Surrounded; YouTube-only"
+  },
+  {
+   "id": "mVdMflwSIpA",
+   "url": "https://www.youtube.com/watch?v=mVdMflwSIpA",
+   "category": "no_feed",
+   "show": "Jubilee",
+   "feed_url": null,
+   "expected": null,
+   "note": "Face Off; YouTube-only"
+  },
+  {
+   "id": "hGiTmHpBsn8",
+   "url": "https://www.youtube.com/watch?v=hGiTmHpBsn8",
+   "category": "no_feed",
+   "show": "Good Mythical Morning",
+   "feed_url": null,
+   "expected": null,
+   "note": "trap: the hosts' separate Ear Biscuits podcast"
+  },
+  {
+   "id": "of6W6O6aNrk",
+   "url": "https://www.youtube.com/watch?v=of6W6O6aNrk",
+   "category": "no_feed",
+   "show": "Good Mythical Morning",
+   "feed_url": null,
+   "expected": null,
+   "note": "YouTube-only"
+  },
+  {
+   "id": "JsBZOcqZerk",
+   "url": "https://www.youtube.com/watch?v=JsBZOcqZerk",
+   "category": "no_feed",
+   "show": "Veritasium",
+   "feed_url": null,
+   "expected": null,
+   "note": "YouTube-only"
+  },
+  {
+   "id": "QW_jlUn4gA8",
+   "url": "https://www.youtube.com/watch?v=QW_jlUn4gA8",
+   "category": "no_feed",
+   "show": "Kurzgesagt",
+   "feed_url": null,
+   "expected": null,
+   "note": "YouTube-only"
+  },
+  {
+   "id": "v9QtM6qnG50",
+   "url": "https://www.youtube.com/watch?v=v9QtM6qnG50",
+   "category": "no_feed",
+   "show": "MrBeast",
+   "feed_url": null,
+   "expected": null,
+   "note": "YouTube-only"
+  },
+  {
+   "id": "_L1Rim7-IPo",
+   "url": "https://www.youtube.com/watch?v=_L1Rim7-IPo",
+   "category": "no_feed",
+   "show": "Mark Rober",
+   "feed_url": null,
+   "expected": null,
+   "note": "YouTube-only"
+  },
+  {
+   "id": "YSLWEsv-8MM",
+   "url": "https://www.youtube.com/watch?v=YSLWEsv-8MM",
+   "category": "no_feed",
+   "show": "Channel 5 with Andrew Callaghan",
+   "feed_url": null,
+   "expected": null,
+   "note": "YouTube-only interviews"
+  },
+  {
+   "id": "4o2YEkmejU0",
+   "url": "https://www.youtube.com/watch?v=4o2YEkmejU0",
+   "category": "no_feed",
+   "show": "WIRED",
+   "feed_url": null,
+   "expected": null,
+   "note": "trap: WIRED has other podcasts, not this series"
+  },
+  {
+   "id": "DcC-EdKdHEg",
+   "url": "https://www.youtube.com/watch?v=DcC-EdKdHEg",
+   "category": "no_feed",
+   "show": "Vanity Fair",
+   "feed_url": null,
+   "expected": null,
+   "note": "celebrity interview; trap: guest appears on many podcasts"
+  },
+  {
+   "id": "siICTGjJqVQ",
+   "url": "https://www.youtube.com/watch?v=siICTGjJqVQ",
+   "category": "non_podcast",
+   "show": "Channel 5 (UK TV)",
+   "feed_url": null,
+   "expected": null,
+   "note": "TV channel clip"
+  },
+  {
+   "id": "dQw4w9WgXcQ",
+   "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+   "category": "non_podcast",
+   "show": "Rick Astley",
+   "feed_url": null,
+   "expected": null,
+   "note": "music video"
+  }
+ ]
+}

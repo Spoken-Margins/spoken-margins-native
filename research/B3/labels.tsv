@@ -1,0 +1,75 @@
+# video_id	category	show	feed_url	guid	note
+# category: full_episode (labeled with its feed episode), clip, no_feed (the show has no podcast feed),
+#           not_in_feed (the show has a feed but this video is not in it), non_podcast.
+# Every label was decided by reading the show's own RSS feed (tools/label_helper.py), not Apple's search results.
+s7d2d8FhevU	full_episode	Lex Fridman Podcast	https://lexfridman.com/feed/podcast/	https://lexfridman.com/?p=6554	#502; episode number in both titles
+l6USUAIKJls	full_episode	Lex Fridman Podcast	https://lexfridman.com/feed/podcast/	https://lexfridman.com/?p=6494	#500; older #421 also mentions Khabib
+nk15CT41MFc	full_episode	Huberman Lab	https://feeds.megaphone.fm/hubermanlab	982695aa-badf-11f1-9093-e3267f060ab3	same title and day
+Gu04f6aFuBY	full_episode	Huberman Lab	https://feeds.megaphone.fm/hubermanlab	3214407a-b7e5-11f1-a48a-3f6aff694931	"Essentials" re-cut; trap: 2023 full Galpin episode with a near-identical title
+6Kq5e49MD6U	full_episode	Acquired	https://feeds.transistor.fm/acquired	68b66323-6e74-4c90-8157-ef3f1ed0d042	feed title is just "The Home Depot"; durations equal
+u_k8pJ2I9S4	full_episode	Hard Fork	https://feeds.simplecast.com/l2i9YnTd	c196b474-cd43-40c0-ab3a-2bed3756a248	retitled on YouTube; identical description, same day
+a_GiFiHXJ6g	full_episode	The Diary Of A CEO	https://rss2.flightcast.com/xmsftuzjjykcmqwolaqn6mdn	flightcast:01M2RHNG0S1MZ1VD7AG18AGCZ7	retitled on YouTube; durations within 5s
+5-96FyJFiCA	full_episode	Lenny's Podcast	https://api.substack.com/feed/podcast/10845.rss	substack:post:214070196	retitled on YouTube; durations within 1s; trap: older Molly Graham episode
+cvP_1jmnkmM	full_episode	All-In	https://rss.libsyn.com/shows/254861/destinations/1928300.xml	39dac85d-ab62-45b0-a587-67797ed8f0ee	same title
+Gnb-CfNPcPE	full_episode	All-In	https://rss.libsyn.com/shows/254861/destinations/1928300.xml	ebe0e737-5995-476f-8d20-673400e3ec13	short interview episode, same title and duration
+ruVJE9po3-U	full_episode	The Joe Rogan Experience	https://feeds.megaphone.fm/GLT1412515089	fdbc67aa-b7a1-11f1-974a-f3fc61fd3468	#2558
+0MXllsmXWus	full_episode	The Joe Rogan Experience	https://feeds.megaphone.fm/GLT1412515089	78761fec-b0ac-11f1-bdd6-2b4a2c138356	#2554
+c628dF5qLzA	full_episode	Freakonomics Radio	https://feeds.simplecast.com/Y8lFbOT4	3f83f1f8-e9e5-4bc7-b9d8-dc1015948aa4	688.
+uTCEZcNIXK0	full_episode	Freakonomics Radio	https://feeds.simplecast.com/Y8lFbOT4	75093d30-0cd5-40e4-bfbe-e6505eed3b47	Better in Person; video 8 days before the audio, retitled; same guest and near-identical description
+VLI_yo1YNrk	full_episode	Oxide and Friends	https://feeds.transistor.fm/oxide-and-friends	c69e7677-0e72-41ae-9b8b-bbbf86341c46	durations equal
+f_6TzmifxnI	full_episode	Oxide and Friends	https://feeds.transistor.fm/oxide-and-friends	27edfef6-4772-4434-95b9-31e8a373ccf2	trap: 2024 episode with the same guest
+B32qsUA30-0	full_episode	The Changelog	https://changelog.com/podcast/feed	changelog.com/1/2817	same day; feed adds "(Interview)"
+rsp5wJSM7K0	full_episode	Syntax	https://feed.syntax.fm/rss	5daa2860-b6b1-11f1-8ef7-bb315dd5dbd1	1042; audio a week after the video, identical description
+mQBnjImNOm0	full_episode	Sean Carroll's Mindscape	https://rss.libsyn.com/shows/604590/destinations/5264190.xml	fbc9810f-f983-49eb-8753-f7d6e4457a80	369
+5vZ01J1mLQA	full_episode	Sean Carroll's Mindscape	https://rss.libsyn.com/shows/604590/destinations/5264190.xml	2247d1c8-dcfa-473e-9bfe-7b3cd7bbaaa3	monthly AMA; trap: other months' AMAs differ only by month
+j774AFDJqFg	full_episode	The Tim Ferriss Show	https://rss.art19.com/tim-ferriss-show	gid://art19-episode-locator/V0/mbdm7FqApWkMF1leES32j8BmnIVkghmms67B1O_PMMg	#884; audio 10 minutes longer
+dCX4PE2HxMs	full_episode	Latent Space	https://api.substack.com/feed/podcast/1084089.rss	substack:post:217456046	retitled on YouTube; same guests and day
+wTxb_whJR00	full_episode	The Twenty Minute VC	https://rss.libsyn.com/shows/61840/destinations/240976.xml	ad1ab1b3-e855-4910-8937-65bed31a3de6	identical description; audio 12 minutes shorter
+72Im-Mm5JKs	full_episode	Machine Learning Street Talk	https://anchor.fm/s/1e4a0eac/podcast/rss	992350a1-56bb-4952-8d86-6e53b295a70c	retitled on YouTube; durations within 1s
+BtBeqQl3cyQ	full_episode	SmartLess	https://feeds.simplecast.com/hNaFxXpO	f7bd301c-e15b-4fb9-a7b4-ae1c3a0f255a	guest name only
+L9hEK7DFMNY	full_episode	SmartLess	https://feeds.simplecast.com/hNaFxXpO	2e0dc94b-26d9-4135-994a-cc7a84263b3d	re-release; trap: the 2023 original has the same audio length
+2JakQDisOlE	full_episode	Conan O'Brien Needs A Friend	https://feeds.simplecast.com/dHoohVNH	3cabf2b0-12ca-4d9d-b8dc-70127f0326d0	uploaded on the Team Coco channel
+ZO5aU97fwA4	full_episode	This Past Weekend	https://feeds.megaphone.fm/thispastweekend	9b73ee3e-b89f-11f1-93dc-47b81452bc30	#685; trap: 2018 Joey Diaz #124
+78BsFkDrAr8	full_episode	The Mel Robbins Podcast	https://feeds.simplecast.com/UCwaTX1J	327dc387-ec6a-4e57-8290-4dacdd495f19	same title and day
+N1rjtDs8blY	full_episode	No Priors	https://feeds.megaphone.fm/nopriors	51c4092c-b309-11f1-8603-fb8d30e1277f	same title
+mGJRk43YlAw	full_episode	Planet Money	https://feeds.npr.org/510289/podcast.xml	278cf0c2-d1cc-46c4-ba0d-cde6a2902f5b	"(update)"; trap: 2024 original with a similar title
+GBT_XIQl5fg	full_episode	The Indicator from Planet Money	https://feeds.npr.org/510325/podcast.xml	15287a67-3eb9-48df-a99c-3fa5ec256699	Planet Money channel, separate Indicator feed
+270q4aF0qU8	full_episode	TED Talks Daily	https://feeds.feedburner.com/TEDTalks_audio	6aabff67fa2bb1bafe272880	audio 6 days before the video, retitled, identical description
+gYEAdTt5-j8	full_episode	Call Her Daddy	https://feeds.simplecast.com/mKn_QmLS	eabdaece-226d-4365-af75-002f9ef293fb	same title and day
+Q8yFrGwIftE	full_episode	a16z Podcast	https://feeds.simplecast.com/JGE3yC0V	ad703a5b-581f-4220-a4aa-55ad60535ace	retitled on YouTube; same day
+W9-UG1hvMYs	full_episode	The Standup	https://rss2.flightcast.com/pmgqiszts7kfhopzaq8el6yw.xml	flightcast:01M3B6HTBBK0QK8JT6SB5Q4XR2	same title; YouTube cut is 21 minutes shorter
+EmEzGv-i-AQ	full_episode	Impaulsive	https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/acd3f8a1-3824-4e5f-ab92-b4b300f0cf57/f4ff3c4f-5606-4c61-9c5a-b4b300f0cf7a/podcast.rss	f32877da-178f-4356-a44c-b4bb014df026	retitled; durations within 1s
+f6cjAEr08qk	not_in_feed	Dwarkesh Podcast	https://api.substack.com/feed/podcast/69345.rss	-	not in the feed as of 2026-09-28; trap: older Sarah Paine episodes
+7ZWB79HRRUw	not_in_feed	Syntax	https://feed.syntax.fm/rss	-	YouTube-only video; no feed item of its length or topic
+2SyX3sudRrY	not_in_feed	The Vergecast	https://feeds.megaphone.fm/vergecast	-	not in the feed as of 2026-09-28
+HwmqZTnb7Co	not_in_feed	The Standup	https://rss2.flightcast.com/pmgqiszts7kfhopzaq8el6yw.xml	-	ThePrimeagen main channel; his podcast feed exists but this video is not in it
+BHPDsGVciDk	not_in_feed	The Standup	https://rss2.flightcast.com/pmgqiszts7kfhopzaq8el6yw.xml	-	The PrimeTime channel reaction video; not in The Standup feed
+fEXfXqCrZDw	clip	Big Technology Podcast	https://feeds.megaphone.fm/LI3617121267	-	16-minute cut of the 62-minute 2026-09-23 episode, despite "(Full Conversation)"
+ImNEHHLh6-U	clip	Lex Fridman Podcast	https://lexfridman.com/feed/podcast/	-	Lex Clips; parent #502
+X0bkKHsCtqs	clip	Huberman Lab	https://feeds.megaphone.fm/hubermanlab	-	Huberman Lab Clips; parent Arthur Brooks episode
+4QmsFKyt6UA	clip	The Joe Rogan Experience	https://feeds.megaphone.fm/GLT1412515089	-	JRE Clips; parent #2556
+_WX5ij7H-yE	clip	The Joe Rogan Experience	https://feeds.megaphone.fm/GLT1412515089	-	JRE Clips; parent #2554, same day
+RHZjeV_iJAQ	clip	Conan O'Brien Needs A Friend	https://feeds.simplecast.com/dHoohVNH	-	Team Coco clip
+djBGFjSAxmI	clip	Conan O'Brien Needs A Friend	https://feeds.simplecast.com/dHoohVNH	-	Team Coco clip
+l7-EkEnWsg8	clip	Freakonomics Radio	https://feeds.simplecast.com/Y8lFbOT4	-	Better in Person clip; parent is the John Urschel episode
+365Z7eSu0Ic	clip	Pod Save America	https://audioboom.com/channels/5166624.rss	-	43-minute YouTube segment; no feed item of that length
+MkeARSgbFYw	clip	Call Her Daddy	https://feeds.simplecast.com/mKn_QmLS	-	Short; parent Tinashe episode
+Dum3Vh6QT5k	clip	Shawn Ryan Show	https://rss.pdrl.fm/ac69ac/feeds.megaphone.fm/WWO7410387571	-	Short
+b0JmVh9S7ls	clip	Shawn Ryan Show	https://rss.pdrl.fm/ac69ac/feeds.megaphone.fm/WWO7410387571	-	"Official Preview" of #343
+h-dblk5xM8s	clip	Shawn Ryan Show	https://rss.pdrl.fm/ac69ac/feeds.megaphone.fm/WWO7410387571	-	9-minute cut
+fb-SGTSPkHA	clip	Modern Wisdom	https://feeds.megaphone.fm/SIXMSB5088139739	-	9-minute cut of #1153 (Tony Robbins)
+mJJuJiQew68	clip	-	-	-	Cleo Abram Short
+YqugY2zTIoI	no_feed	Hot Ones	-	-	no feed in fyyd or Apple for Hot Ones
+020ZvO0FbMM	no_feed	Jubilee	-	-	Surrounded; YouTube-only
+mVdMflwSIpA	no_feed	Jubilee	-	-	Face Off; YouTube-only
+hGiTmHpBsn8	no_feed	Good Mythical Morning	-	-	trap: the hosts' separate Ear Biscuits podcast
+of6W6O6aNrk	no_feed	Good Mythical Morning	-	-	YouTube-only
+JsBZOcqZerk	no_feed	Veritasium	-	-	YouTube-only
+QW_jlUn4gA8	no_feed	Kurzgesagt	-	-	YouTube-only
+v9QtM6qnG50	no_feed	MrBeast	-	-	YouTube-only
+_L1Rim7-IPo	no_feed	Mark Rober	-	-	YouTube-only
+YSLWEsv-8MM	no_feed	Channel 5 with Andrew Callaghan	-	-	YouTube-only interviews
+4o2YEkmejU0	no_feed	WIRED	-	-	trap: WIRED has other podcasts, not this series
+DcC-EdKdHEg	no_feed	Vanity Fair	-	-	celebrity interview; trap: guest appears on many podcasts
+siICTGjJqVQ	non_podcast	Channel 5 (UK TV)	-	-	TV channel clip
+dQw4w9WgXcQ	non_podcast	Rick Astley	-	-	music video
