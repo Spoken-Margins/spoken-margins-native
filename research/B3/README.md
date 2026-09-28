@@ -68,6 +68,9 @@ Two confident-wrong results turned up during development. Each became a rule and
 
 ## Known limits
 
+- **In-sample numbers.** The matcher was tuned on this set: two rules were added after test-set failures, and one label was corrected after the matcher found the episode. There is no held-out set, so expect somewhat worse results on new links. A fresh batch of 20–30 links, labeled before the matcher sees them, is the honest check (cheap to do in M2).
+- **Clips count as "none".** A clip confidently matched to its parent episode counts as wrong. Clips aren't in the 80% denominator.
+
 - **Apple rate limit.** From this shared cloud IP Apple's Search API allows roughly four or five requests a minute before answering 403; `b3/http.py` paces and backs off. Recording the full set takes about an hour. A phone has its own quota.
 - **Latest 200 episodes.** Apple Lookup returns at most the 200 newest episodes. Older episodes are only reachable through the title search, which is weaker when the YouTube title was rewritten.
 - **Feeds change.** Recorded fixtures pin the results; `refresh` runs will differ as shows publish.
