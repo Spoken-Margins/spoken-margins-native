@@ -1,0 +1,319 @@
+{
+ "description": "B1 M2 search test list. Each query is what a listener might type; expected names the right show by the start of its title and part of its publisher name (compared case- and punctuation-insensitively). 43 expectations were written before any search was recorded. 7 (marked correctedAfterRecording) were changed after recording because the publisher or title had changed; each was checked against the show's Apple listing and feed, but that check used the recorded data, so the owner should confirm them. The resolver must put the expected show first for at least 45 of 50. Recorded iTunes Search responses (2026-09-28, limit 15, country us) are in itunes-responses/<query-slug>.json.",
+ "names": [
+  {
+   "query": "the daily",
+   "expectedTitle": "The Daily",
+   "expectedArtist": "The New York Times",
+   "tier": "popular"
+  },
+  {
+   "query": "joe rogan",
+   "expectedTitle": "The Joe Rogan Experience",
+   "expectedArtist": "Joe Rogan",
+   "tier": "popular"
+  },
+  {
+   "query": "crime junkie",
+   "expectedTitle": "Crime Junkie",
+   "expectedArtist": "audiochuck",
+   "tier": "popular"
+  },
+  {
+   "query": "stuff you should know",
+   "expectedTitle": "Stuff You Should Know",
+   "expectedArtist": "iHeartPodcasts",
+   "tier": "popular"
+  },
+  {
+   "query": "smartless",
+   "expectedTitle": "SmartLess",
+   "expectedArtist": "Jason Bateman",
+   "tier": "popular"
+  },
+  {
+   "query": "huberman lab",
+   "expectedTitle": "Huberman Lab",
+   "expectedArtist": "Scicomm Media",
+   "tier": "popular"
+  },
+  {
+   "query": "freakonomics",
+   "expectedTitle": "Freakonomics Radio",
+   "expectedArtist": "Freakonomics Radio",
+   "tier": "popular"
+  },
+  {
+   "query": "hidden brain",
+   "expectedTitle": "Hidden Brain",
+   "expectedArtist": "Hidden Brain",
+   "tier": "popular"
+  },
+  {
+   "query": "radiolab",
+   "expectedTitle": "Radiolab",
+   "expectedArtist": "WNYC Studios",
+   "tier": "popular"
+  },
+  {
+   "query": "fresh air",
+   "expectedTitle": "Fresh Air",
+   "expectedArtist": "NPR",
+   "tier": "popular"
+  },
+  {
+   "query": "up first",
+   "expectedTitle": "Up First from NPR",
+   "expectedArtist": "NPR",
+   "tier": "popular"
+  },
+  {
+   "query": "pod save america",
+   "expectedTitle": "Pod Save America",
+   "expectedArtist": "Pod Save America",
+   "tier": "popular",
+   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed",
+   "correctedAfterRecording": true
+  },
+  {
+   "query": "planet money",
+   "expectedTitle": "Planet Money",
+   "expectedArtist": "NPR",
+   "tier": "popular"
+  },
+  {
+   "query": "conan o'brien needs a friend",
+   "expectedTitle": "Conan O’Brien Needs A Friend",
+   "expectedArtist": "Team Coco",
+   "tier": "popular"
+  },
+  {
+   "query": "morbid",
+   "expectedTitle": "Morbid",
+   "expectedArtist": "Alaina Urquhart",
+   "tier": "popular",
+   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed",
+   "correctedAfterRecording": true
+  },
+  {
+   "query": "lex fridman",
+   "expectedTitle": "Lex Fridman Podcast",
+   "expectedArtist": "Lex Fridman",
+   "tier": "popular"
+  },
+  {
+   "query": "ezra klein",
+   "expectedTitle": "The Ezra Klein Show",
+   "expectedArtist": "New York Times Opinion",
+   "tier": "popular"
+  },
+  {
+   "query": "hard fork",
+   "expectedTitle": "Hard Fork",
+   "expectedArtist": "The New York Times",
+   "tier": "popular"
+  },
+  {
+   "query": "serial",
+   "expectedTitle": "Serial",
+   "expectedArtist": "Serial Productions",
+   "tier": "popular"
+  },
+  {
+   "query": "the moth",
+   "expectedTitle": "The Moth",
+   "expectedArtist": "The Moth",
+   "tier": "popular"
+  },
+  {
+   "query": "science vs",
+   "expectedTitle": "Science Vs",
+   "expectedArtist": "Spotify Studios",
+   "tier": "popular"
+  },
+  {
+   "query": "acquired",
+   "expectedTitle": "Acquired",
+   "expectedArtist": "Ben Gilbert and David Rosenthal",
+   "tier": "popular"
+  },
+  {
+   "query": "rest is history",
+   "expectedTitle": "The Rest Is History",
+   "expectedArtist": "Goalhanger",
+   "tier": "popular"
+  },
+  {
+   "query": "99% invisible",
+   "expectedTitle": "99% Invisible",
+   "expectedArtist": "Roman Mars",
+   "tier": "popular"
+  },
+  {
+   "query": "this american life",
+   "expectedTitle": "This American Life",
+   "expectedArtist": "This American Life",
+   "tier": "popular"
+  },
+  {
+   "query": "hardcore history",
+   "expectedTitle": "Dan Carlin's Hardcore History",
+   "expectedArtist": "Dan Carlin",
+   "tier": "niche"
+  },
+  {
+   "query": "the allusionist",
+   "expectedTitle": "The Allusionist",
+   "expectedArtist": "Helen Zaltzman",
+   "tier": "niche"
+  },
+  {
+   "query": "song exploder",
+   "expectedTitle": "Song Exploder",
+   "expectedArtist": "Hrishikesh Hirway",
+   "tier": "niche"
+  },
+  {
+   "query": "criminal",
+   "expectedTitle": "Criminal",
+   "expectedArtist": "Vox Media Podcast Network",
+   "tier": "niche"
+  },
+  {
+   "query": "the memory palace",
+   "expectedTitle": "The Memory Palace",
+   "expectedArtist": "Nate DiMeo",
+   "tier": "niche"
+  },
+  {
+   "query": "omnibus ken jennings",
+   "expectedTitle": "Omnibus",
+   "expectedArtist": "Omnibus",
+   "tier": "niche",
+   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed",
+   "correctedAfterRecording": true
+  },
+  {
+   "query": "accidental tech podcast",
+   "expectedTitle": "Accidental Tech Podcast",
+   "expectedArtist": "Marco Arment, Casey Liss, John Siracusa",
+   "tier": "niche"
+  },
+  {
+   "query": "darknet diaries",
+   "expectedTitle": "Darknet Diaries",
+   "expectedArtist": "Jack Rhysider",
+   "tier": "niche"
+  },
+  {
+   "query": "in our time",
+   "expectedTitle": "In Our Time",
+   "expectedArtist": "BBC Radio 4",
+   "tier": "niche"
+  },
+  {
+   "query": "twenty thousand hertz",
+   "expectedTitle": "Twenty Thousand Hertz",
+   "expectedArtist": "Dallas Taylor",
+   "tier": "niche"
+  },
+  {
+   "query": "no such thing as a fish",
+   "expectedTitle": "No Such Thing As A Fish",
+   "expectedArtist": "No Such Thing As A Fish",
+   "tier": "niche"
+  },
+  {
+   "query": "revolutions mike duncan",
+   "expectedTitle": "Revolutions",
+   "expectedArtist": "Mike Duncan",
+   "tier": "niche"
+  },
+  {
+   "query": "philosophize this",
+   "expectedTitle": "Philosophize This!",
+   "expectedArtist": "Stephen West",
+   "tier": "niche"
+  },
+  {
+   "query": "very bad wizards",
+   "expectedTitle": "Very Bad Wizards",
+   "expectedArtist": "Tamler Sommers",
+   "tier": "niche"
+  },
+  {
+   "query": "hello internet",
+   "expectedTitle": "Hello Internet",
+   "expectedArtist": "CGP Grey",
+   "tier": "niche"
+  },
+  {
+   "query": "cortex",
+   "expectedTitle": "Cortex",
+   "expectedArtist": "Relay",
+   "tier": "niche"
+  },
+  {
+   "query": "mindscape sean carroll",
+   "expectedTitle": "Sean Carroll's Mindscape",
+   "expectedArtist": "Sean Carroll",
+   "tier": "niche",
+   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed",
+   "correctedAfterRecording": true
+  },
+  {
+   "query": "econtalk",
+   "expectedTitle": "EconTalk",
+   "expectedArtist": "Russ Roberts",
+   "tier": "niche"
+  },
+  {
+   "query": "ologies",
+   "expectedTitle": "Ologies with Alie Ward",
+   "expectedArtist": "Alie Ward",
+   "tier": "niche"
+  },
+  {
+   "query": "welcome to night vale",
+   "expectedTitle": "Welcome to Night Vale",
+   "expectedArtist": "Night Vale Presents",
+   "tier": "niche"
+  },
+  {
+   "query": "heavyweight",
+   "expectedTitle": "Heavyweight",
+   "expectedArtist": "Pushkin Industries",
+   "tier": "niche",
+   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed",
+   "correctedAfterRecording": true
+  },
+  {
+   "query": "search engine pj vogt",
+   "expectedTitle": "Search Engine",
+   "expectedArtist": "PJ Vogt",
+   "tier": "niche"
+  },
+  {
+   "query": "tides of history",
+   "expectedTitle": "Tides of History",
+   "expectedArtist": "Patrick Wyman",
+   "tier": "niche",
+   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed",
+   "correctedAfterRecording": true
+  },
+  {
+   "query": "fall of civilizations",
+   "expectedTitle": "Fall of Civilizations",
+   "expectedArtist": "Fall of Civilizations",
+   "tier": "niche",
+   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed",
+   "correctedAfterRecording": true
+  },
+  {
+   "query": "articles of interest",
+   "expectedTitle": "Articles of Interest",
+   "expectedArtist": "Avery Trufelman",
+   "tier": "niche"
+  }
+ ]
+}

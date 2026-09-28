@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "source-catalog-manifest.v1",
+  "catalogId": "fixture-top-podcasts",
+  "contentVersion": 1,
+  "generatedAt": "2026-09-28T12:19:05Z",
+  "catalogURL": "https://spokenmargins.proximitytoprogress.com/onboarding/catalog/v1/catalog.json",
+  "catalogByteCount": 5738,
+  "catalogChecksumSHA256": "4e89be7ba80ebb231e3d05aa14ad4d883c58c2400e75e06145336dabf57793d5",
+  "entryCount": 6
+}

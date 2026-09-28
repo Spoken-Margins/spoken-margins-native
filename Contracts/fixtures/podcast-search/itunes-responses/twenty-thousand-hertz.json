@@ -1,0 +1,10 @@
+
+
+
+{
+ "resultCount":1,
+ "results": [
+{"wrapperType":"track", "kind":"podcast", "collectionId":1171270672, "trackId":1171270672, "artistName":"Dallas Taylor", "collectionName":"Twenty Thousand Hertz", "trackName":"Twenty Thousand Hertz", "collectionCensoredName":"Twenty Thousand Hertz", "trackCensoredName":"Twenty Thousand Hertz", "collectionViewUrl":"https://podcasts.apple.com/us/podcast/twenty-thousand-hertz/id1171270672?uo=4", "feedUrl":"https://feed.20k.org", "trackViewUrl":"https://podcasts.apple.com/us/podcast/twenty-thousand-hertz/id1171270672?uo=4", "artworkUrl30":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/ad/dd/64/addd64d2-c2b1-4ff2-aa5f-0f5cc723f92b/mza_10710679716941336906.jpeg/30x30bb.jpg", "artworkUrl60":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/ad/dd/64/addd64d2-c2b1-4ff2-aa5f-0f5cc723f92b/mza_10710679716941336906.jpeg/60x60bb.jpg", "artworkUrl100":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/ad/dd/64/addd64d2-c2b1-4ff2-aa5f-0f5cc723f92b/mza_10710679716941336906.jpeg/100x100bb.jpg", "collectionPrice":0.00, "trackPrice":0.00, "collectionHdPrice":0, "releaseDate":"2026-09-21T10:00:00Z", "collectionExplicitness":"notExplicit", "trackExplicitness":"cleaned", "trackCount":259, "trackTimeMillis":1631, "country":"USA", "currency":"USD", "primaryGenreName":"Design", "contentAdvisoryRating":"Clean", "artworkUrl600":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/ad/dd/64/addd64d2-c2b1-4ff2-aa5f-0f5cc723f92b/mza_10710679716941336906.jpeg/600x600bb.jpg", "genreIds":["1402", "26", "1301"], "genres":["Design", "Podcasts", "Arts"]}]
+}
+
+

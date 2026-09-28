@@ -1,0 +1,10 @@
+
+
+
+{
+ "resultCount":1,
+ "results": [
+{"wrapperType":"track", "kind":"podcast", "artistId":712379884, "collectionId":703889772, "trackId":703889772, "artistName":"Mike Duncan", "collectionName":"Revolutions", "trackName":"Revolutions", "collectionCensoredName":"Revolutions", "trackCensoredName":"Revolutions", "artistViewUrl":"https://podcasts.apple.com/us/artist/mike-duncan/712379884?uo=4", "collectionViewUrl":"https://podcasts.apple.com/us/podcast/revolutions/id703889772?uo=4", "feedUrl":"https://rss.libsyn.com/shows/47475/destinations/159998.xml", "trackViewUrl":"https://podcasts.apple.com/us/podcast/revolutions/id703889772?uo=4", "artworkUrl30":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts/v4/fc/90/04/fc9004c7-afd6-4b5e-5033-0fb3dfd6c3a3/mza_7623711418780898276.jpg/30x30bb.jpg", "artworkUrl60":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts/v4/fc/90/04/fc9004c7-afd6-4b5e-5033-0fb3dfd6c3a3/mza_7623711418780898276.jpg/60x60bb.jpg", "artworkUrl100":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts/v4/fc/90/04/fc9004c7-afd6-4b5e-5033-0fb3dfd6c3a3/mza_7623711418780898276.jpg/100x100bb.jpg", "collectionPrice":0.00, "trackPrice":0.00, "collectionHdPrice":0, "releaseDate":"2025-06-30T01:34:00Z", "collectionExplicitness":"notExplicit", "trackExplicitness":"cleaned", "trackCount":400, "trackTimeMillis":70, "country":"USA", "currency":"USD", "primaryGenreName":"History", "contentAdvisoryRating":"Clean", "artworkUrl600":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts/v4/fc/90/04/fc9004c7-afd6-4b5e-5033-0fb3dfd6c3a3/mza_7623711418780898276.jpg/600x600bb.jpg", "genreIds":["1487", "26", "1304"], "genres":["History", "Podcasts", "Education"]}]
+}
+
+
