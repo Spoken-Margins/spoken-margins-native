@@ -1,0 +1,310 @@
+{
+  "id": "fable",
+  "name": "Fable",
+  "vendor": "Fable (developer name on the App Store; now one team with Everand)",
+  "category": "social-listening",
+  "website": "https://fable.co",
+  "why_listed": "Readers who want book clubs with spoiler-free chapter rooms and highlights shared inside the ebook with their group would use Fable instead of Spoken Margins for social, anchored discussion.",
+  "claims": {
+    "platforms": {
+      "value": "iOS, iPadOS, Android",
+      "detail": "Phone and tablet apps; books and clubs are not available on the web.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1488170618",
+          "title": "Fable: Track & Discuss Books App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "iPhone, iPad"
+        },
+        {
+          "url": "https://play.google.com/store/apps/details?id=co.fable.fable&hl=en_US&gl=US",
+          "title": "Fable: Track & Discuss Books - Apps on Google Play",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Join a community of good people discussing great stories on Fable, an app designed to find, discuss, and track books and TV shows."
+        },
+        {
+          "url": "https://help.fable.co/article/91-can-i-read-books-on-my-laptop-can-i-access-my-club-discussion-on-a-computer",
+          "title": "Can I read books on my laptop? Can I access my club discussion on a computer? - Fable Reader Support",
+          "published": "2024-11-06",
+          "checked": "2026-09-28",
+          "quote": "For now, books and clubs can only be accessed using a smartphone or tablet."
+        }
+      ],
+      "note": "The help centre also lists a beta Chrome browser extension, not read. fable.co itself is a JavaScript app that returned no readable text to curl."
+    },
+    "price_free_tier": {
+      "value": "Free: tracking, lists, streaks, reviews, free book and TV clubs, interactive ebook reader (ebooks bought separately; free classics)",
+      "detail": "Core app is free; ebooks are sold individually.",
+      "sources": [
+        {
+          "url": "https://help.fable.co/article/153-will-fable-continue-to-be-free",
+          "title": "Will Fable continue to be free unless I choose to upgrade? - Fable Reader Support",
+          "published": "2025-06-09",
+          "checked": "2026-09-28",
+          "quote": "Yes. Fable will remain free to use, with the same option to upgrade to Fable Plus for those who want extra features."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/id1488170618",
+          "title": "Fable: Track & Discuss Books App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Explore thousands of free book and TV clubs for every niche interest"
+        }
+      ]
+    },
+    "price_paid": {
+      "value": "Fable Plus: USD 5.99/month or 49.99/year",
+      "detail": "Fable Plus adds advanced stats, custom goals, badges and no ads; it is also included with any Everand subscription (from USD 11.99 in the US).",
+      "sources": [
+        {
+          "url": "https://help.fable.co/article/142-how-much-will-fable-plus-cost",
+          "title": "How much does Fable Plus cost? Are there any discounts or promotions on Fable Plus? - Fable Reader Support",
+          "published": "2025-04-10",
+          "checked": "2026-09-28",
+          "quote": "The monthly plan costs $5.99 USD/mo, and the annual plan costs $49.99 USD."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/id1488170618",
+          "title": "Fable: Track & Discuss Books App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Fable Plus Monthly $5.99 Fable Plus Annual $49.99"
+        },
+        {
+          "url": "https://help.fable.co/article/187-whats-included-in-fable-plus",
+          "title": "What's included in Fable Plus? - Fable Reader Support",
+          "published": "2026-04-09",
+          "checked": "2026-09-28",
+          "quote": "Fable Plus comes included with any Everand subscription plan."
+        }
+      ],
+      "note": "US prices in USD; ebooks are separate purchases."
+    },
+    "plays_podcasts": {
+      "value": "no",
+      "detail": "Books and TV tracking and ebook reading; podcasts live in the sister app Everand.",
+      "sources": [
+        {
+          "url": "https://help.fable.co/article/185-what-is-the-fable-everand-bundle",
+          "title": "What is the Fable + Everand bundle? - Fable Reader Support",
+          "published": "2026-06-09",
+          "checked": "2026-09-28",
+          "quote": "Everand is our sister app, where you read and listen."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/id1488170618",
+          "title": "Fable: Track & Discuss Books App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "an app designed to find, discuss, and track books and TV shows"
+        }
+      ],
+      "note": "The long App Store description lists every feature area (tracking, stats, streaks, reviews, clubs, discovery, ebook reader, wraps) and is treated as the comprehensive feature list."
+    },
+    "reads_web_articles_aloud": {
+      "value": "no",
+      "detail": "No web articles or TTS; the reader is for ebooks.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1488170618",
+          "title": "Fable: Track & Discuss Books App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "an app designed to find, discuss, and track books and TV shows"
+        }
+      ],
+      "note": "The long App Store description lists every feature area (tracking, stats, streaks, reviews, clubs, discovery, ebook reader, wraps) and is treated as the comprehensive feature list."
+    },
+    "reads_pdfs_aloud": {
+      "value": "no",
+      "detail": "No PDF reading or TTS.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1488170618",
+          "title": "Fable: Track & Discuss Books App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "an app designed to find, discuss, and track books and TV shows"
+        }
+      ],
+      "note": "The long App Store description lists every feature area (tracking, stats, streaks, reviews, clubs, discovery, ebook reader, wraps) and is treated as the comprehensive feature list."
+    },
+    "voice_notes_anchored": {
+      "value": "no",
+      "detail": "In-book annotations are highlights, notes, tabs, comments and reactions; no voice notes.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1488170618",
+          "title": "Fable: Track & Discuss Books App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Annotate books with highlights, notes, tabs, comments, and reactions right inside the book"
+        }
+      ],
+      "note": "The long App Store description lists every feature area (tracking, stats, streaks, reviews, clubs, discovery, ebook reader, wraps) and is treated as the comprehensive feature list."
+    },
+    "text_notes_anchored": {
+      "value": "yes",
+      "detail": "Typed notes and comments attached to passages inside Fable ebooks.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1488170618",
+          "title": "Fable: Track & Discuss Books App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Annotate books with highlights, notes, tabs, comments, and reactions right inside the book"
+        },
+        {
+          "url": "https://help.fable.co/article/11-what-is-fable",
+          "title": "What is Fable? How do I get started? - Fable Reader Support",
+          "published": "2024-05-03",
+          "checked": "2026-09-28",
+          "quote": "When reading books on Fable, you can make highlights and take notes while you read"
+        }
+      ],
+      "note": "Only in ebooks bought or free inside Fable."
+    },
+    "hands_free_capture": {
+      "value": "no",
+      "detail": "No hands-free capture; reading and annotation are on screen.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1488170618",
+          "title": "Fable: Track & Discuss Books App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Annotate books with highlights, notes, tabs, comments, and reactions right inside the book"
+        }
+      ],
+      "note": "The long App Store description lists every feature area (tracking, stats, streaks, reviews, clubs, discovery, ebook reader, wraps) and is treated as the comprehensive feature list."
+    },
+    "transcripts": {
+      "value": "no",
+      "detail": "No audio content, so no transcripts.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1488170618",
+          "title": "Fable: Track & Discuss Books App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "an app designed to find, discuss, and track books and TV shows"
+        }
+      ],
+      "note": "The long App Store description lists every feature area (tracking, stats, streaks, reviews, clubs, discovery, ebook reader, wraps) and is treated as the comprehensive feature list."
+    },
+    "ai_summaries": {
+      "value": "no",
+      "detail": "No AI summaries or chapters; 'Scout' gives book recommendations.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1488170618",
+          "title": "Fable: Track & Discuss Books App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Use Scout to get personalized book recommendations"
+        }
+      ],
+      "note": "The long App Store description lists every feature area (tracking, stats, streaks, reviews, clubs, discovery, ebook reader, wraps) and is treated as the comprehensive feature list."
+    },
+    "export_markdown_pkm": {
+      "value": "unknown",
+      "detail": "No export of highlights or notes found; Goodreads and Kindle import is documented.",
+      "sources": [
+        {
+          "url": "https://help.fable.co/",
+          "title": "Fable Reader Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://apps.apple.com/us/app/id1488170618",
+          "title": "Fable: Track & Discuss Books App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked the help centre article index (all collections) and the App Store description; no export article or feature found."
+    },
+    "share_note_at_moment": {
+      "value": "partial",
+      "detail": "In a club's Social Mode, members see each other's highlights and comments in place in the book; notes stay private. Quotes can also be shared as images.",
+      "sources": [
+        {
+          "url": "https://help.fable.co/article/39-what-is-social-mode",
+          "title": "What is Social Mode? - Fable Reader Support",
+          "published": "2021-08-19",
+          "checked": "2026-09-28",
+          "quote": "You'll be able to see your group's highlights, add your own, and even start discussions right from the book."
+        },
+        {
+          "url": "https://help.fable.co/article/44-can-members-of-my-book-club-see-my-notes",
+          "title": "Can members of my Club see my notes? - Fable Reader Support",
+          "published": "2024-09-24",
+          "checked": "2026-09-28",
+          "quote": "All your notes are always private, so no one you're reading with will be able to see them."
+        }
+      ],
+      "note": "Only within Fable club books, text only."
+    },
+    "group_listening": {
+      "value": "yes",
+      "detail": "Book and TV clubs with spoiler-free chapter rooms, milestones and shared in-book highlights (Social Mode).",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1488170618",
+          "title": "Fable: Track & Discuss Books App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Spark conversations with your club in organized, spoiler-free chapter rooms and episode rooms"
+        },
+        {
+          "url": "https://help.fable.co/article/39-what-is-social-mode",
+          "title": "What is Social Mode? - Fable Reader Support",
+          "published": "2021-08-19",
+          "checked": "2026-09-28",
+          "quote": "Social Mode allows Fable members to read together"
+        }
+      ],
+      "note": "Group reading, not listening."
+    },
+    "on_device_privacy": {
+      "value": "no",
+      "detail": "Account-based social service; notes are private to the user but no on-device storage or account-free use is stated.",
+      "sources": [
+        {
+          "url": "https://help.fable.co/article/44-can-members-of-my-book-club-see-my-notes",
+          "title": "Can members of my Club see my notes? - Fable Reader Support",
+          "published": "2024-09-24",
+          "checked": "2026-09-28",
+          "quote": "All your notes are always private, so no one you're reading with will be able to see them."
+        }
+      ],
+      "note": "Private here means hidden from other members, not stored only on device."
+    },
+    "account_required": {
+      "value": "unknown",
+      "detail": "The help centre assumes an account (sign-in, account data) but no page states that browsing needs one.",
+      "sources": [
+        {
+          "url": "https://help.fable.co/article/185-what-is-the-fable-everand-bundle",
+          "title": "What is the Fable + Everand bundle? - Fable Reader Support",
+          "published": "2026-06-09",
+          "checked": "2026-09-28",
+          "quote": "A Fable account (you can create one for free)"
+        },
+        {
+          "url": "https://help.fable.co/",
+          "title": "Fable Reader Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked the help centre index and App Store listing; the Everand bundle requires a Fable account, but a general requirement is not stated."
+    }
+  }
+}

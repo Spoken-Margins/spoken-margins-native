@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "source-resolution.schema.json",
+  "title": "Link or query to source candidates (seam I1)",
+  "description": "What one resolver returns for one input. Resolvers (Apple, Spotify, feed discovery, Substack B2, YouTube B3, bridge B4, catalog search) are independent; the app merges their candidates. A candidate is only 'exact' when the resolver has no doubt (the link is the feed itself, or a stable id maps to it); everything else is shown as 'is this it?'. A feed URL carrying a private token is marked private and never leaves the device (#168).",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "input",
+    "resolverId",
+    "candidates"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "source-resolution.v1"
+    },
+    "input": {
+      "type": "object",
+      "required": [
+        "kind",
+        "value"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "link",
+            "query"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "additionalProperties": false
+    },
+    "resolverId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$"
+    },
+    "candidates": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "$ref": "#/$defs/candidate"
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "Present when the resolver could not answer (as opposed to answering 'nothing matches').",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 500
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "contentKind",
+        "title",
+        "confidence",
+        "reason",
+        "resolverId"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "kind": {
+          "type": "string",
+          "description": "How it would be followed: podcast_feed, article_feed, website, bridged_site. Readers skip kinds they can't follow.",
+          "maxLength": 40
+        },
+        "contentKind": {
+          "type": "string",
+          "description": "podcast, article, newsletter, paper, news, video. Same values as the catalog.",
+          "maxLength": 40
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "author": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "artworkURL": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        "websiteURL": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        "feed": {
+          "type": "object",
+          "description": "Absent when the source can't be followed as a feed (for example a YouTube channel with no matching podcast).",
+          "required": [
+            "url",
+            "isPrivate"
+          ],
+          "properties": {
+            "url": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https://"
+            },
+            "isPrivate": {
+              "type": "boolean",
+              "description": "True when the URL holds a per-subscriber secret. Private feeds never appear in packets, exports, logs or catalogs."
+            }
+          },
+          "additionalProperties": false
+        },
+        "confidence": {
+          "enum": [
+            "exact",
+            "likely",
+            "possible"
+          ]
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Optional resolver score, for ordering within a confidence level only."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "Human-readable, shown to the listener: 'matched by title and publish date'."
+        },
+        "resolverId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$"
+        },
+        "catalogEntryId": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "externalIds": {
+          "type": "object",
+          "properties": {
+            "applePodcastsId": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "podcastIndexId": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "podcastGuid": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "youtubeChannelId": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "spotifyShowId": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

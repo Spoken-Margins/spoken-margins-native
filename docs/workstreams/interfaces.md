@@ -23,6 +23,7 @@ This page sets **what crosses each seam and what must stay true**. It deliberate
   - A candidate is never presented as certain when the resolver isn't. This is the same principle as podcast anchors: an honest "is this it?" beats a confidently wrong follow.
   - Each resolver is independent and testable on the host with recorded responses. Adding a resolver doesn't mean editing the others.
   - Feed URLs that carry a private token (paid Substack, private podcast feeds) are marked private and never leave the device, including in packets (#168).
+- **Published (B1 M1):** `Contracts/schemas/source-resolution.schema.json` with fixtures in `Contracts/fixtures/source-resolution/`; Swift `SourceResolver`, `SourceResolverRegistry`, `StubSourceResolver` and `CatalogSourceResolver` in `SessionKit/SourceResolution.swift`.
 
 ## I2. Followed source and catalog entry
 
@@ -30,6 +31,7 @@ This page sets **what crosses each seam and what must stay true**. It deliberate
 
 - **Crosses:** what a followed source is (builds on `Contracts/schemas/followed-source.schema.json`), plus a **catalog entry** for sources the user hasn't followed yet (the onboarding "top podcasts" list, suggestions). Includes category and kind tags so D3 can filter.
 - **Invariants:** the catalog can be refreshed without an app update (#69), and the app works offline with a bundled snapshot. Following never downloads episodes by itself.
+- **Published (B1 M1):** `Contracts/schemas/source-catalog.schema.json` and `source-catalog-manifest.schema.json`, fixtures in `Contracts/fixtures/source-catalog*/`, the snapshot in `Site/onboarding/catalog/v1/` (built by `research/B1/build_catalog.py`); Swift `SourceCatalog`, `SourceCatalogValidator` and `SourceCatalogStore` in SessionKit. Followed sources are unchanged: a followed source finds its catalog entry with `SourceCatalog.entry(matchingFeedURL:)`.
 
 ## I3. Bridge manifest and fetch recipes
 

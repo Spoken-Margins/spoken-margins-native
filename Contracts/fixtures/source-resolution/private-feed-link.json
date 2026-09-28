@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "source-resolution.v1",
+  "input": {"kind": "link", "value": "https://www.patreon.com/rss/exampleshow?auth=Zx81kq0P2mNw7rT4yB6vC9dF3hJ5lA1s"},
+  "resolverId": "feed_discovery",
+  "candidates": [
+    {
+      "id": "feed_discovery:patreon-exampleshow",
+      "kind": "podcast_feed",
+      "contentKind": "podcast",
+      "title": "Example Show (Patron feed)",
+      "feed": {"url": "https://www.patreon.com/rss/exampleshow?auth=Zx81kq0P2mNw7rT4yB6vC9dF3hJ5lA1s", "isPrivate": true},
+      "confidence": "exact",
+      "reason": "The link is a podcast feed",
+      "resolverId": "feed_discovery"
+    }
+  ]
+}

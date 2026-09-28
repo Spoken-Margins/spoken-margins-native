@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<opml version="1.0">
+  <head><title>Overcast Podcast Subscriptions</title></head>
+  <body>
+    <outline text="playlists">
+      <outline type="podcast-playlist" overcastId="1234" text="All Episodes" smart="1" sorting="chronological" includePodcastIds="1,2,3"/>
+    </outline>
+    <outline text="feeds">
+      <outline type="rss" text="The Daily" title="The Daily" xmlUrl="https://feeds.simplecast.com/Sl5CSM3S" htmlUrl="https://www.nytimes.com/the-daily" overcastId="11" subscribed="1" notifications="0">
+        <outline type="podcast-episode" overcastId="901" pubDate="2026-09-26T06:00:00-04:00" title="An Episode" url="https://overcast.fm/+AbCdE" overcastUrl="https://overcast.fm/+AbCdE" enclosureUrl="https://dts.podtrac.com/redirect.mp3/example.com/1.mp3" played="1" userUpdatedDate="2026-09-26T12:00:00-04:00"/>
+        <outline type="podcast-episode" overcastId="902" pubDate="2026-09-25T06:00:00-04:00" title="Another Episode" url="https://overcast.fm/+FgHiJ" overcastUrl="https://overcast.fm/+FgHiJ" enclosureUrl="https://dts.podtrac.com/redirect.mp3/example.com/2.mp3" progress="120" userUpdatedDate="2026-09-25T12:00:00-04:00"/>
+      </outline>
+      <outline type="rss" text="Radiolab" title="Radiolab" xmlUrl="https://feeds.simplecast.com/EmVW7VGp" htmlUrl="https://radiolab.org" overcastId="12" subscribed="1">
+        <outline type="podcast-episode" overcastId="903" pubDate="2026-09-19T05:00:00-04:00" title="A Radiolab Episode" url="https://overcast.fm/+KlMnO" enclosureUrl="https://example.com/r.mp3"/>
+      </outline>
+      <outline type="rss" text="Hard Fork" title="Hard Fork" xmlUrl="https://feeds.simplecast.com/6HKOhNgS" overcastId="13" subscribed="1"/>
+    </outline>
+  </body>
+</opml>

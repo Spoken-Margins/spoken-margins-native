@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "source-catalog-manifest.schema.json",
+  "title": "Remote source catalog manifest (seam I2)",
+  "description": "Small, size-capped pointer the app polls, following the guided onboarding manifest pattern (Site/onboarding/v1). The app downloads catalogURL only when contentVersion is newer than what it holds, rejects a body larger than catalogByteCount or with a different SHA-256, and keeps its bundled or cached catalog on any failure. Both URLs must be https on the owner's site host.",
+  "type": "object",
+  "required": ["schemaVersion", "catalogId", "contentVersion", "catalogURL", "catalogByteCount", "catalogChecksumSHA256"],
+  "properties": {
+    "schemaVersion": {"const": "source-catalog-manifest.v1"},
+    "catalogId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
+    "contentVersion": {"type": "integer", "minimum": 1},
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "catalogURL": {"type": "string", "format": "uri", "pattern": "^https://"},
+    "catalogByteCount": {"type": "integer", "minimum": 1, "maximum": 2097152},
+    "catalogChecksumSHA256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "entryCount": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": false
+}

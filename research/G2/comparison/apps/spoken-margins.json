@@ -1,0 +1,262 @@
+{
+  "id": "spoken-margins",
+  "name": "Spoken Margins",
+  "vendor": "Spoken Margins (the owner)",
+  "category": "podcast",
+  "website": "https://github.com/uncomposed/spoken-margins-native",
+  "why_listed": "Our own row, held to the same sourcing rule: every claim points at the repo at a pinned commit, so a comparison page can't overstate what the app does. The repository is private, so before any public page uses this row, its claims need a public source (App Store listing or release notes).",
+  "claims": {
+    "platforms": {
+      "value": "iOS and iPadOS 26 or later",
+      "detail": "iPhone and iPad only.",
+      "sources": [
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/project.yml",
+          "title": "XcodeGen spec (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "iOS: \"26.0\""
+        },
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
+          "title": "Agent guide (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "native iPhone/iPad listening app (iOS/iPadOS 26+)"
+        }
+      ]
+    },
+    "price_free_tier": {
+      "value": "Free; internal TestFlight only, not on the App Store",
+      "detail": "No public release yet.",
+      "sources": [
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/AGENTS.md",
+          "title": "Agent guide (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "is the last shipped build (internal TestFlight, 2026-09-25)"
+        }
+      ],
+      "note": "Update when the App Store release (#175) happens."
+    },
+    "price_paid": {
+      "value": "None (not publicly available: internal TestFlight only)",
+      "detail": "No paid tier.",
+      "sources": [
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/docs/pkm-product-plan-2026-09-12.md",
+          "title": "PKM product plan (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "no paid Spoken Margins offering"
+        }
+      ]
+    },
+    "plays_podcasts": {
+      "value": "yes",
+      "detail": "Follows podcast feeds and plays episodes.",
+      "sources": [
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
+          "title": "Agent guide (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Listeners play articles, PDFs and podcasts"
+        }
+      ]
+    },
+    "reads_web_articles_aloud": {
+      "value": "yes",
+      "detail": "Reads saved articles with on-device voices.",
+      "sources": [
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
+          "title": "Agent guide (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Listeners play articles, PDFs and podcasts"
+        }
+      ]
+    },
+    "reads_pdfs_aloud": {
+      "value": "yes",
+      "detail": "Reads PDFs aloud. Running headers, footnotes and references in scientific papers can still be read out.",
+      "sources": [
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
+          "title": "Agent guide (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Listeners play articles, PDFs and podcasts"
+        },
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/docs/workstreams/streams/C1-pdf.md",
+          "title": "C1 pdf brief (repo), the goal not current behaviour",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "no running headers, page numbers, stamps, footnote clutter or reference lists read out"
+        }
+      ],
+      "note": "Known issues: #138, #162."
+    },
+    "voice_notes_anchored": {
+      "value": "yes",
+      "detail": "Record a spoken Margin anchored to the moment.",
+      "sources": [
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
+          "title": "Agent guide (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "record spoken or written **Margins** anchored to the source"
+        }
+      ]
+    },
+    "text_notes_anchored": {
+      "value": "yes",
+      "detail": "Type a Margin anchored to the moment.",
+      "sources": [
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
+          "title": "Agent guide (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "record spoken or written **Margins** anchored to the source"
+        }
+      ]
+    },
+    "hands_free_capture": {
+      "value": "no",
+      "detail": "Capture needs the phone screen today; Live Activity buttons control playback and shared Margins, not new capture.",
+      "sources": [
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/App/Gate2Shared/Sources/Gate2LiveActivityIntents.swift",
+          "title": "Live Activity intents (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Controls Spoken Margins playback from the Live Activity."
+        }
+      ],
+      "note": "Planned: #117 bookmarks, #118 headphone shortcut, #121 Watch."
+    },
+    "transcripts": {
+      "value": "partial",
+      "detail": "On-device Speech transcription of source context around a Margin; no full episode transcript reader.",
+      "sources": [
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/Contracts/docs/recovery-mvp.md",
+          "title": "Recovery MVP product boundary (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "on-device Speech.framework transcription"
+        },
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/Contracts/docs/recovery-mvp.md",
+          "title": "Recovery MVP product boundary (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "a native-audio transcript reader"
+        }
+      ],
+      "note": "The second quote is from the MVP's 'Do not add' list."
+    },
+    "ai_summaries": {
+      "value": "partial",
+      "detail": "On-device summaries of Margins where Apple Foundation Models are available; listening maps come from source headings or the listener's own model via Shortcuts.",
+      "sources": [
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/Contracts/docs/recovery-mvp.md",
+          "title": "Recovery MVP product boundary (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Apple Foundation Models for scoped interjection summaries when available"
+        },
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/docs/pkm-workflows.md",
+          "title": "Personal knowledge workflows (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "The model account and execution belong to Ask ChatGPT; Spoken Margins sends no model request."
+        }
+      ]
+    },
+    "export_markdown_pkm": {
+      "value": "partial",
+      "detail": "Writes each typed Margin as a Markdown file into a chosen Files folder such as an Obsidian vault, while the app is open. Spoken Margins are not exported yet.",
+      "sources": [
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/App/SpokenMarginsApp/Sources/SpokenMarginsApp/PKMSettingsViews.swift",
+          "title": "Margin Output settings copy (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Writes each text Margin as a Markdown note in the folder you choose, such as an Obsidian vault."
+        },
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/docs/pkm-workflows.md",
+          "title": "Personal knowledge workflows (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Existing and new active text Margins are exported as individual Markdown files"
+        }
+      ],
+      "note": "Spoken Margins: #171. Readwise export: #172. docs/pkm-workflows.md says recorded Margins export once transcribed; the shipped settings copy says text Margins only, and this row follows the app."
+    },
+    "share_note_at_moment": {
+      "value": "partial",
+      "detail": "Share Margins as a .spokenmargins file; the recipient imports it and hears each Margin at that place in their own copy. Not yet a link.",
+      "sources": [
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",
+          "title": "Agent guide (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "share Margins as `.spokenmargins` packets that another listener can import and hear at the right place in their own copy"
+        }
+      ],
+      "note": "Links: #169."
+    },
+    "group_listening": {
+      "value": "no",
+      "detail": "Group listening is planned, not built.",
+      "sources": [
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/55abf7a/docs/workstreams/streams/F1-coop.md",
+          "title": "F1 coop brief (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "A group listens to the same item at different times"
+        }
+      ],
+      "note": "Stream F1."
+    },
+    "on_device_privacy": {
+      "value": "yes",
+      "detail": "Source text and Margins aren't sent to a third-party model provider; summaries use on-device models where available.",
+      "sources": [
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/Contracts/docs/recovery-mvp.md",
+          "title": "Recovery MVP product boundary (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "source material and interjections are not sent to a third-party model provider"
+        }
+      ],
+      "note": "The network is still used for feeds, web pages, and read-later services the listener connects (with their own token). A listener's own Ask ChatGPT shortcut sends text to OpenAI under the listener's account, outside the app."
+    },
+    "account_required": {
+      "value": "no",
+      "detail": "No Spoken Margins account; read-later services use the listener's own token.",
+      "sources": [
+        {
+          "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/docs/pkm-workflows.md",
+          "title": "Personal knowledge workflows (repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Tokens are stored in this device’s Keychain."
+        }
+      ],
+      "note": "Inferred from the absence of any sign-in in the product docs; re-check if B4 adds a server."
+    }
+  }
+}

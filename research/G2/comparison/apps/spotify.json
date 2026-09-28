@@ -1,0 +1,316 @@
+{
+  "id": "spotify",
+  "name": "Spotify (podcasts)",
+  "vendor": "Spotify AB",
+  "category": "podcast",
+  "website": "https://www.spotify.com",
+  "why_listed": "Mainstream listeners who want to clip, comment on and share podcast moments inside the app they already use would use Spotify instead of Spoken Margins.",
+  "claims": {
+    "platforms": {
+      "value": "iOS, iPadOS, Android, macOS, Windows, Linux, Chromebook, web player",
+      "detail": "Apps on all major platforms; comments, clips and transcripts are mobile-app features.",
+      "sources": [
+        {
+          "url": "https://www.spotify.com/us/download/",
+          "title": "Download Spotify - Spotify (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Web Player"
+        },
+        {
+          "url": "https://support.spotify.com/us/creators/article/reading-approving-reacting-comments/",
+          "title": "Reading, approving, and reacting to comments - Spotify",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Fans can leave, react, and reply to comments on the Spotify mobile app."
+        }
+      ],
+      "note": "Download page platform list read via WebFetch summary (Mac OS X, Windows, iOS, Android, Linux, Chromebook, Web Player)."
+    },
+    "price_free_tier": {
+      "value": "Free with ads; podcasts and podcast clips available to Free users.",
+      "detail": "Podcasts are playable free; clips roll out to Free and Premium on mobile.",
+      "sources": [
+        {
+          "url": "https://www.spotify.com/us/free/",
+          "title": "Spotify Free - Spotify (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Play millions of songs and podcasts for free"
+        },
+        {
+          "url": "https://newsroom.spotify.com/2026-05-27/podcast-clips-save-share-moments/",
+          "title": "Podcast Clips Make Your Favorite Moments Easier to Save and Share — Spotify",
+          "published": "2026-05-27",
+          "checked": "2026-09-28",
+          "quote": "Clips for podcasts are starting to roll out globally to Free and Premium users on mobile, with availability expanding across more shows over time."
+        }
+      ]
+    },
+    "price_paid": {
+      "value": "USD 12.99/month (Premium Individual, US); Student USD 6.99/month",
+      "detail": "Premium Individual after a one-month free trial; Student plan is cheaper but eligibility-limited.",
+      "sources": [
+        {
+          "url": "https://www.spotify.com/us/premium/",
+          "title": "Spotify Premium - Spotify (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "$0 for 1 month, then $12.99 per month after"
+        },
+        {
+          "url": "https://www.spotify.com/us/premium/",
+          "title": "Spotify Premium - Spotify (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "$0 for 1 month, then $6.99 per month after"
+        }
+      ],
+      "note": "US Premium page. Premium mostly affects music; podcast features covered here are also on Free."
+    },
+    "plays_podcasts": {
+      "value": "yes",
+      "detail": "Plays podcasts, including video podcasts.",
+      "sources": [
+        {
+          "url": "https://www.spotify.com/us/free/",
+          "title": "Spotify Free - Spotify (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Play millions of songs and podcasts for free"
+        }
+      ],
+      "note": "Spotify hosts/ingests shows; it does not subscribe to arbitrary RSS URLs added by the listener (not verified on a page read here)."
+    },
+    "reads_web_articles_aloud": {
+      "value": "unknown",
+      "detail": "Not researched: this record covers Spotify's podcast features only.",
+      "sources": [
+        {
+          "url": "https://www.spotify.com/us/download/",
+          "title": "Download Spotify - Spotify (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Out of scope for this record (podcast features only). No article text-to-speech appeared on the pages read, but no comprehensive feature list was checked."
+    },
+    "reads_pdfs_aloud": {
+      "value": "unknown",
+      "detail": "Not researched: this record covers Spotify's podcast features only.",
+      "sources": [
+        {
+          "url": "https://www.spotify.com/us/download/",
+          "title": "Download Spotify - Spotify (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Out of scope for this record (podcast features only). No PDF reading appeared on the pages read."
+    },
+    "voice_notes_anchored": {
+      "value": "unknown",
+      "detail": "No private notes on podcasts found; a community idea asks for timestamped notes.",
+      "sources": [
+        {
+          "url": "https://newsroom.spotify.com/2026-05-27/podcast-clips-save-share-moments/",
+          "title": "Podcast Clips Make Your Favorite Moments Easier to Save and Share — Spotify",
+          "published": "2026-05-27",
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://community.spotify.com/t5/Live-Ideas/inline-notes-with-timestamps-for-podcast-a-simple-way-to-save/idi-p/7284272",
+          "title": "inline notes with timestamps for podcast - The Spotify Community",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked the clips announcement (no notes mentioned). The community idea page returned 403; its title, seen in search results, requests 'inline notes with timestamps for podcast'."
+    },
+    "text_notes_anchored": {
+      "value": "partial",
+      "detail": "No private notes; listeners can save clips (a moment with no note) to Your Library and leave public episode comments.",
+      "sources": [
+        {
+          "url": "https://newsroom.spotify.com/2026-05-27/podcast-clips-save-share-moments/",
+          "title": "Podcast Clips Make Your Favorite Moments Easier to Save and Share — Spotify",
+          "published": "2026-05-27",
+          "checked": "2026-09-28",
+          "quote": "All clips are saved in Your Library, ready to revisit or add to a podcast playlist whenever you want."
+        },
+        {
+          "url": "https://support.spotify.com/us/creators/article/reading-approving-reacting-comments/",
+          "title": "Reading, approving, and reacting to comments - Spotify",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Fans can leave, react, and reply to comments on the Spotify mobile app."
+        },
+        {
+          "url": "https://community.spotify.com/t5/Live-Ideas/inline-notes-with-timestamps-for-podcast-a-simple-way-to-save/idi-p/7284272",
+          "title": "inline notes with timestamps for podcast - The Spotify Community",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Whether comments are tied to a timestamp was not stated on the pages read. Community notes idea page returned 403."
+    },
+    "hands_free_capture": {
+      "value": "unknown",
+      "detail": "Clip capture is a tap on the scissor icon in Now Playing; no headphone or Watch capture found.",
+      "sources": [
+        {
+          "url": "https://newsroom.spotify.com/2026-05-27/podcast-clips-save-share-moments/",
+          "title": "Podcast Clips Make Your Favorite Moments Easier to Save and Share — Spotify",
+          "published": "2026-05-27",
+          "checked": "2026-09-28",
+          "quote": "tap the scissor icon in the Now Playing view to capture the moment"
+        }
+      ],
+      "note": "Only the on-screen capture method is documented in the announcement."
+    },
+    "transcripts": {
+      "value": "yes",
+      "detail": "Transcripts in Now Playing and episode pages on mobile; some shows have auto-generated ones.",
+      "sources": [
+        {
+          "url": "https://support.spotify.com/us/creators/article/managing-episode-transcripts-on-spotify/",
+          "title": "Managing episode transcripts on Spotify - Spotify",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Listeners see transcripts in the Now Playing View and on episode pages in the Spotify mobile app."
+        }
+      ],
+      "note": "Not available for all shows."
+    },
+    "ai_summaries": {
+      "value": "yes",
+      "detail": "Automatic chapters from a generated transcript (English, not all shows), AI chapter hooks, and an ask-questions-about-the-episode feature.",
+      "sources": [
+        {
+          "url": "https://support.spotify.com/us/creators/article/episode-chapters/",
+          "title": "Episode chapters - Spotify",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "A transcript of your episode is automatically generated and we choose the best chapter titles and start points for your episode's chapters."
+        },
+        {
+          "url": "https://support.spotify.com/us/creators/article/episode-chapters/",
+          "title": "Episode chapters - Spotify",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Automatic chapters are currently only generated in English, and they aren't available to all shows yet."
+        },
+        {
+          "url": "https://newsroom.spotify.com/2026-05-21/investor-day-podcast-features-updates/",
+          "title": "Spotify Levels Up Our Podcast Experience With New Features for Fans and Creators — Spotify",
+          "published": "2026-05-21",
+          "checked": "2026-09-28",
+          "quote": "Users can ask Spotify questions about the podcast they're listening or watching, and get answers in real time."
+        }
+      ]
+    },
+    "export_markdown_pkm": {
+      "value": "unknown",
+      "detail": "No export of clips or podcast moments to note apps found.",
+      "sources": [
+        {
+          "url": "https://newsroom.spotify.com/2026-05-27/podcast-clips-save-share-moments/",
+          "title": "Podcast Clips Make Your Favorite Moments Easier to Save and Share — Spotify",
+          "published": "2026-05-27",
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://support.spotify.com/us/creators/article/managing-episode-transcripts-on-spotify/",
+          "title": "Managing episode transcripts on Spotify - Spotify",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked the clips announcement and transcript help page; no export to Obsidian/Notion/Readwise/Markdown mentioned."
+    },
+    "share_note_at_moment": {
+      "value": "yes",
+      "detail": "Share an episode, chapter, timestamp or clip to friends via Spotify Messages or other apps.",
+      "sources": [
+        {
+          "url": "https://newsroom.spotify.com/2026-05-27/podcast-clips-save-share-moments/",
+          "title": "Podcast Clips Make Your Favorite Moments Easier to Save and Share — Spotify",
+          "published": "2026-05-27",
+          "checked": "2026-09-28",
+          "quote": "full episode, chapter, timestamp, or clip"
+        }
+      ],
+      "note": "Shares a moment, not a spoken or typed note. Community threads report timestamp sharing was previously limited to video podcasts; not re-verified."
+    },
+    "group_listening": {
+      "value": "partial",
+      "detail": "Public per-episode comments that fans can reply to; Messages for sharing with friends. Jam group sessions exist but podcast support was not confirmed.",
+      "sources": [
+        {
+          "url": "https://support.spotify.com/us/creators/article/reading-approving-reacting-comments/",
+          "title": "Reading, approving, and reacting to comments - Spotify",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Fans can leave, react, and reply to comments on the Spotify mobile app."
+        },
+        {
+          "url": "https://newsroom.spotify.com/2025-12-29/year-in-features/",
+          "title": "25 Ways Spotify Leveled Up Your Listening in 2025 — Spotify",
+          "published": "2025-12-29",
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://support.spotify.com/us/article/jam/",
+          "title": "Start or join a Jam - Spotify",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Comments are public to all listeners of a show, not a private group. Jam page not read in full."
+    },
+    "on_device_privacy": {
+      "value": "unknown",
+      "detail": "No on-device statement found for podcast features.",
+      "sources": [
+        {
+          "url": "https://www.spotify.com/us/legal/end-user-agreement/",
+          "title": "Spotify Terms of Use",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked Terms of Use for account wording only; privacy policy not read."
+    },
+    "account_required": {
+      "value": "yes",
+      "detail": "Listening in the apps uses a (free) Spotify account.",
+      "sources": [
+        {
+          "url": "https://www.spotify.com/us/legal/end-user-agreement/",
+          "title": "Spotify Terms of Use",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "You may need to create a Spotify account to use all or part of the Spotify Service"
+        },
+        {
+          "url": "https://www.spotify.com/us/free/",
+          "title": "Spotify Free - Spotify (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "It's free. No credit card required."
+        }
+      ],
+      "note": "The Terms word this as 'may need'; the pages read do not say explicitly that every podcast play requires sign-in."
+    }
+  }
+}

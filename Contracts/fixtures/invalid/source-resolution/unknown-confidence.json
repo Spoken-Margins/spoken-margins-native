@@ -1,0 +1,29 @@
+{
+ "schemaVersion": "source-resolution.v1",
+ "input": {
+  "kind": "link",
+  "value": "https://podcasts.apple.com/us/podcast/the-daily/id1200361736"
+ },
+ "resolverId": "apple_podcasts",
+ "candidates": [
+  {
+   "id": "apple_podcasts:1200361736",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Daily",
+   "author": "The New York Times",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/ab/64/66/ab6466a9-9a7d-e20e-7a3d-bc5be37d29ce/mza_15084852813176276273.jpg/600x600bb.jpg",
+   "feed": {
+    "url": "https://feeds.simplecast.com/Sl5CSM3S",
+    "isPrivate": false
+   },
+   "confidence": "certain",
+   "reason": "Apple Podcasts id 1200361736 lists this feed",
+   "resolverId": "apple_podcasts",
+   "catalogEntryId": "apple-1200361736",
+   "externalIds": {
+    "applePodcastsId": "1200361736"
+   }
+  }
+ ]
+}
