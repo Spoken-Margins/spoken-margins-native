@@ -41,9 +41,12 @@ It compares your branch (uncommitted files included) with `origin/next`, prints 
 - **T4 and T5** go to the Test Desk.
 - Ask for each tier in its own comment. The runner answers the newest T2/T3 request it hasn't reported on, and leaves `lane:queued` in place while a T4/T5 request is waiting.
 
-**When nothing happens.**
-- GitHub doesn't run the lane for a PR that conflicts with `next`. Merge `next` in and push.
-- Adding a label that is already on the PR doesn't trigger anything. If `lane:queued` is already there (a T4 waiting), remove it and add it again after posting a T2/T3 request.
+**When nothing happens.** If no run starts within about 2 minutes of labeling, check three things:
+- **The PR's base.** It must target `next`, from a branch in this repository.
+- **The label.** Adding a label that's already on the PR triggers nothing. If `lane:queued` is already there (a T4 waiting), remove it and add it again after posting your T2/T3 request.
+- **The runner.** `gh api repos/uncomposed/spoken-margins-native/actions/runners` should show `sm-lane-mac online`. If it's offline, say so on the stream's tracking issue.
+
+Old branches are fine: the lane uses `next`'s workflow and merges the newest `next` into your head itself. A PR that conflicts with `next` gets an INCONCLUSIVE report naming the files; merge `next` in, push, and ask again.
 
 **Newer pushes and repeats.**
 - A newer push replaces a queued request: the lane tests only the newest commit.

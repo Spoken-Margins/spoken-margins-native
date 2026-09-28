@@ -2,6 +2,7 @@ import importlib.util
 import os
 from pathlib import Path
 import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -27,7 +28,7 @@ def comment(body, login='uncomposed', url='https://example.test/c'):
 
 
 def runner_report(verdict, wanted, url='https://example.test/r'):
-    return comment(lane.report('pr1-r1', verdict, wanted['commit'], wanted['merge'], wanted['tier'], 'x', 1, 'x', [],
+    return comment(lane.report('pr1-r1', verdict, wanted['commit'], wanted['next'], wanted['tier'], 'x', 1, 'x', [],
                                'none', '/e', 'owner', wanted), login='github-actions[bot]', url=url)
 
 
@@ -96,7 +97,7 @@ class RequestTests(unittest.TestCase):
         self.assertEqual(lane.earlier_report([runner_report('FAIL', wanted, url='u2')], same), 'u2')
         self.assertIsNone(lane.earlier_report([runner_report('INCONCLUSIVE', wanted)], same))
         self.assertIsNone(lane.earlier_report([runner_report('PASS', wanted)], lane.identity('T3', NEWER, MERGE, ['A', 'B'])))
-        # Same head, but next (or the lane) moved: a new merge commit, so it runs again.
+        # Same head, but next moved: it runs again.
         self.assertIsNone(lane.earlier_report([runner_report('PASS', wanted)], lane.identity('T3', HEAD, NEWER, ['A', 'B'])))
 
 
@@ -107,7 +108,7 @@ class ReportTests(unittest.TestCase):
                            'none', '/ev/pr7-r9', 'journeys (T4)', lane.identity('T2', HEAD, MERGE, []))
         lines = body.splitlines()
         self.assertEqual(lines[0], 'Lane report pr7-r9 — FAIL')
-        self.assertEqual(lines[1], f'commit {HEAD[:7]} (tested merged into next as {MERGE[:7]}) · tier T2 · '
+        self.assertEqual(lines[1], f'commit {HEAD[:7]} (tested merged with next at {MERGE[:7]}) · tier T2 · '
                                    'no simulator (compile only) · 1m15s')
         self.assertTrue(lines[2].startswith('ran: '))
         self.assertIn('crashes: none', lines)
@@ -229,8 +230,12 @@ class MainFlowTests(unittest.TestCase):
                 mock.patch.dict('os.environ', {'GH_REPO': 'o/r', 'SM_LANE_EVIDENCE_DIR': temporary}), \
                 mock.patch.object(lane, 'run_t2', return_value=(verdict, 'simulator build (pass), device build (pass)', [])), \
                 mock.patch.object(lane, 'sweep_runner_simulators'), \
+                mock.patch.object(lane, 'fetch_base', return_value=MERGE), \
+                mock.patch.object(lane, 'merge_base_branch', return_value=self.conflicts), \
                 mock.patch.object(lane, 'link_tools'), mock.patch('builtins.print'):
-            return lane.main(['--pr', '5', '--event-head', event_head, '--merge-sha', MERGE, '--run-id', '42', *extra])
+            return lane.main(['--pr', '5', '--event-head', event_head, '--run-id', '42', *extra])
+
+    conflicts = []
 
     def test_a_queued_t2_request_is_run_reported_and_relabelled(self):
         github = FakeGitHub(comments=[comment(f'/lane T2\ncommit: {HEAD[:7]}')])
@@ -294,6 +299,55 @@ class MainFlowTests(unittest.TestCase):
         self.run_main(github, HEAD, 'PASS', '--cleanup')
         self.assertIn('the runner stopped before reporting (https://github.com/o/r/actions/runs/42)', github.posted[-1])
         self.assertEqual(github.labels & {'lane:running', 'lane:queued'}, set())
+
+
+    def test_a_pr_that_conflicts_with_next_gets_an_inconclusive_report_naming_the_files(self):
+        github = FakeGitHub(comments=[comment('/lane T2')])
+        with mock.patch.object(self, 'conflicts', ['App/Shared.swift']), \
+                mock.patch.object(lane, 'run_t2', side_effect=AssertionError('nothing should build')):
+            self.run_main(github)
+        self.assertTrue(github.posted[0].startswith('Lane report pr5-r42 — INCONCLUSIVE'))
+        self.assertIn('does not merge cleanly into next', github.posted[0])
+        self.assertIn('App/Shared.swift', github.posted[0])
+
+
+class MergeTests(unittest.TestCase):
+    """The runner merges the newest base into the PR head itself, with real git."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        root = Path(self.temporary.name)
+        self.origin, self.tree = root / 'origin', root / 'tree'
+        git = ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'init.defaultBranch=next']
+        self.git = git
+        subprocess.run(git + ['init', '-q', str(self.origin)], check=True)
+        (self.origin / 'shared.txt').write_text('one\n')
+        subprocess.run(git + ['-C', str(self.origin), 'add', '.'], check=True)
+        subprocess.run(git + ['-C', str(self.origin), 'commit', '-q', '-m', 'start'], check=True)
+        subprocess.run(git + ['clone', '-q', str(self.origin), str(self.tree)], check=True)
+        subprocess.run(git + ['-C', str(self.tree), 'checkout', '-q', '-b', 'pr'], check=True)
+
+    def commit(self, where, name, text):
+        (where / name).write_text(text)
+        subprocess.run(self.git + ['-C', str(where), 'add', '.'], check=True)
+        subprocess.run(self.git + ['-C', str(where), 'commit', '-q', '-m', name], check=True)
+
+    def test_a_clean_merge_brings_in_the_newest_base(self):
+        self.commit(self.tree, 'pr.txt', 'pr\n')
+        self.commit(self.origin, 'lane.yml', 'new on next\n')
+        base = lane.fetch_base(self.tree, 'next')
+        self.assertEqual(base, subprocess.check_output(['git', '-C', str(self.origin), 'rev-parse', 'HEAD'], text=True).strip())
+        self.assertEqual(lane.merge_base_branch(self.tree, 'next'), [])
+        self.assertTrue((self.tree / 'lane.yml').exists())
+
+    def test_a_conflict_names_the_files_and_leaves_the_tree_clean(self):
+        self.commit(self.tree, 'shared.txt', 'pr side\n')
+        self.commit(self.origin, 'shared.txt', 'next side\n')
+        lane.fetch_base(self.tree, 'next')
+        self.assertEqual(lane.merge_base_branch(self.tree, 'next'), ['shared.txt'])
+        status = subprocess.check_output(['git', '-C', str(self.tree), 'status', '--porcelain'], text=True)
+        self.assertEqual(status, '')
 
 
 class OnlyTestingTests(unittest.TestCase):

@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """The lane's deterministic tiers: run a T2 or T3 request from a PR and post the report.
 
-Run by .github/workflows/lane.yml on the Mac's self-hosted runner, in a checkout of the PR merged
-into next. Agent sessions can't run it (the lane guard blocks it); they ask by commenting a request
-and adding the lane:queued label. Formats: docs/workstreams/test-lane.md.
+Run by .github/workflows/lane.yml on the Mac's self-hosted runner. The workflow checks out the PR's
+head in --tree and runs this script as taken from the base branch (next); the script merges the
+newest next into the tree itself, so a PR whose GitHub merge ref is stale, or that conflicts with
+next, still gets a run and a report. Agent sessions can't run it (the lane guard blocks it); they ask
+by commenting a request and adding the lane:queued label. Formats: docs/workstreams/test-lane.md.
 
 - The runner takes the newest T2/T3 request it hasn't answered yet. T4 and T5 requests belong to the
   Test Desk: while one is waiting, the runner leaves lane:queued in place so the Test Desk sees it.
 - The newest commit wins: if the PR moved on since this run was queued, a newer run tests it.
-- A request identical to one that already has a PASS or FAIL report (same commit merged into the
+- A request identical to one that already has a PASS or FAIL report (same head merged into the
   same next, tier and tests) runs once. After an INCONCLUSIVE report, asking again runs again.
 - T2 builds for simulator and device (unsigned) through scripts/xcodebuild-lane.
 - T3 runs the named app-hosted tests through verify-tests.py on a temporary iOS 26 simulator,
@@ -109,9 +111,9 @@ def pending_requests(comments: list[dict]) -> tuple[dict | None, bool]:
     return newest, desk_request > desk_answered
 
 
-def identity(tier: str, commit: str, merge: str, tests: list[str]) -> dict:
-    """What a report covers: the PR head as merged into next (so a changed next or lane runs again)."""
-    return {'tier': tier, 'commit': commit, 'merge': merge, 'tests': sorted(tests)}
+def identity(tier: str, commit: str, base: str, tests: list[str]) -> dict:
+    """What a report covers: the PR head merged into this next commit (a moved next runs again)."""
+    return {'tier': tier, 'commit': commit, 'next': base, 'tests': sorted(tests)}
 
 
 def earlier_report(comments: list[dict], wanted: dict) -> str | None:
@@ -136,11 +138,11 @@ def duration(seconds: float) -> str:
     return f'{minutes}m{seconds:02d}s' if minutes else f'{seconds}s'
 
 
-def report(request_id: str, verdict: str, head: str, merge: str, tier: str, where: str, seconds: float,
+def report(request_id: str, verdict: str, head: str, base: str, tier: str, where: str, seconds: float,
            ran: str, details: list[str], crashes: str, evidence: str, not_verified: str, wanted: dict,
-           cc: str = '') -> str:
+           cc: str = '', base_name: str = 'next') -> str:
     lines = [f'Lane report {request_id} — {verdict}',
-             f'commit {head[:7]} (tested merged into next as {merge[:7]}) · tier {tier} · {where} · {duration(seconds)}',
+             f'commit {head[:7]} (tested merged with {base_name} at {base[:7]}) · tier {tier} · {where} · {duration(seconds)}',
              f'ran: {ran}', *details, f'crashes: {crashes}', f'evidence: {evidence} (on the Mac)',
              f'not verified: {not_verified}']
     if cc:
@@ -407,6 +409,25 @@ def cleanup(github: GitHub, run_url: str) -> int:
     return 0
 
 
+def fetch_base(tree: Path, base: str) -> str:
+    """Fetch the newest base branch into the tree and return its commit."""
+    subprocess.run(['git', '-C', str(tree), 'fetch', '--no-tags', '--quiet', 'origin', base], check=True)
+    return subprocess.check_output(['git', '-C', str(tree), 'rev-parse', f'origin/{base}'], text=True).strip()
+
+
+def merge_base_branch(tree: Path, base: str) -> list[str]:
+    """Merge origin/<base> into the checked-out PR head. Returns the conflicting files, if any."""
+    git = ['git', '-C', str(tree)]
+    merged = subprocess.run(git + ['-c', 'user.name=Spoken Margins lane', '-c', 'user.email=lane@localhost',
+                                   'merge', '--no-edit', '--quiet', f'origin/{base}'], capture_output=True, text=True)
+    if merged.returncode == 0:
+        return []
+    conflicts = subprocess.run(git + ['diff', '--name-only', '--diff-filter=U'], capture_output=True,
+                               text=True).stdout.split()
+    subprocess.run(git + ['merge', '--abort'], capture_output=True)
+    return conflicts or [merged.stderr.strip().splitlines()[-1] if merged.stderr.strip() else 'the merge failed']
+
+
 def link_tools(source: Path) -> None:
     for name in ('.venv', 'node_modules'):
         if not (ROOT / name).exists() and (source / name).exists():
@@ -414,13 +435,17 @@ def link_tools(source: Path) -> None:
 
 
 def main(argv=None) -> int:
+    global ROOT
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--pr', type=int, required=True)
     parser.add_argument('--event-head', required=True, help='head SHA the triggering event saw')
-    parser.add_argument('--merge-sha', required=True, help='the merge commit this checkout is on')
     parser.add_argument('--run-id', required=True)
+    parser.add_argument('--tree', type=Path, default=ROOT, help='checkout of the PR head to test')
+    parser.add_argument('--base', default='next', help='branch the PR merges into')
     parser.add_argument('--cleanup', action='store_true', help='tidy up after a cancelled or failed job')
     args = parser.parse_args(argv)
+    ROOT = args.tree.resolve()
+    sys.path.insert(0, str(ROOT / 'scripts'))
     repo = os.environ['GH_REPO']
     github = GitHub(repo, args.pr)
     run_url = f'{os.environ.get("GITHUB_SERVER_URL", "https://github.com")}/{repo}/actions/runs/{args.run_id}'
@@ -441,7 +466,8 @@ def main(argv=None) -> int:
             github.relabel(QUEUED, None)
         print('No unanswered T2/T3 request; nothing to do.')
         return 0
-    wanted = identity(request['tier'], head, args.merge_sha, request['tests'])
+    base_sha = fetch_base(ROOT, args.base)
+    wanted = identity(request['tier'], head, base_sha, request['tests'])
     done_before = earlier_report(comments, wanted)
     if done_before:
         github.comment(f'Lane: identical {request["tier"]} request for {head[:7]} already reported: {done_before}\n{NOTE}')
@@ -452,7 +478,8 @@ def main(argv=None) -> int:
     evidence = Path(os.environ.get('SM_LANE_EVIDENCE_DIR') or
                     Path.home() / 'Library/Caches/SpokenMarginsLane/evidence') / request_id
     evidence.mkdir(parents=True, exist_ok=True)
-    (evidence / 'request.json').write_text(json.dumps(dict(request, head=head, merge=args.merge_sha), indent=2))
+    (evidence / 'request.json').write_text(json.dumps(dict(request, head=head, base=args.base, base_sha=base_sha),
+                                                      indent=2))
     if not desk_waiting:  # a waiting T4/T5 keeps lane:queued so the Test Desk still sees it
         github.relabel(QUEUED, RUNNING)
     link_tools(Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Documents/GitHub/spoken-margins-native'))
@@ -462,7 +489,12 @@ def main(argv=None) -> int:
         if requested and not head.startswith(requested) else []
     cc = ''
     try:
-        if request['tier'] == 'T2':
+        conflicts = merge_base_branch(ROOT, args.base)
+        if conflicts:
+            verdict, where, ran, crashes = 'INCONCLUSIVE', 'no simulator', 'nothing', 'none'
+            details = [f'The PR does not merge cleanly into {args.base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
+                       f'Merge {args.base} into your branch, push, and ask again.']
+        elif request['tier'] == 'T2':
             verdict, ran, details = run_t2(evidence)
             where, crashes = 'no simulator (compile only)', 'none'
         else:
@@ -470,9 +502,9 @@ def main(argv=None) -> int:
     except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
         verdict, where, ran, crashes = 'INCONCLUSIVE', 'lane error', 'nothing', 'unknown'
         details = [f'The lane itself failed: {error!r}. evidence: {evidence}']
-    body = report(request_id, verdict, head, args.merge_sha, request['tier'], where, time.monotonic() - started,
+    body = report(request_id, verdict, head, base_sha, request['tier'], where, time.monotonic() - started,
                   ran, moved + details, crashes, str(evidence),
-                  'journeys and anything a listener notices (T4), audible content (owner)', wanted, cc)
+                  'journeys and anything a listener notices (T4), audible content (owner)', wanted, cc, args.base)
     (evidence / 'report.md').write_text(body)
     print(body)
     github.comment(body)  # if this fails, the job fails and the tidy step says so on the PR
