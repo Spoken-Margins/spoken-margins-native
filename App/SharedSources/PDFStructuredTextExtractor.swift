@@ -210,6 +210,19 @@ enum PDFStructuredTextExtractor {
         )
     }
 
+    /// The item title v1 gave a PDF: its metadata title, else its first level-1
+    /// heading (ObsidianMarkdownParser took the first "# " line). The same title
+    /// gives a re-imported PDF the same item id, so the edition guard applies.
+    static func itemTitle(for document: PDFDocument, structured: StructuredDocument) -> String? {
+        if let title = document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String, !cleaned(title).isEmpty {
+            return cleaned(title)
+        }
+        let characters = Array(structured.text)
+        return structured.segments.first { $0.role == .heading && $0.level == 1 }.map {
+            String(characters[$0.range.start..<min($0.range.end, characters.count)])
+        }
+    }
+
     /// Every line of the PDF in reading order with a role. Nothing is dropped:
     /// what v1 cut (running heads, stamps, contents pages, the reference list)
     /// is labelled, and the speech path decides what is heard (I14).
@@ -348,6 +361,9 @@ enum PDFStructuredTextExtractor {
                   lines[index].text.range(of: referencesHeading, options: .regularExpression) != nil else { continue }
             let tail = lines[(index + 1)...].filter { $0.role == .body }.prefix(40)
             guard tail.filter({ looksLikeBibliographyEntry($0.text) }).count >= 4 else { continue }
+            // The heading is part of the list: "References skipped." says it once,
+            // instead of "References", then "References skipped."
+            lines[index].role = .reference
             var cursor = index + 1
             while cursor < lines.count, lines[cursor].role != .heading {
                 if lines[cursor].role == .body { lines[cursor].role = .reference }

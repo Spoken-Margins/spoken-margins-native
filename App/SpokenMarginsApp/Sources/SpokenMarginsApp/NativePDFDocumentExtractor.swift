@@ -9,6 +9,14 @@ struct NativePDFImportExtraction: Sendable {
     var documentStructure: PDFDocumentStructure
 }
 
+/// Extraction v2 (C1 M3): the I13 document new PDF imports are built from, and
+/// the title v1 would have given the item (so a re-import finds the same item).
+struct NativePDFStructuredImport: Sendable {
+    var document: StructuredDocument
+    var title: String?
+    var documentStructure: PDFDocumentStructure
+}
+
 /// Keeps PDFKit's exact embedded text and authored outline as the canonical
 /// document, then augments it with Vision's on-device layout recognition on
 /// iOS 26. Pages are rendered and recognized one at a time to bound memory.
@@ -51,6 +59,34 @@ enum NativePDFDocumentExtractor {
             throw PDFStructuredTextExtractor.ExtractionError.unreadableDocument
         }
         return try baselineExtraction(from: document)
+    }
+
+    static func extractStructured(from url: URL) throws -> NativePDFStructuredImport {
+        guard let document = PDFDocument(url: url) else {
+            throw PDFStructuredTextExtractor.ExtractionError.unreadableDocument
+        }
+        return try structuredExtraction(from: document)
+    }
+
+    static func extractStructured(from data: Data) throws -> NativePDFStructuredImport {
+        guard let document = PDFDocument(data: data) else {
+            throw PDFStructuredTextExtractor.ExtractionError.unreadableDocument
+        }
+        return try structuredExtraction(from: document)
+    }
+
+    private static func structuredExtraction(from document: PDFDocument) throws -> NativePDFStructuredImport {
+        let structured = try PDFStructuredTextExtractor.structuredDocument(from: document)
+        return NativePDFStructuredImport(
+            document: structured,
+            title: PDFStructuredTextExtractor.itemTitle(for: document, structured: structured),
+            documentStructure: PDFDocumentStructure(
+                extractionEngine: .pdfKit,
+                analysisStatus: .partial,
+                pageCount: document.pageCount,
+                analyzedPageCount: 0
+            )
+        )
     }
 
     static func tableAnnouncement(pageIndex: Int, rowCount: Int, columnCount: Int) -> String {

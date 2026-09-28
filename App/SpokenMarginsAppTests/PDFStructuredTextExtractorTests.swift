@@ -72,7 +72,7 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
             StructuredDocumentLine(text: "Supplementary methods are read.", role: .body),
         ]
         PDFStructuredTextExtractor.labelReferenceLists(&lines)
-        XCTAssertEqual(lines.map(\.role), [.heading, .body, .heading, .reference, .reference, .reference, .reference, .heading, .body])
+        XCTAssertEqual(lines.map(\.role), [.heading, .body, .reference, .reference, .reference, .reference, .reference, .heading, .body])
     }
 
     func testV2DoesNotTakeAProseMentionOfReferencesForAList() {
