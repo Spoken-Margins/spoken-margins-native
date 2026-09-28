@@ -2215,7 +2215,7 @@ private struct PlaybackScreen: View {
             }
             playbackTransport
             if !dynamicTypeSize.isAccessibilitySize {
-                HStack(spacing: 24) {
+                PlaybackSecondaryControlsRow {
                     Button(model.compactPlaybackRateDescription, action: model.cyclePlaybackRate)
                         .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
                         .accessibilityIdentifier("playback.rate.button")
@@ -2230,7 +2230,6 @@ private struct PlaybackScreen: View {
                     }
                     listeningOptionsButton
                 }
-                .font(.subheadline.weight(.medium))
                 .foregroundStyle(.white)
                 .buttonStyle(.plain)
                 .frame(minHeight: 44)
