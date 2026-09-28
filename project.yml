@@ -27,6 +27,8 @@ targets:
         buildPhase: resources
       - path: App/SharedResources/Defuddle-LICENSE.txt
         buildPhase: resources
+      - path: Site/onboarding/catalog/v1/catalog.json
+        buildPhase: resources
       - path: Contracts/fixtures
         type: folder
       - path: Contracts/traces

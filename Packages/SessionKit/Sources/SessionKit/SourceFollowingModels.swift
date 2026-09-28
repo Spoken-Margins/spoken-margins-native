@@ -144,3 +144,31 @@ public struct SourceSuggestionDecision: Codable, Equatable, Sendable, Identifiab
         self.lastPromptAt = lastPromptAt
     }
 }
+
+/// Which Library items offer a manual Follow action (B2 M1). Articles used to get only the
+/// delayed suggestion card, so a Substack post couldn't be followed until a quarter was heard.
+public enum ManualFollowPolicy {
+    public static func offersFollow(mediaType: String, sourceURL: String?, sourceReference: String?) -> Bool {
+        switch mediaType.lowercased() {
+        case "podcast", TargetType.transcriptBackedMedia.rawValue:
+            return true
+        case "text":
+            // Discovery runs on tap; an article needs an https link to discover from.
+            return [sourceURL, sourceReference].contains { value in
+                guard let value, let url = URL(string: value.trimmingCharacters(in: .whitespacesAndNewlines)) else { return false }
+                return url.scheme?.lowercased() == "https" && !(url.host ?? "").isEmpty
+            }
+        default:
+            return false
+        }
+    }
+}
+
+public extension SourceCandidateEvidence {
+    /// A Substack profile's primary publication. A writer can run several, so it is an
+    /// "Is this it?" candidate (I1) that the listener confirms even when it is the only one.
+    static let substackProfileRelation = "substack_profile_primary"
+
+    /// Confirm before following, even as the only candidate.
+    var needsConfirmation: Bool { relation == Self.substackProfileRelation }
+}

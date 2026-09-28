@@ -1,0 +1,14 @@
+{
+ "url": "https://substack.com/inbox/post/210681369",
+ "kind": "html",
+ "status": 302,
+ "headers": {
+  "content-type": "text/html; charset=utf-8",
+  "location": "https://www.astralcodexten.com/p/your-book-review-lee-kuan-yews-memoirs",
+  "x-served-by": "Substack",
+  "content-length": "100"
+ },
+ "body": "<p>Found. Redirecting to https://www.astralcodexten.com/p/your-book-review-lee-kuan-yews-memoirs</p>",
+ "original_bytes": 100,
+ "trimmed": false
+}

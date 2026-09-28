@@ -1,0 +1,14 @@
+{
+ "url": "https://substack.com/notes",
+ "kind": "html",
+ "status": 301,
+ "headers": {
+  "content-type": "text/html; charset=utf-8",
+  "location": "/",
+  "x-served-by": "Substack",
+  "content-length": "42"
+ },
+ "body": "<p>Moved Permanently. Redirecting to /</p>",
+ "original_bytes": 42,
+ "trimmed": false
+}

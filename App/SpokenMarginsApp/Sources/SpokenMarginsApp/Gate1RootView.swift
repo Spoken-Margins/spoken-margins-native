@@ -8,6 +8,7 @@ import UIKit
 struct Gate1RootView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @EnvironmentObject private var sharingCoordinator: Build23SharingCoordinator
+    @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
     @State private var navigation = AppNavigationState()
     @State private var keyboardIsPresented = false
 
@@ -71,6 +72,10 @@ struct Gate1RootView: View {
         .edgeSwipeBack(enabled: !model.recordingNavigationIsLocked && model.screen != .home, action: model.openHome)
         .onAppear {
             model.bootstrapLibraryIfNeeded()
+            catalogDrawer.presentIfFirstRun(
+                libraryWasEmptyAtLaunch: model.libraryWasEmptyAtLaunch,
+                followedSourceCount: model.feedSubscriptions.count
+            )
         }
         .onChange(of: model.requestedExperienceRoot) { _, root in
             guard let root else { return }
@@ -96,6 +101,13 @@ struct Gate1RootView: View {
                     .environmentObject(model)
             }
             .interactiveDismissDisabled(!model.hasAcceptedCurrentTerms)
+        }
+        .sheet(isPresented: $catalogDrawer.isPresented, onDismiss: {
+            catalogDrawer.markSeen()
+            model.refreshFollowedSources(force: false)
+        }) {
+            CatalogDrawerView()
+                .environmentObject(catalogDrawer)
         }
         .sheet(isPresented: $model.isHelpPresented) {
             HelpScreen()

@@ -1,0 +1,13 @@
+{
+ "url": "https://www.platformer.news/feed/",
+ "kind": "feed",
+ "status": 301,
+ "headers": {
+  "location": "/rss/",
+  "x-served-by": "cache-ams-eham8680020-AMS, cache-ams-eham8680020-AMS, cache-ams-eham8680034-AMS, cache-iad-khef600036-IAD",
+  "content-length": "0"
+ },
+ "body": "",
+ "original_bytes": 0,
+ "trimmed": false
+}

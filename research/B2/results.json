@@ -1,0 +1,1090 @@
+[
+ {
+  "id": "post-custom-clean",
+  "category": "post",
+  "url": "https://www.astralcodexten.com/p/the-specter-of-neuralese",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://www.astralcodexten.com/p/the-specter-of-neuralese",
+   "share": "https://www.astralcodexten.com/p/the-specter-of-neuralese"
+  },
+  "suggest_safari": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "suggest_share": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.astralcodexten.com/p/the-specter-of-neuralese; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-custom-email-utm",
+  "category": "post+tracking",
+  "url": "https://www.astralcodexten.com/p/the-specter-of-neuralese?utm_source=substack&utm_medium=email&utm_content=share",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://www.astralcodexten.com/p/the-specter-of-neuralese?utm_source=substack&utm_medium=email&utm_content=share",
+   "share": "https://www.astralcodexten.com/p/the-specter-of-neuralese"
+  },
+  "suggest_safari": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:77-80 item URL not in feed (membership); feed found at https://www.astralcodexten.com/feed"
+  },
+  "suggest_share": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.astralcodexten.com/p/the-specter-of-neuralese; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-custom-web-share-r",
+  "category": "post+tracking",
+  "url": "https://www.astralcodexten.com/p/your-book-review-lee-kuan-yews-memoirs?r=4abcd&utm_campaign=post&utm_medium=web",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://www.astralcodexten.com/p/your-book-review-lee-kuan-yews-memoirs?r=4abcd&utm_campaign=post&utm_medium=web",
+   "share": "https://www.astralcodexten.com/p/your-book-review-lee-kuan-yews-memoirs"
+  },
+  "suggest_safari": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:77-80 item URL not in feed (membership); feed found at https://www.astralcodexten.com/feed"
+  },
+  "suggest_share": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.astralcodexten.com/p/your-book-review-lee-kuan-yews-memoirs; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-custom-fragment",
+  "category": "post",
+  "url": "https://www.astralcodexten.com/p/the-specter-of-neuralese#footnote-1",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://www.astralcodexten.com/p/the-specter-of-neuralese#footnote-1",
+   "share": "https://www.astralcodexten.com/p/the-specter-of-neuralese"
+  },
+  "suggest_safari": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "suggest_share": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.astralcodexten.com/p/the-specter-of-neuralese; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-custom-comments",
+  "category": "post",
+  "url": "https://www.astralcodexten.com/p/the-specter-of-neuralese/comments",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:261 HTML over 1 MB; aborts before /feed heuristics"
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.astralcodexten.com/p/the-specter-of-neuralese/comments; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-custom-old-2022",
+  "category": "old post",
+  "url": "https://www.astralcodexten.com/p/spring-meetups-in-seventy-cities",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://www.astralcodexten.com/p/spring-meetups-in-seventy-cities",
+   "share": "https://www.astralcodexten.com/p/spring-meetups-in-seventy-cities"
+  },
+  "suggest_safari": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:77-80 item URL not in feed (membership); feed found at https://www.astralcodexten.com/feed"
+  },
+  "suggest_share": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:77-80 item URL not in feed (membership); feed found at https://www.astralcodexten.com/feed"
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.astralcodexten.com/p/spring-meetups-in-seventy-cities; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-custom-old-2026-01",
+  "category": "old post",
+  "url": "https://www.astralcodexten.com/p/open-thread-418",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://www.astralcodexten.com/p/open-thread-418",
+   "share": "https://www.astralcodexten.com/p/open-thread-418"
+  },
+  "suggest_safari": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:77-80 item URL not in feed (membership); feed found at https://www.astralcodexten.com/feed"
+  },
+  "suggest_share": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:77-80 item URL not in feed (membership); feed found at https://www.astralcodexten.com/feed"
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.astralcodexten.com/p/open-thread-418; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-subdomain-redirects-to-custom",
+  "category": "post",
+  "url": "https://astralcodexten.substack.com/p/the-specter-of-neuralese",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://www.astralcodexten.com/p/the-specter-of-neuralese",
+   "share": "https://www.astralcodexten.com/p/the-specter-of-neuralese"
+  },
+  "suggest_safari": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "suggest_share": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://astralcodexten.substack.com/p/the-specter-of-neuralese; Substack subdomain 'astralcodexten'; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-subdomain-old-utm",
+  "category": "old post+tracking",
+  "url": "https://garymarcus.substack.com/p/promises-are-cheap?utm_source=substack&utm_medium=email",
+  "expect_feed": "https://garymarcus.substack.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://garymarcus.substack.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://garymarcus.substack.com/p/promises-are-cheap?utm_source=substack&utm_medium=email",
+   "share": "https://garymarcus.substack.com/p/promises-are-cheap"
+  },
+  "suggest_safari": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:77-80 item URL not in feed (membership); feed found at https://garymarcus.substack.com/feed"
+  },
+  "suggest_share": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:77-80 item URL not in feed (membership); feed found at https://garymarcus.substack.com/feed"
+  },
+  "resolver": {
+   "feed": "https://garymarcus.substack.com/feed",
+   "title": "Marcus on AI",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://garymarcus.substack.com/p/promises-are-cheap; Substack subdomain 'garymarcus'; feed https://garymarcus.substack.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-subdomain-recent",
+  "category": "post",
+  "url": "https://garymarcus.substack.com/p/breaking-ai-agent-incident-toll-has",
+  "expect_feed": "https://garymarcus.substack.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://garymarcus.substack.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://garymarcus.substack.com/p/breaking-ai-agent-incident-toll-has",
+   "share": "https://garymarcus.substack.com/p/breaking-ai-agent-incident-toll-has"
+  },
+  "suggest_safari": {
+   "ok": true,
+   "feeds": [
+    "https://garymarcus.substack.com/feed"
+   ]
+  },
+  "suggest_share": {
+   "ok": true,
+   "feeds": [
+    "https://garymarcus.substack.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://garymarcus.substack.com/feed",
+   "title": "Marcus on AI",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://garymarcus.substack.com/p/breaking-ai-agent-incident-toll-has; Substack subdomain 'garymarcus'; feed https://garymarcus.substack.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-on-substack-old-2023",
+  "category": "old post",
+  "url": "https://on.substack.com/p/meet-your-fellow-writers",
+  "expect_feed": "https://on.substack.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://on.substack.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://on.substack.com/p/meet-your-fellow-writers",
+   "share": "https://on.substack.com/p/meet-your-fellow-writers"
+  },
+  "suggest_safari": {
+   "ok": true,
+   "feeds": [
+    "https://on.substack.com/feed"
+   ]
+  },
+  "suggest_share": {
+   "ok": true,
+   "feeds": [
+    "https://on.substack.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://on.substack.com/feed",
+   "title": "On Substack",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 6,
+   "reason": "input https://on.substack.com/p/meet-your-fellow-writers; Substack subdomain 'on'; feed https://on.substack.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-noahpinion-recent-r",
+  "category": "post+tracking",
+  "url": "https://www.noahpinion.blog/p/roundup-88-is-it-time-to-panic-yet?r=2xyz",
+  "expect_feed": "https://www.noahpinion.blog/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.noahpinion.blog/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://www.noahpinion.blog/p/roundup-88-is-it-time-to-panic-yet?r=2xyz",
+   "share": "https://www.noahpinion.blog/p/roundup-88-is-it-time-to-panic-yet"
+  },
+  "suggest_safari": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:77-80 item URL not in feed (membership); feed found at https://www.noahpinion.blog/feed"
+  },
+  "suggest_share": {
+   "ok": true,
+   "feeds": [
+    "https://www.noahpinion.blog/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.noahpinion.blog/feed",
+   "title": "Noahpinion",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.noahpinion.blog/p/roundup-88-is-it-time-to-panic-yet; feed https://www.noahpinion.blog/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-thefp-large-page",
+  "category": "post (page near 1 MB)",
+  "url": "https://www.thefp.com/p/james-blair-fulton-sheen-midterms",
+  "expect_feed": "https://www.thefp.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.thefp.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://www.thefp.com/p/james-blair-fulton-sheen-midterms",
+   "share": "https://www.thefp.com/p/james-blair-fulton-sheen-midterms"
+  },
+  "suggest_safari": {
+   "ok": true,
+   "feeds": [
+    "https://www.thefp.com/feed"
+   ]
+  },
+  "suggest_share": {
+   "ok": true,
+   "feeds": [
+    "https://www.thefp.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.thefp.com/feed",
+   "title": "The Free Press",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 1,
+   "reason": "input https://www.thefp.com/p/james-blair-fulton-sheen-midterms; feed https://www.thefp.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-zvi-long",
+  "category": "post",
+  "url": "https://thezvi.substack.com/p/ai-187-coming-into-play",
+  "expect_feed": "https://thezvi.substack.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://thezvi.substack.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://thezvi.substack.com/p/ai-187-coming-into-play",
+   "share": "https://thezvi.substack.com/p/ai-187-coming-into-play"
+  },
+  "suggest_safari": {
+   "ok": true,
+   "feeds": [
+    "https://thezvi.substack.com/feed"
+   ]
+  },
+  "suggest_share": {
+   "ok": true,
+   "feeds": [
+    "https://thezvi.substack.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://thezvi.substack.com/feed",
+   "title": "Don't Worry About the Vase",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://thezvi.substack.com/p/ai-187-coming-into-play; Substack subdomain 'thezvi'; feed https://thezvi.substack.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-paid-truncated",
+  "category": "paid post",
+  "url": "https://www.slowboring.com/p/upzoned-overbid-under-construction?utm_source=substack&utm_medium=email",
+  "expect_feed": "https://www.slowboring.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.slowboring.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://www.slowboring.com/p/upzoned-overbid-under-construction?utm_source=substack&utm_medium=email",
+   "share": "https://www.slowboring.com/p/upzoned-overbid-under-construction"
+  },
+  "suggest_safari": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:77-80 item URL not in feed (membership); feed found at https://www.slowboring.com/feed?sectionId=261691"
+  },
+  "suggest_share": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:77-80 item URL not in feed (membership); feed found at https://www.slowboring.com/feed?sectionId=261691"
+  },
+  "resolver": {
+   "feed": "https://www.slowboring.com/feed",
+   "title": "Slow Boring ",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.slowboring.com/p/upzoned-overbid-under-construction; feed https://www.slowboring.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-podcast-episode",
+  "category": "audio post",
+  "url": "https://www.dwarkesh.com/p/noam-brown",
+  "expect_feed": "https://www.dwarkesh.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.dwarkesh.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://www.dwarkesh.com/p/noam-brown",
+   "share": "https://www.dwarkesh.com/p/noam-brown"
+  },
+  "suggest_safari": {
+   "ok": true,
+   "feeds": [
+    "https://www.dwarkesh.com/feed"
+   ]
+  },
+  "suggest_share": {
+   "ok": true,
+   "feeds": [
+    "https://www.dwarkesh.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.dwarkesh.com/feed",
+   "title": "Dwarkesh Podcast",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 15,
+   "reason": "input https://www.dwarkesh.com/p/noam-brown; feed https://www.dwarkesh.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-podcast-lenny-utm",
+  "category": "audio post+tracking",
+  "url": "https://www.lennysnewsletter.com/p/jev-for-beginners-how-to-use-it-and?utm_source=post-email-title&publication_id=10845&post_id=1&utm_campaign=email-post-title&isFreemail=true&r=abc&triedRedirect=true&utm_medium=email",
+  "expect_feed": "https://www.lennysnewsletter.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.lennysnewsletter.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://www.lennysnewsletter.com/p/jev-for-beginners-how-to-use-it-and?utm_source=post-email-title&publication_id=10845&post_id=1&utm_campaign=email-post-title&isFreemail=true&r=abc&triedRedirect=true&utm_medium=email",
+   "share": "https://www.lennysnewsletter.com/p/jev-for-beginners-how-to-use-it-and"
+  },
+  "suggest_safari": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:77-80 item URL not in feed (membership); feed found at https://www.lennysnewsletter.com/feed?sectionId=198869"
+  },
+  "suggest_share": {
+   "ok": true,
+   "feeds": [
+    "https://www.lennysnewsletter.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.lennysnewsletter.com/feed",
+   "title": "Lenny's Newsletter",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 11,
+   "reason": "input https://www.lennysnewsletter.com/p/jev-for-beginners-how-to-use-it-and; feed https://www.lennysnewsletter.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "post-paid-podcast",
+  "category": "paid audio post",
+  "url": "https://www.slowboring.com/p/jane-jacobss-urbanism-without-economics",
+  "expect_feed": "https://www.slowboring.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.slowboring.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://www.slowboring.com/p/jane-jacobss-urbanism-without-economics",
+   "share": "https://www.slowboring.com/p/jane-jacobss-urbanism-without-economics"
+  },
+  "suggest_safari": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:77-80 item URL not in feed (membership); feed found at https://www.slowboring.com/feed"
+  },
+  "suggest_share": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:77-80 item URL not in feed (membership); feed found at https://www.slowboring.com/feed"
+  },
+  "resolver": {
+   "feed": "https://www.slowboring.com/feed",
+   "title": "Slow Boring ",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.slowboring.com/p/jane-jacobss-urbanism-without-economics; feed https://www.slowboring.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "share-open-substack-pub",
+  "category": "Substack app share link",
+  "url": "https://open.substack.com/pub/astralcodexten/p/your-book-review-lee-kuan-yews-memoirs?r=4abcd&utm_campaign=post&utm_medium=web&showWelcomeOnShare=true",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:93 no alternate link or /feed heuristic on this host parsed"
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://open.substack.com/pub/astralcodexten/p/your-book-review-lee-kuan-yews-memoirs; open.substack.com share link names publication 'astralcodexten'; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "share-home-post-id",
+  "category": "Substack app share link",
+  "url": "https://substack.com/home/post/p-210681369",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:93 no alternate link or /feed heuristic on this host parsed"
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://substack.com/home/post/p-210681369; redirected to https://www.astralcodexten.com/p/your-book-review-lee-kuan-yews-memoirs; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "share-handle-post-id",
+  "category": "Substack app share link",
+  "url": "https://substack.com/@astralcodexten/p-210681369",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:93 no alternate link or /feed heuristic on this host parsed"
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://substack.com/@astralcodexten/p-210681369; redirected to https://www.astralcodexten.com/p/your-book-review-lee-kuan-yews-memoirs; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "share-inbox-post",
+  "category": "Substack app share link",
+  "url": "https://substack.com/inbox/post/210681369",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:93 no alternate link or /feed heuristic on this host parsed"
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://substack.com/inbox/post/210681369; redirected to https://www.astralcodexten.com/p/your-book-review-lee-kuan-yews-memoirs; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "share-app-link-email",
+  "category": "email 'open in app' link",
+  "url": "https://substack.com/app-link/post?publication_id=89120&post_id=210681369",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:93 no alternate link or /feed heuristic on this host parsed"
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://substack.com/app-link/post; redirected to https://www.astralcodexten.com/p/your-book-review-lee-kuan-yews-memoirs; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "home-custom",
+  "category": "home page",
+  "url": "https://www.astralcodexten.com/",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.astralcodexten.com/; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "home-custom-apex",
+  "category": "home page",
+  "url": "https://astralcodexten.com",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:93 no alternate link or /feed heuristic on this host parsed"
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://astralcodexten.com; redirected to https://www.astralcodexten.com/; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "home-subdomain",
+  "category": "home page",
+  "url": "https://garymarcus.substack.com/",
+  "expect_feed": "https://garymarcus.substack.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://garymarcus.substack.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://garymarcus.substack.com/feed",
+   "title": "Marcus on AI",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://garymarcus.substack.com/; Substack subdomain 'garymarcus'; feed https://garymarcus.substack.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "home-subdomain-to-custom",
+  "category": "home page",
+  "url": "https://noahpinion.substack.com",
+  "expect_feed": "https://www.noahpinion.blog/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.noahpinion.blog/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.noahpinion.blog/feed",
+   "title": "Noahpinion",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://noahpinion.substack.com; Substack subdomain 'noahpinion'; feed https://www.noahpinion.blog/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "home-thefp-over-1mb",
+  "category": "home page (over 1 MB)",
+  "url": "https://www.thefp.com/",
+  "expect_feed": "https://www.thefp.com/feed",
+  "following_tab": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:261 HTML over 1 MB; aborts before /feed heuristics"
+  },
+  "resolver": {
+   "feed": "https://www.thefp.com/feed",
+   "title": "The Free Press",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 1,
+   "reason": "input https://www.thefp.com/; feed https://www.thefp.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "home-oneusefulthing",
+  "category": "home page",
+  "url": "https://www.oneusefulthing.org/",
+  "expect_feed": "https://www.oneusefulthing.org/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.oneusefulthing.org/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.oneusefulthing.org/feed",
+   "title": "One Useful Thing",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.oneusefulthing.org/; feed https://www.oneusefulthing.org/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "home-honest-broker",
+  "category": "home page",
+  "url": "https://www.honest-broker.com",
+  "expect_feed": "https://www.honest-broker.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.honest-broker.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.honest-broker.com/feed",
+   "title": "The Honest Broker",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.honest-broker.com; feed https://www.honest-broker.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "archive-page",
+  "category": "archive/about",
+  "url": "https://www.astralcodexten.com/archive?sort=new",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.astralcodexten.com/archive?sort=new; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "about-page",
+  "category": "archive/about",
+  "url": "https://www.slowboring.com/about",
+  "expect_feed": "https://www.slowboring.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.slowboring.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.slowboring.com/feed",
+   "title": "Slow Boring ",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.slowboring.com/about; feed https://www.slowboring.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "feed-custom",
+  "category": "/feed link",
+  "url": "https://www.astralcodexten.com/feed",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.astralcodexten.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.astralcodexten.com/feed; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "feed-subdomain-large",
+  "category": "/feed link",
+  "url": "https://thezvi.substack.com/feed",
+  "expect_feed": "https://thezvi.substack.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://thezvi.substack.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://thezvi.substack.com/feed",
+   "title": "Don't Worry About the Vase",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://thezvi.substack.com/feed; Substack subdomain 'thezvi'; feed https://thezvi.substack.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "feed-http",
+  "category": "/feed link (http)",
+  "url": "http://www.astralcodexten.com/feed",
+  "expect_feed": "https://www.astralcodexten.com/feed",
+  "following_tab": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:56 scheme must be https"
+  },
+  "resolver": {
+   "feed": "https://www.astralcodexten.com/feed",
+   "title": "Astral Codex Ten",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input http://www.astralcodexten.com/feed; feed https://www.astralcodexten.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "feed-subdomain-to-custom",
+  "category": "/feed link",
+  "url": "https://noahpinion.substack.com/feed",
+  "expect_feed": "https://www.noahpinion.blog/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.noahpinion.blog/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.noahpinion.blog/feed",
+   "title": "Noahpinion",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://noahpinion.substack.com/feed; Substack subdomain 'noahpinion'; feed https://www.noahpinion.blog/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "feed-public-podcast",
+  "category": "/feed link (podcast)",
+  "url": "https://api.substack.com/feed/podcast/69345.rss",
+  "expect_feed": "https://api.substack.com/feed/podcast/69345.rss",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://api.substack.com/feed/podcast/69345.rss"
+   ]
+  },
+  "resolver": {
+   "feed": "https://api.substack.com/feed/podcast/69345.rss",
+   "title": "Dwarkesh Podcast",
+   "confidence": 1.0,
+   "kind": "substack_podcast_feed",
+   "audio_items": 141,
+   "reason": "podcast feed link https://api.substack.com/feed/podcast/69345.rss; parsed (141 items, 141 with audio)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "profile-handle",
+  "category": "profile",
+  "url": "https://substack.com/@noahpinion",
+  "expect_feed": "https://www.noahpinion.blog/feed",
+  "following_tab": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:93 no alternate link or /feed heuristic on this host parsed"
+  },
+  "resolver": {
+   "feed": "https://www.noahpinion.blog/feed",
+   "title": "Noahpinion",
+   "confidence": 0.8,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://substack.com/@noahpinion; profile @noahpinion: primary publication 'noahpinion'; feed https://www.noahpinion.blog/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "profile-subdomain-redirect",
+  "category": "profile",
+  "url": "https://lennysnewsletter.substack.com/",
+  "expect_feed": "https://na12.substack.com/feed",
+  "following_tab": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:93 no alternate link or /feed heuristic on this host parsed"
+  },
+  "resolver": {
+   "feed": "https://na12.substack.com/feed",
+   "title": "na’s Substack",
+   "confidence": 0.8,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://lennysnewsletter.substack.com/; Substack subdomain 'lennysnewsletter'; redirected to profile @lennysnewsletter; profile @lennysnewsletter: primary publication 'na12'; feed https://na12.substack.com/feed parsed (1 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "subdomain-to-custom-lenny",
+  "category": "home page",
+  "url": "https://lenny.substack.com/",
+  "expect_feed": "https://www.lennysnewsletter.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.lennysnewsletter.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.lennysnewsletter.com/feed",
+   "title": "Lenny's Newsletter",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 11,
+   "reason": "input https://lenny.substack.com/; Substack subdomain 'lenny'; feed https://www.lennysnewsletter.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
+  "id": "control-ghost-site",
+  "category": "not Substack (control)",
+  "url": "https://www.platformer.news/",
+  "expect_feed": null,
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.platformer.news/rss/"
+   ]
+  },
+  "resolver": null,
+  "resolver_ok": true
+ },
+ {
+  "id": "control-substack-notes",
+  "category": "not a publication (control)",
+  "url": "https://substack.com/notes",
+  "expect_feed": null,
+  "following_tab": {
+   "ok": false,
+   "check": "FollowedSourceCoordinator.swift:93 no alternate link or /feed heuristic on this host parsed"
+  },
+  "resolver": null,
+  "resolver_ok": true
+ }
+]
