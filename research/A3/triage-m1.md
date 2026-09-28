@@ -1,6 +1,6 @@
 # A3 M1: triage proposal for the open issues
 
-Prepared 2026-09-28 from `next` at `55abf7a`. It covers all 106 open issues, excluding the stream tracking issues #184–#205. **Nothing has been changed on GitHub.** M2 applies only the rows the owner approves.
+Prepared 2026-09-28 from `next` at `55abf7a`. It covers all 108 open issues, excluding the stream tracking issues #184–#205. The brief said 106; #206 and #207 were opened by G2 on 2026-09-28. **Nothing has been changed on GitHub.** M2 applies only the rows the owner approves.
 
 ## How to read this
 
@@ -26,20 +26,22 @@ Prepared 2026-09-28 from `next` at `55abf7a`. It covers all 106 open issues, exc
 
 | State | Issues |
 | --- | ---: |
-| stream | 49 |
-| owner-check (21 labeled + 5 unlabeled) | 26 |
+| stream | 52 |
+| owner-check (21 labeled + 6 unlabeled) | 27 |
 | park | 18 |
 | close-dup | 7 |
-| close-done | 5 |
+| close-done | 3 |
 | close-obsolete | 1 |
-| **Total** | **106** |
+| **Total** | **108** |
 
-Per stream: A2 1 · B1 5 · C1 3 · C2 3 · C4 6 · D1 1 · D3 4 · D4 7 · D5 9 · E3 4 · F1 2 · G1 1 · G2 3.
+Per stream: A2 1 · B1 5 · C1 3 · C2 4 · C4 6 · D1 1 · D3 4 · D4 8 · D5 9 · E3 4 · F1 2 · G1 1 · G2 4.
 
 ## Triage table
 
 | # | Title | Proposed | Reason |
 | --- | --- | --- | --- |
+| 207 | VoiceOver pass before inviting blind listeners | stream:G2 | Gates G2's outreach to low-vision listeners; the journeys run through the A1 lane, and you judge VoiceOver by ear. |
+| 206 | Export Margins with a citation Zotero can match | stream:D4 | Export frontmatter is D4's; C1 supplies DOI/author metadata. Priority waits on G2's student interviews. |
 | 183 | Low Power/charging switches narration to system voice | stream:C2 | C2 M1; `allowsRendering` refuses Supertonic in Low Power Mode with no explanation in the UI. |
 | 182 | Skim to next Margin or chapter, skippable lead-in | stream:D5 | D5 M2 (needs A2 M2 coordinator); keeper for #137. |
 | 181 | Level spoken Margins to source loudness | stream:D5 | Listed in D5; loudness measure is host-testable in SessionKitAudio. |
@@ -123,7 +125,7 @@ Per stream: A2 1 · B1 5 · C1 3 · C2 3 · C4 6 · D1 1 · D3 4 · D4 7 · D5 9
 | 75 | Untethered Apple Watch playback and sync | park | No Watch target in Build 29; no stream owns Watch. |
 | 74 | Background preparation only while charging | close-dup-of-#64 | Shipped in Build 25 (`318a22f`, `31eab6a`); only device measurements remain, folded into #64. |
 | 73 | Power-aware TTS preparation window | close-dup-of-#64 | Accepted in Builds 26/27 (`9caf7d0`); only measurements remain, folded into #64. |
-| 72 | One offline-storage budget for all media | close-done | Shipped in Build 25 (`31eab6a`), accepted in Build 27; `OfflineStorageLedger` in Build 29. The Watch part stays in #75. |
+| 72 | One offline-storage budget for all media | stream:C2 | Ledger shipped in Build 25 (`31eab6a`) and was accepted in Build 27, but your note keeps it open for the budget-reduction, overage and eviction matrix. That sits with #64's evidence; the Watch part stays in #75. |
 | 70 | Classroom assignments and participation receipts | park | Epic with no stream; see synergy list. |
 | 69 | Onboarding: starter podcasts, guided tour | stream:B1 | B1's outcome; the tour shipped, the starter board didn't. |
 | 68 | Tell apart my, shared and source Timeline entries | owner-check | `0b077f1` (Build 27) plus later repairs; recheck on Build 29. |
@@ -143,7 +145,7 @@ Per stream: A2 1 · B1 5 · C1 3 · C2 3 · C4 6 · D1 1 · D3 4 · D4 7 · D5 9
 | 22 | Spike: biometric signing for sharing | park | F1 lists #22 as out of scope for now. |
 | 21 | Anchor Margins to external audio via mic | park | Post-MVP spike; see synergy list. |
 | 19 | Layered asynchronous co-op conversations | stream:F1 | F1's core outcome; reply lineage exists only on parked branches. |
-| 18 | Import and listen to another person's layer | close-done | Recipient flow accepted in Build 25 and again in Build 27 (`0b077f1`); `SharedMarginRow` in Build 29. Leftovers are tracked in #68 and #93. |
+| 18 | Import and listen to another person's layer | owner-check* | Recipient flow accepted in Builds 25 and 27 (`0b077f1`); `SharedMarginRow` in Build 29. Your note keeps it open until #68 and #93 are rechecked, so close it with them. |
 | 16 | Export Margins as Markdown for PKM | stream:D4 | Listed in D4; export shipped, "Configure Margin Output" profiles remain. |
 | 14 | Excerpt rights, attribution, sharing policy | stream:E3 | Direct sharing accepted 09-12; what's left is the community-server rights gate for E3 M3. |
 
@@ -173,10 +175,10 @@ These stay in the state given above. M2 would add one comment to each, pointing 
 
 - **Needs your say before closing:**
   - The 21 labeled `owner-check` rows can't close without you.
-  - Seven fixes shipped in Build 29 were never labeled (#111, #116, #123, #134, #135, plus #124 and #138, which are partial and go to C1). If you approve, M2 adds `status: needs-human-validation` to the five full fixes.
+  - Six rows are marked `owner-check*`: shipped but unlabeled (#18, #111, #116, #123, #134, #135). If you approve, M2 adds `status: needs-human-validation` to them. #124 and #138 are partial Build 29 fixes that go to C1 instead.
 - **Close on Build 30:** #156, #158, #159 and #168 are fixed on `next` and stay with their stream until Build 30 ships and you check them.
 - **Long bodies that stay open (>~4,000 characters)** get a short current-state comment in M2, without editing your text:
-  - #14, #16, #19, #21, #27, #49, #64, #69, #70, #75, #76, #77, #78, #83, #88, #89, #93, #96, #107, #108, #109, #111, #114, #117, #183.
+  - #14, #16, #18, #19, #21, #27, #49, #64, #69, #70, #72, #75, #76, #77, #78, #83, #88, #89, #93, #96, #107, #108, #109, #111, #114, #117, #183.
   - Also #22 and #116, which are borderline.
 - **Missing briefs:**
   - No brief names #178; C4 or D4 should list it.
