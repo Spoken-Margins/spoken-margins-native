@@ -1,0 +1,77 @@
+# E1 held-out set, written by an independent author who did not see the baseline rules. Same format as margins_public.psv.
+# id | ctx | capture (s spoken, w written) | kind | referent (sN, item, none) | text | entities (text:type;...) | topics (;-separated) | follows_up (id)
+h001|ai#1|s|claim|s4|so there's a council of AI officers from every agency that meets monthly, honestly that's probably the most useful part of the whole thing, more than the use case filings||ai governance;interagency coordination|
+h002|ai#1|s|question|s7|um wait who's actually in these working groups she keeps mentioning like is it just engineers or||working groups|
+h003|ai#2|s|quote|s6|explore using AI but don't let it make your decisions for you, yeah keep that one||ai decision making|
+h004|ai#2|s|connection|s7|ha my old manager literally set up an auto responder bot for his inbox and it was a disaster, this is exactly that||email automation|
+h005|ai#3|w|reaction|s7|good non answer lol|||
+h006|a2#1|s|claim|s6|so the south pole landing sites have debris from Tycho on them, which means sampling there could basically be sampling Tycho by accident|Tycho:place|impact cratering;landing sites|
+h007|a2#1|s|question|s6|how far is it actually from Tycho down to the pole, she said thousands of kilometers but like that seems like a lot|Tycho:place|impact ejecta|h006
+h008|a2#2|s|connection|s6|this is exactly how my geology field camp worked, you never went out alone you always had a buddy||field geology|
+h009|a2#3|s|reaction|s7|aw that's genuinely sweet, the whole trust thing with the flight director||trust|
+h010|a3#1|s|claim|s7|I mean it's not just extra time, with a six month old at home that's the whole family signing up for it||work life balance|
+h011|a3#1|w|todo|s9|check Artemis III launch date, 2027?|Artemis III:other|launch schedule|
+h012|a3#2|s|quote|s7|fire hose of information, square wave, love that, save it||crew training|
+h013|a3#2|s|reaction|s7|ugh fire hose is right, that sounds exhausting|||
+h014|a3#3|s|todo|s5|note to self send this bit to Dana, she's always asking what astronaut training is actually like|Dana:person|astronaut training|
+h015|wf#1|s|quote|s1|failure's not an option, there it is, he's already teasing it||mission control culture|
+h016|wf#1|s|claim|s9|trust as the foundation, sure, but that's kind of easy to say, the hard part is what you do when somebody screws up||trust;leadership|
+h017|wf#2|w|question|s5|Zaragoza = abort landing site?|Zaragoza:place|abort landing sites|
+h018|wf#3|s|reaction|s8|that's so wild, the worst thing he could picture was the ascent engine just not working||ascent engine|
+h019|wf#3|s|todo|s6|gotta read up on inflatable habitats after this, he sounded so into it||inflatable habitats|
+h020|ch#1|s|connection|s3|the Rumspringa comparison is kind of perfect, reminds me of that silent retreat where I gave up my phone for ten days|Rumspringa:other|isolation|
+h021|ch#1|w|todo|none|try a phone-free weekend||digital detox|h020
+h022|ch#2|s|quote|s6|lol the line about how if CHAPEA taught him anything it's that the Thor movies are actually realistic|CHAPEA:other;Thor:work||
+h023|ch#2|s|todo|s9|gotta find that movie Ash they're watching, sounds like a stranded astronaut thing|Ash:work|space movies|
+h024|ch#3|s|question|s4|so the VR ones reset every time so they can compare, but I kind of want to know if they get better just from doing the same sim over and over||virtual reality;crew performance|
+h025|ct#1|s|claim|s6|cloud cover and light pollution sure but altitude and dry air matter even more for those telescopes I'm pretty sure||observatory siting;light pollution|
+h026|ct#1|s|question|s10|and wait why the poles then, is it the long nights or the cold dry air thing I was just saying||polar telescopes|h025
+h027|ct#2|s|connection|s7|this is me with linear algebra sophomore year, total fog and then one day it just clicked||learning|
+h028|ct#3|w|reaction|s4|7+ hrs EVA and still not hungry. wow|||
+h029|ct#3|s|question|s0|six hours to flush the nitrogen before you go out the door, is that the prebreathe thing||prebreathe|
+h030|ms#1|s|claim|s7|lunar dust coatings is probably the most practical thing in this whole episode, dust gets into everything||lunar dust|
+h031|ms#1|s|question|s2|she studied stuff that came back from Mir after ten years, what did that even look like|Mir:other|material degradation|
+h032|ms#2|s|reaction|s9|silicone that glows under UV after space but the ground sample doesn't, that's so weird||uv fluorescence|
+h033|ms#2|s|connection|s3|high school girls from Hathaway Brown on MISSE for 24 years, reminds me of my niece's robotics club|Hathaway Brown:org;MISSE:other|stem education|
+h034|ms#3|w|question|s5|octopus ink melanin?? how does that shield radiation||melanin;radiation shielding|
+h035|sc#1|s|claim|s4|the registry thing is really a representation problem, you can't fix it with better matching you need more people signing up||donor registry|
+h036|sc#1|s|todo|s4|ok I need to actually sign up for the bone marrow registry already, been meaning to for years||donor registry|h035
+h037|sc#2|s|reaction|s9|oof years for results, that's rough|||
+h038|sc#3|s|question|s4|does radiation on the station actually damage the cells or not, she never really answered that||radiation damage;stem cells|
+h039|sc#3|w|todo|item|find her paper, answer the radiation q myself||stem cells|h038
+h040|wy#1|s|claim|s4|smart that they waited till the balance stuff wore off, otherwise you're measuring the inner ear not the brain||vestibular system|
+h041|wy#2|s|connection|s5|moving to Calgary and building a mental map, that was me in Lisbon last year, got lost for like a week straight|Calgary:place;Lisbon:place|mental maps|
+h042|wy#2|s|claim|s8|so they basically stop trusting landmarks and go by body turns, makes sense if up and down keep changing on you||spatial navigation|
+h043|wy#3|s|question|s2|six month follow up, I kind of want to know whether the brain changes fully go back or not||brain changes|
+h044|sr#1|w|todo|s2|listen to ep 402 w/ his wife Anna|ep 402:work;Anna:person||
+h045|sr#1|s|reaction|s9|ha the 1111 number calling, that's adorable|||
+h046|sr#2|s|quote|s10|it's so small it's like a phone booth with three people in it, love that||water survival training|
+h047|sr#3|s|claim|s3|data centers in space is mostly hype I think, the power and cooling math just doesn't work yet||space data centers|
+h048|sr#3|w|todo|s7|Chris Williams plant experiment - look into|Chris Williams:person|plant growth|
+h049|ds#1|w|question|s5|one network for landers, rovers, suits? how||communications network|
+h050|ds#2|s|claim|s4|the size weight and power savings is the real selling point for laser comms, more than the bandwidth honestly||laser communications|
+h051|ds#2|s|connection|s2|same thing as when we switched from copper to fiber at the house, way more data through a tiny line||optical communications|
+h052|ds#3|s|reaction|s9|oof he spends six years building them and then they just cancel the next generation|||
+h053|ds#3|s|question|s10|so what replaces TDRS then, commercial relays or what|TDRS:other|relay satellites|h052
+h054|mb#1|s|claim|s6|hopping drones make sense, rovers are gonna get stuck on crater rims anyway||lunar drones|
+h055|mb#1|s|connection|s6|sounds like Ingenuity on Mars but for the Moon|Ingenuity:other;Mars:place;Moon:place|lunar drones|
+h056|mb#2|s|quote|s8|we'd love to find like a block of ice in one of these permanently shadowed regions, that's what they said, but it's mostly mixed into the regolith||lunar water ice|
+h057|mb#3|s|claim|s3|small countries getting payloads on the Moon is the underrated part, that's how you actually get broad buy in|Moon:place|international partnerships|
+h058|mb#3|w|todo|s3|read up on Artemis Accords signatories|Artemis Accords:other|international partnerships|h057
+h059|du#1|s|claim|s6|290 versus 150 isn't really a contradiction, they're probably just counting different kinds of ties||social networks|
+h060|du#1|s|connection|s2|Flight Centre splitting into families villages tribes, our company did almost the exact same thing with pods|Flight Centre:org|organizational structure|
+h061|du#2|s|quote|s7|two thirds of our time to just 15 people, writing that down||social time|
+h062|du#2|w|todo|s8|queue Hello Internet ep 103|Hello Internet:work||
+h063|gs#1|s|question|s8|why did Hall care that the outfalls were inside the capital, isn't the river gonna carry it all anyway|Hall:person|sewage outfalls|
+h064|gs#2|s|reaction|s5|the cement testing part is so satisfying honestly||quality control|
+h065|gs#2|s|claim|s4|he basically invented modern QA for concrete, that's probably why those sewers still work today||quality control;cement|h064
+h066|gs#3|w|claim|s7|1866 cholera = water company's fault, sewage carried upriver by the tide||cholera;drinking water|
+h067|gs#3|s|connection|s8|this is the John Snow pump story all over again, water borne not miasma|John Snow:person|miasma theory|
+h068|pc#1|s|question|s5|why did Stevens resign though they just skip right over that|Stevens:person|chief engineer|
+h069|pc#1|s|claim|s8|two years ahead of schedule is kind of unheard of for something that size, Goethals must have been ruthless|Goethals:person|project management|
+h070|pc#2|s|reaction|s1|36 cents to swim the whole canal, love it||canal tolls|
+h071|pc#3|w|claim|s9|Nicaragua canal: never happening|Nicaragua:place|canal projects|
+h072|tm#1|s|quote|s8|windhandel, air trade, because no bulbs actually changed hands, that is such a good word||forward contracts|
+h073|tm#1|s|connection|s7|no initial margin no mark to market, that's basically crypto perps in 2021 minus the exchange||margin trading|
+h074|tm#2|s|question|s10|wait so Mackay's version went unchallenged till the 1980s, was he just wrong the whole time|Mackay:person|historical accounts|
+h075|tm#3|w|claim|s8|pamphlets were religious, not from victims -> damage probably overstated||moral panic|

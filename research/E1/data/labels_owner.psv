@@ -1,0 +1,3 @@
+# E1 owner set labels. Keyed by Margin ID; offsets point into the Margin text in the owner's local export.
+# No Margin or source text is committed. Empty until the owner attaches an export.
+# id | capture (s, w) | kind | referent (sN into the rebuilt window, item, none) | entities (start:end:type;...) | topics (start:end;...) | follows_up (id)

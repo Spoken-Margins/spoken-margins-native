@@ -41,7 +41,7 @@ m033|a3#3|w|todo|item|Add this whole episode to the Artemis playlist for Dad.|Ar
 m034|wf#1|s|quote|s1|Failure is not an option. Here it comes.||failure|
 m035|wf#1|s|claim|s9|Trust as the foundation is a better leadership answer than the usual vision stuff.||trust;leadership|
 m036|wf#1|w|todo|s0|Write down Kranz's list: toughness, competence, preparation. Put it on the team wiki.|Kranz:person|toughness;competence|
-m037|wf#1|s|question|s7|Who's the host in this one? I missed the name.||host|
+m037|wf#1|s|question|item|Who's the host in this one? I missed the name.||host|
 m038|wf#2|s|question|s5|Why Zaragoza specifically? Is that an abort landing site for shuttle launches?|Zaragoza:place|abort landing site|
 m039|wf#2|s|claim|s2|He's saying Columbia's reentry path was planned to avoid people, which I didn't know.|Columbia:other|reentry trajectory|
 m040|wf#2|s|connection|s7|Preventable versus unpreventable failures, that's the same split we use in incident reviews at work.||incident reviews;failures|
