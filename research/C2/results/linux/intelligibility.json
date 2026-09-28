@@ -1,0 +1,128 @@
+{
+  "kitten-nano-0.8-Jasper": {
+    "p1-narrative": {
+      "wer": 0.048,
+      "heard": "The ferry left Anacorts a little after 7 and by the time it cleared the harbor the fog had already begun to lift.  Maria stood at the rail with her coffee going cold, watching the islands come up out of the gray one at a time.  She had made this crossing a hundred times, but never once, she realized, had she actually looked."
+    },
+    "p2-scientific": {
+      "wer": 0.24,
+      "heard": "In a randomized, double-blind trial of 1 to 84 adults, mean age 61, 3 years, daily supplementation  with 2,000 IU of vitamin D3 did not reduce the incidence of type 2 diabetes compared  with placebo hazard ratio, xeno-88, 95% psi, 075 to 1, xeno-4, P equals xeno-12.  Starting 25-hydroxyvitamin D rose from 28 to 54 NG slash ML.  These findings are consistent with earlier meta-analyzes, 12-14, but contrast with observational  data reported by Pittas et al."
+    },
+    "p3-conversational": {
+      "wer": 0.033,
+      "heard": "\"'Honestly,' she said, \"'I don't think the problem is the software.  It's that nobody reads the manual,' he laughed, but she was, joking.  Here's the thing.  When a tool is hard to use, we blame ourselves first, then the tool, and only much later  the people who decided it should work that way.  Why is that?'\""
+    }
+  },
+  "kitten-nano-fp32-0.8-Jasper": {
+    "p1-narrative": {
+      "wer": 0.032,
+      "heard": "The ferry left Anacorts a little after seven, and by the time it cleared the harbor the  fog had already begun to lift.  Maria stood at the rail with her coffee going cold, watching the islands come up out of  the gray one at a time.  She had made this crossing a hundred times, but never once, she realized, had she actually  looked."
+    },
+    "p2-scientific": {
+      "wer": 0.267,
+      "heard": "In a randomized double-blind trial of 1 to 84 adults, mean age 61, three years, daily  supplementation with 2,000 IU of vitamin D3 did not reduce the incidence of type 2 diabetes  compared with placebo hazard ratio, zinc-88, 95% psi, 075 to 1, xeno-4, P equals xeno-12.  Form 25 hydroxy vitamin D rose from 28 to 54 NG slash ML.  These findings are consistent with earlier meta-analyzes, 12-14, but contrast with observational data  reported by Pittas et al."
+    },
+    "p3-conversational": {
+      "wer": 0.033,
+      "heard": "Honestly, she said,  I don't think the problem is the software.  It's that nobody reads the manual.  He laughed, but she was, joking.  Here's the thing.  When a tool is hard to use, we blame ourselves first, then the tool, and only much later  the people who decided it should work that way.  Why is that?"
+    }
+  },
+  "kokoro-fp32-af_heart": {
+    "p1-narrative": {
+      "wer": 0.048,
+      "heard": "The ferry left, Anacorts a little after 7, and by the time it cleared the harbor the  fog had already begun to lift.  Maria stood at the rail with her coffee going cold, watching the islands come up out of  the gray one at a time.  She had made this crossing a hundred times, but never once, she realized, had she actually  looked."
+    },
+    "p2-scientific": {
+      "wer": 0.053,
+      "heard": "In a randomized, double-blind trial of 1,284 adults, mean age 61.3 years, daily supplementation  with 2,000 IU of vitamin D3 did not reduce the incidence of type 2 diabetes compared  with placebo, hazard ratio, 0.88, 95% CI, 0.75 to 1.04, P equals 0.12.  M25-hydroxyvitamin D rose from 28 to 54 NG slash ML.  These findings are consistent with earlier meta-analyses 12, 14, but contrast with observational  data reported by Pittas et al."
+    },
+    "p3-conversational": {
+      "wer": 0.0,
+      "heard": "Honestly, she said, I don't think the problem is the software.  It's that nobody reads the manual.  He laughed, but she wasn't joking.  Here's the thing, when a tool is hard to use, we blame ourselves first,  then the tool, and only much later the people who decided it should work that way.  Why is that?"
+    }
+  },
+  "kokoro-int8-af_heart": {
+    "p1-narrative": {
+      "wer": 0.048,
+      "heard": "The ferry left, Anacorts a little after 7, and by the time it cleared the harbor the  fog had already begun to lift.  Maria stood at the rail with her coffee going cold, watching the islands come up out of  the gray one at a time.  She had made this crossing a hundred times, but never once, she realized, had she actually  looked."
+    },
+    "p2-scientific": {
+      "wer": 0.04,
+      "heard": "In a randomized, double-blind trial of 1,284 adults, mean age 61.3 years, daily supplementation  with 2,000 IU of vitamin D3 did not reduce the incidence of type 2 diabetes compared  with placebo, hazard ratio, 0.88, 95% CI, 0.75 to 1.04, P equals 0.12.  Form 25-hydroxyvitamin D rose from 28 to 54 NG slash ML.  These findings are consistent with earlier meta-analyses 12, 14, but contrast with observational  data reported by Pittas et al."
+    },
+    "p3-conversational": {
+      "wer": 0.0,
+      "heard": "Honestly, she said, I don't think the problem is the software.  It's that nobody reads the manual.  He laughed, but she wasn't joking.  Here's the thing, when a tool is hard to use, we blame ourselves first, then the tool,  and only much later the people who decided it should work that way.  Why is that?"
+    }
+  },
+  "piper-en_US-lessac-medium": {
+    "p1-narrative": {
+      "wer": 0.032,
+      "heard": "The ferry left Anacortes a little after seven, and by the time it cleared the harbour the fog had already begun to lift.  Maria stood at the rail with her coffee going cold, watching the islands come up out of the grey one at a time.  She had made this crossing a hundred times, but never once, she realised, had she actually looked."
+    },
+    "p2-scientific": {
+      "wer": 0.147,
+      "heard": "In a randomized, double-blind trial of 1,284 adults mean age 61.3 years, daily supplementation  with 2,000 IU of vitamin D3 did not reduce the incidence of type 2 diabetes compared  with placebo hazard ratio, 0.88, 95% psi, 0.75 to 1.04, p equals 0.12.  Cerium-25 hydroxovitamin D rose from 28 to 54 in G slash ML, these findings are consistent  with earlier meta-analyzes 12, 14 but contrast with observational data reported by Pittazetal."
+    },
+    "p3-conversational": {
+      "wer": 0.0,
+      "heard": "Honestly, she said, I don't think the problem is the software.  It's that nobody reads the manual, he laughed, but she wasn't joking.  Here's the thing, when a tool is hard to use, we blame ourselves first,  then the tool, and only much later the people who decided it should work that way.  Why is that?"
+    }
+  },
+  "piper-en_US-ljspeech-high": {
+    "p1-narrative": {
+      "wer": 0.016,
+      "heard": "The ferry left Anacortes a little after seven, and by the time it cleared the harbor the  fog had already begun to lift.  Maria stood at the rail with her coffee going cold, watching the islands come up out of  the gray one at a time.  She had made this crossing a hundred times, but never once, she realized, had she actually  looked."
+    },
+    "p2-scientific": {
+      "wer": 0.187,
+      "heard": "in a randomized, double-blind trial of 1,284 adults  being aged 61.3 years.  Daily supplementation with 2,000 IU of vitamin D,  3 did not reduce the incidence of type 2 diabetes compared  with placebo hazard ratio, 0.88, 95% side, 0.75 to 1.04.  P equals 0.12.  Serum 25-hydroxivate MND rose from 28 to 50, 4NG slash ML.  These findings are consistent with earlier metaranolysis 12,  14, but contrast with observational data  reported by Pitters et al."
+    },
+    "p3-conversational": {
+      "wer": 0.033,
+      "heard": "Icely she said I don't think the problem is the software. It's that nobody reads the manual he laughed  But she wasn't joking here's the thing when a tool is hard to use we'd blame ourselves first  Then the tool and only much later the people who decided it should work that way. Why is that?"
+    }
+  },
+  "pocket-alba": {
+    "p1-narrative": {
+      "wer": 0.032,
+      "heard": "The ferry left Anacortes a little after 7, and by the time it cleared the harbor, the fog had already begun to lift.  Maria stood at the rail with her coffee going cold, watching the islands come up out of the gray one at a time.  She had made this crossing a hundred times, but never once, she realized, had she actually looked."
+    },
+    "p2-scientific": {
+      "wer": 0.24,
+      "heard": "In a randomized, double-blind trial of 1284 adults, mean age 613 years, daily supplementation  with 2, use ideal of vitamin D. 3 did not reduce the incidence of type 2 diabetes compared  with placebo, hazard ratio than 95% CI752a.  Serum 2,5-hydroxyvitamin D rose from 2,8 to 5,4, and these findings are consistent  with earlier meta-analyzes, 12,14.  But contrast with observational data reported by Pittas et al."
+    },
+    "p3-conversational": {
+      "wer": 0.0,
+      "heard": "Honestly, she said, I don't think the problem is the software.  It's that nobody reads the manual.  He laughed, but she wasn't joking.  Here's the thing.  When a tool is hard to use, we blame ourselves first, then the tool, and only much later  the people who decided it should work that way.  Why is that?"
+    }
+  },
+  "supertonic3-int8-M2-4step": {
+    "p1-narrative": {
+      "wer": 0.048,
+      "heard": "The ferry left Anacorte as a little after seven, and by the time it cleared the harbor  the fog had already begun to lift.  Maria stood at the rail with her coffee going cold, watching the islands come up out of  the gray one at a time.  She had made this crossing a hundred times, but never once, she realized, had she actually  looked."
+    },
+    "p2-scientific": {
+      "wer": 0.293,
+      "heard": "In a randomized, double-blind trial of 1,084 adults, mean age 61.3 years, daily supplementation  with 2,000 IU and MND3 did not reduce the incidence of type 2 diabetes, compared with  placebo's placebo, hazard rate AA, 95% CI, near 0.2144, PR.12.  1,25-hydroxyvitamin D rows from 28 to 54 angi-MLL.  These findings are consistent with earlier MET analyses 12,14, but contrast with observational  data reported by Pittus et al."
+    },
+    "p3-conversational": {
+      "wer": 0.0,
+      "heard": "Honestly, she said, I don't think the problem is the software.  It's that nobody reads the manual.  He laughed, but she wasn't joking.  Here's the thing.  When a tool is hard to use, we blame ourselves first, then the tool, and only much later  the people who decided it should work that way.  Why is that?"
+    }
+  },
+  "supertonic3-int8-M2-8step": {
+    "p1-narrative": {
+      "wer": 0.016,
+      "heard": "The ferry left Anacortes a little after seven, and by the time it cleared the harbor the fog had already begun to lift.  Maria stood at the rail with her coffee going cold, watching the islands come up out of the gray one at a time.  She had made this crossing a hundred times, but never once, she realized, had she actually looked."
+    },
+    "p2-scientific": {
+      "wer": 0.173,
+      "heard": "In a randomized, double-blind trial of 1,02,184 adults, mean age 61.3 years, daily supplementation  with 2,000 IU of vitamin D3 did not reduce the incidence of type 2 diabetes compared  with placebo, hazard ratio, EO, EU.85% CI and 0.175 to 1.14, PL.1.1 wild.  M25-hydroxyvitamin D rose from 28 to 54 angia ML. These findings are consistent with earlier  meta-analyzes 12-14, but contrast with observational data reported by Pittus et al."
+    },
+    "p3-conversational": {
+      "wer": 0.0,
+      "heard": "Honestly, she said, I don't think the problem is the software.  It's that nobody reads the manual.  He laughed, but she wasn't joking.  Here's the thing.  When a tool is hard to use, we blame ourselves first, then the tool, and only much later  the people who decided it should work that way.  Why is that?"
+    }
+  }
+}
