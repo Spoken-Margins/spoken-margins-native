@@ -19,7 +19,7 @@ It compares your branch (uncommitted files included) with `origin/next`, prints 
 
 ## 2. Run what you can yourself
 
-- **T1** (host tests): run the commands the scope tool printed, or `.venv/bin/python scripts/verify-tests.py --plan fast`.
+- **T1** (host tests): run the commands the scope tool printed, or `.venv/bin/python scripts/verify-tests.py --plan fast`. In a new worktree, run `scripts/setup-worktree.sh` once first; it links the main checkout's `.venv` and `node_modules`.
 - **T2** (compile for simulator and device): Mac sessions run it themselves with `scripts/xcodebuild-lane` (the two commands in `AGENTS.md`). The wrapper waits for a Mac-wide build slot, so a queue message isn't an error. Cloud sessions can't build; ask the lane.
 - **T3 and up** need a simulator. Only the Test Desk session may boot one. In any other session the lane guard hook blocks `simctl boot/install/launch`, `xcodebuild test`, `verify-tests.py --plan app|adapters|...`, and opening Simulator.app. Don't work around it; ask the lane.
 

@@ -4,10 +4,10 @@ DerivedData/
 .swiftpm/
 xcuserdata/
 *.xcuserstate
-node_modules/
+node_modules
 dist/
 coverage/
-.venv/
+.venv
 __pycache__/
 # Claude Code and Remote Control create stream worktrees here.
 .claude/worktrees/

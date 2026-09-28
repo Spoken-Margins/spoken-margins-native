@@ -253,6 +253,8 @@ class Run:
         self.command('contracts', [sys.executable, 'scripts/validate-contracts.py'])
         self.command('surfaces', [sys.executable, 'scripts/validate-surface-contracts.py'])
         self.command('inventory', [sys.executable, 'scripts/test_inventory.py'])
+        if not (ROOT / 'node_modules').exists():
+            raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         self.command('browser', ['npm', 'run', 'test:browser-extraction'])
         expected = set()
         for target in ('SessionKitTests', 'SessionKitTraceTests'):
