@@ -1,0 +1,14 @@
+{
+ "url": "https://noahpinion.substack.com/feed",
+ "kind": "feed",
+ "status": 301,
+ "headers": {
+  "content-type": "text/plain; charset=utf-8",
+  "location": "https://www.noahpinion.blog/feed",
+  "x-served-by": "Substack",
+  "content-length": "66"
+ },
+ "body": "Moved Permanently. Redirecting to https://www.noahpinion.blog/feed",
+ "original_bytes": 66,
+ "trimmed": false
+}

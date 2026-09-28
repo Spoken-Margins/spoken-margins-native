@@ -1,0 +1,13 @@
+{
+ "url": "https://www.platformer.news/atom.xml",
+ "kind": "feed",
+ "status": 404,
+ "headers": {
+  "content-type": "text/plain; charset=utf-8",
+  "x-served-by": "cache-ams-eham8680020-AMS, cache-ams-eham8680020-AMS, cache-ams-eham8680030-AMS, cache-iad-kiad7000185-IAD",
+  "content-length": "34"
+ },
+ "body": "File not found",
+ "original_bytes": 14,
+ "trimmed": false
+}

@@ -266,3 +266,30 @@ public enum SourceCatalogValidator {
         return components.scheme?.lowercased() == "https" && !(components.host ?? "").isEmpty
     }
 }
+
+/// B1 M1: whether the drawer shows a catalog entry as followed. A feed can settle on another URL
+/// once followed (a redirect, or its own self link), so URL matching alone lost some follows after
+/// a relaunch. An entry followed from the drawer is matched by the source id recorded when it was
+/// followed; a show followed another way still matches by feed URL.
+public enum CatalogFollowState {
+    public static func isFollowed(
+        _ entry: SourceCatalogEntry,
+        in catalog: SourceCatalog,
+        recordedSourceId: String?,
+        subscriptions: [FeedSubscription]
+    ) -> Bool {
+        if let recordedSourceId, subscriptions.contains(where: { $0.source.id == recordedSourceId }) {
+            return true
+        }
+        return subscriptions.contains { catalog.entry(matchingFeedURL: $0.source.canonicalURL)?.id == entry.id }
+    }
+}
+
+/// B1 M1: when the first-run podcast drawer opens by itself. Only a fresh install sees it
+/// unasked (the Library was empty before the welcome sample was added); upgraded Libraries
+/// reach it from Following. It opens by itself once.
+public enum FirstRunCatalogDrawerPolicy {
+    public static func opensAutomatically(libraryWasEmptyAtLaunch: Bool, hasSeenDrawer: Bool, followedSourceCount: Int) -> Bool {
+        libraryWasEmptyAtLaunch && !hasSeenDrawer && followedSourceCount == 0
+    }
+}
