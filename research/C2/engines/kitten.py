@@ -24,9 +24,9 @@ SYMBOLS = {s: i for i, s in enumerate([_pad] + list(_punct) + list(_letters) + l
 class Engine:
     sample_rate = 24000
 
-    def __init__(self, size="nano", voice="Jasper", threads=4):
-        self.size, self.voice, self.threads = size, voice, threads
-        self.name = f"kitten-{size}-0.8-{voice}"
+    def __init__(self, size="nano", voice="Jasper", threads=4, frontend="espeak"):
+        self.size, self.voice, self.threads, self.frontend = size, voice, threads, frontend
+        self.name = f"kitten-{size}-0.8-{voice}" + ("" if frontend == "espeak" else f"-{frontend}")
 
     def load(self):
         repo = {"nano": "kitten-tts-nano-0.8-int8", "nano-fp32": "kitten-tts-nano-0.8-fp32", "micro": "kitten-tts-micro-0.8", "mini": "kitten-tts-mini-0.8"}[self.size]
@@ -45,9 +45,14 @@ class Engine:
         # environment variable alone isn't enough there; pass the path explicitly.
         EspeakWrapper.set_data_path(espeakng_loader.get_data_path())
         self.ph = EspeakBackend(language="en-us", preserve_punctuation=True, with_stress=True)
+        if self.frontend == "c2":
+            import sys
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "frontend"))
+            from frontend import FrontEnd
+            self.fe = FrontEnd()
 
     def synth(self, text):
-        p = self.ph.phonemize([text])[0]
+        p = self.fe.phonemize(text) if self.frontend == "c2" else self.ph.phonemize([text])[0]
         p = " ".join(re.findall(r"\w+|[^\w\s]", p))
         ids = [0] + [SYMBOLS[c] for c in p if c in SYMBOLS] + [10, 0]
         vs = self.voices[self.vkey]
