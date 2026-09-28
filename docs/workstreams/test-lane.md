@@ -57,7 +57,8 @@ Post as a PR comment. Keep it short; the Test Desk needs intent, not narrative.
 /lane T4
 commit: <sha>
 changed: <one line: what the diff changes, from the listener's side>
-run: J1, J7            # or: tests: SourceLinkImportTests/testSubstackCustomDomain
+run: J1, J7            # T4: the journeys to run
+tests: SourceLinkImportTests/testSubstackCustomDomain, Gate1AppModelWorkflowTests   # T3: app test classes or methods
 scenario: <only for a one-off check: numbered steps + what passing looks like>
 watch for: <the specific risk, e.g. "chunk boundary flips play/pause">
 not needed: <what you already covered, e.g. "T1 green, T2 green on this sha">

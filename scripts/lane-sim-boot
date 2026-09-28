@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""Boot a simulator through the Mac-wide simulator-boot lock, and wait until it is ready.
+
+Usage: scripts/lane-sim-boot <udid> [--timeout SECONDS]
+
+Two simulators booting at once crash-flooded SpringBoard onto the owner's screen (#184), so every
+lane boot (the Test Desk's, the runner's, verify-tests.py's) holds one lock from `simctl boot`
+until the device is ready. A first boot migrates data for several minutes, hence the long default.
+An already-booted device just gets the readiness check. Exit 0 when ready.
+"""
+import argparse
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lane_slots import simulator_boot_lock  # noqa: E402
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('udid')
+    parser.add_argument('--timeout', type=float, default=900, help='seconds to wait for readiness (default 900)')
+    args = parser.parse_args(argv)
+    simctl = shlex.split(os.environ.get('SM_LANE_SIMCTL', 'xcrun simctl'))
+    with simulator_boot_lock(f'boot {args.udid}'):
+        booted = subprocess.run(simctl + ['boot', args.udid], capture_output=True, text=True)
+        if booted.returncode and 'current state: Booted' not in booted.stderr:
+            print(f'[lane] simctl boot failed ({booted.returncode}): {booted.stderr.strip()}', file=sys.stderr)
+            return booted.returncode
+        try:
+            ready = subprocess.run(simctl + ['bootstatus', args.udid], timeout=args.timeout).returncode
+        except subprocess.TimeoutExpired:
+            print(f'[lane] {args.udid} not ready after {args.timeout:.0f}s', file=sys.stderr)
+            return 124
+    print(f'[lane] {args.udid} is ready' if ready == 0 else f'[lane] bootstatus exited {ready}', file=sys.stderr)
+    return ready
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))
