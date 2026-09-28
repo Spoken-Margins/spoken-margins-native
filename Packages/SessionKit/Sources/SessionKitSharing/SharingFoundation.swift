@@ -93,6 +93,8 @@ public enum SpokenMarginsPackageBuilder {
         senderDisplayLabel: String? = nil,
         suggestedRevealMode: ImportedCommentaryRevealMode? = nil
     ) throws -> PreparedSpokenMarginsPackage {
+        let item = removingPrivateLinks(from: item)
+        let fingerprintSpines = fingerprintSpines.map(removingPrivateLinks(from:))
         let scopedIds = selections.map(\.packageScopedId)
         if let duplicate = Dictionary(grouping: scopedIds, by: { $0 }).first(where: { $0.value.count > 1 })?.key {
             throw InterjectionPackagePreparationError.duplicatePackageScopedId(duplicate)
@@ -245,6 +247,10 @@ public enum SpokenMarginsPackageBuilder {
         let itemTransport: SharedItemTransport
         let fullItemOmitted: Bool
         switch itemTransportSelection {
+        case .reference where item.canonicalURL == nil:
+            // The only link was private, so the recipient supplies the item from their own copy.
+            itemTransport = SharedItemTransport(kind: .recipientSupplied)
+            fullItemOmitted = true
         case .reference:
             itemTransport = SharedItemTransport(kind: .reference)
             fullItemOmitted = true
@@ -293,6 +299,45 @@ public enum SpokenMarginsPackageBuilder {
             ),
             artifactData: artifactData,
             assetFiles: assetFiles
+        )
+    }
+
+    /// Drops links that could grant access to a private feed (#168). Fields are omitted rather
+    /// than renamed so the packet still imports into builds that predate this policy.
+    private static func removingPrivateLinks(from item: SharedItemIdentity) -> SharedItemIdentity {
+        SharedItemIdentity(
+            itemType: item.itemType,
+            canonicalURL: ShareableLinkPolicy.shareableLink(item.canonicalURL),
+            originalURL: ShareableLinkPolicy.shareableLink(item.originalURL),
+            title: item.title,
+            author: item.author,
+            publisher: item.publisher,
+            showTitle: item.showTitle,
+            episodeGUID: ShareableLinkPolicy.shareableEpisodeGUID(item.episodeGUID),
+            enclosureURL: ShareableLinkPolicy.shareableLink(item.enclosureURL),
+            publishedAt: item.publishedAt,
+            durationMs: item.durationMs,
+            normalizedContentSHA256: item.normalizedContentSHA256,
+            exactEditionSHA256: item.exactEditionSHA256,
+            languageCode: item.languageCode,
+            source: item.source.flatMap { source in
+                ShareableLinkPolicy.shareableLink(source.canonicalURL) == nil ? nil : source
+            }
+        )
+    }
+
+    private static func removingPrivateLinks(from spine: EditionFingerprintSpineArtifact) -> EditionFingerprintSpineArtifact {
+        EditionFingerprintSpineArtifact(
+            id: spine.id,
+            schemaVersion: spine.schemaVersion,
+            itemId: spine.itemId,
+            canonicalURL: ShareableLinkPolicy.shareableLink(spine.canonicalURL),
+            episodeGUID: ShareableLinkPolicy.shareableEpisodeGUID(spine.episodeGUID),
+            producingEditionDurationMs: spine.producingEditionDurationMs,
+            producingEditionSHA256: spine.producingEditionSHA256,
+            createdAt: spine.createdAt,
+            generatorVersion: spine.generatorVersion,
+            landmarks: spine.landmarks
         )
     }
 

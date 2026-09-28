@@ -13898,9 +13898,12 @@ final class Gate1AppModel: ObservableObject {
         return .recipientSupplied
     }
 
+    /// Mirrors the link the packet builder keeps, so the share screen never promises a private feed link (#168).
     private func secureSharedItemURL(for item: Item) -> String? {
-        item.externalReference.flatMap(normalizedSharingURL)
-            ?? item.media?.url.flatMap(normalizedSharingURL)
+        ShareableLinkPolicy.shareableLink(
+            item.externalReference.flatMap(normalizedSharingURL)
+                ?? item.media?.url.flatMap(normalizedSharingURL)
+        )
     }
 
     private func sharedItemType(for item: Item) -> SharedItemType {
