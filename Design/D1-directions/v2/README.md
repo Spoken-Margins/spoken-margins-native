@@ -6,9 +6,9 @@ Each page is self-contained: open it on a phone and the page is the app. On a wi
 
 | Direction | Page | The idea | What it hides |
 | --- | --- | --- | --- |
-| 1 · Player | [1-player.html](1-player.html) | The app is Now Playing. Two doors in the top corners: Shelf (what to listen to) and Notebook (what you said). No tabs. | Browsing, Margins, settings: all behind a door. |
-| 2 · Today | [2-today.html](2-today.html) | A daily paper. Today (what's new), Saved, Notes. The player is a sheet from the mini-player, and the mini-player has the mic. | Feed management, export, the player itself. |
-| 3 · Notebook | [3-notebook.html](3-notebook.html) | Your Margins are the home screen. Listen is the other tab. The mic sits between them and never moves. | Everything about listening that isn't a Margin. |
+| 1 · Player | [1-player.html](1-player.html), [artifact](https://claude.ai/artifact/BXPvxs7Vcbji1Y7jCNxC5n) | The app is Now Playing. Two doors in the top corners: Shelf (what to listen to) and Notebook (what you said). No tabs. | Browsing, Margins, settings: all behind a door. |
+| 2 · Today | [2-today.html](2-today.html), [artifact](https://claude.ai/artifact/HEmcs9H8AWrv8xJVkjzKS1) | A daily paper. Today (what's new), Saved, Notes. The player is a sheet from the mini-player, and the mini-player has the mic. | Feed management, export, the player itself. |
+| 3 · Notebook | [3-notebook.html](3-notebook.html), [artifact](https://claude.ai/artifact/CLyu85kPMmR9BqjhG4Zeog) | Your Margins are the home screen. Listen is the other tab. The mic sits between them and never moves. | Everything about listening that isn't a Margin. |
 
 ## What changed from round one
 
