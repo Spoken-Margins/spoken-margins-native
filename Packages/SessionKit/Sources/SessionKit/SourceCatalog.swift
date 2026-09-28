@@ -266,3 +266,12 @@ public enum SourceCatalogValidator {
         return components.scheme?.lowercased() == "https" && !(components.host ?? "").isEmpty
     }
 }
+
+/// B1 M1: when the first-run podcast drawer opens by itself. Only a fresh install sees it
+/// unasked (the Library was empty before the welcome sample was added); upgraded Libraries
+/// reach it from Following. It opens by itself once.
+public enum FirstRunCatalogDrawerPolicy {
+    public static func opensAutomatically(libraryWasEmptyAtLaunch: Bool, hasSeenDrawer: Bool, followedSourceCount: Int) -> Bool {
+        libraryWasEmptyAtLaunch && !hasSeenDrawer && followedSourceCount == 0
+    }
+}

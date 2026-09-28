@@ -997,6 +997,8 @@ final class Gate1AppModel: ObservableObject {
     private var offlineStorageLedger: OfflineStorageLedger?
     private var localSourceImporter: LocalSourceImporter?
     private var followedSourceCoordinator: FollowedSourceCoordinator?
+    /// A fresh install: the Library was empty before the welcome sample was added (B1 drawer).
+    private(set) var libraryWasEmptyAtLaunch = false
     private let readablePageExtractor = AppOwnedReadablePageExtractor()
     private var sourceSuggestionChecks: Set<String> = []
     private var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
@@ -1830,6 +1832,7 @@ final class Gate1AppModel: ObservableObject {
                 return
             }
             var rows = try loadLibraryRows(store: store)
+            libraryWasEmptyAtLaunch = rows.isEmpty
             let storedWelcomeSampleVersion = UserDefaults.standard.integer(
                 forKey: Self.welcomeSampleSeedVersionKey
             )
@@ -15640,6 +15643,21 @@ final class Gate1AppModel: ObservableObject {
                 self.reportFailure(error, context: "Follow source failed")
             }
         }
+    }
+
+    /// B1 drawer: follows a catalog feed (always a public https feed) in one tap. Throws so the
+    /// drawer can show the failure on the row.
+    func followCatalogFeed(_ feedURL: String) async throws {
+        let store = try requireStore()
+        let coordinator = followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
+        followedSourceCoordinator = coordinator
+        guard let candidate = try await coordinator.discover(urlString: feedURL).first else {
+            throw FollowedSourceError.noFeedCandidates
+        }
+        if try !store.loadFeedSubscriptions().contains(where: { $0.source.id == candidate.source.id }) {
+            _ = try await coordinator.follow(candidate: candidate)
+        }
+        await refreshFollowedSources(force: false)
     }
 
     func followSourceCandidate(_ candidate: SourceCandidateEvidence) {

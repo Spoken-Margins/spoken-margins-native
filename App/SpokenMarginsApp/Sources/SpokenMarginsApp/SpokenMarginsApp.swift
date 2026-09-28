@@ -51,6 +51,7 @@ struct SpokenMarginsApp: App {
     #endif
     @StateObject private var model: Gate1AppModel
     @StateObject private var sharingCoordinator: Build23SharingCoordinator
+    @StateObject private var catalogDrawer: CatalogDrawerModel
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -62,6 +63,11 @@ struct SpokenMarginsApp: App {
         _sharingCoordinator = StateObject(
             wrappedValue: Build23SharingCoordinator(model: model)
         )
+        _catalogDrawer = StateObject(wrappedValue: CatalogDrawerModel(
+            store: CatalogDrawerModel.makeStore(),
+            followedFeedURLs: { [weak model] in model?.feedSubscriptions.map(\.source.canonicalURL) ?? [] },
+            follow: { [weak model] feedURL in try await model?.followCatalogFeed(feedURL) }
+        ))
     }
 
     var body: some Scene {
@@ -69,6 +75,7 @@ struct SpokenMarginsApp: App {
             Gate1RootView()
                 .environmentObject(model)
                 .environmentObject(sharingCoordinator)
+                .environmentObject(catalogDrawer)
                 .onReceive(NotificationCenter.default.publisher(for: ListeningReadyNotifications.opened)) { _ in model.openReadyListeningEdition() }
                 .onOpenURL { url in
                     model.handleIncomingURL(url)
