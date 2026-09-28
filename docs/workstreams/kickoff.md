@@ -18,9 +18,9 @@ Work milestone by milestone. For each milestone:
 1. Say in two or three sentences how you intend to reach it and what you will measure.
    If the brief lists an owner decision this milestone needs, stop and ask on the
    stream's tracking issue instead of guessing.
-2. /goal <the milestone's "Done when" text, copied from the brief, leaving out items
-   marked (owner)>, or stop and report on the tracking issue after 40 turns without
-   progress.
+2. Work until the milestone's "Done when" items hold, leaving out items marked (owner)
+   or (Mac), and show the evidence for each one. If 40 turns pass without progress,
+   stop and report on the tracking issue.
 3. When it is met: comment on the tracking issue with what changed, the evidence
    (test output, lane report link), exact steps for any (owner) items, and what is next.
 
@@ -31,7 +31,7 @@ brief and fix only real gaps.
 
 Why it's shaped this way:
 
-- **`/goal` holds the agent to the endpoint.** After each turn, a separate evaluator checks the condition against what the agent has shown in the transcript, and the agent keeps working until it's met ([docs](https://code.claude.com/docs/en/goal)). That's why every "Done when" in the briefs is written as something the agent can *demonstrate* (a test output, a measured number, a tap count, a lane report), not something it can merely assert.
+- **`/goal` holds the agent to the endpoint.** It's a command the person who started the session types, not something the agent can run. After the agent posts its approach, send `/goal <the milestone's "Done when", minus (owner) and (Mac) items>` as the next message. After each turn, a separate evaluator checks the condition against what the agent has shown in the transcript, and the agent keeps working until it's met ([docs](https://code.claude.com/docs/en/goal)). Without it, the agent still works toward the same list; `/goal` just stops it from declaring victory early. That's why every "Done when" in the briefs is written as something the agent can *demonstrate* (a test output, a measured number, a tap count, a lane report), not something it can merely assert.
 - **Items marked (owner) stay out of the goal.** Listening by ear, measurements on the owner's phone, and data only the owner has can't be demonstrated by an agent. The agent prepares them (a build, exact steps, what to look for) and the milestone waits on the owner.
 - **Stating the approach first** gives the owner a moment to redirect from the phone before hours go into the wrong idea. It isn't a request for approval; the agent continues unless redirected.
 - **A turn cap** stops a stuck stream from burning a day. Blocked is a legitimate outcome if it's reported.
