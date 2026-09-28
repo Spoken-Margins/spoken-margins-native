@@ -931,6 +931,8 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var podcastDownloadRecords: [String: PodcastDownloadRecord] = [:]
     @Published var preparedTextAudioStatus = "Not started"
     @Published private(set) var onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.inactive.rawValue
+    /// Why narration is in the iOS voice instead of the chosen one (I14); nil when it isn't.
+    @Published private(set) var speechFallbackReason: SpeechFallbackReason?
     @Published private(set) var onDeviceSpeechGenerationProgress = RenderedSpeechGenerationProgress(
         completedChunks: 0,
         totalChunks: 0
@@ -2464,8 +2466,9 @@ final class Gate1AppModel: ObservableObject {
         foregroundAudioPreparationTask?.cancel()
         if let client = speechPlaybackClient as? SupertonicSpeechPlaybackClient {
             do {
-                if try client.stopOnDeviceRenderingAndUseSystemSpeech() {
-                    let message = SupertonicResourcePolicy.fallbackMessage(memoryPressure: true)
+                if try client.stopOnDeviceRenderingAndUseSystemSpeech(returnsAutomatically: true) {
+                    speechFallbackReason = .memoryWarning
+                    let message = SpeechFallbackReason.memoryWarning.listenerExplanation
                     statusMessage = message
                     feedbackEvent = UserFeedbackEvent(kind: .warning, message: message)
                 }
@@ -4068,6 +4071,7 @@ final class Gate1AppModel: ObservableObject {
                 reportFailure("There is no active Supertonic generation to stop.")
                 return
             }
+            speechFallbackReason = .listenerStoppedGeneration
             suppressAudioPreparation(itemId: activeItemId)
             if let coordinator = preparedAudioCoordinator,
                let signature = currentSupertonicRenderSignature {
@@ -9100,6 +9104,7 @@ final class Gate1AppModel: ObservableObject {
                 guard self.snapshot.sessionId == sessionId, self.snapshot.targetId == targetId else { return }
                 if let itemId { self.allowAudioPreparation(itemId: itemId) }
                 guard try client.retryOnDeviceRendering() else { return }
+                self.speechFallbackReason = nil
                 self.preparedTextAudioStatus = "preparing"
                 self.diagnostics["onDeviceSpeechGeneration"] = "retry_current_target"
                 self.reportConfirmation("Retrying Supertonic at the current position.")
@@ -9123,7 +9128,7 @@ final class Gate1AppModel: ObservableObject {
         case RenderedSpeechGenerationState.ready.rawValue:
             return "Prepared audio is ready for playback"
         case RenderedSpeechGenerationState.stopped.rawValue:
-            return "Generation stopped · using the iOS system voice"
+            return speechFallbackReason?.listenerExplanation ?? "Generation stopped · using the iOS system voice"
         default:
             return "On-device voice generation is inactive"
         }
@@ -10003,9 +10008,11 @@ final class Gate1AppModel: ObservableObject {
             let utterance = AVSpeechUtterance(string: "Spoken Margins preview. This is the \(label) path.")
             switch mode {
             case .spokenContent:
-                utterance.rate = Float(speechRate)
+                utterance.rate = SpeechRateRule.systemSpeechRate(forMultiplier: speechPlaybackRateMultiplier)
             case .appVoice(let voiceIdentifier, let rate):
-                utterance.rate = rate
+                utterance.rate = SpeechRateRule.systemSpeechRate(
+                    forMultiplier: SpeechRateRule.multiplier(forStoredRate: rate)
+                )
                 if let voiceIdentifier,
                    let configuredVoice = AVSpeechSynthesisVoice(identifier: voiceIdentifier) {
                     utterance.voice = configuredVoice
@@ -10857,13 +10864,31 @@ final class Gate1AppModel: ObservableObject {
                            let signature = self.currentSupertonicRenderSignature {
                             try? await coordinator.stop(itemId: itemId, signature: signature)
                         }
+                        // I14: the reason is shown and logged with the power state beside it,
+                        // so a device report shows whether charging or Low Power Mode coincided.
+                        let conditions = SupertonicResourcePolicy.currentConditions(
+                            isOnExternalPower: SupertonicResourcePolicy.isOnExternalPower()
+                        )
+                        let fallbackReason = SpeechFallbackReason(
+                            supertonicCode: reason,
+                            resourceBlock: SpeechEnginePolicy.onDeviceRenderingBlock(conditions)
+                        )
+                        self.speechFallbackReason = fallbackReason
                         self.diagnostics["supertonicFallback"] = reason
+                        self.diagnostics["supertonicFallbackReason"] = fallbackReason.rawValue
+                        self.diagnostics["supertonicFallbackConditions"] = conditions.logDescription
                         self.diagnostics["supertonicFallbackOffset"] = "\(offset)"
-                        let message = reason == "supertonic_resource_pressure"
-                            ? SupertonicResourcePolicy.fallbackMessage()
-                            : "Supertonic could not prepare audio in time or encountered a playback problem. Using your configured iOS voice for this playback."
+                        let message = fallbackReason.listenerExplanation
                         self.statusMessage = message
                         self.feedbackEvent = UserFeedbackEvent(kind: .warning, message: message)
+                    }
+                },
+                onRestore: { [weak self] itemId in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.speechFallbackReason = nil
+                        self.allowAudioPreparation(itemId: itemId)
+                        self.diagnostics["supertonicFallbackRestored"] = itemId
                     }
                 }
             )
@@ -11033,6 +11058,9 @@ final class Gate1AppModel: ObservableObject {
     private func handleSpeechPlaybackInterruption(_ event: AudioPlaybackInterruptionEvent) {
         switch event {
         case .began:
+            // Counted so a device report can show whether chunk-boundary pauses (#183) come
+            // from audio interruptions.
+            diagnostics["speechPlaybackInterruptionCount"] = "\(Int(diagnostics["speechPlaybackInterruptionCount"] ?? "0").map { $0 + 1 } ?? 1)"
             guard snapshot.status.isPlaybackActive, let engine else {
                 diagnostics["speechPlaybackInterruption"] = "pause_skipped"
                 return

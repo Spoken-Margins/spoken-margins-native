@@ -119,6 +119,30 @@ final class SessionKitCoreTests: XCTestCase {
         try client.stop()
     }
 
+    /// #221 lane FAIL: with the iOS voice, changing the speed mid-session restarted playback with
+    /// the session's old 1× rate, so "1.50×" played at 1× and Now Playing reported rate 1.
+    /// Rate is one number (I14): the session's rate follows the listener's speech rate.
+    func testChangingSpeechSettingsMidSessionPlaysAtTheListenersRate() throws {
+        let audio = RecordingAudioClient()
+        let item = Item(id: "item-rate", title: "Rate", mediaType: "text", text: "One. Two. Three. Four.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-offline",
+            displayName: "Phone/Tablet Offline",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
+        )
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+        _ = try engine.startSession(itemId: item.id)
+
+        let faster = try engine.updateSpeechPlaybackSettings(voiceIdentifier: nil, rate: 0.75) // the app's stored 1.5×
+        XCTAssertEqual(audio.playbackRate, 1.5, accuracy: 0.001, "the restart plays at the listener's speed")
+        XCTAssertEqual(faster.playbackRate, 1.5, accuracy: 0.001, "Now Playing reports the same rate")
+
+        let slower = try engine.updateSpeechPlaybackSettings(voiceIdentifier: nil, rate: 0.375) // 0.75×
+        XCTAssertEqual(audio.playbackRate, 0.75, accuracy: 0.001)
+        XCTAssertEqual(slower.playbackRate, 0.75, accuracy: 0.001)
+    }
+
     func testSystemSpeechPlaybackRateReportsEffectiveTransportMultiplier() throws {
         let client = SystemSpeechPlaybackClient(
             voiceIdentifier: nil,
