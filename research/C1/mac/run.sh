@@ -39,11 +39,14 @@ swift build --package-path "$here" -c release
 extract_status=0
 "$here/.build/release/c1-extract" --root "$c1" "$@" || extract_status=$?
 "$py" "$c1/tools/score.py" --extractor app-baseline "$@"
+# C1 M3: extraction v2 (I13 roles, spoken per I14), with v1 timed beside it.
+"$here/.build/release/c1-extract" --root "$c1" --v2 "$@" || extract_status=$?
+"$py" "$c1/tools/score.py" --extractor app-v2 "$@"
 "$py" "$c1/tools/report.py"
 # C1 M2: fit and evaluate the hard-PDF pre-check on the app's own output.
 "$py" "$c1/tools/precheck.py"
 "$py" "$c1/tools/precheck.py" --target content
-echo "Scores: research/C1/results/app-baseline/scores.json; report: research/C1/results/REPORT.md; pre-check: research/C1/results/app-baseline/precheck.json"
+echo "Scores: research/C1/results/app-baseline/scores.json, research/C1/results/app-v2/scores.json; report: research/C1/results/REPORT.md; pre-check: research/C1/results/app-baseline/precheck.json"
 if [ "$fetch_status" != 0 ] || [ "$extract_status" != 0 ]; then
     echo "Warning: some PDFs failed to fetch or didn't match the manifest's sha256; see the output above and results/app-baseline/run-info.json." >&2
 fi

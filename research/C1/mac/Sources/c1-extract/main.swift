@@ -1,6 +1,16 @@
 // c1-extract: runs the app's PDF extractor over the C1 corpus.
 //
-//   swift run -c release c1-extract --root <repo>/research/C1 [--only <id> ...]
+//   swift run -c release c1-extract --root <repo>/research/C1 [--v2] [--only <id> ...]
+//
+// --v2 scores extraction v2 (I13 roles, C1 M3) as extractor `app-v2`:
+// `markdown` is the structured document's canonical text (Item.text for a v2
+// import), `spoken` is StructuredDocumentSpeech.spokenLines (I14 applied, then
+// SpeechTextNormalizer), and the I13 document goes to cache/i13-app-v2/.
+// It also times v1 on the same PDF right before v2, so the import-time budget
+// is a per-paper ratio that other work on the Mac affects on both sides. v1's
+// time includes normalizeImportedText on each line, which the import's
+// Markdown parser runs after extraction (the parser does more than that, so
+// the ratio can only overstate v2's cost). v2 does that cleaning in the builder.
 //
 // For each manifest entry with a fetched PDF (cache/pdf/<id>.pdf) it writes
 // cache/candidates/app-baseline/<id>.json in the format tools/score.py reads:
@@ -20,18 +30,22 @@ import PDFKit
 struct Options {
     var root: URL
     var only: Set<String> = []
+    var v2 = false
 }
 
 func parseOptions() -> Options {
     var arguments = Array(CommandLine.arguments.dropFirst())
     var root: URL?
     var only: Set<String> = []
+    var v2 = false
     while !arguments.isEmpty {
         let flag = arguments.removeFirst()
         switch flag {
         case "--root":
             guard !arguments.isEmpty else { fail("--root needs a path") }
             root = URL(fileURLWithPath: arguments.removeFirst(), isDirectory: true)
+        case "--v2":
+            v2 = true
         case "--only":
             while let next = arguments.first, !next.hasPrefix("--") {
                 only.insert(arguments.removeFirst())
@@ -40,8 +54,8 @@ func parseOptions() -> Options {
             fail("unknown argument \(flag)")
         }
     }
-    guard let root else { fail("usage: c1-extract --root <repo>/research/C1 [--only <id> ...]") }
-    return Options(root: root, only: only)
+    guard let root else { fail("usage: c1-extract --root <repo>/research/C1 [--v2] [--only <id> ...]") }
+    return Options(root: root, only: only, v2: v2)
 }
 
 func fail(_ message: String) -> Never {
@@ -81,8 +95,10 @@ func write(_ object: [String: Any], to url: URL) throws {
 let options = parseOptions()
 let manifestURL = options.root.appendingPathComponent("corpus/manifest.json")
 let pdfDirectory = options.root.appendingPathComponent("cache/pdf", isDirectory: true)
-let outDirectory = options.root.appendingPathComponent("cache/candidates/app-baseline", isDirectory: true)
-let resultsDirectory = options.root.appendingPathComponent("results/app-baseline", isDirectory: true)
+let extractorName = options.v2 ? "app-v2" : "app-baseline"
+let outDirectory = options.root.appendingPathComponent("cache/candidates/\(extractorName)", isDirectory: true)
+let resultsDirectory = options.root.appendingPathComponent("results/\(extractorName)", isDirectory: true)
+let i13Directory = options.root.appendingPathComponent("cache/i13-\(extractorName)", isDirectory: true)
 
 guard let manifestData = try? Data(contentsOf: manifestURL),
       let manifest = try? JSONSerialization.jsonObject(with: manifestData) as? [String: Any],
@@ -91,9 +107,14 @@ guard let manifestData = try? Data(contentsOf: manifestURL),
 }
 try FileManager.default.createDirectory(at: outDirectory, withIntermediateDirectories: true)
 try FileManager.default.createDirectory(at: resultsDirectory, withIntermediateDirectories: true)
+if options.v2 {
+    try FileManager.default.createDirectory(at: i13Directory, withIntermediateDirectories: true)
+}
 
 let clock = ContinuousClock()
 var timings: [Double] = []
+var pairedV1Timings: [Double] = []
+var pairedRatios: [Double] = []
 var extracted = 0
 var failed: [String: String] = [:]
 var missing: [String] = []
@@ -110,7 +131,7 @@ for entry in entries {
     }
     var record: [String: Any] = [
         "id": id,
-        "extractor": "app-baseline",
+        "extractor": extractorName,
         "extractor_commit": AppSourcesVersion.commit,
         "extractor_sha256_prefix": AppSourcesVersion.extractorSHA256Prefix,
     ]
@@ -123,17 +144,43 @@ for entry in entries {
         }
     }
     autoreleasepool {
-        let start = clock.now
+        var start = clock.now
         do {
-            // The same entry point the import path uses (extractBaseline → markdown).
-            let markdown = try PDFStructuredTextExtractor.markdown(from: pdfURL)
-            let elapsed = milliseconds(clock.now - start)
-            timings.append(elapsed)
-            record["markdown"] = markdown
-            // I13 rule 1(a): a changed fingerprint without a version bump is a bug.
-            record["markdown_sha256"] = SHA256.hash(data: Data(markdown.utf8)).map { String(format: "%02x", $0) }.joined()
-            record["spoken"] = spokenText(fromMarkdown: markdown)
-            record["elapsed_ms"] = Int(elapsed.rounded())
+            if options.v2 {
+                // Paired timing: v1 then v2 on the same, already-read file.
+                _ = PDFDocument(url: pdfURL)?.pageCount
+                let v1Start = clock.now
+                let v1Markdown = (try? PDFStructuredTextExtractor.markdown(from: pdfURL)) ?? ""
+                for line in v1Markdown.components(separatedBy: "\n") {
+                    _ = SpeechTextNormalizer.normalizeImportedText(line)
+                }
+                let v1Elapsed = milliseconds(clock.now - v1Start)
+                start = clock.now
+                let document = try PDFStructuredTextExtractor.structuredDocument(from: pdfURL)
+                let elapsed = milliseconds(clock.now - start)
+                timings.append(elapsed)
+                pairedV1Timings.append(v1Elapsed)
+                if v1Elapsed > 0 { pairedRatios.append(elapsed / v1Elapsed) }
+                record["markdown"] = document.text
+                record["markdown_sha256"] = document.extraction.textSHA256 ?? ""
+                record["extraction_version"] = document.extraction.version
+                record["spoken"] = StructuredDocumentSpeech.spokenLines(document).joined(separator: "\n")
+                record["elapsed_ms"] = Int(elapsed.rounded())
+                record["elapsed_ms_v1_paired"] = Int(v1Elapsed.rounded())
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+                try encoder.encode(document).write(to: i13Directory.appendingPathComponent("\(id).json"), options: .atomic)
+            } else {
+                // The same entry point the import path uses (extractBaseline → markdown).
+                let markdown = try PDFStructuredTextExtractor.markdown(from: pdfURL)
+                let elapsed = milliseconds(clock.now - start)
+                timings.append(elapsed)
+                record["markdown"] = markdown
+                // I13 rule 1(a): a changed fingerprint without a version bump is a bug.
+                record["markdown_sha256"] = SHA256.hash(data: Data(markdown.utf8)).map { String(format: "%02x", $0) }.joined()
+                record["spoken"] = spokenText(fromMarkdown: markdown)
+                record["elapsed_ms"] = Int(elapsed.rounded())
+            }
             extracted += 1
         } catch {
             record["spoken"] = ""
@@ -152,14 +199,17 @@ for entry in entries {
     log("\(record["error"] == nil ? "ok  " : "FAIL") \(id): \(words) words, \(record["elapsed_ms"] ?? 0) ms")
 }
 
-let sorted = timings.sorted()
-let median = sorted.isEmpty ? 0 : sorted[sorted.count / 2]
-let runInfo: [String: Any] = [
-    "extractor": "app-baseline",
+func median(_ values: [Double]) -> Double {
+    let sorted = values.sorted()
+    return sorted.isEmpty ? 0 : sorted[sorted.count / 2]
+}
+var runInfo: [String: Any] = [
+    "extractor": extractorName,
     "extractor_commit": AppSourcesVersion.commit,
     "extractor_uncommitted_changes": AppSourcesVersion.uncommittedChanges,
     "extractor_sha256_prefix": AppSourcesVersion.extractorSHA256Prefix,
     "normalizer_sha256_prefix": AppSourcesVersion.normalizerSHA256Prefix,
+    "structured_document_sha256_prefix": AppSourcesVersion.structuredDocumentSHA256Prefix,
     "os": ProcessInfo.processInfo.operatingSystemVersionString,
     "hardware": hardwareModel(),
     "date": ISO8601DateFormatter().string(from: Date()),
@@ -167,8 +217,14 @@ let runInfo: [String: Any] = [
     "failed": failed,
     "not_fetched": missing,
     "sha256_mismatches": checksumMismatches,
-    "median_extract_ms": Int(median.rounded()),
+    "median_extract_ms": Int(median(timings).rounded()),
 ]
+if options.v2 {
+    runInfo["extraction_version"] = PDFStructuredTextExtractor.structuredExtractionVersion
+    runInfo["median_v1_paired_ms"] = Int(median(pairedV1Timings).rounded())
+    // The import-time budget: v2 time over v1 time on the same PDF, median across the corpus.
+    runInfo["median_v2_over_v1"] = (median(pairedRatios) * 1000).rounded() / 1000
+}
 try write(runInfo, to: resultsDirectory.appendingPathComponent("run-info.json"))
-log("done: \(extracted) extracted, \(failed.count) failed, \(missing.count) not fetched; median \(Int(median)) ms")
+log("done: \(extracted) extracted, \(failed.count) failed, \(missing.count) not fetched; median \(Int(median(timings))) ms")
 if !missing.isEmpty || !checksumMismatches.isEmpty { exit(1) }

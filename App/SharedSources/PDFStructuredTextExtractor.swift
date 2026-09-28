@@ -1,5 +1,6 @@
 import Foundation
 import PDFKit
+import SessionKit
 import UIKit
 
 struct PDFDetectedTableRegion: Equatable {
@@ -184,6 +185,245 @@ enum PDFStructuredTextExtractor {
             return lines.prefix(index).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return markdown
+    }
+
+    // MARK: - Extraction v2 (I13): roles instead of cuts
+
+    /// Bumped by any change that can change v2 text for some PDF (I13 rule 1a).
+    /// v1 is `markdown(from:)`, which stays as it is for items imported under it.
+    static let structuredExtractionVersion = 2
+
+    static func structuredDocument(from url: URL) throws -> StructuredDocument {
+        guard let document = PDFDocument(url: url) else {
+            throw ExtractionError.unreadableDocument
+        }
+        return try structuredDocument(from: document)
+    }
+
+    static func structuredDocument(from document: PDFDocument, sourceSHA256: String? = nil) throws -> StructuredDocument {
+        StructuredDocumentBuilder.build(
+            lines: try structuredLines(from: document),
+            engine: "pdfkit_baseline",
+            version: structuredExtractionVersion,
+            pageCount: document.pageCount,
+            sourceSHA256: sourceSHA256
+        )
+    }
+
+    /// Every line of the PDF in reading order with a role. Nothing is dropped:
+    /// what v1 cut (running heads, stamps, contents pages, the reference list)
+    /// is labelled, and the speech path decides what is heard (I14).
+    static func structuredLines(from document: PDFDocument) throws -> [StructuredDocumentLine] {
+        let outline = outlineHeadings(in: document)
+        var pages: [[TextLine]] = []
+        for pageIndex in 0..<document.pageCount {
+            pages.append(document.page(at: pageIndex).map { lines(from: $0) } ?? [])
+        }
+        let allLines = pages.flatMap { $0 }
+        guard allLines.contains(where: { !$0.text.isEmpty }) else {
+            throw ExtractionError.noExtractableText
+        }
+
+        // Page furniture: repeated text or page numbers in the physical margins,
+        // and download stamps there. Labelled by edge, not removed.
+        enum Edge { case top, bottom }
+        func edge(_ line: TextLine, page: PDFPage) -> Edge? {
+            guard let bounds = line.bounds else { return nil }
+            let box = page.bounds(for: .mediaBox)
+            if bounds.midY > box.maxY - box.height * 0.14 { return .top }
+            if bounds.midY < box.minY + box.height * 0.10 { return .bottom }
+            return nil
+        }
+        // Digits are ignored, so "New Research 12 of 15" repeats across pages.
+        func furnitureKey(_ text: String) -> String {
+            normalized(text).replacingOccurrences(of: "[0-9]+", with: "0", options: .regularExpression)
+        }
+        var occurrences: [String: Set<Int>] = [:]
+        for (index, lines) in pages.enumerated() {
+            guard let page = document.page(at: index) else { continue }
+            for line in lines where edge(line, page: page) != nil {
+                occurrences[furnitureKey(line.text), default: []].insert(index)
+            }
+        }
+        let threshold = max(3, Int(ceil(Double(pages.count) * 0.3)))
+        func furnitureRole(_ line: TextLine, page: PDFPage) -> StructuredDocument.Role? {
+            guard let side = edge(line, page: page) else { return nil }
+            let repeated = pages.count >= 3 && occurrences[furnitureKey(line.text), default: []].count >= threshold
+            let pageNumber = line.text.range(of: "^(?:[0-9]+|[ivxlcdm]+)$", options: [.regularExpression, .caseInsensitive]) != nil
+            guard repeated || pageNumber || isDownloadStamp(line.text) else { return nil }
+            return side == .top ? .pageHeader : .pageFooter
+        }
+
+        let firstContentsPage = pages.firstIndex { $0.contains { isTableOfContentsTitle($0.text) } }
+        let bodySize = inferredBodyPointSize(from: allLines)
+        let layout = BodyLayout(lines: allLines, bodySize: bodySize)
+        var insertedOutlineHeadingIDs = Set<Int>()
+        var result: [StructuredDocumentLine] = []
+
+        // The metadata title, unless the first page already prints it (v1 read it twice).
+        if let title = document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String {
+            let cleanedTitle = cleaned(title)
+            let firstPage = normalized(pages.first?.prefix(20).map(\.text).joined(separator: " ") ?? "")
+            if !cleanedTitle.isEmpty, !firstPage.contains(normalized(cleanedTitle)) {
+                result.append(StructuredDocumentLine(text: cleanedTitle, role: .title, pageIndex: 0, level: 1))
+            }
+        }
+
+        for (pageIndex, pageLines) in pages.enumerated() {
+            guard let page = document.page(at: pageIndex) else { continue }
+            let pageOutline = outline.filter { $0.pageIndex == pageIndex }
+            let tableOfContentsLines = tableOfContentsLineIndices(in: pageLines, pageIndex: pageIndex, outline: outline)
+            let tableLines = tableLineIndices(in: pageLines, layout: layout)
+            for heading in pageOutline where !pageLines.contains(where: { headingKey($0.text) == headingKey(heading.title) }) {
+                result.append(StructuredDocumentLine(text: heading.title, role: .heading, pageIndex: pageIndex, level: heading.level))
+                insertedOutlineHeadingIDs.insert(heading.id)
+            }
+            for (lineIndex, line) in pageLines.enumerated() {
+                let key = headingKey(line.text)
+                if let role = furnitureRole(line, page: page) {
+                    result.append(StructuredDocumentLine(text: line.text, role: role, pageIndex: pageIndex))
+                } else if tableOfContentsLines.contains(lineIndex) {
+                    result.append(StructuredDocumentLine(text: line.text, role: .frontMatter, pageIndex: pageIndex))
+                } else if tableLines.contains(lineIndex) {
+                    result.append(StructuredDocumentLine(text: line.text, role: .table, pageIndex: pageIndex))
+                } else if let heading = pageOutline.first(where: {
+                    !insertedOutlineHeadingIDs.contains($0.id) && headingKey($0.title) == key
+                }) {
+                    insertedOutlineHeadingIDs.insert(heading.id)
+                    result.append(StructuredDocumentLine(text: line.text, role: .heading, pageIndex: pageIndex, level: heading.level))
+                } else if outline.isEmpty
+                    && (firstContentsPage.map({ pageIndex > $0 }) ?? true)
+                    && isVisualHeading(line, bodySize: bodySize) {
+                    result.append(StructuredDocumentLine(text: line.text, role: .heading, pageIndex: pageIndex, level: visualHeadingLevel(line, bodySize: bodySize)))
+                } else {
+                    result.append(StructuredDocumentLine(text: line.text, role: .body, pageIndex: pageIndex))
+                }
+            }
+        }
+        labelReferenceLists(&result)
+        return result
+    }
+
+    /// A references heading followed by bibliography-shaped lines starts a
+    /// reference list. Unlike v1, it ends at the next heading, so an appendix after
+    /// the references is read (#215).
+    static func labelReferenceLists(_ lines: inout [StructuredDocumentLine]) {
+        let referencesHeading = #"(?i)^(?:[0-9]+[. ]+)?(?:references|bibliography|works cited|literature cited|references and notes)\s*$"#
+        var index = 0
+        while index < lines.count {
+            defer { index += 1 }
+            guard lines[index].role == .heading || lines[index].role == .body,
+                  lines[index].text.range(of: referencesHeading, options: .regularExpression) != nil else { continue }
+            let tail = lines[(index + 1)...].filter { $0.role == .body }.prefix(40)
+            guard tail.filter({ looksLikeBibliographyEntry($0.text) }).count >= 4 else { continue }
+            var cursor = index + 1
+            while cursor < lines.count, lines[cursor].role != .heading {
+                if lines[cursor].role == .body { lines[cursor].role = .reference }
+                cursor += 1
+            }
+            index = cursor - 1
+        }
+    }
+
+    /// Where running text sits: its type size, a full line's width, and the x
+    /// positions body columns start at (full-width lines only, so indents and
+    /// table cells don't count).
+    private struct BodyLayout {
+        var bodySize: CGFloat
+        var lineWidth: CGFloat
+        var columnStarts: [CGFloat]
+
+        init(lines: [TextLine], bodySize: CGFloat) {
+            self.bodySize = bodySize
+            let prose = lines.filter { $0.text.count >= 45 && abs($0.pointSize - bodySize) < 0.6 }
+            // The most common full-line width, in 4 pt buckets; justified text makes it sharp.
+            var widthCounts: [Int: Int] = [:]
+            for line in prose {
+                if let width = line.bounds?.width { widthCounts[Int(width / 4), default: 0] += 1 }
+            }
+            lineWidth = widthCounts.max { $0.value < $1.value || ($0.value == $1.value && $0.key < $1.key) }.map { CGFloat($0.key) * 4 + 2 } ?? 0
+            var starts: [Int: Int] = [:]
+            for line in prose {
+                guard let bounds = line.bounds, bounds.width >= lineWidth * 0.85 else { continue }
+                starts[Int((bounds.minX / 2).rounded()), default: 0] += 1
+            }
+            columnStarts = starts.filter { $0.value >= 3 }.map { CGFloat($0.key) * 2 }
+        }
+
+        /// A table cell line: mostly numbers and not laid out as running text,
+        /// or a short fragment that is both off every body column and narrow.
+        /// A full-width line is never a cell, and math isn't a table.
+        func looksLikeTableCell(_ line: TextLine) -> Bool {
+            guard let bounds = line.bounds, lineWidth > 0, bounds.width < lineWidth * 0.8 else { return false }
+            guard !looksLikeMath(line.text) else { return false }
+            let tokens = line.text.split(separator: " ")
+            guard !tokens.isEmpty else { return false }
+            let numeric = tokens.filter { $0.range(of: #"^[(\[]?[-–−+±<>=≤≥~]?[0-9][0-9.,:%–−-]*[)\]*†‡a-z]?[,;]?$"#, options: .regularExpression) != nil }
+            let offColumn = !columnStarts.contains { abs($0 - bounds.minX) <= 4 }
+            let narrow = bounds.width < lineWidth * 0.5
+            let otherSize = abs(line.pointSize - bodySize) >= 0.6
+            if Double(numeric.count) / Double(tokens.count) >= 0.4 {
+                return offColumn || narrow || otherSize
+            }
+            return offColumn && narrow && tokens.count <= 12
+        }
+
+        /// Display math: operators, Greek or math-alphabet letters, arrows, or
+        /// mostly one-letter tokens.
+        func looksLikeMath(_ text: String) -> Bool {
+            let symbols = text.unicodeScalars.filter { scalar in
+                "=+×·∑∏∫√∂∇≤≥≈≠∈∀∃→←⇒∞^_|".unicodeScalars.contains(scalar)
+                    || (0x0391...0x03C9).contains(scalar.value)    // Greek
+                    || (0x2100...0x214F).contains(scalar.value)    // letterlike: ℰ, ℝ
+                    || (0x2190...0x22FF).contains(scalar.value)    // arrows, operators
+                    || (0x1D400...0x1D7FF).contains(scalar.value)  // math alphanumerics: 𝑎, 𝒪, 𝔛
+            }
+            let tokens = text.split(separator: " ")
+            let single = tokens.filter { $0.count == 1 && $0.first?.isLetter == true }
+            return symbols.count >= 2 || (tokens.count >= 3 && Double(single.count) / Double(tokens.count) >= 0.4)
+        }
+    }
+
+    /// Runs of table-cell lines on one page. A run next to a "Table N" caption
+    /// needs three lines; any other run needs five, so a short list or a
+    /// paragraph's last line is never taken for a table.
+    private static func tableLineIndices(in lines: [TextLine], layout: BodyLayout) -> Set<Int> {
+        let cells = lines.map(layout.looksLikeTableCell)
+        let captions = lines.indices.filter {
+            lines[$0].text.range(of: #"^(?:Table|TABLE)\s+[0-9IVX]+[.:|]?(?:\s|$)"#, options: .regularExpression) != nil
+        }
+        var result = Set<Int>()
+        var index = 0
+        while index < lines.count {
+            guard cells[index] else { index += 1; continue }
+            // A run may bridge one short line that doesn't look like a cell (a wrapped label).
+            func bridges(_ gap: Int) -> Bool {
+                gap + 1 < lines.count && cells[gap + 1] && !captions.contains(gap)
+                    && lines[gap].text.split(separator: " ").count <= 4
+            }
+            var end = index
+            var probe = index + 1
+            while probe < lines.count, cells[probe] || bridges(probe) {
+                if cells[probe] { end = probe }
+                probe += 1
+            }
+            let length = end - index + 1
+            let captioned = captions.contains { $0 >= index - 3 && $0 <= end + 3 }
+            if length >= (captioned ? 3 : 5) {
+                result.formUnion((index...end).filter { !captions.contains($0) })
+            }
+            index = end + 1
+        }
+        return result
+    }
+
+    /// The first line of a bibliography entry in the common styles: numbered
+    /// ("[12] …", "12. …"), author first ("Agarwal A, …", "Abdul-Hay, S. O., …"), or
+    /// any line carrying a parenthesised year or a DOI.
+    static func looksLikeBibliographyEntry(_ text: String) -> Bool {
+        text.range(of: #"^\s*(?:\[\^?[0-9]{1,4}\]:?|[0-9]{1,4}[.)])\s+\S"#, options: .regularExpression) != nil
+            || text.range(of: #"^\p{Lu}[\p{L}'’\-]+(?: [\p{Lu}][\p{L}'’\-]+)?,? (?:\p{Lu}\.?[ -]?){1,3}[,.(]"#, options: .regularExpression) != nil
+            || text.range(of: #"\((?:19|20)[0-9]{2}[a-z]?\)|\bdoi[:.]|\b10\.[0-9]{4,}/"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     private static func lines(from page: PDFPage) -> [TextLine] {
