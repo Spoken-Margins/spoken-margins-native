@@ -112,7 +112,7 @@ It installs the harness, fetches the models, runs every benchmark (`results/darw
 
 1. **Blind listen:** done 2026-09-28.
 2. **Phone benchmark:** once the Mac session has built it, run it warm, in Low Power Mode, as described in [phone-bench/README.md](phone-bench/README.md), and share the JSON on #192.
-3. **Accept the app-size cost:** about 60 MB for KittenTTS nano fp32 (about 27 MB if int8 is fast on the phone).
+3. **App-size cost:** accepted by the owner on 2026-09-28 (about 60 MB for KittenTTS nano fp32; int8 at about 27 MB only if it is as fast on the phone).
 
 ## Files
 
