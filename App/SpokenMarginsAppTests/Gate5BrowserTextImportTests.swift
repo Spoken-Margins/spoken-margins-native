@@ -31,12 +31,31 @@ final class Gate5BrowserTextImportTests: XCTestCase {
     }
 
     private var temporaryDirectories: [URL] = []
+    private var priorTermsVersion: Any?
+    private var priorTermsDate: Any?
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        // Several tests start playback. On a simulator where the terms were never
+        // accepted, the first playback waits for the terms decision instead, so
+        // these tests passed or failed depending on earlier tests' leftovers.
+        priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
+        priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
+        SpokenMarginsTerms.recordAcceptance()
+    }
 
     override func tearDownWithError() throws {
         for directory in temporaryDirectories {
             try? FileManager.default.removeItem(at: directory)
         }
         temporaryDirectories.removeAll()
+        for (value, key) in [(priorTermsVersion, SpokenMarginsTerms.acceptanceVersionKey), (priorTermsDate, SpokenMarginsTerms.acceptanceDateKey)] {
+            if let value {
+                UserDefaults.standard.set(value, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
         try super.tearDownWithError()
     }
 
