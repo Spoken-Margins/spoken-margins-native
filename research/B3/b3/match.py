@@ -83,6 +83,10 @@ def title_segments(title: str) -> list[str]:
 
 def content_title(title: str, show_names: list[str]) -> str:
     """The title without segments that just name the show."""
+    return " ".join(content_segments(title, show_names)) or title
+
+
+def content_segments(title: str, show_names: list[str]) -> list[str]:
     keep = []
     for seg in title_segments(title):
         seg_tokens = set(name_tokens(re.sub(r"#?\d+", "", seg)))
@@ -93,18 +97,17 @@ def content_title(title: str, show_names: list[str]) -> str:
         if any(seg_tokens <= set(name_tokens(n)) for n in show_names if n):
             continue
         keep.append(seg)
-    return " ".join(keep) or title
+    return keep
 
 
 def search_term(title: str, show_names: list[str]) -> str:
     """A title search Apple can answer: its search wants every word to match,
     so a run-on title with several segments finds nothing. Use the first
     segment that isn't the show's name."""
-    content = content_title(title, show_names)
-    for seg in title_segments(content):
+    for seg in content_segments(title, show_names):
         if len(tokens(seg)) >= 2:
             return seg[:100]
-    return content[:100]
+    return content_title(title, show_names)[:100]
 
 
 def _date(value: str | None) -> dt.date | None:
@@ -502,7 +505,9 @@ def match(video: VideoEvidence) -> Result:
                  if (sh is not None and sh.strength >= 0.8 and c.score >= 0.35)
                  or (sg.title >= 0.6 and sg.duration in ("match", "close")
                      and sg.days is not None and sg.days <= 3)
-                 or (sg.desc >= 0.6 and sg.days is not None and sg.days <= 7)]
+                 or (sg.desc >= 0.6 and sg.days is not None and sg.days <= 7)
+                 # Same title the same week, but a different cut: worth asking about.
+                 or (sg.title >= 0.8 and sg.days is not None and sg.days <= 3)]
     if plausible:
         return Result("review", why, candidates=plausible, show=top_show)
     return Result("none", nothing, show=top_show)
