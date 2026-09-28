@@ -1,5 +1,5 @@
 {
- "description": "B1 M2 search test list. Each query is what a listener might type; expected identifies the right show by the start of its title and a part of its publisher name (both compared case- and punctuation-insensitively), judged by a person, independent of any search ranking. The resolver must put this show first for at least 45 of 50. Recorded iTunes Search responses (2026-09-28, limit 15, country us) are in itunes-responses/<query-slug>.json.",
+ "description": "B1 M2 search test list. Each query is what a listener might type; expected names the right show by the start of its title and part of its publisher name (compared case- and punctuation-insensitively). 43 expectations were written before any search was recorded. 7 (marked correctedAfterRecording) were changed after recording because the publisher or title had changed; each was checked against the show's Apple listing and feed, but that check used the recorded data, so the owner should confirm them. The resolver must put the expected show first for at least 45 of 50. Recorded iTunes Search responses (2026-09-28, limit 15, country us) are in itunes-responses/<query-slug>.json.",
  "names": [
   {
    "query": "the daily",
@@ -72,7 +72,8 @@
    "expectedTitle": "Pod Save America",
    "expectedArtist": "Pod Save America",
    "tier": "popular",
-   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed"
+   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed",
+   "correctedAfterRecording": true
   },
   {
    "query": "planet money",
@@ -91,7 +92,8 @@
    "expectedTitle": "Morbid",
    "expectedArtist": "Alaina Urquhart",
    "tier": "popular",
-   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed"
+   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed",
+   "correctedAfterRecording": true
   },
   {
    "query": "lex fridman",
@@ -188,7 +190,8 @@
    "expectedTitle": "Omnibus",
    "expectedArtist": "Omnibus",
    "tier": "niche",
-   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed"
+   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed",
+   "correctedAfterRecording": true
   },
   {
    "query": "accidental tech podcast",
@@ -255,7 +258,8 @@
    "expectedTitle": "Sean Carroll's Mindscape",
    "expectedArtist": "Sean Carroll",
    "tier": "niche",
-   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed"
+   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed",
+   "correctedAfterRecording": true
   },
   {
    "query": "econtalk",
@@ -280,7 +284,8 @@
    "expectedTitle": "Heavyweight",
    "expectedArtist": "Pushkin Industries",
    "tier": "niche",
-   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed"
+   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed",
+   "correctedAfterRecording": true
   },
   {
    "query": "search engine pj vogt",
@@ -293,14 +298,16 @@
    "expectedTitle": "Tides of History",
    "expectedArtist": "Patrick Wyman",
    "tier": "niche",
-   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed"
+   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed",
+   "correctedAfterRecording": true
   },
   {
    "query": "fall of civilizations",
    "expectedTitle": "Fall of Civilizations",
    "expectedArtist": "Fall of Civilizations",
    "tier": "niche",
-   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed"
+   "note": "Expectation corrected 2026-09-28 after confirming the show's current publisher/title in its Apple listing and feed",
+   "correctedAfterRecording": true
   },
   {
    "query": "articles of interest",

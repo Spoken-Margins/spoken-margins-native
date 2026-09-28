@@ -47,18 +47,23 @@ final class OPMLTests: XCTestCase {
         let hello = try XCTUnwrap(preview.toFollow.first { $0.title == "Hello Internet" })
         XCTAssertEqual(hello.feed?.url, "https://www.hellointernet.fm/podcast?format=rss")
         XCTAssertTrue(hello.reason.contains("https"))
+        XCTAssertEqual(hello.confidence, .likely, "an http feed rewritten to https is a guess, not the feed itself")
         let patron = try XCTUnwrap(preview.toFollow.first { $0.title == "Patron Feed" })
         XCTAssertEqual(patron.feed?.isPrivate, true, "a private feed can be followed but stays on the device")
     }
 
     func testHostileAndWrongFilesFailClosed() throws {
+        let marker = "ENTITY-MARKER-\(UUID().uuidString)"
+        let secretFile = FileManager.default.temporaryDirectory.appendingPathComponent("opml-entity-\(UUID().uuidString).txt")
+        try marker.write(to: secretFile, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: secretFile) }
         let entity = Data("""
         <?xml version="1.0"?>
-        <!DOCTYPE opml [<!ENTITY secret SYSTEM "file:///etc/passwd">]>
-        <opml version="2.0"><body><outline type="rss" text="&secret;" xmlUrl="https://example.com/feed.xml"/></body></opml>
+        <!DOCTYPE opml [<!ENTITY secret SYSTEM "\(secretFile.absoluteString)">]>
+        <opml version="2.0"><head><title>&secret;</title></head><body><outline type="rss" text="Feed" xmlUrl="https://example.com/feed.xml"/></body></opml>
         """.utf8)
         if let document = try? OPMLParser.parse(entity) {
-            XCTAssertFalse(document.feeds.contains { $0.title.contains("root:") }, "external entities are never resolved")
+            XCTAssertFalse(document.title?.contains(marker) ?? false, "external entities are never resolved")
         }
 
         let deep = Data(("<opml><body>" + String(repeating: "<outline text=\"x\">", count: 40) + String(repeating: "</outline>", count: 40) + "</body></opml>").utf8)

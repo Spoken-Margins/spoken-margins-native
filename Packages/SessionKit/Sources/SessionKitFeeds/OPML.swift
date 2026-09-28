@@ -51,6 +51,7 @@ public enum OPMLParser {
         let delegate = OPMLDelegate(limits: limits)
         let parser = XMLParser(data: data)
         parser.shouldResolveExternalEntities = false
+        parser.externalEntityResolvingPolicy = .never
         parser.delegate = delegate
         let finished = parser.parse()
         if let failure = delegate.failure { throw failure }
@@ -161,6 +162,10 @@ public struct OPMLImportPreview: Equatable, Sendable {
     /// decides from the feed's items, as it does for any link.
     public var toFollow: [SourceCandidate]
     /// Feeds already followed, matched by feed URL (scheme and host case, http/https and a trailing slash ignored).
+    /// Known gap: a follow stores the feed's own self link, which can differ from the URL it was
+    /// followed from (a moved host, an old redirect). Such a feed shows as new here; following it
+    /// again updates the same subscription rather than adding one. Matching both needs the
+    /// followed-from URL stored with the follow (a storage change, raised on #187).
     public var alreadyFollowed: [OPMLFeed]
     /// Repeats of a feed earlier in the same file.
     public var duplicatesInFile: [OPMLFeed]
@@ -189,7 +194,9 @@ public enum OPMLImportPlanner {
                 title: feed.title,
                 websiteURL: feed.websiteURL.flatMap { $0.lowercased().hasPrefix("https://") ? $0 : nil },
                 feed: SourceCandidateFeed(url: httpsURL),
-                confidence: .exact,
+                // The file names the feed itself, so it is exact, unless we rewrote http to
+                // https: that guesses the host serves the same feed over https.
+                confidence: httpsURL == feed.feedURL ? .exact : .likely,
                 reason: httpsURL == feed.feedURL
                     ? "Listed in the imported file"
                     : "Listed in the imported file (http link, will be tried over https)",
