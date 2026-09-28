@@ -10,9 +10,10 @@ In a guarded session it blocks (exit 2, reason on stderr):
   killing CoreSimulator, simulator MCP tools, installs and launches on a physical device;
 - simulator test runs: `xcodebuild test|test-without-building`, `verify-tests.py --plan` other
   than fast, and the repo scripts that boot simulators;
-unless the session was started with SM_LANE_ROLE=test-desk. In every guarded session, including
-the Test Desk, it also sends raw `xcodebuild` builds to scripts/xcodebuild-lane, the Mac-wide
-build semaphore.
+unless the session is the Test Desk: opened on <repo>/.claude/worktrees/test-desk, or started
+with SM_LANE_ROLE=test-desk. In every guarded session, including the Test Desk, it also sends raw
+`xcodebuild` builds to scripts/xcodebuild-lane, the Mac-wide build semaphore. Guarded calls are
+logged to ~/Library/Caches/SpokenMarginsLane/guard.log.
 
 Stdlib only and Python 3.9-compatible: it runs under /usr/bin/python3, outside any checkout.
 Anything unexpected fails open, because a crashing hook must not block every project's shell.
@@ -25,15 +26,19 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 
 TEST_DESK_ENV = 'SM_LANE_ROLE'
 TEST_DESK_VALUE = 'test-desk'
+TEST_DESK_FOLDER = os.path.join('.claude', 'worktrees', 'test-desk')
 
 KEYWORDS = ('simctl', 'xcodebuild', 'devicectl', 'verify-tests', 'Simulator', 'smoke-simulator',
             'verify-gate', 'posterboard')
 SEPARATORS = {';', '&&', '||', '|', '&', '(', ')', '|&', ';;'}
 PREFIX_COMMANDS = {'env', 'command', 'exec', 'time', 'nice', 'nohup', 'caffeinate', 'sudo',
                    'timeout', 'gtimeout', 'stdbuf', 'arch', 'xargs'}
+# Options of those wrappers that take a separate value, e.g. `env -u NAME` or `timeout -s KILL`.
+PREFIX_VALUE_OPTIONS = {'-u', '-n', '-s', '-k', '-S', '-C', '-P', '-t', '-w', '-g', '-I', '-L', '-a'}
 SHELLS = {'bash', 'sh', 'zsh', 'dash'}
 PYTHON = re.compile(r'python(\d+(\.\d+)*)?$')
 
@@ -105,7 +110,9 @@ def strip_prefixes(argv: list[str]) -> list[str]:
             argv.pop(0)
             while argv and (argv[0].startswith('-') or re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', argv[0])
                             or re.match(r'^\d+(\.\d+)?[smhd]?$', argv[0])):
-                argv.pop(0)
+                option = argv.pop(0)
+                if option in PREFIX_VALUE_OPTIONS and argv:
+                    argv.pop(0)
         else:
             break
     return argv
@@ -227,27 +234,68 @@ def in_scope(event: dict, repos: list[str]) -> bool:
     return any(place and same_repository(place, repos) for place in places)
 
 
+def project_key(path: str) -> str:
+    """Claude Code's folder name for a project under ~/.claude/projects."""
+    return re.sub(r'[^A-Za-z0-9]', '-', path)
+
+
+def test_desk(event: dict, repos: list[str], environ) -> str | None:
+    """How this session is the Test Desk, or None.
+
+    Either it was started with SM_LANE_ROLE=test-desk (a terminal session), or its project folder,
+    which `cd` can't change, is <repo>/.claude/worktrees/test-desk (a desktop app or terminal
+    session opened on that folder).
+    """
+    if environ.get(TEST_DESK_ENV) == TEST_DESK_VALUE:
+        return TEST_DESK_ENV
+    desks = [os.path.join(os.path.realpath(repo), TEST_DESK_FOLDER) for repo in repos]
+    project = environ.get('CLAUDE_PROJECT_DIR')
+    if project:
+        return 'project folder' if os.path.realpath(project) in desks else None
+    transcript = event.get('transcript_path') or ''
+    if transcript and os.path.basename(os.path.dirname(transcript)) in {project_key(d) for d in desks}:
+        return 'project folder'
+    return None
+
+
+def log_decision(event: dict, found, decision: str, desk: str | None, environ) -> None:
+    """Append guarded calls to a local log, so blocks and Test Desk runs can be audited later."""
+    try:
+        directory = environ.get('SM_LANE_STATE_DIR') or os.path.expanduser('~/Library/Caches/SpokenMarginsLane')
+        os.makedirs(directory, exist_ok=True)
+        with open(os.path.join(directory, 'guard.log'), 'a') as log:
+            log.write(json.dumps({'time': time.strftime('%Y-%m-%dT%H:%M:%S'), 'decision': decision,
+                                  'what': sorted({what for _, what in found}), 'test_desk': desk,
+                                  'session': event.get('session_id'), 'cwd': event.get('cwd'),
+                                  'project_dir': environ.get('CLAUDE_PROJECT_DIR'),
+                                  'transcript_path': event.get('transcript_path')}) + '\n')
+    except (OSError, TypeError, ValueError):
+        pass
+
+
 def decide(event: dict, repos: list[str], environ=None) -> str | None:
     """Return the reason to block this tool call, or None to let it through."""
     environ = os.environ if environ is None else environ
     found = classify_tool(event.get('tool_name') or '', event.get('tool_input') or {})
     if not found or not in_scope(event, repos):
         return None
-    desk = environ.get(TEST_DESK_ENV) == TEST_DESK_VALUE
+    desk = test_desk(event, repos, environ)
     sim = sorted({what for kind, what in found if kind == SIM})
+    reason = None
     if sim and not desk:
-        return (f'Spoken Margins lane guard: blocked {", ".join(sim)}. Only the Test Desk session '
-                f'({TEST_DESK_ENV}={TEST_DESK_VALUE}) boots, installs on or drives simulators, and runs '
-                'simulator test plans, so parallel sessions cannot start a simulator crash flood. Ask the '
-                'lane for a T3/T4 run instead: see .claude/skills/lane-request/SKILL.md and '
-                'docs/workstreams/test-lane.md. Host checks (verify-tests.py --plan fast, swift test) and '
-                'builds through scripts/xcodebuild-lane are allowed.')
-    if any(kind == BUILD for kind, _ in found):
-        return ('Spoken Margins lane guard: run xcodebuild through scripts/xcodebuild-lane with the same '
-                'arguments. It queues for one of the two Mac-wide build slots and uses this worktree\'s '
-                'own DerivedData (.build/dd) unless you pass -derivedDataPath. Information-only calls '
-                '(-version, -list, -showBuildSettings, -exportArchive) may use xcodebuild directly.')
-    return None
+        reason = (f'Spoken Margins lane guard: blocked {", ".join(sim)}. Only the Test Desk session boots, '
+                  'installs on or drives simulators, and runs simulator test plans, so parallel sessions '
+                  'cannot start a simulator crash flood. Ask the lane for a T3/T4 run instead: see '
+                  '.claude/skills/lane-request/SKILL.md and docs/workstreams/test-lane.md. Host checks '
+                  '(verify-tests.py --plan fast, swift test) and builds through scripts/xcodebuild-lane '
+                  'are allowed.')
+    elif any(kind == BUILD for kind, _ in found):
+        reason = ('Spoken Margins lane guard: run xcodebuild through scripts/xcodebuild-lane with the same '
+                  'arguments. It queues for one of the two Mac-wide build slots and uses this worktree\'s '
+                  'own DerivedData (.build/dd) unless you pass -derivedDataPath. Information-only calls '
+                  '(-version, -list, -showBuildSettings, -exportArchive) may use xcodebuild directly.')
+    log_decision(event, found, 'blocked' if reason else 'allowed', desk, environ)
+    return reason
 
 
 def main(argv: list[str]) -> int:
