@@ -35,7 +35,7 @@ TEST_DESK_VALUE = 'test-desk'
 TEST_DESK_SUFFIX = '-test-desk'  # the Test Desk's worktree sits next to the checkout: <repo>-test-desk
 
 KEYWORDS = ('simctl', 'xcodebuild', 'devicectl', 'verify-tests', 'Simulator', 'smoke-simulator',
-            'verify-gate', 'posterboard', 'lane-runner')
+            'verify-gate', 'posterboard', 'lane-runner', 'lane-sim-boot')
 SEPARATORS = {';', '&&', '||', '|', '&', '(', ')', '|&', ';;'}
 PREFIX_COMMANDS = {'env', 'command', 'exec', 'time', 'nice', 'nohup', 'caffeinate', 'sudo',
                    'timeout', 'gtimeout', 'stdbuf', 'arch', 'xargs'}
@@ -57,11 +57,13 @@ XCODEBUILD_NO_BUILD = {'-version', '-list', '-showsdks', '-showBuildSettings', '
 HOST_PLANS = {'fast'}
 SIMULATOR_SCRIPTS = {'smoke-simulator.sh', 'check_posterboard_repair.py', 'verify-gate1.sh',
                      'verify-gate1-routine.sh', 'verify-gate1-closeout.sh', 'verify-gate2.sh',
-                     'lane-runner.py'}  # the lane's own runner job: agents ask for it by label instead
+                     'lane-runner.py',  # the lane's own runner job: agents ask for it by label instead
+                     'lane-sim-boot'}   # the Test Desk's locked boot
 
 SIM = 'simulator'
 BUILD = 'build'
 PROTECTED = 'protected'
+BOOT = 'boot'
 
 
 def strip_heredocs(command: str) -> str:
@@ -123,9 +125,13 @@ def simple_commands(command: str) -> list[list[str]]:
     except ValueError:
         # Unbalanced quotes (often a heredoc body): fall back to plain whitespace splitting per line.
         return [line.split() for line in command.splitlines()]
-    result, current = [], []
+    result, current, target = [], [], False
     for token in tokens:
-        if token in SEPARATORS or set(token) <= set('();<>|&'):
+        if target:  # the file after a redirection (`> out.txt`, `2>&1`) is not a command
+            target = False
+        elif set(token) <= set('<>&') and ('<' in token or '>' in token):
+            target = True
+        elif token in SEPARATORS or set(token) <= set('();<>|&'):
             if current:
                 result.append(current)
             current = []
@@ -190,7 +196,7 @@ def classify_argv(argv: list[str], depth: int = 0) -> list[tuple[str, str]]:
             return []
         if sub in ('erase', 'delete', 'shutdown') and SIMCTL_EVERY_DEVICE & set(rest[1:]):
             return [(PROTECTED, f'simctl {sub} ' + ' '.join(sorted(SIMCTL_EVERY_DEVICE & set(rest[1:]))))]
-        return [(SIM, f'simctl {sub}')]
+        return [(SIM, f'simctl {sub}')] + ([(BOOT, 'raw simctl boot')] if sub == 'boot' else [])
     if program == 'devicectl':
         if rest[:1] == ['list'] or rest[:2] == ['device', 'info'] or not rest or rest[0] in ('help', '--help'):
             return []
@@ -279,8 +285,8 @@ def in_scope(event: dict, repos: list[str], environ) -> bool:
     return any(place and same_repository(place, repos) for place in places)
 
 
-def wrapper_available(event: dict) -> bool:
-    """Whether the worktree this command runs in has scripts/xcodebuild-lane (branches from before it don't)."""
+def wrapper_available(event: dict, name: str = 'xcodebuild-lane') -> bool:
+    """Whether the worktree this command runs in has scripts/<name> (branches from before it don't)."""
     tool_input = event.get('tool_input') or {}
     place = tool_input.get('cwd') if isinstance(tool_input.get('cwd'), str) else event.get('cwd')
     try:
@@ -288,7 +294,7 @@ def wrapper_available(event: dict) -> bool:
                              capture_output=True, text=True, timeout=5).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return False
-    return bool(top) and os.path.exists(os.path.join(top, 'scripts', 'xcodebuild-lane'))
+    return bool(top) and os.path.exists(os.path.join(top, 'scripts', name))
 
 
 def project_key(path: str) -> str:
@@ -351,6 +357,11 @@ def decide(event: dict, repos: list[str], environ=None) -> str | None:
                   '.claude/skills/lane-request/SKILL.md and docs/workstreams/test-lane.md. Host checks '
                   '(verify-tests.py --plan fast, swift test) and builds through scripts/xcodebuild-lane '
                   'are allowed.')
+    elif any(kind == BOOT for kind, _ in found) and wrapper_available(event, 'lane-sim-boot'):
+        reason = ('Spoken Margins lane guard: boot simulators with `scripts/lane-sim-boot <udid>`. It waits for the '
+                  'Mac-wide simulator-boot lock, boots, and waits until the device is ready: two simulators booting '
+                  'at once crash-flooded SpringBoard onto the owner\'s screen (#184). Never let xcodebuild boot a '
+                  'shut-down simulator by itself.')
     elif any(kind == BUILD for kind, _ in found) and wrapper_available(event):
         reason = ('Spoken Margins lane guard: run xcodebuild through scripts/xcodebuild-lane with the same '
                   'arguments. It queues for one of the two Mac-wide build slots and uses this worktree\'s '

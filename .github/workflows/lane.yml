@@ -2,13 +2,22 @@
 # docs/workstreams/test-lane.md for the request and report formats, and scripts/lane-runner.py.
 #
 # A stream asks by commenting `/lane T2` or `/lane T3` on its PR into next and adding the
-# lane:queued label. Pull-request events are the trigger because comment events only run workflows
-# from the default branch (main), which the lane doesn't touch.
+# lane:queued label.
+#
+# Trigger: pull_request. GitHub builds these runs from the PR's merge ref, which it doesn't refresh
+# when next moves, so a PR last pushed before this file reached next gets no run (#221) until it
+# merges next and pushes; a PR that conflicts with next gets no run either. The other triggers
+# don't help: comment events and pull_request_target always use the default branch's (main's)
+# copy of this file, and main doesn't carry it.
+# The job checks out the PR head, takes lane-runner.py from the base branch, and lets it merge the
+# newest base in itself, so a report always tests the PR against the current next.
+#
+# `lane-check/**` bases exist only to test a change to the lane before it reaches next.
 name: lane
 
 on:
   pull_request:
-    branches: [next]
+    branches: [next, 'lane-check/**']
     types: [labeled, synchronize, reopened]
 
 permissions:
@@ -30,22 +39,27 @@ jobs:
       group: lane-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      # Event values reach the shell only through these variables, always quoted.
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+      RUN_ID: ${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Take the lane runner from the base branch
+        run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
       - name: Run the request
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
         run: >-
-          /usr/bin/python3 scripts/lane-runner.py --pr ${{ github.event.pull_request.number }}
-          --event-head ${{ github.event.pull_request.head.sha }} --merge-sha ${{ github.sha }}
-          --run-id ${{ github.run_id }}
+          /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
+          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF"
       - name: Tidy up after a cancelled or failed run
         if: failure() || cancelled()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
         run: >-
-          /usr/bin/python3 scripts/lane-runner.py --cleanup --pr ${{ github.event.pull_request.number }}
-          --event-head ${{ github.event.pull_request.head.sha }} --merge-sha ${{ github.sha }}
-          --run-id ${{ github.run_id }}
+          /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --cleanup --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
+          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF"
