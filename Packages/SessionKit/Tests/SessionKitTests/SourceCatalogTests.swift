@@ -98,15 +98,16 @@ final class SourceCatalogTests: XCTestCase {
     }
 
     func testValidatorKeepsPublicFeedsThatTheShareablePolicyWouldWithhold() throws {
-        // Amperwave (CBS, Audacy) feed paths end in 32 hex digits, which the packet
-        // policy treats as a possible secret. Seven charted shows use it.
+        // A feed path ending in 32 hex digits looks like a secret to the packet policy.
+        // Amperwave's public feeds are now exempt (#209), so this uses the same shape on
+        // another host, which the policy still withholds. The catalog keeps it anyway.
         var catalog = try Self.fixtureCatalog()
-        var amperwave = catalog.entries[0]
-        amperwave.id = "amperwave"
-        amperwave.feedURL = "https://rss.amperwave.net/v2/feed/audacynetwork/496099a4061493caac75b71a6c26b8fb"
-        catalog.entries.append(amperwave)
-        XCTAssertNil(ShareableLinkPolicy.shareableLink(amperwave.feedURL))
-        XCTAssertTrue(try SourceCatalogValidator.validated(catalog).entries.contains { $0.id == "amperwave" })
+        var hexPath = catalog.entries[0]
+        hexPath.id = "hex-path"
+        hexPath.feedURL = "https://feeds.example.com/podcast/496099a4061493caac75b71a6c26b8fb"
+        catalog.entries.append(hexPath)
+        XCTAssertNil(ShareableLinkPolicy.shareableLink(hexPath.feedURL))
+        XCTAssertTrue(try SourceCatalogValidator.validated(catalog).entries.contains { $0.id == "hex-path" })
     }
 
     func testValidatorRejectsANewerSchemaVersionAndACatalogWithNothingFollowable() throws {

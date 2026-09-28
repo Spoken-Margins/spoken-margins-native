@@ -34,6 +34,11 @@ public enum ShareableLinkPolicy {
         "memberful.com", "memberfulcontent.com"
     ]
 
+    /// Public podcast feed hosts whose feed paths end in a hyphenless 32-hex identifier (#209).
+    /// Only that exact shape is exempt there; every other check still applies. Scoped by host
+    /// because the same shape elsewhere could be a private token.
+    private static let publicHexIdentifierFeedHosts = ["rss.amperwave.net"]
+
     private static let privatePathMarkers: Set<String> = [
         "private", "premium", "paid", "subscriber", "subscribers",
         "member", "members", "patron", "patrons", "supporter", "supporters"
@@ -52,9 +57,12 @@ public enum ShareableLinkPolicy {
             return false
         }
         let segments = components.percentEncodedPath.split(separator: "/").map(String.init)
+        let allowsHexIdentifiers = publicHexIdentifierFeedHosts.contains(host)
         for segment in segments {
             let stem = segment.split(separator: ".", maxSplits: 1).first.map(String.init) ?? segment
-            if privatePathMarkers.contains(stem.lowercased()) || looksLikeSecret(stem) { return false }
+            if privatePathMarkers.contains(stem.lowercased()) { return false }
+            if allowsHexIdentifiers, isHyphenlessUUID(stem) { continue }
+            if looksLikeSecret(stem) { return false }
         }
         for item in components.queryItems ?? [] {
             let name = item.name.lowercased()
@@ -72,6 +80,10 @@ public enum ShareableLinkPolicy {
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
         guard trimmed.unicodeScalars.allSatisfy(allowed.contains) else { return false }
         return trimmed.contains(where: \.isLetter) && trimmed.contains(where: \.isNumber)
+    }
+
+    private static func isHyphenlessUUID(_ value: String) -> Bool {
+        value.count == 32 && value.unicodeScalars.allSatisfy { CharacterSet(charactersIn: "0123456789abcdefABCDEF").contains($0) }
     }
 
     private static func looksLikeLink(_ value: String) -> Bool {
