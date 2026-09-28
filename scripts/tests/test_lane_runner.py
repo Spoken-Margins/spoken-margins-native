@@ -69,18 +69,20 @@ class RequestTests(unittest.TestCase):
         self.assertEqual(lane.latest_request(comments)['tier'], 'T3')
 
     def test_identical_requests_are_recognised_by_the_report_marker(self):
-        wanted = lane.identity('T3', HEAD, ['B', 'A'])
+        wanted = lane.identity('T3', HEAD, NEWER, ['B', 'A'])
         body = lane.report('pr1-r1', 'PASS', HEAD, NEWER, 'T3', 'x', 1, 'A', [], 'none', '/e', 'owner', wanted)
-        self.assertEqual(lane.earlier_report([comment(body, url='u1')], lane.identity('T3', HEAD, ['A', 'B'])), 'u1')
-        self.assertIsNone(lane.earlier_report([comment(body)], lane.identity('T3', NEWER, ['A', 'B'])))
-        self.assertIsNone(lane.earlier_report([comment(body)], lane.identity('T2', HEAD, [])))
+        self.assertEqual(lane.earlier_report([comment(body, url='u1')], lane.identity('T3', HEAD, NEWER, ['A', 'B'])), 'u1')
+        self.assertIsNone(lane.earlier_report([comment(body)], lane.identity('T3', NEWER, NEWER, ['A', 'B'])))
+        self.assertIsNone(lane.earlier_report([comment(body)], lane.identity('T2', HEAD, NEWER, [])))
+        # Same head, but next (or the lane) moved: a new merge commit, so it runs again.
+        self.assertIsNone(lane.earlier_report([comment(body)], lane.identity('T3', HEAD, 'c' * 40, ['A', 'B'])))
 
 
 class ReportTests(unittest.TestCase):
     def test_report_matches_the_contract_header_and_lines(self):
         body = lane.report('pr7-r9', 'FAIL', HEAD, NEWER, 'T2', 'no simulator (compile only)', 75,
                            'simulator build (pass), device build (fail)', ['device build — expected: …'],
-                           'none', '/ev/pr7-r9', 'journeys (T4)', lane.identity('T2', HEAD, []))
+                           'none', '/ev/pr7-r9', 'journeys (T4)', lane.identity('T2', HEAD, NEWER, []))
         lines = body.splitlines()
         self.assertEqual(lines[0], 'Lane report pr7-r9 — FAIL')
         self.assertEqual(lines[1], f'commit {HEAD[:7]} (tested merged into next as {NEWER[:7]}) · tier T2 · '
@@ -95,7 +97,9 @@ class ReportTests(unittest.TestCase):
 
             def fake(command, stdout, **_):
                 if 'generic/platform=iOS' in command:
-                    stdout.write('Foo.swift:3:1: error: cannot find Bar in scope\n')
+                    self.assertIn('CODE_SIGNING_ALLOWED=NO', command)  # the runner can't reach the keychain
+                    stdout.write('Foo.swift:3:1: error: cannot find Bar in scope\n** BUILD FAILED **\n\n'
+                                 'The following build commands failed:\n\tCompileSwift Foo.swift\n(1 failure)\n\n')
                     return subprocess.CompletedProcess(command, 65)
                 return subprocess.CompletedProcess(command, 0)
 
@@ -103,6 +107,7 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(verdict, 'FAIL')
             self.assertEqual(ran, 'simulator build (pass), device build (fail)')
             self.assertTrue(any('cannot find Bar' in line for line in details))
+            self.assertTrue(any('failed: CompileSwift Foo.swift' in line for line in details))
             verdict, _, _ = lane.run_t2(evidence, runner=lambda command, **_: subprocess.CompletedProcess(command, 0))
             self.assertEqual(verdict, 'PASS')
 

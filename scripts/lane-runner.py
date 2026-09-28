@@ -8,7 +8,7 @@ and adding the lane:queued label. Formats: docs/workstreams/test-lane.md.
 - T4 and T5 requests belong to the Test Desk and are left alone.
 - The newest commit wins: if the PR moved on since this run was queued, a newer run tests it.
 - An identical request (same commit, tier and tests) that already has a report runs once.
-- T2 builds for simulator and device through scripts/xcodebuild-lane.
+- T2 builds for simulator and device (unsigned) through scripts/xcodebuild-lane.
 - T3 runs the named app-hosted tests through verify-tests.py on a temporary iOS 26 simulator,
   created for the job and deleted afterwards (iOS 27's Apple Intelligence services crash-flood
   on this Mac, #184).
@@ -37,8 +37,10 @@ QUEUED, RUNNING, DONE = 'lane:queued', 'lane:running', 'lane:done'
 RUNNER_TIERS = ('T2', 'T3')
 APP_TEST_TARGET = 'SpokenMarginsAppTests'
 PLANS = {'app': 'AppBehavior', 'adapters': 'AudioAdapters'}
+# The device build compiles without signing: the runner is a background service with no access to
+# the login keychain's signing key (errSecInternalComponent), and signing is a release-archive check.
 T2_BUILDS = (('simulator', ["-destination", "generic/platform=iOS Simulator", "build-for-testing"]),
-             ('device', ["-destination", "generic/platform=iOS", "build"]))
+             ('device', ["-destination", "generic/platform=iOS", "CODE_SIGNING_ALLOWED=NO", "build"]))
 BUILD_TIMEOUT = 1800
 T3_TIMEOUT = 3600
 T3_IOS_MAJOR = 26
@@ -78,8 +80,9 @@ def latest_request(comments: list[dict]) -> dict | None:
     return None
 
 
-def identity(tier: str, commit: str, tests: list[str]) -> dict:
-    return {'tier': tier, 'commit': commit, 'tests': sorted(tests)}
+def identity(tier: str, commit: str, merge: str, tests: list[str]) -> dict:
+    """What a report covers: the PR head as merged into next (so a changed next or lane runs again)."""
+    return {'tier': tier, 'commit': commit, 'merge': merge, 'tests': sorted(tests)}
 
 
 def earlier_report(comments: list[dict], wanted: dict) -> str | None:
@@ -121,7 +124,13 @@ def first_errors(log: Path, limit: int = 5) -> list[str]:
         text = log.read_text(errors='replace')
     except OSError:
         return []
-    found = [line.strip() for line in text.splitlines() if ' error: ' in line or line.startswith('error:')]
+    lines = text.splitlines()
+    found = [line.strip() for line in lines if ' error: ' in line or line.startswith('error:') or 'errSec' in line]
+    if 'The following build commands failed:' in lines:
+        for line in lines[lines.index('The following build commands failed:') + 1:]:
+            if not line.strip():
+                break
+            found.append('failed: ' + line.strip())
     return list(dict.fromkeys(found))[:limit]
 
 
@@ -337,7 +346,7 @@ def main(argv=None) -> int:
     if request['tier'] not in RUNNER_TIERS:
         print(f'{request["tier"]} requests are the Test Desk\'s; leaving it queued.')
         return 0
-    wanted = identity(request['tier'], head, request['tests'])
+    wanted = identity(request['tier'], head, args.merge_sha, request['tests'])
     done_before = earlier_report(comments, wanted)
     if done_before:
         github.comment(f'Lane: identical {request["tier"]} request for {head[:7]} already reported: {done_before}')
