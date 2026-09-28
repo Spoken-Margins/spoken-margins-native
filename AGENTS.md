@@ -6,10 +6,10 @@ Spoken Margins is a native iPhone/iPad listening app (iOS/iPadOS 26+). Listeners
 
 Replace this section when the focus changes; do not append to it.
 
-- **Baseline:** Build 29, tag `testflight/0.1-build-29` (`fcc4974`), is the last shipped build (internal TestFlight, 2026-09-25). `main` points at it plus docs-only commits.
-- **Working branch:** start a feature branch off `main` for Build 30 work. `anchor-reliability` is merged into `main`.
-- **Goal:** shared podcast Margins land at the right place for the recipient. Device capture and placement are owner-validated on Build 29; remaining work and status: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
-- **Build 30 candidates:** stream source context (#156), "Play this moment" (#159), jump to an unplaced shared Margin (#158), the one-handed reach pass (#141, #145-#149, #151).
+- **Baseline:** Build 29, tag `testflight/0.1-build-29` (`fcc4974`), is the last shipped build (internal TestFlight, 2026-09-25).
+- **Parallel workstreams:** work is split into streams, each with a brief, in [docs/workstreams/](docs/workstreams/README.md). Start there: it lists the streams, what gates what, and the first testable build (Build 30).
+- **Working branch:** streams branch `ws/<id>` from `next` and open PRs into `next`. Only the owner moves `main`. Build 30 work already on branches `play-this-moment` (#156, #158, #159, #166) and `private-feed-urls` (#168) goes into `next` first.
+- **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
   - `codex/desktop`: macOS companion prototype.
@@ -30,9 +30,9 @@ Replace this section when the focus changes; do not append to it.
 
 ## How to work
 
-- **One agent, one change at a time.** Don't spawn manager, implementer and auditor chains. Use sub-agents only for read-only research.
+- **One agent per stream, one change at a time within it.** Streams run in parallel only as laid out in [docs/workstreams/](docs/workstreams/README.md). Don't spawn manager, implementer and auditor chains. Use sub-agents only for read-only research and for a fresh-context review of your own diff.
 - **Small, verified commits.** Each commit is one logical change with a message that says what was wrong and why the change fixes it. The commit message and PR description are the record, so don't write separate handoff, audit or status files for routine work.
-- **Branches.** Work on a feature branch off the baseline. Merging to `main`, pushing `main`, archiving, uploading and distributing are the owner's decisions; ask first.
+- **Branches.** Work on your stream's branch off `next`. Merging to `main`, pushing `main`, archiving, uploading and distributing are the owner's decisions; ask first.
 - **Don't grow `Gate1AppModel`.** Put new logic in a focused type, in SessionKit when it can be host-tested, and call it from the model. In particular, don't add another "should the source resume" flag or another playback state machine.
 - **Keep packets compatible.** Packets exported by a new build must import into the last shipped build unless the owner explicitly accepts a break. Only require a new manifest capability when the packet actually uses the feature.
 - **Protect owner data.** Never reset, reseed or delete the owner's Library or recordings. Storage changes must let the previous build still open the database.
@@ -43,6 +43,8 @@ Replace this section when the focus changes; do not append to it.
 ## Verification
 
 Tests that pass while the app is broken usually fake the exact boundary that broke: audio sessions, players, file paths across app containers, network responses. Verify in three layers, and don't let a lower layer stand in for a higher one.
+
+While parallel streams are running, pick the lowest tier that covers your change from [docs/workstreams/test-lane.md](docs/workstreams/test-lane.md). Anything that boots a simulator (`--plan app`, journeys) goes through the test lane, not your own session.
 
 1. **Component tests (host, fast).** This is the default loop for every change: `.venv/bin/python scripts/verify-tests.py --plan fast`. It runs the SessionKit suite, contract validators and browser suites.
    - Write tests that can fail for the bug they name. Run a new regression test once without the fix and confirm it fails.
