@@ -8,6 +8,9 @@ import XCTest
 final class CatalogDrawerTests: XCTestCase {
     private final class FollowLog {
         var feeds: [String] = []
+        var subscriptions: [FeedSubscription] = []
+        /// Feeds that settle on another URL once followed.
+        var moves: [String: String] = [:]
         var failing = false
     }
 
@@ -22,10 +25,17 @@ final class CatalogDrawerTests: XCTestCase {
         return CatalogDrawerModel(
             store: store,
             defaults: defaults,
-            followedFeedURLs: { log.feeds },
+            subscriptions: { log.subscriptions },
             follow: { feedURL in
                 if log.failing { throw URLError(.timedOut) }
                 log.feeds.append(feedURL)
+                let sourceId = "source-\(log.feeds.count)"
+                let settled = log.moves[feedURL] ?? feedURL
+                log.subscriptions.append(FeedSubscription(
+                    id: "subscription-\(log.feeds.count)",
+                    source: SourceIdentity(id: sourceId, kind: .podcastFeed, canonicalURL: settled, host: URL(string: settled)?.host ?? "")
+                ))
+                return sourceId
             }
         )
     }
@@ -61,6 +71,26 @@ final class CatalogDrawerTests: XCTestCase {
         let again = try makeDrawer(defaults: defaults, log: log)
         again.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
         XCTAssertFalse(again.isPresented, "opens by itself only once")
+    }
+
+    /// #224 lane FAIL: after a relaunch, one of five followed shows (its feed had moved) showed
+    /// "Follow" again. The drawer keeps the followed source's id, not only the feed URL.
+    func testRelaunchStillShowsAShowWhoseFeedMovedAsFollowed() async throws {
+        let defaults = try freshDefaults()
+        let log = FollowLog()
+        let drawer = try makeDrawer(defaults: defaults, log: log)
+        await drawer.load()
+        let entry = try XCTUnwrap(drawer.entries.first)
+        log.moves[entry.feedURL] = "https://feeds.example.net/moved/feed.xml"
+        drawer.toggleFollow(entry)
+        for _ in 0..<100 where drawer.followedCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(drawer.state(for: entry), .followed)
+
+        let relaunched = try makeDrawer(defaults: defaults, log: log)
+        await relaunched.load()
+        XCTAssertEqual(relaunched.state(for: entry), .followed, "still followed after a relaunch")
+        log.subscriptions.removeAll()
+        XCTAssertNil(relaunched.state(for: entry), "unfollowed in Following: shows Follow again")
     }
 
     func testSubjectFilterAndFailedFollowStayOnTheRow() async throws {

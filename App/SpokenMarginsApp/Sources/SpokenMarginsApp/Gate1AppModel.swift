@@ -15647,17 +15647,22 @@ final class Gate1AppModel: ObservableObject {
 
     /// B1 drawer: follows a catalog feed (always a public https feed) in one tap. Throws so the
     /// drawer can show the failure on the row.
-    func followCatalogFeed(_ feedURL: String) async throws {
+    /// Returns the followed source's id, which the drawer keeps: the feed can settle on another URL.
+    func followCatalogFeed(_ feedURL: String) async throws -> String {
         let store = try requireStore()
         let coordinator = followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
         followedSourceCoordinator = coordinator
         guard let candidate = try await coordinator.discover(urlString: feedURL).first else {
             throw FollowedSourceError.noFeedCandidates
         }
-        if try !store.loadFeedSubscriptions().contains(where: { $0.source.id == candidate.source.id }) {
-            _ = try await coordinator.follow(candidate: candidate)
+        let sourceId: String
+        if let existing = try store.loadFeedSubscriptions().first(where: { $0.source.id == candidate.source.id }) {
+            sourceId = existing.source.id
+        } else {
+            sourceId = try await coordinator.follow(candidate: candidate).source.id
         }
         await refreshFollowedSources(force: false)
+        return sourceId
     }
 
     func followSourceCandidate(_ candidate: SourceCandidateEvidence) {

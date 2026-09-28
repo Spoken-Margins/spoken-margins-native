@@ -13,6 +13,8 @@ final class CatalogDrawerModel: ObservableObject {
     }
 
     static let seenKey = "catalogDrawerSeenV1"
+    /// Catalog entry id → followed source id, recorded when the drawer follows a show.
+    static let followedSourcesKey = "catalogDrawerFollowedSourcesV1"
 
     @Published var isPresented = false
     @Published var selectedSubject: String?
@@ -21,20 +23,20 @@ final class CatalogDrawerModel: ObservableObject {
     @Published private(set) var followStates: [String: FollowState] = [:]
 
     private let store: SourceCatalogStore?
-    private let follow: @MainActor (String) async throws -> Void
-    private let followedFeedURLs: @MainActor () -> [String]
+    private let follow: @MainActor (String) async throws -> String
+    private let subscriptions: @MainActor () -> [FeedSubscription]
     private let defaults: UserDefaults
     private var hasLoaded = false
 
     init(
         store: SourceCatalogStore?,
         defaults: UserDefaults = .standard,
-        followedFeedURLs: @escaping @MainActor () -> [String],
-        follow: @escaping @MainActor (String) async throws -> Void
+        subscriptions: @escaping @MainActor () -> [FeedSubscription],
+        follow: @escaping @MainActor (String) async throws -> String
     ) {
         self.store = store
         self.defaults = defaults
-        self.followedFeedURLs = followedFeedURLs
+        self.subscriptions = subscriptions
         self.follow = follow
     }
 
@@ -102,8 +104,16 @@ final class CatalogDrawerModel: ObservableObject {
 
     func state(for entry: SourceCatalogEntry) -> FollowState? {
         if let state = followStates[entry.id] { return state }
-        let followed = followedFeedURLs().contains { catalog?.entry(matchingFeedURL: $0)?.id == entry.id }
-        return followed ? .followed : nil
+        guard let catalog else { return nil }
+        let recorded = (defaults.dictionary(forKey: Self.followedSourcesKey) as? [String: String])?[entry.id]
+        return CatalogFollowState.isFollowed(entry, in: catalog, recordedSourceId: recorded, subscriptions: subscriptions())
+            ? .followed : nil
+    }
+
+    private func recordFollowedSource(_ sourceId: String, for entry: SourceCatalogEntry) {
+        var recorded = defaults.dictionary(forKey: Self.followedSourcesKey) as? [String: String] ?? [:]
+        recorded[entry.id] = sourceId
+        defaults.set(recorded, forKey: Self.followedSourcesKey)
     }
 
     func toggleFollow(_ entry: SourceCatalogEntry) {
@@ -117,7 +127,8 @@ final class CatalogDrawerModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await self.follow(entry.feedURL)
+                let sourceId = try await self.follow(entry.feedURL)
+                self.recordFollowedSource(sourceId, for: entry)
                 self.followStates[entry.id] = .followed
             } catch {
                 self.followStates[entry.id] = .failed(error.localizedDescription)

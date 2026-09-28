@@ -65,8 +65,11 @@ struct SpokenMarginsApp: App {
         )
         _catalogDrawer = StateObject(wrappedValue: CatalogDrawerModel(
             store: CatalogDrawerModel.makeStore(),
-            followedFeedURLs: { [weak model] in model?.feedSubscriptions.map(\.source.canonicalURL) ?? [] },
-            follow: { [weak model] feedURL in try await model?.followCatalogFeed(feedURL) }
+            subscriptions: { [weak model] in model?.feedSubscriptions ?? [] },
+            follow: { [weak model] feedURL in
+                guard let model else { throw CancellationError() }
+                return try await model.followCatalogFeed(feedURL)
+            }
         ))
     }
 

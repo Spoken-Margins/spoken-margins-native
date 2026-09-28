@@ -25,6 +25,28 @@ final class FirstRunCatalogDrawerTests: XCTestCase {
         }
     }
 
+    /// #224 lane: after a relaunch, a show whose feed settled on another URL once followed showed
+    /// "Follow" again in the drawer although Following listed it.
+    func testAShowWhoseFeedMovedStaysFollowedAfterARelaunch() throws {
+        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.bundledSnapshot))
+        let entry = try XCTUnwrap(catalog.entries(forSubject: nil).first)
+        let moved = FeedSubscription(
+            id: "subscription-moved",
+            source: SourceIdentity(id: "source-moved", kind: .podcastFeed, canonicalURL: "https://feeds.example.net/moved/feed.xml", host: "feeds.example.net")
+        )
+        XCTAssertNil(catalog.entry(matchingFeedURL: moved.source.canonicalURL), "URL matching can't find it")
+        XCTAssertTrue(CatalogFollowState.isFollowed(entry, in: catalog, recordedSourceId: "source-moved", subscriptions: [moved]))
+        XCTAssertFalse(CatalogFollowState.isFollowed(entry, in: catalog, recordedSourceId: "source-moved", subscriptions: []),
+                       "unfollowed since: shows Follow again")
+
+        let direct = FeedSubscription(
+            id: "subscription-direct",
+            source: SourceIdentity(id: "source-direct", kind: .podcastFeed, canonicalURL: entry.feedURL, host: "example")
+        )
+        XCTAssertTrue(CatalogFollowState.isFollowed(entry, in: catalog, recordedSourceId: nil, subscriptions: [direct]),
+                      "a show followed another way still matches by feed URL")
+    }
+
     func testDrawerOpensByItselfOnlyOnAFreshInstallAndOnlyOnce() {
         XCTAssertTrue(FirstRunCatalogDrawerPolicy.opensAutomatically(libraryWasEmptyAtLaunch: true, hasSeenDrawer: false, followedSourceCount: 0))
         XCTAssertFalse(FirstRunCatalogDrawerPolicy.opensAutomatically(libraryWasEmptyAtLaunch: true, hasSeenDrawer: true, followedSourceCount: 0), "once")
