@@ -66,6 +66,10 @@ docs/workstreams/test-lane.md, and "The lead session" in docs/workstreams/kickof
    `gh pr merge --merge --match-head-commit <full sha>`. A conflict or a failing
    combination goes back to the owning session with the exact failing test. Squash
    only where the PR says so.
+   A FAIL counts as passed for that PR only when the failing step is in code the PR
+   doesn't change: the report shows the files aren't in its diff, or the same step
+   fails on a control build without the PR. File the failure as its own issue and link
+   it from the PR (owner's standing rule, 2026-09-28).
 4. Keep streams moving. Relay owner answers to the stream as a message, and quote
    them on its tracking issue. Wake idle cloud streams whose gate has opened. Tell
    the Test Desk your session's name, and ask it to message "PASS #<pr> <sha>"
