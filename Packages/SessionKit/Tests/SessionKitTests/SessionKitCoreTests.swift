@@ -548,6 +548,30 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(try result.store.loadSession(id: result.session.id)?.position, result.session.position)
     }
 
+    func testAPDFSharedFromAURLWithoutAPdfExtensionKeepsItsV2Document() throws {
+        // #220 T4: Safari's share of https://arxiv.org/pdf/2607.28282v1 imported v2 text
+        // without its document (no roles, no chapters), because the URL has no ".pdf".
+        let repo = InMemorySessionRepository()
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "pdf", displayName: "PDF", capabilities: ["sync": ["canonical_persistence"]]), repository: repo)
+        let document = StructuredDocumentBuilder.build(lines: [
+            StructuredDocumentLine(text: "Introduction", role: .heading, pageIndex: 0, level: 1),
+            StructuredDocumentLine(text: "Listening is slower than reading.", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "Methods", role: .heading, pageIndex: 1, level: 1),
+            StructuredDocumentLine(text: "We asked twelve researchers.", role: .body, pageIndex: 1),
+        ], engine: "pdfkit_baseline", version: 2, pageCount: 2)
+        let item = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: "https://arxiv.org/pdf/2607.28282v1", title: "Scalable Evaluation"),
+            text: document.text,
+            contentFormat: .plainText,
+            documentStructure: PDFDocumentStructure(extractionEngine: .pdfKit, analysisStatus: .partial, pageCount: 2, analyzedPageCount: 0)
+        ), structuredDocument: document)
+        XCTAssertEqual(item.mediaType, "pdf")
+        XCTAssertEqual(try repo.loadStructuredDocument(itemId: item.id), document)
+        XCTAssertEqual(item.status, "ready")
+        XCTAssertNotNil(try repo.loadListeningMap(itemId: item.id))
+    }
+
     func testExtractionV2PDFIsSpokenPerI14WhilePositionsStayInItemText() throws {
         let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
         defer { try? FileManager.default.removeItem(atPath: path) }

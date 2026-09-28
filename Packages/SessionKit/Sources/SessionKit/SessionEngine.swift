@@ -3378,7 +3378,9 @@ public final class SessionEngine {
     ) throws -> (Item, ListeningMap?, StructuredDocument?) {
         let fallbackTitle = cleanedBrowserTextTitle(handoff.source.title, url: handoff.source.url)
         let sourceExtension = URL(string: handoff.source.url)?.pathExtension.lowercased()
-        let isPDF = handoff.captureMode == .markdownFile && sourceExtension == "pdf"
+        // A v2 document only comes from a PDF, whatever its URL looks like
+        // (https://arxiv.org/pdf/2607.28282v1 has no ".pdf").
+        let isPDF = handoff.captureMode == .markdownFile && (sourceExtension == "pdf" || structuredDocument != nil)
         // A v2 PDF's canonical text is the document's; it isn't parsed as Markdown,
         // so every I13 range indexes Item.text exactly.
         let document = isPDF ? structuredDocument.flatMap { $0.text.isEmpty ? nil : $0 } : nil
@@ -3439,7 +3441,7 @@ public final class SessionEngine {
         let item = Item(
             id: itemId,
             title: title,
-            mediaType: sourceExtension == "pdf" ? "pdf" : "text",
+            mediaType: isPDF || sourceExtension == "pdf" ? "pdf" : "text",
             text: text,
             externalReference: source,
             status: deterministicMap == nil ? "needs_listening_map" : "ready",
