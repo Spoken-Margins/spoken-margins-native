@@ -35,7 +35,7 @@ Measured by walking each path with real clicks at 375×812 and 390×844 in Chrom
 
 "Hold" means press and hold the mic and let go to save; a plain tap opens the recording sheet, and Save makes it two. The first export to a new notes folder adds the Files picker (2 taps, once) in every direction.
 
-The system surfaces are the same in all three: the iOS share sheet (one-line preview of what the recipient gets, private feed link left out), the incoming packet card and the export sheet. That keeps the comparison about navigation and disclosure.
+The system surfaces are the same in all three: the iOS share sheet (one-line preview of what the recipient gets, private feed link left out) and the incoming packet card. Directions 1 and 3 export through a sheet that previews the note; direction 2 saves the note straight to the folder and confirms with a toast. That keeps the comparison about navigation and disclosure.
 
 ## Rebuilding and checking
 

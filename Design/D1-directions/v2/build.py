@@ -3,7 +3,7 @@
 
 Writes two copies of each page:
   Design/D1-directions/v2/<name>.html   full document, opens from the repo or any static host
-  <out>/<name>.html                     the same document, for publishing as a Claude artifact
+  <out>/<name>.html                     fragment (no doctype/head), for publishing as a Claude artifact
 """
 import pathlib, sys
 
@@ -29,5 +29,5 @@ for page in sorted(src.glob("[123]-*.html")):
     (here / page.name).write_text(doc)
     if out:
         out.mkdir(parents=True, exist_ok=True)
-        (out / page.name).write_text(doc)
+        (out / page.name).write_text(text)
     print("built", page.name)
