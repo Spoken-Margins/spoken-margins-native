@@ -1,6 +1,7 @@
 import XCTest
 import SessionKit
 import SessionKitPersistence
+import SessionKitAudio
 @testable import SpokenMarginsApp
 #if canImport(UIKit)
 import UIKit
@@ -771,7 +772,7 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.feedbackEvent?.message, "Source context recovered.")
     }
 
-    func testNativeAudioInterjectionRequestsFullShoulderContext() async throws {
+    func testStreamedMarginContextComesFromTheAudioHeardAroundIt() async throws {
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
             requestId: "ignored",
             status: .playable,
@@ -785,16 +786,15 @@ final class SourceLinkImportTests: XCTestCase {
             )
         ))
         let audio = WindowContextAudioClient()
+        // Timed from the start of the heard file, as the real transcriber reports it.
         let transcriber = RecordingSourceWindowTranscriptionClient(timeline: TranscriptTimeline(
             segments: [
-                MediaTimelineSegment(id: "window-early", startMs: 33_000, endMs: 62_000, text: "Earlier context."),
-                MediaTimelineSegment(id: "window-before", startMs: 63_000, endMs: 122_000, text: "Minute before."),
-                MediaTimelineSegment(id: "window-current", startMs: 122_000, endMs: 124_000, text: "Interjection context."),
-                MediaTimelineSegment(id: "window-after", startMs: 124_000, endMs: 183_000, text: "Minute after."),
-                MediaTimelineSegment(id: "window-late", startMs: 184_000, endMs: 243_000, text: "Later context.")
+                MediaTimelineSegment(id: "window-before", startMs: 0, endMs: 59_000, text: "Minute before."),
+                MediaTimelineSegment(id: "window-current", startMs: 59_000, endMs: 61_000, text: "Interjection context."),
+                MediaTimelineSegment(id: "window-after", startMs: 61_000, endMs: 120_000, text: "Minute after.")
             ],
             chapters: [],
-            durationMs: 300_000
+            durationMs: 120_000
         ))
         let model = Gate1AppModel(
             sourceLinkResolver: resolver,
@@ -809,19 +809,28 @@ final class SourceLinkImportTests: XCTestCase {
         audio.currentMediaTimeValue = 123_000
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
+        // #156: a stream can't be cut after the fact, so nothing is sent to the transcriber until the heard audio arrives.
+        try await waitFor("the Margin to wait for heard audio") {
+            model.marginDiagnostic("sourceWindowTranscription", interjectionId: "ij-001") == "waiting:heard_audio"
+        }
+        let beforeHeard = await transcriber.windowRequestCount()
+        XCTAssertEqual(beforeHeard, 0)
+
+        try deliverHeardWindow(to: model, anchorMs: 123_000, startMs: 63_000, durationMs: 120_000)
         let request = await transcriber.waitForWindowRequest()
         try await waitFor("source window context to attach") {
-            model.marginDiagnostic("sourceWindowTranscription", interjectionId: "ij-001") == "complete:speech_window"
+            model.marginDiagnostic("sourceWindowTranscription", interjectionId: "ij-001") == "complete:heard_audio:3_segments"
         }
 
-        XCTAssertEqual(request.anchorMediaTimeMs, 123_000)
-        XCTAssertEqual(request.windowBeforeMs, 90_000)
+        XCTAssertTrue(request.url.isFileURL, "the heard audio is transcribed from a local file, not the stream")
+        XCTAssertEqual(request.anchorMediaTimeMs, 0)
+        XCTAssertEqual(request.windowBeforeMs, 0)
         XCTAssertEqual(request.windowAfterMs, 120_000)
-        XCTAssertEqual(request.durationMs, 300_000)
-        XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorBefore, "Earlier context. Minute before. Interjection context.")
-        XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorAfter, "Minute after. Later context.")
+        XCTAssertEqual(request.durationMs, 120_000)
+        XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorBefore, "Minute before. Interjection context.")
+        XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorAfter, "Minute after.")
         XCTAssertEqual(model.selectedItem.interjections.first?.anchorContextStatus, .ready)
-        XCTAssertEqual(model.marginDiagnostic("sourceWindowContextProvenance", interjectionId: "ij-001"), "bounded_remote_window")
+        XCTAssertEqual(model.marginDiagnostic("sourceWindowContextProvenance", interjectionId: "ij-001"), "heard_stream_audio")
     }
 
     func testInterjectionTranscriptionFinishesBeforeSourceWindowTranscriptionStarts() async throws {
@@ -860,6 +869,7 @@ final class SourceLinkImportTests: XCTestCase {
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
         await interjectionTranscriber.waitForRequest()
+        try deliverHeardWindow(to: model, anchorMs: 123_000, startMs: 63_000, durationMs: 120_000)
 
         let sourceRequestsBeforeNoteFinished = await sourceTranscriber.windowRequestCount()
         XCTAssertEqual(sourceRequestsBeforeNoteFinished, 0)
@@ -867,7 +877,7 @@ final class SourceLinkImportTests: XCTestCase {
         await interjectionTranscriber.complete(with: "My recorded note.")
         _ = await sourceTranscriber.waitForWindowRequest()
         try await waitFor("both transcription stages to finish") {
-            model.marginDiagnostic("sourceWindowTranscription", interjectionId: "ij-001") == "complete:speech_window"
+            model.marginDiagnostic("sourceWindowTranscription", interjectionId: "ij-001")?.hasPrefix("complete:heard_audio") == true
         }
 
         XCTAssertEqual(model.marginDiagnostic("interjectionTranscription", interjectionId: "ij-001"), "complete")
@@ -1078,6 +1088,7 @@ final class SourceLinkImportTests: XCTestCase {
         audio.currentMediaTimeValue = 123_000
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
+        try deliverHeardWindow(to: model, anchorMs: 123_000, startMs: 63_000, durationMs: 120_000)
         try await waitFor("source window failure to persist") {
             model.selectedItem.interjections.first?.anchorContextStatus == .unavailable
         }
@@ -2528,6 +2539,23 @@ private final class WindowContextAudioClient: AudioPlaybackClient {
             playbackRate: 1,
             anchorConfidence: .mediaTime
         )
+    }
+}
+
+extension SourceLinkImportTests {
+    /// Stands in for the player's audio tap, which these tests don't run: hands the model the audio heard around the
+    /// first Margin (#156). Silent samples are enough; the fake transcriber doesn't read them.
+    func deliverHeardWindow(to model: Gate1AppModel, anchorMs: Int, startMs: Int, durationMs: Int) throws {
+        let margin = try XCTUnwrap(model.selectedItem.interjections.first, "the Margin should be saved before its heard audio arrives")
+        let request = PostResumeAudioSampleRequest(
+            interjectionId: margin.id, sessionId: margin.sessionId, itemId: margin.itemId,
+            anchorMediaTimeMs: anchorMs, targetDurationMs: 11_000
+        )
+        model.handleHeardSourceWindow(HeardAudioWindow(
+            request: request, sampleRate: 1_000,
+            segments: [.init(startMediaTimeMs: startMs, samples: [Float](repeating: 0, count: durationMs))],
+            endReason: "complete"
+        ))
     }
 }
 

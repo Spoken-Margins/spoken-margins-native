@@ -1,0 +1,205 @@
+import Foundation
+import SessionKit
+
+/// A stretch of episode audio the listener actually heard around one Margin, as mono speech-rate samples (#156).
+///
+/// Built from the player's own decoded audio, so it matches the edition (and ads) the listener heard and needs no
+/// network. Segments are contiguous runs; a seek starts a new one.
+public struct HeardAudioWindow: Sendable, Equatable {
+    public struct Segment: Sendable, Equatable {
+        public let startMediaTimeMs: Int
+        public let samples: [Float]
+
+        public init(startMediaTimeMs: Int, samples: [Float]) {
+            self.startMediaTimeMs = startMediaTimeMs
+            self.samples = samples
+        }
+    }
+
+    public let request: PostResumeAudioSampleRequest
+    public let sampleRate: Double
+    public let segments: [Segment]
+    /// Why collection stopped: "complete", "seeked", "stopped".
+    public let endReason: String
+
+    public init(request: PostResumeAudioSampleRequest, sampleRate: Double, segments: [Segment], endReason: String) {
+        self.request = request
+        self.sampleRate = sampleRate
+        self.segments = segments
+        self.endReason = endReason
+    }
+
+    public func durationMs(of segment: Segment) -> Int {
+        Int((Double(segment.samples.count) / sampleRate * 1_000).rounded())
+    }
+
+    public var coversBeforeAnchor: Bool {
+        segments.contains { $0.startMediaTimeMs < request.anchorMediaTimeMs - 1_000 }
+    }
+
+    public var coversAfterAnchor: Bool {
+        segments.contains { $0.startMediaTimeMs + durationMs(of: $0) > request.anchorMediaTimeMs + 1_000 }
+    }
+
+    /// Joins per-segment transcripts (each timed from its own start) into one timeline in episode time.
+    public static func episodeTimeline(_ parts: [(startMediaTimeMs: Int, timeline: MediaTimeline)]) -> MediaTimeline {
+        var segments: [MediaTimelineSegment] = []
+        for (index, part) in parts.enumerated() {
+            for segment in part.timeline.segments {
+                segments.append(MediaTimelineSegment(
+                    id: "heard-\(index)-\(segment.id)",
+                    startMs: segment.startMs + part.startMediaTimeMs,
+                    endMs: segment.endMs + part.startMediaTimeMs,
+                    text: segment.text,
+                    sourceLocator: segment.sourceLocator
+                ))
+            }
+        }
+        return MediaTimeline(segments: segments.sorted { $0.startMs < $1.startMs }, chapters: [])
+    }
+}
+
+/// Keeps the last minute of heard audio and, for each Margin, collects up to a minute after playback resumes (#156).
+///
+/// Runs on the audio tap's thread under the tap's lock, so it only copies samples: no allocation-heavy work beyond
+/// appending, no I/O. The caller downsamples to mono speech rate before appending.
+public struct HeardAudioWindowRecorder: Sendable {
+    public static let beforeMs = 60_000
+    public static let afterMs = 60_000
+    /// Chunks further apart than this aren't one contiguous run (a seek or a dropped buffer).
+    static let contiguityToleranceMs = 250
+
+    private struct Chunk: Sendable {
+        let startMediaTimeMs: Int
+        let samples: [Float]
+    }
+
+    private struct Collecting: Sendable {
+        let request: PostResumeAudioSampleRequest
+        let before: [Chunk]
+        var after: [Chunk] = []
+        var afterSampleCount = 0
+    }
+
+    public let sampleRate: Double
+    private var ring: [Chunk] = []
+    private var ringSampleCount = 0
+    private var collecting: [String: Collecting] = [:]
+
+    public init(sampleRate: Double) {
+        self.sampleRate = sampleRate
+    }
+
+    private var beforeCapacity: Int { Int(sampleRate * Double(Self.beforeMs) / 1_000) }
+    private var afterCapacity: Int { Int(sampleRate * Double(Self.afterMs) / 1_000) }
+
+    public var isCollecting: Bool { !collecting.isEmpty }
+
+    /// Appends heard samples. Returns windows that just reached a full minute after resuming.
+    public mutating func append(samples: [Float], startMediaTimeMs: Int) -> [HeardAudioWindow] {
+        guard !samples.isEmpty else { return [] }
+        let chunk = Chunk(startMediaTimeMs: startMediaTimeMs, samples: samples)
+        ring.append(chunk)
+        ringSampleCount += samples.count
+        while let first = ring.first, ringSampleCount - first.samples.count >= beforeCapacity {
+            ring.removeFirst()
+            ringSampleCount -= first.samples.count
+        }
+        var finished: [HeardAudioWindow] = []
+        for key in Array(collecting.keys) {
+            guard var window = collecting[key] else { continue }
+            window.after.append(chunk)
+            window.afterSampleCount += samples.count
+            if window.afterSampleCount >= afterCapacity {
+                finished.append(makeWindow(window, endReason: "complete"))
+                collecting[key] = nil
+            } else {
+                collecting[key] = window
+            }
+        }
+        return finished
+    }
+
+    /// Called when a Margin finishes, before playback resumes: snapshots the minute before its anchor and starts
+    /// collecting what plays next.
+    public mutating func begin(_ request: PostResumeAudioSampleRequest) {
+        let key = Self.key(request)
+        let before = ring.filter { $0.startMediaTimeMs < request.anchorMediaTimeMs }
+        collecting[key] = Collecting(request: request, before: before)
+    }
+
+    /// A seek ends every window in progress with what it has, and empties the rolling minute.
+    public mutating func noteSeek() -> [HeardAudioWindow] {
+        ring.removeAll()
+        ringSampleCount = 0
+        return finishAll(reason: "seeked")
+    }
+
+    public mutating func finishAll(reason: String) -> [HeardAudioWindow] {
+        let windows = collecting.values.map { makeWindow($0, endReason: reason) }
+        collecting.removeAll()
+        return windows
+    }
+
+    public static func key(_ request: PostResumeAudioSampleRequest) -> String {
+        "\(request.sessionId)::\(request.interjectionId)"
+    }
+
+    private func makeWindow(_ window: Collecting, endReason: String) -> HeardAudioWindow {
+        var segments: [HeardAudioWindow.Segment] = []
+        var runStart: Int?
+        var runSamples: [Float] = []
+        var expectedNextMs: Int?
+        for chunk in window.before + window.after {
+            if let expected = expectedNextMs, abs(chunk.startMediaTimeMs - expected) <= Self.contiguityToleranceMs,
+               runStart != nil {
+                runSamples.append(contentsOf: chunk.samples)
+            } else {
+                if let start = runStart, !runSamples.isEmpty {
+                    segments.append(.init(startMediaTimeMs: start, samples: runSamples))
+                }
+                runStart = chunk.startMediaTimeMs
+                runSamples = chunk.samples
+            }
+            expectedNextMs = chunk.startMediaTimeMs + Int((Double(chunk.samples.count) / sampleRate * 1_000).rounded())
+        }
+        if let start = runStart, !runSamples.isEmpty {
+            segments.append(.init(startMediaTimeMs: start, samples: runSamples))
+        }
+        return HeardAudioWindow(request: window.request, sampleRate: sampleRate, segments: segments, endReason: endReason)
+    }
+}
+
+/// Mixes a decoded float buffer to mono and decimates it to about 16-24 kHz for speech recognition.
+public enum HeardAudioDownsampler {
+    public static func factor(for sampleRate: Double) -> Int {
+        max(1, Int(sampleRate / 16_000))
+    }
+
+    /// `channels` are per-channel sample pointers (deinterleaved) or one interleaved pointer with `stride` channels.
+    public static func mono(
+        channels: [UnsafePointer<Float>],
+        interleavedStride: Int,
+        frameCount: Int,
+        factor: Int
+    ) -> [Float] {
+        guard frameCount >= factor, !channels.isEmpty, factor > 0 else { return [] }
+        let outputCount = frameCount / factor
+        var output = [Float](repeating: 0, count: outputCount)
+        let channelCount = interleavedStride > 1 ? interleavedStride : channels.count
+        let scale = 1 / Float(factor * channelCount)
+        for index in 0..<outputCount {
+            var sum: Float = 0
+            for offset in 0..<factor {
+                let frame = index * factor + offset
+                if interleavedStride > 1 {
+                    for channel in 0..<interleavedStride { sum += channels[0][frame * interleavedStride + channel] }
+                } else {
+                    for pointer in channels { sum += pointer[frame] }
+                }
+            }
+            output[index] = sum * scale
+        }
+        return output
+    }
+}

@@ -93,6 +93,59 @@ final class RealPlayerPodcastEvidenceTests: XCTestCase {
         XCTAssertFalse(capture.signatureData.isEmpty)
     }
 
+    private final class HeardWindows: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [HeardAudioWindow] = []
+        func append(_ value: HeardAudioWindow) { lock.withLock { values.append(value) } }
+        var all: [HeardAudioWindow] { lock.withLock { values } }
+    }
+
+    /// #156: the source-context window for a streamed Margin comes from the audio the tap heard, before and after.
+    func testTapKeepsTheHeardAudioAroundAStreamedMarginForTranscription() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "real-player-heard-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = try Self.writeTestEpisode(to: directory.appending(path: "episode.caf"), seconds: 16)
+        let server = try LoopbackAudioServer(data: Data(contentsOf: fileURL), contentType: "audio/x-caf")
+        defer { server.stop() }
+        let port = try XCTUnwrap(server.waitForPort())
+        let url = try XCTUnwrap(URL(string: "http://127.0.0.1:\(port)/episode.caf"))
+
+        let client = AVPlayerStreamPlaybackClient()
+        try client.setPlaybackVolume(0)
+        let heard = HeardWindows()
+        client.heardSourceWindowHandler = { heard.append($0) }
+        try client.configureMediaContext(PlaybackMediaContext(
+            itemId: "episode", targetType: .transcriptBackedMedia, targetId: "episode-target",
+            title: "Test episode", playbackURL: url.absoluteString, durationMs: 16_000, sourceType: .remoteStream
+        ))
+        try client.play(targetId: "episode-target", fromMediaTimeMs: 0)
+        XCTAssertTrue(spin(until: 5) { client.hasPodcastEvidenceTapOnCurrentItem })
+        XCTAssertTrue(spin(until: 15) { (client.currentMediaTimeMs() ?? 0) >= 7_000 }, "playback did not advance")
+
+        let anchor = try XCTUnwrap(client.currentMediaTimeMs())
+        let request = PostResumeAudioSampleRequest(
+            interjectionId: "ij-001", sessionId: "session", itemId: "episode",
+            anchorMediaTimeMs: anchor, targetDurationMs: 3_000
+        )
+        _ = client.captureBufferedPreInterjectionAudioSample(request)
+        XCTAssertTrue(spin(until: 15) { (client.currentMediaTimeMs() ?? 0) >= anchor + 4_000 })
+        try client.stop()
+
+        XCTAssertTrue(spin(until: 5) { !heard.all.isEmpty }, "stopping must hand over what was heard")
+        let window = try XCTUnwrap(heard.all.first)
+        XCTAssertEqual(window.request, request)
+        XCTAssertEqual(window.endReason, "stopped")
+        XCTAssertTrue(window.coversBeforeAnchor, "the rolling minute before the Margin")
+        XCTAssertTrue(window.coversAfterAnchor, "what played after it")
+        XCTAssertGreaterThanOrEqual(window.sampleRate, 16_000)
+        let first = try XCTUnwrap(window.segments.first)
+        XCTAssertLessThanOrEqual(first.startMediaTimeMs, 1_000, "kept from near the start of playback")
+        let rms = (first.samples.reduce(0) { $0 + $1 * $1 } / Float(max(1, first.samples.count))).squareRoot()
+        XCTAssertGreaterThan(rms, 0.01, "real decoded audio, even with the player muted")
+    }
+
     /// Minimal HTTP/1.1 server with byte-range support, which AVPlayer needs to stream a file progressively.
     private final class LoopbackAudioServer: @unchecked Sendable {
         private let listener: NWListener

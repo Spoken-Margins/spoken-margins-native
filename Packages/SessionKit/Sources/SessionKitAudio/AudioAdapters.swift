@@ -1627,6 +1627,12 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     /// Receives one timing record per media start: how long audio session activation, the start seek and the
     /// wait for "playing" took, and whether the stream was fetched again. Field values are numbers or flags.
     public var playbackStartTraceHandler: (@Sendable ([String: String]) -> Void)?
+    /// Receives a record when the player's clock stops moving while playback is intended, and when it moves
+    /// again (#166). Carries AVPlayer's own state so the log can tell a buffering stall from a frozen clock.
+    public var playbackStallTraceHandler: (@Sendable ([String: String]) -> Void)?
+    private var stallDetector = PlaybackStallDetector()
+    private var stallWatchdog: Timer?
+    private var mediaSeekStartedUptime: TimeInterval?
     #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
     private var postResumeEvidenceTap: MTAudioProcessingTap?
     private var postResumeEvidenceTapContext: PostResumePodcastEvidenceTapContext?
@@ -1634,6 +1640,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var postResumeEvidenceAudioMix: AVAudioMix?
     private var continuousEvidenceTapTracksObservation: NSKeyValueObservation?
     public var postResumePodcastEvidenceHandler: (@Sendable (PostResumePodcastEvidenceCaptureResult) -> Void)?
+    /// Receives the minute before and after each Margin as the listener heard it (#156).
+    public var heardSourceWindowHandler: (@Sendable (HeardAudioWindow) -> Void)?
     #endif
     private let remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)?
     private let interruptionHandler: (@Sendable (AudioPlaybackInterruptionEvent) -> Void)?
@@ -1837,6 +1845,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         player?.play()
         player?.rate = Float(playbackRate)
         publishNowPlaying(isPlaying: true)
+        startStallWatchdog()
         #else
         throw SessionKitError.persistenceFailed("stream_audio_playback_unavailable")
         #endif
@@ -2102,6 +2111,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         interruptionResumePolicy.cancelAutomaticResume()
         paused = true
         player?.pause()
+        stopStallWatchdog()
         #if os(iOS)
         if player != nil, mixesWithOtherAudio, lowersBackgroundAudio { try? PlaybackAudioSessionPolicy.releaseDucking() }
         #endif
@@ -2115,6 +2125,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         interruptionResumePolicy.cancelAutomaticResume()
         invalidatePendingMediaSeek()
         player?.pause()
+        stopStallWatchdog()
         removePlayerStateObserver()
         removeCompletionObserver()
         removeTimeObserver()
@@ -2147,7 +2158,79 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             )
         }
         mediaSeekFailure = nil
+        mediaSeekStartedUptime = ProcessInfo.processInfo.systemUptime
         return mediaSeekLifecycle.begin(targetId: targetId, mediaTimeMs: mediaTimeMs, purpose: purpose)
+    }
+
+    private func startStallWatchdog() {
+        guard stallWatchdog == nil else { return }
+        stallDetector.reset()
+        // A plain timer, not a periodic time observer: those run on the player's clock, which is what freezes.
+        let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in self?.checkForStall() }
+        RunLoop.main.add(timer, forMode: .common)
+        stallWatchdog = timer
+    }
+
+    private func stopStallWatchdog() {
+        checkForStall()
+        stallWatchdog?.invalidate()
+        stallWatchdog = nil
+        stallDetector.reset()
+    }
+
+    private func checkForStall() {
+        let uptime = ProcessInfo.processInfo.systemUptime
+        guard let event = stallDetector.observe(
+            uptimeMs: Int(uptime * 1_000),
+            mediaTimeMs: observedPlayerMediaTimeMs(),
+            intendsToPlay: !paused && player != nil
+        ) else { return }
+        var fields: [String: String]
+        switch event {
+        case .stalled(let atMediaTimeMs, let forMs):
+            fields = ["event": "stalled", "atMs": String(atMediaTimeMs), "forMs": String(forMs)]
+        case .ended(let fromMediaTimeMs, let toMediaTimeMs, let stalledForMs):
+            fields = [
+                "event": "ended", "fromMs": String(fromMediaTimeMs),
+                "toMs": toMediaTimeMs.map(String.init) ?? "none", "stalledForMs": String(stalledForMs)
+            ]
+        }
+        fields.merge(playerStateFields(uptime: uptime)) { current, _ in current }
+        playbackStallTraceHandler?(fields)
+    }
+
+    private func playerStateFields(uptime: TimeInterval) -> [String: String] {
+        var fields: [String: String] = ["intendsToPlay": paused ? "0" : "1", "tap": hasPodcastEvidenceTap ? "1" : "0"]
+        if let pending = mediaSeekLifecycle.pending {
+            fields["pendingSeek"] = "\(pending.purpose == .navigation ? "navigation" : "start"):retry\(pending.retryCount)"
+            fields["pendingSeekToMs"] = String(pending.mediaTimeMs)
+            fields["pendingSeekAgeMs"] = mediaSeekStartedUptime.map { String(Int((uptime - $0) * 1_000)) } ?? "unknown"
+        } else {
+            fields["pendingSeek"] = "none"
+        }
+        guard let player else { return fields }
+        fields["playerMs"] = observedPlayerMediaTimeMs().map(String.init) ?? "none"
+        fields["rate"] = String(format: "%.2f", player.rate)
+        switch player.timeControlStatus {
+        case .playing: fields["timeControl"] = "playing"
+        case .paused: fields["timeControl"] = "paused"
+        case .waitingToPlayAtSpecifiedRate: fields["timeControl"] = "waiting"
+        @unknown default: fields["timeControl"] = "unknown"
+        }
+        fields["waitingReason"] = player.reasonForWaitingToPlay.map { $0.rawValue } ?? "none"
+        if let item = player.currentItem {
+            fields["itemStatus"] = item.status == .readyToPlay ? "ready" : (item.status == .failed ? "failed" : "unknown")
+            fields["keepUp"] = item.isPlaybackLikelyToKeepUp ? "1" : "0"
+            fields["bufferEmpty"] = item.isPlaybackBufferEmpty ? "1" : "0"
+            let now = item.currentTime()
+            if let range = item.loadedTimeRanges.map(\.timeRangeValue).first(where: { $0.containsTime(now) }) {
+                fields["bufferedAheadMs"] = String(Int((CMTimeGetSeconds(CMTimeRangeGetEnd(range)) - now.seconds) * 1_000))
+            } else {
+                fields["bufferedAheadMs"] = "0"
+            }
+            fields["stream"] = (item.asset as? AVURLAsset)?.url.isFileURL == false ? "1" : "0"
+        }
+        return fields
     }
 
     private func finishMediaSeek(generation: Int, targetId: String, finished: Bool) {
@@ -2308,7 +2391,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             },
             becameIdle: {},
             continuousCollection: true,
-            itemId: mediaContext.itemId
+            itemId: mediaContext.itemId,
+            heardWindowHandler: { [weak self] window in self?.heardSourceWindowHandler?(window) }
         )
         do {
             let tap = try PostResumePodcastEvidenceTapFactory.make(context: context)

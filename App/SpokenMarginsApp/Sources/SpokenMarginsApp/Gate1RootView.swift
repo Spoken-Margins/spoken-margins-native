@@ -2067,6 +2067,7 @@ private struct PlaybackScreen: View {
                             playbackHeader
                             capturePermissionRecovery
                             importedCommentaryControl
+                            marginMomentControl
                             recentMarginPreview
                             if model.shouldShowGuidedOnboardingCoach {
                                 GuidedOnboardingPlaybackCard {
@@ -2548,6 +2549,57 @@ private struct PlaybackScreen: View {
             .accessibilityIdentifier("importedCommentary.autoPlay")
         }
 
+    }
+
+    /// "Play this moment" (#159): the lead-in countdown with a way to skip it, then the Margin playing inline.
+    @ViewBuilder
+    private var marginMomentControl: some View {
+        if let moment = model.marginMoment {
+            VStack(alignment: .leading, spacing: 10) {
+                if moment.isPlayingMargin {
+                    Label(model.marginMomentVoiceIsPaused ? "\(model.marginMomentTitle) is paused" : "Playing \(model.marginMomentTitle)",
+                          systemImage: "waveform")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Button("Skip to the item", systemImage: "forward.end.fill", action: model.skipMarginMomentVoice)
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("marginMoment.skip")
+                } else if let remaining = moment.msUntilTarget(currentMediaTimeMs: model.snapshot.currentMediaTimeMs) {
+                    Label("\(model.marginMomentTitle) in \(Self.marginMomentCountdown(remaining))", systemImage: "text.bubble")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .contentTransition(.numericText())
+                    if model.marginMomentPositionIsApproximate {
+                        Text("Approximate position: ads can differ between copies.")
+                            .font(.footnote)
+                            .foregroundStyle(.white.opacity(0.75))
+                    }
+                    Button("Play it now", systemImage: "play.fill", action: model.playMarginMomentNow)
+                        .buttonStyle(PrimaryButtonStyle())
+                        .accessibilityIdentifier("marginMoment.playNow")
+                } else {
+                    Text("Your Margins play as you reach them.")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                if !moment.isPlayingMargin {
+                    Button(moment.phase == .leadIn ? "Cancel" : "Stop playing my Margins", action: model.endMarginMoment)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("marginMoment.end")
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    private static func marginMomentCountdown(_ ms: Int) -> String {
+        let seconds = max(0, Int((Double(ms) / 1000).rounded(.up)))
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
     private var playbackHeader: some View {

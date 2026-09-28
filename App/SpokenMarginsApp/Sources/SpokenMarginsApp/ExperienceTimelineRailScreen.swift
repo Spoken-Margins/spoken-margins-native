@@ -123,6 +123,7 @@ struct ExperienceTimelineRailScreen: View {
                     action: { perform(entry.action) }
                 )
                 .equatable()
+                .contextMenu { details(for: entry.action) }
                 .id(entry.id)
                 .accessibilityIdentifier(entry.accessibilityIdentifier)
             }
@@ -390,7 +391,8 @@ struct ExperienceTimelineRailScreen: View {
         case .listeningMapScene(let scene):
             model.jumpToListeningMapScene(scene, fromTimeline: true)
         case .sharedMargin(let row):
-            selectedSharedMargin = row
+            // #158: play the moment directly; details stay on long-press.
+            model.playSharedMarginMoment(row)
         case .margin(let row):
             model.recordTimelineInterjectionViewed(interjectionId: row.interjection.id)
             selectedMargin = row
@@ -398,6 +400,13 @@ struct ExperienceTimelineRailScreen: View {
             model.playTurn(turn, fromTimeline: true)
         case .turnChapter(let turn, let chapter):
             model.jumpToTurnChapter(turn: turn, chapter: chapter, fromTimeline: true)
+        }
+    }
+
+    @ViewBuilder
+    private func details(for action: TimelineRailEntry.Action) -> some View {
+        if case .sharedMargin(let row) = action {
+            Button("Shared Margin details", systemImage: "info.circle") { selectedSharedMargin = row }
         }
     }
 
