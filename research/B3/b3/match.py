@@ -133,7 +133,8 @@ def _name_support(show: dict, sources: list[tuple[str, str]], searched: str | No
     0.8  the source is part of the show's name, and the show came up when
          searching for that very source (e.g. "The Indicator" -> "The
          Indicator from Planet Money", channel "Changelog" -> "The Changelog")
-    0.6  loose overlap; enough to look at the show's episodes, not to trust it
+    0.6  loose overlap, such as a shared distinctive word ("Andrew Huberman"
+         and "Huberman Lab"); an episode of such a show must be unmistakable
     """
     best = 0.0
     for target_name in (show.get("collectionName") or "", show.get("artistName") or ""):
@@ -145,12 +146,20 @@ def _name_support(show: dict, sources: list[tuple[str, str]], searched: str | No
             if not src_tokens:
                 continue
             j = jaccard(target, src_tokens)
+            if kind == "title_tail" and target != src_tokens:
+                if j >= 0.5 or target & src_tokens:
+                    best = max(best, 0.6)
+                continue
             if target <= src_tokens and j >= 0.5:
                 best = max(best, 1.0)
-            elif src_tokens <= target and searched is not None and fold(searched) == fold(src) \
+            # Part of a short name, not a phrase inside a keyword-stuffed one
+            # ("... Andrew Huberman, Joe Rogan, Stress, Anxiety ...").
+            elif src_tokens <= target and len(target) - len(src_tokens) <= 3 \
+                    and searched is not None and fold(searched) == fold(src) \
                     and (len(src_tokens) >= 2 or kind in ("channel", "linked")):
                 best = max(best, 0.8)
-            elif j >= 0.5 or (target <= src_tokens and len(target) >= 2):
+            elif j >= 0.5 or (target & src_tokens and len(target) <= 8
+                              and any(len(t) >= 4 for t in target & src_tokens)):
                 best = max(best, 0.6)
     return best
 
@@ -182,7 +191,10 @@ def show_sources(video: VideoEvidence) -> list[tuple[str, str]]:
         last_after_bar = i == len(segs) - 1 and len(segs) >= 2 and " | " in video.title \
             and len(_source_tokens(seg)) <= 6
         if (has_number or podcasty or last_after_bar) and _source_tokens(seg):
-            sources.append(("title", re.sub(r"#\s?\d+|\b\d{1,5}\s*$", "", seg).strip()))
+            # A bare trailing segment is as often the guest ("| Dr. Andy Galpin")
+            # as the show ("| SmartLess"), so it is weaker evidence.
+            kind = "title" if has_number or podcasty else "title_tail"
+            sources.append((kind, re.sub(r"#\s?\d+|\b\d{1,5}\s*$", "", seg).strip()))
     return sources
 
 
@@ -247,15 +259,59 @@ def _duration_agreement(video_s: int | None, episode_s: int | None) -> str:
     return "mismatch"
 
 
-def _description_overlap(a: str, b: str) -> float:
-    """Share of the shorter description's opening words found in the other.
+def _longest_common_run(a: list[str], b: list[str]) -> int:
+    """Length of the longest run of words the two texts share, in order."""
+    if not a or not b:
+        return 0
+    best, prev = 0, [0] * (len(b) + 1)
+    for x in a:
+        cur = [0] * (len(b) + 1)
+        for j, y in enumerate(b, 1):
+            if x == y:
+                cur[j] = prev[j - 1] + 1
+                if cur[j] > best:
+                    best = cur[j]
+        prev = cur
+    return best
 
-    Many shows paste the same episode notes on YouTube and in the feed, so a
-    high overlap is strong evidence even when the titles differ."""
-    ta, tb = tokens(a[:1500]), tokens(b[:1500])
+
+def _description_overlap(a: str, b: str, boilerplate: frozenset = frozenset()) -> float:
+    """How much of the episode-specific description text the two share.
+
+    Many shows paste the same episode notes on YouTube and in the feed, so
+    this is strong evidence even when titles differ. Words that recur across
+    most of a show's episodes (sponsor reads, links, sign-offs) are dropped
+    first, so shared boilerplate can't make two different episodes look alike.
+    The result is the larger of word-set overlap and the longest shared run of
+    words (25 in a row counts as full), since one side often adds a long
+    trailer the other doesn't have."""
+    ta = [t for t in tokens(a[:2500]) if t not in boilerplate]
+    tb = [t for t in tokens(b[:2500]) if t not in boilerplate]
     if min(len(set(ta)), len(set(tb))) < 15:
         return 0.0
-    return containment(ta[:120], tb) if len(set(ta)) <= len(set(tb)) else containment(tb[:120], ta)
+    short, long_ = (ta, tb) if len(set(ta)) <= len(set(tb)) else (tb, ta)
+    overlap = containment(short[:120], long_)
+    run = _longest_common_run(ta[:300], tb[:300]) / 25
+    return min(1.0, max(overlap, run))
+
+
+def _boilerplate(episodes: list[dict]) -> dict[int, frozenset]:
+    """Per show, words found in at least 40% of its episodes' descriptions."""
+    by_show: dict[int, list[set]] = {}
+    for ep in episodes:
+        desc = ep.get("description") or ep.get("shortDescription") or ""
+        by_show.setdefault(ep.get("collectionId") or 0, []).append(set(tokens(desc[:2500])))
+    out = {}
+    for cid, docs in by_show.items():
+        if len(docs) < 5:
+            out[cid] = frozenset()
+            continue
+        df: dict[str, int] = {}
+        for d in docs:
+            for t in d:
+                df[t] = df.get(t, 0) + 1
+        out[cid] = frozenset(t for t, n in df.items() if n >= max(3, 0.4 * len(docs)))
+    return out
 
 
 @dataclass
@@ -268,14 +324,16 @@ class Signals:
 
 
 def score_episode(ep: dict, video: VideoEvidence, show: ShowCandidate | None,
-                  show_names: list[str]) -> tuple[Candidate, Signals]:
+                  show_names: list[str], boilerplate: frozenset = frozenset()
+                  ) -> tuple[Candidate, Signals]:
     ep_title = ep.get("trackName") or ""
     yt_title = content_title(video.title, show_names)
     t_sim = max(title_similarity(yt_title, ep_title), title_similarity(video.title, ep_title))
     yt_nums, ep_nums = episode_numbers(video.title), episode_numbers(ep_title)
     number = bool(yt_nums & ep_nums) if yt_nums and ep_nums else None
     desc = _description_overlap(video.description or "",
-                                ep.get("description") or ep.get("shortDescription") or "")
+                                ep.get("description") or ep.get("shortDescription") or "",
+                                boilerplate)
     days = days_apart(video.published, ep.get("releaseDate"))
     ep_s = int(ep["trackTimeMillis"] / 1000) if ep.get("trackTimeMillis") else None
     duration = _duration_agreement(video.duration_s, ep_s)
@@ -336,27 +394,40 @@ def _key(ep: dict) -> str:
     return ep.get("episodeGuid") or ep.get("episodeUrl") or ep.get("trackName") or ""
 
 
-def _episode_show(ep: dict, video: VideoEvidence, by_id: dict) -> ShowCandidate | None:
+def _episode_show(ep: dict, video: VideoEvidence, by_id: dict, sig: "Signals",
+                  lookups: dict) -> ShowCandidate | None:
     """The episode's show, if the video backs it: either one found in stage 1,
-    or one whose own name or publisher the video names (an episode search can
-    surface the real show when a look-alike crowded it out of stage 1)."""
+    or one an episode search surfaced whose own name or publisher the video
+    names (a look-alike can crowd the real show out of stage 1). Episode
+    results carry no publisher, so a promising episode's show is looked up."""
     cid = ep.get("collectionId")
     if cid in by_id:
         return by_id[cid]
-    strength = _name_support(ep, show_sources(video), None)
+    if not cid:
+        return None
+    show = {"collectionName": ep.get("collectionName"), "artistName": ep.get("artistName")}
+    promising = sig.title >= 0.6 or sig.desc >= 0.6 or sig.number
+    if not show["artistName"] and promising:
+        if cid not in lookups:
+            lookups[cid] = itunes.lookup_show(cid) or {}
+        show["artistName"] = lookups[cid].get("artistName")
+    strength = _name_support(show, show_sources(video), None)
     if strength >= 0.6:
-        return ShowCandidate(cid or 0, ep.get("collectionName") or "", ep.get("artistName") or "",
-                             strength, ["episode_show_name"])
+        return ShowCandidate(cid, show["collectionName"] or "", show["artistName"] or "",
+                             strength, ["episode_search"])
     return None
 
 
-def _rank(episodes, video, by_id, show_names):
+def _rank(episodes, video, by_id, show_names, lookups):
     scored = []
+    boiler = _boilerplate(list(episodes.values()))
     for ep in episodes.values():
-        show = _episode_show(ep, video, by_id)
-        cand, sig = score_episode(ep, video, show, show_names)
+        bp = boiler.get(ep.get("collectionId") or 0, frozenset())
+        _, sig = score_episode(ep, video, None, show_names, bp)
         if sig.title < 0.15 and not sig.number and sig.desc < 0.4:
             continue
+        show = _episode_show(ep, video, by_id, sig, lookups)
+        cand, sig = score_episode(ep, video, show, show_names, bp)
         scored.append((cand, sig, show))
     scored.sort(key=lambda x: -x[0].score)
     return scored
@@ -364,7 +435,11 @@ def _rank(episodes, video, by_id, show_names):
 
 def _decide(scored, video):
     best, sig, show = scored[0]
-    runner = scored[1][0].score if len(scored) > 1 else 0.0
+    # Competitors are episodes of shows the video backs. An episode from an
+    # unbacked show (often a copycat re-upload of the same feed) can never be
+    # the confident answer, so it can't make the answer wrong either.
+    rivals = [c.score for c, _, sh in scored[1:] if sh is not None]
+    runner = rivals[0] if rivals else 0.0
     ok, why = _is_confident(sig, show)
     if ok and best.score - runner < 0.1:
         ok, why = False, "another episode scores almost as well"
@@ -380,16 +455,19 @@ def match(video: VideoEvidence) -> Result:
 
     episodes: dict[str, dict] = {}
     for s in shows:
+        if s.strength < 0.8:
+            continue    # loosely backed shows are only met through the episode search
         for ep in itunes.show_episodes(s.collection_id):
             episodes.setdefault(_key(ep), ep)
-    scored = _rank(episodes, video, by_id, show_names)
+    lookups: dict = {}
+    scored = _rank(episodes, video, by_id, show_names, lookups)
     ok, why = _decide(scored, video) if scored else (False, "")
     if not ok:
         # Older episodes (beyond the latest 200) and shows the video doesn't
         # name only surface through an episode search by title.
         for ep in itunes.search_episodes(content_title(video.title, show_names)[:100]):
             episodes.setdefault(_key(ep), ep)
-        scored = _rank(episodes, video, by_id, show_names)
+        scored = _rank(episodes, video, by_id, show_names, lookups)
         ok, why = _decide(scored, video) if scored else (False, "")
 
     top_show = shows[0].name if shows else None
