@@ -42,6 +42,7 @@ extract_status=0
 "$py" "$c1/tools/report.py"
 # C1 M2: fit and evaluate the hard-PDF pre-check on the app's own output.
 "$py" "$c1/tools/precheck.py"
+"$py" "$c1/tools/precheck.py" --target content
 echo "Scores: research/C1/results/app-baseline/scores.json; report: research/C1/results/REPORT.md; pre-check: research/C1/results/app-baseline/precheck.json"
 if [ "$fetch_status" != 0 ] || [ "$extract_status" != 0 ]; then
     echo "Warning: some PDFs failed to fetch or didn't match the manifest's sha256; see the output above and results/app-baseline/run-info.json." >&2

@@ -20,6 +20,7 @@ cost per minute of body text, plus any PDF with no text layer.
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import statistics
@@ -143,14 +144,30 @@ def text_features(text: str) -> dict:
     }
 
 
-def burden(result: dict) -> float:
+# Costs a PDF carries whatever the extractor does: math, lost text (scans,
+# OCR), column chaos, stray fragments. The rest (reference lists, tables,
+# page furniture, markers, hyphenation, front and back matter) are the
+# extractor's to fix with I13 roles in M3, so they don't make a PDF "hard".
+CONTENT_COSTS = {"math", "equation", "missing_body", "reading_order", "fragment", "mid_sentence_interruptions"}
+# Content cost is measured on a reference parser, so the app's own bugs
+# (appendices cut with the references, lost body text) don't define it.
+CONTENT_SCORES = "pymupdf-raw"
+
+
+def burden(result: dict, costs: set[str] | None = None) -> float:
     body_minutes = max(1e-9, result["body_words_truth"] / 155)
-    return sum(result.get("listener_cost_seconds", {}).values()) / 60 / body_minutes
+    seconds = result.get("listener_cost_seconds", {})
+    return sum(v for k, v in seconds.items() if costs is None or k in costs) / 60 / body_minutes
 
 
-def labels() -> dict[str, bool]:
-    papers = json.loads((ROOT / "results" / TARGET / "scores.json").read_text())["papers"]
-    ranked = sorted(papers, key=lambda pid: -burden(papers[pid]))
+def labels(target: str = "all") -> dict[str, bool]:
+    """Bottom quintile by listener cost per body minute, plus any PDF with no text.
+    target "all": every cost, under the app's extractor (the brief's literal reading).
+    target "content": content costs only, under the reference parser."""
+    scores = TARGET if target == "all" else CONTENT_SCORES
+    costs = None if target == "all" else CONTENT_COSTS
+    papers = json.loads((ROOT / "results" / scores / "scores.json").read_text())["papers"]
+    ranked = sorted(papers, key=lambda pid: -burden(papers[pid], costs))
     hard = set(ranked[: round(len(ranked) / 5)])
     hard |= {pid for pid, r in papers.items() if r.get("spoken_words", 0) == 0}
     return {pid: pid in hard for pid in papers}
@@ -233,10 +250,16 @@ def evaluate(rows: dict, predicted: dict[str, bool]) -> dict:
     }
 
 
-def main() -> None:
-    truth = labels()
-    rows = {}
-    sources = set()
+def feature_rows(truth: dict[str, bool]) -> tuple[dict, str]:
+    """Features per paper. Uses the app's text from the cache (a Mac run); in
+    the cloud, reuses the features a Mac run committed; else a proxy."""
+    committed = ROOT / "results" / TARGET / "precheck.json"
+    if not (ROOT / "cache" / "candidates" / TARGET).exists() and committed.exists():
+        papers = json.loads(committed.read_text())["papers"]
+        rows = {pid: {k: v for k, v in r.items() if k not in ("hard", "flagged")} | {"hard": truth[pid]}
+                for pid, r in papers.items() if pid in truth}
+        return rows, "app"
+    rows, sources = {}, set()
     for pid in truth:
         path = PDF_DIR / f"{pid}.pdf"
         if not path.exists():
@@ -247,6 +270,16 @@ def main() -> None:
         row = {**features(path), **text_features(text), "hard": truth[pid]}
         row["words_per_page"] = round(row["words"] / max(1, row["pages"]), 1)
         rows[pid] = row
+    return rows, "app" if sources == {"app"} else "proxy"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--target", choices=["all", "content"], default="all",
+                        help="which papers count as hard; see labels()")
+    args = parser.parse_args()
+    truth = labels(args.target)
+    rows, source = feature_rows(truth)
     rule = fit(rows)
     in_sample = evaluate(rows, {pid: flags(r, rule) for pid, r in rows.items()})
     # Leave-one-out: fit without each paper, then predict it.
@@ -255,18 +288,20 @@ def main() -> None:
         rest = {k: v for k, v in rows.items() if k != pid}
         loo[pid] = flags(rows[pid], fit(rest))
     held_out = evaluate(rows, loo)
-    source = "app-baseline markdown" if sources == {"app"} else "proxy: PyMuPDF text + Python port of the app's reference cut"
-    result = {"text_source": source, "rule": rule, "in_sample": in_sample, "leave_one_out": held_out,
-              "papers": {pid: {**r, "flagged": flags(r, rule)} for pid, r in rows.items()}}
+    text_source = "app-baseline markdown" if source == "app" else "proxy: PyMuPDF text + Python port of the app's reference cut"
+    result = {"target": args.target, "text_source": text_source, "rule": rule, "in_sample": in_sample,
+              "leave_one_out": held_out, "papers": {pid: {**r, "flagged": flags(r, rule)} for pid, r in rows.items()}}
     # Only the app's own text gives a result worth committing; a proxy run stays in the cache.
-    out = ROOT / "results" / TARGET / "precheck.json" if sources == {"app"} else ROOT / "cache" / "precheck-proxy.json"
+    name = "precheck.json" if args.target == "all" else f"precheck-{args.target}.json"
+    out = ROOT / "results" / TARGET / name if source == "app" else ROOT / "cache" / f"proxy-{name}"
     out.write_text(json.dumps(result, indent=1) + "\n")
-    print(f"text source: {source}")
+    print(f"target: {args.target}; text source: {text_source}")
     print(f"rule: {rule}")
-    for name, ev in (("in sample", in_sample), ("leave-one-out", held_out)):
-        print(f"{name:14s} caught {ev['caught']}/{ev['hard']} ({ev['recall']:.0%}), false alarms {ev['false_alarms']}/{ev['easy']} "
+    for label, ev in (("in sample", in_sample), ("leave-one-out", held_out)):
+        print(f"{label:14s} caught {ev['caught']}/{ev['hard']} ({ev['recall']:.0%}), false alarms {ev['false_alarms']}/{ev['easy']} "
               f"({ev['false_alarm_rate']:.0%} of easy papers, {ev['share_of_flags_wrong']:.0%} of flags)")
     print(f"missed (leave-one-out): {held_out['missed']}")
+    print(f"false alarms (leave-one-out): {held_out['false_alarm_papers']}")
     print(f"wrote {out}")
 
 
