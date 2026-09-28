@@ -90,6 +90,8 @@ class LaneGuardTests(unittest.TestCase):
                         "git commit -m 'Block `xcrun simctl boot` in streams'",
                         "echo '$(xcrun simctl boot X)'",
                         'command -v xcodebuild', 'xcodebuild -h',
+                        'git show HEAD:scripts/lane-runner.py > scripts/lane-runner.py',
+                        'cat notes.txt >> scripts/smoke-simulator.sh 2>&1',
                         'python -u'):
             with self.subTest(command=command):
                 self.assertIsNone(self.decide(bash(command)))

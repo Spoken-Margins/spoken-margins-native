@@ -123,9 +123,13 @@ def simple_commands(command: str) -> list[list[str]]:
     except ValueError:
         # Unbalanced quotes (often a heredoc body): fall back to plain whitespace splitting per line.
         return [line.split() for line in command.splitlines()]
-    result, current = [], []
+    result, current, target = [], [], False
     for token in tokens:
-        if token in SEPARATORS or set(token) <= set('();<>|&'):
+        if target:  # the file after a redirection (`> out.txt`, `2>&1`) is not a command
+            target = False
+        elif set(token) <= set('<>&') and ('<' in token or '>' in token):
+            target = True
+        elif token in SEPARATORS or set(token) <= set('();<>|&'):
             if current:
                 result.append(current)
             current = []
