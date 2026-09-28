@@ -112,6 +112,32 @@ def is_narrative_citation(label: str, before: str) -> bool:
     return not inside
 
 
+# "(Gilman et al., 2008; Wenning et al., 2022)" where the XML tags only the years.
+PARENTHETICAL_AUTHORS = re.compile(
+    r"(?:(?:see|e\.g\.|cf\.)\s*,?\s*)?[A-Z][\w'’\-]+(?:(?:\s+|\s*,\s*)(?:et\s+al\.?|and|&|[A-Z][\w'’\-]+))*\s*,?\s*$"
+)
+
+
+def claim_parenthetical_authors(seg: "Segment", label: str) -> str:
+    """Some journals tag only the year of a parenthetical author-year citation.
+    I14 silences the whole citation, names included, so the names written just
+    before the year inside the parentheses belong to the marker, not the body.
+    A narrative citation ("Gilman et al. (2008) showed") keeps its names: they are
+    outside the parentheses."""
+    if not re.fullmatch(r"(?:19|20)\d{2}[a-z]?", label.strip()):
+        return label
+    text = seg.text
+    opened = text.rfind("(")
+    if opened < 0 or text.rfind(")") > opened:
+        return label
+    start = max(opened + 1, text.rfind(";") + 1)
+    match = PARENTHETICAL_AUTHORS.search(text, start)
+    if not match or match.start() != start + (len(text[start:]) - len(text[start:].lstrip())):
+        return label
+    seg.text = text[:match.start()]
+    return f"{match.group(0).strip()} {label.strip()}"
+
+
 # ---------------------------------------------------------------- JATS -----
 
 MML = "{http://www.w3.org/1998/Math/MathML}"
@@ -313,6 +339,8 @@ def jats_inline(b: Builder, el):
                 # Narrative citation: its words are part of the sentence.
                 b.text(label)
             else:
+                if kind == "citation" and seg is not None:
+                    label = claim_parenthetical_authors(seg, label)
                 b.marker(kind, label)
         elif name in ("inline-formula", "math") or child.tag == f"{MML}math" or name == "tex-math":
             b.marker("math", "")

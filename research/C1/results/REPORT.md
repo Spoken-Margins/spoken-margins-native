@@ -15,7 +15,7 @@ Publishers: BMC (Springer Nature); BMJ; Cell Press (Elsevier); Elsevier; F1000 (
 | Extractor | Median clutter | Median missing | Markers silent (I14) | No text |
 | --- | ---: | ---: | ---: | ---: |
 | app-baseline | 24.8% | 0.9% | 0.0% | 1 |
-| pymupdf-raw | 35.6% | 0.4% | 0.0% | 1 |
+| pymupdf-raw | 35.7% | 0.4% | 0.0% | 1 |
 | pdfminer | 35.9% | 0.6% | 0.0% | 1 |
 | gt-i14 (ground truth spoken per I14: the floor for M3) | 0.2% | 0.1% | 100.0% | 0 |
 
@@ -42,7 +42,7 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 | 6 | Display equations read aloud | 118 | 0.1 | 20 |
 | 7 | Page furniture: running headers, footers, page and line numbers | 108 | 0.8 | 45 |
 | 8 | Line-end hyphenation left in ("bio- logy") | 84 | 0.6 | 37 |
-| 9 | Citation and footnote markers read as numbers or names | 74 | 0.9 | 48 |
+| 9 | Citation and footnote markers read as numbers or names | 73 | 0.9 | 48 |
 | 10 | Back matter: funding, contributions, competing interests, reviewer reports | 60 | 0.3 | 29 |
 | 11 | Mid-sentence interruptions (captions, footers inside a sentence) | 59 | 0.5 | 28 |
 | 12 | Repeated text (running titles, duplicated lines) | 59 | 0.5 | 34 |
@@ -55,19 +55,19 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 | Category | Words | Share of spoken |
 | --- | ---: | ---: |
-| body | 407983 | 63.2% |
+| body | 407869 | 63.2% |
 | reference | 45037 | 7.0% |
-| math | 35629 | 5.5% |
+| math | 35634 | 5.5% |
 | table | 30881 | 4.8% |
 | caption | 26951 | 4.2% |
 | equation | 18261 | 2.8% |
 | furniture | 16787 | 2.6% |
 | unattributed_prose | 15998 | 2.5% |
 | back_matter | 9227 | 1.4% |
-| repeated | 9113 | 1.4% |
-| citation_markers | 7790 | 1.2% |
+| repeated | 9114 | 1.4% |
+| citation_markers | 7895 | 1.2% |
 | front_matter | 7750 | 1.2% |
-| inline_residue | 4463 | 0.7% |
+| inline_residue | 4466 | 0.7% |
 | fragment | 4265 | 0.7% |
 | footnote | 2455 | 0.4% |
 | stamp_link | 2262 | 0.4% |
@@ -79,7 +79,7 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 ### Citations, footnotes, figures and tables
 
-- Citation markers (3331 sites): spoken label 1540 (46%), label read 610 (18%), number read 556 (17%), silent 245 (7%), glued number 217 (7%), context missing 163 (5%)
+- Citation markers (3320 sites): spoken label 1540 (46%), label read 636 (19%), number read 518 (16%), silent 246 (7%), glued number 217 (7%), context missing 163 (5%)
 - Footnote markers (95 sites): label read 43 (45%), glued number 25 (26%), number read 11 (12%), silent 7 (7%), context missing 7 (7%), spoken label 2 (2%)
 - Figure and table captions: 510 of 548 read aloud (≥ half their words spoken)
 - Tables: 161 of 205 had their cells read aloud (≥ 30% of cell words)
@@ -128,10 +128,10 @@ Ranked by listener cost per minute of real body text.
 ## pymupdf-raw
 
 - Papers scored: 66; produced no text: 1 (pmc-pmc11960816-imageonly)
-- Median clutter rate: **35.6%** of spoken words
+- Median clutter rate: **35.7%** of spoken words
 - Median missing body text: **0.4%**
 - Median reading-order breaks: 0.70 per 1000 body words
-- Median extraction time: 66 ms
+- Median extraction time: 109 ms
 
 ### Failure categories ranked by listener cost
 
@@ -161,19 +161,19 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 | Category | Words | Share of spoken |
 | --- | ---: | ---: |
-| body | 421537 | 55.2% |
+| body | 421423 | 55.2% |
 | reference | 111389 | 14.6% |
 | table | 36621 | 4.8% |
-| math | 34968 | 4.6% |
+| math | 34973 | 4.6% |
 | furniture | 29381 | 3.8% |
 | caption | 28497 | 3.7% |
 | unattributed_prose | 22213 | 2.9% |
 | equation | 17845 | 2.3% |
 | back_matter | 14372 | 1.9% |
-| repeated | 12763 | 1.7% |
+| repeated | 12764 | 1.7% |
 | front_matter | 9130 | 1.2% |
-| inline_residue | 7180 | 0.9% |
-| citation_markers | 6434 | 0.8% |
+| inline_residue | 7183 | 0.9% |
+| citation_markers | 6539 | 0.9% |
 | fragment | 3967 | 0.5% |
 | stamp_link | 3405 | 0.4% |
 | footnote | 2897 | 0.4% |
@@ -185,7 +185,7 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 ### Citations, footnotes, figures and tables
 
-- Citation markers (3331 sites): number read 2151 (65%), label read 615 (18%), silent 261 (8%), glued number 221 (7%), context missing 83 (2%)
+- Citation markers (3320 sites): number read 2113 (64%), label read 641 (19%), silent 262 (8%), glued number 221 (7%), context missing 83 (2%)
 - Footnote markers (95 sites): label read 43 (45%), glued number 25 (26%), number read 14 (15%), context missing 7 (7%), silent 6 (6%)
 - Figure and table captions: 538 of 548 read aloud (≥ half their words spoken)
 - Tables: 203 of 205 had their cells read aloud (≥ 30% of cell words)
@@ -237,7 +237,7 @@ Ranked by listener cost per minute of real body text.
 - Median clutter rate: **35.9%** of spoken words
 - Median missing body text: **0.6%**
 - Median reading-order breaks: 1.65 per 1000 body words
-- Median extraction time: 1266 ms
+- Median extraction time: 704 ms
 
 ### Failure categories ranked by listener cost
 
@@ -252,7 +252,7 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 | 4 | Reading order broken (columns, floats) | 235 | 1.3 | 56 |
 | 5 | Table cells read aloud | 148 | 0.5 | 33 |
 | 6 | Display equations read aloud | 114 | 0.1 | 20 |
-| 7 | Citation and footnote markers read as numbers or names | 104 | 1.5 | 54 |
+| 7 | Citation and footnote markers read as numbers or names | 103 | 1.5 | 54 |
 | 8 | Repeated text (running titles, duplicated lines) | 96 | 0.8 | 50 |
 | 9 | Back matter: funding, contributions, competing interests, reviewer reports | 92 | 0.4 | 31 |
 | 10 | Line-end hyphenation left in ("bio- logy") | 85 | 0.5 | 36 |
@@ -267,19 +267,19 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 | Category | Words | Share of spoken |
 | --- | ---: | ---: |
-| body | 421059 | 53.2% |
+| body | 420948 | 53.2% |
 | reference | 111341 | 14.1% |
-| furniture | 60539 | 7.6% |
-| math | 39325 | 5.0% |
+| furniture | 60534 | 7.6% |
+| math | 39328 | 5.0% |
 | caption | 28198 | 3.6% |
 | unattributed_prose | 27864 | 3.5% |
-| table | 23002 | 2.9% |
-| equation | 17671 | 2.2% |
-| repeated | 14827 | 1.9% |
+| table | 23010 | 2.9% |
+| equation | 17672 | 2.2% |
+| repeated | 14824 | 1.9% |
 | back_matter | 14306 | 1.8% |
 | front_matter | 9065 | 1.1% |
-| inline_residue | 7119 | 0.9% |
-| citation_markers | 6369 | 0.8% |
+| inline_residue | 7120 | 0.9% |
+| citation_markers | 6475 | 0.8% |
 | fragment | 3793 | 0.5% |
 | stamp_link | 3471 | 0.4% |
 | footnote | 2877 | 0.4% |
@@ -291,7 +291,7 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 ### Citations, footnotes, figures and tables
 
-- Citation markers (3331 sites): number read 2119 (64%), label read 611 (18%), silent 274 (8%), glued number 220 (7%), context missing 107 (3%)
+- Citation markers (3320 sites): number read 2082 (63%), label read 637 (19%), silent 275 (8%), glued number 220 (7%), context missing 106 (3%)
 - Footnote markers (95 sites): label read 43 (45%), glued number 25 (26%), number read 14 (15%), context missing 7 (7%), silent 6 (6%)
 - Figure and table captions: 536 of 548 read aloud (≥ half their words spoken)
 - Tables: 146 of 205 had their cells read aloud (≥ 30% of cell words)
@@ -373,7 +373,7 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 | Category | Words | Share of spoken |
 | --- | ---: | ---: |
-| body | 425909 | 81.4% |
+| body | 425795 | 81.4% |
 | caption | 29184 | 5.6% |
 | equation | 21175 | 4.0% |
 | math | 16790 | 3.2% |
@@ -395,7 +395,7 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 ### Citations, footnotes, figures and tables
 
-- Citation markers (3379 sites): silent 3360 (99%), context missing 15 (0%), number read 4 (0%)
+- Citation markers (3368 sites): silent 3349 (99%), context missing 15 (0%), number read 4 (0%)
 - Footnote markers (95 sites): silent 94 (99%), context missing 1 (1%)
 - Figure and table captions: 552 of 554 read aloud (≥ half their words spoken)
 - Tables: 0 of 205 had their cells read aloud (≥ 30% of cell words)

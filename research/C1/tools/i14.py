@@ -34,7 +34,8 @@ REFERENCES_SKIPPED = "References skipped."
 TABLE_NOT_READ = "Table not read."
 BACK_MATTER_SKIPPED = "Back matter skipped."
 EQUATION = "Equation."
-ANNOUNCEMENTS = {REFERENCES_SKIPPED, TABLE_NOT_READ, BACK_MATTER_SKIPPED, EQUATION}
+EQUATION_NOT_READ = "Equation not read."  # C2 #221
+ANNOUNCEMENTS = {REFERENCES_SKIPPED, TABLE_NOT_READ, BACK_MATTER_SKIPPED, EQUATION, EQUATION_NOT_READ}
 
 # I14's published table, plus C1's proposed defaults for roles it doesn't
 # list yet (asked on #191). "read" | "announce" | "skip" | "silent".

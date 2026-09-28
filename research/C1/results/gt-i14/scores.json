@@ -358,13 +358,13 @@
    "elapsed_ms": null
   },
   "pmc-pmc10784378": {
-   "spoken_words": 2906,
-   "body_words_truth": 2681,
-   "clutter_rate": 0.0024,
-   "missing_body_rate": 0.0026,
-   "body_share_of_spoken": 0.9202,
+   "spoken_words": 2792,
+   "body_words_truth": 2567,
+   "clutter_rate": 0.0025,
+   "missing_body_rate": 0.0027,
+   "body_share_of_spoken": 0.9169,
    "words_by_category": {
-    "body": 2674,
+    "body": 2560,
     "authors": 8,
     "caption": 203,
     "announcement": 14,
@@ -376,7 +376,7 @@
    "mid_sentence_interruptions": {},
    "hyphen_breaks": 0,
    "citations": {
-    "silent": 39
+    "silent": 28
    },
    "markers_silent_share": 1.0,
    "footnote_markers": {},
