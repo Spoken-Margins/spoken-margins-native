@@ -43,7 +43,7 @@ class Normalization(unittest.TestCase):
 
     def test_numbers_years_ordinals_times(self):
         self.assertEqual(normalize("On March 3rd, 2024, at 11:45"), "On March third, twenty twenty-four, at eleven forty-five")
-        self.assertEqual(normalize("1,284 adults"), "one thousand, two hundred eighty-four adults")
+        self.assertEqual(normalize("1,284 adults"), "one thousand, two hundred, eighty-four adults")
         self.assertEqual(normalize("in 2001"), "in two thousand one")
 
     def test_codes_are_spelled(self):
@@ -53,7 +53,7 @@ class Normalization(unittest.TestCase):
         """Cases a fresh review found reading wrong words (2026-09-28)."""
         cases = {
             "In the 1990s": "In the nineteen nineties",
-            "1284 participants": "one thousand, two hundred eighty-four participants",
+            "1284 participants": "one thousand, two hundred, eighty-four participants",
             "in 2023": "in twenty twenty-three",
             "paid $12.50": "paid twelve dollars fifty",
             "$1.2 billion": "one point two billion dollars",

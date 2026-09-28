@@ -68,7 +68,10 @@ Saved on the A/B page. The letters were decoded with the answer key after saving
 | Names and numbers, Citations | espeak front end |
 
 - **Result:** the new front end wins 6, espeak 2, with 2 ties. That passes the bar: at least "Same" on narrative, essay and dialogue.
-- **The owner's note:** "both have trouble with numbers with commas in them (e.g. 1,124 kg)". Kitten drops "one thousand" from "one thousand two hundred fifty" (heard as "250", 3 of 3 renders). With a comma after the scale word ("one thousand, two hundred fifty") it's heard correctly 3 of 3, and the same holds for "1,284 adults". `int_words` now adds that comma. This affects the Names and numbers passage the owner preferred espeak on, whose clips were rendered before the fix.
+- **The owner's note:** "both have trouble with numbers with commas in them (e.g. 1,124 kg)". Kitten drops "one thousand" from "one thousand two hundred fifty" (heard as "250", 3 of 3 renders). With a comma after the scale word ("one thousand, two hundred fifty") it's heard correctly 3 of 3, and the same holds for "1,284 adults". `int_words` now adds that comma.
+- **Follow-up, same day.** The owner still heard "two [uh] eighty-four".
+  - Number words now use hand-written forms in Kitten's training style: "hundred" as hˈʌndɹɪd, "eighty-four" as one word, and teens stressed first.
+  - On a four-way number check (https://claude.ai/artifact/VqXcYqZRPdxCdUEFW4stR1), the owner heard A (comma after "thousand" only) choke into static on "hundred", and C ("twelve hundred eighty-four") cut off. B (with "and") and D (a comma after "hundred" as well) were clean. **The owner picked D:** "one thousand, two hundred, eighty-four". `int_words` now does that. This affects the Names and numbers passage the owner preferred espeak on, whose clips were rendered before the fix.
 
 ## Licenses of what would ship
 

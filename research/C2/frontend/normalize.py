@@ -23,7 +23,8 @@ def int_words(n: int) -> str:
         return TENS[n // 10] + ("-" + ONES[n % 10] if n % 10 else "")
     if n < 1000:
         rest = n % 100
-        return ONES[n // 100] + " hundred" + (" " + int_words(rest) if rest else "")
+        # a comma after 'hundred' too (owner's pick, 2026-09-28): without it Kitten chokes on 'hundred'
+        return ONES[n // 100] + " hundred" + (", " + int_words(rest) if rest else "")
     for value, name in SCALES:
         if n >= value:
             rest = n % value
