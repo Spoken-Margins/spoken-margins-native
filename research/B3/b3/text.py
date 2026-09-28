@@ -63,6 +63,12 @@ def title_similarity(a: str, b: str) -> float:
     return (1 - weight) * j + weight * c
 
 
+# Publisher suffixes that don't distinguish one publisher from another.
+CORPORATE = {"llc", "inc", "ltd", "co", "corp", "media", "network", "networks", "studios",
+             "productions", "group", "channel", "official", "tv", "hq"}
+
+
 def name_tokens(name: str) -> list[str]:
-    """Tokens that identify a show or channel name."""
-    return tokens(name) or tokens(name, drop_format=False)
+    """Tokens that identify a show, channel or publisher name."""
+    toks = tokens(name) or tokens(name, drop_format=False)
+    return [t for t in toks if t not in CORPORATE] or toks

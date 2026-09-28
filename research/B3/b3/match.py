@@ -186,7 +186,7 @@ def show_sources(video: VideoEvidence) -> list[tuple[str, str]]:
     return sources
 
 
-def find_shows(video: VideoEvidence, limit: int = 2) -> list[ShowCandidate]:
+def find_shows(video: VideoEvidence, limit: int = 3) -> list[ShowCandidate]:
     found: dict[int, ShowCandidate] = {}
     sources = show_sources(video)
     text = (video.description or "") + " " + " ".join(video.links)
@@ -226,6 +226,7 @@ def find_shows(video: VideoEvidence, limit: int = 2) -> list[ShowCandidate]:
         for show in itunes.search_shows(term, limit=8):
             consider(show, f"search:{term}", term)
 
+    # Stable sort: among equally backed shows, Apple's relevance order decides.
     ranked = sorted(found.values(), key=lambda s: -s.strength)
     return [s for s in ranked if s.strength >= 0.6][:limit]
 
@@ -335,10 +336,24 @@ def _key(ep: dict) -> str:
     return ep.get("episodeGuid") or ep.get("episodeUrl") or ep.get("trackName") or ""
 
 
+def _episode_show(ep: dict, video: VideoEvidence, by_id: dict) -> ShowCandidate | None:
+    """The episode's show, if the video backs it: either one found in stage 1,
+    or one whose own name or publisher the video names (an episode search can
+    surface the real show when a look-alike crowded it out of stage 1)."""
+    cid = ep.get("collectionId")
+    if cid in by_id:
+        return by_id[cid]
+    strength = _name_support(ep, show_sources(video), None)
+    if strength >= 0.6:
+        return ShowCandidate(cid or 0, ep.get("collectionName") or "", ep.get("artistName") or "",
+                             strength, ["episode_show_name"])
+    return None
+
+
 def _rank(episodes, video, by_id, show_names):
     scored = []
     for ep in episodes.values():
-        show = by_id.get(ep.get("collectionId"))
+        show = _episode_show(ep, video, by_id)
         cand, sig = score_episode(ep, video, show, show_names)
         if sig.title < 0.15 and not sig.number and sig.desc < 0.4:
             continue
