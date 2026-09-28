@@ -4,9 +4,9 @@ Three clickable, phone-sized prototypes of a redesigned Spoken Margins, for the 
 
 | Direction | Page | Navigation idea |
 | --- | --- | --- |
-| A · Four Rooms | [a-rooms.html](a-rooms.html) | Four tabs: Home, Following, Library, Margins. Full-screen player from a mini-player. Closest to Build 29. |
-| B · The Deck | [b-deck.html](b-deck.html) | Now Playing is the root screen. Home, Following, Library and Margins are panes of one drawer. You record by pressing and holding. |
-| C · Notebook | [c-notebook.html](c-notebook.html) | Two tabs, Notebook and Listen, with a record button between them. Your and your friends' Margins are the home screen. |
+| A · Four Rooms | [a-rooms.html](a-rooms.html), [artifact](https://claude.ai/artifact/KsrRoxtV5THC1AtRFjQ4yP) | Four tabs: Home, Following, Library, Margins. Full-screen player from a mini-player. Closest to Build 29. |
+| B · The Deck | [b-deck.html](b-deck.html), [artifact](https://claude.ai/artifact/Mw4cgXUvyr6MHceLWFF4P5) | Now Playing is the root screen. Home, Following, Library and Margins are panes of one drawer. You record by pressing and holding. |
+| C · Notebook | [c-notebook.html](c-notebook.html), [artifact](https://claude.ai/artifact/AEq8V4usWFc8mfY2pGq2dR) | Two tabs, Notebook and Listen, with a record button between them. Your and your friends' Margins are the home screen. |
 
 Tap **Tasks** (on a phone) and then **Try** on a task. The counter in the top strip counts every tap from the task's start screen until the task is done. The budgets below are those counts.
 
