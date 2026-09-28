@@ -1,0 +1,438 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0F80953FEB18DAC43955B4E4 /* VoiceBenchInputs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B9E7DAC3A8757F9B5507FE /* VoiceBenchInputs.swift */; };
+		2201A78A065AEDE47B2D2AF7 /* VoiceBenchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD36244107DEE97BD1A3A789 /* VoiceBenchView.swift */; };
+		23DD91BEB0DA85E03B3E6D00 /* kitten-nano-0.8-int8.onnx in Resources */ = {isa = PBXBuildFile; fileRef = 81E7D0A201E01DF970B5CA10 /* kitten-nano-0.8-int8.onnx */; };
+		283A269FC3959FE3FCAB3855 /* VoiceBenchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A13DE4788CD3D254ADEAB4EF /* VoiceBenchApp.swift */; };
+		766F65A7181593930E19D2C8 /* kitten-nano-0.8-fp32.onnx in Resources */ = {isa = PBXBuildFile; fileRef = 30268456394B3DD76CBADB68 /* kitten-nano-0.8-fp32.onnx */; };
+		7B12A22BA57550A2DE44D3FF /* VoiceBenchRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 873101A659394738646A7C78 /* VoiceBenchRunner.swift */; };
+		B51FA52B0B95D7B8D48D23E3 /* Supertonic in Resources */ = {isa = PBXBuildFile; fileRef = E66B0937308FB1C17CB9B1F9 /* Supertonic */; };
+		F0BFE59CD9D90861B8A7A4FF /* onnxruntime in Frameworks */ = {isa = PBXBuildFile; productRef = B737E6AA526DEB3F3F2219FD /* onnxruntime */; };
+		F8667B177023D2B46957A23F /* SessionKitSupertonic in Frameworks */ = {isa = PBXBuildFile; productRef = 65234170D83315CE8E819CB9 /* SessionKitSupertonic */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		30268456394B3DD76CBADB68 /* kitten-nano-0.8-fp32.onnx */ = {isa = PBXFileReference; path = "kitten-nano-0.8-fp32.onnx"; sourceTree = "<group>"; };
+		5103244B66962827068103B2 /* VoiceBench.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = VoiceBench.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		58B9E7DAC3A8757F9B5507FE /* VoiceBenchInputs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceBenchInputs.swift; sourceTree = "<group>"; };
+		81E7D0A201E01DF970B5CA10 /* kitten-nano-0.8-int8.onnx */ = {isa = PBXFileReference; path = "kitten-nano-0.8-int8.onnx"; sourceTree = "<group>"; };
+		873101A659394738646A7C78 /* VoiceBenchRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceBenchRunner.swift; sourceTree = "<group>"; };
+		8742F0FB93BA09CEA7187009 /* SessionKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SessionKit; path = ../../../Packages/SessionKit; sourceTree = SOURCE_ROOT; };
+		A13DE4788CD3D254ADEAB4EF /* VoiceBenchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceBenchApp.swift; sourceTree = "<group>"; };
+		BD36244107DEE97BD1A3A789 /* VoiceBenchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceBenchView.swift; sourceTree = "<group>"; };
+		E66B0937308FB1C17CB9B1F9 /* Supertonic */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Supertonic; path = ../../../App/SpokenMarginsApp/Resources/Supertonic; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AFB1699FA452824D761D1CBE /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F8667B177023D2B46957A23F /* SessionKitSupertonic in Frameworks */,
+				F0BFE59CD9D90861B8A7A4FF /* onnxruntime in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		16D9761BD1FE85442A809125 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				30268456394B3DD76CBADB68 /* kitten-nano-0.8-fp32.onnx */,
+				81E7D0A201E01DF970B5CA10 /* kitten-nano-0.8-int8.onnx */,
+			);
+			name = Models;
+			path = VoiceBench/Models;
+			sourceTree = "<group>";
+		};
+		2A50801F47C2B7ADDE5AE939 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				8742F0FB93BA09CEA7187009 /* SessionKit */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		6D8A3376CAFEB974AE37616F /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				5103244B66962827068103B2 /* VoiceBench.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		76D8AE6C68DE98CC88633449 = {
+			isa = PBXGroup;
+			children = (
+				E66B0937308FB1C17CB9B1F9 /* Supertonic */,
+				16D9761BD1FE85442A809125 /* Models */,
+				2A50801F47C2B7ADDE5AE939 /* Packages */,
+				9B6A4C89CC0449E9B34757EB /* VoiceBench */,
+				6D8A3376CAFEB974AE37616F /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		9B6A4C89CC0449E9B34757EB /* VoiceBench */ = {
+			isa = PBXGroup;
+			children = (
+				A13DE4788CD3D254ADEAB4EF /* VoiceBenchApp.swift */,
+				58B9E7DAC3A8757F9B5507FE /* VoiceBenchInputs.swift */,
+				873101A659394738646A7C78 /* VoiceBenchRunner.swift */,
+				BD36244107DEE97BD1A3A789 /* VoiceBenchView.swift */,
+			);
+			path = VoiceBench;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		3BF4F9EBFF13F567F2A18FB9 /* VoiceBench */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CEF2876CD6FB80E5D7D8F632 /* Build configuration list for PBXNativeTarget "VoiceBench" */;
+			buildPhases = (
+				DFF537D873BDB54CBE99CE49 /* Sources */,
+				40D4B4F079D4F6F0DEC587ED /* Resources */,
+				AFB1699FA452824D761D1CBE /* Frameworks */,
+				F3B2D99781B488F38CB46CB9 /* Normalize and Re-sign Embedded Framework */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = VoiceBench;
+			packageProductDependencies = (
+				65234170D83315CE8E819CB9 /* SessionKitSupertonic */,
+				B737E6AA526DEB3F3F2219FD /* onnxruntime */,
+			);
+			productName = VoiceBench;
+			productReference = 5103244B66962827068103B2 /* VoiceBench.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		769914C700AB63C8C6E3DEB6 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					3BF4F9EBFF13F567F2A18FB9 = {
+						DevelopmentTeam = J8SWC6J3VY;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = AB5B1EEABC1795FB403D2DF0 /* Build configuration list for PBXProject "VoiceBench" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 76D8AE6C68DE98CC88633449;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				B0A87FEC0BB8A2C66C834E4C /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */,
+				60A34B75296671D2EFA48987 /* XCLocalSwiftPackageReference "../../../Packages/SessionKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 6D8A3376CAFEB974AE37616F /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				3BF4F9EBFF13F567F2A18FB9 /* VoiceBench */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		40D4B4F079D4F6F0DEC587ED /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B51FA52B0B95D7B8D48D23E3 /* Supertonic in Resources */,
+				766F65A7181593930E19D2C8 /* kitten-nano-0.8-fp32.onnx in Resources */,
+				23DD91BEB0DA85E03B3E6D00 /* kitten-nano-0.8-int8.onnx in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		F3B2D99781B488F38CB46CB9 /* Normalize and Re-sign Embedded Framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Normalize and Re-sign Embedded Framework";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/../../../scripts/normalize-embedded-framework-minimum-os.sh\" \\\n  \"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/onnxruntime.framework\" \\\n  \"$IPHONEOS_DEPLOYMENT_TARGET\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		DFF537D873BDB54CBE99CE49 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				283A269FC3959FE3FCAB3855 /* VoiceBenchApp.swift in Sources */,
+				0F80953FEB18DAC43955B4E4 /* VoiceBenchInputs.swift in Sources */,
+				7B12A22BA57550A2DE44D3FF /* VoiceBenchRunner.swift in Sources */,
+				2201A78A065AEDE47B2D2AF7 /* VoiceBenchView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		03324FB8725439DE5C86DB15 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		5736FA860FAFD0A063302C2F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = J8SWC6J3VY;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = VoiceBench;
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIFileSharingEnabled = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.voicebench;
+				PRODUCT_NAME = VoiceBench;
+				REMOVE_STATIC_EXECUTABLES_FROM_EMBEDDED_BUNDLES = YES;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		6E7D89D5E17B2E8112073CF2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A6D854526E354C2609C550CB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = J8SWC6J3VY;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = VoiceBench;
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIFileSharingEnabled = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.voicebench;
+				PRODUCT_NAME = VoiceBench;
+				REMOVE_STATIC_EXECUTABLES_FROM_EMBEDDED_BUNDLES = YES;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AB5B1EEABC1795FB403D2DF0 /* Build configuration list for PBXProject "VoiceBench" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				03324FB8725439DE5C86DB15 /* Debug */,
+				6E7D89D5E17B2E8112073CF2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		CEF2876CD6FB80E5D7D8F632 /* Build configuration list for PBXNativeTarget "VoiceBench" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5736FA860FAFD0A063302C2F /* Debug */,
+				A6D854526E354C2609C550CB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		60A34B75296671D2EFA48987 /* XCLocalSwiftPackageReference "../../../Packages/SessionKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../../Packages/SessionKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B0A87FEC0BB8A2C66C834E4C /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/microsoft/onnxruntime-swift-package-manager.git";
+			requirement = {
+				kind = exactVersion;
+				version = 1.24.2;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		65234170D83315CE8E819CB9 /* SessionKitSupertonic */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SessionKitSupertonic;
+		};
+		B737E6AA526DEB3F3F2219FD /* onnxruntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B0A87FEC0BB8A2C66C834E4C /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */;
+			productName = onnxruntime;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 769914C700AB63C8C6E3DEB6 /* Project object */;
+}

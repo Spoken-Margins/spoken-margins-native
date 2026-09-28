@@ -1,0 +1,17 @@
+# Research harness only; nothing here ships in the app.
+onnxruntime==1.30.0
+numpy
+soundfile
+lameenc
+huggingface_hub
+kokoro-onnx==0.6.1
+misaki[en]==0.9.4
+piper-tts==1.8.0
+pocket-tts==3.3.0
+torch
+phonemizer
+espeakng-loader
+# spaCy English model for misaki (from Hugging Face):
+# https://huggingface.co/spacy/en_core_web_sm/resolve/main/en_core_web_sm-any-py3-none-any.whl
+faster-whisper
+jiwer

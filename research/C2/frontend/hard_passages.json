@@ -1,0 +1,10 @@
+{
+  "passages": [
+    {"id": "h1-names-numbers", "title": "Names and numbers", "text": "On March 3rd, 2024, Dr. Nakamura flew from Reykjavík to Ouagadougou with 1,250 kg of equipment, arriving 36 hours later, about 2.5 times slower than planned."},
+    {"id": "h2-stats", "title": "Statistics", "text": "The effect was small but reliable (β = 0.21, SE = 0.04, p < 0.001), and remained after adjusting for age, BMI, and baseline HbA1c (n = 3,412)."},
+    {"id": "h3-methods", "title": "Methods", "text": "Cells were incubated at 37 °C for 48 h in 5% CO2, then washed twice with PBS and lysed in RIPA buffer containing 1 mM EDTA."},
+    {"id": "h4-rare-words", "title": "Rare words", "text": "The archaeologist catalogued the chthonic iconography, noting the palimpsest's idiosyncratic marginalia and a surprisingly well-preserved quincunx."},
+    {"id": "h5-citations", "title": "Citations", "text": "Earlier work found similar effects [4, 7–9], although Smith et al. reported the opposite in a smaller cohort (Smith et al., 2019; Lee, 2021)."},
+    {"id": "h6-dialogue", "title": "Dialogue", "text": "\"You're kidding,\" said Priya. \"We read that paper twice, and nobody noticed the typo?\" Tom shrugged. \"It's 11:45, let's just fix it.\""}
+  ]
+}
