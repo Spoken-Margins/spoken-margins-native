@@ -26,7 +26,7 @@ A structured document has five parts.
    - Contiguous and non-overlapping. Anything between two segments is whitespace.
    - Each has a role (table below). Optional fields: a heading level, the page it starts on, and the float it belongs to.
 3. **`markers`: inline marks inside a segment.**
-   - Kinds: `citation`, `footnote`, `math`, `figure_reference`, `table_reference`.
+   - Kinds: `citation`, `footnote`, `math`, `figure_reference`, `table_reference`, `soft_hyphen` (a line-end hyphen that splits one word, "agree-" + "ment"; spoken whole).
    - Each carries the printed label (`12`, `3–5`, `Smith et al., 2020`, `*`) and, when known, the segment it points to.
    - The marker's characters stay in `text`. Removing them would move every anchor after them. How they sound is the speech path's decision.
 4. **`floats`: figures and tables that can be shown on screen.**

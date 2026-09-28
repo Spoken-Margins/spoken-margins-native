@@ -58,6 +58,25 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(spoken.count, listenable.sourceOffsets.count)
     }
 
+    func testAWordHyphenatedAtALineEndIsSpokenWhole() throws {
+        // #220 T4: "agree-\nment" was spoken "agree, ment" on two-column papers.
+        let doc = document([
+            StructuredDocumentLine(text: "Adjustable agree-", role: .body, pageIndex: 0, endsWithSoftHyphen: true),
+            StructuredDocumentLine(text: "ment thresholds (see Sec-", role: .body, pageIndex: 0, endsWithSoftHyphen: true),
+            StructuredDocumentLine(text: "tion 8) and Mixtral-", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "8x7B were used with chain-of-", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "thought prompts.", role: .body, pageIndex: 0),
+        ])
+        // A compound broken at its hyphen keeps it; the extractor marks only real splits.
+        XCTAssertEqual(StructuredDocumentSpeech.spokenLines(doc), [
+            "Adjustable agreement thresholds (see Section 8) and Mixtral-8x7B were used with chain-of-thought prompts.",
+        ])
+        // The joined word still maps into the canonical text, so positions don't move.
+        let listenable = StructuredDocumentSpeech.listenableText(doc)
+        let spokenStart = listenable.text.distance(from: listenable.text.startIndex, to: try XCTUnwrap(listenable.text.range(of: "agreement")).lowerBound)
+        XCTAssertEqual(listenable.sourceOffset(atSpokenCharacterOffset: spokenStart), doc.text.distance(from: doc.text.startIndex, to: doc.text.range(of: "agree-")!.lowerBound))
+    }
+
     func testATableSplitByAPageBreakIsAnnouncedOnce() {
         let doc = document([
             StructuredDocumentLine(text: "Before.", role: .body, pageIndex: 0),

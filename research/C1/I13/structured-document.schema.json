@@ -107,7 +107,7 @@
       "additionalProperties": false,
       "required": ["kind", "range"],
       "properties": {
-        "kind": { "enum": ["citation", "footnote", "math", "figure_reference", "table_reference"] },
+        "kind": { "enum": ["citation", "footnote", "math", "figure_reference", "table_reference", "soft_hyphen"] },
         "range": { "$ref": "#/$defs/range" },
         "label": { "description": "The marker as printed: \"12\", \"3–5\", \"Smith et al., 2020\", \"*\".", "type": ["string", "null"] },
         "targetSegmentId": { "description": "The reference, footnote or caption segment it points to, when known.", "type": ["string", "null"] }

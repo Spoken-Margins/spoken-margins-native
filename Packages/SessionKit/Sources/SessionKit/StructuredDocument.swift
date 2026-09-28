@@ -24,6 +24,8 @@ public struct StructuredDocument: Codable, Equatable, Sendable {
 
     public enum MarkerKind: String, Codable, Sendable {
         case citation, footnote, math
+        /// A hyphen that only splits one word across a line ("agree-" + "ment").
+        case softHyphen = "soft_hyphen"
         case figureReference = "figure_reference"
         case tableReference = "table_reference"
     }
@@ -131,13 +133,17 @@ public struct StructuredDocumentLine: Equatable, Sendable {
     public var level: Int?
     /// Character ranges of `text` printed as superscripts: citation or footnote markers.
     public var superscripts: [Range<Int>]
+    /// The line ends in a hyphen that splits one word with the next line ("agree-" +
+    /// "ment"), not a compound ("open-" + "ended"). The extractor decides.
+    public var endsWithSoftHyphen: Bool
 
-    public init(text: String, role: StructuredDocument.Role, pageIndex: Int? = nil, level: Int? = nil, superscripts: [Range<Int>] = []) {
+    public init(text: String, role: StructuredDocument.Role, pageIndex: Int? = nil, level: Int? = nil, superscripts: [Range<Int>] = [], endsWithSoftHyphen: Bool = false) {
         self.text = text
         self.role = role
         self.pageIndex = pageIndex
         self.level = level
         self.superscripts = superscripts
+        self.endsWithSoftHyphen = endsWithSoftHyphen
     }
 }
 
@@ -183,6 +189,13 @@ public enum StructuredDocumentBuilder {
                 ))
             }
             let cleanedCharacters = Array(cleaned.text)
+            if line.endsWithSoftHyphen, cleanedCharacters.last == "-" {
+                markers.append(StructuredDocument.Marker(
+                    kind: .softHyphen,
+                    range: StructuredDocument.TextRange(start: length - 1, length: 1),
+                    label: nil
+                ))
+            }
             for superscript in line.superscripts {
                 // The cleaned characters that came from the superscript run.
                 let kept = cleaned.sourceOffsets.indices.filter { superscript.contains(cleaned.sourceOffsets[$0]) }
@@ -321,6 +334,7 @@ public enum StructuredDocumentSpeech {
     static func units(_ document: StructuredDocument) -> [Unit] {
         let characters = Array(document.text)
         let silent = document.markers.filter { isSilent($0.kind) }.sorted { $0.range.start < $1.range.start }
+        let softHyphens = Set(document.markers.filter { $0.kind == .softHyphen }.map(\.range.start))
         var markerIndex = 0
         var result: [Unit] = []
         var lastNotice: String?
@@ -355,6 +369,18 @@ public enum StructuredDocumentSpeech {
                         }
                         index = end
                         markerIndex += 1
+                        continue
+                    }
+                    // A hyphen at a line end: "agree-\nment" (a soft hyphen, one word) is
+                    // spoken "agreement"; "open-\nended" or "Mixtral-\n8x7B" keeps its hyphen.
+                    // Either way the line break goes, so no pause splits the word.
+                    if characters[index] == "-", index + 1 < range.upperBound, characters[index + 1] == "\n",
+                       index > range.lowerBound, characters[index - 1].isLetter || characters[index - 1].isNumber {
+                        if !softHyphens.contains(index) {
+                            unit.characters.append("-")
+                            unit.offsets.append(index)
+                        }
+                        index += 2
                         continue
                     }
                     unit.characters.append(characters[index])
