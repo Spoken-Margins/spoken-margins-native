@@ -102,8 +102,16 @@ install -m 0644 "${stage}/journald@smserver.conf" "${jconf}"
 if [[ ! -f "${server_root}/api/v1/config.json" ]]; then
   # The unit's sandbox makes this root read-only to the service, so the
   # first config is written here, as smserver, outside the sandbox.
-  runuser -u smserver -- "${bin}" switch -public "${server_root}" attest on
+  # umask 022 as well: this script runs under 077, and Caddy (another user)
+  # must be able to read what's written here. The binary also sets 0644
+  # itself; this covers an older binary.
+  (umask 022 && runuser -u smserver -- "${bin}" switch -public "${server_root}" attest on)
 fi
+# Caddy serves this root as its own user, so every file must be world-readable
+# and every directory world-traversable. Check before Caddy is touched; the
+# first deploy rolled back on a 0600 config.json.
+unreadable="$(find "${server_root}" \( -type f ! -perm -o=r \) -o \( -type d ! -perm -o=rx \) 2>/dev/null | head -5)"
+[[ -z "${unreadable}" ]] || die "not readable by Caddy (fix with chmod 0644 files / 0755 dirs); Caddy was not touched: ${unreadable}"
 systemctl daemon-reload
 systemctl try-restart systemd-journald@smserver.service || true
 systemctl enable --quiet smserver

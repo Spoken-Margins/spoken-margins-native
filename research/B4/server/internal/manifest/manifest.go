@@ -19,12 +19,12 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 	"unicode"
+
+	"spokenmargins.dev/bridge/internal/publicfs"
 )
 
 const (
@@ -203,26 +203,10 @@ func Publish(path string, data []byte) (*Manifest, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := publicfs.WriteFile(path, data); err != nil {
 		return nil, err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".manifest-*")
-	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return nil, err
-	}
-	if err := tmp.Chmod(0o644); err != nil {
-		tmp.Close()
-		return nil, err
-	}
-	if err := tmp.Close(); err != nil {
-		return nil, err
-	}
-	return m, os.Rename(tmp.Name(), path)
+	return m, nil
 }
 
 func checkTime(p *Problems, where, v string, required bool) {

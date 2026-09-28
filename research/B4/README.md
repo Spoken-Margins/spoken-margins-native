@@ -1,4 +1,6 @@
-# B4 bridge: server skeleton (M1)
+# B4 bridge: server (M1)
+
+**Deployed** to the Spoken Margins VPS on 2026-09-28 (details on #190): `https://spokenmargins.proximitytoprogress.com/api/v1/health`. Deploys run from the Mac with the owner's OK, never from a cloud session.
 
 Design and privacy rules: [DESIGN.md](DESIGN.md). Tracking issue #190.
 
@@ -11,4 +13,4 @@ CADDY=caddy SMSERVER=smserver research/B4/deploy/test-edit-caddyfile.sh   # Cadd
 research/B4/deploy/deploy.sh --dry-run root@<vps>           # from the Mac: show every change on the box, change nothing
 ```
 
-`deploy/deploy.sh` without `--dry-run` deploys; the owner approves the dry-run diff first.
+`deploy/deploy.sh` without `--dry-run` deploys; the owner approves the dry-run diff first. Admin on the box runs as the service user, e.g. `runuser -u smserver -- smserver switch -public /srv/www/spokenmargins-server attest off`.

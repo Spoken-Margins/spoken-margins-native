@@ -9,10 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
+
+	"spokenmargins.dev/bridge/internal/publicfs"
 )
 
 const (
@@ -128,14 +129,9 @@ func Write(path string, d Document) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	// Caddy serves this file as another user, so it must be 0644 whatever
+	// the caller's umask (publicfs).
+	return publicfs.WriteFile(path, append(data, '\n'))
 }
 
 // Summary is a one-line human description for the CLI.

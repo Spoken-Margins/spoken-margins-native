@@ -14,7 +14,7 @@ phone ──POST attested request (App Attest key id + assertion)──▶ Caddy
 
 ## 1. Hosting and cost
 
-**Recommendation: the existing VPS, behind the Caddy that already serves the site.** The server is one Go binary using only the standard library, with no database and no third-party code. Measured locally: a 9.6 MB binary using about 5–10 MB of RAM idle, and state is one small file per registered install. Static documents are served by Caddy, so they, and the kill switch, keep working if the service is stopped.
+**Decided (owner, 2026-09-28): the existing VPS, behind the Caddy that already serves the site. Deployed 2026-09-28** from `5d844ac`; health, the kill switch while smserver is stopped, and the Caddy error-log filter were checked on the box (#190). The server is one Go binary using only the standard library, with no database and no third-party code. Measured locally: a 9.6 MB binary using about 5–10 MB of RAM idle, and state is one small file per registered install. Static documents are served by Caddy, so they, and the kill switch, keep working if the service is stopped.
 
 | | Existing VPS (recommended) | Fly.io machine | Google Cloud Run |
 | --- | --- | --- | --- |
@@ -27,12 +27,12 @@ The Fly.io and Cloud Run prices are approximate list prices from memory, not che
 
 **Traffic estimate.** A 20-site manifest with 20 items each is about 110 KB raw, 25–30 KB gzipped. Apps check at most every 6 hours with `If-None-Match`, so most checks are a ~300-byte 304. Budgeting four full downloads per install per day gives about 3 GB/month per 1,000 installs, or 30 GB per 10,000. Attested traffic is negligible. The watcher that fetches the 20 sites hourly (M2) adds under 1 GB/month.
 
-**Cost ceiling and alert (owner decision).** I suggest a **$10/month ceiling for all Spoken Margins servers** through E3 and F1. B4 alone costs $0 extra on the VPS. "Hard budget alert" on a flat-rate box means watching the one metered thing, plus liveness, from off the box:
+**Cost ceiling and alert.** The owner set a **$10/month ceiling for all Spoken Margins servers**, once there are users. Still open: the uptime monitor and the transfer alert below, which need the plan's transfer allowance. B4 alone costs $0 extra on the VPS. "Hard budget alert" on a flat-rate box means watching the one metered thing, plus liveness, from off the box:
 - A free external monitor (Healthchecks.io or UptimeRobot free tier) polls `https://spokenmargins.proximitytoprogress.com/api/v1/health` every 5 minutes and emails the owner on failure.
 - A daily cron on the VPS reads `vnstat` and pings a second Healthchecks check *only* when monthly transfer passes 50% of the plan's allowance. That check alerts if it gets pinged.
 - If the owner picks a metered host instead, set that provider's budget alert at 50% and 90% of the ceiling.
 
-**Deploy** (`deploy/deploy.sh <ssh-host>`, run from the Mac; `--dry-run` first). smserver listens on `127.0.0.1:8795` (8787 is taken on the box; `SM_SERVER_PORT` changes it). Its public documents live in their own root, `/srv/www/spokenmargins-server`, because the site deploy's `rsync --delete` into `/srv/www/spokenmargins` would otherwise delete the kill switch. Caddy serves those two paths from that root inside the site block's `route`. The script edits only the `spokenmargins.proximitytoprogress.com` block and a new global log block, refusing if either isn't what it expects. It runs `caddy validate` first, backs up the Caddyfile, reloads Caddy (never restarts it), checks the sites and health, and rolls back on any failure. `deploy/test-edit-caddyfile.sh` tests the Caddyfile edit against Caddy 2.10.2, the box's version.
+**Deploy** (`deploy/deploy.sh <ssh-host>`, run from the Mac with the owner's OK; `--dry-run` first). smserver listens on `127.0.0.1:8795` (8787 is taken on the box; `SM_SERVER_PORT` changes it). Its public documents live in their own root, `/srv/www/spokenmargins-server`, because the site deploy's `rsync --delete` into `/srv/www/spokenmargins` would otherwise delete the kill switch. Caddy serves those two paths from that root inside the site block's `route`. The script edits only the `spokenmargins.proximitytoprogress.com` block and a new global log block, refusing if either isn't what it expects. It runs `caddy validate` first, backs up the Caddyfile, reloads Caddy (never restarts it), checks the sites and health, and rolls back on any failure. The first real run did roll back: the install-time `smserver switch` inherited the script's `umask 077`, so `config.json` came out `0600` and Caddy answered 403. Public files are now always written `0644` (with `0755` for new directories) whatever the umask, and the script refuses before touching Caddy if anything under the public root isn't world-readable. `deploy/test-edit-caddyfile.sh` tests the Caddyfile edit against Caddy 2.10.2, the box's version.
 
 ## 2. Attestation, and blocking one install
 
@@ -147,12 +147,12 @@ Add a section:
 - `cmd/smclient`: the test client.
 - `scripts/demo.sh`: runs the whole M1 path locally.
 
-It stays under `research/B4/` until the owner picks hosting. At the first real deploy (M2), I suggest moving it to a top-level `Server/` beside `Site/`, with a deploy script modeled on `scripts/deploy-spoken-margins-site.sh`.
+It's deployed from `research/B4/` today. Before M2 adds the watcher, I suggest moving it to a top-level `Server/` beside `Site/`, with `deploy/` alongside it.
 
 ## 9. Decisions for the owner
 
-1. **Hosting:** the existing VPS, behind the current Caddy (recommended), or a managed host.
-2. **Monthly ceiling:** $10/month for all Spoken Margins servers (recommended); B4 alone is $0 extra on the VPS. Also confirm the VPS plan's monthly transfer allowance, so the 50% alert has a number.
+1. ~~**Hosting**~~: decided, the existing VPS; deployed 2026-09-28.
+2. ~~**Monthly ceiling**~~: decided, $10/month once there are users. **Still needed:** the VPS plan's monthly transfer allowance, so the 50% alert has a number.
 3. **How new sites get bridged:** the owner approves each one (the brief's recommendation, and the design above assumes it).
 4. **Privacy page and label:** approve the draft text in §7 and the Device ID declaration. They publish before any attested feature ships, and they're not needed for a bridge that only reads.
 5. **Unlinkable submissions:** confirm §3 (tokens, blocking at issuance) as the rule E3 and F1 inherit, rather than linking submissions to install keys.
