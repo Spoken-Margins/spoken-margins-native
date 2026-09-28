@@ -3372,9 +3372,12 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
         var itemId = handoff.itemId ?? browserTextItemId(title: title, url: handoff.source.url)
-        if handoff.itemId == nil, handoff.captureMode == .readablePage {
-            // A corrected extraction must not move existing Margin anchors.
-            // Retain the original edition and give changed text its own identity.
+        let sourceExtension = URL(string: handoff.source.url)?.pathExtension.lowercased()
+        let isPDF = handoff.captureMode == .markdownFile && sourceExtension == "pdf"
+        if handoff.itemId == nil, handoff.captureMode == .readablePage || isPDF {
+            // A corrected extraction (or a new PDF extractor) must not move existing
+            // Margin anchors. Retain the original edition and give changed text its
+            // own identity.
             if let existing = try existingItem(id: itemId), existing.text != text {
                 let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
                 itemId += "-edition-\(digest)"
@@ -3384,8 +3387,7 @@ public final class SessionEngine {
                 return (existing, try repository.loadListeningMap(itemId: itemId))
             }
         }
-        let sourceExtension = URL(string: handoff.source.url)?.pathExtension.lowercased()
-        let mapPolicy: DeterministicListeningMapPolicy = handoff.captureMode == .markdownFile && sourceExtension == "pdf"
+        let mapPolicy: DeterministicListeningMapPolicy = isPDF
             ? .canonicalHeadings
             : .adaptiveListeningSections
         let deterministicMap = parsedMarkdown?.deterministicListeningMap(

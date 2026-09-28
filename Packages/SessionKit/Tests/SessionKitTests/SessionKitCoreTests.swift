@@ -378,6 +378,52 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(try repo.loadItem(id: original.id), original)
     }
 
+    func testReextractedPDFKeepsTheTextUnderExistingWrittenMargins() throws {
+        // A new PDF extractor (C1 M3) changes the text a written Margin's offsets
+        // point into. Re-importing must not replace it (I13 rule 1).
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let store = try SQLiteSessionStore(path: path)
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "pdf", displayName: "PDF", capabilities: ["sync": ["canonical_persistence"]]), repository: store)
+        for url in ["shared-file://share-sheet/Paper.pdf", "https://journal.example/paper.pdf"] {
+            var handoff = BrowserTextHandoff(captureMode: .markdownFile, source: BrowserTextSource(url: url, title: "Paper"), text: "# Paper\n\nJ Biol 12 (2020) 1-9. The body begins here and goes on.", contentFormat: .markdown)
+            let original = try engine.importBrowserTextInBackground(handoff)
+            let originalText = try XCTUnwrap(original.text)
+            let marked = try XCTUnwrap(originalText.range(of: "body begins"))
+            let session = Session(id: "session-\(original.id)", itemId: original.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: original.id, position: Position(), completionPercent: 0, playbackRate: 1)
+            try store.saveSession(session)
+            let margin = Interjection(
+                id: "margin-\(original.id)",
+                itemId: original.id,
+                sessionId: session.id,
+                targetType: .item,
+                targetId: original.id,
+                createdAt: Date(timeIntervalSince1970: 1),
+                roughPercent: 50,
+                anchor: Anchor(anchorType: .text, startChar: originalText.distance(from: originalText.startIndex, to: marked.lowerBound), endChar: originalText.distance(from: originalText.startIndex, to: marked.upperBound), anchorBefore: "The", anchorAfter: "here"),
+                audioPath: nil,
+                audioStatus: "none",
+                transcriptionStatus: "complete",
+                transcript: nil,
+                cleanedTranscript: nil,
+                displayText: "Written Margin",
+                status: "active"
+            )
+            try store.saveInterjection(margin)
+
+            handoff.text = "# Paper\n\nThe body begins here and goes on."
+            let reextracted = try engine.importBrowserTextInBackground(handoff)
+
+            XCTAssertNotEqual(reextracted.id, original.id, url)
+            XCTAssertEqual(reextracted.text, "Paper\n\nThe body begins here and goes on.", url)
+            let kept = Array(try XCTUnwrap(store.loadItem(id: original.id).text))
+            XCTAssertEqual(String(kept), originalText, url)
+            let anchor = try XCTUnwrap(store.loadInterjections(sessionId: session.id).first?.anchor)
+            XCTAssertEqual(anchor.endChar <= kept.count ? String(kept[anchor.startChar..<anchor.endChar]) : nil, "body begins", url)
+            XCTAssertEqual(try engine.importBrowserTextInBackground(handoff).id, reextracted.id, "the same re-extraction is one edition: \(url)")
+        }
+    }
+
     func testPodcastIdentitySeparatesDefaultFilenamesAndTitlePrefixesAcrossPersistence() throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
