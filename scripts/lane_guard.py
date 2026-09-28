@@ -10,8 +10,8 @@ In a guarded session it blocks (exit 2, reason on stderr):
   killing CoreSimulator, simulator MCP tools, installs and launches on a physical device;
 - simulator test runs: `xcodebuild test|test-without-building`, `verify-tests.py --plan` other
   than fast, and the repo scripts that boot simulators;
-unless the session is the Test Desk: opened on <repo>/.claude/worktrees/test-desk, or started
-with SM_LANE_ROLE=test-desk. In every guarded session, including the Test Desk, it also sends raw
+unless the session is the Test Desk: opened on the <repo>-test-desk worktree next to the
+repository, or started with SM_LANE_ROLE=test-desk. In every guarded session, including the Test Desk, it also sends raw
 `xcodebuild` builds to scripts/xcodebuild-lane, the Mac-wide build semaphore. Guarded calls are
 logged to ~/Library/Caches/SpokenMarginsLane/guard.log.
 
@@ -30,7 +30,7 @@ import time
 
 TEST_DESK_ENV = 'SM_LANE_ROLE'
 TEST_DESK_VALUE = 'test-desk'
-TEST_DESK_FOLDER = os.path.join('.claude', 'worktrees', 'test-desk')
+TEST_DESK_SUFFIX = '-test-desk'  # the Test Desk's worktree sits next to the checkout: <repo>-test-desk
 
 KEYWORDS = ('simctl', 'xcodebuild', 'devicectl', 'verify-tests', 'Simulator', 'smoke-simulator',
             'verify-gate', 'posterboard')
@@ -226,11 +226,11 @@ def same_repository(path: str, repos: list[str]) -> bool:
                                 for repo in repos)
 
 
-def in_scope(event: dict, repos: list[str]) -> bool:
+def in_scope(event: dict, repos: list[str], environ) -> bool:
     command = (event.get('tool_input') or {}).get('command') or ''
     if any(os.path.realpath(repo) in command or repo in command for repo in repos):
         return True
-    places = [event.get('cwd'), os.environ.get('CLAUDE_PROJECT_DIR')]
+    places = [event.get('cwd'), environ.get('CLAUDE_PROJECT_DIR')]
     return any(place and same_repository(place, repos) for place in places)
 
 
@@ -243,12 +243,12 @@ def test_desk(event: dict, repos: list[str], environ) -> str | None:
     """How this session is the Test Desk, or None.
 
     Either it was started with SM_LANE_ROLE=test-desk (a terminal session), or its project folder,
-    which `cd` can't change, is <repo>/.claude/worktrees/test-desk (a desktop app or terminal
+    which `cd` can't change, is the <repo>-test-desk worktree (a desktop app or terminal
     session opened on that folder).
     """
     if environ.get(TEST_DESK_ENV) == TEST_DESK_VALUE:
         return TEST_DESK_ENV
-    desks = [os.path.join(os.path.realpath(repo), TEST_DESK_FOLDER) for repo in repos]
+    desks = [os.path.realpath(repo) + TEST_DESK_SUFFIX for repo in repos]
     project = environ.get('CLAUDE_PROJECT_DIR')
     if project:
         return 'project folder' if os.path.realpath(project) in desks else None
@@ -277,7 +277,7 @@ def decide(event: dict, repos: list[str], environ=None) -> str | None:
     """Return the reason to block this tool call, or None to let it through."""
     environ = os.environ if environ is None else environ
     found = classify_tool(event.get('tool_name') or '', event.get('tool_input') or {})
-    if not found or not in_scope(event, repos):
+    if not found or not in_scope(event, repos, environ):
         return None
     desk = test_desk(event, repos, environ)
     sim = sorted({what for kind, what in found if kind == SIM})

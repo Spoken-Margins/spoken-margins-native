@@ -1,6 +1,6 @@
 ---
 name: journey
-description: How the Spoken Margins Test Desk runs a journey from docs/journeys.md (or a one-off scenario from a lane request) on a simulator with real taps and screenshots, and reports it on the PR. Use only in the Test Desk session (started with SM_LANE_ROLE=test-desk) when handling a T4 or T5 lane request.
+description: How the Spoken Margins Test Desk runs a journey from docs/journeys.md (or a one-off scenario from a lane request) on a simulator with real taps and screenshots, and reports it on the PR. Use only in the Test Desk session (opened on the spoken-margins-native-test-desk folder) when handling a T4 or T5 lane request.
 ---
 
 # Running a journey for a lane request
@@ -9,7 +9,9 @@ The journeys themselves are in [docs/journeys.md](../../../docs/journeys.md), an
 
 ## Who can do this
 
-Only the Test Desk: a Claude Code session started from a terminal with `SM_LANE_ROLE=test-desk claude`. The lane guard hook in `~/.claude/settings.json` blocks simulator commands in every other session. If a simulator command is blocked here, this session wasn't started as the Test Desk. Stop and say so; don't try to get around it.
+Only the Test Desk: a Claude Code session opened on the `spoken-margins-native-test-desk` folder, the worktree next to the main checkout (in the desktop app, or a terminal `claude` started there), or a terminal session started with `SM_LANE_ROLE=test-desk`. The lane guard hook in `~/.claude/settings.json` blocks simulator commands in every other session, and `cd` into that folder doesn't count. If a simulator command is blocked here, this session wasn't opened as the Test Desk. Stop and say so; don't try to get around it.
+
+That worktree is the desk's home, not a test subject: keep it detached at `origin/next` (`git fetch` then `git checkout --detach origin/next` there) and test each request in its own worktree.
 
 ## Setup for one request
 

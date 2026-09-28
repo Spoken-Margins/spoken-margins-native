@@ -11,7 +11,6 @@ sys.path.insert(0, str(SCRIPTS))
 import lane_guard as guard  # noqa: E402
 
 REPO = str(SCRIPTS.parent)
-DESK_FOLDER = os.path.join(os.path.realpath(REPO), '.claude', 'worktrees', 'test-desk')
 
 
 def bash(command, cwd=REPO):
@@ -137,18 +136,30 @@ class LaneGuardTests(unittest.TestCase):
         self.assertEqual(broken.returncode, 0)
         self.assertIn('allowed the call', broken.stderr)
 
+    def repository_with_test_desk(self):
+        """A throwaway repository and its <repo>-test-desk worktree, like the Mac's layout."""
+        parent = os.path.realpath(self.temporary.name)
+        main, desk = os.path.join(parent, 'repo'), os.path.join(parent, 'repo-test-desk')
+        git = ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com']
+        subprocess.run(git + ['init', '-q', main], check=True)
+        subprocess.run(git + ['-C', main, 'commit', '-q', '--allow-empty', '-m', 'start'], check=True)
+        subprocess.run(git + ['-C', main, 'worktree', 'add', '-q', '--detach', desk], check=True)
+        return main, desk
+
     def test_a_session_opened_on_the_test_desk_folder_is_the_test_desk(self):
-        event = bash('xcrun simctl boot X', cwd=REPO)
-        self.assertIsNone(self.decide(event, {**self.stream, 'CLAUDE_PROJECT_DIR': DESK_FOLDER}))
+        main, desk = self.repository_with_test_desk()
+        event = bash('xcrun simctl boot X', cwd=desk)
+        self.assertIsNone(self.decide(event, {**self.stream, 'CLAUDE_PROJECT_DIR': desk}, repos=(main,)))
         # Without CLAUDE_PROJECT_DIR, the transcript's project folder name identifies the session.
-        transcript = f'/Users/x/.claude/projects/{guard.project_key(DESK_FOLDER)}/session.jsonl'
-        self.assertIsNone(self.decide({**event, 'transcript_path': transcript}))
+        transcript = f'/Users/x/.claude/projects/{guard.project_key(desk)}/session.jsonl'
+        self.assertIsNone(self.decide({**event, 'transcript_path': transcript}, repos=(main,)))
 
     def test_changing_directory_into_the_test_desk_folder_does_not_make_a_test_desk(self):
-        event = bash('xcrun simctl boot X', cwd=DESK_FOLDER)
-        self.assertIsNotNone(self.decide(event, {**self.stream, 'CLAUDE_PROJECT_DIR': REPO}))
-        transcript = f'/Users/x/.claude/projects/{guard.project_key(REPO)}/session.jsonl'
-        self.assertIsNotNone(self.decide({**event, 'transcript_path': transcript}))
+        main, desk = self.repository_with_test_desk()
+        event = bash('xcrun simctl boot X', cwd=desk)
+        self.assertIsNotNone(self.decide(event, {**self.stream, 'CLAUDE_PROJECT_DIR': main}, repos=(main,)))
+        transcript = f'/Users/x/.claude/projects/{guard.project_key(main)}/session.jsonl'
+        self.assertIsNotNone(self.decide({**event, 'transcript_path': transcript}, repos=(main,)))
 
     def test_guarded_calls_are_logged_and_ordinary_ones_are_not(self):
         self.decide(bash('xcrun simctl boot X'))
