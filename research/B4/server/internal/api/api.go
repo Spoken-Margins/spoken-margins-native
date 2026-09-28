@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -171,11 +172,19 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
 		route := r.URL.Path
 		if !loggedRoutes[route] {
 			route = "other"
 		}
+		defer func() {
+			// net/http's own panic message names the peer address, so recover
+			// here and log only the route.
+			if p := recover(); p != nil {
+				s.writeLine(s.RequestLog, map[string]any{"hour": s.Now().UTC().Format("2006-01-02T15"), "route": route, "panic": fmt.Sprint(p)})
+				fail(rec, http.StatusInternalServerError, "internal")
+			}
+		}()
+		next.ServeHTTP(rec, r)
 		s.writeLine(s.RequestLog, map[string]any{
 			"hour":    s.Now().UTC().Format("2006-01-02T15"),
 			"method":  r.Method,

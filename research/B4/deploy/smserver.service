@@ -1,0 +1,48 @@
+# NOT DEPLOYED. systemd unit template for the owner's VPS.
+# Install: useradd --system --home /var/lib/smserver --shell /usr/sbin/nologin smserver
+#          install -m 0755 smserver /usr/local/bin/smserver
+#          install -d -o smserver -g smserver -m 0755 /srv/www/spokenmargins/api/v1 /srv/www/spokenmargins/bridge/v1
+# Admin:   sudo -u smserver smserver block -state /var/lib/smserver TAG
+#          sudo -u smserver smserver switch -public /srv/www/spokenmargins attest off
+[Unit]
+Description=Spoken Margins server (bridge and attestation)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=smserver
+Group=smserver
+ExecStart=/usr/local/bin/smserver serve -listen 127.0.0.1:8787 -state /var/lib/smserver -public /srv/www/spokenmargins -behind-proxy
+StateDirectory=smserver
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+
+# Request log lines (hour, route, status, latency bucket) go to their own
+# journal namespace so their retention can be 14 days without touching the
+# rest of the box. See journald@smserver.conf.
+LogNamespace=smserver
+
+# Keep a small service small, and contained if it is ever compromised.
+MemoryMax=128M
+CPUQuota=50%
+TasksMax=64
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/smserver
+ReadOnlyPaths=/srv/www/spokenmargins
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

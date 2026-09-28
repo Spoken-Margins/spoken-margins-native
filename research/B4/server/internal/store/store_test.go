@@ -78,3 +78,18 @@ func TestRegisterAdvanceBlockPurge(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPruneHourLog(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "abuse.log")
+	os.WriteFile(p, []byte(`{"hour":"2026-07-01T10","tag":"aaaaaaaaaaaaaaaa","reason":"rate_limited"}
+{"hour":"2026-09-27T10","tag":"bbbbbbbbbbbbbbbb","reason":"rate_limited"}
+`), 0o600)
+	n, err := PruneHourLog(p, time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC), 30)
+	if err != nil || n != 1 {
+		t.Fatalf("pruned %d, %v", n, err)
+	}
+	data, _ := os.ReadFile(p)
+	if strings.Contains(string(data), "aaaa") || !strings.Contains(string(data), "bbbb") {
+		t.Fatalf("after prune: %s", data)
+	}
+}

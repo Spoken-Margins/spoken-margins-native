@@ -225,3 +225,34 @@ func (s *Store) Count() (int, error) {
 	}
 	return n, nil
 }
+
+// PruneHourLog drops JSON lines whose "hour" field is older than the given
+// number of days. It keeps the abuse log from becoming a long-term record.
+func PruneHourLog(path string, now time.Time, days int) (int, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	} else if err != nil {
+		return 0, err
+	}
+	cutoff := now.UTC().AddDate(0, 0, -days).Format("2006-01-02T15")
+	var kept []byte
+	dropped := 0
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		var entry struct {
+			Hour string `json:"hour"`
+		}
+		if json.Unmarshal([]byte(line), &entry) != nil || entry.Hour < cutoff {
+			dropped++
+			continue
+		}
+		kept = append(kept, line+"\n"...)
+	}
+	if dropped == 0 {
+		return 0, nil
+	}
+	return dropped, writeAtomic(path, kept)
+}

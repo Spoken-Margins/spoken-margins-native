@@ -33,7 +33,11 @@ import (
 	"spokenmargins.dev/bridge/internal/store"
 )
 
-const defaultAppID = "J8SWC6J3VY.com.spokenmargins.native"
+const (
+	defaultAppID = "J8SWC6J3VY.com.spokenmargins.native"
+	// abuseLogDays bounds how long an over-limit install's tag is kept.
+	abuseLogDays = 30
+)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -108,11 +112,6 @@ func serve(args []string) error {
 		}
 		log.Printf("wrote default config to %s", cfgPath)
 	}
-	abuse, err := os.OpenFile(filepath.Join(*stateDir, "abuse.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer abuse.Close()
 
 	srv := &api.Server{
 		Verifier:          &appattest.Verifier{Roots: pool, AppID: *appID, AllowDevelopment: *allowDev},
@@ -120,7 +119,7 @@ func serve(args []string) error {
 		Config:            &config.Reader{Path: cfgPath},
 		PublicDir:         *public,
 		RequestLog:        os.Stdout,
-		AbuseLog:          abuse,
+		AbuseLog:          appendFile(filepath.Join(*stateDir, "abuse.log")),
 		TrustForwardedFor: *behindProxy,
 	}
 	httpServer := &http.Server{
@@ -143,6 +142,9 @@ func serve(args []string) error {
 				log.Printf("purge failed: %v", err)
 			} else if n > 0 {
 				log.Printf("purged %d idle install records", n)
+			}
+			if _, err := store.PruneHourLog(filepath.Join(*stateDir, "abuse.log"), time.Now(), abuseLogDays); err != nil {
+				log.Printf("abuse log prune failed: %v", err)
 			}
 		}
 		purgeOnce()
@@ -168,6 +170,19 @@ func serve(args []string) error {
 		return err
 	}
 	return nil
+}
+
+// appendFile opens the file for each write, so the daily prune can replace
+// it by rename without the server writing into the old, unlinked copy.
+type appendFile string
+
+func (a appendFile) Write(p []byte) (int, error) {
+	f, err := os.OpenFile(string(a), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	return f.Write(p)
 }
 
 type discard struct{}
@@ -220,6 +235,9 @@ func purge(args []string) error {
 		return err
 	}
 	n, err := st.Purge(time.Now(), *idleDays)
+	if err == nil {
+		_, err = store.PruneHourLog(filepath.Join(*stateDir, "abuse.log"), time.Now(), abuseLogDays)
+	}
 	if err == nil {
 		left, _ := st.Count()
 		fmt.Printf("purged %d, %d remain\n", n, left)
