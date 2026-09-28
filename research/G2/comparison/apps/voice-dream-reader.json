@@ -1,0 +1,294 @@
+{
+  "id": "voice-dream-reader",
+  "name": "Voice Dream Reader",
+  "vendor": "Voice Dream LLC",
+  "category": "read-aloud",
+  "website": "https://www.voicedream.com",
+  "why_listed": "Blind, low-vision and dyslexic readers who want an offline, accessibility-first reader for PDFs, ebooks and articles with highlights and notes would pick Voice Dream Reader instead of Spoken Margins.",
+  "claims": {
+    "platforms": {
+      "value": "iOS, iPadOS, watchOS, visionOS, macOS (separate Mac app)",
+      "detail": "Universal iPhone/iPad app with Apple Watch and Vision Pro support, plus a separate native Mac app, 'Voice Dream Reader' (Mac only). No Android, Windows or web app found.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-natural-reader/id496177674",
+          "title": "Voice Dream - Natural Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Apple Vision Requires visionOS 1.0 or later. Apple Watch Requires watchOS 7.0 or later."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-reader/id972112040",
+          "title": "Voice Dream Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "we wrote Voice Dream Reader Desktop from ground up as a native macOS app"
+        },
+        {
+          "url": "https://www.voicedream.com/",
+          "title": "Voice Dream Reader - Text to Speech App",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Listen offline when you’re on the go, and continue across your iPhone, iPad, and Mac."
+        }
+      ],
+      "note": "iOS app requires iOS 15.0 or later; Mac app requires macOS 11.0 or later."
+    },
+    "price_free_tier": {
+      "value": "No free tier: subscription required after a free trial",
+      "detail": "The iOS listing says a subscription is required to use the app; new users get a free trial.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-natural-reader/id496177674",
+          "title": "Voice Dream - Natural Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "A subscription is required to access the app. A free trial is offered to new users."
+        }
+      ],
+      "note": "Trial length not stated on the listing. The vendor site has no pricing page."
+    },
+    "price_paid": {
+      "value": "iOS App Store (US): Monthly Subscription USD 4.99; annual subscriptions listed at USD 39.99, 59.99, 79.99 and 89.99. Mac App Store (US): USD 9.99/month or USD 49.99/year and up",
+      "detail": "Prices come only from the App Store in-app purchase lists; several annual tiers are listed without saying which is current. Extra premium voices are sold separately (USD 4.99 each).",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-natural-reader/id496177674",
+          "title": "Voice Dream - Natural Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Annual Subscription $79.99 Premium $79.99 Monthly Subscription $4.99 James (NeoSpeech US English Voice) $4.99 Annual Subscription $39.99"
+        },
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-reader/id972112040",
+          "title": "Voice Dream Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Monthly Subscription $9.99 Annual Subscription $49.99"
+        }
+      ],
+      "note": "US pages, USD. The vendor website has no pricing page; the offered price may differ from the lowest listed in-app purchase."
+    },
+    "plays_podcasts": {
+      "value": "unknown",
+      "detail": "The app plays MP3/MP4 audiobooks and DAISY audio, but no vendor text mentions podcast feeds or subscriptions.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-natural-reader/id496177674",
+          "title": "Voice Dream - Natural Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Audiobooks in MP3, MP4 or zipped MP3 format."
+        }
+      ],
+      "note": "One App Store user review says they use it to listen to podcasts they download; that is not vendor evidence of feed subscription. The vendor support page (voicedream.com/support/reader-help/) now returns 404."
+    },
+    "reads_web_articles_aloud": {
+      "value": "yes",
+      "detail": "Web pages can be saved via the Safari extension or from Pocket/Instapaper and read aloud.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-natural-reader/id496177674",
+          "title": "Voice Dream - Natural Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Voice Dream - Read Aloud lets you listen to PDFs, textbooks, Web pages, emails, and books using advanced AI Text To Speech!"
+        }
+      ]
+    },
+    "reads_pdfs_aloud": {
+      "value": "yes",
+      "detail": "Reads PDFs aloud, including OCR of scanned PDFs and skipping headers and footers.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-natural-reader/id496177674",
+          "title": "Voice Dream - Natural Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Recognize text for scanned PDF documents."
+        }
+      ]
+    },
+    "voice_notes_anchored": {
+      "value": "unknown",
+      "detail": "Bookmarks, highlights and notes exist; no recorded or dictated voice-note feature is described.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-natural-reader/id496177674",
+          "title": "Voice Dream - Natural Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-reader/id972112040",
+          "title": "Voice Dream Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked both App Store descriptions and the vendor homepage. iOS dictation could presumably fill a note field, but no vendor page says so."
+    },
+    "text_notes_anchored": {
+      "value": "yes",
+      "detail": "Bookmark, highlight and annotate text; notes sync via iCloud Drive.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-natural-reader/id496177674",
+          "title": "Voice Dream - Natural Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Bookmarking, text highlighting and annotation. Highlights and notes can be exported."
+        },
+        {
+          "url": "https://www.voicedream.com/",
+          "title": "Voice Dream Reader - Text to Speech App",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Highlight key passages, add notes, and export your work whenever you need it."
+        }
+      ]
+    },
+    "hands_free_capture": {
+      "value": "unknown",
+      "detail": "There is an Apple Watch app, and playback works with AirPods and the Lock Screen, but no vendor text says a bookmark, highlight or note can be captured from them.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-natural-reader/id496177674",
+          "title": "Voice Dream - Natural Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Improved AirPods, lock screen, and playback control reliability."
+        }
+      ],
+      "note": "Quote is from version 5.5.6 release notes and is about playback control only. What the Watch app does is not described on the listing."
+    },
+    "transcripts": {
+      "value": "unknown",
+      "detail": "No podcast playback found, so podcast transcripts were not looked for further. For text documents the spoken word is highlighted as it is read.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-natural-reader/id496177674",
+          "title": "Voice Dream - Natural Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Spoken word is highlighted to improve comprehension and retention."
+        }
+      ],
+      "note": "Quote concerns text read-along, not transcripts of podcast audio."
+    },
+    "ai_summaries": {
+      "value": "yes",
+      "detail": "Since late 2025 the iOS app can summarize a document and chat about it.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-natural-reader/id496177674",
+          "title": "Voice Dream - Natural Reader App - App Store",
+          "published": "2025-12-22",
+          "checked": "2026-09-28",
+          "quote": "Add new AI features like chat with document and summarize text"
+        }
+      ],
+      "note": "Date is the release date of version 5.5.2 in the App Store version history. Whether AI runs on device or on a server is not stated."
+    },
+    "export_markdown_pkm": {
+      "value": "partial",
+      "detail": "Highlights and notes can be exported, but no vendor page read names a format (Markdown) or a destination (Obsidian, Notion, Readwise, Logseq). The app can import from Evernote but export to it is not stated.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-natural-reader/id496177674",
+          "title": "Voice Dream - Natural Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Highlights and notes can be exported."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-reader/id972112040",
+          "title": "Voice Dream Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Export highlights and notes."
+        }
+      ],
+      "note": "'partial' means export exists but PKM or Markdown support is not confirmed. A search snippet mentions a plain-text (.txt) export; its source page was not read."
+    },
+    "share_note_at_moment": {
+      "value": "unknown",
+      "detail": "No feature found for sharing a note or clip that opens at the same point for someone else.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-natural-reader/id496177674",
+          "title": "Voice Dream - Natural Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://www.voicedream.com/",
+          "title": "Voice Dream Reader - Text to Speech App",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked iOS and Mac App Store listings and the vendor homepage."
+    },
+    "group_listening": {
+      "value": "unknown",
+      "detail": "Voice Dream sells to schools, but no group, shared-library or shared-annotation feature is described.",
+      "sources": [
+        {
+          "url": "https://www.voicedream.com/",
+          "title": "Voice Dream Reader - Text to Speech App",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Voice Dream for Schools"
+        }
+      ],
+      "note": "Checked homepage and both App Store listings. The /school page was not read."
+    },
+    "on_device_privacy": {
+      "value": "partial",
+      "detail": "The vendor says the library stays on the device or in the user's iCloud Drive, voices run offline and the scanner works on device. But the iOS App Store privacy label lists identifiers and usage data used for tracking and third-party advertising.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-reader/id972112040",
+          "title": "Voice Dream Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Your library stays private on your device, or in iCloud Drive if you synchronize. No-one else has access."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-natural-reader/id496177674",
+          "title": "Voice Dream - Natural Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "The following data may be used to track you across apps and websites owned by other companies: Identifiers Usage Data"
+        }
+      ],
+      "note": "The library privacy statement appears on the Mac listing; the iOS listing says library sync uses iCloud Drive and the scanner 'Works entirely on device'. Privacy labels are self-reported."
+    },
+    "account_required": {
+      "value": "unknown",
+      "detail": "A subscription is required, and sync uses the user's iCloud Drive. No page read states whether a Voice Dream account is also required.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/voice-dream-natural-reader/id496177674",
+          "title": "Voice Dream - Natural Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Your entire library, including folders, reading locations, bookmarks and annotations are synchronized across all your devices using iCloud Drive"
+        },
+        {
+          "url": "https://www.voicedream.com/privacy",
+          "title": "Privacy Policy - Voice Dream Reader",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Account means a unique account created for You to access our Service or parts of our Service."
+        }
+      ],
+      "note": "The homepage has an email 'Create account' form and the privacy policy defines an Account, but neither says one is needed to use the app. The privacy label links email and user ID to the user for app functionality."
+    }
+  }
+}

@@ -1,0 +1,271 @@
+{
+  "id": "hypothesis",
+  "name": "Hypothesis",
+  "vendor": "Hypothes.is Project (Hypothesis)",
+  "category": "social-listening",
+  "website": "https://web.hypothes.is",
+  "why_listed": "Classes and research groups who want to annotate the same web page, PDF or YouTube transcript together and discuss in threads would use Hypothesis instead of Spoken Margins' shared Margins.",
+  "claims": {
+    "platforms": {
+      "value": "web: Chrome/Chromium extension, bookmarklet for other browsers, LMS apps (Canvas, Blackboard, Moodle, D2L); no native mobile app",
+      "detail": "Browser-based annotation layer; on phones only via an unofficial bookmarklet workaround.",
+      "sources": [
+        {
+          "url": "https://web.hypothes.is/help/how-to-use-hypothesis-on-mobile-devices/",
+          "title": "How to Use Hypothesis on Mobile Devices : Hypothesis",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Currently, Hypothesis officially provides a Chrome extension and a bookmarklet. Most major browsers, however, only support extensions or bookmarklets on desktop computers and laptops."
+        },
+        {
+          "url": "https://web.hypothes.is",
+          "title": "Hypothesis | The #1 Social Annotation Tool for Higher Education",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "all without leaving Canvas, Blackboard, Moodle, or D2L."
+        }
+      ]
+    },
+    "price_free_tier": {
+      "value": "Free: core annotation and private groups (free account)",
+      "detail": "Individuals annotate for free; paid packages are for institutions' LMS use.",
+      "sources": [
+        {
+          "url": "https://web.hypothes.is/pricing-page/",
+          "title": "Pricing Page : Hypothesis",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Free Per student/yearly Features Core annotation Private groups"
+        },
+        {
+          "url": "https://web.hypothes.is/help/annotation-basics/",
+          "title": "Annotation Basics : Hypothesis",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "If you don’t have a free Hypothesis account yet"
+        }
+      ]
+    },
+    "price_paid": {
+      "value": "Not published: Bronze, Silver and Gold packages are priced per student per year via sales",
+      "detail": "Paid tiers add LMS integration, analytics, auto-grading and support for institutions; no price is shown.",
+      "sources": [
+        {
+          "url": "https://web.hypothes.is/pricing-page/",
+          "title": "Pricing Page : Hypothesis",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Bronze Per student/yearly Features Core Annotation LMS Integration Up to 1,000 user seats"
+        },
+        {
+          "url": "https://web.hypothes.is/pricing-page/",
+          "title": "Pricing Page : Hypothesis",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Contact our sales team for a custom solution"
+        }
+      ],
+      "note": "US site; the price figures are blank in the page HTML."
+    },
+    "plays_podcasts": {
+      "value": "no",
+      "detail": "Annotation layer for text, PDFs, videos and images; does not subscribe to or play podcasts.",
+      "sources": [
+        {
+          "url": "https://web.hypothes.is",
+          "title": "Hypothesis | The #1 Social Annotation Tool for Higher Education",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Hypothesis works seamlessly across every content type your students encounter:"
+        }
+      ],
+      "note": "The homepage section 'What Can Be Annotated with Hypothesis?' (webpages, online PDFs, videos, images, eTexts, online articles) is treated as the comprehensive list of what it works on."
+    },
+    "reads_web_articles_aloud": {
+      "value": "no",
+      "detail": "No text-to-speech; it annotates pages the browser displays.",
+      "sources": [
+        {
+          "url": "https://web.hypothes.is",
+          "title": "Hypothesis | The #1 Social Annotation Tool for Higher Education",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Annotate articles, research, and course readings right where you find them—directly in your browser."
+        }
+      ],
+      "note": "The homepage section 'What Can Be Annotated with Hypothesis?' (webpages, online PDFs, videos, images, eTexts, online articles) is treated as the comprehensive list of what it works on."
+    },
+    "reads_pdfs_aloud": {
+      "value": "no",
+      "detail": "Annotates online PDFs; no read-aloud.",
+      "sources": [
+        {
+          "url": "https://web.hypothes.is",
+          "title": "Hypothesis | The #1 Social Annotation Tool for Higher Education",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Highlight and annotate papers, readings, and handouts directly in the document."
+        }
+      ],
+      "note": "The homepage section 'What Can Be Annotated with Hypothesis?' (webpages, online PDFs, videos, images, eTexts, online articles) is treated as the comprehensive list of what it works on."
+    },
+    "voice_notes_anchored": {
+      "value": "no",
+      "detail": "Annotations are text with formatting, links, images, LaTeX and embedded YouTube videos; no voice recording.",
+      "sources": [
+        {
+          "url": "https://web.hypothes.is/help/annotation-basics/",
+          "title": "Annotation Basics : Hypothesis",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "When creating an annotation, use the toolbar above your note to format text, and add links, pictures, or equations (in LaTeX format) ."
+        }
+      ],
+      "note": "The Annotation Basics page describes the full annotation editor; no audio recording is mentioned."
+    },
+    "text_notes_anchored": {
+      "value": "yes",
+      "detail": "Typed annotations on selected text in web pages and PDFs, and on YouTube transcript lines that jump to that point in the video.",
+      "sources": [
+        {
+          "url": "https://web.hypothes.is/help/annotation-basics/",
+          "title": "Annotation Basics : Hypothesis",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Log in to Hypothesis and use your cursor to select any text."
+        },
+        {
+          "url": "https://web.hypothes.is/help/annotating-youtube-videos-with-the-hypothesis-web-app/",
+          "title": "Annotating YouTube Videos With the Hypothesis Web App : Hypothesis",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "You can select text anywhere in the transcript to create a new annotation or highlight."
+        }
+      ]
+    },
+    "hands_free_capture": {
+      "value": "no",
+      "detail": "Annotation is done by selecting text in a desktop browser.",
+      "sources": [
+        {
+          "url": "https://web.hypothes.is/help/annotation-basics/",
+          "title": "Annotation Basics : Hypothesis",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Log in to Hypothesis and use your cursor to select any text."
+        }
+      ],
+      "note": "The homepage section 'What Can Be Annotated with Hypothesis?' (webpages, online PDFs, videos, images, eTexts, online articles) is treated as the comprehensive list of what it works on."
+    },
+    "transcripts": {
+      "value": "partial",
+      "detail": "Shows YouTube transcripts beside the video for annotation (video must have a transcript); no podcasts.",
+      "sources": [
+        {
+          "url": "https://web.hypothes.is/help/annotating-youtube-videos-with-the-hypothesis-web-app/",
+          "title": "Annotating YouTube Videos With the Hypothesis Web App : Hypothesis",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "you will see the YouTube video, the transcript, and the Hypothesis sidebar all in one window."
+        }
+      ]
+    },
+    "ai_summaries": {
+      "value": "unknown",
+      "detail": "No AI summary feature found; the vendor positions the product against AI summarising.",
+      "sources": [
+        {
+          "url": "https://web.hypothes.is",
+          "title": "Hypothesis | The #1 Social Annotation Tool for Higher Education",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "real learning happens when students engage directly with ideas — not when they summarize them for an AI."
+        }
+      ],
+      "note": "Checked homepage, pricing page and the help articles above; no AI summary or chapter feature is mentioned, but the help centre was not searched exhaustively."
+    },
+    "export_markdown_pkm": {
+      "value": "partial",
+      "detail": "Exports annotations as JSON, plain text, CSV or HTML; no Markdown or Obsidian/Notion/Readwise integration from the vendor.",
+      "sources": [
+        {
+          "url": "https://web.hypothes.is/help/exporting-and-importing-annotations/",
+          "title": "Exporting and Importing Annotations : Hypothesis",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "You may choose from JSON, plain text, CSV, and HTML exports."
+        }
+      ],
+      "note": "Third-party tools exist but were not counted."
+    },
+    "share_note_at_moment": {
+      "value": "yes",
+      "detail": "Each annotation has its own link that opens it in context on the source page; works for text, PDFs and YouTube transcripts.",
+      "sources": [
+        {
+          "url": "https://web.hypothes.is/help/annotation-basics/",
+          "title": "Annotation Basics : Hypothesis",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Every annotation has various components, including a unique link (aka URL) you can use to share it on social media, via email, or by copying the link to paste elsewhere."
+        },
+        {
+          "url": "https://web.hypothes.is/help/annotation-basics/",
+          "title": "Annotation Basics : Hypothesis",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "links to visit the original source and annotations in context"
+        }
+      ],
+      "note": "Requires the recipient to open it in a browser with Hypothesis; not an audio moment."
+    },
+    "group_listening": {
+      "value": "yes",
+      "detail": "Public layer and private groups with threaded replies and mentions; built for classes.",
+      "sources": [
+        {
+          "url": "https://web.hypothes.is/help/annotation-basics/",
+          "title": "Annotation Basics : Hypothesis",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Use the groups menu in the sidebar to choose whether to post your finished note in the public layer or in one of your groups."
+        },
+        {
+          "url": "https://web.hypothes.is",
+          "title": "Hypothesis | The #1 Social Annotation Tool for Higher Education",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Students, faculty, and teams can share ideas, ask questions, provide insights and respond directly to annotations."
+        }
+      ],
+      "note": "Shared annotation, not listening."
+    },
+    "on_device_privacy": {
+      "value": "no",
+      "detail": "Annotations are stored in the Hypothesis service under an account; private ones are 'Only Me' on the server.",
+      "sources": [
+        {
+          "url": "https://web.hypothes.is/help/annotation-basics/",
+          "title": "Annotation Basics : Hypothesis",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "You’ll need to log in to create annotations and to see private or group annotations."
+        }
+      ],
+      "note": "No on-device claim found."
+    },
+    "account_required": {
+      "value": "yes",
+      "detail": "Viewing public annotations works without logging in; creating annotations requires a free account (or LMS login).",
+      "sources": [
+        {
+          "url": "https://web.hypothes.is/help/annotation-basics/",
+          "title": "Annotation Basics : Hypothesis",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "You’ll need to log in to create annotations and to see private or group annotations."
+        }
+      ]
+    }
+  }
+}
