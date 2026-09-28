@@ -18,6 +18,7 @@ Publishers: BMC (Springer Nature); BMJ; Cell Press (Elsevier); Elsevier; F1000 (
 | pymupdf-raw | 35.7% | 0.4% | 0.0% | 1 |
 | pdfminer | 35.9% | 0.6% | 0.0% | 1 |
 | gt-i14 (ground truth spoken per I14: the floor for M3) | 0.2% | 0.1% | 100.0% | 0 |
+| app-v2 | 14.0% | 0.9% | 91.3% | 1 |
 
 ## app-baseline
 
@@ -440,6 +441,112 @@ Ranked by listener cost per minute of real body text.
 | arxiv-2605.10717v1 | conference, two-column, math-heavy | 0.24 | 13.3% | 1.4% |
 | arxiv-2606.21736v1 | conference, two-column, math-heavy | 0.21 | 11.3% | 1.3% |
 | arxiv-2609.22558v1 | journal, two-column, math-heavy | 0.15 | 10.0% | 1.1% |
+
+## app-v2
+
+- Papers scored: 66; produced no text: 1 (pmc-pmc11960816-imageonly)
+- Median clutter rate: **14.0%** of spoken words
+- Median missing body text: **0.9%**
+- Median reading-order breaks: 2.01 per 1000 body words
+- Median extraction time: 1103 ms
+
+### Failure categories ranked by listener cost
+
+Cost is listening time wasted or lost, summed over the corpus (cost model below).
+"Papers ≥ 30 s" counts papers where the category costs a listener half a minute or more.
+
+| Rank | Category | Corpus total (min) | Median per paper (min) | Papers ≥ 30 s |
+| ---: | --- | ---: | ---: | ---: |
+| 1 | Math read as symbols and letters | 219 | 0.6 | 36 |
+| 2 | Reading order broken (columns, floats) | 172 | 1.8 | 48 |
+| 3 | Table cells read aloud | 149 | 0.5 | 33 |
+| 4 | Body text missing (never spoken) | 136 | 0.5 | 30 |
+| 5 | Display equations read aloud | 102 | 0.1 | 18 |
+| 6 | Line-end hyphenation left in ("bio- logy") | 78 | 0.6 | 37 |
+| 7 | Reference list read aloud | 70 | 0.0 | 11 |
+| 8 | Back matter: funding, contributions, competing interests, reviewer reports | 54 | 0.3 | 29 |
+| 9 | Title-page matter: authors, affiliations, identifiers | 47 | 0.5 | 34 |
+| 10 | Mid-sentence interruptions (captions, footers inside a sentence) | 47 | 0.3 | 17 |
+| 11 | Repeated text (running titles, duplicated lines) | 47 | 0.4 | 30 |
+| 12 | Page furniture: running headers, footers, page and line numbers | 35 | 0.1 | 14 |
+| 13 | Citation and footnote markers read as numbers or names | 34 | 0.1 | 15 |
+| 14 | Stray fragments: figure labels, axis ticks | 20 | 0.1 | 8 |
+| 15 | Footnote text read inline | 16 | 0.0 | 14 |
+| 16 | Stamps, licences and links | 7 | 0.1 | 2 |
+
+### Where the spoken words came from
+
+| Category | Words | Share of spoken |
+| --- | ---: | ---: |
+| body | 412500 | 70.3% |
+| math | 33917 | 5.8% |
+| caption | 26354 | 4.5% |
+| table | 23167 | 3.9% |
+| unattributed_prose | 20249 | 3.4% |
+| equation | 15817 | 2.7% |
+| reference | 10846 | 1.8% |
+| back_matter | 8320 | 1.4% |
+| front_matter | 7244 | 1.2% |
+| repeated | 7217 | 1.2% |
+| furniture | 5425 | 0.9% |
+| inline_residue | 3977 | 0.7% |
+| fragment | 3045 | 0.5% |
+| announcement | 2922 | 0.5% |
+| footnote | 2490 | 0.4% |
+| citation_markers | 1744 | 0.3% |
+| stamp_link | 1132 | 0.2% |
+| authors | 469 | 0.1% |
+| footnote_markers | 155 | 0.0% |
+
+`unattributed_prose` and `inline_residue` are not counted as clutter: they may be real text the ground truth lacks (text inside figures, code listings LaTeXML dropped) or body words garbled by the extractor.
+
+### Citations, footnotes, figures and tables
+
+- Citation markers (3320 sites): silent 2281 (69%), number read 524 (16%), glued number 217 (7%), label read 167 (5%), context missing 131 (4%)
+- Footnote markers (95 sites): label read 43 (45%), glued number 25 (26%), number read 11 (12%), context missing 9 (9%), silent 7 (7%)
+- Figure and table captions: 495 of 548 read aloud (≥ half their words spoken)
+- Tables: 150 of 205 had their cells read aloud (≥ 30% of cell words)
+- Mid-sentence interruptions by what interrupted: {'unattributed_prose': 355, 'furniture': 109, 'caption': 93, 'repeated': 38, 'table': 38, 'fragment': 18, 'front_matter': 15, 'stamp_link': 8, 'announcement': 7, 'reference': 7, 'footnote': 6, 'equation': 6, 'back_matter': 1}
+- Line-end hyphenation left unrepaired: 4653 words
+
+Marker outcomes: *silent* (nothing spoken between the words around it), *spoken label* ("citation 12", the app's normalizer), *number read* ("cells 12 divide"), *glued number* ("cells12"), *label read* (the author-year text read in full), *context missing* (the neighbouring words weren't spoken, so the marker can't be judged).
+
+### By format
+
+| Format | Papers | Median clutter | Median missing | Median order breaks /1000 |
+| --- | ---: | ---: | ---: | ---: |
+| journal | 44 | 12.5% | 0.8% | 1.64 |
+| single-column | 34 | 13.5% | 0.7% | 1.25 |
+| two-column | 31 | 17.5% | 1.0% | 2.78 |
+| math-heavy | 19 | 25.9% | 1.5% | 3.16 |
+| conference | 12 | 22.3% | 1.5% | 3.37 |
+| author-manuscript | 5 | 12.3% | 0.4% | 1.37 |
+| scanned | 4 | 18.4% | 12.2% | 4.60 |
+| preprint | 4 | 34.2% | 2.2% | 2.04 |
+| ocr-text-layer | 3 | 18.4% | 10.3% | 4.60 |
+| thesis | 3 | 43.4% | 2.7% | 4.38 |
+| image-only | 1 | – | 100.0% | – |
+| derived | 1 | – | 100.0% | – |
+
+### Bottom quintile (M2 target)
+
+Ranked by listener cost per minute of real body text.
+
+| Paper | Formats | Cost per body minute | Clutter | Missing |
+| --- | --- | ---: | ---: | ---: |
+| pmc-pmc5315337 | journal, scanned, ocr-text-layer, two-column | 1.30 | 18.0% | 14.0% |
+| arxiv-2609.27549v1 | thesis, single-column, math-heavy | 1.10 | 44.3% | 2.7% |
+| arxiv-2609.25172v1 | thesis, single-column, math-heavy | 1.04 | 43.4% | 2.8% |
+| arxiv-2609.07965v1 | conference, two-column | 1.02 | 43.3% | 4.0% |
+| pmc-pmc11960816-imageonly | journal, scanned, image-only, derived | 1.00 | – | 100.0% |
+| pmc-pmc11150781 | journal, two-column | 0.97 | 44.0% | 0.5% |
+| arxiv-2609.06489v1 | conference, single-column, math-heavy | 0.95 | 39.7% | 3.4% |
+| arxiv-2605.07149v1 | conference, two-column, math-heavy | 0.92 | 36.5% | 0.7% |
+| arxiv-2506.00390v1 | preprint, single-column, math-heavy | 0.89 | 41.9% | 2.9% |
+| pmc-pmc11326079 | journal, single-column | 0.84 | 28.0% | 0.5% |
+| arxiv-2609.22558v1 | journal, two-column, math-heavy | 0.80 | 25.4% | 43.5% |
+| arxiv-2506.00547v1 | preprint, single-column, math-heavy | 0.77 | 35.7% | 4.8% |
+| arxiv-2607.07895v1 | conference, two-column | 0.72 | 29.1% | 1.7% |
 
 ## Cost model
 
