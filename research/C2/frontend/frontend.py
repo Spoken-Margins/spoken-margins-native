@@ -44,6 +44,15 @@ FUNCTION = {"the": "ðə", "a": "ɐ", "an": "ɐn", "to": "tə", "of": "ʌv", "an
             "will": "wɪl", "do": "dˈuː", "does": "dˈʌz", "did": "dˈɪd", "has": "hɐz", "have": "hæv",
             "had": "hæd", "there": "ðɛɹ", "then": "ðˈɛn", "up": "ˌʌp", "out": "ˈaʊt"}
 
+# Number words in the forms Kitten heard in training (hand-written; a closed set). The owner heard
+# 'two [uh] eighty-four' for 'two hundred eighty-four' with the dictionary forms (hˈʌndɹəd, split
+# 'eighty four'); counting forms stress teens on the first syllable.
+NUMBER_WORDS = {"zero": "zˈiəɹoʊ", "one": "wˈʌn", "eleven": "ᵻlˈɛvən", "thirteen": "θˈɜːtiːn",
+                "fourteen": "fˈɔːɹtiːn", "fifteen": "fˈɪftiːn", "sixteen": "sˈɪkstiːn",
+                "seventeen": "sˈɛvəntˌiːn", "eighteen": "ˈeɪtiːn", "nineteen": "nˈaɪntiːn",
+                "ninety": "nˈaɪnti", "hundred": "hˈʌndɹɪd", "million": "mˈɪliən", "billion": "bˈɪliən"}
+TENS_WORDS = {"twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"}
+
 
 def arpabet_to_ipa(phones: list[str]) -> str:
     out = []
@@ -93,6 +102,9 @@ class FrontEnd:
 
     @lru_cache(maxsize=50_000)
     def word(self, w: str) -> str:
+        if w.lower() in NUMBER_WORDS:
+            self._count("number")
+            return NUMBER_WORDS[w.lower()]
         if w.lower() in FUNCTION and not (len(w) > 1 and w.isupper()):
             self._count("function")
             return FUNCTION[w.lower()]
@@ -128,7 +140,13 @@ class FrontEnd:
         """Text -> phoneme string in phonemizer's shape (words space-separated, punctuation kept)."""
         t = normalize(text)
         out, pending, open_quote = [], "", False
-        for tok in re.findall(r"[A-Za-z]+(?:['’][A-Za-z]+)?|[.,!?;:—…\"“”]", t):
+        t = re.sub(rf"\b({'|'.join(TENS_WORDS)})-(one|two|three|four|five|six|seven|eight|nine)\b", r"\1\2@", t)
+        for tok in re.findall(r"[A-Za-z]+@?(?:['’][A-Za-z]+)?|[.,!?;:—…\"“”]", t):
+            if tok.endswith("@"):                              # 'eighty-four' said as one word
+                m = re.match(rf"({'|'.join(TENS_WORDS)})(.+)@", tok)
+                out.append(pending + self.word(m.group(1)) + self.word(m.group(2)))
+                pending = ""
+                continue
             if re.match(r"[A-Za-z]", tok):
                 out.append(pending + self.word(tok.replace("’", "'")))
                 pending = ""

@@ -1,0 +1,38 @@
+[
+ {
+  "id": "A",
+  "text": "In a randomized trial of one thousand, two hundred eighty-four adults, three thousand, four hundred twelve completed follow-up.",
+  "phonemes": "ɪn ɐ ɹˈændəmˌaɪzd tɹˈaɪəl ʌv wˈʌn θˈaʊzənd, tˈuː hˈʌndɹɪd ˈeɪɾifˈɔːɹ ɐdˈʌlts, θɹˈiː θˈaʊzənd, fˈɔːɹ hˈʌndɹɪd twˈɛlv kəmplˈiːɾəd fˈɑːloʊ ˌʌp.",
+  "takes": [
+   "audio/A1.mp3",
+   "audio/A2.mp3"
+  ]
+ },
+ {
+  "id": "B",
+  "text": "In a randomized trial of one thousand, two hundred and eighty-four adults, three thousand, four hundred and twelve completed follow-up.",
+  "phonemes": "ɪn ɐ ɹˈændəmˌaɪzd tɹˈaɪəl ʌv wˈʌn θˈaʊzənd, tˈuː hˈʌndɹɪd ænd ˈeɪɾifˈɔːɹ ɐdˈʌlts, θɹˈiː θˈaʊzənd, fˈɔːɹ hˈʌndɹɪd ænd twˈɛlv kəmplˈiːɾəd fˈɑːloʊ ˌʌp.",
+  "takes": [
+   "audio/B1.mp3",
+   "audio/B2.mp3"
+  ]
+ },
+ {
+  "id": "C",
+  "text": "In a randomized trial of twelve hundred eighty-four adults, thirty-four hundred twelve completed follow-up.",
+  "phonemes": "ɪn ɐ ɹˈændəmˌaɪzd tɹˈaɪəl ʌv twˈɛlv hˈʌndɹɪd ˈeɪɾifˈɔːɹ ɐdˈʌlts, θˈɜːɾifˈɔːɹ hˈʌndɹɪd twˈɛlv kəmplˈiːɾəd fˈɑːloʊ ˌʌp.",
+  "takes": [
+   "audio/C1.mp3",
+   "audio/C2.mp3"
+  ]
+ },
+ {
+  "id": "D",
+  "text": "In a randomized trial of one thousand, two hundred, eighty-four adults, three thousand, four hundred, twelve completed follow-up.",
+  "phonemes": "ɪn ɐ ɹˈændəmˌaɪzd tɹˈaɪəl ʌv wˈʌn θˈaʊzənd, tˈuː hˈʌndɹɪd, ˈeɪɾifˈɔːɹ ɐdˈʌlts, θɹˈiː θˈaʊzənd, fˈɔːɹ hˈʌndɹɪd, twˈɛlv kəmplˈiːɾəd fˈɑːloʊ ˌʌp.",
+  "takes": [
+   "audio/D1.mp3",
+   "audio/D2.mp3"
+  ]
+ }
+]
