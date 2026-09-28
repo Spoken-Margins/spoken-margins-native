@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "source-resolution.v1",
+  "input": {"kind": "query", "value": "hard fork"},
+  "resolverId": "itunes_search",
+  "candidates": [],
+  "failure": {"code": "network_unavailable", "message": "Apple's search didn't answer. Try again when you're online."}
+}

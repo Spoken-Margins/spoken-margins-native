@@ -37,11 +37,24 @@ PATH_SCHEMA_RULES = [
     ("fixtures/offline-storage/*.json", "offline-storage.schema.json"),
     ("fixtures/followed-sources/*.json", "followed-source.schema.json"),
     ("fixtures/presentation/*.json", "app-presentation.schema.json"),
+    ("fixtures/source-catalog/*.json", "source-catalog.schema.json"),
+    ("fixtures/source-catalog-manifest/*.json", "source-catalog-manifest.schema.json"),
+    ("fixtures/source-resolution/*.json", "source-resolution.schema.json"),
     ("traces/*.json", "session-trace.schema.json"),
 ]
 
 NEGATIVE_PATH_SCHEMA_RULES = [
     ("fixtures/invalid/interjection-packages/*.json", "spoken-margins-package.schema.json"),
+    ("fixtures/invalid/source-catalog/*.json", "source-catalog.schema.json"),
+    ("fixtures/invalid/source-resolution/*.json", "source-resolution.schema.json"),
+]
+
+# Remote source catalogs (seam I2): the published catalog and its manifest, and each
+# fixture manifest with the fixture catalog of the same name.
+SOURCE_CATALOG_PAIRS = [
+    (ROOT / "Site/onboarding/catalog/v1/manifest.json", ROOT / "Site/onboarding/catalog/v1/catalog.json"),
+    (CONTRACTS / "fixtures/source-catalog-manifest/top-podcasts-small.json",
+     CONTRACTS / "fixtures/source-catalog/top-podcasts-small.json"),
 ]
 
 
@@ -89,6 +102,53 @@ def validate_trace_references(trace_path: Path) -> list[str]:
     return errors
 
 
+def validate_source_catalog(path: Path) -> list[str]:
+    """Rules JSON Schema can't express: unique ids and references that resolve."""
+    catalog = load_json(path)
+    errors: list[str] = []
+    entry_ids = [entry["id"] for entry in catalog.get("entries", [])]
+    subject_ids = {subject["id"] for subject in catalog.get("subjects", [])}
+    provenance_ids = {item["id"] for item in catalog.get("provenance", [])}
+    if len(entry_ids) != len(set(entry_ids)):
+        errors.append(f"{path}: duplicate entry ids")
+    feeds = [entry["feedURL"].lower() for entry in catalog.get("entries", [])]
+    if len(feeds) != len(set(feeds)):
+        errors.append(f"{path}: duplicate feed URLs")
+    for entry in catalog.get("entries", []):
+        for subject in entry["subjects"]:
+            if subject not in subject_ids:
+                errors.append(f"{path}: {entry['id']} names unknown subject {subject!r}")
+        referenced = set(entry["provenanceIds"]) | {pos["provenanceId"] for pos in entry.get("chartPositions", [])}
+        for missing in sorted(referenced - provenance_ids):
+            errors.append(f"{path}: {entry['id']} names unknown provenance {missing!r}")
+    for row in catalog.get("starterRows", []):
+        if row["subjectId"] not in subject_ids:
+            errors.append(f"{path}: starter row names unknown subject {row['subjectId']!r}")
+        for entry_id in row["entryIds"]:
+            if entry_id not in entry_ids:
+                errors.append(f"{path}: starter row {row['subjectId']} names unknown entry {entry_id!r}")
+    return errors
+
+
+def validate_source_catalog_pair(manifest_path: Path, catalog_path: Path) -> list[str]:
+    errors = validate_file(manifest_path, SCHEMAS / "source-catalog-manifest.schema.json")
+    errors += validate_file(catalog_path, SCHEMAS / "source-catalog.schema.json")
+    if errors:
+        return errors
+    errors += validate_source_catalog(catalog_path)
+    manifest = load_json(manifest_path)
+    catalog = load_json(catalog_path)
+    data = catalog_path.read_bytes()
+    if manifest["catalogByteCount"] != len(data):
+        errors.append(f"{manifest_path}: catalogByteCount {manifest['catalogByteCount']} != {len(data)}")
+    if manifest["catalogChecksumSHA256"] != hashlib.sha256(data).hexdigest():
+        errors.append(f"{manifest_path}: catalogChecksumSHA256 does not match {catalog_path.name}")
+    for key in ("catalogId", "contentVersion"):
+        if manifest[key] != catalog[key]:
+            errors.append(f"{manifest_path}: {key} does not match {catalog_path.name}")
+    return errors
+
+
 def main() -> int:
     errors: list[str] = []
     for rule in PATH_SCHEMA_RULES:
@@ -104,6 +164,11 @@ def main() -> int:
                     errors.append(f"{path}: prior-build database missing or digest changed")
             if pattern == "traces/*.json":
                 errors.extend(validate_trace_references(path))
+            if pattern == "fixtures/source-catalog/*.json":
+                errors.extend(validate_source_catalog(path))
+
+    for manifest_path, catalog_path in SOURCE_CATALOG_PAIRS:
+        errors.extend(validate_source_catalog_pair(manifest_path, catalog_path))
 
     for pattern, schema_name in NEGATIVE_PATH_SCHEMA_RULES:
         schema_path = SCHEMAS / schema_name
