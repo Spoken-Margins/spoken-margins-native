@@ -1,0 +1,267 @@
+{
+  "id": "apple-podcasts",
+  "name": "Apple Podcasts",
+  "vendor": "Apple Inc.",
+  "category": "podcast",
+  "website": "https://www.apple.com/apple-podcasts/",
+  "why_listed": "iPhone listeners who only need transcripts and timestamp sharing would stay in the built-in Apple Podcasts app instead of adopting Spoken Margins.",
+  "claims": {
+    "platforms": {
+      "value": "iOS, iPadOS, macOS, watchOS, tvOS, visionOS, CarPlay, web (podcasts.apple.com)",
+      "detail": "Preinstalled on Apple devices and available on the web.",
+      "sources": [
+        {
+          "url": "https://www.apple.com/apple-podcasts/",
+          "title": "Apple Podcasts - Apple",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Apple Podcasts is already installed on all your favorite Apple devices, including iPhone, Mac, iPad, Apple Watch, Apple TV 4K, and Apple Vision Pro."
+        },
+        {
+          "url": "https://www.apple.com/apple-podcasts/",
+          "title": "Apple Podcasts - Apple",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Find the Apple Podcasts app on all your favorite Apple devices or listen on the web at podcasts.apple.com."
+        }
+      ],
+      "note": "No Android app found on the pages read; Windows availability not checked."
+    },
+    "price_free_tier": {
+      "value": "The app and millions of shows are free.",
+      "detail": "Free app; some creators sell show subscriptions.",
+      "sources": [
+        {
+          "url": "https://www.apple.com/apple-podcasts/",
+          "title": "Apple Podcasts - Apple",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Apple Podcasts offers millions of shows completely free."
+        }
+      ]
+    },
+    "price_paid": {
+      "value": "No paid plan for the app itself; creator-priced show subscriptions (price set per show)",
+      "detail": "Premium show subscriptions are priced by each creator; Apple keeps 30% (15% after year one).",
+      "sources": [
+        {
+          "url": "https://www.apple.com/apple-podcasts/",
+          "title": "Apple Podcasts - Apple",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "70 percent of your subscription fee (minus applicable taxes) goes directly to the creator"
+        }
+      ],
+      "note": "US apple.com page; no fixed price because each creator sets theirs."
+    },
+    "plays_podcasts": {
+      "value": "yes",
+      "detail": "Apple's built-in podcast player.",
+      "sources": [
+        {
+          "url": "https://www.apple.com/apple-podcasts/",
+          "title": "Apple Podcasts - Apple",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Apple Podcasts offers millions of shows completely free."
+        }
+      ]
+    },
+    "reads_web_articles_aloud": {
+      "value": "no",
+      "detail": "Podcasts-only app; no article reading.",
+      "sources": [
+        {
+          "url": "https://www.apple.com/apple-podcasts/",
+          "title": "Apple Podcasts - Apple",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Apple Podcasts offers millions of shows completely free."
+        }
+      ],
+      "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature."
+    },
+    "reads_pdfs_aloud": {
+      "value": "no",
+      "detail": "Podcasts-only app; no PDF reading.",
+      "sources": [
+        {
+          "url": "https://www.apple.com/apple-podcasts/",
+          "title": "Apple Podcasts - Apple",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Apple Podcasts offers millions of shows completely free."
+        }
+      ],
+      "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature."
+    },
+    "voice_notes_anchored": {
+      "value": "no",
+      "detail": "No note-taking in the app.",
+      "sources": [
+        {
+          "url": "https://www.apple.com/apple-podcasts/",
+          "title": "Apple Podcasts - Apple",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Apple Podcasts offers millions of shows completely free."
+        },
+        {
+          "url": "https://support.apple.com/en-us/guide/iphone/iph9426049e9/ios",
+          "title": "View podcast transcripts on iPhone - Apple Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature. The iPhone transcript guide offers play, share and select text only."
+    },
+    "text_notes_anchored": {
+      "value": "partial",
+      "detail": "No notes, but selected transcript text (up to 200 words) can be shared to Notes or another app with its timestamp.",
+      "sources": [
+        {
+          "url": "https://support.apple.com/en-us/guide/iphone/iph9426049e9/ios",
+          "title": "View podcast transcripts on iPhone - Apple Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Select text, then choose to play from that point, copy text, or share from that point."
+        },
+        {
+          "url": "https://support.apple.com/guide/podcasts/share-podcasts-pod96aaf8353/mac",
+          "title": "Share podcasts on Mac - Apple Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Control-click the text, then choose 'Share from [timestamp].'"
+        }
+      ],
+      "note": "The note lives in the other app (e.g. Apple Notes), not in Podcasts. The 200-word limit is from the Mac guide as summarised by WebFetch."
+    },
+    "hands_free_capture": {
+      "value": "no",
+      "detail": "No capture of moments by headphone gesture, Watch or CarPlay.",
+      "sources": [
+        {
+          "url": "https://www.apple.com/apple-podcasts/",
+          "title": "Apple Podcasts - Apple",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Apple Podcasts offers millions of shows completely free."
+        }
+      ],
+      "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature."
+    },
+    "transcripts": {
+      "value": "yes",
+      "detail": "Read-along, searchable transcripts; tap a paragraph to jump there.",
+      "sources": [
+        {
+          "url": "https://support.apple.com/en-us/guide/iphone/iph9426049e9/ios",
+          "title": "View podcast transcripts on iPhone - Apple Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "You can also tap a paragraph to jump to that point in the podcast."
+        },
+        {
+          "url": "https://www.apple.com/apple-podcasts/",
+          "title": "Apple Podcasts - Apple",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Transcripts are only supported in select languages."
+        }
+      ],
+      "note": "Availability varies by language and region."
+    },
+    "ai_summaries": {
+      "value": "partial",
+      "detail": "Automatically generated chapters (iOS 26.2); no AI episode summaries found.",
+      "sources": [
+        {
+          "url": "https://support.apple.com/en-us/123075",
+          "title": "About iOS 26 Updates - Apple Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Automatically generated chapters make it easier to navigate episodes"
+        }
+      ],
+      "note": "Press reports say English-language shows only and creators can opt out; not confirmed on an Apple page."
+    },
+    "export_markdown_pkm": {
+      "value": "no",
+      "detail": "No export of notes or highlights to note apps; only share-sheet sharing of transcript text.",
+      "sources": [
+        {
+          "url": "https://support.apple.com/en-us/guide/iphone/iph9426049e9/ios",
+          "title": "View podcast transcripts on iPhone - Apple Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Select text, then choose to play from that point, copy text, or share from that point."
+        }
+      ],
+      "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature."
+    },
+    "share_note_at_moment": {
+      "value": "yes",
+      "detail": "Share an episode from a point in the transcript; the link starts at that timestamp.",
+      "sources": [
+        {
+          "url": "https://support.apple.com/en-us/guide/iphone/iph9426049e9/ios",
+          "title": "View podcast transcripts on iPhone - Apple Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Touch and hold text, then choose to play from that point, share from that point, or select text."
+        },
+        {
+          "url": "https://support.apple.com/guide/podcasts/share-podcasts-pod96aaf8353/mac",
+          "title": "Share podcasts on Mac - Apple Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Control-click the text, then choose 'Share from [timestamp].'"
+        }
+      ],
+      "note": "Shares a timestamp and quoted text, not a listener's own note or recording. Recipient experience is not described on the pages read."
+    },
+    "group_listening": {
+      "value": "no",
+      "detail": "No groups or shared annotations; Family Sharing covers subscriptions only.",
+      "sources": [
+        {
+          "url": "https://www.apple.com/apple-podcasts/",
+          "title": "Apple Podcasts - Apple",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "share your Apple Podcasts subscriptions with up to five people through Family Sharing"
+        }
+      ],
+      "note": "Judged from Apple's product page for Apple Podcasts, which is the vendor's feature overview and lists no such feature."
+    },
+    "on_device_privacy": {
+      "value": "unknown",
+      "detail": "No on-device statement found for Podcasts specifically.",
+      "sources": [
+        {
+          "url": "https://www.apple.com/apple-podcasts/",
+          "title": "Apple Podcasts - Apple",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked the product page; it states an Apple Account and internet access are required. Apple's general privacy pages were not read."
+    },
+    "account_required": {
+      "value": "partial",
+      "detail": "An Apple Account is required for subscriptions and sync; whether plain listening needs sign-in is not stated.",
+      "sources": [
+        {
+          "url": "https://www.apple.com/apple-podcasts/",
+          "title": "Apple Podcasts - Apple",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Apple Account and internet access required; data fees may apply."
+        }
+      ],
+      "note": "The sentence appears as a footnote on the product page; its scope (all features vs subscriptions) is not clear from the page."
+    }
+  }
+}

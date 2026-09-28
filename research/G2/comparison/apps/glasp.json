@@ -1,0 +1,328 @@
+{
+  "id": "glasp",
+  "name": "Glasp",
+  "vendor": "Glasp Inc.",
+  "category": "read-it-later",
+  "website": "https://glasp.co",
+  "why_listed": "Readers and learners who want to highlight and annotate web pages, PDFs and YouTube transcripts, get AI summaries and push highlights into Obsidian or Notion would use Glasp instead of Spoken Margins.",
+  "claims": {
+    "platforms": {
+      "value": "iOS, iPadOS, Android, web, browser extensions (Chrome, Safari, Edge, Firefox and other Chromium browsers)",
+      "detail": "Browser extension is the core; web app; iPhone/iPad and Android apps with a Safari extension on iOS.",
+      "sources": [
+        {
+          "url": "https://glasp.co/mobile-app",
+          "title": "Download Glasp Mobile App for Free on iOS & Android | Glasp",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Glasp runs on iPhone, iPad, and Android phones and tablets."
+        },
+        {
+          "url": "https://blog.glasp.co/faqs/",
+          "title": "FAQs (Glasp)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "The Glasp Web Highlighter works on Chrome, Safari, Edge, Brave, Firefox, and Opera, as well as other Chromium-based browsers."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/id1645763435",
+          "title": "Glasp: AI Summary & Highlight App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Requires iPadOS 15.1 or later."
+        }
+      ],
+      "note": "glasp.co returned a Cloudflare 403 to curl; this page was read through WebFetch, so the quote is as the fetch tool returned it. (applies to the glasp.co/mobile-app source)."
+    },
+    "price_free_tier": {
+      "value": "Free: unlimited public highlights, basic YouTube summaries (3/day), 30 PDF uploads, 30 min/month audio transcription, Markdown/CSV/JSON/HTML export",
+      "detail": "Free plan covers public highlighting and limited AI; highlights are public by default and private highlights need Pro.",
+      "sources": [
+        {
+          "url": "https://glasp.co/pricing",
+          "title": "Pricing — Free to Highlight, Pro for More AI | Glasp",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Unlimited Public Highlights"
+        },
+        {
+          "url": "https://glasp.co/pricing",
+          "title": "Pricing — Free to Highlight, Pro for More AI | Glasp",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Markdown, HTML, CSV and JSON are on every plan, including the free one."
+        }
+      ],
+      "note": "glasp.co returned a Cloudflare 403 to curl; this page was read through WebFetch, so the quote is as the fetch tool returned it. Limits on AI features were summarised by the fetch tool, not quoted in full; US page, USD."
+    },
+    "price_paid": {
+      "value": "Pro: USD 15/month or USD 150/year",
+      "detail": "Pro adds private highlights, more AI summaries and transcription, and Notion auto-sync. Unlimited is USD 36/month or 360/year.",
+      "sources": [
+        {
+          "url": "https://blog.glasp.co/price-update-2026-05-01/",
+          "title": "Updates to Glasp Pricing: Effective May 1, 2026",
+          "published": "2026-03-30",
+          "checked": "2026-09-28",
+          "quote": "Monthly: $12/mo → $15/mo Yearly: $120/yr ($10/mo) → $150/yr ($12.50/mo)"
+        },
+        {
+          "url": "https://glasp.co/pricing",
+          "title": "Pricing — Free to Highlight, Pro for More AI | Glasp",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Daily Auto-Sync/Export to Notion"
+        }
+      ],
+      "note": "Prices from the vendor's own pricing-change post (effective 2026-05-01), USD, US; the live pricing page (via WebFetch) showed $12.50/month billed annually, consistent with it."
+    },
+    "plays_podcasts": {
+      "value": "no",
+      "detail": "Not a podcast player; podcast highlights come in only through the separate Snipd app.",
+      "sources": [
+        {
+          "url": "https://blog.glasp.co/faqs/",
+          "title": "FAQs (Glasp)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "We collaborate and integrate with Snipd, an AI-powered podcast player. You can highlight podcasts with Snipd and show them on Glasp."
+        }
+      ],
+      "note": "The FAQ's list of supported content types (PDFs, images, YouTube, podcasts via Snipd, audio transcripts, social media, Kindle) is treated as comprehensive."
+    },
+    "reads_web_articles_aloud": {
+      "value": "unknown",
+      "detail": "No text-to-speech or read-aloud feature found.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1645763435",
+          "title": "Glasp: AI Summary & Highlight App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://blog.glasp.co/faqs/",
+          "title": "FAQs (Glasp)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://glasp.co/pricing",
+          "title": "Pricing — Free to Highlight, Pro for More AI | Glasp",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked App Store description and version history, the FAQ and the pricing page (via WebFetch); a site-restricted web search for Glasp text to speech found nothing from the vendor."
+    },
+    "reads_pdfs_aloud": {
+      "value": "unknown",
+      "detail": "PDFs can be uploaded, highlighted, summarised and chatted with; no read-aloud found.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1645763435",
+          "title": "Glasp: AI Summary & Highlight App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://blog.glasp.co/faqs/",
+          "title": "FAQs (Glasp)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Same pages checked as for web articles; no TTS mentioned."
+    },
+    "voice_notes_anchored": {
+      "value": "unknown",
+      "detail": "No voice note recording found; notes are typed.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1645763435",
+          "title": "Glasp: AI Summary & Highlight App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://blog.glasp.co/faqs/",
+          "title": "FAQs (Glasp)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked App Store description and version history and the FAQ; audio features are file transcription only."
+    },
+    "text_notes_anchored": {
+      "value": "yes",
+      "detail": "Typed notes attach to a highlight in a web page, PDF, YouTube transcript or uploaded-audio transcript; YouTube highlights keep a timestamp.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1645763435",
+          "title": "Glasp: AI Summary & Highlight App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Highlights: add and remove tags, write a page note, switch a page between public and private, copy everything at once"
+        },
+        {
+          "url": "https://apps.apple.com/us/app/id1645763435",
+          "title": "Glasp: AI Summary & Highlight App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Tap the timestamp on a YouTube highlight to jump straight to that moment in the video."
+        }
+      ]
+    },
+    "hands_free_capture": {
+      "value": "unknown",
+      "detail": "No headphone, Watch, lock-screen or CarPlay capture found.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1645763435",
+          "title": "Glasp: AI Summary & Highlight App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked App Store description and version history; capture is by selecting text or using the share extension."
+    },
+    "transcripts": {
+      "value": "partial",
+      "detail": "Shows transcripts for YouTube videos and for audio files the user uploads; podcast feeds are not transcribed in Glasp itself.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1645763435",
+          "title": "Glasp: AI Summary & Highlight App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "AI Summary — get the key points of any YouTube video or web page instantly, with transcripts and timestamps."
+        },
+        {
+          "url": "https://blog.glasp.co/faqs/",
+          "title": "FAQs (Glasp)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Audio Transcripts : Yes."
+        }
+      ],
+      "note": "Uploaded-audio transcription is capped per month by plan."
+    },
+    "ai_summaries": {
+      "value": "yes",
+      "detail": "AI summaries of YouTube videos, web pages and PDFs, plus chat about a page.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1645763435",
+          "title": "Glasp: AI Summary & Highlight App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Summarize YouTube videos and long articles with AI in seconds"
+        }
+      ]
+    },
+    "export_markdown_pkm": {
+      "value": "yes",
+      "detail": "Exports to Notion, Obsidian (official plugin), Readwise and others; Markdown download on every plan.",
+      "sources": [
+        {
+          "url": "https://blog.glasp.co/faqs/",
+          "title": "FAQs (Glasp)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "You can export your Glasp highlights and notes to your favorite tools, including Notion , Obsidian , Readwise"
+        },
+        {
+          "url": "https://blog.glasp.co/faqs/",
+          "title": "FAQs (Glasp)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "you can copy and paste your highlights, or download them as TXT, CSV, or Markdown files."
+        }
+      ],
+      "note": "Notion daily auto-sync is paid-only."
+    },
+    "share_note_at_moment": {
+      "value": "partial",
+      "detail": "Highlights are public by default and appear to other readers on the same page; a Community tab lets them tap a passage to jump to it. Text only, no audio moments beyond YouTube timestamps on one's own highlights.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id1645763435",
+          "title": "Glasp: AI Summary & Highlight App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "New Community tab: see the passages other readers highlighted on this page, and browse them one reader at a time. Tap a passage to jump to it."
+        },
+        {
+          "url": "https://glasp.co/pricing",
+          "title": "Pricing — Free to Highlight, Pro for More AI | Glasp",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Highlights are public by default"
+        }
+      ],
+      "note": "Sharing is via the public Glasp layer, not a file another person imports."
+    },
+    "group_listening": {
+      "value": "partial",
+      "detail": "Social layer (public highlights, following, community feed) but no private groups.",
+      "sources": [
+        {
+          "url": "https://blog.glasp.co/faqs/",
+          "title": "FAQs (Glasp)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "As of August 2026, we do not have a group feature."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/id1645763435",
+          "title": "Glasp: AI Summary & Highlight App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "see the passages other readers highlighted on this page"
+        }
+      ]
+    },
+    "on_device_privacy": {
+      "value": "no",
+      "detail": "Cloud service tied to an account; highlights are public by default and private highlights are a Pro feature.",
+      "sources": [
+        {
+          "url": "https://blog.glasp.co/faqs/",
+          "title": "FAQs (Glasp)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "As of August 2026, we offer only Google Sign-in and Apple Sign-in to sign up for Glasp."
+        },
+        {
+          "url": "https://blog.glasp.co/faqs/",
+          "title": "FAQs (Glasp)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "By upgrading to Glasp Pro, you gain access to unlimited private highlights and notes"
+        }
+      ]
+    },
+    "account_required": {
+      "value": "yes",
+      "detail": "Sign-up is via Google or Apple; highlights sync to the account.",
+      "sources": [
+        {
+          "url": "https://blog.glasp.co/faqs/",
+          "title": "FAQs (Glasp)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "As of August 2026, we offer only Google Sign-in and Apple Sign-in to sign up for Glasp."
+        }
+      ],
+      "note": "Since iOS 3.11.0 the Safari button appears before sign-in, but saving highlights is account-based."
+    }
+  }
+}

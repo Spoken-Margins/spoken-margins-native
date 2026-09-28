@@ -1,0 +1,322 @@
+{
+  "id": "margin-fm",
+  "name": "Margin",
+  "vendor": "Selinay Filiz Parlak (individual developer)",
+  "category": "social-listening",
+  "website": "https://margin.fm",
+  "why_listed": "Podcast listeners who want to save spoken thoughts at a chosen episode timestamp and discuss them in a small listening club, while keeping playback in Spotify, would use Margin instead of Spoken Margins.",
+  "claims": {
+    "platforms": {
+      "value": "iOS, iPadOS (also installable on Apple silicon Macs and Vision Pro as an iPad app)",
+      "detail": "iPhone and iPad app; no Android or web app is mentioned.",
+      "sources": [
+        {
+          "url": "https://margin.fm",
+          "title": "Margin · Podcast note-taking app for active listeners",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Free for iPhone and iPad · iOS 17.6 or later."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/id6765992068",
+          "title": "Margin - Podcast notes & clubs App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Mac Requires macOS 14.6 or later and a Mac with Apple M1 chip or later."
+        }
+      ],
+      "note": "App Store listing says 'Designed for iPad. Not verified for macOS.'"
+    },
+    "price_free_tier": {
+      "value": "Free: whole app, including private voice notes and clubs",
+      "detail": "The app is free; no paid tier or in-app purchases are listed.",
+      "sources": [
+        {
+          "url": "https://margin.fm",
+          "title": "Margin · Podcast note-taking app for active listeners",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Is Margin free? Yes. Download it for free on iPhone and iPad with iOS 17.6 or later."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/id6765992068",
+          "title": "Margin - Podcast notes & clubs App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Free · Designed for iPad. Not verified for macOS."
+        }
+      ],
+      "note": "US App Store listing; no In-App Purchases section shown."
+    },
+    "price_paid": {
+      "value": "None: no paid plan found",
+      "detail": "No paid tier, subscription or in-app purchase is listed.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id6765992068",
+          "title": "Margin - Podcast notes & clubs App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Free · Designed for iPad. Not verified for macOS."
+        },
+        {
+          "url": "https://margin.fm",
+          "title": "Margin · Podcast note-taking app for active listeners",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Is Margin free? Yes."
+        }
+      ],
+      "note": "US App Store; checked the listing for an In-App Purchases section and found none."
+    },
+    "plays_podcasts": {
+      "value": "no",
+      "detail": "Not a podcast player: the listener imports a Spotify episode link and playback stays in Spotify.",
+      "sources": [
+        {
+          "url": "https://margin.fm",
+          "title": "Margin · Podcast note-taking app for active listeners",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Margin is not a podcast player. Import a Spotify episode link, choose a timestamp, and record your note. Playback stays in Spotify."
+        }
+      ]
+    },
+    "reads_web_articles_aloud": {
+      "value": "no",
+      "detail": "Podcast-only note app; no articles or TTS.",
+      "sources": [
+        {
+          "url": "https://margin.fm",
+          "title": "Margin · Podcast note-taking app for active listeners",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Margin is a podcast note-taking app for iOS."
+        }
+      ],
+      "note": "The App Store description and the margin.fm homepage together read as the full feature list of a v1.0 app (released Sep 2026); nothing matching was found."
+    },
+    "reads_pdfs_aloud": {
+      "value": "no",
+      "detail": "Podcast-only note app; no PDFs.",
+      "sources": [
+        {
+          "url": "https://margin.fm",
+          "title": "Margin · Podcast note-taking app for active listeners",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Margin is a podcast note-taking app for iOS."
+        }
+      ],
+      "note": "The App Store description and the margin.fm homepage together read as the full feature list of a v1.0 app (released Sep 2026); nothing matching was found."
+    },
+    "voice_notes_anchored": {
+      "value": "yes",
+      "detail": "Hold-to-record voice note saved with the episode and a timestamp the listener chooses (manually for imported links), with an on-device transcript.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id6765992068",
+          "title": "Margin - Podcast notes & clubs App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Import an episode from Spotify, choose a timestamp, and hold to record a voice note."
+        },
+        {
+          "url": "https://margin.fm",
+          "title": "Margin · Podcast note-taking app for active listeners",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Keep each note with its episode and timestamp. Imported links use the time you choose."
+        }
+      ],
+      "note": "The timestamp is entered by hand for imported links; automatic playback control is limited to invited Spotify accounts."
+    },
+    "text_notes_anchored": {
+      "value": "partial",
+      "detail": "Text notes are shared into clubs at episode moments; private notes are voice plus transcript. No standalone typed private note is described.",
+      "sources": [
+        {
+          "url": "https://margin.fm",
+          "title": "Margin · Podcast note-taking app for active listeners",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Share text notes at the moments that mattered."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/id6765992068",
+          "title": "Margin - Podcast notes & clubs App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Share text notes with other members and compare what stood out."
+        }
+      ],
+      "note": "Unclear from vendor pages whether a text note can be typed without recording first."
+    },
+    "hands_free_capture": {
+      "value": "no",
+      "detail": "Capture is an in-app press-and-hold on the microphone button after choosing a timestamp; no headphone, Watch, lock-screen or CarPlay capture is described.",
+      "sources": [
+        {
+          "url": "https://margin.fm/support",
+          "title": "Margin · Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Hold the microphone button in Margin to record; release to save."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/id6765992068",
+          "title": "Margin - Podcast notes & clubs App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Hold the microphone to record your thought."
+        }
+      ],
+      "note": "The App Store description and the margin.fm homepage together read as the full feature list of a v1.0 app (released Sep 2026); nothing matching was found."
+    },
+    "transcripts": {
+      "value": "no",
+      "detail": "Transcribes the listener's own voice notes on device, but does not show transcripts of the podcast audio (it never plays the podcast).",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id6765992068",
+          "title": "Margin - Podcast notes & clubs App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Save the audio and an on-device transcript so you can listen back or read it later."
+        },
+        {
+          "url": "https://margin.fm",
+          "title": "Margin · Podcast note-taking app for active listeners",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Margin is not a podcast player."
+        }
+      ],
+      "note": "Transcripts are of the user's notes only."
+    },
+    "ai_summaries": {
+      "value": "no",
+      "detail": "No AI summaries or chapters; the homepage positions it against automatic AI highlighting.",
+      "sources": [
+        {
+          "url": "https://margin.fm/compare",
+          "title": "Margin compared to Snipd, Airr, Apple Notes, Notion, Pocket Casts",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "AI auto-highlights vs. your own attention."
+        }
+      ],
+      "note": "The App Store description and the margin.fm homepage together read as the full feature list of a v1.0 app (released Sep 2026); nothing matching was found."
+    },
+    "export_markdown_pkm": {
+      "value": "unknown",
+      "detail": "No export to Markdown, Obsidian, Notion or Readwise is described.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/id6765992068",
+          "title": "Margin - Podcast notes & clubs App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://margin.fm/support",
+          "title": "Margin · Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://margin.fm",
+          "title": "Margin · Podcast note-taking app for active listeners",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked App Store description, homepage FAQ, support page and privacy policy; none mention export. The compare page calls Notion 'the synthesis layer' but describes no integration."
+    },
+    "share_note_at_moment": {
+      "value": "partial",
+      "detail": "Text notes shared to a club carry the episode and timestamp; members reopen the episode in Spotify. Voice notes are never shared, and there is no file export.",
+      "sources": [
+        {
+          "url": "https://margin.fm",
+          "title": "Margin · Podcast note-taking app for active listeners",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Listen with 2–5 friends. Share text notes at the moments that mattered. Live progress depends on Spotify access."
+        },
+        {
+          "url": "https://margin.fm",
+          "title": "Margin · Podcast note-taking app for active listeners",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Revisit a saved note and its timestamp, then open the episode in Spotify."
+        }
+      ],
+      "note": "Whether a club member's tap seeks Spotify to the moment is not stated; live playback control is limited to invited Spotify accounts."
+    },
+    "group_listening": {
+      "value": "yes",
+      "detail": "Small private listening clubs (2–5 friends) with shared text notes and listening progress.",
+      "sources": [
+        {
+          "url": "https://margin.fm",
+          "title": "Margin · Podcast note-taking app for active listeners",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Create or join a club with Sign in with Apple. Share text notes with friends; your private voice recordings stay on your device."
+        },
+        {
+          "url": "https://margin.fm/privacy",
+          "title": "Margin · Privacy Policy",
+          "published": "2026-09-25",
+          "checked": "2026-09-28",
+          "quote": "Text you choose to share, your display name and club playback progress are visible to fellow club members."
+        }
+      ]
+    },
+    "on_device_privacy": {
+      "value": "yes",
+      "detail": "Recordings and private transcripts stay on the device; transcription uses Apple's on-device recognition with no cloud fallback; private use needs no account.",
+      "sources": [
+        {
+          "url": "https://margin.fm/privacy",
+          "title": "Margin · Privacy Policy",
+          "published": "2026-09-25",
+          "checked": "2026-09-28",
+          "quote": "Audio you record and your private notes and transcripts are stored on your device."
+        },
+        {
+          "url": "https://margin.fm/privacy",
+          "title": "Margin · Privacy Policy",
+          "published": "2026-09-25",
+          "checked": "2026-09-28",
+          "quote": "it does not fall back to sending recordings to a cloud transcription service."
+        }
+      ]
+    },
+    "account_required": {
+      "value": "no",
+      "detail": "Private notes need no account; clubs require Sign in with Apple.",
+      "sources": [
+        {
+          "url": "https://margin.fm/privacy",
+          "title": "Margin · Privacy Policy",
+          "published": "2026-09-25",
+          "checked": "2026-09-28",
+          "quote": "Use private notes without creating a Margin account."
+        },
+        {
+          "url": "https://margin.fm/support",
+          "title": "Margin · Support",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Private notes do not require a Margin account."
+        }
+      ],
+      "note": "An account (Sign in with Apple) is required only for clubs."
+    }
+  }
+}

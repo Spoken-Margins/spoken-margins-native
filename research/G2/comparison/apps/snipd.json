@@ -1,0 +1,327 @@
+{
+  "id": "snipd",
+  "name": "Snipd",
+  "vendor": "Snipd AG",
+  "category": "podcast",
+  "website": "https://www.snipd.com",
+  "why_listed": "Podcast learners who want to save and export moments from episodes with a headphone tap would use Snipd instead of Spoken Margins.",
+  "claims": {
+    "platforms": {
+      "value": "iOS, iPadOS, watchOS, macOS (App Store listing), visionOS, Android; web upload page at upload.snipd.com",
+      "detail": "App Store lists iPhone, iPad, Apple Watch, Mac and Apple Vision; an Android app is on Google Play.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/snipd-podcast-ai-player/id1557206126",
+          "title": "Snipd | AI Podcast Player - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Tap your headphones to save ideas from podcasts"
+        },
+        {
+          "url": "https://play.google.com/store/apps/details?id=ai.topicfinder.podcastdiscovery&hl=en_US",
+          "title": "Snipd | AI Podcast Player - Apps on Google Play",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Tap your headphones to save ideas from podcasts"
+        },
+        {
+          "url": "https://support.snipd.com/en/articles/10226381-upload-your-own-audio-files",
+          "title": "Upload Your Own Audio Files | Snipd Help Center",
+          "published": "2026-01-22",
+          "checked": "2026-09-28",
+          "quote": "upload.snipd.com"
+        }
+      ],
+      "note": "App Store device list read via WebFetch summary (iPhone, iPad, Apple Watch watchOS 10.4+, Mac, Apple Vision visionOS 1.0+); the quote only shows the listing was read; device support comes from its compatibility section as summarised. Google Play page did not render in WebFetch; Android availability taken from the Google Play search-result snippet. No evidence of a Windows app or a full web player."
+    },
+    "price_free_tier": {
+      "value": "Unlimited listening and core features; AI features limited to 2 episodes per week.",
+      "detail": "Free plan includes unlimited podcast listening and core features, with AI snips, transcripts, chapters and summaries capped at 2 episodes per week.",
+      "sources": [
+        {
+          "url": "https://www.snipd.com/pricing",
+          "title": "Snipd Pricing",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Limited AI features (2 episodes per week)"
+        }
+      ]
+    },
+    "price_paid": {
+      "value": "USD 6.99/month (Premium, US pricing page); annual option exists but price not shown on page",
+      "detail": "Premium adds unlimited AI features, chat with episode, file/YouTube import, custom prompts and 900 AI minutes/month.",
+      "sources": [
+        {
+          "url": "https://www.snipd.com/pricing",
+          "title": "Snipd Pricing",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Prices may vary by country. For exact pricing, please check the App Store in your region."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/snipd-podcast-ai-player/id1557206126",
+          "title": "Snipd | AI Podcast Player - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Snipd Premium"
+        }
+      ],
+      "note": "Pricing page shows $6.99/month (USD, currency of page as served to a US request) with a Monthly/Annual toggle whose annual figure did not render. US App Store lists Premium in-app purchases from USD 11.90 to 95.90, periods not shown."
+    },
+    "plays_podcasts": {
+      "value": "yes",
+      "detail": "Full podcast player with unlimited listening to all podcasts.",
+      "sources": [
+        {
+          "url": "https://www.snipd.com/pricing",
+          "title": "Snipd Pricing",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Unlimited listening to all podcasts"
+        }
+      ]
+    },
+    "reads_web_articles_aloud": {
+      "value": "no",
+      "detail": "No text-to-speech for web articles is listed; Snipd works on podcasts, YouTube videos and uploaded audio.",
+      "sources": [
+        {
+          "url": "https://www.snipd.com/all-features",
+          "title": "Snipd Feature Overview",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Import YouTube videos into Snipd, highlight key moments, and take notes just like with podcasts."
+        }
+      ],
+      "note": "Judged from the vendor's full feature overview page, which lists no article or text-to-speech reading."
+    },
+    "reads_pdfs_aloud": {
+      "value": "no",
+      "detail": "No PDF reading is listed; uploads are audio or video files.",
+      "sources": [
+        {
+          "url": "https://www.snipd.com/all-features",
+          "title": "Snipd Feature Overview",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Import YouTube videos into Snipd, highlight key moments, and take notes just like with podcasts."
+        },
+        {
+          "url": "https://support.snipd.com/en/articles/10226381-upload-your-own-audio-files",
+          "title": "Upload Your Own Audio Files | Snipd Help Center",
+          "published": "2026-01-22",
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Upload help article mentions only audio and video files; the feature overview lists no PDF or TTS feature."
+    },
+    "voice_notes_anchored": {
+      "value": "unknown",
+      "detail": "No page read describes recording a spoken note attached to a snip.",
+      "sources": [
+        {
+          "url": "https://www.snipd.com/all-features",
+          "title": "Snipd Feature Overview",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://www.snipd.com/blog/how-to-take-notes-from-podcasts-with-snipd",
+          "title": "How to Take Notes from Podcasts: A Complete Guide",
+          "published": "2025-10-08",
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://www.snipd.com/blog/how-to-take-notes-from-podcasts-while-driving",
+          "title": "How to Take Notes From Podcasts While Driving",
+          "published": "2025-08-20",
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked the feature overview, the note-taking guide and the driving guide; none mentions voice or dictated notes. Headphone taps create AI snips, not voice notes."
+    },
+    "text_notes_anchored": {
+      "value": "yes",
+      "detail": "Each snip is tied to a moment in the episode; the listener can add their own typed thoughts to it.",
+      "sources": [
+        {
+          "url": "https://www.snipd.com/blog/how-to-take-notes-from-podcasts-with-snipd",
+          "title": "How to Take Notes from Podcasts: A Complete Guide",
+          "published": "2025-10-08",
+          "checked": "2026-09-28",
+          "quote": "Add your own thoughts. The most valuable notes include your personal connections."
+        },
+        {
+          "url": "https://www.snipd.com/all-features",
+          "title": "Snipd Feature Overview",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Import YouTube videos into Snipd, highlight key moments, and take notes just like with podcasts."
+        }
+      ],
+      "note": "The Medium blog version (403 when fetched) is described in search snippets as offering 'Add a private note' on a snip."
+    },
+    "hands_free_capture": {
+      "value": "yes",
+      "detail": "Triple-tap headphones, steering-wheel back button in CarPlay/Android Auto, and an Apple Watch app save a snip.",
+      "sources": [
+        {
+          "url": "https://www.snipd.com/",
+          "title": "Snipd - The Podcast App for Knowledge Seekers",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Triple-tap your headphones to save key moments with transcript and summary."
+        },
+        {
+          "url": "https://www.snipd.com/blog/how-to-take-notes-from-podcasts-with-snipd",
+          "title": "How to Take Notes from Podcasts: A Complete Guide",
+          "published": "2025-10-08",
+          "checked": "2026-09-28",
+          "quote": "triple-tap your headphones or press your steering wheel's back button"
+        },
+        {
+          "url": "https://www.snipd.com/all-features",
+          "title": "Snipd Feature Overview",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Listen to podcasts and save insights on the go without needing your phone."
+        }
+      ]
+    },
+    "transcripts": {
+      "value": "yes",
+      "detail": "Full searchable episode transcripts with speaker identification.",
+      "sources": [
+        {
+          "url": "https://www.snipd.com/",
+          "title": "Snipd - The Podcast App for Knowledge Seekers",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Read along and search full episode transcripts with speaker identification."
+        }
+      ],
+      "note": "Free tier limits AI features, including transcripts, to 2 episodes per week."
+    },
+    "ai_summaries": {
+      "value": "yes",
+      "detail": "AI episode summaries, auto-chapters, snip summaries and chat with episode.",
+      "sources": [
+        {
+          "url": "https://www.snipd.com/",
+          "title": "Snipd - The Podcast App for Knowledge Seekers",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Auto-chapters: Get a quick overview and navigate episodes with AI-generated chapters."
+        },
+        {
+          "url": "https://www.snipd.com/all-features",
+          "title": "Snipd Feature Overview",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Preview episode content with AI-generated summaries before you start listening."
+        }
+      ]
+    },
+    "export_markdown_pkm": {
+      "value": "yes",
+      "detail": "Snips sync to Notion, Readwise, Obsidian, Glasp, Bear, Logseq, or export as Markdown.",
+      "sources": [
+        {
+          "url": "https://www.snipd.com/",
+          "title": "Snipd - The Podcast App for Knowledge Seekers",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Sync your podcast highlights, including transcripts and rich metadata, with your favorite note-taking apps like Notion, Readwise, Obsidian, Glasp, Bear, Logseq, or export as Markdown."
+        }
+      ]
+    },
+    "share_note_at_moment": {
+      "value": "partial",
+      "detail": "A snip can be shared as text, image, link or audio/video clip; recipients hear the clip, not a note placed in their own copy of the episode.",
+      "sources": [
+        {
+          "url": "https://www.snipd.com/all-features",
+          "title": "Snipd Feature Overview",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Share the summary, audio or video clip of your captured podcast snippets (=snips)."
+        },
+        {
+          "url": "https://www.snipd.com/",
+          "title": "Snipd - The Podcast App for Knowledge Seekers",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Share with friends and colleagues as text, images, link, or video clip."
+        },
+        {
+          "url": "https://share.snipd.com/snip/32e12865-f9a5-4553-9720-9fedb934dfa3",
+          "title": "Shared snip page (share.snipd.com)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Whether a shared link opens the full episode at the snip's timestamp was not confirmed: the share.snipd.com example page returned 403."
+    },
+    "group_listening": {
+      "value": "unknown",
+      "detail": "No groups, book clubs or shared annotation spaces found.",
+      "sources": [
+        {
+          "url": "https://www.snipd.com/all-features",
+          "title": "Snipd Feature Overview",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://support.snipd.com/en/collections/11061876-faqs",
+          "title": "FAQs | Snipd Help Center",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked the feature overview and help-center FAQ index; no group or shared-annotation feature mentioned, but not stated as absent."
+    },
+    "on_device_privacy": {
+      "value": "partial",
+      "detail": "Anonymous sign-up is possible for the free tier; snips and user content are stored on Snipd's servers (US), and uploads are private to the user.",
+      "sources": [
+        {
+          "url": "https://open.snipd.com/privacy-policy",
+          "title": "Snipd Privacy Policy",
+          "published": "2023-09-05",
+          "checked": "2026-09-28",
+          "quote": "anonymous sign up"
+        },
+        {
+          "url": "https://support.snipd.com/en/articles/10226381-upload-your-own-audio-files",
+          "title": "Upload Your Own Audio Files | Snipd Help Center",
+          "published": "2026-01-22",
+          "checked": "2026-09-28",
+          "quote": "Your uploaded files and snips of them are private and aren't shared with others."
+        }
+      ],
+      "note": "No on-device processing claim found. App Store privacy label lists User ID and Device ID linked to identity."
+    },
+    "account_required": {
+      "value": "partial",
+      "detail": "An account is created at sign-up, but it can be anonymous on the free tier; Premium needs personal data.",
+      "sources": [
+        {
+          "url": "https://open.snipd.com/privacy-policy",
+          "title": "Snipd Privacy Policy",
+          "published": "2023-09-05",
+          "checked": "2026-09-28",
+          "quote": "anonymous sign up"
+        }
+      ],
+      "note": "Privacy policy (dated 2023-09-05) says anonymous sign-up is limited to the Free Service. Quote is a fragment as returned by WebFetch."
+    }
+  }
+}
