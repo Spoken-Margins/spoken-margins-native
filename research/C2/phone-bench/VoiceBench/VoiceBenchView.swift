@@ -17,15 +17,22 @@ struct VoiceBenchView: View {
                 Text("Low Power Mode: \(ProcessInfo.processInfo.isLowPowerModeEnabled ? "on" : "off") · Thermal: \(VoiceBenchDevice.thermal)")
                     .font(.footnote.monospacedDigit())
             } footer: {
-                Text("Keep the screen on; a run takes about 3 minutes.")
+                Text("Keep the app open; a run takes about 5 minutes. The screen stays on by itself.")
             }
             if let report {
+                if let kitten = report.engines.filter({ $0.engine.contains("fp32") && $0.error == nil }).max(by: { $0.speedX < $1.speedX }) {
+                    Section("Kitten fp32, best") {
+                        Text(String(format: "%.1f× real time: %@ the 4× bar", kitten.speedX,
+                                    kitten.speedX >= 4 ? "meets" : "below"))
+                            .font(.title3.monospacedDigit().bold())
+                    }
+                }
                 Section("Results") {
                     ForEach(Array(report.engines.enumerated()), id: \.offset) { _, e in
                         VStack(alignment: .leading, spacing: 2) {
                             Text("\(e.engine) · \(e.threads) thr").font(.headline)
                             if let error = e.error {
-                                Text(error).foregroundStyle(.red)
+                                Label("Failed: \(error)", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
                             } else {
                                 Text(String(format: "%.1f× real time · first audio %.2f s · peak %.0f MB",
                                             e.speedX, e.medianTimeToFirstAudioSeconds, e.peakFootprintMB))
@@ -39,7 +46,7 @@ struct VoiceBenchView: View {
                     Section {
                         ShareLink(item: savedURL) { Label("Share results JSON", systemImage: "square.and.arrow.up") }
                     } footer: {
-                        Text("Post the JSON on issue #192. Pass: Kitten fp32 at 4× real time or faster, with Low Power Mode on.")
+                        Text("AirDrop the JSON to the Mac. Pass: Kitten fp32 at 4× real time or faster, with Low Power Mode on and the phone warm.")
                     }
                 }
             }

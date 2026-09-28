@@ -2,12 +2,11 @@
 // (bundle ID com.spokenmargins.voicebench; never a screen in Spoken Margins). See ../README.md.
 // Written in a cloud session without a compiler; the Mac session builds and fixes it.
 import AVFoundation
-import CryptoKit
 import Foundation
 import OnnxRuntimeBindings
 import SessionKitSupertonic
 
-struct VoiceBenchPassageResult: Codable, Sendable {
+struct VoiceBenchPassageResult: Encodable, Sendable {
     var passage: String
     var chunks: Int
     var timeToFirstAudioSeconds: Double
@@ -27,7 +26,7 @@ struct VoiceBenchPassageResult: Codable, Sendable {
     }
 }
 
-struct VoiceBenchEngineResult: Codable, Sendable {
+struct VoiceBenchEngineResult: Encodable, Sendable {
     var engine: String
     var threads: String
     var loadSeconds: Double
@@ -43,9 +42,24 @@ struct VoiceBenchEngineResult: Codable, Sendable {
         let t = passages.map(\.timeToFirstAudioSeconds).sorted()
         return t.isEmpty ? 0 : t[t.count / 2]
     }
+
+    enum CodingKeys: String, CodingKey {
+        case engine, threads, loadSeconds, passages, peakFootprintMB, error, speedX, medianTimeToFirstAudioSeconds
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(engine, forKey: .engine)
+        try c.encode(threads, forKey: .threads)
+        try c.encode(loadSeconds, forKey: .loadSeconds)
+        try c.encode(passages, forKey: .passages)
+        try c.encode(peakFootprintMB, forKey: .peakFootprintMB)
+        try c.encodeIfPresent(error, forKey: .error)
+        try c.encode(speedX, forKey: .speedX)
+        try c.encode(medianTimeToFirstAudioSeconds, forKey: .medianTimeToFirstAudioSeconds)
+    }
 }
 
-struct VoiceBenchReport: Codable, Sendable {
+struct VoiceBenchReport: Encodable, Sendable {
     var date: Date
     var device: String
     var systemVersion: String
@@ -58,11 +72,11 @@ struct VoiceBenchReport: Codable, Sendable {
 }
 
 enum VoiceBenchError: Error, LocalizedError {
-    case badDownload(String)
+    case missingModel(String)
     case missingOutput(String)
     var errorDescription: String? {
         switch self {
-        case .badDownload(let s): return "Model download failed: \(s)"
+        case .missingModel(let s): return "\(s).onnx isn't bundled; run fetch_models.sh and rebuild"
         case .missingOutput(let s): return "Model produced no \(s) output"
         }
     }
@@ -102,7 +116,7 @@ enum VoiceBenchDevice {
     }
 }
 
-// MARK: - Models (bundled in the VoiceBench app; download is only a fallback, sha256-checked)
+// MARK: - Models (bundled in the VoiceBench app; the URL and sha256 record where each came from)
 
 struct VoiceBenchModel: Sendable {
     let name: String
@@ -123,26 +137,12 @@ struct VoiceBenchModel: Sendable {
         bytes: 24_369_971
     )
 
-    /// Bundled copy (add `<name>.onnx` to the app's resources), else the downloaded one.
-    var localURL: URL {
-        Bundle.main.url(forResource: name, withExtension: "onnx")
-            ?? URL.applicationSupportDirectory.appending(path: "VoiceBench/\(name).onnx")
-    }
-
-    var isPresent: Bool { FileManager.default.fileExists(atPath: localURL.path) }
-
-    func ensureDownloaded() async throws {
-        if isPresent { return }
-        let (tmp, response) = try await URLSession.shared.download(from: url)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw VoiceBenchError.badDownload("\(name): HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+    /// The bundled copy (fetch_models.sh puts it in VoiceBench/Models/). Nothing is downloaded on the phone.
+    func bundledURL() throws -> URL {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "onnx") else {
+            throw VoiceBenchError.missingModel(name)
         }
-        let data = try Data(contentsOf: tmp, options: .mappedIfSafe)
-        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        guard digest == sha256 else { throw VoiceBenchError.badDownload("\(name): checksum mismatch") }
-        try FileManager.default.createDirectory(at: localURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? FileManager.default.removeItem(at: localURL)
-        try FileManager.default.moveItem(at: tmp, to: localURL)
+        return url
     }
 }
 
@@ -159,7 +159,7 @@ enum KittenBench {
         let options = try ORTSessionOptions()
         if threads > 0 { try options.setIntraOpNumThreads(threads) }
         try options.setGraphOptimizationLevel(.all)
-        let session = try ORTSession(env: env, modelPath: model.localURL.path, sessionOptions: options)
+        let session = try ORTSession(env: env, modelPath: try model.bundledURL().path, sessionOptions: options)
         let loadSeconds = Date().timeIntervalSince(loadStart)
         var peak = VoiceBenchDevice.footprintMB()
 
@@ -319,10 +319,9 @@ enum VoiceBench {
         }
 
         // Kitten first: it's the chosen fallback and the result that matters.
-        for (model, threads) in [(VoiceBenchModel.kittenFP32, Int32(1)), (.kittenFP32, 2), (.kittenINT8, 1)] {
+        for (model, threads) in [(VoiceBenchModel.kittenFP32, Int32(1)), (.kittenFP32, 2), (.kittenINT8, 1), (.kittenINT8, 2)] {
             await progress("Kitten \(model.name), \(threads) thread(s)…")
             do {
-                try await model.ensureDownloaded()
                 report.engines.append(try KittenBench.run(model: model, threads: threads, inputs: inputs))
             } catch {
                 report.engines.append(failed(model.name, error))

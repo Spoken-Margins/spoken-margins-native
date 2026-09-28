@@ -13,29 +13,30 @@ M2's last open item is render speed on the owner's iPhone 17 Pro, measured in Lo
 - **Models are bundled in the app.** The owner runs it from Xcode.
 - A dedicated Mac session builds it, pushes to `ws/c2-voice`, and posts the numbers on #192.
 
-## Starting point from the cloud session
+## The app
 
-[`VoiceBench/`](VoiceBench/) holds the app's code, written without a compiler. The Mac session builds it and fixes anything that doesn't compile. It's a starting point, not a constraint: replace any part of it.
+`VoiceBench.xcodeproj` is generated from [`project.yml`](project.yml) (`xcodegen generate` in this folder). It is its own project, and the shipping app's `project.yml` doesn't mention it.
 
-- **`VoiceBenchRunner.swift`: the runners.**
-  - Kitten runs on the onnxruntime Swift package from pre-tokenized ids and style rows, with no phonemizer on the device. It runs three times: fp32 on 1 thread, fp32 on 2 threads, and int8 on 1 thread.
-  - Supertonic runs through `SessionKitSupertonic`'s public `SupertonicNarrationRenderer` (voice M2, 8 steps).
+- **Build it:** run `./fetch_models.sh` once. It downloads the two Kitten files into `VoiceBench/Models/` (git-ignored) at pinned Hugging Face revisions and checks their sha256. The build copies them, and `App/SpokenMarginsApp/Resources/Supertonic`, into the app. The phone downloads nothing.
+- **Scheme:** Run uses the Release configuration, so Supertonic's Swift code is optimized as it is in the shipping app.
+- **`VoiceBench/VoiceBenchRunner.swift`: the runners.**
+  - Kitten runs on onnxruntime 1.24.2 from pre-tokenized ids and style rows, with no phonemizer on the device. It runs fp32 and int8, each on 1 and 2 threads.
+  - Supertonic runs through `SessionKitSupertonic`'s `SupertonicNarrationRenderer` (voice M2, 8 steps).
   - Samantha renders offline through `AVSpeechSynthesizer.write`.
   - Every run measures time to first audio, speed and peak `phys_footprint`, and records Low Power Mode and thermal state at the start and end. The report is saved as JSON in Documents.
-- **`VoiceBenchView.swift`: the one screen.** Run all, per-engine results, and a share button for the JSON.
-- **`VoiceBenchInputs.swift`:** generated from [`inputs.json`](inputs.json) by `make_inputs_swift.py`. The inputs were checked against the Python engine: rendering from them matches it to within 9e-6.
-- **What the app needs:**
-  - Dependencies: SessionKit (for `SessionKitSupertonic`) and onnxruntime 1.24.2, as in `Packages/SessionKit/Package.swift`.
-  - Bundled resources: `App/SpokenMarginsApp/Resources/Supertonic` as a folder named `Supertonic`, plus `kitten-nano-0.8-fp32.onnx` and `kitten-nano-0.8-int8.onnx` (from `../fetch_models.sh`; the Hugging Face revisions and sha256 are in `VoiceBenchModel`).
-  - Supertonic keeps its Terms: the owner has accepted them in the app, and this app is only for the owner's own device.
+  - Time to first audio is the time to render a passage's whole first chunk, which holds 7–20 s of audio. It is an upper bound on what the app would see with a short first chunk.
+- **`VoiceBench/VoiceBenchView.swift`: the one screen.** Run all, the Kitten fp32 verdict, per-engine results, and a Share button for the JSON.
+- **`VoiceBench/VoiceBenchInputs.swift`:** generated from [`inputs.json`](inputs.json) by `make_inputs_swift.py`. Rendering from these inputs matches the Python engine to within 9e-6.
+- **Host check:** the same runner files, compiled into a macOS command-line tool on the Mac (M-series, 2026-09-28), gave Kitten fp32 6.2× on 1 thread and 11.9× on 2, int8 4.9× and 6.1×, Supertonic 4.3× and Samantha 6.7×. Those are Mac numbers, not the phone's.
 
 ## How the owner runs it
 
-1. Warm the phone first: about 10 minutes of narration playback, unplugged.
-2. Turn on **Low Power Mode**.
-3. Run VoiceBench from Xcode and tap **Run all** (about 3 minutes; keep the screen on).
-4. Share the JSON to #192.
-5. Run it once more with Low Power Mode off, so the Low Power Mode penalty is known.
+1. Run VoiceBench from Xcode once so it installs, then press Stop and unplug the phone.
+2. Warm the phone: about 10 minutes of narration playback, unplugged.
+3. Turn on **Low Power Mode**.
+4. Open VoiceBench from the Home Screen and tap **Run all** (about 5 minutes).
+5. Tap **Share results JSON** and AirDrop it to the Mac. It lands in Downloads.
+6. Optional: run it again with Low Power Mode off, so the Low Power Mode penalty is known.
 
 ## Pass mark (derived A13 budget)
 
