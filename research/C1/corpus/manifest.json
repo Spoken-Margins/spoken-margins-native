@@ -1,0 +1,2214 @@
+{
+  "schema": "c1-corpus-manifest/1",
+  "description": "Spoken Margins C1 PDF corpus. URLs and licenses only; fetch with tools/fetch.py.",
+  "entries": [
+    {
+      "id": "pmc-pmc11960816",
+      "source": "pmc",
+      "venue": "PLOS Computational Biology",
+      "publisher": "PLOS",
+      "title": "HiSV: A control-free method for structural variation detection from Hi-C data",
+      "citation": "PLoS Comput Biol. 2023 Jan 6;19(1):e1010760. doi: 10.1371/journal.pcbi.1010760",
+      "doi": "10.1371/journal.pcbi.1010760",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11960816/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11960816.1/PMC11960816.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11960816.1/PMC11960816.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 17,
+        "text_layer_words": 8345,
+        "columns": 1,
+        "body_words": 5437,
+        "math_per_1000_words": 1.1,
+        "captions": 6,
+        "tables": 0,
+        "citation_markers": 49,
+        "footnote_markers": 0,
+        "sha256": "ab43049188b78b323b41f9e97fe173fbe9ee0fd0c521d5c37bbeffafa1d4ffb9"
+      }
+    },
+    {
+      "id": "pmc-pmc10817199",
+      "source": "pmc",
+      "venue": "PLOS Computational Biology",
+      "publisher": "PLOS",
+      "title": "Method to determine whether sleep phenotypes are driven by endogenous circadian rhythms or environmental light by combining longitudinal data and personalised mathematical models",
+      "citation": "PLoS Comput Biol. 2023 Dec 22;19(12):e1011743. doi: 10.1371/journal.pcbi.1011743",
+      "doi": "10.1371/journal.pcbi.1011743",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10817199/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10817199.1/PMC10817199.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10817199.1/PMC10817199.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 33,
+        "text_layer_words": 17304,
+        "columns": 1,
+        "body_words": 10761,
+        "math_per_1000_words": 3.2,
+        "captions": 12,
+        "tables": 3,
+        "citation_markers": 100,
+        "footnote_markers": 0,
+        "sha256": "7b63ed804b534fd2d8efc8e38d1328331d8f632248c345de49d7029c13a0c1df"
+      }
+    },
+    {
+      "id": "pmc-pmc10756530",
+      "source": "pmc",
+      "venue": "PLOS ONE",
+      "publisher": "PLOS",
+      "title": "Screening for the risk of canine impaction, what are the presumptive signs and how does it affect orthodontics? A cross-sectional study in France",
+      "citation": "PLoS One. 2023 Dec 29;18(12):e0296395. doi: 10.1371/journal.pone.0296395",
+      "doi": "10.1371/journal.pone.0296395",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10756530/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10756530.1/PMC10756530.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10756530.1/PMC10756530.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 11,
+        "text_layer_words": 4938,
+        "columns": 1,
+        "body_words": 2713,
+        "math_per_1000_words": 0.0,
+        "captions": 5,
+        "tables": 8,
+        "citation_markers": 49,
+        "footnote_markers": 0,
+        "sha256": "d9317719031b3d4269eb63a5edc7116750819273cab7acd8ee7f321a1484e9d4"
+      }
+    },
+    {
+      "id": "pmc-pmc10756544",
+      "source": "pmc",
+      "venue": "PLOS ONE",
+      "publisher": "PLOS",
+      "title": "The octopamine receptor OAα1 influences oogenesis and reproductive performance in Rhodnius prolixus",
+      "citation": "PLoS One. 2023 Dec 29;18(12):e0296463. doi: 10.1371/journal.pone.0296463",
+      "doi": "10.1371/journal.pone.0296463",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10756544/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10756544.1/PMC10756544.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10756544.1/PMC10756544.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 18,
+        "text_layer_words": 8242,
+        "columns": 1,
+        "body_words": 4591,
+        "math_per_1000_words": 0.0,
+        "captions": 6,
+        "tables": 0,
+        "citation_markers": 73,
+        "footnote_markers": 0,
+        "sha256": "5f9ad43eef11b05b41eaf2e9717bd9a099a4a11973428ed0dec7af1c2a1296d0"
+      }
+    },
+    {
+      "id": "pmc-pmc12629593",
+      "source": "pmc",
+      "venue": "eLife",
+      "publisher": "eLife Sciences",
+      "title": "Emergent periodicity in the collective synchronous flashing of fireflies",
+      "citation": "eLife. 2023 Mar 13;12:e78908. doi: 10.7554/eLife.78908",
+      "doi": "10.7554/eLife.78908",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12629593/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC12629593.1/PMC12629593.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC12629593.1/PMC12629593.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 17,
+        "text_layer_words": 9338,
+        "columns": 1,
+        "body_words": 5494,
+        "math_per_1000_words": 45.7,
+        "captions": 7,
+        "tables": 0,
+        "citation_markers": 47,
+        "footnote_markers": 12,
+        "sha256": "910af325c8f31c0f8d7fb613af9e49fcfa2c0a82d1b29a7e19018e5d4c51901c"
+      }
+    },
+    {
+      "id": "pmc-pmc10928513",
+      "source": "pmc",
+      "venue": "eLife",
+      "publisher": "eLife Sciences",
+      "title": "A unified approach to dissecting biphasic responses in cell signaling",
+      "citation": "eLife. 2023 Dec 6;12:e86520. doi: 10.7554/eLife.86520",
+      "doi": "10.7554/eLife.86520",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10928513/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10928513.1/PMC10928513.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10928513.1/PMC10928513.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 32,
+        "text_layer_words": 20764,
+        "columns": 1,
+        "body_words": 14743,
+        "math_per_1000_words": 39.5,
+        "captions": 4,
+        "tables": 0,
+        "citation_markers": 81,
+        "footnote_markers": 4,
+        "sha256": "4eb1aa6db193f99ff1ab375d06fa5fb3a9fec221a4f1fe6187e0aa4cbac54d8a"
+      }
+    },
+    {
+      "id": "pmc-pmc10784378",
+      "source": "pmc",
+      "venue": "Frontiers in Neuroscience",
+      "publisher": "Frontiers",
+      "title": "Detecting ferroptosis and immune infiltration profiles in multiple system atrophy using postmortem brain tissue",
+      "citation": "Front Neurosci. 2023 Dec 29;17:1269996. doi: 10.3389/fnins.2023.1269996",
+      "doi": "10.3389/fnins.2023.1269996",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10784378/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10784378.1/PMC10784378.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10784378.1/PMC10784378.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 8,
+        "text_layer_words": 4219,
+        "columns": 2,
+        "body_words": 2518,
+        "math_per_1000_words": 0.0,
+        "captions": 5,
+        "tables": 1,
+        "citation_markers": 39,
+        "footnote_markers": 0,
+        "sha256": "6464406ccf3ca2aa61cac10218778d65397ad840a2347b49a68748b15168b40a"
+      }
+    },
+    {
+      "id": "pmc-pmc10777729",
+      "source": "pmc",
+      "venue": "Frontiers in Neuroscience",
+      "publisher": "Frontiers",
+      "title": "Flavonoids and fibrate modulate apoE4-induced processing of amyloid precursor protein in neuroblastoma cells",
+      "citation": "Front Neurosci. 2023 Dec 22;17:1245895. doi: 10.3389/fnins.2023.1245895",
+      "doi": "10.3389/fnins.2023.1245895",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10777729/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10777729.1/PMC10777729.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10777729.1/PMC10777729.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 13,
+        "text_layer_words": 10467,
+        "columns": 2,
+        "body_words": 6062,
+        "math_per_1000_words": 0.0,
+        "captions": 4,
+        "tables": 0,
+        "citation_markers": 104,
+        "footnote_markers": 0,
+        "sha256": "3b359a77b3789aeeb3d23ae5ba56a1106e341d5ac2eee1efaf16edb93d369e57"
+      }
+    },
+    {
+      "id": "pmc-pmc11843480",
+      "source": "pmc",
+      "venue": "PeerJ",
+      "publisher": "PeerJ",
+      "title": "Assessing the effect of heavy metals on maize (Zea mays L.) growth and soil characteristics: plants-implications for phytoremediation",
+      "citation": "PeerJ. 2023 Oct 9;11:e16067. doi: 10.7717/peerj.16067",
+      "doi": "10.7717/peerj.16067",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11843480/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11843480.1/PMC11843480.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11843480.1/PMC11843480.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 25,
+        "text_layer_words": 11049,
+        "columns": 1,
+        "body_words": 5954,
+        "math_per_1000_words": 1.2,
+        "captions": 6,
+        "tables": 3,
+        "citation_markers": 86,
+        "footnote_markers": 0,
+        "sha256": "d6e6ec3c9a008ed695908a6bfed6845b5b9a347064819ec2a2d16820e8481ba2"
+      }
+    },
+    {
+      "id": "pmc-pmc10950207",
+      "source": "pmc",
+      "venue": "PeerJ",
+      "publisher": "PeerJ",
+      "title": "Circular RNA hsa_circ_0051246 acts as a microRNA-375 sponge to promote the progression of gastric cancer stem cells via YAP1",
+      "citation": "PeerJ. 2023 Nov 30;11:e16523. doi: 10.7717/peerj.16523",
+      "doi": "10.7717/peerj.16523",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10950207/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10950207.1/PMC10950207.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10950207.1/PMC10950207.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 27,
+        "text_layer_words": 10160,
+        "columns": 1,
+        "body_words": 5416,
+        "math_per_1000_words": 0.0,
+        "captions": 10,
+        "tables": 1,
+        "citation_markers": 62,
+        "footnote_markers": 0,
+        "sha256": "81a35221b92e8763c38068a90e756ff713890739e09c0536b31f4a4010989233"
+      }
+    },
+    {
+      "id": "pmc-pmc10740247",
+      "source": "pmc",
+      "venue": "BMC Bioinformatics",
+      "publisher": "BMC (Springer Nature)",
+      "title": "PWSC: a novel clustering method based on polynomial weight-adjusted sparse clustering for sparse biomedical data and its application in cancer subtyping",
+      "citation": "BMC Bioinformatics. 2023 Dec 21;24:490. doi: 10.1186/s12859-023-05595-4",
+      "doi": "10.1186/s12859-023-05595-4",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10740247/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10740247.1/PMC10740247.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10740247.1/PMC10740247.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 17,
+        "text_layer_words": 6733,
+        "columns": 1,
+        "body_words": 4185,
+        "math_per_1000_words": 7.9,
+        "captions": 6,
+        "tables": 0,
+        "citation_markers": 48,
+        "footnote_markers": 0,
+        "sha256": "f896271be384b0e132390f47034b6d7cd7cea5b4a638113bc45e494f2580e8b1"
+      }
+    },
+    {
+      "id": "pmc-pmc10740312",
+      "source": "pmc",
+      "venue": "BMC Bioinformatics",
+      "publisher": "BMC (Springer Nature)",
+      "title": "ICON-GEMs: integration of co-expression network in genome-scale metabolic models, shedding light through systems biology",
+      "citation": "BMC Bioinformatics. 2023 Dec 21;24:492. doi: 10.1186/s12859-023-05599-0",
+      "doi": "10.1186/s12859-023-05599-0",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10740312/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10740312.1/PMC10740312.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10740312.1/PMC10740312.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 25,
+        "text_layer_words": 10730,
+        "columns": 1,
+        "body_words": 7147,
+        "math_per_1000_words": 7.3,
+        "captions": 16,
+        "tables": 5,
+        "citation_markers": 64,
+        "footnote_markers": 0,
+        "sha256": "d9d70643b4391c02002b40453e650eeb36dcb7aa4bd8cddd93a23abe06e84877"
+      }
+    },
+    {
+      "id": "pmc-pmc10775890",
+      "source": "pmc",
+      "venue": "Nature Communications",
+      "publisher": "Nature Portfolio (Springer Nature)",
+      "title": "Alveolar epithelial progenitor cells require Nkx2-1 to maintain progenitor-specific epigenomic state during lung homeostasis and regeneration",
+      "citation": "Nat Commun. 2023 Dec 19;14:8452. doi: 10.1038/s41467-023-44184-0",
+      "doi": "10.1038/s41467-023-44184-0",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10775890/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10775890.1/PMC10775890.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10775890.1/PMC10775890.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 20,
+        "text_layer_words": 17470,
+        "columns": 2,
+        "body_words": 10961,
+        "math_per_1000_words": 0.0,
+        "captions": 9,
+        "tables": 0,
+        "citation_markers": 160,
+        "footnote_markers": 0,
+        "sha256": "2ce2c17e41e1cfee60d6a85535929b42bf17ff19c5777db0c201d04326ff3693"
+      }
+    },
+    {
+      "id": "pmc-pmc10756881",
+      "source": "pmc",
+      "venue": "Nature Communications",
+      "publisher": "Nature Portfolio (Springer Nature)",
+      "title": "Targeted treatment of injured nestmates with antimicrobial compounds in an ant society",
+      "citation": "Nat Commun. 2023 Dec 29;14:8446. doi: 10.1038/s41467-023-43885-w",
+      "doi": "10.1038/s41467-023-43885-w",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10756881/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10756881.1/PMC10756881.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10756881.1/PMC10756881.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 13,
+        "text_layer_words": 12131,
+        "columns": 2,
+        "body_words": 8764,
+        "math_per_1000_words": 0.0,
+        "captions": 5,
+        "tables": 0,
+        "citation_markers": 73,
+        "footnote_markers": 0,
+        "sha256": "22b8b0545ccdff90fc2fa6fa0264179763fced4cb9828c5aee7987fb7c716361"
+      }
+    },
+    {
+      "id": "pmc-pmc10756882",
+      "source": "pmc",
+      "venue": "Scientific Reports",
+      "publisher": "Nature Portfolio (Springer Nature)",
+      "title": "Reversible data hiding in encrypted images with multi-prediction and adaptive huffman encoding",
+      "citation": "Sci Rep. 2023 Dec 29;13:23104. doi: 10.1038/s41598-023-50186-1",
+      "doi": "10.1038/s41598-023-50186-1",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10756882/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10756882.1/PMC10756882.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10756882.1/PMC10756882.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 16,
+        "text_layer_words": 10231,
+        "columns": 1,
+        "body_words": 6538,
+        "math_per_1000_words": 15.6,
+        "captions": 22,
+        "tables": 8,
+        "citation_markers": 37,
+        "footnote_markers": 0,
+        "sha256": "417a5a4f5508d2edd866e051c088a317bf2e80c194dd2799709495c1c3f3aa76"
+      }
+    },
+    {
+      "id": "pmc-pmc10756880",
+      "source": "pmc",
+      "venue": "Scientific Reports",
+      "publisher": "Nature Portfolio (Springer Nature)",
+      "title": "CPEB2 inhibit cell proliferation through upregulating p21 mRNA stability in glioma",
+      "citation": "Sci Rep. 2023 Dec 29;13:23103. doi: 10.1038/s41598-023-50848-0",
+      "doi": "10.1038/s41598-023-50848-0",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10756880/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10756880.1/PMC10756880.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10756880.1/PMC10756880.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 12,
+        "text_layer_words": 7526,
+        "columns": 1,
+        "body_words": 3690,
+        "math_per_1000_words": 0.0,
+        "captions": 5,
+        "tables": 0,
+        "citation_markers": 43,
+        "footnote_markers": 0,
+        "sha256": "1fd88694ddd9e244e481809689fbad35ba1c4c3dcbd9ce9d9a2dbc67c1275f53"
+      }
+    },
+    {
+      "id": "pmc-pmc11314421",
+      "source": "pmc",
+      "venue": "Nucleic Acids Research",
+      "publisher": "Oxford University Press",
+      "title": "Identification of G-quadruplex structures in MALAT1 lncRNA that interact with nucleolin and nucleophosmin",
+      "citation": "Nucleic Acids Res. 2023 Aug 10;51(17):9415–31. doi: 10.1093/nar/gkad639",
+      "doi": "10.1093/nar/gkad639",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11314421/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11314421.1/PMC11314421.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11314421.1/PMC11314421.1.xml"
+      },
+      "license": "CC BY-NC",
+      "license_url": "https://creativecommons.org/licenses/by-nc/4.0/",
+      "tags": [
+        "journal",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 17,
+        "text_layer_words": 14827,
+        "columns": 2,
+        "body_words": 9263,
+        "math_per_1000_words": 0.1,
+        "captions": 7,
+        "tables": 2,
+        "citation_markers": 86,
+        "footnote_markers": 0,
+        "sha256": "6b96b37791b718e223fcef67fd3b343f8961c7bc9d490ddf969985f7872eb9a4"
+      }
+    },
+    {
+      "id": "pmc-pmc10711437",
+      "source": "pmc",
+      "venue": "Nucleic Acids Research",
+      "publisher": "Oxford University Press",
+      "title": "Genome-wide transformation reveals extensive exchange across closely related Bacillus species",
+      "citation": "Nucleic Acids Res. 2023 Nov 16;51(22):12352–66. doi: 10.1093/nar/gkad1074",
+      "doi": "10.1093/nar/gkad1074",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10711437/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10711437.1/PMC10711437.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10711437.1/PMC10711437.1.xml"
+      },
+      "license": "CC BY-NC",
+      "license_url": "https://creativecommons.org/licenses/by-nc/4.0/",
+      "tags": [
+        "journal",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 15,
+        "text_layer_words": 12150,
+        "columns": 2,
+        "body_words": 8068,
+        "math_per_1000_words": 3.2,
+        "captions": 9,
+        "tables": 0,
+        "citation_markers": 95,
+        "footnote_markers": 0,
+        "sha256": "1282942e901a02782c2d05d2204ffb7c2e6ad3094fb0924ac87ab8f0d3ca1303"
+      }
+    },
+    {
+      "id": "pmc-pmc11326079",
+      "source": "pmc",
+      "venue": "Sensors",
+      "publisher": "MDPI",
+      "title": "Survey on Energy Harvesting for Biomedical Devices: Applications, Challenges and Future Prospects for African Countries",
+      "citation": "Sensors (Basel). 2023 Dec 27;24(1):163. doi: 10.3390/s24010163",
+      "doi": "10.3390/s24010163",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11326079/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11326079.1/PMC11326079.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11326079.1/PMC11326079.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 22,
+        "text_layer_words": 9787,
+        "columns": 1,
+        "body_words": 3598,
+        "math_per_1000_words": 0.0,
+        "captions": 0,
+        "tables": 0,
+        "citation_markers": 70,
+        "footnote_markers": 0,
+        "sha256": "24fd121bf642f250b696c2fd98ee883dd7cacfbea58b1e6c9ef03ba26d4fea43"
+      }
+    },
+    {
+      "id": "pmc-pmc11154291",
+      "source": "pmc",
+      "venue": "Sensors",
+      "publisher": "MDPI",
+      "title": "Securing Cloud-Assisted Connected and Autonomous Vehicles: An In-Depth Threat Analysis and Risk Assessment",
+      "citation": "Sensors (Basel). 2023 Dec 31;24(1):241. doi: 10.3390/s24010241",
+      "doi": "10.3390/s24010241",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11154291/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11154291.1/PMC11154291.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11154291.1/PMC11154291.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 41,
+        "text_layer_words": 20535,
+        "columns": 1,
+        "body_words": 8123,
+        "math_per_1000_words": 0.1,
+        "captions": 8,
+        "tables": 5,
+        "citation_markers": 108,
+        "footnote_markers": 0,
+        "sha256": "bab46c1aab574fbcaaf043a27797b835f3db8215641de095d6d74d197e9bde1d"
+      }
+    },
+    {
+      "id": "pmc-pmc11150781",
+      "source": "pmc",
+      "venue": "BMJ Open",
+      "publisher": "BMJ",
+      "title": "Social deprivation and exclusion in Parkinson’s disease: a cross-sectional and longitudinal study",
+      "citation": "BMJ Open. 2023 Dec 30;13(12):e074618. doi: 10.1136/bmjopen-2023-074618",
+      "doi": "10.1136/bmjopen-2023-074618",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11150781/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11150781.1/PMC11150781.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11150781.1/PMC11150781.1.xml"
+      },
+      "license": "CC BY-NC",
+      "license_url": "https://creativecommons.org/licenses/by-nc/4.0/",
+      "tags": [
+        "journal",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 9,
+        "text_layer_words": 6986,
+        "columns": 2,
+        "body_words": 3795,
+        "math_per_1000_words": 0.0,
+        "captions": 3,
+        "tables": 3,
+        "citation_markers": 54,
+        "footnote_markers": 0,
+        "sha256": "0d9efaf47a46b4fc4ff2f85675b670f3d54cdfc13e4e353c62f5a8c41b57dc24"
+      }
+    },
+    {
+      "id": "pmc-pmc11148707",
+      "source": "pmc",
+      "venue": "BMJ Open",
+      "publisher": "BMJ",
+      "title": "Randomised, placebo-controlled, double-blinded trial of fecal microbiota transplantation in severe obesity: a study protocol",
+      "citation": "BMJ Open. 2023 Dec 27;13(12):e073242. doi: 10.1136/bmjopen-2023-073242",
+      "doi": "10.1136/bmjopen-2023-073242",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11148707/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11148707.1/PMC11148707.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11148707.1/PMC11148707.1.xml"
+      },
+      "license": "CC BY-NC",
+      "license_url": "https://creativecommons.org/licenses/by-nc/4.0/",
+      "tags": [
+        "journal",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 10,
+        "text_layer_words": 6641,
+        "columns": 2,
+        "body_words": 3967,
+        "math_per_1000_words": 0.0,
+        "captions": 5,
+        "tables": 6,
+        "citation_markers": 15,
+        "footnote_markers": 0,
+        "sha256": "86e5a0e924c68fba2b5c6d7f30555c87eaa1dc42426e8d9a86f2dff00b314187"
+      }
+    },
+    {
+      "id": "pmc-pmc11334374",
+      "source": "pmc",
+      "venue": "Journal of Medical Internet Research",
+      "publisher": "JMIR Publications",
+      "title": "Charting a Course for Smartphones and Wearables to Transform Population Health Research",
+      "citation": "J Med Internet Res. 2023 Feb 7;25:e42449. doi: 10.2196/42449",
+      "doi": "10.2196/42449",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11334374/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11334374.1/PMC11334374.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11334374.1/PMC11334374.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 6,
+        "text_layer_words": 4065,
+        "columns": 2,
+        "body_words": 2374,
+        "math_per_1000_words": 0.0,
+        "captions": 0,
+        "tables": 0,
+        "citation_markers": 35,
+        "footnote_markers": 0,
+        "sha256": "dec964e05dcee627e0757ed26d952a798b931ae5af10a92581bd50bf4379815d"
+      }
+    },
+    {
+      "id": "pmc-pmc10787326",
+      "source": "pmc",
+      "venue": "Journal of Medical Internet Research",
+      "publisher": "JMIR Publications",
+      "title": "Acceptability of Telelactation Services for Breastfeeding Support Among Black Parents: Semistructured Interview Study",
+      "citation": "J Med Internet Res. 2023 Dec 29;25:e50191. doi: 10.2196/50191",
+      "doi": "10.2196/50191",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10787326/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10787326.1/PMC10787326.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10787326.1/PMC10787326.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 9,
+        "text_layer_words": 5230,
+        "columns": 2,
+        "body_words": 3593,
+        "math_per_1000_words": 0.0,
+        "captions": 3,
+        "tables": 3,
+        "citation_markers": 30,
+        "footnote_markers": 0,
+        "sha256": "997a7786d4d2621d974c8b7553b5abd18af3a34fc0dd51fda8178d88585a11e5"
+      }
+    },
+    {
+      "id": "pmc-pmc10731326",
+      "source": "pmc",
+      "venue": "Royal Society Open Science",
+      "publisher": "The Royal Society",
+      "title": "A data-driven approach shows that individuals' characteristics are more important than their networks in predicting fertility preferences",
+      "citation": "R Soc Open Sci. 2023 Dec 20;10(12):230988. doi: 10.1098/rsos.230988",
+      "doi": "10.1098/rsos.230988",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10731326/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10731326.1/PMC10731326.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10731326.1/PMC10731326.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 16,
+        "text_layer_words": 11391,
+        "columns": 1,
+        "body_words": 7823,
+        "math_per_1000_words": 0.3,
+        "captions": 4,
+        "tables": 1,
+        "citation_markers": 161,
+        "footnote_markers": 0,
+        "sha256": "9ac3514a6ae8927fb5049c73e723d2f6cb41a23e25241cc06bb6bb7e4b31c62b"
+      }
+    },
+    {
+      "id": "pmc-pmc10731324",
+      "source": "pmc",
+      "venue": "Royal Society Open Science",
+      "publisher": "The Royal Society",
+      "title": "Exploring the relationships between psychological variables and loot box engagement, part 1: pre-registered hypotheses",
+      "citation": "R Soc Open Sci. 2023 Dec 20;10(12):231045. doi: 10.1098/rsos.231045",
+      "doi": "10.1098/rsos.231045",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10731324/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10731324.1/PMC10731324.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10731324.1/PMC10731324.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 19,
+        "text_layer_words": 11933,
+        "columns": 1,
+        "body_words": 6982,
+        "math_per_1000_words": 0.0,
+        "captions": 5,
+        "tables": 5,
+        "citation_markers": 131,
+        "footnote_markers": 0,
+        "sha256": "b7af784766a7046eb4184d9baa410011f6859a25f4ae02300088738f1e82eefe"
+      }
+    },
+    {
+      "id": "pmc-pmc7619014",
+      "source": "pmc",
+      "venue": "Cell Reports",
+      "publisher": "Cell Press (Elsevier)",
+      "title": "Atypical B cells and impaired SARS-CoV-2 neutralization following heterologous vaccination in the elderly",
+      "citation": "Cell Rep. Author manuscript; Available in PMC 2026 Apr 17.",
+      "doi": "10.1016/j.celrep.2023.112991",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC7619014/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC7619014.1/PMC7619014.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC7619014.1/PMC7619014.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "author-manuscript",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 43,
+        "text_layer_words": 14933,
+        "columns": 1,
+        "body_words": 7204,
+        "math_per_1000_words": 0.0,
+        "captions": 1,
+        "tables": 1,
+        "citation_markers": 108,
+        "footnote_markers": 0,
+        "sha256": "70656e5c7cd6beb68393ae770ea5300536b6424f03bbda945a118872228d864c"
+      }
+    },
+    {
+      "id": "pmc-pmc7619013",
+      "source": "pmc",
+      "venue": "Cell Reports",
+      "publisher": "Cell Press (Elsevier)",
+      "title": "Amacrine cells differentially balance zebrafish color circuits in the central and peripheral retina",
+      "citation": "Cell Rep. Author manuscript; Available in PMC 2026 Apr 17.",
+      "doi": "10.1016/j.celrep.2023.112055",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC7619013/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC7619013.1/PMC7619013.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC7619013.1/PMC7619013.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "author-manuscript",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 41,
+        "text_layer_words": 16154,
+        "columns": 1,
+        "body_words": 10707,
+        "math_per_1000_words": 0.5,
+        "captions": 1,
+        "tables": 1,
+        "citation_markers": 158,
+        "footnote_markers": 43,
+        "sha256": "f4a199a1413984215feaf154457cfdfdb00582ed01a40311d64b9c9c0176b148"
+      }
+    },
+    {
+      "id": "pmc-pmc11731475",
+      "source": "pmc",
+      "venue": "Heliyon",
+      "publisher": "Elsevier",
+      "title": "Identification of key genes and regulatory networks involved in the Comorbidity of atrial fibrillation and chronic obstructive pulmonary disease",
+      "citation": "Heliyon. 2023 Nov 17;9(11):e22430. doi: 10.1016/j.heliyon.2023.e22430",
+      "doi": "10.1016/j.heliyon.2023.e22430",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11731475/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11731475.1/PMC11731475.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11731475.1/PMC11731475.1.xml"
+      },
+      "license": "CC BY-NC-ND",
+      "license_url": "https://creativecommons.org/licenses/by-nc-nd/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 17,
+        "text_layer_words": 6835,
+        "columns": 1,
+        "body_words": 3935,
+        "math_per_1000_words": 0.0,
+        "captions": 12,
+        "tables": 2,
+        "citation_markers": 71,
+        "footnote_markers": 0,
+        "sha256": "c95eaa3ce6147d95e3c8d5a50f9c585bbe19d7eadf9136bdca8c6cb3082dd4ac"
+      }
+    },
+    {
+      "id": "pmc-pmc11639692",
+      "source": "pmc",
+      "venue": "Heliyon",
+      "publisher": "Elsevier",
+      "title": "Parametric investigation of rectangular CFRP-confined concrete columns reinforced by inner elliptical steel tubes using finite element and machine learning models",
+      "citation": "Heliyon. 2023 Dec 15;10(2):e23666. doi: 10.1016/j.heliyon.2023.e23666",
+      "doi": "10.1016/j.heliyon.2023.e23666",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11639692/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11639692.1/PMC11639692.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11639692.1/PMC11639692.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 31,
+        "text_layer_words": 13708,
+        "columns": 1,
+        "body_words": 7976,
+        "math_per_1000_words": 15.3,
+        "captions": 37,
+        "tables": 18,
+        "citation_markers": 133,
+        "footnote_markers": 0,
+        "sha256": "d4561884857bb5645fd4e78045bbb481eca25835701c5982cdbe57d8a81dcd6e"
+      }
+    },
+    {
+      "id": "pmc-pmc13560010",
+      "source": "pmc",
+      "venue": "F1000Research",
+      "publisher": "F1000 (Taylor & Francis)",
+      "title": "The effect of wind speed in increasing COVID-19 cases in Jakarta: a spatial-temporal analysis from March to September 2020",
+      "citation": "F1000Res. 2023 Dec 28;12:145. Originally published 2023 Feb 8. [Version 3] doi: 10.12688/f1000research.128908.3",
+      "doi": "10.12688/f1000research.128908.3",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC13560010/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC13560010.3/PMC13560010.3.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC13560010.3/PMC13560010.3.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 25,
+        "text_layer_words": 11720,
+        "columns": 1,
+        "body_words": 3793,
+        "math_per_1000_words": 0.0,
+        "captions": 4,
+        "tables": 2,
+        "citation_markers": 71,
+        "footnote_markers": 0,
+        "sha256": "647a3cadabe17f3bd9ef27ba3e5401d2ae17d7fa95dfaf0320d69510f21344ef"
+      }
+    },
+    {
+      "id": "pmc-pmc13305550",
+      "source": "pmc",
+      "venue": "F1000Research",
+      "publisher": "F1000 (Taylor & Francis)",
+      "title": "Emotional intelligence: An important skill to learn now more than ever",
+      "citation": "F1000Res. 2023 Sep 13;12:1146. [Version 1] doi: 10.12688/f1000research.134752.1",
+      "doi": "10.12688/f1000research.134752.1",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC13305550/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC13305550.1/PMC13305550.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC13305550.1/PMC13305550.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 20,
+        "text_layer_words": 12820,
+        "columns": 1,
+        "body_words": 8687,
+        "math_per_1000_words": 0.0,
+        "captions": 1,
+        "tables": 1,
+        "citation_markers": 161,
+        "footnote_markers": 0,
+        "sha256": "fe034a6ac65d116700dd1a77093fd9761642bd0ca14317dcffc5885d68541043"
+      }
+    },
+    {
+      "id": "pmc-pmc10755640",
+      "source": "pmc",
+      "venue": "eNeuro",
+      "publisher": "Society for Neuroscience",
+      "title": "Dynamic Foraging Behavior Performance Is Not Affected by Scn2a Haploinsufficiency",
+      "citation": "eNeuro. 2023 Dec 8;10(12):ENEURO.0367-23.2023. doi: 10.1523/ENEURO.0367-23.2023",
+      "doi": "10.1523/ENEURO.0367-23.2023",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10755640/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10755640.1/PMC10755640.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10755640.1/PMC10755640.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 13,
+        "text_layer_words": 11240,
+        "columns": 2,
+        "body_words": 5534,
+        "math_per_1000_words": 0.0,
+        "captions": 5,
+        "tables": 0,
+        "citation_markers": 145,
+        "footnote_markers": 0,
+        "sha256": "6e18683736544a58b72d8fc2ecdffa226ff52db6f892fcd357fd2f7cea16be0f"
+      }
+    },
+    {
+      "id": "pmc-pmc10755645",
+      "source": "pmc",
+      "venue": "eNeuro",
+      "publisher": "Society for Neuroscience",
+      "title": "Pituitary Adenylate Cyclase-Activating Polypeptide (PACAP) of the Bed Nucleus of the Stria Terminalis Mediates Heavy Alcohol Drinking in Mice",
+      "citation": "eNeuro. 2023 Dec 15;10(12):ENEURO.0424-23.2023. doi: 10.1523/ENEURO.0424-23.2023",
+      "doi": "10.1523/ENEURO.0424-23.2023",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10755645/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10755645.1/PMC10755645.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC10755645.1/PMC10755645.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 15,
+        "text_layer_words": 11003,
+        "columns": 2,
+        "body_words": 5811,
+        "math_per_1000_words": 0.0,
+        "captions": 5,
+        "tables": 0,
+        "citation_markers": 136,
+        "footnote_markers": 0,
+        "sha256": "05903bab4dce42f43ecb554f5edbcc5d3105b8ec60fa5ff7672da1b96c40290f"
+      }
+    },
+    {
+      "id": "pmc-pmc13612741",
+      "source": "pmc",
+      "venue": "Brain Behav Immun",
+      "publisher": "various (NIHMS author manuscript)",
+      "title": "Psychological stress is associated with arterial inflammation in people living with treated HIV infection",
+      "citation": "Brain Behav Immun. Author manuscript; Available in PMC 2026 Sep 25.",
+      "doi": "10.1016/j.bbi.2023.06.019",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC13612741/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC13612741.1/PMC13612741.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC13612741.1/PMC13612741.1.xml"
+      },
+      "license": "CC BY-NC",
+      "license_url": "https://creativecommons.org/licenses/by-nc/4.0/",
+      "tags": [
+        "author-manuscript",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 20,
+        "text_layer_words": 8605,
+        "columns": 1,
+        "body_words": 4433,
+        "math_per_1000_words": 0.0,
+        "captions": 0,
+        "tables": 0,
+        "citation_markers": 83,
+        "footnote_markers": 0,
+        "sha256": "2a31f7de0168e39c605fd986d07848ce558962453aef0b7729648306fb0efc3c"
+      }
+    },
+    {
+      "id": "pmc-pmc13585476",
+      "source": "pmc",
+      "venue": "Proc Conf Cogn Comput Neurosci",
+      "publisher": "various (NIHMS author manuscript)",
+      "title": "Self-supervised transformers predict dynamics of object-based attention in humans",
+      "citation": "Proc Conf Cogn Comput Neurosci. Author manuscript; Available in PMC 2026 Sep 18.",
+      "doi": null,
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC13585476/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC13585476.1/PMC13585476.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC13585476.1/PMC13585476.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "author-manuscript",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 7,
+        "text_layer_words": 2233,
+        "columns": 1,
+        "body_words": 1287,
+        "math_per_1000_words": 0.0,
+        "captions": 0,
+        "tables": 0,
+        "citation_markers": 23,
+        "footnote_markers": 0,
+        "sha256": "6abcba2275baeec27ae82f66d1c7423de3881f21c1283f382572ed7676ff48e8"
+      }
+    },
+    {
+      "id": "pmc-pmc13577200",
+      "source": "pmc",
+      "venue": "J Aquat Anim Health",
+      "publisher": "various (NIHMS author manuscript)",
+      "title": "Detection and virulence of Lactococcus garvieae and L.petauri from four lakes in southern California",
+      "citation": "J Aquat Anim Health. Author manuscript; Available in PMC 2026 Sep 15.",
+      "doi": "10.1002/aah.10188",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC13577200/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC13577200.1/PMC13577200.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC13577200.1/PMC13577200.1.xml"
+      },
+      "license": "CC BY-NC",
+      "license_url": "https://creativecommons.org/licenses/by-nc/4.0/",
+      "tags": [
+        "author-manuscript",
+        "single-column"
+      ],
+      "measured": {
+        "pages": 19,
+        "text_layer_words": 7948,
+        "columns": 1,
+        "body_words": 4382,
+        "math_per_1000_words": 0.2,
+        "captions": 0,
+        "tables": 0,
+        "citation_markers": 95,
+        "footnote_markers": 0,
+        "sha256": "343fca16a7a10525b39e24b2039811cd1a675924eb55c2d79f459a378c1824b9"
+      }
+    },
+    {
+      "id": "pmc-pmc5315336",
+      "source": "pmc",
+      "venue": "Journal of Research of the NBS (1962)",
+      "publisher": "National Bureau of Standards (NIST)",
+      "title": "Chromatographic Analysis of Petroleum Fractions Used in Oil-Extended Rubber",
+      "citation": "J Res Natl Bur Stand A Phys Chem. 1962 Apr 1;66A(2):189–92. doi: 10.6028/jres.066A.018",
+      "doi": "10.6028/jres.066A.018",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC5315336/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC5315336.1/PMC5315336.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC5315336.1/PMC5315336.1.xml"
+      },
+      "license": "US Government work (NBS/NIST), public domain in the US",
+      "license_url": "https://www.nist.gov/open/copyright-fair-use-and-licensing-statements-srd-data-software-and-technical-series-publications",
+      "tags": [
+        "journal",
+        "scanned",
+        "ocr-text-layer",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 4,
+        "text_layer_words": 3464,
+        "columns": 2,
+        "body_words": 1857,
+        "math_per_1000_words": 0.0,
+        "captions": 0,
+        "tables": 0,
+        "citation_markers": 25,
+        "footnote_markers": 3,
+        "sha256": "3db8923183a61abe014402a600fb261363aa4f2a40c0c2813cee394c6d14b97f"
+      }
+    },
+    {
+      "id": "pmc-pmc5315337",
+      "source": "pmc",
+      "venue": "Journal of Research of the NBS (1962)",
+      "publisher": "National Bureau of Standards (NIST)",
+      "title": "Cross-Sectional Correction for Computing Young's Modulus From Longitudinal Resonance Vibrations of Square and Cylindrical Rods",
+      "citation": "J Res Natl Bur Stand A Phys Chem. 1962 Apr 1;66A(2):193–7. doi: 10.6028/jres.066A.019",
+      "doi": "10.6028/jres.066A.019",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC5315337/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC5315337.1/PMC5315337.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC5315337.1/PMC5315337.1.xml"
+      },
+      "license": "US Government work (NBS/NIST), public domain in the US",
+      "license_url": "https://www.nist.gov/open/copyright-fair-use-and-licensing-statements-srd-data-software-and-technical-series-publications",
+      "tags": [
+        "journal",
+        "scanned",
+        "ocr-text-layer",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 10,
+        "text_layer_words": 8603,
+        "columns": 2,
+        "body_words": 2239,
+        "math_per_1000_words": 4.0,
+        "captions": 0,
+        "tables": 0,
+        "citation_markers": 18,
+        "footnote_markers": 4,
+        "sha256": "18711c10df8c7d6072c347ef6c07d004b707cf8d53c4b3b8062015a4ed97f2e3"
+      }
+    },
+    {
+      "id": "pmc-pmc5315332",
+      "source": "pmc",
+      "venue": "Journal of Research of the NBS (1962)",
+      "publisher": "National Bureau of Standards (NIST)",
+      "title": "Ionization in the Plasma of a Copper Arc",
+      "citation": "J Res Natl Bur Stand A Phys Chem. 1962 Apr 1;66A(2):169–75. doi: 10.6028/jres.066A.014",
+      "doi": "10.6028/jres.066A.014",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC5315332/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC5315332.1/PMC5315332.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC5315332.1/PMC5315332.1.xml"
+      },
+      "license": "US Government work (NBS/NIST), public domain in the US",
+      "license_url": "https://www.nist.gov/open/copyright-fair-use-and-licensing-statements-srd-data-software-and-technical-series-publications",
+      "tags": [
+        "journal",
+        "scanned",
+        "ocr-text-layer",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 7,
+        "text_layer_words": 6711,
+        "columns": 2,
+        "body_words": 3966,
+        "math_per_1000_words": 6.8,
+        "captions": 0,
+        "tables": 0,
+        "citation_markers": 31,
+        "footnote_markers": 1,
+        "sha256": "b2e7ed00a2453725a60f51a56bd02e49e52907d60eaa7969de1311dd65c27292"
+      }
+    },
+    {
+      "id": "arxiv-2608.09666v1",
+      "source": "arxiv",
+      "venue": "ACL 2025 paper",
+      "publisher": "arXiv (cs.AI)",
+      "title": "Open Evaluation Agent: Efficient and Promptable Evaluation of Visual Generative Models",
+      "citation": "arXiv:2608.09666v1 [cs.AI]. Journal extension of our ACL 2025 paper (arXiv:2412.09645). 12 pages. Code: https://github.com/Vchitect/Evaluation-Agent",
+      "doi": "10.48550/arXiv.2608.09666",
+      "landing_url": "https://arxiv.org/abs/2608.09666v1",
+      "pdf_url": "https://arxiv.org/pdf/2608.09666v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2608.09666v1"
+      },
+      "license": "arXiv non-exclusive distribution license",
+      "license_url": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/",
+      "tags": [
+        "conference",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 12,
+        "text_layer_words": 11627,
+        "columns": 2,
+        "body_words": 5976,
+        "math_per_1000_words": 4.4,
+        "captions": 11,
+        "tables": 6,
+        "citation_markers": 70,
+        "footnote_markers": 0,
+        "sha256": "69ea9c71a93085c3714a5e5c3b8df44370efa4e7732a0563036094accbfc3496"
+      }
+    },
+    {
+      "id": "arxiv-2607.28282v1",
+      "source": "arxiv",
+      "venue": "ACL 2025 paper",
+      "publisher": "arXiv (cs.CL)",
+      "title": "(Towards) Scalable Reliable Automated Evaluation with Large Language Models",
+      "citation": "arXiv:2607.28282v1 [cs.CL]. 17 pages. Published in the Proceedings of the Fourth Workshop on Generation, Evaluation and Metrics (GEM2) at ACL 2025",
+      "doi": "10.48550/arXiv.2607.28282",
+      "landing_url": "https://arxiv.org/abs/2607.28282v1",
+      "pdf_url": "https://arxiv.org/pdf/2607.28282v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2607.28282v1"
+      },
+      "license": "CC BY 4.0",
+      "license_url": "http://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "conference",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 17,
+        "text_layer_words": 9484,
+        "columns": 2,
+        "body_words": 5042,
+        "math_per_1000_words": 8.5,
+        "captions": 6,
+        "tables": 3,
+        "citation_markers": 0,
+        "footnote_markers": 5,
+        "sha256": "b5ba1fed2750c8e362cd7e0efe9d5412a60febea69bb4356ec93032e565ceefe"
+      }
+    },
+    {
+      "id": "arxiv-2607.10715v1",
+      "source": "arxiv",
+      "venue": "ACL 2025 paper",
+      "publisher": "arXiv (cs.CL)",
+      "title": "A Corpus of Persuasion Techniques in Slavic Languages",
+      "citation": "arXiv:2607.10715v1 [cs.CL]. Corpus used for SlavicNLP 2025 Workshop co-located with ACL 2025, Published at LREC 2026",
+      "doi": "10.48550/arXiv.2607.10715",
+      "landing_url": "https://arxiv.org/abs/2607.10715v1",
+      "pdf_url": "https://arxiv.org/pdf/2607.10715v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2607.10715v1"
+      },
+      "license": "CC BY-SA 4.0",
+      "license_url": "http://creativecommons.org/licenses/by-sa/4.0/",
+      "tags": [
+        "conference",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 18,
+        "text_layer_words": 11590,
+        "columns": 2,
+        "body_words": 8358,
+        "math_per_1000_words": 1.3,
+        "captions": 11,
+        "tables": 7,
+        "citation_markers": 0,
+        "footnote_markers": 7,
+        "sha256": "c06fee7f4ad2b8d984e6f78b5301107216ca69daa409cdb9c06fa5f5375b515a"
+      }
+    },
+    {
+      "id": "arxiv-2609.07965v1",
+      "source": "arxiv",
+      "venue": "EMNLP 2025 paper",
+      "publisher": "arXiv (cs.CL)",
+      "title": "Rethinking Sign Language Translation: The Impact of Signer Dependence on Model Evaluation",
+      "citation": "arXiv:2609.07965v1 [cs.CL]. 13 pages. Published in Findings of the Association for Computational Linguistics: EMNLP 2025",
+      "doi": "10.48550/arXiv.2609.07965",
+      "landing_url": "https://arxiv.org/abs/2609.07965v1",
+      "pdf_url": "https://arxiv.org/pdf/2609.07965v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2609.07965v1"
+      },
+      "license": "arXiv non-exclusive distribution license",
+      "license_url": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/",
+      "tags": [
+        "conference",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 13,
+        "text_layer_words": 8363,
+        "columns": 2,
+        "body_words": 3967,
+        "math_per_1000_words": 4.3,
+        "captions": 16,
+        "tables": 16,
+        "citation_markers": 0,
+        "footnote_markers": 4,
+        "sha256": "a71064196e4edee903232e7f839ce692c3590bd590c26ba631a0ab28fb837c79"
+      }
+    },
+    {
+      "id": "arxiv-2607.07895v1",
+      "source": "arxiv",
+      "venue": "EMNLP 2025 paper",
+      "publisher": "arXiv (cs.CL)",
+      "title": "Scalable and Culturally Specific Stereotype Dataset Construction via Human-LLM Collaboration",
+      "citation": "arXiv:2607.07895v1 [cs.CL]. Weicheng Ma, John Guerrerio: equal contribution; published in EMNLP 2025 Main",
+      "doi": "10.48550/arXiv.2607.07895",
+      "landing_url": "https://arxiv.org/abs/2607.07895v1",
+      "pdf_url": "https://arxiv.org/pdf/2607.07895v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2607.07895v1"
+      },
+      "license": "CC BY-NC-SA 4.0",
+      "license_url": "http://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "tags": [
+        "conference",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 29,
+        "text_layer_words": 12985,
+        "columns": 2,
+        "body_words": 5960,
+        "math_per_1000_words": 0.7,
+        "captions": 45,
+        "tables": 27,
+        "citation_markers": 0,
+        "footnote_markers": 5,
+        "sha256": "a183c00b87155fbc291e656fb4812819397accd6cb79dfeb7190b197cb25eade"
+      }
+    },
+    {
+      "id": "arxiv-2606.21736v1",
+      "source": "arxiv",
+      "venue": "CVPR 2025 paper",
+      "publisher": "arXiv (cs.CV)",
+      "title": "Adversarial Domain Prompt Tuning and Generation for Single Domain Generalization",
+      "citation": "arXiv:2606.21736v1 [cs.CV]. 12 pages, 6 figures, accepted by CVPR 2025",
+      "doi": "10.48550/arXiv.2606.21736",
+      "landing_url": "https://arxiv.org/abs/2606.21736v1",
+      "pdf_url": "https://arxiv.org/pdf/2606.21736v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2606.21736v1"
+      },
+      "license": "CC BY 4.0",
+      "license_url": "http://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "conference",
+        "two-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 12,
+        "text_layer_words": 9296,
+        "columns": 2,
+        "body_words": 3918,
+        "math_per_1000_words": 51.6,
+        "captions": 13,
+        "tables": 4,
+        "citation_markers": 43,
+        "footnote_markers": 0,
+        "sha256": "6579c5e8164a71123201742024dec0ae95a242722ae1864442894bdeb18c82e6"
+      }
+    },
+    {
+      "id": "arxiv-2605.10717v1",
+      "source": "arxiv",
+      "venue": "CVPR 2025 paper",
+      "publisher": "arXiv (cs.LG)",
+      "title": "Heteroscedastic Diffusion for Multi-Agent Trajectory Modeling",
+      "citation": "arXiv:2605.10717v1 [cs.LG]. Accepted to IEEE Transactions on Pattern Analysis and Machine Intelligence (TPAMI). Extended version of arXiv:2503.18589 (CVPR 2025)",
+      "doi": "10.48550/arXiv.2605.10717",
+      "landing_url": "https://arxiv.org/abs/2605.10717v1",
+      "pdf_url": "https://arxiv.org/pdf/2605.10717v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2605.10717v1"
+      },
+      "license": "CC BY 4.0",
+      "license_url": "http://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "conference",
+        "two-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 13,
+        "text_layer_words": 11853,
+        "columns": 2,
+        "body_words": 6575,
+        "math_per_1000_words": 47.6,
+        "captions": 14,
+        "tables": 7,
+        "citation_markers": 79,
+        "footnote_markers": 2,
+        "sha256": "eac999911e20882d0627b985048c917f0bf9a7cd1811eb4b8275cb3a5961bad7"
+      }
+    },
+    {
+      "id": "arxiv-2605.07149v1",
+      "source": "arxiv",
+      "venue": "CVPR 2025 paper",
+      "publisher": "arXiv (cs.CV)",
+      "title": "Real-IAD MVN: A Multi-View Normal Vector Dataset and Benchmark for High-Fidelity Industrial Anomaly Detection",
+      "citation": "arXiv:2605.07149v1 [cs.CV]. Accepted to CVPR 2025. 15 pages",
+      "doi": "10.48550/arXiv.2605.07149",
+      "landing_url": "https://arxiv.org/abs/2605.07149v1",
+      "pdf_url": "https://arxiv.org/pdf/2605.07149v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2605.07149v1"
+      },
+      "license": "arXiv non-exclusive distribution license",
+      "license_url": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/",
+      "tags": [
+        "conference",
+        "two-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 15,
+        "text_layer_words": 7270,
+        "columns": 2,
+        "body_words": 3501,
+        "math_per_1000_words": 26.8,
+        "captions": 12,
+        "tables": 4,
+        "citation_markers": 49,
+        "footnote_markers": 0,
+        "sha256": "02ca66fed9cc9fcfaf1ea29ca8b1dbba40cc50030c2c494571ec35588f9911ce"
+      }
+    },
+    {
+      "id": "arxiv-2609.21554v1",
+      "source": "arxiv",
+      "venue": "ICML 2025 paper",
+      "publisher": "arXiv (cs.CL)",
+      "title": "MIRAGE: Multi-Perspective Creative Language Model Reasoning with Reinforcement Learning Guidance",
+      "citation": "arXiv:2609.21554v1 [cs.CL]. 18 pages, 5 figures. Accepted at the ICML 2025 Workshop on Multi-Agent Systems in the Era of Foundation Models: Opportunities, Challenges and Futures (MAS-2025)",
+      "doi": "10.48550/arXiv.2609.21554",
+      "landing_url": "https://arxiv.org/abs/2609.21554v1",
+      "pdf_url": "https://arxiv.org/pdf/2609.21554v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2609.21554v1"
+      },
+      "license": "CC BY 4.0",
+      "license_url": "http://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "conference",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 18,
+        "text_layer_words": 8059,
+        "columns": 2,
+        "body_words": 4967,
+        "math_per_1000_words": 14.1,
+        "captions": 12,
+        "tables": 5,
+        "citation_markers": 72,
+        "footnote_markers": 0,
+        "sha256": "556b085e5f5fd177cf0c4d122f3afc2f277006c0a7485122ca3815a8dc1a81a1"
+      }
+    },
+    {
+      "id": "arxiv-2609.06489v1",
+      "source": "arxiv",
+      "venue": "ICML 2025 paper",
+      "publisher": "arXiv (cs.LG)",
+      "title": "Power Mean Estimation in Stochastic Continuous Monte Carlo Tree Search",
+      "citation": "arXiv:2609.06489v1 [cs.LG]. Published at the International Conference on Machine Learning (ICML 2025)",
+      "doi": "10.48550/arXiv.2609.06489",
+      "landing_url": "https://arxiv.org/abs/2609.06489v1",
+      "pdf_url": "https://arxiv.org/pdf/2609.06489v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2609.06489v1"
+      },
+      "license": "CC BY 4.0",
+      "license_url": "http://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "conference",
+        "single-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 33,
+        "text_layer_words": 15590,
+        "columns": 1,
+        "body_words": 7757,
+        "math_per_1000_words": 107.9,
+        "captions": 9,
+        "tables": 5,
+        "citation_markers": 28,
+        "footnote_markers": 0,
+        "sha256": "9fbdda7cdecef9f3ca46dac39c9f7d13d37cc5b1194e192d48689dbe41dfd602"
+      }
+    },
+    {
+      "id": "arxiv-2609.29509v1",
+      "source": "arxiv",
+      "venue": "NeurIPS 2025 paper",
+      "publisher": "arXiv (cs.AI)",
+      "title": "Delay-of-Gratification as a Multi-Agent Survival Micro-benchmark for Long-Horizon LLMs: Social Exposure, Personas, and Tool Use Budgets",
+      "citation": "arXiv:2609.29509v1 [cs.AI]. Accepted as a poster at the NeurIPS 2025 Workshop on Multi-Turn Interactions in Large Language Models",
+      "doi": "10.48550/arXiv.2609.29509",
+      "landing_url": "https://arxiv.org/abs/2609.29509v1",
+      "pdf_url": "https://arxiv.org/pdf/2609.29509v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2609.29509v1"
+      },
+      "license": "CC BY 4.0",
+      "license_url": "http://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "conference",
+        "single-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 11,
+        "text_layer_words": 5710,
+        "columns": 1,
+        "body_words": 3746,
+        "math_per_1000_words": 25.1,
+        "captions": 7,
+        "tables": 1,
+        "citation_markers": 26,
+        "footnote_markers": 0,
+        "sha256": "398c8b14ef5d5dde95f77f82b868b8ec1e6143b36d9edd793919472a6a4c99e4"
+      }
+    },
+    {
+      "id": "arxiv-2609.21432v1",
+      "source": "arxiv",
+      "venue": "NeurIPS 2025 paper",
+      "publisher": "arXiv (cs.AI)",
+      "title": "GVPO++: Group Variance Policy Optimization for LLM Post-Training and On-Policy Distillation",
+      "citation": "arXiv:2609.21432v1 [cs.AI]. Extended version of the NeurIPS 2025 paper \"GVPO: Group Variance Policy Optimization for Large Language Model Post-Training\"",
+      "doi": "10.48550/arXiv.2609.21432",
+      "landing_url": "https://arxiv.org/abs/2609.21432v1",
+      "pdf_url": "https://arxiv.org/pdf/2609.21432v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2609.21432v1"
+      },
+      "license": "arXiv non-exclusive distribution license",
+      "license_url": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/",
+      "tags": [
+        "conference",
+        "two-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 16,
+        "text_layer_words": 11036,
+        "columns": 2,
+        "body_words": 6528,
+        "math_per_1000_words": 51.3,
+        "captions": 15,
+        "tables": 8,
+        "citation_markers": 72,
+        "footnote_markers": 0,
+        "sha256": "b89880123f2fd483af1f7da1ad6a1cf0db7bae8db29367c111763e8113d6f582"
+      }
+    },
+    {
+      "id": "arxiv-2609.31301v1",
+      "source": "arxiv",
+      "venue": "IEEE Transactions article",
+      "publisher": "arXiv (cs.SE)",
+      "title": "Beyond Approved Actions: Runtime Validation of Persistent Outcomes in Agent Workflows",
+      "citation": "arXiv:2609.31301v1 [cs.SE]. 22 pages including 7 pages of supplementary material. Submitted to IEEE Transactions on Software Engineering",
+      "doi": "10.48550/arXiv.2609.31301",
+      "landing_url": "https://arxiv.org/abs/2609.31301v1",
+      "pdf_url": "https://arxiv.org/pdf/2609.31301v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2609.31301v1"
+      },
+      "license": "arXiv non-exclusive distribution license",
+      "license_url": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/",
+      "tags": [
+        "journal",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 22,
+        "text_layer_words": 17289,
+        "columns": 2,
+        "body_words": 12335,
+        "math_per_1000_words": 8.4,
+        "captions": 23,
+        "tables": 16,
+        "citation_markers": 27,
+        "footnote_markers": 4,
+        "sha256": "3310616756536b79325aff41d042e7a2459002df1038729e0911346f8143b784"
+      }
+    },
+    {
+      "id": "arxiv-2609.31218v1",
+      "source": "arxiv",
+      "venue": "IEEE Transactions article",
+      "publisher": "arXiv (eess.SP)",
+      "title": "POPT: Physics-Informed Deep Learning for Phase-Only Positioning in Distributed MIMO",
+      "citation": "arXiv:2609.31218v1 [eess.SP]. Submitted to IEEE Transactions on Wireless Communications (TWC)",
+      "doi": "10.48550/arXiv.2609.31218",
+      "landing_url": "https://arxiv.org/abs/2609.31218v1",
+      "pdf_url": "https://arxiv.org/pdf/2609.31218v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2609.31218v1"
+      },
+      "license": "CC BY 4.0",
+      "license_url": "http://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "two-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 13,
+        "text_layer_words": 13207,
+        "columns": 2,
+        "body_words": 8865,
+        "math_per_1000_words": 50.0,
+        "captions": 8,
+        "tables": 2,
+        "citation_markers": 94,
+        "footnote_markers": 2,
+        "sha256": "a1c31abf3ff3de938b42ca1fe748f96a9334b852bfdce876465ca72bbe54a31c"
+      }
+    },
+    {
+      "id": "arxiv-2609.22558v1",
+      "source": "arxiv",
+      "venue": "Physical Review article",
+      "publisher": "arXiv (cond-mat.mtrl-sci)",
+      "title": "Compressive Splitting in Brittle Solids: The Inverse of Wrinkling in Sheets",
+      "citation": "arXiv:2609.22558v1 [cond-mat.mtrl-sci]. To appear in Physical Review Letters",
+      "doi": "10.48550/arXiv.2609.22558",
+      "landing_url": "https://arxiv.org/abs/2609.22558v1",
+      "pdf_url": "https://arxiv.org/pdf/2609.22558v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2609.22558v1"
+      },
+      "license": "CC BY 4.0",
+      "license_url": "http://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "two-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 17,
+        "text_layer_words": 9587,
+        "columns": 2,
+        "body_words": 5028,
+        "math_per_1000_words": 58.3,
+        "captions": 18,
+        "tables": 3,
+        "citation_markers": 70,
+        "footnote_markers": 0,
+        "sha256": "9c9bb7c2a3e213c3990e812fc1e900dccc79d636c8d5274644954e9a5663561e"
+      }
+    },
+    {
+      "id": "arxiv-2609.19108v1",
+      "source": "arxiv",
+      "venue": "Physical Review article",
+      "publisher": "arXiv (astro-ph.HE)",
+      "title": "Radiation-Driven Magnetic Fields in Sub-Keplerian Accretion Flows: An Alternative to MRI",
+      "citation": "arXiv:2609.19108v1 [astro-ph.HE]. Submitted to Physical Review Letters",
+      "doi": "10.48550/arXiv.2609.19108",
+      "landing_url": "https://arxiv.org/abs/2609.19108v1",
+      "pdf_url": "https://arxiv.org/pdf/2609.19108v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2609.19108v1"
+      },
+      "license": "CC BY 4.0",
+      "license_url": "http://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "two-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 8,
+        "text_layer_words": 5313,
+        "columns": 2,
+        "body_words": 3165,
+        "math_per_1000_words": 69.5,
+        "captions": 4,
+        "tables": 1,
+        "citation_markers": 14,
+        "footnote_markers": 1,
+        "sha256": "a7903507e04e4ca62a58e025e996587d4f74f7f7c3b87575ca1ddf0885420471"
+      }
+    },
+    {
+      "id": "arxiv-2609.31565v1",
+      "source": "arxiv",
+      "venue": "Astrophysical Journal article",
+      "publisher": "arXiv (astro-ph.SR)",
+      "title": "A Comprehensive Study of the Magnetic White Dwarfs in DESI DR1",
+      "citation": "arXiv:2609.31565v1 [astro-ph.SR]. 23 pages, 23 figures, submitted to ApJ",
+      "doi": "10.48550/arXiv.2609.31565",
+      "landing_url": "https://arxiv.org/abs/2609.31565v1",
+      "pdf_url": "https://arxiv.org/pdf/2609.31565v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2609.31565v1"
+      },
+      "license": "arXiv non-exclusive distribution license",
+      "license_url": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/",
+      "tags": [
+        "journal",
+        "two-column"
+      ],
+      "measured": {
+        "pages": 23,
+        "text_layer_words": 14553,
+        "columns": 2,
+        "body_words": 9668,
+        "math_per_1000_words": 19.7,
+        "captions": 25,
+        "tables": 2,
+        "citation_markers": 74,
+        "footnote_markers": 0,
+        "sha256": "1d7ff6f3074e80743e13eb559d4d35ef5f02fa9b165dd1aa2e871e373a235223"
+      }
+    },
+    {
+      "id": "arxiv-2609.31457v1",
+      "source": "arxiv",
+      "venue": "Astrophysical Journal article",
+      "publisher": "arXiv (astro-ph.HE)",
+      "title": "4FHL: The Fourth Catalog of Hard Fermi-LAT Sources",
+      "citation": "arXiv:2609.31457v1 [astro-ph.HE]. Accepted in ApJ. Contact authors: Alba Rico, Marco Ajello, Alberto Domínguez, Benoit Lott, Dario Gasparrini. The full catalog is available at the FSSC: https://fermi.gsfc.nasa.gov/ssc/data/access/lat/4FHL/",
+      "doi": "10.48550/arXiv.2609.31457",
+      "landing_url": "https://arxiv.org/abs/2609.31457v1",
+      "pdf_url": "https://arxiv.org/pdf/2609.31457v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2609.31457v1"
+      },
+      "license": "arXiv non-exclusive distribution license",
+      "license_url": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/",
+      "tags": [
+        "journal",
+        "two-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 30,
+        "text_layer_words": 15358,
+        "columns": 2,
+        "body_words": 8644,
+        "math_per_1000_words": 37.4,
+        "captions": 14,
+        "tables": 3,
+        "citation_markers": 93,
+        "footnote_markers": 9,
+        "sha256": "6c1f8913a5e85641e18d41561e9314bc871648a83b75e2475a8b499b4ff7fc9d"
+      }
+    },
+    {
+      "id": "arxiv-2609.27549v1",
+      "source": "arxiv",
+      "venue": "PhD thesis",
+      "publisher": "arXiv (math.AG)",
+      "title": "A Topos-Theoretic Approach to the Logarithmic Cartier Transform",
+      "citation": "arXiv:2609.27549v1 [math.AG]. 68 pages. This is the second part of my PhD thesis arXiv:2512.11660",
+      "doi": "10.48550/arXiv.2609.27549",
+      "landing_url": "https://arxiv.org/abs/2609.27549v1",
+      "pdf_url": "https://arxiv.org/pdf/2609.27549v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2609.27549v1"
+      },
+      "license": "arXiv non-exclusive distribution license",
+      "license_url": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/",
+      "tags": [
+        "thesis",
+        "single-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 68,
+        "text_layer_words": 21913,
+        "columns": 1,
+        "body_words": 13372,
+        "math_per_1000_words": 229.4,
+        "captions": 0,
+        "tables": 0,
+        "citation_markers": 114,
+        "footnote_markers": 1,
+        "sha256": "886e3a838dfc7587f57152657a07b4163e4ec30203789af4e14d3d74130afdcc"
+      }
+    },
+    {
+      "id": "arxiv-2609.25172v1",
+      "source": "arxiv",
+      "venue": "PhD thesis",
+      "publisher": "arXiv (math.AG)",
+      "title": "Local Logarithmic Cartier Transform",
+      "citation": "arXiv:2609.25172v1 [math.AG]. 78 pages. This is the first part of my PhD thesis arXiv:2512.11660",
+      "doi": "10.48550/arXiv.2609.25172",
+      "landing_url": "https://arxiv.org/abs/2609.25172v1",
+      "pdf_url": "https://arxiv.org/pdf/2609.25172v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2609.25172v1"
+      },
+      "license": "arXiv non-exclusive distribution license",
+      "license_url": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/",
+      "tags": [
+        "thesis",
+        "single-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 78,
+        "text_layer_words": 26059,
+        "columns": 1,
+        "body_words": 16599,
+        "math_per_1000_words": 225.1,
+        "captions": 0,
+        "tables": 0,
+        "citation_markers": 114,
+        "footnote_markers": 0,
+        "sha256": "b82dbe87ceeef553998bd04961388869ef708cdc60810892ef54d73c60113acb"
+      }
+    },
+    {
+      "id": "arxiv-2609.20536v1",
+      "source": "arxiv",
+      "venue": "PhD thesis",
+      "publisher": "arXiv (hep-lat)",
+      "title": "Numerical Investigations of Phase Transitions in Lattice Field Theories",
+      "citation": "arXiv:2609.20536v1 [hep-lat]. PhD Thesis, IISER Mohali (2026), based on arXiv:2307.13593, arXiv:2404.17504, arXiv:2508.05595, arXiv:2601.17436",
+      "doi": "10.48550/arXiv.2609.20536",
+      "landing_url": "https://arxiv.org/abs/2609.20536v1",
+      "pdf_url": "https://arxiv.org/pdf/2609.20536v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2609.20536v1"
+      },
+      "license": "CC BY 4.0",
+      "license_url": "http://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "thesis",
+        "single-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 123,
+        "text_layer_words": 27480,
+        "columns": 1,
+        "body_words": 16648,
+        "math_per_1000_words": 48.2,
+        "captions": 46,
+        "tables": 5,
+        "citation_markers": 76,
+        "footnote_markers": 4,
+        "sha256": "1e04dbd7e20d5ec98b44dc9483484523f154d299fd2f4ad2483ed35bfa38c1b0"
+      }
+    },
+    {
+      "id": "arxiv-2506.00268v2",
+      "source": "arxiv",
+      "venue": "math.AP preprint",
+      "publisher": "arXiv (math.AP)",
+      "title": "Shape derivative approach to fractional overdetermined problems",
+      "citation": "arXiv:2506.00268v2 [math.AP].",
+      "doi": "10.48550/arXiv.2506.00268",
+      "landing_url": "https://arxiv.org/abs/2506.00268v2",
+      "pdf_url": "https://arxiv.org/pdf/2506.00268v2",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2506.00268v2"
+      },
+      "license": "CC BY 4.0",
+      "license_url": "http://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "preprint",
+        "single-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 9,
+        "text_layer_words": 4072,
+        "columns": 1,
+        "body_words": 2237,
+        "math_per_1000_words": 138.6,
+        "captions": 0,
+        "tables": 0,
+        "citation_markers": 26,
+        "footnote_markers": 0,
+        "sha256": "88524ab97237b2b141a7d3e6c525756ab9e0f8beea05045dd7790ef1c928b42d"
+      }
+    },
+    {
+      "id": "arxiv-2506.00390v1",
+      "source": "arxiv",
+      "venue": "math.AP preprint",
+      "publisher": "arXiv (math.AP)",
+      "title": "A large scaling property of level sets for degenerate $p$-Laplacian equations with logarithmic BMO matrix weights",
+      "citation": "arXiv:2506.00390v1 [math.AP]. 23 pages",
+      "doi": "10.48550/arXiv.2506.00390",
+      "landing_url": "https://arxiv.org/abs/2506.00390v1",
+      "pdf_url": "https://arxiv.org/pdf/2506.00390v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2506.00390v1"
+      },
+      "license": "CC BY 4.0",
+      "license_url": "http://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "preprint",
+        "single-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 23,
+        "text_layer_words": 8278,
+        "columns": 1,
+        "body_words": 4418,
+        "math_per_1000_words": 152.6,
+        "captions": 0,
+        "tables": 0,
+        "citation_markers": 33,
+        "footnote_markers": 0,
+        "sha256": "a1135897e31e449e850b9bacd048defa9e6395d66b2a1856fc2826f8d9386651"
+      }
+    },
+    {
+      "id": "arxiv-2506.00547v1",
+      "source": "arxiv",
+      "venue": "math.PR preprint",
+      "publisher": "arXiv (math.PR)",
+      "title": "Symmetrization for high dimensional dependent random variables",
+      "citation": "arXiv:2506.00547v1 [math.PR].",
+      "doi": "10.48550/arXiv.2506.00547",
+      "landing_url": "https://arxiv.org/abs/2506.00547v1",
+      "pdf_url": "https://arxiv.org/pdf/2506.00547v1",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2506.00547v1"
+      },
+      "license": "CC BY 4.0",
+      "license_url": "http://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "preprint",
+        "single-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 18,
+        "text_layer_words": 5088,
+        "columns": 1,
+        "body_words": 2470,
+        "math_per_1000_words": 360.7,
+        "captions": 0,
+        "tables": 0,
+        "citation_markers": 14,
+        "footnote_markers": 0,
+        "sha256": "cfb7b68ee8ac72d41c7ed6204404344efc7150412f2b8aa767dadf406088eb8b"
+      }
+    },
+    {
+      "id": "arxiv-2506.00266v2",
+      "source": "arxiv",
+      "venue": "math.NT preprint",
+      "publisher": "arXiv (math.NT)",
+      "title": "Determining unit groups and $\\mathrm{K}_1$ of finite rings",
+      "citation": "arXiv:2506.00266v2 [math.NT].",
+      "doi": "10.48550/arXiv.2506.00266",
+      "landing_url": "https://arxiv.org/abs/2506.00266v2",
+      "pdf_url": "https://arxiv.org/pdf/2506.00266v2",
+      "ground_truth": {
+        "kind": "latexml",
+        "url": "https://arxiv.org/html/2506.00266v2"
+      },
+      "license": "arXiv non-exclusive distribution license",
+      "license_url": "http://arxiv.org/licenses/nonexclusive-distrib/1.0/",
+      "tags": [
+        "preprint",
+        "single-column",
+        "math-heavy"
+      ],
+      "measured": {
+        "pages": 17,
+        "text_layer_words": 8931,
+        "columns": 1,
+        "body_words": 5864,
+        "math_per_1000_words": 103.2,
+        "captions": 1,
+        "tables": 1,
+        "citation_markers": 69,
+        "footnote_markers": 0,
+        "sha256": "abb5c97e9374564a46cbe45d931a0fdced2661a49a5f5b4ff1f9d4b9a869eaa9"
+      }
+    },
+    {
+      "id": "pmc-pmc11960816-imageonly",
+      "source": "pmc",
+      "venue": "PLOS Computational Biology (rasterized, no text layer)",
+      "publisher": "PLOS",
+      "title": "HiSV: A control-free method for structural variation detection from Hi-C data",
+      "citation": "PLoS Comput Biol. 2023 Jan 6;19(1):e1010760. doi: 10.1371/journal.pcbi.1010760",
+      "doi": "10.1371/journal.pcbi.1010760",
+      "landing_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11960816/",
+      "pdf_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11960816.1/PMC11960816.1.pdf",
+      "ground_truth": {
+        "kind": "jats",
+        "url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC11960816.1/PMC11960816.1.xml"
+      },
+      "license": "CC BY",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "tags": [
+        "journal",
+        "scanned",
+        "image-only",
+        "derived"
+      ],
+      "derived_from": "pmc-pmc11960816",
+      "derivation": "rasterize every page at 200 dpi, grayscale, no text layer (tools/fetch.py)",
+      "measured": {
+        "pages": 17,
+        "text_layer_words": 0,
+        "columns": 1,
+        "body_words": 5437,
+        "math_per_1000_words": 1.1,
+        "captions": 6,
+        "tables": 0,
+        "citation_markers": 49,
+        "footnote_markers": 0
+      }
+    }
+  ]
+}
