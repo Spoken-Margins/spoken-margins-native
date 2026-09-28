@@ -260,6 +260,9 @@ enum PDFStructuredTextExtractor {
         }
         let threshold = max(3, Int(ceil(Double(pages.count) * 0.3)))
         func furnitureRole(_ line: TextLine, page: PDFPage) -> StructuredDocument.Role? {
+            if let bounds = line.bounds, isSideStamp(line.text, bounds: bounds, pageBox: page.bounds(for: .mediaBox)) {
+                return .pageHeader
+            }
             guard let side = edge(line, page: page) else { return nil }
             let repeated = pages.count >= 3 && occurrences[furnitureKey(line.text), default: []].count >= threshold
             let pageNumber = line.text.range(of: "^(?:[0-9]+|[ivxlcdm]+)$", options: [.regularExpression, .caseInsensitive]) != nil
@@ -332,7 +335,46 @@ enum PDFStructuredTextExtractor {
         }
         labelReferenceLists(&result)
         joinEquationFragments(&result)
+        markSoftHyphens(&result)
         return result
+    }
+
+    /// Marks line-end hyphens that only split a word for layout: "agree-" + "ment"
+    /// makes "agreement", a dictionary word, so it is spoken whole (#220 T4). A
+    /// compound broken at its hyphen ("open-" + "ended", "chain-of-" + "thought")
+    /// keeps it. `isWord` is the system dictionary; tests pass their own.
+    static func markSoftHyphens(_ lines: inout [StructuredDocumentLine], isWord: ([String]) -> Set<String> = dictionaryWords) {
+        var candidates: [(index: Int, word: String)] = []
+        for index in lines.indices.dropLast() where lines[index].text.hasSuffix("-") && lines[index + 1].role == lines[index].role {
+            guard let leftToken = lines[index].text.dropLast().split(separator: " ").last,
+                  let rightToken = lines[index + 1].text.split(separator: " ").first,
+                  !leftToken.contains("-") else { continue }
+            let left = String(leftToken.reversed().prefix(while: \.isLetter).reversed())
+            let right = String(rightToken.prefix(while: \.isLetter))
+            guard !left.isEmpty, right.first?.isLowercase == true, left.count == leftToken.count else { continue }
+            candidates.append((index, left + right))
+        }
+        guard !candidates.isEmpty else { return }
+        let words = isWord(Array(Set(candidates.map(\.word))))
+        for candidate in candidates where words.contains(candidate.word) {
+            lines[candidate.index].endsWithSoftHyphen = true
+        }
+    }
+
+    /// The system spell checker's English dictionary. UITextChecker is UIKit, so the
+    /// lookups run on the main thread, all at once.
+    static func dictionaryWords(_ words: [String]) -> Set<String> {
+        let check = { () -> Set<String> in
+            let checker = UITextChecker()
+            let language = UITextChecker.availableLanguages.first { $0.hasPrefix("en") } ?? "en_US"
+            return Set(words.filter { word in
+                checker.rangeOfMisspelledWord(
+                    in: word, range: NSRange(location: 0, length: (word as NSString).length),
+                    startingAt: 0, wrap: false, language: language
+                ).location == NSNotFound
+            })
+        }
+        return Thread.isMainThread ? check() : DispatchQueue.main.sync(execute: check)
     }
 
     /// A multi-line display equation comes out as several lines with its number
@@ -365,12 +407,41 @@ enum PDFStructuredTextExtractor {
             // instead of "References", then "References skipped."
             lines[index].role = .reference
             var cursor = index + 1
-            while cursor < lines.count, lines[cursor].role != .heading {
+            while cursor < lines.count, lines[cursor].role != .heading, !startsAppendix(lines[cursor].text) {
                 if lines[cursor].role == .body { lines[cursor].role = .reference }
                 cursor += 1
             }
-            index = cursor - 1
+            index = labelReferencesResumedAfterHeadings(&lines, from: cursor) - 1
         }
+    }
+
+    /// On a two-column reference page PDFKit can read a heading such as "Appendix"
+    /// between the columns, so the second column's entries follow it (#220 T4).
+    /// After the headings, entries keep the reference role while a new entry starts
+    /// within every few lines; a sentence of prose after a finished entry ends them.
+    /// Returns the index after the last line it labelled (or `start`).
+    private static func labelReferencesResumedAfterHeadings(_ lines: inout [StructuredDocumentLine], from start: Int) -> Int {
+        var first = start
+        while first < lines.count, lines[first].role == .heading || (lines[first].role == .body && startsAppendix(lines[first].text)) { first += 1 }
+        guard first > start, first < lines.count, lines[first].role == .body,
+              looksLikeBibliographyEntry(lines[first].text) else { return start }
+        var end = first
+        var entryStart = first
+        while end < lines.count, lines[end].role == .body {
+            let text = lines[end].text
+            if looksLikeBibliographyEntry(text) {
+                entryStart = end
+            } else {
+                if end - entryStart > 4 { break }
+                // "Names. 2024." is followed by the title, which may read like prose.
+                let titleLine = end == entryStart + 1
+                    && lines[entryStart].text.range(of: #"(?:19|20)[0-9]{2}[a-z]?\.\s*$"#, options: .regularExpression) != nil
+                if !titleLine, looksLikeProse(text), lines[end - 1].text.trimmingCharacters(in: .whitespaces).hasSuffix(".") { break }
+            }
+            end += 1
+        }
+        for index in first..<end { lines[index].role = .reference }
+        return end
     }
 
     /// Where running text sits: its type size, a full line's width, and the x
@@ -601,11 +672,38 @@ enum PDFStructuredTextExtractor {
         return result
     }
 
+    /// "Appendix B. …", "Supplementary …", "Table 3 …": never a reference entry, and an
+    /// appendix line ends a reference list even when PDFKit didn't see a heading.
+    static func startsAppendixOrFloat(_ text: String) -> Bool {
+        text.range(of: #"^(?:Appendix|APPENDIX|Supplementary|SUPPLEMENTARY|Table|TABLE|Fig\.|Figure|FIGURE|Section|Chapter)\b"#, options: .regularExpression) != nil
+    }
+
+    static func startsAppendix(_ text: String) -> Bool {
+        text.range(of: #"^(?:Appendix|APPENDIX)(?:\s+[A-Z0-9]|\s*$|:)"#, options: .regularExpression) != nil
+    }
+
+    /// Text printed sideways in a page's outer margin, like arXiv's
+    /// "arXiv:2607.28282v1 [cs.CL] 30 Jul 2026" or a publisher's download line: page
+    /// furniture, never read (#162, #220). The arXiv stamp is also known by its form,
+    /// in case PDFKit reports it with upright bounds.
+    static func isSideStamp(_ text: String, bounds: CGRect, pageBox: CGRect) -> Bool {
+        if text.range(of: #"^arXiv:[0-9]{4}\.[0-9]{4,5}v[0-9]+\s*\[[^\]]*\]\s*[0-9]{1,2}\s+[A-Z][a-z]{2}\s+[0-9]{4}\s*$"#, options: .regularExpression) != nil {
+            return true
+        }
+        let rotated = bounds.height > bounds.width * 4 && bounds.width < 40 && bounds.height > 60
+        let inSideMargin = bounds.maxX < pageBox.minX + pageBox.width * 0.15 || bounds.minX > pageBox.maxX - pageBox.width * 0.15
+        return rotated && inSideMargin
+    }
+
     /// The first line of a bibliography entry in the common styles: numbered
     /// ("[12] …", "12. …"), author first ("Agarwal A, …", "Abdul-Hay, S. O., …"), or
     /// any line carrying a parenthesised year or a DOI.
     static func looksLikeBibliographyEntry(_ text: String) -> Bool {
-        text.range(of: #"^\s*(?:\[\^?[0-9]{1,4}\]:?|[0-9]{1,4}[.)])\s+\S"#, options: .regularExpression) != nil
+        // "Appendix B. Analysis ..." has the shape of "Agarwal A. ..." but isn't one.
+        guard !startsAppendixOrFloat(text) else { return false }
+        return text.range(of: #"^\s*(?:\[\^?[0-9]{1,4}\]:?|[0-9]{1,4}[.)])\s+\S"#, options: .regularExpression) != nil
+            // ACL/natbib: "Marah Abdin, Sam Ade Jacobs, et al. 2024." (names, then the year)
+            || text.range(of: #"^(?:\p{Lu}[\p{L}'’\-]*\.?\s?){2,4}(?:,\s(?:\p{Lu}[\p{L}'’\-]*\.?\s?){1,4})*(?:,?\sand\s(?:\p{Lu}[\p{L}'’\-]*\.?\s?){1,4})?(?:,?\set al\.)?\s*(?:19|20)[0-9]{2}[a-z]?\."#, options: .regularExpression) != nil
             || text.range(of: #"^\p{Lu}[\p{L}'’\-]+(?: [\p{Lu}][\p{L}'’\-]+)?,? (?:\p{Lu}\.?[ -]?){1,3}[,.(]"#, options: .regularExpression) != nil
             || text.range(of: #"\((?:19|20)[0-9]{2}[a-z]?\)|\bdoi[:.]|\b10\.[0-9]{4,}/"#, options: [.regularExpression, .caseInsensitive]) != nil
     }

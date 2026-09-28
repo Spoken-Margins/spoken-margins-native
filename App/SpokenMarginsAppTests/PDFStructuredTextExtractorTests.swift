@@ -76,6 +76,57 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertEqual(lines.map(\.role), [.heading, .body, .reference, .reference, .reference, .reference, .reference, .heading, .body])
     }
 
+    func testV2KeepsSkippingReferenceEntriesPrintedAfterTheAppendixHeading() {
+        // #220 T4: on a two-column reference page PDFKit reads "Appendix" between the
+        // columns, and the second column's entries were read aloud as body text.
+        var lines = [
+            StructuredDocumentLine(text: "References", role: .heading, level: 2),
+            StructuredDocumentLine(text: "Marah Abdin, Sam Ade Jacobs, et al. 2024. Phi-3 Technical", role: .body),
+            StructuredDocumentLine(text: "Report. arXiv preprint.", role: .body),
+            StructuredDocumentLine(text: "[2] B. Brown. Sleep and memory. Nature, 2011.", role: .body),
+            StructuredDocumentLine(text: "Usman Anwar, Abulhair Saparov, et al. 2024. Foundational", role: .body),
+            StructuredDocumentLine(text: "Challenges. arXiv preprint.", role: .body),
+            StructuredDocumentLine(text: "Xiao Pu, Mingqi Gao, and Xiaojun Wan. 2023. Summarization", role: .body),
+            StructuredDocumentLine(text: "is (Almost) Dead. arXiv preprint.", role: .body),
+            StructuredDocumentLine(text: "Appendix", role: .heading, level: 1),
+            StructuredDocumentLine(text: "Large Language Models Used", role: .heading, level: 2),
+            StructuredDocumentLine(text: "Max Schäfer, Sarah Nadi, Aryaz Eghbali, et al. 2024.", role: .body),
+            StructuredDocumentLine(text: "An Empirical Evaluation of Unit Test Generation. IEEE", role: .body),
+            StructuredDocumentLine(text: "Transactions on Software Engineering, 50(1):85-105.", role: .body),
+            StructuredDocumentLine(text: "C Spearman. 2010. The proof and measurement of association.", role: .body),
+            StructuredDocumentLine(text: "We used three models for the evaluation pipeline.", role: .body),
+        ]
+        PDFStructuredTextExtractor.labelReferenceLists(&lines)
+        XCTAssertEqual(lines.map(\.role), [.reference, .reference, .reference, .reference, .reference, .reference, .reference, .reference,
+                                          .heading, .heading, .reference, .reference, .reference, .reference, .body])
+    }
+
+    func testV2MarksOnlyLineEndHyphensThatSplitOneWord() {
+        // #220 T4: "agree-" + "ment" was spoken "agree, ment". A compound broken at its
+        // hyphen ("open-" + "ended") must keep the hyphen.
+        var lines = [
+            StructuredDocumentLine(text: "Adjustable agree-", role: .body),
+            StructuredDocumentLine(text: "ment is open-", role: .body),
+            StructuredDocumentLine(text: "ended with chain-of-", role: .body),
+            StructuredDocumentLine(text: "thought and Mixtral-", role: .body),
+            StructuredDocumentLine(text: "8x7B.", role: .body),
+        ]
+        PDFStructuredTextExtractor.markSoftHyphens(&lines) { Set($0).intersection(["agreement"]) }
+        XCTAssertEqual(lines.map(\.endsWithSoftHyphen), [true, false, false, false, false])
+        // The real dictionary knows the difference.
+        XCTAssertEqual(PDFStructuredTextExtractor.dictionaryWords(["agreement", "openended"]), ["agreement"])
+    }
+
+    func testV2TakesTheArXivSideStampForPageFurniture() {
+        // #220 T4 and #162: "arXiv:2607.28282v1 [cs.CL] 30 Jul 2026", printed rotated
+        // in the left margin of every arXiv paper, was read as the first sentence.
+        let box = CGRect(x: 0, y: 0, width: 612, height: 792)
+        XCTAssertTrue(PDFStructuredTextExtractor.isSideStamp("arXiv:2607.28282v1 [cs.CL] 30 Jul 2026", bounds: CGRect(x: 21, y: 182, width: 20, height: 340), pageBox: box))
+        XCTAssertTrue(PDFStructuredTextExtractor.isSideStamp("Downloaded from journals.example.org", bounds: CGRect(x: 580, y: 200, width: 12, height: 300), pageBox: box))
+        XCTAssertFalse(PDFStructuredTextExtractor.isSideStamp("We cite arXiv:2607.28282 in the text.", bounds: CGRect(x: 72, y: 400, width: 468, height: 12), pageBox: box))
+        XCTAssertFalse(PDFStructuredTextExtractor.isSideStamp("Short", bounds: CGRect(x: 300, y: 400, width: 10, height: 12), pageBox: box))
+    }
+
     func testV2DoesNotTakeAProseMentionOfReferencesForAList() {
         var lines = [
             StructuredDocumentLine(text: "References", role: .body),
