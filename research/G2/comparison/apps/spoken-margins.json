@@ -81,7 +81,7 @@
     },
     "reads_pdfs_aloud": {
       "value": "yes",
-      "detail": "Reads PDFs aloud; scientific-PDF quality is being improved (stream C1).",
+      "detail": "Reads PDFs aloud. Running headers, footnotes and references in scientific papers can still be read out.",
       "sources": [
         {
           "url": "https://github.com/uncomposed/spoken-margins-native/blob/fcc4974/AGENTS.md",

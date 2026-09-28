@@ -9,6 +9,9 @@ Pages never type competitor facts by hand; they paste this output (or a site bui
 calls it). It refuses to render if a cell's newest check is older than
 --max-age-days, so a stale page can't be regenerated without a refresh first
 (REFRESH.md). Unknown values render as "Not documented", never as "No".
+Footnotes cite the newest source for each cell. Internal notes are not rendered;
+a page's prose states caveats itself. Sources inside this private repository are
+refused unless --draft is given, because readers can't open them.
 """
 import argparse
 import datetime
@@ -35,6 +38,7 @@ def main() -> int:
     ap.add_argument("--fields", required=True)
     ap.add_argument("--max-age-days", type=int, default=90)
     ap.add_argument("--today", default=datetime.date.today().isoformat())
+    ap.add_argument("--draft", action="store_true", help="allow private-repo sources (not for publishing)")
     args = ap.parse_args()
     today = datetime.date.fromisoformat(args.today)
     apps = {a["id"]: a for a in json.loads(DATA.read_text())["apps"]}
@@ -44,27 +48,32 @@ def main() -> int:
         print(f"unknown app or field: {', '.join(missing)}", file=sys.stderr)
         return 2
 
-    notes, stale = [], []
+    notes, stale, private = [], [], []
     header = "| | " + " | ".join(apps[i]["name"] for i in ids) + " |"
     rows = [header, "|---" * (len(ids) + 1) + "|"]
     for field in fields:
         cells = []
         for app_id in ids:
             claim = apps[app_id]["claims"][field]
-            newest = max(datetime.date.fromisoformat(s["checked"]) for s in claim["sources"])
+            src = max(claim["sources"], key=lambda s: s["checked"])
+            newest = datetime.date.fromisoformat(src["checked"])
+            if "github.com/uncomposed/spoken-margins-native" in src["url"]:
+                private.append(f"{app_id}.{field}")
             if (today - newest).days > args.max_age_days:
                 stale.append(f"{app_id}.{field} (checked {newest})")
             value = claim["value"]
             text = WORDS.get(value, str(value))
             if value in WORDS and value not in ("unknown",) and claim.get("detail"):
                 text += f": {claim['detail']}"
-            src = claim["sources"][0]
-            notes.append(f"{src['title']}, <{src['url']}>, checked {src['checked']}."
-                         + (f" {claim['note']}" if claim.get("note") else ""))
+            notes.append(f"{src['title']}, <{src['url']}>, checked {src['checked']}.")
             cells.append(f"{text.replace('|', '/')} [^{len(notes)}]")
         rows.append(f"| {LABELS[field]} | " + " | ".join(cells) + " |")
     if stale:
         print("refusing to render stale cells; refresh them first (REFRESH.md):\n  " + "\n  ".join(stale), file=sys.stderr)
+        return 1
+    if private and not args.draft:
+        print("refusing to render sources in the private repository; give these a public source "
+              "(App Store listing or release notes) or pass --draft:\n  " + "\n  ".join(private), file=sys.stderr)
         return 1
     print("\n".join(rows))
     print()

@@ -236,6 +236,13 @@
           "published": null,
           "checked": "2026-09-28",
           "quote": "Sync your podcast highlights, including transcripts and rich metadata, with your favorite note-taking apps like Notion, Readwise, Obsidian, Glasp, Bear, Logseq, or export as Markdown."
+        },
+        {
+          "url": "https://www.snipd.com/blog/sync-snips-to-obsidian-plugin",
+          "title": "Snipd blog: official Obsidian plugin",
+          "published": "2025-11-26",
+          "checked": "2026-09-28",
+          "quote": "It automatically syncs all your podcast snips directly to your Obsidian vault, with transcripts, AI summaries, your notes, and rich episode metadata."
         }
       ]
     },
