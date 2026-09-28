@@ -53,6 +53,15 @@ final class OPMLTests: XCTestCase {
     }
 
     func testHostileAndWrongFilesFailClosed() throws {
+        // The guard that holds on every platform: parse's parser is configured never to
+        // resolve external entities. Flipping either setting fails here.
+        let configured = OPMLParser.makeXMLParser(Data())
+        XCTAssertFalse(configured.shouldResolveExternalEntities)
+        XCTAssertEqual(configured.externalEntityResolvingPolicy, .never)
+
+        // Behavioral check. It can only catch a regression where the platform parser would
+        // substitute the entity; Apple's XMLParser never does, so on Apple platforms the
+        // settings check above is what guards this.
         let marker = "ENTITY-MARKER-\(UUID().uuidString)"
         let secretFile = FileManager.default.temporaryDirectory.appendingPathComponent("opml-entity-\(UUID().uuidString).txt")
         try marker.write(to: secretFile, atomically: true, encoding: .utf8)

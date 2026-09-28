@@ -49,9 +49,7 @@ public enum OPMLParser {
     public static func parse(_ data: Data, limits: OPMLLimits = OPMLLimits()) throws -> OPMLDocument {
         guard data.count <= limits.maximumBytes else { throw OPMLError.tooLarge }
         let delegate = OPMLDelegate(limits: limits)
-        let parser = XMLParser(data: data)
-        parser.shouldResolveExternalEntities = false
-        parser.externalEntityResolvingPolicy = .never
+        let parser = makeXMLParser(data)
         parser.delegate = delegate
         let finished = parser.parse()
         if let failure = delegate.failure { throw failure }
@@ -62,6 +60,16 @@ public enum OPMLParser {
         // Some XMLParser builds accept a truncated file; a cut-off export must not import half its feeds silently.
         guard delegate.sawOPMLEnd else { throw OPMLError.malformed("the file ends before </opml>") }
         return OPMLDocument(title: delegate.title, feeds: delegate.feeds, unusableOutlineCount: delegate.unusable)
+    }
+
+    /// The one place parse's XMLParser is configured: external entities are never resolved.
+    /// Tests check these settings directly, because whether a resolving parser would actually
+    /// substitute a SYSTEM entity differs by platform (Apple's XMLParser doesn't, in practice).
+    static func makeXMLParser(_ data: Data) -> XMLParser {
+        let parser = XMLParser(data: data)
+        parser.shouldResolveExternalEntities = false
+        parser.externalEntityResolvingPolicy = .never
+        return parser
     }
 }
 
