@@ -31,10 +31,10 @@ python3 -m unittest discover tests
 
 | Category | Count | Label |
 | --- | --- | --- |
-| `full_episode` | 37 | The episode's item in the show's own RSS feed (guid, title, date, length, enclosure) |
+| `full_episode` | 38 | The episode's item in the show's own RSS feed (guid, title, date, length, enclosure) |
 | `clip` | 15 | none. Clip channels (Lex Clips, JRE Clips), Shorts, previews, and cuts that are much shorter than any episode |
 | `no_feed` | 12 | none. Shows with no podcast feed: Hot Ones, Jubilee, Good Mythical Morning, Veritasium, MrBeast, Channel 5 with Andrew Callaghan… |
-| `not_in_feed` | 5 | none. The show has a feed, but this video isn't in it |
+| `not_in_feed` | 4 | none. The show has a feed, but this video isn't in it |
 | `non_podcast` | 2 | none |
 
 It spans big shows (Joe Rogan, Huberman, Diary of a CEO, SmartLess), mid-size and small ones (Oxide and Friends, Syntax, Mindscape, Machine Learning Street Talk), and includes deliberate traps: a re-release whose 2023 original has the same length (SmartLess), monthly AMAs that differ only by month (Mindscape), an "(update)" whose 2024 original has a similar title (Planet Money), a "Essentials" re-cut next to an older full episode with a near-identical title (Huberman), older episodes with the same guest (Theo Von, Oxide, Lenny), retitled uploads (Diary of a CEO, Hard Fork, MLST), audio published a week before or after the video (TED, Syntax, Freakonomics), and a 16-minute video titled "(Full Conversation)" (Big Technology).
@@ -50,7 +50,21 @@ It spans big shows (Joe Rogan, Huberman, Diary of a CEO, SmartLess), mid-size an
 
 ## Results
 
-See the milestone report on #189 for the numbers from the last run; rerun `python3 score.py` to reproduce them offline.
+Offline replay of the recorded responses (`python3 score.py`, 2026-09-28):
+
+| Measure | Result | Brief |
+| --- | --- | --- |
+| Correct confident matches (38 videos with a feed episode) | 35/38 = 92% | ≥ 80% |
+| Confident wrong matches (all 71) | 0 | 0 |
+| "none" for shows with no feed | 12/12 = 100% | ≥ 90% |
+
+- The three misses weren't confident, and each went to review with the right episode among the candidates: a Freakonomics video posted 8 days before its audio; a Standup video cut 21 minutes shorter than the audio; an Impaulsive upload retitled with a different description.
+- The 21 clips, not-in-feed and non-podcast videos never got a confident match. One clip was offered its parent episode for review; the rest got "none".
+
+Two confident-wrong results turned up during development. Each became a rule and a unit test in `tests/test_safety.py`:
+
+1. A Lex Clips video matched its full episode because its description is mostly Lex's standard links. Description evidence now counts only when it singles out one episode of the show.
+2. A Vergecast "wrong" match turned out to be a labeling error: the feed carries the episode under a different title with an identical description. The label was fixed, and every "none" label was re-audited against feed descriptions.
 
 ## Known limits
 
