@@ -448,7 +448,7 @@ Ranked by listener cost per minute of real body text.
 - Median clutter rate: **11.5%** of spoken words
 - Median missing body text: **0.9%**
 - Median reading-order breaks: 1.87 per 1000 body words
-- Median extraction time: 1134 ms
+- Median extraction time: 1148 ms
 
 ### Failure categories ranked by listener cost
 
@@ -478,8 +478,8 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 | Category | Words | Share of spoken |
 | --- | ---: | ---: |
-| body | 411865 | 73.8% |
-| math | 28694 | 5.1% |
+| body | 411839 | 73.8% |
+| math | 28688 | 5.1% |
 | caption | 26197 | 4.7% |
 | unattributed_prose | 18851 | 3.4% |
 | reference | 9856 | 1.8% |
@@ -491,7 +491,7 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 | furniture | 5304 | 1.0% |
 | front_matter | 5192 | 0.9% |
 | inline_residue | 3924 | 0.7% |
-| fragment | 3056 | 0.5% |
+| fragment | 3027 | 0.5% |
 | footnote | 2170 | 0.4% |
 | citation_markers | 1727 | 0.3% |
 | stamp_link | 838 | 0.2% |
@@ -521,9 +521,9 @@ Marker outcomes: *silent* (nothing spoken between the words around it), *spoken 
 | math-heavy | 19 | 20.3% | 2.6% | 3.47 |
 | conference | 12 | 15.3% | 1.5% | 3.37 |
 | author-manuscript | 5 | 9.8% | 0.4% | 1.37 |
-| scanned | 4 | 14.4% | 12.5% | 4.35 |
-| preprint | 4 | 30.5% | 3.3% | 2.83 |
-| ocr-text-layer | 3 | 14.4% | 10.5% | 4.35 |
+| scanned | 4 | 14.3% | 12.5% | 4.35 |
+| preprint | 4 | 30.6% | 3.3% | 2.83 |
+| ocr-text-layer | 3 | 14.3% | 10.5% | 4.35 |
 | thesis | 3 | 27.7% | 3.5% | 4.51 |
 | image-only | 1 | – | 100.0% | – |
 | derived | 1 | – | 100.0% | – |
