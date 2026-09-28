@@ -113,9 +113,8 @@ public enum SourceCatalogRefreshOutcome: Equatable, Sendable {
     case failed(SourceCatalogError)
 }
 
-/// Fetches `url`, reading at most `maximumBytes` of body. Returns the HTTP status and body.
 /// The app implements this with URLSession (no URL cache, bounded redirects); tests pass recorded responses.
-public typealias SourceCatalogFetch = @Sendable (_ url: URL, _ maximumBytes: Int) async throws -> (status: Int, body: Data)
+public typealias SourceCatalogFetch = SourceHTTPFetch
 
 public actor SourceCatalogStore {
     private let bundledCatalogURL: URL
