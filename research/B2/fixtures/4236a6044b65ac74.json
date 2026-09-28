@@ -1,0 +1,12 @@
+{
+ "url": "https://astralcodexten.com/feed.xml",
+ "kind": "feed",
+ "status": 404,
+ "headers": {
+  "content-type": "text/html; charset=iso-8859-1",
+  "content-length": "17"
+ },
+ "body": "<h1>Not found<h1>",
+ "original_bytes": 17,
+ "trimmed": false
+}

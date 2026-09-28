@@ -1,0 +1,13 @@
+{
+ "url": "https://substack.com/app-link/post",
+ "kind": "html",
+ "status": 400,
+ "headers": {
+  "content-type": "application/json; charset=utf-8",
+  "x-served-by": "Substack",
+  "content-length": "141"
+ },
+ "body": "{\"errors\":[{\"location\":\"query\",\"param\":\"publication_id\",\"msg\":\"Invalid value\"},{\"location\":\"query\",\"param\":\"post_id\",\"msg\":\"Invalid value\"}]}",
+ "original_bytes": 141,
+ "trimmed": false
+}

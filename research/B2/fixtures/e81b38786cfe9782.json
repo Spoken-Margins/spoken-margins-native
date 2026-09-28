@@ -1,0 +1,13 @@
+{
+ "url": "https://noahpinion.substack.com/atom.xml",
+ "kind": "feed",
+ "status": 301,
+ "headers": {
+  "location": "https://www.noahpinion.blog/atom.xml",
+  "x-served-by": "Substack",
+  "content-length": "0"
+ },
+ "body": "",
+ "original_bytes": 0,
+ "trimmed": false
+}

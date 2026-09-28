@@ -1,0 +1,13 @@
+{
+ "url": "https://lennysnewsletter.substack.com/rss",
+ "kind": "feed",
+ "status": 302,
+ "headers": {
+  "location": "https://substack.com/@lennysnewsletter",
+  "x-served-by": "Substack",
+  "content-length": "0"
+ },
+ "body": "",
+ "original_bytes": 0,
+ "trimmed": false
+}
