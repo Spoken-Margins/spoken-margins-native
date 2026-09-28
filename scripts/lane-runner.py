@@ -75,6 +75,11 @@ def parse_request(body: str) -> dict | None:
             field = re.match(r'^\s*([a-z][a-z ]*?)\s*:\s*(.*)$', extra)
             if field:
                 request[field.group(1)] = re.sub(r'\s+#.*$', '', field.group(2)).strip()
+        # test-lane.md's example once read `run: J1, J7   # or: tests: …`, so `run: tests: A, B` is
+        # accepted too; a separate `tests:` line wins.
+        inline = re.match(r'^tests\s*:\s*(.*)$', request.get('run', ''))
+        if inline and not request.get('tests'):
+            request['tests'] = inline.group(1)
         request['tests'] = [t for t in re.split(r'[,\s]+', request.get('tests', '')) if t]
         return request
     return None

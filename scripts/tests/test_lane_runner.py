@@ -68,6 +68,14 @@ class RequestTests(unittest.TestCase):
         self.assertEqual(request['watch for'], 'chunk flips')
         self.assertIsNone(lane.parse_request('Looks good. We could /lane T2 later.'))
 
+    def test_tests_on_a_run_line_are_accepted_as_the_contract_example_wrote_them(self):
+        request = lane.parse_request('/lane T3\ncommit: abc1234\nrun: tests: AppNavigationStateTests, B/testC\n')
+        self.assertEqual(request['tests'], ['AppNavigationStateTests', 'B/testC'])
+        request = lane.parse_request('/lane T3\nrun: tests: Ignored\ntests: Wins\n')
+        self.assertEqual(request['tests'], ['Wins'])
+        request = lane.parse_request('/lane T4\nrun: J1, J7\n')
+        self.assertEqual((request['run'], request['tests']), ('J1, J7', []))
+
     def test_the_newest_unanswered_runner_request_wins(self):
         request, desk = lane.pending_requests([comment('/lane T2\ncommit: 1111111'),
                                                comment('/lane T3\ncommit: 2222222\ntests: X')])

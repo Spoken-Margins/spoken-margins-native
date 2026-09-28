@@ -33,7 +33,23 @@ It compares your branch (uncommitted files included) with `origin/next`, prints 
    gh pr edit <pr> --add-label lane:queued
    ```
 
-   Keep it short. `run:` names journeys (`J1, J7`) or `tests: <Class>/<method>` for T3. Use `scenario:` only for a one-off check, with numbered steps and what passing looks like. `watch for:` names the specific risk. `not needed:` lists what you already ran on this commit.
+   A T3 request, for example:
+
+   ```text
+   /lane T3
+   commit: 1bc676d
+   changed: the Library remembers each tab's navigation
+   tests: AppNavigationStateTests, Gate1AppModelWorkflowTests/testRestoresSelection
+   watch for: tab switch resets the path
+   not needed: T2 green on 1bc676d
+   ```
+
+   Keep it short.
+   - For T3, put the app test classes or methods on their own `tests:` line. `scripts/test-scope.py` suggests them.
+   - For T4, `run:` names the journeys (`J1, J7`).
+   - Use `scenario:` only for a one-off check, with numbered steps and what passing looks like.
+   - `watch for:` names the specific risk.
+   - `not needed:` lists what you already ran on this commit.
 3. For T4/T5 on the Mac, you may also message the `test-desk` session as a doorbell ("lane request on PR #N"). The PR comment is always the real request.
 
 **Who takes it.**
