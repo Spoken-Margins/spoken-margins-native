@@ -9,11 +9,11 @@ Progress and decisions live on #191, not here.
 
 ## Done when (from the brief)
 
-1. The corpus median clutter rate is halved from the M1 app baseline, 24.9% → **12.4% or lower**, and no category regresses.
+1. The corpus median clutter rate is halved from the app baseline, rescored with the `authors` role on 2026-09-28: 24.79% → **12.4% or lower**, and no category regresses. (The M1 figure was 24.9%; it counted author names as clutter.)
 2. Footnote markers and citations are spoken per I14.
 3. J7 still passes on the lane.
 4. Written Margins on already-imported PDFs still open at the right passage. A test proves this with a PDF imported under the old extractor.
-5. From "Must not break": median import time on the corpus doesn't slow by more than 20%. The app baseline is 843 ms on a MacBook Pro (`results/app-baseline/run-info.json`).
+5. From "Must not break": median import time on the corpus doesn't slow by more than 20%. The app baseline is 872 ms on a MacBook Pro (`results/app-baseline/run-info.json`). Other sessions' builds share this Mac, so M3 compares the old and new extractor back to back on each PDF rather than against this one number.
 
 ## What the corpus says has to change
 

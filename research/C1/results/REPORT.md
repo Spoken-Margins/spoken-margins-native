@@ -14,7 +14,7 @@ Publishers: BMC (Springer Nature); BMJ; Cell Press (Elsevier); Elsevier; F1000 (
 
 | Extractor | Median clutter | Median missing | Markers silent (I14) | No text |
 | --- | ---: | ---: | ---: | ---: |
-| app-baseline | 24.9% | 0.9% | 0.0% | 1 |
+| app-baseline | 24.8% | 0.9% | 0.0% | 1 |
 | pymupdf-raw | 35.6% | 0.4% | 0.0% | 1 |
 | pdfminer | 35.9% | 0.6% | 0.0% | 1 |
 | gt-i14 (ground truth spoken per I14: the floor for M3) | 0.2% | 0.1% | 100.0% | 0 |
@@ -22,10 +22,10 @@ Publishers: BMC (Springer Nature); BMJ; Cell Press (Elsevier); Elsevier; F1000 (
 ## app-baseline
 
 - Papers scored: 66; produced no text: 1 (pmc-pmc11960816-imageonly)
-- Median clutter rate: **24.9%** of spoken words
+- Median clutter rate: **24.8%** of spoken words
 - Median missing body text: **0.9%**
 - Median reading-order breaks: 2.36 per 1000 body words
-- Median extraction time: 885 ms
+- Median extraction time: 863 ms
 
 ### Failure categories ranked by listener cost
 
@@ -37,7 +37,7 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 | 1 | Reference list read aloud | 291 | 0.1 | 28 |
 | 2 | Math read as symbols and letters | 230 | 0.9 | 40 |
 | 3 | Table cells read aloud | 199 | 0.5 | 33 |
-| 4 | Reading order broken (columns, floats) | 194 | 2.0 | 55 |
+| 4 | Reading order broken (columns, floats) | 195 | 2.0 | 55 |
 | 5 | Body text missing (never spoken) | 166 | 0.4 | 26 |
 | 6 | Display equations read aloud | 118 | 0.1 | 20 |
 | 7 | Page furniture: running headers, footers, page and line numbers | 108 | 0.8 | 45 |
@@ -45,8 +45,8 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 | 9 | Citation and footnote markers read as numbers or names | 74 | 0.9 | 48 |
 | 10 | Back matter: funding, contributions, competing interests, reviewer reports | 60 | 0.3 | 29 |
 | 11 | Mid-sentence interruptions (captions, footers inside a sentence) | 59 | 0.5 | 28 |
-| 12 | Repeated text (running titles, duplicated lines) | 59 | 0.5 | 35 |
-| 13 | Title-page matter: authors, affiliations, identifiers | 56 | 0.6 | 39 |
+| 12 | Repeated text (running titles, duplicated lines) | 59 | 0.5 | 34 |
+| 13 | Title-page matter: authors, affiliations, identifiers | 50 | 0.5 | 36 |
 | 14 | Stray fragments: figure labels, axis ticks | 28 | 0.1 | 17 |
 | 15 | Footnote text read inline | 16 | 0.0 | 14 |
 | 16 | Stamps, licences and links | 15 | 0.1 | 2 |
@@ -55,23 +55,25 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 | Category | Words | Share of spoken |
 | --- | ---: | ---: |
-| body | 407987 | 63.2% |
+| body | 407983 | 63.2% |
 | reference | 45037 | 7.0% |
-| math | 35602 | 5.5% |
+| math | 35629 | 5.5% |
 | table | 30881 | 4.8% |
-| caption | 26957 | 4.2% |
+| caption | 26951 | 4.2% |
 | equation | 18261 | 2.8% |
-| furniture | 16786 | 2.6% |
-| unattributed_prose | 15925 | 2.5% |
-| back_matter | 9226 | 1.4% |
-| repeated | 9098 | 1.4% |
-| front_matter | 8652 | 1.3% |
+| furniture | 16787 | 2.6% |
+| unattributed_prose | 15998 | 2.5% |
+| back_matter | 9227 | 1.4% |
+| repeated | 9113 | 1.4% |
 | citation_markers | 7790 | 1.2% |
-| inline_residue | 4448 | 0.7% |
-| fragment | 4262 | 0.7% |
+| front_matter | 7750 | 1.2% |
+| inline_residue | 4463 | 0.7% |
+| fragment | 4265 | 0.7% |
 | footnote | 2455 | 0.4% |
-| stamp_link | 2265 | 0.4% |
+| stamp_link | 2262 | 0.4% |
+| authors | 772 | 0.1% |
 | footnote_markers | 162 | 0.0% |
+| announcement | 10 | 0.0% |
 
 `unattributed_prose` and `inline_residue` are not counted as clutter: they may be real text the ground truth lacks (text inside figures, code listings LaTeXML dropped) or body words garbled by the extractor.
 
@@ -90,14 +92,14 @@ Marker outcomes: *silent* (nothing spoken between the words around it), *spoken 
 
 | Format | Papers | Median clutter | Median missing | Median order breaks /1000 |
 | --- | ---: | ---: | ---: | ---: |
-| journal | 44 | 20.2% | 0.9% | 2.01 |
-| single-column | 34 | 25.6% | 0.7% | 1.59 |
-| two-column | 31 | 24.9% | 0.9% | 2.74 |
+| journal | 44 | 20.1% | 0.9% | 2.01 |
+| single-column | 34 | 25.5% | 0.7% | 1.59 |
+| two-column | 31 | 24.8% | 0.9% | 2.74 |
 | math-heavy | 19 | 33.5% | 1.8% | 3.18 |
-| conference | 12 | 26.1% | 0.7% | 3.32 |
-| author-manuscript | 5 | 22.2% | 0.4% | 1.55 |
+| conference | 12 | 26.0% | 0.7% | 3.32 |
+| author-manuscript | 5 | 20.8% | 0.4% | 1.55 |
 | scanned | 4 | 21.9% | 12.3% | 4.60 |
-| preprint | 4 | 42.4% | 2.5% | 2.74 |
+| preprint | 4 | 42.3% | 2.5% | 2.74 |
 | ocr-text-layer | 3 | 21.9% | 10.2% | 4.60 |
 | thesis | 3 | 43.6% | 2.7% | 4.50 |
 | image-only | 1 | – | 100.0% | – |
@@ -109,19 +111,19 @@ Ranked by listener cost per minute of real body text.
 
 | Paper | Formats | Cost per body minute | Clutter | Missing |
 | --- | --- | ---: | ---: | ---: |
-| pmc-pmc11326079 | journal, single-column | 1.45 | 36.4% | 0.5% |
-| arxiv-2606.21736v1 | conference, two-column, math-heavy | 1.35 | 49.0% | 0.4% |
+| pmc-pmc11326079 | journal, single-column | 1.45 | 36.2% | 0.5% |
+| arxiv-2606.21736v1 | conference, two-column, math-heavy | 1.35 | 48.8% | 0.4% |
 | arxiv-2506.00547v1 | preprint, single-column, math-heavy | 1.34 | 53.0% | 2.9% |
 | arxiv-2609.06489v1 | conference, single-column, math-heavy | 1.24 | 47.6% | 3.7% |
-| arxiv-2605.07149v1 | conference, two-column, math-heavy | 1.24 | 44.2% | 0.7% |
+| arxiv-2605.07149v1 | conference, two-column, math-heavy | 1.23 | 43.9% | 0.7% |
 | arxiv-2609.07965v1 | conference, two-column | 1.16 | 46.8% | 0.3% |
 | arxiv-2609.27549v1 | thesis, single-column, math-heavy | 1.14 | 44.6% | 2.8% |
-| pmc-pmc10755645 | journal, two-column | 1.07 | 39.9% | 0.9% |
+| pmc-pmc10755645 | journal, two-column | 1.07 | 39.7% | 0.9% |
 | arxiv-2609.25172v1 | thesis, single-column, math-heavy | 1.07 | 43.6% | 2.7% |
-| arxiv-2506.00390v1 | preprint, single-column, math-heavy | 1.03 | 45.3% | 2.7% |
-| pmc-pmc11154291 | journal, single-column | 1.01 | 44.9% | 0.1% |
+| arxiv-2506.00390v1 | preprint, single-column, math-heavy | 1.03 | 45.2% | 2.7% |
+| pmc-pmc11154291 | journal, single-column | 1.01 | 44.8% | 0.1% |
 | pmc-pmc11960816-imageonly | journal, scanned, image-only, derived | 1.00 | – | 100.0% |
-| pmc-pmc11843480 | journal, single-column | 1.00 | 44.6% | 0.4% |
+| pmc-pmc11843480 | journal, single-column | 0.99 | 44.3% | 0.4% |
 
 ## pymupdf-raw
 
