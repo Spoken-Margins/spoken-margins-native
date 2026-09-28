@@ -65,11 +65,13 @@ class LaneGuardTests(unittest.TestCase):
                 reason = self.decide(bash(command))
                 self.assertIsNotNone(reason)
                 self.assertIn('Only the Test Desk', reason)
-                self.assertIsNone(self.decide(bash(command), self.desk))
+                desk = self.decide(bash(command), self.desk)
+                self.assertTrue(desk is None or 'scripts/lane-sim-boot' in desk, desk)
 
     def test_test_desk_may_touch_simulators(self):
-        for command in ('xcrun simctl boot X', '.venv/bin/python scripts/verify-tests.py --plan app',
-                        'scripts/xcodebuild-lane -scheme S test-without-building', 'open -a Simulator'):
+        for command in ('xcrun simctl install booted App.app', '.venv/bin/python scripts/verify-tests.py --plan app',
+                        'scripts/xcodebuild-lane -scheme S test-without-building', 'open -a Simulator',
+                        'scripts/lane-sim-boot 31A5C797-9CE5-409F-9C65-4A8D4C339D44'):
             with self.subTest(command=command):
                 self.assertIsNone(self.decide(bash(command), self.desk))
 
@@ -90,9 +92,18 @@ class LaneGuardTests(unittest.TestCase):
                         "git commit -m 'Block `xcrun simctl boot` in streams'",
                         "echo '$(xcrun simctl boot X)'",
                         'command -v xcodebuild', 'xcodebuild -h',
+                        'git show HEAD:scripts/lane-runner.py > scripts/lane-runner.py',
+                        'cat notes.txt >> scripts/smoke-simulator.sh 2>&1',
                         'python -u'):
             with self.subTest(command=command):
                 self.assertIsNone(self.decide(bash(command)))
+
+    def test_the_desk_boots_through_the_boot_lock_and_streams_cannot_boot_at_all(self):
+        self.assertIn('scripts/lane-sim-boot', self.decide(bash('xcrun simctl boot X'), self.desk))
+        self.assertIn('Only the Test Desk', self.decide(bash('scripts/lane-sim-boot X')))
+        # A branch from before the helper existed isn't redirected (nothing to redirect to).
+        main, _ = self.repository_with_test_desk()
+        self.assertIsNone(self.decide(bash('xcrun simctl boot X', cwd=main), self.desk, repos=(main,)))
 
     def test_raw_xcodebuild_builds_go_through_the_wrapper_even_for_the_desk(self):
         for environ in (self.stream, self.desk):
@@ -176,7 +187,7 @@ class LaneGuardTests(unittest.TestCase):
         blocked = run(bash('xcrun simctl boot X'), environment)
         self.assertEqual(blocked.returncode, 2, blocked.stderr)
         self.assertIn('Only the Test Desk', blocked.stderr)
-        allowed = run(bash('xcrun simctl boot X'), {**environment, guard.TEST_DESK_ENV: guard.TEST_DESK_VALUE})
+        allowed = run(bash('xcrun simctl install booted X'), {**environment, guard.TEST_DESK_ENV: guard.TEST_DESK_VALUE})
         self.assertEqual((allowed.returncode, allowed.stderr), (0, ''))
         broken = subprocess.run([python, str(SCRIPTS / 'lane_guard.py'), '--repo', REPO],
                                 input='not json', capture_output=True, text=True, env=environment)
@@ -210,7 +221,7 @@ class LaneGuardTests(unittest.TestCase):
 
     def test_guarded_calls_are_logged_and_ordinary_ones_are_not(self):
         self.decide(bash('xcrun simctl boot X'))
-        self.decide(bash('xcrun simctl boot X'), self.desk)
+        self.decide(bash('xcrun simctl install booted X'), self.desk)
         self.decide(bash('ls -la'))
         lines = [json.loads(line) for line in open(os.path.join(self.temporary.name, 'guard.log'))]
         self.assertEqual([(l['decision'], l['test_desk']) for l in lines],
@@ -220,7 +231,7 @@ class LaneGuardTests(unittest.TestCase):
 class HeredocTests(unittest.TestCase):
     def test_heredoc_body_is_not_a_command_but_the_next_line_is(self):
         command = "cat <<EOF > notes.txt\nxcrun simctl boot X\nEOF\nxcrun simctl boot Y"
-        self.assertEqual(guard.classify_command(command), [(guard.SIM, 'simctl boot')])
+        self.assertEqual(guard.classify_command(command), [(guard.SIM, 'simctl boot'), (guard.BOOT, 'raw simctl boot')])
 
 
 if __name__ == '__main__':

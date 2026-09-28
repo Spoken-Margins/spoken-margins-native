@@ -17,7 +17,7 @@ import sys
 import time
 
 from check_posterboard_repair import new_crash
-from lane_slots import build_slot
+from lane_slots import build_slot, simulator_boot_lock
 
 from test_inventory import ROOT, plan_tests, swift_tests, validate
 
@@ -319,9 +319,12 @@ class Run:
                      str(derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')])
         booted_here = chosen['state'] != 'Booted'
         try:
-            if booted_here:
-                self.command('simulator-boot', ['xcrun', 'simctl', 'boot', chosen['udid']], timeout=60)
-            self.command('simulator-ready', ['xcrun', 'simctl', 'bootstatus', chosen['udid'], '-b'], timeout=180)
+            # One simulator boots at a time Mac-wide: concurrent boots crash-flooded SpringBoard (#184).
+            with simulator_boot_lock(f'verify-tests {plan} boot', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS) \
+                    if booted_here else contextlib.nullcontext():
+                if booted_here:
+                    self.command('simulator-boot', ['xcrun', 'simctl', 'boot', chosen['udid']], timeout=60)
+                self.command('simulator-ready', ['xcrun', 'simctl', 'bootstatus', chosen['udid'], '-b'], timeout=180)
             if chosen.get('name') == TEST_RUNNER_NAME:
                 # Start from an empty app container so earlier runs' data can't leak into this one.
                 app = derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app'

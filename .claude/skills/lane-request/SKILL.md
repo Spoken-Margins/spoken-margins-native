@@ -33,7 +33,23 @@ It compares your branch (uncommitted files included) with `origin/next`, prints 
    gh pr edit <pr> --add-label lane:queued
    ```
 
-   Keep it short. `run:` names journeys (`J1, J7`) or `tests: <Class>/<method>` for T3. Use `scenario:` only for a one-off check, with numbered steps and what passing looks like. `watch for:` names the specific risk. `not needed:` lists what you already ran on this commit.
+   A T3 request, for example:
+
+   ```text
+   /lane T3
+   commit: 1bc676d
+   changed: the Library remembers each tab's navigation
+   tests: AppNavigationStateTests, Gate1AppModelWorkflowTests/testRestoresSelection
+   watch for: tab switch resets the path
+   not needed: T2 green on 1bc676d
+   ```
+
+   Keep it short.
+   - For T3, put the app test classes or methods on their own `tests:` line. `scripts/test-scope.py` suggests them.
+   - For T4, `run:` names the journeys (`J1, J7`).
+   - Use `scenario:` only for a one-off check, with numbered steps and what passing looks like.
+   - `watch for:` names the specific risk.
+   - `not needed:` lists what you already ran on this commit.
 3. For T4/T5 on the Mac, you may also message the `test-desk` session as a doorbell ("lane request on PR #N"). The PR comment is always the real request.
 
 **Who takes it.**
@@ -41,9 +57,12 @@ It compares your branch (uncommitted files included) with `origin/next`, prints 
 - **T4 and T5** go to the Test Desk.
 - Ask for each tier in its own comment. The runner answers the newest T2/T3 request it hasn't reported on, and leaves `lane:queued` in place while a T4/T5 request is waiting.
 
-**When nothing happens.**
-- GitHub doesn't run the lane for a PR that conflicts with `next`. Merge `next` in and push.
-- Adding a label that is already on the PR doesn't trigger anything. If `lane:queued` is already there (a T4 waiting), remove it and add it again after posting a T2/T3 request.
+**When nothing happens.** If no run starts within about 2 minutes of labeling, merge `origin/next` into your branch and push. GitHub builds the run from the PR's merge ref, which it doesn't refresh when `next` moves, so a branch last pushed before the lane workflow reached `next`, or one that conflicts with `next`, gets no run until then. If it still doesn't start, check:
+- **The PR's base.** It must target `next`, from a branch in this repository.
+- **The label.** Adding a label that's already on the PR triggers nothing. If `lane:queued` is already there (a T4 waiting), remove it and add it again after posting your T2/T3 request.
+- **The runner.** `gh api repos/uncomposed/spoken-margins-native/actions/runners` should show `sm-lane-mac online`. If it's offline, say so on the stream's tracking issue.
+
+Once a run starts, the runner merges the newest `next` into your head itself, so the report tests against the current `next`. If that merge conflicts, you get an INCONCLUSIVE report naming the files.
 
 **Newer pushes and repeats.**
 - A newer push replaces a queued request: the lane tests only the newest commit.
