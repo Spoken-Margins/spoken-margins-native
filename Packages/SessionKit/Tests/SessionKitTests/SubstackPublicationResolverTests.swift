@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import XCTest
+import SessionKit
 @testable import SessionKitFeeds
 
 /// B2 M1: Follow didn't work for tracked links, old posts, large pages, share links, apex
@@ -99,6 +100,30 @@ final class SubstackPublicationResolverTests: XCTestCase {
         XCTAssertEqual(resolved?.isPrivate, true)
         XCTAssertGreaterThan(resolved?.feed.items.filter { $0.audioURL != nil }.count ?? 0, 0)
         XCTAssertFalse(resolved?.reason.contains("test-not-a-token") ?? true)
+    }
+
+    /// I1: the resolver plugs into `SourceResolverRegistry` like any other resolver.
+    func testResolverAnswersThroughSeamI1() async throws {
+        let fetcher = ReplayFetcher(fixtures: Self.research.appending(path: "fixtures"), aliases: [Self.fakePrivate: Self.publicPodcast])
+        let resolver = SubstackPublicationResolver(fetch: fetcher.fetch)
+        XCTAssertFalse(resolver.canResolve(.query("astral codex ten")))
+
+        let registry = SourceResolverRegistry(resolvers: [resolver])
+        let tracked = await registry.resolve(.link("https://www.astralcodexten.com/p/the-specter-of-neuralese?utm_source=substack&utm_medium=email"))
+        let post = try XCTUnwrap(tracked.first?.candidates.first)
+        XCTAssertEqual(post.resolverId, "substack")
+        XCTAssertEqual(post.confidence, .exact)
+        XCTAssertEqual(post.feed?.url, "https://www.astralcodexten.com/feed")
+        XCTAssertEqual(post.feed?.isPrivate, false)
+        XCTAssertTrue(post.isFollowable)
+
+        let trap = try await resolver.resolve(.link("https://lennysnewsletter.substack.com/"))
+        XCTAssertEqual(trap.first?.confidence, .likely, "a profile's publication asks \"Is this it?\"")
+
+        let paid = try await resolver.resolve(.link(Self.fakePrivate))
+        XCTAssertEqual(paid.first?.feed?.isPrivate, true)
+        XCTAssertFalse(paid.first?.id.contains("test-not-a-token") ?? true, "no token in the candidate id")
+        XCTAssertFalse(paid.first?.reason.contains("test-not-a-token") ?? true)
     }
 
     func testStripTrackingKeepsMeaningfulQuery() {

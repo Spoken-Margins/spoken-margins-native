@@ -291,3 +291,32 @@ public struct SubstackPublicationResolver: Sendable {
         return String(value[range])
     }
 }
+
+// Seam I1: the Substack resolver as a `SourceResolver`, so `SourceResolverRegistry` runs it
+// alongside the others. Origin evidence is `exact`; a profile's primary publication is `likely`
+// ("Is this it?"). A private feed stays private (#168), and its id carries no token.
+extension SubstackPublicationResolver: SourceResolver {
+    public var id: String { "substack" }
+
+    public func canResolve(_ input: SourceResolutionInput) -> Bool {
+        guard case .link(let link) = input,
+              let scheme = URLComponents(string: link)?.scheme?.lowercased() else { return false }
+        return scheme == "http" || scheme == "https"
+    }
+
+    public func resolve(_ input: SourceResolutionInput) async throws -> [SourceCandidate] {
+        guard case .link(let link) = input, let publication = await resolve(link) else { return [] }
+        let isPodcast = publication.feed.items.contains { $0.audioURL != nil }
+        return [SourceCandidate(
+            id: "substack:\(Self.redact(publication.feedURL))",
+            kind: isPodcast ? .podcastFeed : .articleFeed,
+            contentKind: isPodcast ? .podcast : .newsletter,
+            title: publication.feed.title,
+            websiteURL: publication.publicationURL,
+            feed: SourceCandidateFeed(url: publication.feedURL, isPrivate: publication.isPrivate),
+            confidence: publication.isCertain ? .exact : .likely,
+            reason: publication.reason,
+            resolverId: id
+        )]
+    }
+}
