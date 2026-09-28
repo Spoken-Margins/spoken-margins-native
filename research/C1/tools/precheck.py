@@ -205,6 +205,22 @@ def flags(row: dict, rule: dict) -> bool:
     return False
 
 
+# The rule the app ships (Packages/SessionKit/.../PDFListeningPrecheck.swift):
+# what `--target content` fits on the corpus. test_precheck.py refits it
+# from the committed features and fails if the two drift apart.
+CONTENT_RULE = {"words_per_page": 20.0, "text_single_letter_share": 0.0655}
+REASON = {"words_per_page": "no_text_layer", "text_single_letter_share": "math_heavy"}
+
+
+def verdict(text: str | None, pages: int) -> dict:
+    """What PDFListeningPrecheck.evaluate returns, for pinning the Swift port."""
+    features = text_features(text or "")
+    row = {"words_per_page": round(features["words"] / max(1, pages), 1),
+           "text_single_letter_share": features["text_single_letter_share"]}
+    reasons = [REASON[key] for key in CONTENT_RULE if flags(row, {key: CONTENT_RULE[key]})]
+    return {**row, "reasons": reasons}
+
+
 def fit(rows: dict) -> dict:
     """Greedy OR-of-thresholds: keep adding the one threshold that catches the
     most still-missed hard papers without taking false alarms past budget."""

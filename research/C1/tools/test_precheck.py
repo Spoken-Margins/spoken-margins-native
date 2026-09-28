@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for the M2 pre-check.  python3 -m unittest tools/test_precheck.py"""
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -43,6 +44,38 @@ class PrecheckTests(unittest.TestCase):
         self.assertEqual(precheck.app_listening_markdown(text), "# Paper\nBody text.")
         prose = "# Paper\nWe list references below.\n# References\nNone yet."
         self.assertEqual(precheck.app_listening_markdown(prose), prose)
+
+
+# Same cases, same expected values as
+# Packages/SessionKit/Tests/SessionKitTests/PDFListeningPrecheckTests.swift.
+SWIFT_CASES = [
+    ("Listening is slower than reading but it fits. " * 20, 2, 80.0, 0.0, []),
+    ("Let x be in X and let f map x to y where y is in Y. " * 10, 1, 170.0, 0.4118, ["math_heavy"]),
+    ("", 3, 0.0, 0.0, ["no_text_layer"]),
+    (None, 3, 0.0, 0.0, ["no_text_layer"]),
+    ("I have a cat and A dog. " * 10, 1, 70.0, 0.0, []),
+    ("Die Größe α ist 3 × β. " * 10, 1, 60.0, 0.3333, ["math_heavy"]),
+    ("cafe\u0301 au lait " * 10, 1, 30.0, 0.0, []),
+    ("x " * 131 + "word " * 1869, 1, 2000.0, 0.0655, ["math_heavy"]),
+    ("x " * 130 + "word " * 1870, 1, 2000.0, 0.065, []),
+    ("word " * 20, 1, 20.0, 0.0, ["no_text_layer"]),
+    ("word " * 21, 1, 21.0, 0.0, []),
+    ("word " * 50, 0, 50.0, 0.0, []),
+]
+
+
+class SwiftParityTests(unittest.TestCase):
+    def test_reference_matches_the_swift_cases(self):
+        for text, pages, words_per_page, share, reasons in SWIFT_CASES:
+            with self.subTest(text=(text or "")[:30], pages=pages):
+                self.assertEqual(precheck.verdict(text, pages), {
+                    "words_per_page": words_per_page, "text_single_letter_share": share, "reasons": reasons})
+
+    def test_shipped_rule_is_what_the_corpus_fits(self):
+        committed = precheck.ROOT / "results" / precheck.TARGET / "precheck-content.json"
+        if not committed.exists():
+            self.skipTest("no committed content-target run")
+        self.assertEqual(json.loads(committed.read_text())["rule"], precheck.CONTENT_RULE)
 
 
 if __name__ == "__main__":
