@@ -56,13 +56,16 @@ How to read these numbers:
 
 **Make the fallback Supertonic 3 at 4 steps, and keep the system voice only as the last resort.**
 
-- **It meets the bars as far as the cloud can tell.** It renders 1.7× faster than today's 8 steps (3.9× real time on one Xeon thread, where 8 steps manages 2.2×). It adds 0 MB. There's no license work: it's the same files, already behind the Terms gate. It keeps the listener's chosen voice (M2 stays M2), which is what the brief's outcome is really about. The first audio arrives in about 1.3 s instead of 2.3 s.
+- **It meets the bars as far as the cloud can tell.** It renders 1.8× faster than today's 8 steps (3.9× real time on one Xeon thread, where 8 steps manages 2.2×). It adds 0 MB. There's no license work: it's the same files, already behind the Terms gate. One code change is needed: `SupertonicNarrationRenderer.render` accepts only 5–12 steps (`SupertonicNarrationRenderer.swift:172`), so the guard has to allow 4. It keeps the listener's chosen voice (M2 stays M2), which is what the brief's outcome is really about. The first audio arrives in about 1.3 s instead of 2.3 s.
 - **What would change it:**
   - **If the blind listen rates C clearly below E**, or the phone benchmark puts 4 steps under **4× real time in Low Power Mode while warm**, the runner-up is **KittenTTS nano fp32**. It's the fastest neural voice here (4.6× on one thread, about 60 MB), but it needs a non-GPL front end built first (about a week of work, with a quality risk).
   - **Kokoro** has the best words-right score and is the likely listening favourite, but at 326 MB fp32 and 1.1× on one thread it doesn't fit a fallback budget unless int8 turns out fast on Apple silicon (the Mac run checks this).
   - **Pocket TTS** is license-clean and streams from 0.2 s, but it needs an iOS runtime port and was the slowest here. Watch it; don't pick it now.
   - **Piper** is out on licensing.
-- **One case it doesn't cover:** after a **memory warning**, 4 steps uses the same memory as 8 steps (the same 148 MB of weights). For that reason only, the system voice stays the fallback, visibly labelled, per the I14 draft.
+- **Two cases it doesn't cover.** It's the same 148 MB model on the same CPU, only doing about half the work:
+  - After a **memory warning**, 4 steps uses the same memory as 8 steps.
+  - At thermal **`.critical`**, any neural rendering adds heat.
+  - For those two conditions the system voice stays the fallback, visibly labelled, per the I14 draft. At thermal **`.serious`**, 4 steps is the fallback, provided the phone benchmark shows it holding 4× real time when warm. If it doesn't, `.serious` goes to the system voice as well.
 - **App-size cost to accept:** 0 MB for the recommendation. If the runner-up is needed instead: about 60 MB for Kitten nano fp32 (about 27 MB if int8 is fast on the phone).
 
 ## What's waiting

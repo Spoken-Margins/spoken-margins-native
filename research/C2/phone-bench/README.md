@@ -7,7 +7,7 @@ M2 needs render speed measured on the owner's iPhone 17 Pro in Low Power Mode wh
 - **Where:** a hidden **Voice benchmark** screen behind the existing diagnostics, in a debug build on `ws/c2-voice`. A separate scheme or a `#if DEBUG` screen is fine. Don't change what the shipping app does.
 - **Engines**, all on the onnxruntime the app already links (CPU execution provider; record the thread count used):
   1. Supertonic 3 INT8, voice M2, **8 steps**, through the app's own `SupertonicRuntime`.
-  2. The same at **4 steps**.
+  2. The same at **4 steps**. `SupertonicNarrationRenderer.render` rejects fewer than 5 steps (line 172), so call the runtime directly or widen the guard in the debug build.
   3. KittenTTS nano 0.8 **fp32**, from pre-tokenized input ids.
   4. Kokoro-82M v1.0 **fp32**, from pre-tokenized tokens (style row = token count − 1, input wrapped as `[0, *tokens, 0]`, speed 1.0).
   5. **Samantha** through `AVSpeechSynthesizer.write(_:toBufferCallback:)`, rate `AVSpeechUtteranceDefaultSpeechRate`.

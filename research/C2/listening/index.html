@@ -99,7 +99,7 @@ footer { font: 13px/1.4 var(--display); color: var(--muted); }
     <p class="scale">Average of your three ratings per letter. Answer yes or no for each one.</p>
     <div id="verdict"></div>
     <label for="notes" class="scale">Notes (what bothered you, what you liked, any mispronunciations)</label>
-    <textarea id="notes" placeholder="e.g. C sounds natural but reads '95% CI' oddly; F is robotic."></textarea>
+    <textarea id="notes" placeholder="What bothered you, what you liked, anything mispronounced."></textarea>
     <div class="actions">
       <button class="btn" id="save" type="button">Save ratings</button>
       <button class="btn ghost" id="copy" type="button">Copy as text</button>
@@ -107,11 +107,11 @@ footer { font: 13px/1.4 var(--display); color: var(--muted); }
     </div>
     <pre id="out" hidden></pre>
   </section>
-  <footer>Rendered on a Linux CPU by the C2 research harness (research/C2 on branch ws/c2-voice). Timings and licenses are in the comparison on issue #192, not here, so they can't bias the listen.</footer>
+  <footer>Built by the C2 research harness (research/C2 on branch ws/c2-voice). Timings and licenses are in the comparison on issue #192, not here, so they can't bias the listen.</footer>
 </div>
 
 <script>
-const DATA = {"passages": [{"id": "p1-narrative", "title": "Narrative", "text": "The ferry left Anacortes a little after seven, and by the time it cleared the harbor the fog had already begun to lift. Maria stood at the rail with her coffee going cold, watching the islands come up out of the grey one at a time. She had made this crossing a hundred times, but never once, she realized, had she actually looked."}, {"id": "p2-scientific", "title": "Scientific", "text": "In a randomized, double-blind trial of 1,284 adults (mean age 61.3 years), daily supplementation with 2,000 IU of vitamin D3 did not reduce the incidence of type 2 diabetes compared with placebo (hazard ratio, 0.88; 95% CI, 0.75 to 1.04; p = 0.12). Serum 25-hydroxyvitamin D rose from 28 to 54 ng/mL. These findings are consistent with earlier meta-analyses [12, 14] but contrast with observational data reported by Pittas et al."}, {"id": "p3-conversational", "title": "Essay with dialogue", "text": "\"Honestly?\" she said. \"I don't think the problem is the software. It's that nobody reads the manual.\" He laughed, but she wasn't joking. Here's the thing: when a tool is hard to use, we blame ourselves first, then the tool, and only much later the people who decided it should work that way. Why is that?"}], "voices": [{"letter": "A", "pending": null, "clips": {"p1-narrative": {"src": "audio/A-p1-narrative.mp3", "seconds": 19.7}, "p2-scientific": {"src": "audio/A-p2-scientific.mp3", "seconds": 44.5}, "p3-conversational": {"src": "audio/A-p3-conversational.mp3", "seconds": 18.2}}}, {"letter": "B", "pending": null, "clips": {"p1-narrative": {"src": "audio/B-p1-narrative.mp3", "seconds": 17.3}, "p2-scientific": {"src": "audio/B-p2-scientific.mp3", "seconds": 33.5}, "p3-conversational": {"src": "audio/B-p3-conversational.mp3", "seconds": 18.5}}}, {"letter": "C", "pending": null, "clips": {"p1-narrative": {"src": "audio/C-p1-narrative.mp3", "seconds": 22.2}, "p2-scientific": {"src": "audio/C-p2-scientific.mp3", "seconds": 40.0}, "p3-conversational": {"src": "audio/C-p3-conversational.mp3", "seconds": 21.0}}}, {"letter": "D", "pending": null, "clips": {"p1-narrative": {"src": "audio/D-p1-narrative.mp3", "seconds": 21.3}, "p2-scientific": {"src": "audio/D-p2-scientific.mp3", "seconds": 41.4}, "p3-conversational": {"src": "audio/D-p3-conversational.mp3", "seconds": 22.4}}}, {"letter": "E", "pending": null, "clips": {"p1-narrative": {"src": "audio/E-p1-narrative.mp3", "seconds": 22.2}, "p2-scientific": {"src": "audio/E-p2-scientific.mp3", "seconds": 40.0}, "p3-conversational": {"src": "audio/E-p3-conversational.mp3", "seconds": 21.0}}}, {"letter": "F", "pending": "(Mac)", "clips": {}}, {"letter": "G", "pending": null, "clips": {"p1-narrative": {"src": "audio/G-p1-narrative.mp3", "seconds": 18.2}, "p2-scientific": {"src": "audio/G-p2-scientific.mp3", "seconds": 40.5}, "p3-conversational": {"src": "audio/G-p3-conversational.mp3", "seconds": 17.6}}}], "seed": 192};
+const DATA = {"passages": [{"id": "p1-narrative", "title": "Narrative", "text": "The ferry left Anacortes a little after seven, and by the time it cleared the harbor the fog had already begun to lift. Maria stood at the rail with her coffee going cold, watching the islands come up out of the grey one at a time. She had made this crossing a hundred times, but never once, she realized, had she actually looked."}, {"id": "p2-scientific", "title": "Scientific", "text": "In a randomized, double-blind trial of 1,284 adults (mean age 61.3 years), daily supplementation with 2,000 IU of vitamin D3 did not reduce the incidence of type 2 diabetes compared with placebo (hazard ratio, 0.88; 95% CI, 0.75 to 1.04; p = 0.12). Serum 25-hydroxyvitamin D rose from 28 to 54 ng/mL. These findings are consistent with earlier meta-analyses [12, 14] but contrast with observational data reported by Pittas et al."}, {"id": "p3-conversational", "title": "Essay with dialogue", "text": "\"Honestly?\" she said. \"I don't think the problem is the software. It's that nobody reads the manual.\" He laughed, but she wasn't joking. Here's the thing: when a tool is hard to use, we blame ourselves first, then the tool, and only much later the people who decided it should work that way. Why is that?"}], "voices": [{"letter": "A", "pending": false, "clips": {"p1-narrative": {"src": "audio/A-p1-narrative.mp3"}, "p2-scientific": {"src": "audio/A-p2-scientific.mp3"}, "p3-conversational": {"src": "audio/A-p3-conversational.mp3"}}}, {"letter": "B", "pending": false, "clips": {"p1-narrative": {"src": "audio/B-p1-narrative.mp3"}, "p2-scientific": {"src": "audio/B-p2-scientific.mp3"}, "p3-conversational": {"src": "audio/B-p3-conversational.mp3"}}}, {"letter": "C", "pending": false, "clips": {"p1-narrative": {"src": "audio/C-p1-narrative.mp3"}, "p2-scientific": {"src": "audio/C-p2-scientific.mp3"}, "p3-conversational": {"src": "audio/C-p3-conversational.mp3"}}}, {"letter": "D", "pending": false, "clips": {"p1-narrative": {"src": "audio/D-p1-narrative.mp3"}, "p2-scientific": {"src": "audio/D-p2-scientific.mp3"}, "p3-conversational": {"src": "audio/D-p3-conversational.mp3"}}}, {"letter": "E", "pending": false, "clips": {"p1-narrative": {"src": "audio/E-p1-narrative.mp3"}, "p2-scientific": {"src": "audio/E-p2-scientific.mp3"}, "p3-conversational": {"src": "audio/E-p3-conversational.mp3"}}}, {"letter": "F", "pending": true, "clips": {}}, {"letter": "G", "pending": false, "clips": {"p1-narrative": {"src": "audio/G-p1-narrative.mp3"}, "p2-scientific": {"src": "audio/G-p2-scientific.mp3"}, "p3-conversational": {"src": "audio/G-p3-conversational.mp3"}}}], "seed": 192};
 const STORE = "c2-blind-listen-v1";
 let state = { ratings: {}, accept: {}, notes: "" };
 try { const s = JSON.parse(localStorage.getItem(STORE) || "null"); if (s) state = Object.assign(state, s); } catch (e) {}
@@ -143,7 +143,8 @@ function play(card, btn, src, bar, time, total) {
 }
 audio.addEventListener("timeupdate", () => {
   if (!current) return;
-  const d = audio.duration || current.total;
+  const d = audio.duration || 0;
+  if (!d) return;
   current.bar.style.width = (100 * audio.currentTime / d) + "%";
   current.time.textContent = fmt(audio.currentTime) + " / " + fmt(d);
 });
@@ -169,11 +170,10 @@ function render() {
       if (!clip) {
         btn.disabled = true; btn.firstChild.textContent = "Not rendered yet";
         const pend = document.createElement("div"); pend.className = "pending";
-        pend.textContent = (v.pending || "") + " This sample is rendered on the Mac and added later.";
+        pend.textContent = "This sample is added later.";
         card.appendChild(pend);
       } else {
-        time.textContent = fmt(clip.seconds);
-        btn.addEventListener("click", () => play(card, btn, clip.src, bar, time, clip.seconds));
+        btn.addEventListener("click", () => play(card, btn, clip.src, bar, time, 0));
         const stars = document.createElement("div"); stars.className = "stars"; stars.setAttribute("role", "group"); stars.setAttribute("aria-label", "Rate voice " + v.letter);
         for (let n = 1; n <= 5; n++) {
           const b = document.createElement("button"); b.type = "button"; b.className = "star" + (state.ratings[id] === n ? " on" : ""); b.textContent = n;
@@ -201,7 +201,7 @@ function renderVerdict() {
     const a = avg(v.letter);
     row.innerHTML = `<span class="letter">${v.letter}</span><span class="avg">${a ? a.toFixed(1) + " / 5" : "—"}</span><div class="yns" role="group" aria-label="Acceptable as the fallback, voice ${v.letter}"></div>`;
     const yns = row.querySelector(".yns");
-    if (!Object.keys(v.clips).length) { yns.innerHTML = `<span class="pending">${v.pending || ""} not rendered yet</span>`; }
+    if (!Object.keys(v.clips).length) { yns.innerHTML = `<span class="pending">Added later</span>`; }
     else [["yes", "Acceptable"], ["no", "Not acceptable"]].forEach(([val, label]) => {
       const b = document.createElement("button"); b.type = "button"; b.className = "yn" + (state.accept[v.letter] === val ? " on" : ""); b.dataset.v = val; b.textContent = label;
       b.setAttribute("aria-pressed", state.accept[v.letter] === val ? "true" : "false");

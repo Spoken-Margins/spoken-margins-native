@@ -13,6 +13,7 @@ import random
 from pathlib import Path
 
 import lameenc
+from scipy.signal import resample_poly
 import numpy as np
 import soundfile as sf
 
@@ -33,6 +34,7 @@ CANDIDATES = [
 ]
 SEED = 192  # the tracking issue; changing it re-letters everything
 TARGET_RMS_DB = -20.0
+PAGE_SR = 24000  # one rate for every clip, so the sample rate gives nothing away
 
 
 def loudness_match(x):
@@ -68,15 +70,21 @@ def main():
         clips = {}
         for p in passages:
             src = OUT / key / f"{p['id']}.wav"
-            if not src.exists():
-                continue
-            wav, sr = sf.read(src, dtype="float64")
-            if wav.ndim > 1:
-                wav = wav.mean(axis=1)
             dst = AUDIO / f"{L}-{p['id']}.mp3"
-            to_mp3(loudness_match(wav), sr, dst)
-            clips[p["id"]] = {"src": f"audio/{dst.name}", "seconds": round(len(wav) / sr, 1)}
-        voices.append({"letter": L, "pending": "(Mac)" if not clips and key.endswith("-mac") else None,
+            # Keep clips that already exist: the owner may have rated them, and
+            # a re-render (Pocket samples randomly) would change what they heard.
+            if not dst.exists():
+                if not src.exists():
+                    continue
+                wav, sr = sf.read(src, dtype="float64")
+                if wav.ndim > 1:
+                    wav = wav.mean(axis=1)
+                if sr != PAGE_SR:
+                    g = np.gcd(sr, PAGE_SR)
+                    wav = resample_poly(wav, PAGE_SR // g, sr // g)
+                to_mp3(loudness_match(wav), PAGE_SR, dst)
+            clips[p["id"]] = {"src": f"audio/{dst.name}"}
+        voices.append({"letter": L, "pending": bool(not clips),
                        "clips": clips})
     voices.sort(key=lambda v: v["letter"])
     key_lines = ["# Blind listening answer key", "",
