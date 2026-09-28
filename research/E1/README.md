@@ -59,8 +59,12 @@ python3 -m venv .venv-e1 && . .venv-e1/bin/activate
 pip install spacy click
 pip install https://huggingface.co/spacy/en_core_web_md/resolve/main/en_core_web_md-any-py3-none-any.whl
 python scripts/run_eval.py                      # writes results/*.json and results/summary.md
-python scripts/run_eval.py --owner <unzipped export folder>   # adds the owner set
+python scripts/run_eval.py --owner <unzipped export folder> --out <git-ignored folder>   # adds the owner set
 ```
+
+If pip rejects the wheel's file name ("invalid version"), use `python -m spacy download en_core_web_md`
+instead (Python 3.12). Point `--out` somewhere git-ignored for owner runs, check the files, then
+copy only the owner score files into `results/` (see `results/owner-mac/`).
 
 On a Mac, to re-score portable with Apple's tagger:
 
@@ -69,3 +73,6 @@ python scripts/export_nl_inputs.py > /tmp/in.json
 swift swift/NLTagDump.swift /tmp/in.json > /tmp/nl.json
 python scripts/run_eval.py --nl-tags /tmp/nl.json
 ```
+
+Add `--owner <export folder>` to both Python commands to tag and score the owner set too. The tag
+file then holds the owner's text, so keep it out of git.

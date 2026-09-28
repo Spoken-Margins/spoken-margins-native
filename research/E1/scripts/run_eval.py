@@ -20,7 +20,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--nl-tags", help="NLTagger output recorded on a Mac (swift/NLTagDump.swift)")
     ap.add_argument("--owner", help="owner set loader output (see e1eval/owner.py)", default=None)
+    ap.add_argument("--out", help="results folder (default: results/)", default=None)
     args = ap.parse_args()
+    global RESULTS
+    if args.out:
+        RESULTS = Path(args.out)
 
     nlp = spacy.load("en_core_web_md")
     lemma = functools.lru_cache(maxsize=None)(lambda w: nlp(w)[0].lemma_.lower())
@@ -32,7 +36,7 @@ def main():
         from e1eval import owner
         sets["owner"] = owner.load(args.owner)
 
-    RESULTS.mkdir(exist_ok=True)
+    RESULTS.mkdir(parents=True, exist_ok=True)
     summary = {}
     # Trained kind classifier: cross-validated on the public set, and trained on all of it
     # for any other set, so those numbers are a true transfer test.
