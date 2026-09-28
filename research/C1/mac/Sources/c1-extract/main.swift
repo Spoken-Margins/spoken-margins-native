@@ -5,7 +5,7 @@
 // For each manifest entry with a fetched PDF (cache/pdf/<id>.pdf) it writes
 // cache/candidates/app-baseline/<id>.json in the format tools/score.py reads:
 //
-//   {"id", "extractor", "markdown", "spoken", "elapsed_ms", "pages", "error"?}
+//   {"id", "extractor", "markdown", "markdown_sha256", "spoken", "elapsed_ms", "pages", "error"?}
 //
 // `markdown` is exactly what the app stores on import today
 // (PDFStructuredTextExtractor.markdown, the path extractBaseline takes).
@@ -130,6 +130,8 @@ for entry in entries {
             let elapsed = milliseconds(clock.now - start)
             timings.append(elapsed)
             record["markdown"] = markdown
+            // I13 rule 1(a): a changed fingerprint without a version bump is a bug.
+            record["markdown_sha256"] = SHA256.hash(data: Data(markdown.utf8)).map { String(format: "%02x", $0) }.joined()
             record["spoken"] = spokenText(fromMarkdown: markdown)
             record["elapsed_ms"] = Int(elapsed.rounded())
             extracted += 1
