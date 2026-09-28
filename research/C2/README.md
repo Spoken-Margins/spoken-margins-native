@@ -106,7 +106,7 @@ The owner loved Pocket TTS, but worried it's too heavy for older iPhones. They f
 ./mac/run-mac.sh
 ```
 
-It installs the harness, fetches the models, runs every benchmark (`results/darwin/`), renders **Samantha** with `say` (`mac/samantha.sh`), and rebuilds the listening page with the Samantha clip under letter F. Then commit `results/darwin/` and `listening/`, and republish `listening/index.html` to the same artifact URL (pass it as `url`), with the audio files. Also build the phone benchmark from [phone-bench/README.md](phone-bench/README.md).
+It installs the harness, fetches the models, runs every benchmark (`results/darwin/`), renders **Samantha** with `say` (`mac/samantha.sh`), and rebuilds the listening page with the Samantha clip under letter F. Then commit `results/darwin/` and `listening/` (the audio stays local; it's git-ignored), and republish `listening/index.html` to the same artifact URL (pass it as `url`), with the audio files. Also build the phone benchmark from [phone-bench/README.md](phone-bench/README.md).
 
 **(owner)** In this order:
 
@@ -120,6 +120,8 @@ It installs the harness, fetches the models, runs every benchmark (`results/darw
 - `harness.py`, `bench.py`, `run_all.sh`: the benchmark. `engines/*.py` has one wrapper per engine. `engines/supertonic.py` is a Python port of the app's `SupertonicRuntime.swift`, using the same INT8 files, sha256-matched to `asset-manifest.json`.
 - `intelligibility.py`: the Whisper word-error check.
 - `build_page.py`, `listening_template.html`: build the blind page (seeded letters, loudness-matched 96 kbps MP3).
+  - The clips aren't in git (`listening/audio/` is ignored), so no audio enters `next`'s history. They're still served by the published page.
+  - To rebuild them: `./fetch_models.sh`, `./run_all.sh`, `mac/samantha.sh` (on a Mac, for F), then `.venv/bin/python build_page.py`. Fresh renders differ slightly from what the owner rated, because Pocket TTS and Kitten sample randomly.
 - `summarize.py`, `candidates.json`: the table above.
 - `fetch_models.sh`, `requirements.txt`: reproduce. Models, WAVs and the virtual environment are git-ignored.
 - `I14-draft.md`: **draft** rules for seam I14 (engine selection, one rate, I13 roles, text normalization). C2 M1 publishes the real one.
