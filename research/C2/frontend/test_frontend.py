@@ -48,6 +48,29 @@ class Normalization(unittest.TestCase):
     def test_codes_are_spelled(self):
         self.assertEqual(normalize("baseline HbA1c"), "baseline H B A one C")
 
+    def test_review_cases(self):
+        """Cases a fresh review found reading wrong words (2026-09-28)."""
+        cases = {
+            "In the 1990s": "In the nineteen nineties",
+            "1284 participants": "one thousand two hundred eighty-four participants",
+            "in 2023": "in twenty twenty-three",
+            "paid $12.50": "paid twelve dollars fifty",
+            "$1.2 billion": "one point two billion dollars",
+            "fell to -5 °C": "fell to minus five degrees Celsius",
+            "pages 10-20": "pages ten to twenty",
+            "COVID-19": "COVID-nineteen",
+            "from 2010 to 2015": "from twenty ten to twenty fifteen",
+            "version 4.2.1": "version four point two point one",
+            "filmed in 4K": "filmed in four K",
+            "the U.S. budget": "the U S budget",
+            "St. Louis at 9 a.m.": "Saint Louis at nine A M",
+            "(May, 2020)": "May, twenty twenty",
+            "30 s and 48 h": "thirty seconds and forty-eight hours",
+            "٣ items": "٣ items",
+        }
+        for text, spoken in cases.items():
+            self.assertEqual(normalize(text), spoken, text)
+
     def test_greek(self):
         self.assertIn("beta equals", normalize("β = 0.21"))
 
@@ -59,6 +82,16 @@ class Words(unittest.TestCase):
 
     def test_abbreviations_are_spelled(self):
         self.assertEqual(FE.word("PBS"), "pˌiːbˌiːˈɛs")
+        self.assertEqual(FE.word("US"), "jˌuːˈɛs")      # misaki's gold dictionary says 'us'
+        self.assertEqual(FE.word("IT"), "ˌaɪtˈiː")
+
+    def test_capitalised_dictionary_entries_are_exported(self):
+        lex = Path(__file__).resolve().parents[1] / "models" / "frontend" / "export" / "lexicon.tsv"
+        if not lex.exists():
+            self.skipTest("run export_for_swift.py first")
+        keys = {line.split("\t", 1)[0] for line in lex.read_text(encoding="utf-8").splitlines()}
+        self.assertIn("Polish", keys)
+        self.assertIn("polish", keys)
 
     def test_dictionary_word_in_espeak_convention(self):
         self.assertEqual(misaki_to_espeak("wˈɔɾəɹ", "water"), "wˈɔːɾɚ")

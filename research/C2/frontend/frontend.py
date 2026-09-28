@@ -13,7 +13,7 @@ from pathlib import Path
 
 from lexmap import espeakify, misaki_to_espeak
 from neural_g2p import NeuralG2P
-from normalize import normalize
+from normalize import ALWAYS_SPELL, normalize
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "models" / "frontend"
@@ -64,12 +64,11 @@ def arpabet_to_ipa(phones: list[str]) -> str:
 
 class FrontEnd:
     def __init__(self, use_silver: bool = False):
-        gold = json.loads((MISAKI / "us_gold.json").read_text())
-        self.lex = {k.lower(): v for k, v in gold.items()}
-        self.lex.update({k: v for k, v in gold.items()})
+        # Lookup is exact key first, then the lowercased word (see _dict); keys keep their case.
+        self.lex = json.loads((MISAKI / "us_gold.json").read_text())
         if use_silver:
             for k, v in json.loads((MISAKI / "us_silver.json").read_text()).items():
-                self.lex.setdefault(k.lower(), v)
+                self.lex.setdefault(k, v)
         self.cmu = {}
         for line in (DATA / "cmudict.dict").read_text(encoding="latin-1").splitlines():
             parts = line.split("#")[0].split()
@@ -97,7 +96,7 @@ class FrontEnd:
         if w.lower() in FUNCTION and not (len(w) > 1 and w.isupper()):
             self._count("function")
             return FUNCTION[w.lower()]
-        if len(w) >= 2 and not re.search(r"[aeiouyAEIOUY]", w):
+        if w in ALWAYS_SPELL or len(w) >= 2 and not re.search(r"[aeiouyAEIOUY]", w):
             self._count("letters")                            # 'km', 'tbh', 'PBS': no vowel letter, spell it
             letters = [LETTERS[c.lower()] for c in w]
             return "".join(l.replace("ˈ", "ˌ") if i < len(letters) - 1 else l for i, l in enumerate(letters))

@@ -2,91 +2,181 @@
   "p1-narrative": {
     "espeak": {
       "wer": 0.032,
+      "wer_runs": [
+        0.032,
+        0.032,
+        0.032
+      ],
       "heard": "The ferry left Anacorts a little after seven, and by the time it cleared the harbor the fog had already begun to lift.  Maria stood at the rail with her coffee going cold, watching the islands come up out of the gray one at a time.  She had made this crossing a hundred times, but never once, she realized, had she actually looked."
     },
     "c2": {
       "wer": 0.032,
+      "wer_runs": [
+        0.032,
+        0.048,
+        0.016
+      ],
       "heard": "The fairy left Anacortes a little after seven, and by the time it cleared the harbor the  fog had already begun to lift.  Maria stood at the rail with her coffee going cold, watching the islands come up out of  the gray one at a time.  She had made this crossing a hundred times, but never once, she realized, had she actually  looked."
     }
   },
   "p2-scientific": {
     "espeak": {
-      "wer": 0.288,
-      "heard": "In a randomized, double-blind trial of 1 to 84 adults  mean age 61, three years, daily supplementation  with 2,000 IU of vitamin D3 did not reduce  the incidence of type 2 diabetes  compared with placebo hazard ratio, zen 88,  95% psi, 075 to 1, zeno 4, P equals zeno 12.  Serum 25 hydroxyvitamin D rose from 28 to 54 NG slash ML.  These findings are consistent with earlier meta-analyzes 12,  14, but contrast with observational data  reported by Pittas et al."
+      "wer": 0.301,
+      "wer_runs": [
+        0.315,
+        0.288,
+        0.301
+      ],
+      "heard": "In a randomized double-blind trial of 1 to 84 adults mean age 61, three years, daily  supplementation with 2,000 IU of vitamin D3 did not reduce the incidence of type 2 diabetes  compared with placebo hazard ratio, zinc-88, 95% psi, 075 to 1, xeno-4, P equals xeno-12.  The enzyme 25-hydroxyvitamin D rose from 28 to 54 NG slash ML.  These findings are consistent with earlier meta-analyzes, 12, 14, but contrast with observational  data reported by Pittas et al."
     },
     "c2": {
-      "wer": 0.11,
-      "heard": "In a randomized, double-blind trial of 84 adults, mean age 61.3 years, daily supplementation  with 2000 IU of vitamin D3 did not reduce the incidence of type 2 diabetes compared  with placebo, hazard ratio, 0.88, 95% confidence interval, 0.75 to 1.04, P equals 0.12.  During 25, hydroxyvitamin D rose from 28 to 54 nanograms per milliliter.  These findings are consistent with earlier meta-analyses, but contrast with observational  data reported by Pittas and colleagues."
+      "wer": 0.119,
+      "wer_runs": [
+        0.123,
+        0.11,
+        0.123
+      ],
+      "heard": "In a randomized, double-blind trial of 84 adults, mean age 61.3 years, daily supplementation  with 2000 IU of vitamin D3 did not reduce the incidence of type 2 diabetes compared  with placebo, hazard ratio, 0.88, 95% confidence interval, 0.75 to 1.04, P equals 0.12.  During 25, hydroxyvitamin D rose from 28 to 54 nanograms per milliliter.  These findings are consistent with earlier meta-analyses, but contrast with observational  data reported by pitas and colleagues."
     }
   },
   "p3-conversational": {
     "espeak": {
       "wer": 0.033,
-      "heard": "Honestly, she said,  I don't think the problem is the software.  It's that nobody reads the manual.  He laughed, but she was, joking.  Here's the thing.  When a tool is hard to use, we blame ourselves first, then the tool, and only much later  the people who decided it should work that way.  Why is that?"
+      "wer_runs": [
+        0.033,
+        0.033,
+        0.033
+      ],
+      "heard": "Honestly, she said,  I don't think the problem is the software, it's that nobody reads the manual.  He laughed, but she was, joking.  Here's the thing, when a tool is hard to use, we blame ourselves first, then the tool,  and only much later the people who decided it should work that way.  Why is that?"
     },
     "c2": {
       "wer": 0.0,
-      "heard": "Honestly, she said,  I don't think the problem is the software.  It's that nobody reads the manual.  He laughed, but she wasn't joking.  Here's the thing.  When a tool is hard to use, we blame ourselves first, then the tool, and only much later  the people who decided it should work that way.  Why is that?"
+      "wer_runs": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "heard": "Honestly, she said,  I don't think the problem is the software, it's that nobody reads the manual.  He laughed, but she wasn't joking.  Here's the thing, when a tool is hard to use, we blame ourselves first, then the tool, and  only much later the people who decided it should work that way.  Why is that?"
     }
   },
   "h1-names-numbers": {
     "espeak": {
       "wer": 0.296,
+      "wer_runs": [
+        0.296,
+        0.296,
+        0.296
+      ],
       "heard": "On March 3rd in 24, Dr. Nakamura flew from Reykjavik to Ouagadougou with one 250 kg of  equipment arriving 36 hours later, about two, five times slower than planned."
     },
     "c2": {
       "wer": 0.185,
-      "heard": "On March 3rd, 2024, Dr. Nakamura flew from Reykjavik to Wagadug with 250 kilograms of equipment, arriving 36 hours later, about 2.5 times slower than planned."
+      "wer_runs": [
+        0.185,
+        0.185,
+        0.185
+      ],
+      "heard": "On March 3rd, 2024, Dr. Nakamura flew from Reykjavik to Ouagadoug with 250 kilograms  of equipment arriving 36 hours later, about 2.5 times slower than planned."
     }
   },
   "h2-stats": {
     "espeak": {
-      "wer": 0.696,
-      "heard": "The effect was small but reliable beta equals 0-21, C equals 0-0-4, P0-001 and remained after adjusting for age, BMI and baseline HBA1-Cn equals 3-412."
+      "wer": 0.522,
+      "wer_runs": [
+        0.435,
+        0.696,
+        0.435
+      ],
+      "heard": "The effect was small but reliable beta equals 021, C equals 0x04, P0001, and remained after adjusting for age, BMI, and baseline HBA1-Cn equals 3412."
     },
     "c2": {
-      "wer": 0.304,
-      "heard": "The effect was small but reliable, beta equals 0.21, SE equals 0.04, P less than 0.001, and  remained after adjusting for age, BMI, and baseline HbA1c, N equals 412."
+      "wer": 0.319,
+      "wer_runs": [
+        0.348,
+        0.304,
+        0.304
+      ],
+      "heard": "The effect was small but reliable, beta equals 0.21, SC equals 0.04, P less than 0.001 and  remained after adjusting for age, BMI and baseline HbA1c, N equals 412."
     }
   },
   "h3-methods": {
     "espeak": {
-      "wer": 0.259,
-      "heard": "Cells were incubated at 37 degrees C for 48H in 5% CO2, then washed twice with PBS and  lysed in REPA buffer containing 1mm etch."
+      "wer": 0.21,
+      "wer_runs": [
+        0.111,
+        0.259,
+        0.259
+      ],
+      "heard": "Cells were incubated at 37 degrees C for 48 H in 5% CO2, then washed twice with PBS,  and lysed in REPA buffer containing 1 mm etch."
     },
     "c2": {
       "wer": 0.148,
+      "wer_runs": [
+        0.148,
+        0.148,
+        0.148
+      ],
       "heard": "Cells were incubated at 37 degrees Celsius for 48 hours in 5% CO2, then washed twice with PBS and lysed in RIPA buffer containing 1 millimolar EDTA."
     }
   },
   "h4-rare-words": {
     "espeak": {
-      "wer": 0.167,
-      "heard": "The archaeologists catalogued the Chthonic iconography, noting the palimpsists' idiosyncratic  marginalia and a surprisingly well-preserved quincunx."
+      "wer": 0.13,
+      "wer_runs": [
+        0.111,
+        0.167,
+        0.111
+      ],
+      "heard": "The archaeologist catalogued the Chthonic iconography, noting the palimpsists' idiosyncratic marginalia and a surprisingly well-preserved quincunx."
     },
     "c2": {
-      "wer": 0.056,
+      "wer": 0.093,
+      "wer_runs": [
+        0.056,
+        0.167,
+        0.056
+      ],
       "heard": "The archaeologist catalogued the thonic iconography, noting the palimpsest's idiosyncratic marginalia  and a surprisingly well-preserved quincunx."
     }
   },
   "h5-citations": {
     "espeak": {
       "wer": 0.688,
+      "wer_runs": [
+        0.688,
+        0.688,
+        0.688
+      ],
       "heard": "Earlier work found similar effects 4-7-9, although Smith et al. reported the opposite in a smaller cohort, Smith et al. 2019 lead 2021."
     },
     "c2": {
       "wer": 0.0,
+      "wer_runs": [
+        0.0,
+        0.0,
+        0.0
+      ],
       "heard": "Earlier work found similar effects, although Smith and colleagues reported the opposite in a smaller cohort."
     }
   },
   "h6-dialogue": {
     "espeak": {
-      "wer": 0.115,
+      "wer": 0.128,
+      "wer_runs": [
+        0.115,
+        0.154,
+        0.115
+      ],
       "heard": "You're kidding,\" said Priya.  We read that paper twice and nobody noticed the typo.  Tom shrugged.  It's eleven forty-five, let's just fix it."
     },
     "c2": {
-      "wer": 0.115,
-      "heard": "You're kidding,\" said Priya.  We read that paper twice and nobody noticed the typo.  Tom shrugged.  It's eleven forty-five, let's just fix it."
+      "wer": 0.077,
+      "wer_runs": [
+        0.077,
+        0.077,
+        0.077
+      ],
+      "heard": "You're kidding,\" said Priya.  We read that paper twice and nobody noticed the typo.  Tom shrugged.  It's 11.45.  Let's just fix it."
     }
   }
 }

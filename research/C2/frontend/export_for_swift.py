@@ -31,8 +31,8 @@ lex = {}
 for w, v in fe.lex.items():
     if isinstance(v, dict):
         v = v.get("DEFAULT") or next(iter(v.values()))
-    if v and w == w.lower():
-        lex[w] = misaki_to_espeak(v, w)
+    if v:
+        lex[w] = misaki_to_espeak(v, w.lower())   # keys keep their case: Swift looks up exact, then lowercase
 for w, phones in fe.cmu.items():
     if w not in lex and re.fullmatch(r"[a-z']+", w):
         lex[w] = espeakify(arpabet_to_ipa(phones), w)
@@ -54,7 +54,10 @@ def kitten_ids(ps):
 
 texts = [p["text"] for p in json.loads((ROOT / "passages.json").read_text())["passages"]]
 texts += [p["text"] for p in json.loads((HERE / "hard_passages.json").read_text())["passages"]]
-texts += ["The cat sat on the mat.", "PBS aired it at 9:05.", "Zorblax hydroxyvitamin quincunx.", "Is it 2.5 mg/kg or 25 mg?"]
+texts += ["The cat sat on the mat.", "PBS aired it at 9:05.", "Zorblax hydroxyvitamin quincunx.", "Is it 2.5 mg/kg or 25 mg?",
+          "In the 1990s, 1284 participants paid $12.50 each; the U.S. budget was $1.2 billion.",
+          "Temperatures fell to -5 °C on pages 10-20 of version 4.2.1, filmed in 4K (May, 2020).",
+          "The Polish team met in August in St. Louis at 9 a.m. to discuss IT and AI."]
 vectors = [{"text": t, "normalized": normalize(t), "phonemes": fe.phonemize(t), "kitten_ids": kitten_ids(fe.phonemize(t))} for t in texts]
 words = {w: fe.word(w) for w in ["Zorblax", "hydroxyvitamin", "PBS", "km", "the", "Reykjavik", "Ouagadougou"]}
 (HERE / "test_vectors.json").write_text(json.dumps({"sentences": vectors, "words": words,
