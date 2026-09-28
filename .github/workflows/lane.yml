@@ -1,0 +1,51 @@
+# The lane's deterministic tiers (T2, T3) on the Mac's self-hosted runner. See
+# docs/workstreams/test-lane.md for the request and report formats, and scripts/lane-runner.py.
+#
+# A stream asks by commenting `/lane T2` or `/lane T3` on its PR into next and adding the
+# lane:queued label. Pull-request events are the trigger because comment events only run workflows
+# from the default branch (main), which the lane doesn't touch.
+name: lane
+
+on:
+  pull_request:
+    branches: [next]
+    types: [labeled, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  lane:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'lane:queued') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'lane:queued')
+    runs-on: [self-hosted, macOS, sm-lane]
+    # One runner is one lane, so runs from different PRs queue behind each other. Within a PR, a
+    # newer queued run replaces one that hasn't started, so only the newest commit is tested. This
+    # sits on the job, not the workflow, so skipped runs (other labels) never cancel a real one.
+    concurrency:
+      group: lane-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          /usr/bin/python3 scripts/lane-runner.py --pr ${{ github.event.pull_request.number }}
+          --event-head ${{ github.event.pull_request.head.sha }} --merge-sha ${{ github.sha }}
+          --run-id ${{ github.run_id }}
+      - name: Tidy up after a cancelled or failed run
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          /usr/bin/python3 scripts/lane-runner.py --cleanup --pr ${{ github.event.pull_request.number }}
+          --event-head ${{ github.event.pull_request.head.sha }} --merge-sha ${{ github.sha }}
+          --run-id ${{ github.run_id }}

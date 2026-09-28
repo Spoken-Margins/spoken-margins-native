@@ -1,0 +1,32 @@
+{
+  "engine": "kitten-nano-fp32-0.8-Jasper",
+  "threads": 1,
+  "cpu": "x86_64",
+  "load_s": 0.57,
+  "passages": {
+    "p1-narrative": {
+      "ttfa_s": 1.629,
+      "render_s": 4.532,
+      "audio_s": 21.27,
+      "rtf": 0.213,
+      "chunks": 3
+    },
+    "p2-scientific": {
+      "ttfa_s": 5.621,
+      "render_s": 9.138,
+      "audio_s": 41.43,
+      "rtf": 0.221,
+      "chunks": 2
+    },
+    "p3-conversational": {
+      "ttfa_s": 0.533,
+      "render_s": 4.853,
+      "audio_s": 22.4,
+      "rtf": 0.217,
+      "chunks": 3
+    }
+  },
+  "rtf": 0.218,
+  "speed_x": 4.59,
+  "ttfa_s_median": 1.629
+}

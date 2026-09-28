@@ -35,7 +35,7 @@ TEST_DESK_VALUE = 'test-desk'
 TEST_DESK_SUFFIX = '-test-desk'  # the Test Desk's worktree sits next to the checkout: <repo>-test-desk
 
 KEYWORDS = ('simctl', 'xcodebuild', 'devicectl', 'verify-tests', 'Simulator', 'smoke-simulator',
-            'verify-gate', 'posterboard')
+            'verify-gate', 'posterboard', 'lane-runner')
 SEPARATORS = {';', '&&', '||', '|', '&', '(', ')', '|&', ';;'}
 PREFIX_COMMANDS = {'env', 'command', 'exec', 'time', 'nice', 'nohup', 'caffeinate', 'sudo',
                    'timeout', 'gtimeout', 'stdbuf', 'arch', 'xargs'}
@@ -56,7 +56,8 @@ XCODEBUILD_NO_BUILD = {'-version', '-list', '-showsdks', '-showBuildSettings', '
                        '-exportArchive', '-importLocalizations', '-exportNotarizedApp', '-create-xcframework'}
 HOST_PLANS = {'fast'}
 SIMULATOR_SCRIPTS = {'smoke-simulator.sh', 'check_posterboard_repair.py', 'verify-gate1.sh',
-                     'verify-gate1-routine.sh', 'verify-gate1-closeout.sh', 'verify-gate2.sh'}
+                     'verify-gate1-routine.sh', 'verify-gate1-closeout.sh', 'verify-gate2.sh',
+                     'lane-runner.py'}  # the lane's own runner job: agents ask for it by label instead
 
 SIM = 'simulator'
 BUILD = 'build'
