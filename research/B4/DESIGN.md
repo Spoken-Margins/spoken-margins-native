@@ -23,6 +23,8 @@ phone ──POST attested request (App Attest key id + assertion)──▶ Caddy
 | Operations | Owner's box: OS updates are the owner's job already | Managed | Managed, but the install store needs Firestore or similar |
 | Kill switch while service is down | Yes (static file) | Only if the static files are hosted separately | Same |
 
+The Fly.io and Cloud Run prices are approximate list prices from memory, not checked today; check them before choosing either.
+
 **Traffic estimate.** A 20-site manifest with 20 items each is about 110 KB raw, 25–30 KB gzipped. Apps check at most every 6 hours with `If-None-Match`, so most checks are a ~300-byte 304. Budgeting four full downloads per install per day gives about 3 GB/month per 1,000 installs, or 30 GB per 10,000. Attested traffic is negligible. The watcher that fetches the 20 sites hourly (M2) adds under 1 GB/month.
 
 **Cost ceiling and alert (owner decision).** I suggest a **$10/month ceiling for all Spoken Margins servers** through E3 and F1. B4 alone costs $0 extra on the VPS. "Hard budget alert" on a flat-rate box means watching the one metered thing, plus liveness, from off the box:
