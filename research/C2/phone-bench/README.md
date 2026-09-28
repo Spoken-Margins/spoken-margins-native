@@ -8,9 +8,9 @@ M2 needs render speed measured on the owner's iPhone 17 Pro in Low Power Mode wh
 - **Engines**, all on the onnxruntime the app already links (CPU execution provider; record the thread count used):
   1. Supertonic 3 INT8, voice M2, **8 steps**, through the app's own `SupertonicRuntime`.
   2. The same at **4 steps**. `SupertonicNarrationRenderer.render` rejects fewer than 5 steps (line 172), so call the runtime directly or widen the guard in the debug build.
-  3. KittenTTS nano 0.8 **fp32**, from pre-tokenized input ids.
+  3. KittenTTS nano 0.8 **fp32**, from pre-tokenized input ids. **This is the chosen fallback, so it's the result that matters.** Also run the int8 file: if int8 is as fast on the phone, the app-size cost drops from about 60 MB to about 27 MB.
   4. Kokoro-82M v1.0 **fp32**, from pre-tokenized tokens (style row = token count − 1, input wrapped as `[0, *tokens, 0]`, speed 1.0).
-  5. **Pocket TTS (alba)**: the lead candidate after the blind listen. Try the community ONNX export (Hugging Face `KevinAHM/pocket-tts-onnx`) on onnxruntime first, then MLX. Check the export's license. Measure time to first streamed audio as well as time to first chunk. If neither runtime works on iOS, say so on #192; that's the finding.
+  5. **Pocket TTS (alba)**: optional. It's not the fallback, but its number on the phone tells whether it could be an optional downloaded voice later. Try the community ONNX export (Hugging Face `KevinAHM/pocket-tts-onnx`) on onnxruntime first, then MLX. Check the export's license. Measure time to first streamed audio as well as time to first chunk. If neither runtime works on iOS, say so on #192; that's the finding.
   6. **Samantha** through `AVSpeechSynthesizer.write(_:toBufferCallback:)`, rate `AVSpeechUtteranceDefaultSpeechRate`.
 - **Inputs:** [`inputs.json`](inputs.json) has the exact chunks and token ids for all three passages. That's why the phone needs no phonemizer (and no GPL code) for this benchmark. Model files come from `../fetch_models.sh`. Side-load them into the debug build's Documents folder; don't bundle them.
 - **What to measure**, per engine and passage, with each engine warmed up on one short sentence first:

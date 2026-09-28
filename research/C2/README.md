@@ -79,25 +79,24 @@ From the Mac session's commit 819b006 ([results/darwin/](results/darwin/)):
 
 Kokoro, Kitten and Piper produced no Mac numbers, because espeak-ng couldn't find its data on macOS. `engines/kitten.py` now passes the data path explicitly; this is untested on a Mac. misaki already does this for Kokoro and still failed there, so the Mac session needs to look at Kokoro directly.
 
-## Recommendation (provisional until the phone benchmark)
+## Recommendation (owner direction, 2026-09-28)
 
-The listen rules out the 4-step Supertonic fallback (2.3, not acceptable). Samantha, the system voice the app falls back to today, scored lowest (2.0), so replacing it is worth an app-size cost.
+The owner loved Pocket TTS, but worried it's too heavy for older iPhones. They found Kokoro too heavy even on their iPhone 17 Pro, and judged KittenTTS "not very pleasant, but not bad".
 
-**Make the fallback Kyutai Pocket TTS (voice alba), provided it holds 4× real time on the phone in Low Power Mode while warm. Kokoro is the alternative, and KittenTTS the safety net.**
+**Decision: bundle KittenTTS nano 0.8 as the fallback voice. Keep Pocket TTS as a candidate for a later, optional voice, not the bundled fallback.**
 
-- **Why Pocket TTS:**
-  - You rated it 5.0, tied with Kokoro and above today's Supertonic (4.0).
-  - It's the only 5.0 voice with an Apple number. It does 3.5× real time on one Mac core, faster than the 8-step Supertonic the app already runs (2.5×).
-  - It streams, so audio starts in under 0.1 s on the Mac.
-  - The license needs no engineering: MIT code, CC BY 4.0 weights, and no phonemizer at all, only an attribution line.
-- **Pocket's costs and risks:**
-  - **App size:** about 225 MB (fp32 weights plus one voice).
-  - **Runtime:** it needs an iOS runtime. It's PyTorch today; the options are a community ONNX export on the onnxruntime the app already links, or MLX. This is the main risk, and the phone benchmark has to prove it.
-  - **Normalization:** its scientific-passage word errors are high (24–29%), which the I14 normalizer is meant to fix. The voice itself is fine.
-- **Kokoro (also 5.0)** wins if the Pocket port fails or runs slower on the phone. It already runs on onnxruntime, but it's 332 MB (98 MB if int8 is fast on Apple silicon), still has no Apple speed number, and needs a non-GPL fallback for unknown words.
-- **KittenTTS nano (3.0, acceptable)** is the safety net if neither passes the phone budget. It's about 60 MB and fast, but needs a non-GPL front end built first.
-- **Supertonic 8 steps stays the preferred voice** whenever policy allows it. After a memory warning, a 225 MB model is a poor fit, so the system voice remains the labelled last resort there.
-- **App-size cost to accept:** about 225 MB for Pocket (Kokoro 332 MB or 98 MB; Kitten about 60 MB).
+- **The worry about Pocket is borne out by the numbers.**
+  - Pocket manages 3.5× real time on one Mac core.
+  - Scaled to an A13 by single-core speed, and then cut for Low Power Mode and heat, that lands around 1.5–2.5×, at or below the brief's 2× floor. And that's before any iOS runtime overhead.
+  - Kitten does 4.6× on one core of the slow cloud Xeon, so it clears the A13 floor with room to spare.
+- **Kitten meets the brief's three bars:**
+  - **Speed:** on track for ≥2× on the derived A13 budget. The phone benchmark confirms it.
+  - **License:** Apache-2.0 weights, once its espeak-ng front end is replaced.
+  - **App size:** about 60 MB (about 27 MB if int8 is fast on Apple silicon).
+- **What it costs in M3:** a non-GPL front end that turns text into the phonemes Kitten was trained on (espeak-style IPA), for example CMUdict plus rules for unknown words, together with the I14 text normalizer. That's the main work and the main quality risk. The phone benchmark sidesteps it by using pre-tokenized input.
+- **It beats what listeners get today:** Kitten scored 3.0 and acceptable; Samantha scored 2.0 and not acceptable.
+- **Pocket TTS, later:** worth a separate issue as an optional voice the listener chooses on phones that pass its benchmark. It would be downloaded rather than bundled, so it adds no app size. It's out of M2 scope.
+- **Unchanged:** Supertonic 8 steps stays the preferred voice whenever policy allows it. After a memory warning, the system voice stays the labelled last resort.
 
 ## What's waiting
 
@@ -113,7 +112,7 @@ It installs the harness, fetches the models, runs every benchmark (`results/darw
 
 1. **Blind listen:** done 2026-09-28.
 2. **Phone benchmark:** once the Mac session has built it, run it warm, in Low Power Mode, as described in [phone-bench/README.md](phone-bench/README.md), and share the JSON on #192.
-3. **Accept the app-size cost:** about 225 MB for Pocket TTS (Kokoro 332 MB or 98 MB; Kitten about 60 MB).
+3. **Accept the app-size cost:** about 60 MB for KittenTTS nano fp32 (about 27 MB if int8 is fast on the phone).
 
 ## Files
 
