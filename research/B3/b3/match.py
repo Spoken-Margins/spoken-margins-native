@@ -21,9 +21,10 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+import urllib.parse
 from dataclasses import dataclass, field, asdict
 
-from . import itunes
+from . import itunes, spotify
 from .text import containment, fold, jaccard, name_tokens, title_similarity, tokens
 from .youtube import VideoEvidence
 
@@ -116,48 +117,97 @@ class ShowCandidate:
     collection_id: int
     name: str
     artist: str
-    strength: float           # 0..1, how well the name is backed by the video
+    strength: float           # 0..1, how well the video backs this show's identity
     via: list[str]
 
 
-def _name_support(show: dict, video: VideoEvidence) -> float:
-    """How strongly the channel name or a title segment names this show."""
-    names = [show.get("collectionName") or "", show.get("artistName") or ""]
-    show_tokens = name_tokens(names[0])
-    artist_tokens = name_tokens(names[1])
-    if not show_tokens:
-        return 0.0
+def _source_tokens(text: str) -> set[str]:
+    return set(name_tokens(re.sub(r"#\s?\d+|\b\d{1,5}\b", "", text)))
+
+
+def _name_support(show: dict, sources: list[tuple[str, str]], searched: str | None) -> float:
+    """How strongly a named source (channel, title segment, linked show name)
+    names this show.
+
+    1.0  the source is the show's name or its publisher's name
+    0.8  the source is part of the show's name, and the show came up when
+         searching for that very source (e.g. "The Indicator" -> "The
+         Indicator from Planet Money", channel "Changelog" -> "The Changelog")
+    0.6  loose overlap; enough to look at the show's episodes, not to trust it
+    """
     best = 0.0
-    sources = [video.channel] + title_segments(video.title)
-    for i, src in enumerate(sources):
-        src_tokens = name_tokens(re.sub(r"#?\d+", "", src))
-        if not src_tokens:
+    for target_name in (show.get("collectionName") or "", show.get("artistName") or ""):
+        target = set(name_tokens(target_name))
+        if not target:
             continue
-        # Every token of the show's name appears in the source, and the source
-        # is mostly the show's name (not a long sentence that happens to
-        # contain one of its words).
-        for target in (show_tokens, artist_tokens):
-            if not target:
+        for kind, src in sources:
+            src_tokens = _source_tokens(src)
+            if not src_tokens:
                 continue
-            inside = len(set(target) & set(src_tokens)) / len(set(target))
             j = jaccard(target, src_tokens)
-            if inside >= 0.99 and (j >= 0.5 or (i == 0 and j >= 0.34)):
-                best = max(best, 1.0 if j >= 0.5 else 0.8)
-            elif inside >= 0.99 and len(set(target)) >= 2:
-                best = max(best, 0.6)
-            elif j >= 0.6:
+            if target <= src_tokens and j >= 0.5:
+                best = max(best, 1.0)
+            elif src_tokens <= target and searched is not None and fold(searched) == fold(src) \
+                    and (len(src_tokens) >= 2 or kind in ("channel", "linked")):
+                best = max(best, 0.8)
+            elif j >= 0.5 or (target <= src_tokens and len(target) >= 2):
                 best = max(best, 0.6)
     return best
 
 
-def find_shows(video: VideoEvidence, limit: int = 3) -> list[ShowCandidate]:
-    found: dict[int, ShowCandidate] = {}
+def _domain(url: str | None) -> str | None:
+    host = urllib.parse.urlsplit(url or "").hostname or ""
+    parts = host.lower().split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else None
 
-    def consider(show: dict, via: str, bonus: float = 0.0):
+
+# Hosting and platform domains say nothing about which show a link belongs to.
+_SHARED_DOMAINS = {
+    "megaphone.fm", "simplecast.com", "libsyn.com", "art19.com", "anchor.fm", "transistor.fm",
+    "flightcast.com", "substack.com", "omnycontent.com", "audioboom.com", "podbean.com",
+    "buzzsprout.com", "acast.com", "spreaker.com", "feedburner.com", "captivate.fm", "pdrl.fm",
+    "podtrac.com", "soundcloud.com", "npr.org", "apple.com", "spotify.com", "youtube.com",
+    "google.com", "amazon.com", "bit.ly", "linktr.ee", "patreon.com", "instagram.com",
+    "twitter.com", "x.com", "tiktok.com", "facebook.com", "linkedin.com",
+}
+
+
+def show_sources(video: VideoEvidence) -> list[tuple[str, str]]:
+    """Places in the video's metadata that may name its podcast."""
+    sources = [("channel", video.channel)]
+    segs = title_segments(video.title)
+    for i, seg in enumerate(segs):
+        has_number = bool(re.search(r"#\s?\d+|\b\d{1,5}\s*$", seg))
+        podcasty = re.search(r"\b(podcast|show|radio|pod)\b|cast\b", seg, re.I)
+        last_after_bar = i == len(segs) - 1 and len(segs) >= 2 and " | " in video.title \
+            and len(_source_tokens(seg)) <= 6
+        if (has_number or podcasty or last_after_bar) and _source_tokens(seg):
+            sources.append(("title", re.sub(r"#\s?\d+|\b\d{1,5}\s*$", "", seg).strip()))
+    return sources
+
+
+def find_shows(video: VideoEvidence, limit: int = 2) -> list[ShowCandidate]:
+    found: dict[int, ShowCandidate] = {}
+    sources = show_sources(video)
+    text = (video.description or "") + " " + " ".join(video.links)
+    link_domains = {_domain(u) for u in video.links} - _SHARED_DOMAINS - {None}
+
+    # A Spotify show link names the podcast outright: use its name as a source.
+    for sid in list(dict.fromkeys(spotify.SHOW_LINK.findall(text)))[:2]:
+        name = spotify.show_name(sid)
+        if name:
+            sources.append(("linked", name))
+
+    def consider(show: dict, via: str, searched: str | None, bonus: float = 0.0):
         cid = show.get("collectionId")
         if not cid or show.get("kind") not in (None, "podcast"):
             return
-        strength = min(1.0, _name_support(show, video) + bonus)
+        strength = _name_support(show, sources, searched)
+        # The show's feed lives on a site the video links to (lexfridman.com, changelog.com).
+        if _domain(show.get("feedUrl")) in link_domains:
+            strength += 0.3
+            via += "+feed_domain_linked"
+        strength = min(1.0, strength + bonus)
         if cid in found:
             found[cid].strength = max(found[cid].strength, strength)
             found[cid].via.append(via)
@@ -165,25 +215,16 @@ def find_shows(video: VideoEvidence, limit: int = 3) -> list[ShowCandidate]:
             found[cid] = ShowCandidate(cid, show.get("collectionName") or "",
                                        show.get("artistName") or "", strength, [via])
 
-    # Apple links in the description name the show outright, but descriptions
-    # also link guests' shows and sponsors, so they add support, not proof.
-    for cid in dict.fromkeys(APPLE_SHOW_LINK.findall(video.description or ""))[:3]:
+    # An Apple Podcasts link names a show, but descriptions also link guests'
+    # shows and sponsors, so it adds support rather than proof.
+    for cid in list(dict.fromkeys(APPLE_SHOW_LINK.findall(text)))[:3]:
         show = itunes.lookup_show(int(cid))
         if show:
-            consider(show, "description_link", bonus=0.3)
+            consider(show, "apple_link", None, bonus=0.3)
 
-    terms = [video.channel]
-    for seg in title_segments(video.title):
-        seg = re.sub(r"#\s?\d+|\b\d{1,5}\b", "", seg).strip()
-        if seg and re.search(r"\b(podcast|show|radio|cast|pod)\b|cast\b", seg, re.I):
-            terms.append(seg)
-    # Last segment of a multi-part title is often the show ("... | SmartLess").
-    segs = title_segments(video.title)
-    if len(segs) >= 2 and len(name_tokens(segs[-1])) <= 5:
-        terms.append(re.sub(r"#\s?\d+|\b\d{1,5}\b", "", segs[-1]).strip())
-    for term in dict.fromkeys(t for t in terms if t and len(fold(t)) >= 3):
+    for term in list(dict.fromkeys(src for _, src in sources if len(fold(src)) >= 3))[:4]:
         for show in itunes.search_shows(term, limit=8):
-            consider(show, f"search:{term}")
+            consider(show, f"search:{term}", term)
 
     ranked = sorted(found.values(), key=lambda s: -s.strength)
     return [s for s in ranked if s.strength >= 0.6][:limit]
@@ -205,46 +246,53 @@ def _duration_agreement(video_s: int | None, episode_s: int | None) -> str:
     return "mismatch"
 
 
+def _description_overlap(a: str, b: str) -> float:
+    """Share of the shorter description's opening words found in the other.
+
+    Many shows paste the same episode notes on YouTube and in the feed, so a
+    high overlap is strong evidence even when the titles differ."""
+    ta, tb = tokens(a[:1500]), tokens(b[:1500])
+    if min(len(set(ta)), len(set(tb))) < 15:
+        return 0.0
+    return containment(ta[:120], tb) if len(set(ta)) <= len(set(tb)) else containment(tb[:120], ta)
+
+
+@dataclass
+class Signals:
+    title: float
+    desc: float
+    days: int | None
+    duration: str
+    number: bool | None     # True match, False conflict, None not comparable
+
+
 def score_episode(ep: dict, video: VideoEvidence, show: ShowCandidate | None,
-                  show_names: list[str]) -> Candidate:
-    reasons = []
+                  show_names: list[str]) -> tuple[Candidate, Signals]:
     ep_title = ep.get("trackName") or ""
     yt_title = content_title(video.title, show_names)
     t_sim = max(title_similarity(yt_title, ep_title), title_similarity(video.title, ep_title))
-    score = 0.45 * t_sim
-    reasons.append(f"title {t_sim:.2f}")
-
     yt_nums, ep_nums = episode_numbers(video.title), episode_numbers(ep_title)
-    if yt_nums and ep_nums:
-        if yt_nums & ep_nums:
-            score += 0.25
-            reasons.append("episode number")
-        else:
-            score -= 0.25
-            reasons.append("episode number differs")
-
-    desc_sim = 0.0
-    ep_desc = ep.get("description") or ep.get("shortDescription") or ""
-    if video.description and ep_desc:
-        a = tokens(video.description[:1200])
-        b = tokens(ep_desc[:1200])
-        desc_sim = containment(a, b) if min(len(set(a)), len(set(b))) >= 12 else 0.0
-        score += 0.15 * desc_sim
-        reasons.append(f"description {desc_sim:.2f}")
-
+    number = bool(yt_nums & ep_nums) if yt_nums and ep_nums else None
+    desc = _description_overlap(video.description or "",
+                                ep.get("description") or ep.get("shortDescription") or "")
     days = days_apart(video.published, ep.get("releaseDate"))
+    ep_s = int(ep["trackTimeMillis"] / 1000) if ep.get("trackTimeMillis") else None
+    duration = _duration_agreement(video.duration_s, ep_s)
+
+    score = 0.35 * t_sim + 0.25 * desc
+    score += {True: 0.25, False: -0.3, None: 0.0}[number]
     if days is not None:
         score += 0.1 * (1 if days <= 1 else 0.6 if days <= 3 else 0.3 if days <= 7 else 0)
-        reasons.append(f"{days} days apart")
-
-    ep_s = int(ep["trackTimeMillis"] / 1000) if ep.get("trackTimeMillis") else None
-    agreement = _duration_agreement(video.duration_s, ep_s)
-    score += {"match": 0.1, "close": 0.05, "unknown": 0.0, "mismatch": -0.2}[agreement]
-    reasons.append(f"duration {agreement}")
-
+    score += {"match": 0.1, "close": 0.05, "unknown": 0.0, "mismatch": -0.2}[duration]
     if show is not None:
         score += 0.1 * show.strength
-    return Candidate(
+
+    reasons = [f"title {t_sim:.2f}", f"description {desc:.2f}",
+               f"{days} days apart" if days is not None else "date unknown",
+               f"duration {duration}"]
+    if number is not None:
+        reasons.append("episode number " + ("matches" if number else "differs"))
+    cand = Candidate(
         title=ep_title,
         show=ep.get("collectionName") or "",
         collection_id=ep.get("collectionId") or 0,
@@ -254,26 +302,60 @@ def score_episode(ep: dict, video: VideoEvidence, show: ShowCandidate | None,
         duration_s=ep_s,
         score=round(score, 4),
         reasons=reasons,
-    ), {"title": t_sim, "desc": desc_sim, "days": days, "duration": agreement,
-        "number": bool(yt_nums & ep_nums)}
+    )
+    return cand, Signals(t_sim, desc, days, duration, number)
 
 
-def _is_confident(sig: dict, show: ShowCandidate | None, video: VideoEvidence) -> tuple[bool, str]:
-    if show is None or show.strength < 0.8:
-        return False, "show not identified"
-    if sig["duration"] == "mismatch":
-        return False, "durations disagree (clip or different cut)"
-    if sig["duration"] == "unknown" and not sig["number"]:
-        return False, "duration unknown"
-    if sig["days"] is not None and sig["days"] > 7 and not sig["number"]:
-        return False, "published more than a week apart"
-    strong = (sig["number"] and sig["title"] >= 0.2) \
-        or sig["title"] >= 0.6 \
-        or (sig["title"] >= 0.35 and sig["desc"] >= 0.5 and (sig["days"] or 99) <= 3) \
-        or (sig["desc"] >= 0.7 and (sig["days"] or 99) <= 2 and sig["duration"] == "match")
+def _is_confident(sig: Signals, show: ShowCandidate | None) -> tuple[bool, str]:
+    if show is None:
+        return False, "episode is from a show the video doesn't name"
+    if sig.number is False:
+        return False, "episode numbers differ"
+    if sig.duration == "mismatch":
+        return False, "lengths differ (a clip or a different cut)"
+    if sig.duration == "unknown" and not sig.number and sig.desc < 0.8:
+        return False, "length unknown"
+    near = sig.days is not None and sig.days <= 3
+    week = sig.days is not None and sig.days <= 7
+    if show.strength >= 0.8:
+        strong = (sig.number and sig.title >= 0.2) \
+            or (sig.title >= 0.6 and week) \
+            or (sig.title >= 0.35 and sig.desc >= 0.4 and near) \
+            or (sig.desc >= 0.6 and near) \
+            or (sig.desc >= 0.8 and week)
+    else:
+        # Show only loosely backed: the episode itself must be unmistakable.
+        strong = sig.desc >= 0.8 and near and sig.duration == "match"
     if not strong:
         return False, "no strong episode evidence"
     return True, "matched"
+
+
+def _key(ep: dict) -> str:
+    return ep.get("episodeGuid") or ep.get("episodeUrl") or ep.get("trackName") or ""
+
+
+def _rank(episodes, video, by_id, show_names):
+    scored = []
+    for ep in episodes.values():
+        show = by_id.get(ep.get("collectionId"))
+        cand, sig = score_episode(ep, video, show, show_names)
+        if sig.title < 0.15 and not sig.number and sig.desc < 0.4:
+            continue
+        scored.append((cand, sig, show))
+    scored.sort(key=lambda x: -x[0].score)
+    return scored
+
+
+def _decide(scored, video):
+    best, sig, show = scored[0]
+    runner = scored[1][0].score if len(scored) > 1 else 0.0
+    ok, why = _is_confident(sig, show)
+    if ok and best.score - runner < 0.1:
+        ok, why = False, "another episode scores almost as well"
+    if ok and CLIP_WORDS.search(video.title) and sig.duration != "match":
+        ok, why = False, "looks like a clip"
+    return ok, why
 
 
 def match(video: VideoEvidence) -> Result:
@@ -284,44 +366,33 @@ def match(video: VideoEvidence) -> Result:
     episodes: dict[str, dict] = {}
     for s in shows:
         for ep in itunes.show_episodes(s.collection_id):
-            episodes.setdefault(ep.get("episodeGuid") or ep.get("episodeUrl") or ep.get("trackName"), ep)
-    # Episodes older than the show's latest 200 only surface through search.
-    term = content_title(video.title, show_names)
-    for ep in itunes.search_episodes(term[:100]):
-        episodes.setdefault(ep.get("episodeGuid") or ep.get("episodeUrl") or ep.get("trackName"), ep)
-
-    scored = []
-    for ep in episodes.values():
-        show = by_id.get(ep.get("collectionId"))
-        cand, sig = score_episode(ep, video, show, show_names)
-        if sig["title"] < 0.15 and not sig["number"] and sig["desc"] < 0.5:
-            continue
-        scored.append((cand, sig, show))
-    scored.sort(key=lambda x: -x[0].score)
+            episodes.setdefault(_key(ep), ep)
+    scored = _rank(episodes, video, by_id, show_names)
+    ok, why = _decide(scored, video) if scored else (False, "")
+    if not ok:
+        # Older episodes (beyond the latest 200) and shows the video doesn't
+        # name only surface through an episode search by title.
+        for ep in itunes.search_episodes(content_title(video.title, show_names)[:100]):
+            episodes.setdefault(_key(ep), ep)
+        scored = _rank(episodes, video, by_id, show_names)
+        ok, why = _decide(scored, video) if scored else (False, "")
 
     top_show = shows[0].name if shows else None
+    nothing = "no matching episode in the show's feed" if shows else "no podcast found for this channel"
     if not scored:
-        return Result("none", "no podcast episode found" if shows else "no podcast found for this channel",
-                      show=top_show)
-
-    best, sig, show = scored[0]
-    runner = scored[1][0].score if len(scored) > 1 else 0.0
-    ok, why = _is_confident(sig, show, video)
-    if ok and best.score - runner < 0.08:
-        ok, why = False, "runner-up too close"
-    if ok and CLIP_WORDS.search(video.title) and sig["duration"] != "match":
-        ok, why = False, "looks like a clip"
+        return Result("none", nothing, show=top_show)
+    best = scored[0][0]
     candidates = [c for c, _, _ in scored[:5]]
     if ok:
         return Result("confident", why, match=best, candidates=candidates, show=best.show)
 
     # Offer candidates only when there is something worth offering: an
     # identified show, or an episode that matches strongly on its own.
-    plausible = [c for c, s, sh in scored[:5]
-                 if (sh is not None and sh.strength >= 0.8 and c.score >= 0.3)
-                 or (s["title"] >= 0.6 and s["duration"] in ("match", "close")
-                     and s["days"] is not None and s["days"] <= 3)]
+    plausible = [c for c, sg, sh in scored[:5]
+                 if (sh is not None and sh.strength >= 0.8 and c.score >= 0.35)
+                 or (sg.title >= 0.6 and sg.duration in ("match", "close")
+                     and sg.days is not None and sg.days <= 3)
+                 or (sg.desc >= 0.6 and sg.days is not None and sg.days <= 7)]
     if plausible:
         return Result("review", why, candidates=plausible, show=top_show)
-    return Result("none", "no podcast episode found" if shows else "no podcast found for this channel",
-                  show=top_show)
+    return Result("none", nothing, show=top_show)

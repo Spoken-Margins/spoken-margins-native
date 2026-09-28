@@ -8,6 +8,7 @@ Exits non-zero if any confident match is wrong, or a brief threshold is missed.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import urllib.parse
 from pathlib import Path
@@ -59,6 +60,7 @@ def main() -> int:
         else:
             outcome = "none reported" if status == "none" else "review offered"
         rows.append((case, status, outcome, result))
+        print(f"[{len(rows)}/{len(cases)}] {case['id']} {status} {outcome}", file=sys.stderr, flush=True)
 
     if missing:
         print(f"{len(missing)} cases lack recorded responses; run with B3_HTTP=record:")
@@ -89,6 +91,12 @@ def main() -> int:
     print(f"'none' for no-feed shows:      {pct(none_ok, len(no_feed))}   (brief: >= 90%)")
     print(f"not confident, right episode among review candidates: {in_cands}")
     print(f"labeled none but got confident: {sum(1 for r in none_labeled if r[1] == 'confident')}")
+
+    dump = os.environ.get("B3_RESULTS")
+    if dump:
+        Path(dump).write_text(json.dumps(
+            [{"id": c["id"], "category": c["category"], "status": st, "outcome": oc,
+              "result": r.to_json() if r else None} for c, st, oc, r in rows], indent=1))
 
     ok = wrong == 0 and positives and correct / len(positives) >= 0.8 \
         and (not no_feed or none_ok / len(no_feed) >= 0.9)
