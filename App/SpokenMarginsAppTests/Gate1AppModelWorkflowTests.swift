@@ -3995,6 +3995,29 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.canManuallyFollowSelectedSource)
     }
 
+    /// B2 M1: an article from Safari (a Substack post with tracking) offers Follow right away,
+    /// not only a suggestion after a quarter is heard. Pasted text without a link doesn't.
+    func testArticleItemWithAWebLinkExposesManualFollow() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.selectedItem = ItemDetailState(id: "article", title: "The Specter of Neuralese", isNativeAudio: false)
+        model.libraryItems = [
+            LibraryItemRow(
+                id: "article",
+                title: "The Specter of Neuralese",
+                status: "Ready",
+                canDelete: true,
+                mediaType: "text",
+                sourceReference: "https://www.astralcodexten.com/p/the-specter-of-neuralese?utm_source=substack&utm_medium=email"
+            )
+        ]
+        XCTAssertTrue(model.canManuallyFollowSelectedSource)
+
+        model.libraryItems = [
+            LibraryItemRow(id: "article", title: "Pasted notes", status: "Ready", canDelete: true, mediaType: "text")
+        ]
+        XCTAssertFalse(model.canManuallyFollowSelectedSource)
+    }
+
     func testFollowedSourceIdentityUsesCanonicalURLInsteadOfDisplayTitle() {
         let subscription = FeedSubscription(
             id: "show",

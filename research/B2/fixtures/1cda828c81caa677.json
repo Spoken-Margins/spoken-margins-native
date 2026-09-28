@@ -1,0 +1,13 @@
+{
+ "url": "https://open.substack.com/feed.xml",
+ "kind": "feed",
+ "status": 404,
+ "headers": {
+  "content-type": "text/html; charset=utf-8",
+  "x-served-by": "Substack",
+  "content-length": "34"
+ },
+ "body": "Not found, go <a href=\"/\">home<a/>",
+ "original_bytes": 34,
+ "trimmed": false
+}

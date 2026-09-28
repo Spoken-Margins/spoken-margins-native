@@ -1,0 +1,13 @@
+{
+ "url": "https://www.platformer.news/feed.xml",
+ "kind": "feed",
+ "status": 404,
+ "headers": {
+  "content-type": "text/plain; charset=utf-8",
+  "x-served-by": "cache-ams-eham8680089-AMS, cache-ams-eham8680089-AMS, cache-ams-eham8680066-AMS, cache-iad-kcgs7200093-IAD",
+  "content-length": "34"
+ },
+ "body": "File not found",
+ "original_bytes": 14,
+ "trimmed": false
+}

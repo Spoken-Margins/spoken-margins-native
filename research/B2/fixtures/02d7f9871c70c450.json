@@ -1,0 +1,13 @@
+{
+ "url": "https://substack.com/notes",
+ "kind": "feed",
+ "status": 301,
+ "headers": {
+  "location": "/",
+  "x-served-by": "Substack",
+  "content-length": "0"
+ },
+ "body": "",
+ "original_bytes": 0,
+ "trimmed": false
+}

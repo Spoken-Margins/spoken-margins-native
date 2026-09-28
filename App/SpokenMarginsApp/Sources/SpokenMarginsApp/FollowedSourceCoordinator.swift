@@ -52,12 +52,19 @@ actor FollowedSourceCoordinator {
     }
 
     func discover(urlString: String, requiringItemMembership: Bool = false) async throws -> [SourceCandidateEvidence] {
-        guard let url = URL(string: urlString.trimmingCharacters(in: .whitespacesAndNewlines)) else { throw FollowedSourceError.invalidURL }
-        guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased() else { throw FollowedSourceError.insecureURL }
-        contactedHosts = [host]
-        if let parsed = try? await fetch(url: url, subscription: nil) {
+        let link = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: link) else { throw FollowedSourceError.invalidURL }
+        contactedHosts = []
+        if url.scheme?.lowercased() == "https", let parsed = try? await fetch(url: url, subscription: nil) {
             return [candidate(url: url, parsed: parsed, relation: "direct", confidence: 1)]
         }
+        // B2: a Substack post, home page, share link or profile names its publication by origin,
+        // so old and tracked links need no feed membership. Other sites return nil here.
+        if let substack = await substackCandidate(for: link) {
+            return [substack]
+        }
+        guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased() else { throw FollowedSourceError.insecureURL }
+        contactedHosts.insert(host)
         let html = try await fetchHTML(url: url)
         var evidence: [(URL, String, Double)] = Self.alternateFeedURLs(in: html, baseURL: url)
             .map { ($0, "html_alternate", 0.95) }
@@ -249,6 +256,43 @@ actor FollowedSourceCoordinator {
             URL(string: $0, relativeTo: responseURL)?.absoluteURL.absoluteString
         } ?? responseURL.absoluteString
         return parsed
+    }
+
+    private func substackCandidate(for link: String) async -> SourceCandidateEvidence? {
+        let resolver = SubstackPublicationResolver { url, kind in
+            try await self.substackFetch(url: url, kind: kind)
+        }
+        guard let publication = await resolver.resolve(link),
+              let feedURL = URL(string: publication.feedURL) else { return nil }
+        return candidate(
+            url: feedURL,
+            parsed: publication.feed,
+            relation: publication.isCertain ? publication.kind.rawValue : SourceCandidateEvidence.substackProfileRelation,
+            confidence: publication.confidence
+        )
+    }
+
+    /// Substack probes read /feed and substack.com pages only. Pages are capped higher than the
+    /// generic 1 MB discovery limit because only their final URL and headers matter.
+    private func substackFetch(url: URL, kind: SubstackFetchKind) async throws -> SubstackFetchResponse {
+        if let host = url.host?.lowercased() { contactedHosts.insert(host) }
+        var request = URLRequest(url: url)
+        request.setValue(
+            kind == .feed
+                ? "application/rss+xml, application/atom+xml, application/feed+json, application/json, application/xml, text/xml"
+                : "text/html, application/xhtml+xml",
+            forHTTPHeaderField: "Accept"
+        )
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw FollowedSourceError.invalidResponse }
+        guard data.count <= (kind == .feed ? Self.maximumFeedBytes : 4 * 1_024 * 1_024) else {
+            throw FollowedSourceError.responseTooLarge
+        }
+        var headers: [String: String] = [:]
+        for (name, value) in http.allHeaderFields {
+            headers[String(describing: name).lowercased()] = String(describing: value)
+        }
+        return SubstackFetchResponse(url: http.url ?? url, status: http.statusCode, headers: headers, body: data)
     }
 
     private func fetchHTML(url: URL) async throws -> String {

@@ -1,0 +1,14 @@
+{
+ "url": "https://astralcodexten.substack.com/feed",
+ "kind": "feed",
+ "status": 301,
+ "headers": {
+  "content-type": "text/plain; charset=utf-8",
+  "location": "https://www.astralcodexten.com/feed",
+  "x-served-by": "Substack",
+  "content-length": "69"
+ },
+ "body": "Moved Permanently. Redirecting to https://www.astralcodexten.com/feed",
+ "original_bytes": 69,
+ "trimmed": false
+}
