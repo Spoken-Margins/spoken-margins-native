@@ -1,5 +1,5 @@
 {
- "about": "Substack links a listener might hand the app. `expect_feed` is the publication feed the resolver must find (null: not a Substack; generic discovery keeps it). `item` marks links that would be an article item in the Library (so the suggestion path applies). Recorded responses: fixtures/ (python3 record.py).",
+ "about": "Substack links a listener might hand the app. `expect_feed` is the publication feed the resolver must find (null: not a Substack; generic discovery keeps it). `item` marks links that would be an article item in the Library (so the suggestion path applies). Recorded responses: fixtures/ (python3 run_cases.py --record).",
  "cases": [
   {
    "id": "post-custom-clean",

@@ -94,5 +94,6 @@ The decision and reasoning are on #188. The code parts:
 
 - `is_private_feed_url` / `redact`: recognise a subscriber's private Substack feed link (`api.substack.com/feed/podcast/<id>/private/<token>.rss`) and show it without its token. The resolver returns it as a `substack_private_feed` candidate with `private = True`. Per I1 and #168 it must never leave the device.
   - Tested against a recorded public podcast feed served under a fake private URL. This session has no paid subscription.
+  - A link's shape does not prove access. A UUID-shaped token that isn't a subscriber's gets `200` with the public episodes (checked live 2026-09-28), so the app should compare the followed feed with the public one before calling it "paid".
 - `page_is_paywalled`: detects Substack's paywall element (`data-component-name="Paywall"`) in a captured page. The app can then say "this is only the preview; open it in Safari where you're signed in and use the extension" instead of narrating a teaser as if it were the post.
   - Tested on a recorded paid post (`post-paid-truncated`) and a free one.
