@@ -4,23 +4,19 @@
 # A stream asks by commenting `/lane T2` or `/lane T3` on its PR into next and adding the
 # lane:queued label.
 #
-# Trigger: pull_request_target, so GitHub runs this file as it is on the base branch. A plain
-# pull_request run is built from the PR's merge ref, which GitHub doesn't refresh when next moves:
-# PRs last pushed before this workflow existed never triggered it (#221), and PRs that conflict
-# with next never run at all. Comment events can't be used either; they only run from main.
-# The job then checks out the PR head, takes lane-runner.py from the base branch, and lets it merge
-# the newest base in itself (a conflict gets an INCONCLUSIVE report naming the files).
+# Trigger: pull_request. GitHub builds these runs from the PR's merge ref, which it doesn't refresh
+# when next moves, so a PR last pushed before this file reached next gets no run (#221) until it
+# merges next and pushes; a PR that conflicts with next gets no run either. The other triggers
+# don't help: comment events and pull_request_target always use the default branch's (main's)
+# copy of this file, and main doesn't carry it.
+# The job checks out the PR head, takes lane-runner.py from the base branch, and lets it merge the
+# newest base in itself, so a report always tests the PR against the current next.
 #
-# pull_request_target runs PR code with the base repository's token. That is safe here: the repo
-# is private, the job only runs for branches in this repository, the token can only read contents
-# and write PR comments and labels, and no secrets are used. PR code already runs on this Mac for
-# any lane request.
-#
-# `lane-check/**` bases exist only to test a change to this workflow before it reaches next.
+# `lane-check/**` bases exist only to test a change to the lane before it reaches next.
 name: lane
 
 on:
-  pull_request_target:
+  pull_request:
     branches: [next, 'lane-check/**']
     types: [labeled, synchronize, reopened]
 

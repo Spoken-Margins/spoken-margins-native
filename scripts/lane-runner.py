@@ -3,8 +3,8 @@
 
 Run by .github/workflows/lane.yml on the Mac's self-hosted runner. The workflow checks out the PR's
 head in --tree and runs this script as taken from the base branch (next); the script merges the
-newest next into the tree itself, so a PR whose GitHub merge ref is stale, or that conflicts with
-next, still gets a run and a report. Agent sessions can't run it (the lane guard blocks it); they ask
+newest next into the tree itself, so a report tests the PR against the current next even when
+GitHub's merge ref for the PR is stale. Agent sessions can't run it (the lane guard blocks it); they ask
 by commenting a request and adding the lane:queued label. Formats: docs/workstreams/test-lane.md.
 
 - The runner takes the newest T2/T3 request it hasn't answered yet. T4 and T5 requests belong to the
