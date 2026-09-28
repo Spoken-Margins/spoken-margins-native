@@ -26,8 +26,9 @@
 - Done when:
   - Now Playing follows D1's spec. Every existing ability is still reachable.
   - Primary controls are within one-handed reach and at least 44 pt (#148, #149, #151).
-  - The current chapter is highlighted (#134), and the mini player shows what's actually playing (#165).
-  - Lane T4 runs J1, J2 and J3 green. The owner accepts the feel on the phone.
+  - The current chapter is highlighted (#134).
+  - Lane T4 runs J1, J2 and J3 green.
+  - (owner) The owner accepts the feel on the phone.
 
 **M2: Margin navigation.**
 - Done when:
@@ -36,7 +37,8 @@
   - The next Margin is previewed (#167). Tapping a shared Margin in the timeline plays its moment (#158).
   - All of it runs through the A2 coordinator, adding no playback state to the model.
   - Coordinator-level host tests cover each path, including interruption and seeking while paused.
-  - Lane T4 runs J3 and J5, and the owner checks by ear (T6).
+  - Lane T4 runs J3 and J5.
+  - (owner) The owner checks by ear (T6).
 
 ## Must not break
 
@@ -48,4 +50,4 @@ Book-club features beyond single-item Margin navigation (F1).
 
 ## Related
 
-#115, #134, #137, #148, #149, #151, #158, #159, #165, #167, #180, #181, #182.
+#115, #134, #137, #148, #149, #151, #158, #159, #167, #180, #181, #182.

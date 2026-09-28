@@ -22,7 +22,7 @@
   - An orphaned activity from a killed process is ended on the next launch.
   - The stale state looks intentional ("Paused — tap to resume") rather than frozen.
   - Host/app tests cover each rule with injected clocks and interruption events. T3 is green.
-  - The owner confirms the Spotify and phone-call cases on the phone (T6). An agent can't produce those interruptions in the simulator.
+  - (owner) The owner confirms the Spotify and phone-call cases on the phone (T6). An agent can't produce those interruptions in the simulator.
 
 ## Must not break
 

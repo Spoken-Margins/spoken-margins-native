@@ -13,7 +13,7 @@ Everything is anonymous. There are no accounts; installs that submit junk can be
 - M2 (server design) in the cloud. **Effort: xhigh.**
 - M3 on both.
 
-**Waits for.** B4 M1 (server foundation and I11), I9 (episode identity; #177: the app doesn't store episode GUIDs yet), and the owner's rights decision for transcripts.
+**Waits for.** M1: nothing. M2: B4 M1 (server foundation and I11). M3: B4 M1, plus I9 (episode identity; C4 stores episode GUIDs in #177 after D4 M0 fixes #168), and the owner's decision on the route.
 
 **Seams.** Owns **I8** (listening map extensions), with E1 for entity fields. Uses I9 and I11.
 
@@ -39,8 +39,8 @@ Everything is anonymous. There are no accounts; installs that submit junk can be
 - Done when:
   - Episodes of followed podcasts get maps automatically where the device can make them, within an owner-accepted battery and heat budget. Recommendation: while charging by default, with a visible toggle.
   - Publisher chapters are used when present.
-  - Measured on the owner's phone: the share of new episodes of followed shows that have a map within 24 hours, before and after. The owner sees Skim available more often.
-  - Episode GUIDs are stored (#177), in coordination with C4.
+  - The app records, per episode, whether and when a map became available, so coverage can be measured. A host test proves the recording.
+  - (owner) On the owner's phone, the share of new episodes of followed shows with a map within 24 hours, before and after, from that record.
 
 **M2: Community server design.**
 - Done when a design on the tracking issue, with a skeleton on B4's foundation, covers:

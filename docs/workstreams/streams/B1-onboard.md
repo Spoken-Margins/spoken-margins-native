@@ -6,7 +6,7 @@
 
 **Where.** Research and catalog work in the cloud. App work on the Mac.
 
-**Seams.** Owns **I1** (link → source resolution) and **I2** (followed source and catalog entry). B2, B3 and B4 plug into I1, and D2 and D3 read I2. Publish both before the app milestone lands, with a stub resolver and a fixture catalog.
+**Seams.** Owns **I1** (link → source resolution) and **I2** (followed source and catalog entry). B2, B3 and B4 plug into I1, and D2 and D3 read I2. Publish both in M1, with a stub resolver and a fixture catalog. I2 includes the source *kind* (podcast, article, paper, news, and so on) that D3 filters by.
 
 ## Starting points
 
@@ -16,7 +16,7 @@
 - **Conditional refresh is broken:** ETag and Last-Modified are sent when stored, but nothing ever stores them, so every refresh downloads the whole feed.
 - A remote manifest pattern already exists: `GuidedOnboardingCoordinator` fetches a size-capped, checksum-verified manifest from the owner's static site (`Site/onboarding/v1/`). A catalog can reuse that pattern (#69).
 - The Add Source flow is in `ExperienceAddSourceFlow.swift` (five routes). The Library has a "two-minute tour" card.
-- Build 30 reach items that belong here: #145 (Paste & go), #153 (Paste a feed link doesn't paste).
+- Build 30 reach item that belongs here: #145 (Paste & go).
 
 ## Milestones
 
@@ -24,7 +24,7 @@
 - Done when:
   - On a fresh install, a drawer offers at least 100 popular podcasts with artwork, filterable by at least 8 subjects. One tap follows and shows it's followed.
   - It works offline from a bundled snapshot and refreshes from a remote catalog when online.
-  - A lane T4 run on a fresh simulator shows five follows in under 60 seconds of tapping, with new episodes appearing in Following afterwards.
+  - A lane T4 run on a fresh simulator shows five follows in at most 7 taps from first launch (count taps: an agent's clock isn't a listener's), with new episodes appearing in Following afterwards.
   - I1 and I2 are published.
 
 **M2: Search and OPML.**
@@ -54,4 +54,4 @@ The catalog's source: Apple's public top charts, Podcast Index, or a hand-curate
 
 ## Related
 
-#69, #76, #145, #153, #170, #179 (episodes with audio dropped by the feed parser).
+#69, #76, #145, #170, #179 (episodes with audio dropped by the feed parser).

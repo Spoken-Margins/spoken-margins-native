@@ -44,7 +44,7 @@ Serverless first (packets in a group chat). A server later makes it effortless: 
   - A listener can reply to a specific Margin. The reply is linked to its parent by a stable identifier.
   - A reply packet makes the round trip A → B → C → A with correct threading.
   - The conversation capability is required only when a packet actually contains a reply, so Build 29 imports reply-free packets. It shows replies as plain Margins, or rejects them with a clear message; test which.
-  - The owner runs it with two or three real people (T6).
+  - (owner) The owner runs it with two or three real people (T6).
 
 **M3: Book club with a server.**
 - Done when:

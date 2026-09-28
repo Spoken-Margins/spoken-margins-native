@@ -6,9 +6,9 @@
 
 **Where.** Scoring logic in SessionKit, so it's host-testable, and cloud-testable if A1 M4 lands. UI on the Mac.
 
-**Waits for.** A2 M1 for the UI. Signals and scoring can start immediately.
+**Waits for.** Nothing to start: Following already has its own screen file (`ExperienceSourcesScreen.swift`). M2's evaluation needs signals logged by a shipped build.
 
-**Seams.** Owns **I4** (engagement signals) and **I5** (ranking policy file). Reads I2 (source kinds and categories).
+**Seams.** Owns **I4** (engagement signals, published in M1) and **I5** (ranking policy file, published in M3). Reads I2 for source kinds and categories. B1 owns the kind field; if it isn't published yet, propose the field on B1's tracking issue rather than defining a second one.
 
 ## Starting points
 
@@ -22,8 +22,9 @@
 **M1: Signals and kinds.**
 - Done when:
   - I4 is recording: listened time per item and source, Margins (kind and length), shares, exports, imports from others, dismissals, finishes. There's no per-tick main-thread I/O.
+  - Listening time comes from one thin call site in today's playback path, which A2 M2 later moves into its coordinator. Every other signal is recorded where the action happens.
   - The previous build still opens the database (test with the build-25 fixture approach in `docs/testing.md`).
-  - Sources carry a kind tag (auto-assigned, user-editable), and Following can filter by it.
+  - Following can filter by I2's source kind (auto-assigned, user-editable).
   - #141 and #146 are addressed.
   - T3 green, and lane T4 on a library with 30+ feeds.
 
@@ -32,7 +33,7 @@
   - Following can be ordered by a transparent score, and every item shows its top reason.
   - "More like this" and "less of this source" change the order visibly and reversibly.
   - With no signals, the default order is at least as good as newest-first.
-  - An offline evaluation on the owner's own logged history (exported with the owner's permission) shows the score would have put items the owner went on to finish or make Margins on higher than date order did. Report the metric.
+  - (owner) Once M1 has shipped in a TestFlight build and logged at least two weeks of the owner's listening, the owner exports the log. An offline evaluation then shows whether the score would have put items the owner went on to finish or make Margins on higher than date order did. Build the evaluation script against a synthetic log first, so it's ready when the data is.
 
 **M3: The policy file and filters.**
 - Done when:

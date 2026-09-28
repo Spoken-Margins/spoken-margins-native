@@ -26,7 +26,8 @@
 
 **M2: Paid posts (research first).**
 - Done when a written finding (on the tracking issue, not a doc) answers three questions: what paid-subscriber access Substack actually offers (private feed links, email delivery, app sign-in), what each option would require of the app, and the terms-of-service and credential risks.
-  - It ends with a recommendation and a prototype of the lowest-risk option that works on the owner's own paid subscription.
+  - It ends with a recommendation and a prototype of the lowest-risk option, tested against a free Substack or a recorded fixture.
+  - (owner) The owner tries the prototype with their own paid subscription.
   - No in-app credential handling ships without the owner's OK.
 
 ## Must not break

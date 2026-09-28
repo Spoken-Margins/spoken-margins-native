@@ -24,22 +24,28 @@
   - The chosen voice returns when the condition clears.
   - Chunk boundaries don't flip play/pause or the Now Playing state.
   - Rate is one number and isn't multiplied by the accessibility rate.
-- Host and app tests cover Low Power Mode and charging as separate transitions, with non-1.0 rates. Lane T3 is green. The owner confirms on the phone.
+- Host and app tests cover Low Power Mode and charging as separate transitions, with non-1.0 rates. Lane T3 is green.
+- I14 is published, including how each I13 role (heading, caption, footnote, citation, reference) is spoken, so C1 can build on it.
+- (owner) The owner confirms on the phone.
 
 **M2: Pick a fallback voice** (research).
-- Done when a comparison on the tracking issue covers at least 4 candidate engines or voices: license, app size, time to first audio, real-time factor measured on a Mac and on the owner's phone in Low Power Mode, and quality.
-  - Quality means an owner blind listen of the same three passages (including a scientific paragraph) against Samantha and Supertonic.
-  - It ends with a recommendation that meets: ≥2× real time on the derived A13 budget, a license compatible with the App Store, and an app-size cost the owner accepts.
+- Done when a comparison on the tracking issue covers at least 4 candidate engines or voices: license, app size, time to first audio, and real-time factor on a Mac (Mac).
+  - It includes audio samples of the same three passages (including a scientific paragraph) for each candidate, plus Samantha and Supertonic, labeled blind for the owner.
+  - It includes a small benchmark build the owner can run on the phone.
+  - It ends with a recommendation that meets: ≥2× real time on the derived A13 budget, a license compatible with the App Store, and a stated app-size cost.
+  - (owner) The owner does the blind listen, runs the phone benchmark in Low Power Mode, and accepts the app-size cost.
 
 **M3: Ship it.**
 - Done when:
   - The chosen voice is bundled and needs zero configuration.
   - It's the automatic fallback, with Supertonic still preferred when allowed.
-  - A benchmark command reports real-time factor per engine. The owner's phone meets the derived budget in Low Power Mode while warm.
-  - A 30-minute article plays through a forced thermal fallback without a pause longer than 1 s.
+  - A benchmark command reports real-time factor per engine.
+  - In app tests, a 30-minute article plays through a forced fallback without a pause longer than 1 s.
+  - (owner) The owner's phone meets the derived budget in Low Power Mode while warm.
 
 **M4 (optional): Faster Supertonic.**
-- Done when an experiment on the tracking issue reports real-time factor and quality for at least two efficiency changes (for example fewer steps, a smaller model, a GPU or Neural Engine path), and any adopted change keeps the owner's blind-listen preference.
+- Done when an experiment on the tracking issue reports real-time factor and blind-labeled samples for at least two efficiency changes (for example fewer steps, a smaller model, a GPU or Neural Engine path).
+  - (owner) Any adopted change keeps the owner's blind-listen preference.
 
 ## Must not break
 

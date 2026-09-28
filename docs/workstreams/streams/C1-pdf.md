@@ -6,7 +6,7 @@
 
 **Where.** Corpus, scoring and failure analysis in the cloud. Extraction and app changes on the Mac (PDFKit and Vision are Apple-only, so the app's extractor must run on macOS to be scored).
 
-**Seams.** Owns **I13** (structured document). Uses I14 (the voice stream decides how roles are spoken).
+**Seams.** Owns **I13** (structured document), published in M1. Uses I14: C2 M1 publishes how each role is spoken, and M3 waits for it.
 
 ## Starting points
 
@@ -27,8 +27,9 @@
 - Done when:
   - A corpus manifest of at least 60 PDFs from at least 10 publishers or formats is committed as URLs and licenses, not the PDFs themselves. Include journals, preprints, conference papers, theses, a scanned paper, two-column and math-heavy papers.
   - A scorer reports, per PDF, what fraction of the spoken text is body text versus clutter, what fraction of the body text is missing, and how citations, footnotes, figures and tables are handled.
-  - A command-line tool on macOS runs the app's current extractor over the corpus.
+  - (Mac) A command-line tool on macOS runs the app's current extractor over the corpus. The cloud agent writes it; a Mac session or the lane runs it and posts the output.
   - A baseline report ranks the failure categories by how much they cost listeners.
+  - I13 is published: roles, figure and table references, and the extraction version rule.
 
 **M2: Predict hard PDFs.**
 - Done when a cheap pre-check (run before playback) flags at least 80% of the PDFs that score in the bottom quintile, with no more than 10% false alarms, and the app says so on import. Measured on the corpus.
@@ -44,7 +45,8 @@
 - Done when:
   - For corpus papers with figures and tables, at least 90% are detected with their captions.
   - During playback, reaching a caption shows the figure or table region from the page (tap to enlarge), and playback continues.
-  - Lane T4 shows it on two papers. The owner checks the listening side on a device.
+  - Lane T4 shows it on two papers.
+  - (owner) The owner checks the listening side on a device.
 
 ## Must not break
 

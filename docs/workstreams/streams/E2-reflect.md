@@ -27,20 +27,20 @@
 
 **M1: Review and triage, then a note.**
 - Done when a listener with 25 Margins across 6 items in a week (a seeded library on the lane) can:
-  - triage all of them in under 3 minutes, with one tap per Margin plus bulk drop by item or topic;
+  - triage all of them with at most one tap per Margin, and drop a whole item or topic in one tap (the lane counts taps, since an agent's clock isn't a listener's);
   - answer at least one prompt;
   - export the note in two taps.
-- Lane T4 times it.
 - The note is Markdown with frontmatter, sources, kept Margins with their context, and the listener's reflections.
-- The owner rates two real weeks' notes as worth keeping (T6).
+- (owner) The owner rates two real weeks' notes as worth keeping (T6).
 - With on-device AI, prompts and a short synthesis are generated on device. Without it, sensible fixed prompts and grouping still produce a good note.
 
 **M2: Listen to your week.**
-- Done when an audio mode plays each kept Margin with its source moment (lead-in → Margin), accepts a spoken reply that becomes part of the note, and survives interruptions. It runs on the A2 coordinator. Lane T4 plus an owner device pass.
+- Done when an audio mode plays each kept Margin with its source moment (lead-in → Margin), accepts a spoken reply that becomes part of the note, and survives interruptions. It runs on the A2 coordinator. Lane T4.
+  - (owner) A device pass by ear.
 
 ## Must not break
 
-The listener's Margins. Triage marks Margins as "not in this review" but never deletes them. Anything written to the notes folder follows D4's never-overwrite rule.
+The listener's Margins. Triage marks Margins as "not in this review" but never deletes them. Anything written to the notes folder follows D4's rule: files edited outside the app are never touched, and nothing is deleted.
 
 ## Out of scope
 

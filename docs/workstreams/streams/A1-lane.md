@@ -20,8 +20,8 @@
 
 **M1: Workbench.** Parallel Mac sessions can't hurt each other.
 - Done when:
-  - A `PreToolUse` hook blocks simulator boot, install, launch and simulator test plans in every session except the Test Desk (identified however A1 chooses, for example an environment variable set when it starts). The agent shows it being blocked in a stream session and allowed in the Test Desk.
-  - A build wrapper caps concurrent `xcodebuild` at two, with per-worktree DerivedData. Three simultaneous builds are shown queueing.
+  - A `PreToolUse` hook, installed in the Mac's user-level `~/.claude/settings.json` so it covers sessions on any branch, blocks simulator boot, install, launch and simulator test plans in every session except the Test Desk. The Test Desk can be identified however A1 chooses, for example an environment variable set when it starts. The agent shows it being blocked in a stream session and allowed in the Test Desk. Changing the owner's user settings is an owner-approved step: show the diff first.
+  - A build wrapper caps concurrent `xcodebuild` at two across the whole Mac (lane included), with per-worktree DerivedData. Three simultaneous builds are shown queueing.
   - `scripts/test-scope.py` maps a diff to a tier, and its unit tests cover at least: docs-only, SessionKit-only, app UI, audio-session, persistence, packet.
   - `lane-request` and `journey` skills exist.
   - `.claude/worktrees/` is git-ignored.

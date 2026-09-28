@@ -29,7 +29,7 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 
 ## The lane
 
-**Endpoint A1 must reach.** Any stream, cloud or Mac, can request T2–T5 against a pushed commit without the owner doing anything, and gets a report on its PR. The lane never runs more than **two** simulators at once or more than **two** `xcodebuild` invocations at once. A crash flood stops the lane and notifies the owner.
+**Endpoint A1 must reach.** Any stream, cloud or Mac, can request T2–T5 against a pushed commit without the owner doing anything, and gets a report on its PR. The Mac never runs more than **two** simulators at once. It never runs more than **two** `xcodebuild` invocations at once *in total*: one Mac-wide semaphore shared by the lane and every stream session. A crash flood stops the lane and notifies the owner.
 
 **Recommended shape** (A1 may change it if the endpoint holds):
 
@@ -44,8 +44,8 @@ Note for whoever builds the Test Desk: Claude Desktop's iOS Simulator pane curre
 
 ## Guard rails (deterministic, not advisory)
 
-- **Only the lane boots simulators.** A1 adds a `PreToolUse` hook for stream sessions that blocks `xcrun simctl boot|install|launch`, `xcodebuild test`, and `verify-tests.py --plan app|ui|release` unless the session is the Test Desk. Stream agents then *can't* start a simulator flood by accident.
-- **Build semaphore.** `xcodebuild` from stream worktrees goes through a wrapper that allows two at a time and queues the rest.
+- **Only the lane boots simulators.** A1 installs a `PreToolUse` hook in the Mac's **user-level** settings (`~/.claude/settings.json`), so it applies to every session whatever branch it started on. It blocks `xcrun simctl boot|install|launch`, `xcodebuild test`, and `verify-tests.py --plan app|adapters|ui|release` unless the session is the Test Desk. Stream agents then *can't* start a simulator flood by accident. `AGENTS.md` sends `--plan app` through the lane for this reason.
+- **Build semaphore.** Every `xcodebuild` on the Mac, from streams and from the lane, goes through one wrapper that allows two at a time and queues the rest.
 - **Fresh DerivedData per worktree** (`AGENTS.md`: stale SessionKit modules give false "does not conform" errors).
 - **Crash-flood rule** as in `AGENTS.md`: three crashes of one process within a minute stops the lane, shuts that simulator down and notifies the owner. A lone crash is noted in the report and work continues.
 

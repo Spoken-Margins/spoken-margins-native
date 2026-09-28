@@ -14,10 +14,10 @@
 - Two earlier design studies exist; build on what still holds:
   - `Design/UXProposal20260909`: an audit with 24 findings and 23 screenshots.
   - `Design/SpokenMarginsOverhaul`: a Next.js prototype with 11 states and research docs.
-- Measured today: sharing a Margin takes about 8–10 taps. Session export takes about 5. Setting up the notes folder takes 6–8.
+- Counted from the code today: sharing a Margin takes about 8–10 taps. Session export takes about 5. Setting up the notes folder takes 6–8.
 - Tester feedback: many moving parts; you have to use the app from several places to get podcasts in; no onboarding; no easy sharing.
 - The owner's intent for Home: "a Jack of all trades so the other screens can specialize". It shows what to resume, one suggestion to start, one feed to follow for new users, recent Margins that are easy to share, and the book club, if any.
-- Open UI issues to account for: #106–#109, #115, #141, #146–#149, #151, #165, #167.
+- Open UI issues to account for: #106–#109, #115, #141, #146–#149, #151, #167.
 
 ## Milestones
 

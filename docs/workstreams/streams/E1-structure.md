@@ -14,7 +14,7 @@ This all happens on the device, with no server call, ever. Without on-device AI,
 
 **Where.** The evaluation set and deterministic baseline can start in the cloud. On-device producers, and anything using Apple's NaturalLanguage or Foundation Models frameworks, are host-testable on the Mac.
 
-**Seams.** Owns **I7** (structured Margin record) and the entity fields of **I8**. Uses I12 read access for vault matching.
+**Seams.** Owns **I7** (structured Margin record, published in M2) and the entity fields of **I8**. M4 uses I12 read access, which D4 publishes in its M2.
 
 ## Starting points
 
@@ -29,15 +29,17 @@ This all happens on the device, with no server call, ever. Without on-device AI,
 **M1: What "good" means.**
 - Done when:
   - A small taxonomy (statement kinds, referent, entities, link types) is written on the tracking issue.
-  - A labeled evaluation set of at least 150 Margins with their source context exists. Use the owner's exported Margins (the owner provides the export and decides whether it may be committed) topped up with Margins written against public podcasts and articles.
+  - A labeled evaluation set of at least 150 Margins with their source context exists, built from Margins written against public podcasts and articles.
+  - (owner) If the owner provides an export of their own Margins, it's added as a second set. The owner decides whether it may be committed.
   - A deterministic baseline is scored on it.
 
 **M2: On-device producers.**
 - Done when both producers (Foundation Models where available, deterministic otherwise) fill I7 for every new Margin, and on the evaluation set:
   - Foundation Models: at least 80% statement-kind accuracy and 85% referent accuracy (the right sentence or moment).
   - Deterministic: at least 65% and 75%.
-- Each record names its producer and confidence. Processing one Margin on device costs under 2 s and only runs for new or edited Margins. Records are rebuildable, and deleting them loses nothing.
-- Measure the device timings on the owner's phone.
+- Each record names its producer and confidence. Records are rebuildable, and deleting them loses nothing. Processing runs only for new or edited Margins.
+- Processing one Margin costs under 2 s in a Mac host measurement, scaled by a stated Mac-to-phone ratio.
+- (owner) Confirm it's under 2 s on the owner's phone.
 
 **M3: Navigate it.**
 - Done when:
@@ -50,7 +52,8 @@ This all happens on the device, with no server call, ever. Without on-device AI,
 - Done when:
   - With read access granted to a notes folder, the app suggests related notes for a Margin using only lexical and synonym matching.
   - Precision is at least 70% on an owner-labeled sample of 50 Margins.
-  - Indexing is incremental; its cost on 5,000 notes is measured on device and runs only while charging if it exceeds a battery budget the owner accepts.
+  - Indexing is incremental. Its cost on 5,000 synthetic notes is measured on the Mac host, and it runs only while charging if the projected cost exceeds a stated budget.
+  - (owner) The owner checks the suggestions against their own vault and accepts the battery budget.
   - No note content leaves the device or goes through a model.
 
 ## Must not break

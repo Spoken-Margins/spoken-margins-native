@@ -6,7 +6,7 @@
 
 **Where.** Mac.
 
-**Waits for.** A2 M1 (its own files) and D1 (the look). Card plumbing can start before D1 lands.
+**Waits for.** D1 for the look; card plumbing can start before it lands. The tab shell already has its own file (`ExperienceRootViews.swift`). M2 waits for D3 M2's suggestions.
 
 **Seams.** Owns **I6** (Home cards). Reads I2 (catalog, for the follow nudge), I4 and I5 (suggestions, from D3), and later E2 and F1 cards.
 
@@ -30,7 +30,7 @@
 - Done when:
   - Home shows "start this next" from D3's ranking, with its reason.
   - Book club (F1) and week-in-review (E2) cards appear when those providers exist.
-  - The owner uses Home for a week of builds and accepts it (T6).
+  - (owner) The owner uses Home for a week of builds and accepts it (T6).
 
 ## Must not break
 
