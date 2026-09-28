@@ -44,14 +44,14 @@ def referent(m, tagger, extra_sim=None, sim_weight=0.0):
         for l in sl:
             df[l] = df.get(l, 0) + 1
     best, best_i, best_overlap = -1e9, m.anchor_index, 0.0
-    for i, sl in enumerate(sent_lemmas):
+    for i, sl in enumerate(sent_lemmas[: m.anchor_index + 1]):  # the listener hasn't heard later audio
         overlap = sum(math.log(1 + n / df[l]) for l in ml & sl)
         overlap += 0.5 * sum(1 for w in names if w in m.sentences[i].lower())
         score = overlap
         if extra_sim is not None:
             score += sim_weight * extra_sim(m.text, m.sentences[i])
         d = i - m.anchor_index
-        score -= 0.12 * abs(d) if d <= 0 else 0.35 * d
+        score -= 0.12 * abs(d)
         if score > best:
             best, best_i, best_overlap = score, i, overlap
     if best_overlap == 0 and NONE_RE.search(low):

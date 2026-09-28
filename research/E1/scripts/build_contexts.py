@@ -12,6 +12,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 RAW = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "raw"
 BEFORE, AFTER = 7, 3
+MAX_SHIFT = 5
 FRACTIONS = (0.3, 0.55, 0.8)
 # Windows that landed in reference lists rather than prose.
 SKIP = {"wiki-dunbar-s-number#3"}
@@ -68,6 +69,11 @@ def main():
                 continue
             out.append({"ctx_id": f"{src['source_id']}#{n}", **src,
                         "anchor_index": BEFORE, "sentences": window})
+            # The same window with the listener paused k sentences later. Margins about a
+            # sentence after the base anchor use one of these, so no referent is unheard audio.
+            for k in range(1, MAX_SHIFT + 1):
+                out.append({"ctx_id": f"{src['source_id']}#{n}+{k}", **src, "anchor_index": BEFORE,
+                            "sentences": sents[a + k - BEFORE : a + k + AFTER + 1]})
     dest = HERE / "data" / "contexts.jsonl"
     dest.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in out))
     print(f"{len(out)} windows -> {dest}")

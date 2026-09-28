@@ -1,5 +1,6 @@
 # E1 public evaluation set. One Margin per line, pipe-separated:
 # id | ctx | capture (s spoken, w written) | kind | referent (sN, item, none) | text | entities (text:type;...) | topics (;-separated) | follows_up (id)
+# ctx `wf#2+3` is window wf#2 with the listener paused 3 sentences later (see build_contexts.py).
 # ctx prefixes: ai=hwhap-ai-at-nasa a2=hwhap-artemis-ii-lunar-science a3=hwhap-artemis-iii-training wf=hwhap-callsign-white-flight
 #   ch=hwhap-chapea-2-audio-log-2 ct=hwhap-cosmic-perspectives-with-neil-degrasse-tyson ms=hwhap-iss-results-materials-science
 #   sc=hwhap-iss-results-stem-cells-in-space wy=hwhap-iss-results-wayfinding sr=hwhap-space-runs-in-the-family
@@ -8,7 +9,7 @@
 m001|ai#1|s|question|s4|Who actually sits on that council of AI officers? Is it public which agencies are in it?||ai council|
 m002|ai#1|w|todo|s3|Look up NASA's AI use case inventory, apparently they publish it every year.|NASA:org|use case inventory|
 m003|ai#1|s|claim|s4|A monthly meeting across every agency sounds like it's mostly about procurement, not safety, honestly.||procurement;safety|
-m004|ai#1|s|connection|s8|Relatable, I use it for my day to day stuff at work too.||daily work|
+m004|ai#1+2|s|connection|s6|Relatable, I use it for my day to day stuff at work too.||daily work|
 m005|ai#2|w|quote|s6|Save that line: explore using AI, but don't let it make your decisions for you.||decisions|
 m006|ai#2|s|connection|s7|This is exactly what happened with that email assistant my team tried last spring.||email assistant|
 m007|ai#2|s|reaction|s7|Ha, yes. Please never let a bot auto reply to my inbox.||inbox|
@@ -23,38 +24,38 @@ m015|a2#1|s|reaction|s4|An impact cratering rant, I'm here for it.||impact crate
 m016|a2#1|s|connection|s7|Same argument as field geology on Earth, you need the context before a sample makes sense. Reminds me of the John McPhee books.|Earth:place;John McPhee:person|field geology;context|
 m017|a2#2|s|claim|s6|Pairing people for observation is basically the buddy system from field geology, makes total sense.||field geology;buddy system|
 m018|a2#2|w|quote|s5|"They are members of our science team." Nice framing of the crew.||science team|
-m019|a2#2|s|question|s8|Did the pairs stay the same for the whole flyby or did they rotate?||pairs;flyby|
+m019|a2#2+3|s|question|s5|Did the pairs stay the same for the whole flyby or did they rotate?||pairs;flyby|
 m020|a2#2|w|todo|s7|Look up the Artemis II flyby concept of operations.|Artemis II:other|concept of operations|
 m021|a2#3|s|reaction|s6|Jenni Gibbons as capcom that day, so cool.|Jenni Gibbons:person|capcom|
-m022|a2#3|s|claim|s8|This is the real point: fast back and forth with the crew is what turned observations into science.||crew communication;science|
+m022|a2#3+1|s|claim|s7|This is the real point: fast back and forth with the crew is what turned observations into science.||crew communication;science|
 m023|a2#3|s|connection|s7|Trust building before the big day, same thing Gene Kranz said in the White Flight episode.|Gene Kranz:person;White Flight:work|trust|
 m024|a2#3|s|todo|none|Note to self, I've been listening for an hour, take a break and stretch.||break|
 m025|a3#1|s|reaction|s3|A six month old and two other kids, and she still said yes. Wow.||family|
-m026|a3#1|s|question|s8|Is the Artemis III date realistic given how long Artemis II took?|Artemis III:other;Artemis II:other|schedule|
+m026|a3#1+2|s|question|s6|Is the Artemis III date realistic given how long Artemis II took?|Artemis III:other;Artemis II:other|schedule|
 m027|a3#1|s|connection|s4|This is the exact conversation my partner and I had before I took the night shift job.||career choice|
 m028|a3#2|w|quote|s7|"A fire hose of information." Classic.||training|
-m029|a3#2|s|question|s8|What does she mean by a square wave here, like it's all or nothing?||square wave|
+m029|a3#2+3|s|question|s5|What does she mean by a square wave here, like it's all or nothing?||square wave|
 m030|a3#2|s|claim|s5|The beginning is always the hardest part of training, after that it's just reps.||training|
 m031|a3#3|s|reaction|s7|Nice, sounds like the crew is really gelling.||crew|
 m032|a3#3|s|question|s5|How many simulations do they run in total before launch?||simulations|
 m033|a3#3|w|todo|item|Add this whole episode to the Artemis playlist for Dad.|Artemis:other|playlist|
 m034|wf#1|s|quote|s1|Failure is not an option. Here it comes.||failure|
-m035|wf#1|s|claim|s9|Trust as the foundation is a better leadership answer than the usual vision stuff.||trust;leadership|
+m035|wf#1+2|s|claim|s7|Trust as the foundation is a better leadership answer than the usual vision stuff.||trust;leadership|
 m036|wf#1|w|todo|s0|Write down Kranz's list: toughness, competence, preparation. Put it on the team wiki.|Kranz:person|toughness;competence|
 m037|wf#1|s|question|item|Who's the host in this one? I missed the name.||host|
 m038|wf#2|s|question|s5|Why Zaragoza specifically? Is that an abort landing site for shuttle launches?|Zaragoza:place|abort landing site|
 m039|wf#2|s|claim|s2|He's saying Columbia's reentry path was planned to avoid people, which I didn't know.|Columbia:other|reentry trajectory|
 m040|wf#2|s|connection|s7|Preventable versus unpreventable failures, that's the same split we use in incident reviews at work.||incident reviews;failures|
-m041|wf#2|w|todo|s10|Look up the Apollo 11 communications problems he's talking about.|Apollo 11:other|communications|
+m041|wf#2+3|w|todo|s7|Look up the Apollo 11 communications problems he's talking about.|Apollo 11:other|communications|
 m042|wf#3|s|reaction|s4|I love how amazed he still is by all of it.|||
-m043|wf#3|s|connection|s9|Putting a habitat down before the crew lands is basically the Moon Base plan from the other episode.|Moon Base:other|habitat|
-m044|wf#3|s|question|s8|Was an ascent engine failure really his biggest fear on Apollo? What was the backup?|Apollo:other|ascent engine|
+m043|wf#3+2|s|connection|s7|Putting a habitat down before the crew lands is basically the Moon Base plan from the other episode.|Moon Base:other|habitat|
+m044|wf#3+1|s|question|s7|Was an ascent engine failure really his biggest fear on Apollo? What was the backup?|Apollo:other|ascent engine|
 m045|ch#1|s|reaction|s3|Rumspringa in reverse, that's a great comparison.||rumspringa|
 m046|ch#1|s|connection|s5|Giving up the phone for a year. I barely made it through a weekend digital detox.||digital detox;phone|
 m047|ch#1|s|question|s0|150 days by mid March, so when does the mission end, September?||mission duration|
 m048|ch#1|s|claim|s6|Staying busy is probably the main thing keeping morale up in isolation.||morale;isolation|
 m049|ch#2|s|reaction|s5|The Thor hammer bit made me laugh out loud.|Thor:work|hammer|
-m050|ch#2|w|todo|s9|Watch Ash, the stranded astronaut movie they mentioned.|Ash:work|movie|
+m050|ch#2+2|w|todo|s7|Watch Ash, the stranded astronaut movie they mentioned.|Ash:work|movie|
 m051|ch#2|w|quote|s1|"A lot of our activities day to day aren't as glamorous as people on earth might expect." Good line for the talk.||chores|
 m052|ch#2|s|claim|s3|A mallet being the most useful tool on Mars is honestly believable.|Mars:place|mallet|
 m053|ch#3|s|question|s3|Why reset the VR EVAs to the same starting configuration every time? Just so they can compare?||vr eva;configuration|
@@ -63,12 +64,12 @@ m055|ch#3|s|connection|s6|Handing off notes between EVA pairs sounds like shift 
 m056|ch#3|w|todo|item|Look up what CHAPEA stands for.|CHAPEA:org||
 m057|ct#1|s|question|s5|Which observatory in Chile, is that Rubin?|Chile:place;Rubin:org|observatory|
 m058|ct#1|s|claim|s6|Light pollution is getting worse even in Chile because of all the satellite constellations.|Chile:place|light pollution;satellites|
-m059|ct#1|w|todo|s10|Look into the South Pole Telescope, why put a telescope on the poles at all?|South Pole Telescope:org|telescope|
+m059|ct#1+5|w|todo|s5|Look into the South Pole Telescope, why put a telescope on the poles at all?|South Pole Telescope:org|telescope|
 m060|ct#1|s|reaction|s7|The host is really struggling to get this question out, ha.|||
 m061|ct#2|w|quote|s7|"By mid-semester, all these were my friends." Love how he talks about equations.||equations|
 m062|ct#2|s|connection|s0|Same feeling I had with linear algebra, the fog lifts after about a month.||linear algebra;learning|
-m063|ct#2|s|reaction|s10|His excitement here is contagious.|||
-m064|ct#2|s|claim|s8|Struggling first and then getting it is how real learning works, it's not a sign you're bad at it.||learning|m062
+m063|ct#2+5|s|reaction|s5|His excitement here is contagious.|||
+m064|ct#2+2|s|claim|s6|Struggling first and then getting it is how real learning works, it's not a sign you're bad at it.||learning|m062
 m065|ct#3|s|question|s3|Seven hours of spacewalk and not hungry, is that just adrenaline?||spacewalk;hunger|
 m066|ct#3|s|reaction|s7|Ha, called out for jargon by Neil.|Neil:person|jargon|
 m067|ct#3|s|claim|s1|One meal bar for six hours of prep plus a seven hour EVA seems like terrible nutrition planning.||nutrition|
@@ -77,62 +78,62 @@ m069|ms#1|s|reaction|s2|Getting to analyze materials that were on Mir for ten ye
 m070|ms#1|s|claim|s0|Hubble's insulation cracking is why they replaced the blankets on the later servicing missions.|Hubble:other|insulation|
 m071|ms#1|w|todo|s7|Send the lunar dust coating part to Marco, he works on solar panels.|Marco:person|lunar dust;solar panels|
 m072|ms#2|s|reaction|s4|32 students over 24 years, that's an incredible mentorship record.||mentorship|
-m073|ms#2|s|question|s9|Why would silicone start to glow under UV after being in space?||silicone;uv|
+m073|ms#2+3|s|question|s6|Why would silicone start to glow under UV after being in space?||silicone;uv|
 m074|ms#2|w|todo|s3|Look up the Hathaway Brown School MISSE program for my niece.|Hathaway Brown School:org;MISSE:other|school program|
 m075|ms#2|s|claim|s1|Atomic oxygen erosion is the big reason spacecraft in low orbit need special coatings.||atomic oxygen;erosion|
 m076|ms#3|s|reaction|s5|Octopus ink melanin?! Amazing.||octopus ink;melanin|
 m077|ms#3|s|question|s4|Why melanin for radiation shielding, is it because it absorbs so broadly?||melanin;radiation shielding|
 m078|ms#3|s|connection|s7|Mycelium again, same stuff that startup used for packaging foam.||mycelium;packaging|
-m079|ms#3|s|claim|s10|Half a year of exposure is too short to say much about long duration shielding.||exposure;shielding|
+m079|ms#3+3|s|claim|s7|Half a year of exposure is too short to say much about long duration shielding.||exposure;shielding|
 m080|sc#1|s|claim|s4|The donor registry gap for minorities is a real equity problem and nobody talks about it.||donor registry;equity|
 m081|sc#1|w|todo|s4|Sign up for the bone marrow registry, it's just a cheek swab.||bone marrow registry|
-m082|sc#1|s|question|s9|So did space make the stem cells multiply faster? That's what I want to know.||stem cells|
-m083|sc#2|w|quote|s9|"The result would come, and it may take years." That's science.||research timeline|
+m082|sc#1+4|s|question|s5|So did space make the stem cells multiply faster? That's what I want to know.||stem cells|
+m083|sc#2+4|w|quote|s5|"The result would come, and it may take years." That's science.||research timeline|
 m084|sc#2|w|todo|s6|Find the published Microgravity Expanded Stem Cells papers.|Microgravity Expanded Stem Cells:other|papers|m082
 m085|sc#2|s|reaction|s3|Glad it worked out for her.|||
 m086|sc#3|s|question|s4|Did radiation actually damage any of the samples?||radiation;samples|
-m087|sc#3|s|claim|s10|The ISS retirement is going to leave a big gap for this kind of research.|ISS:other|retirement|
+m087|sc#3+4|s|claim|s6|The ISS retirement is going to leave a big gap for this kind of research.|ISS:other|retirement|
 m088|sc#3|s|question|item|How long is this episode? Feels like it's wrapping up.|||
-m089|wy#1|s|question|s9|Could they bring a portable MRI up someday? Low field MRIs are getting pretty small.||mri|
+m089|wy#1+2|s|question|s7|Could they bring a portable MRI up someday? Low field MRIs are getting pretty small.||mri|
 m090|wy#1|s|claim|s7|Waiting until balance recovers before scanning is smart, otherwise you're just measuring the vestibular mismatch.||vestibular mismatch;brain|
 m091|wy#1|w|todo|s5|Look up the platform test they do at JSC.|JSC:org|platform test|
 m092|wy#2|s|connection|s5|When I moved to Calgary I did exactly this, landmarks first.|Calgary:place|landmarks;mental map|
-m093|wy#2|s|claim|s8|So astronauts switch from landmarks to body based navigation. That's a big finding.||navigation|
-m094|wy#2|s|question|s8|Do they switch back once they're home?||navigation|m093
-m095|wy#2|s|reaction|s10|Twisting to face the laptop, such a specific detail, love it.||laptop|
+m093|wy#2+3|s|claim|s5|So astronauts switch from landmarks to body based navigation. That's a big finding.||navigation|
+m094|wy#2+2|s|question|s6|Do they switch back once they're home?||navigation|m093
+m095|wy#2+5|s|reaction|s5|Twisting to face the laptop, such a specific detail, love it.||laptop|
 m096|wy#3|w|todo|s2|Check back later this year for the six month follow up results.||follow up|
 m097|wy#3|s|question|s2|Will the six month follow up show the brain changes reversing?||brain changes|m094
 m098|wy#3|s|claim|s7|Astronaut safety after landing should be the main point of this research anyway.||astronaut safety|
 m099|sr#1|w|todo|s2|Go back and listen to episode 402 with Anna.|Anna:person|episode|
-m100|sr#1|s|reaction|s9|The mystery 1111 phone number, ha.||phone call|
+m100|sr#1+3|s|reaction|s6|The mystery 1111 phone number, ha.||phone call|
 m101|sr#1|s|question|s3|Are they the first married couple who are both NASA astronauts?|NASA:org|astronaut couple|
 m102|sr#1|s|connection|s6|We applied for our house the same way, long shot, not banking on it.||long shot|
-m103|sr#2|s|reaction|s10|Three people in a phone booth floating in the water, no thank you.||water survival|
-m104|sr#2|s|question|s8|Has a Soyuz ever actually landed in water?|Soyuz:other|water landing|
-m105|sr#2|s|claim|s9|He just answered it, yes, a long time ago, and that's why the training exists.||water landing|m104
+m103|sr#2+5|s|reaction|s5|Three people in a phone booth floating in the water, no thank you.||water survival|
+m104|sr#2+1|s|question|s7|Has a Soyuz ever actually landed in water?|Soyuz:other|water landing|
+m105|sr#2+2|s|claim|s7|He just answered it, yes, a long time ago, and that's why the training exists.||water landing|m104
 m106|sr#2|w|todo|s0|Look into the new solar arrays going up on the station.||solar arrays|
 m107|sr#3|s|claim|s3|Data centers in space sounds like hype to me, the cooling alone is a problem.||data centers;cooling|
 m108|sr#3|s|connection|s7|Growing plants in downtime, like my balcony tomatoes during lockdown.||plants|
-m109|sr#3|s|question|s9|What's the plan for food on the Moon base, hydroponics?|Moon:place|food;hydroponics|
-m110|sr#3|w|quote|s8|"Carry on a little bit of what Chris has started." Nice.|Chris:person||
+m109|sr#3+2|s|question|s7|What's the plan for food on the Moon base, hydroponics?|Moon:place|food;hydroponics|
+m110|sr#3+1|w|quote|s7|"Carry on a little bit of what Chris has started." Nice.|Chris:person||
 m111|ds#1|s|question|s1|What's HLS again? Human landing system?|HLS:other|lander|
 m112|ds#1|s|claim|s5|One network for landers, rovers and suits is a much harder problem than the Deep Space Network ever had.|Deep Space Network:org|network|
-m113|ds#1|w|todo|s10|Look up what SCaN stands for.|SCaN:org||
+m113|ds#1+5|w|todo|s5|Look up what SCaN stands for.|SCaN:org||
 m114|ds#2|s|claim|s2|Optical comms is the obvious future, but clouds are going to be the problem for ground stations.||optical communications;clouds|
 m115|ds#2|s|question|s1|Is it really 10 centimeters for the Deep Space Network? That's S band, right?|Deep Space Network:org|wavelength|
 m116|ds#2|w|quote|s4|"Reduce size, weight, and power." The magic words.||size weight and power|
 m117|ds#2|s|connection|s2|Same story as fiber replacing copper, light just carries more.||fiber;bandwidth|
-m118|ds#3|s|question|s9|Why no fourth generation TDRS? Are they going with commercial relays instead?|TDRS:other|commercial relays|
+m118|ds#3+3|s|question|s6|Why no fourth generation TDRS? Are they going with commercial relays instead?|TDRS:other|commercial relays|
 m119|ds#3|s|reaction|s7|Imagine building the last three of something. Bittersweet.|||
-m120|ds#3|s|claim|s10|Migrating off TDRS means NASA is betting on commercial providers for relay, which is risky.|TDRS:other;NASA:org|commercial relays|m118
+m120|ds#3+5|s|claim|s5|Migrating off TDRS means NASA is betting on commercial providers for relay, which is risky.|TDRS:other;NASA:org|commercial relays|m118
 m121|mb#1|s|reaction|s7|Hopping drones on the Moon, so cool.|Moon:place|drones|
 m122|mb#1|s|question|s7|How do the drones even hop with no atmosphere? Thrusters?||drones;propulsion|m121
-m123|mb#1|s|claim|s8|Scouting astronaut paths with drones first seems like the most practical use.||scouting;drones|
+m123|mb#1+1|s|claim|s7|Scouting astronaut paths with drones first seems like the most practical use.||scouting;drones|
 m124|mb#1|w|todo|item|Share this Moon Base episode with the astronomy club.|Moon Base:work|astronomy club|
 m125|mb#2|s|question|s6|What states could the water be in, ice or bound up in minerals?||water;ice|
-m126|mb#2|s|claim|s8|Water mixed into the regolith means mining it is going to be energy hungry.||regolith;mining|
-m127|mb#2|w|quote|s8|"We would love to find like a block of ice in one of these permanently shadowed regions."||permanently shadowed regions;ice|
-m128|mb#2|s|connection|s10|Same point as the materials episode, everything on the Moon is practice for Mars.|Moon:place;Mars:place|practice|
+m126|mb#2+2|s|claim|s6|Water mixed into the regolith means mining it is going to be energy hungry.||regolith;mining|
+m127|mb#2+2|w|quote|s6|"We would love to find like a block of ice in one of these permanently shadowed regions."||permanently shadowed regions;ice|
+m128|mb#2+3|s|connection|s7|Same point as the materials episode, everything on the Moon is practice for Mars.|Moon:place;Mars:place|practice|
 m129|mb#3|s|question|s3|How many countries have signed the Artemis Accords now?|Artemis Accords:other|signatories|
 m130|mb#3|s|connection|s4|Our university CubeSat team would kill for a lunar surface payload slot.||cubesat;payload|
 m131|mb#3|s|claim|s2|The UAE being named next to Europe and Japan shows how fast their space program has grown.|UAE:place;Europe:place;Japan:place|space program|
@@ -140,25 +141,25 @@ m132|mb#3|w|todo|s4|Email Professor Liang about lunar payload opportunities for 
 m133|du#1|s|connection|s2|Flight Centre's families, villages and tribes is basically Team Topologies.|Flight Centre:org;Team Topologies:work|org structure|
 m134|du#1|s|question|s6|Why is the Bernard Killworth number double Dunbar's? Different definition of a tie?|Dunbar:person|social ties|
 m135|du#1|s|reaction|s1|157 contacts and the best job offer rate, that's oddly precise.||contacts|
-m136|du#1|w|todo|s10|Read the original Bernard and Killworth field studies.|Bernard:person;Killworth:person|field studies|m134
+m136|du#1+3|w|todo|s7|Read the original Bernard and Killworth field studies.|Bernard:person;Killworth:person|field studies|m134
 m137|du#2|w|quote|s7|"We devote about two-thirds of our time to just 15 people."||social time|
-m138|du#2|w|todo|s8|Find Hello Internet episode 103, the one about the 150 limit.|Hello Internet:work||
+m138|du#2+2|w|todo|s6|Find Hello Internet episode 103, the one about the 150 limit.|Hello Internet:work||
 m139|du#2|s|claim|s2|Capping offices at 150 people like the Swedish Tax Agency did seems smart.|Swedish Tax Agency:org|office size|
 m140|du#2|s|connection|s3|I read the Monkeysphere piece in college, that's where I first heard of this.|Monkeysphere:work||
 m141|du#2|s|reaction|s6|Drink is the secret to humanity's success, great headline.||drink|
 m142|gs#1|s|claim|s6|Planning for 4.5 million instead of 3 is why the system lasted so long, he overbuilt it on purpose.||population;capacity|
 m143|gs#1|s|reaction|s1|Foster literally died from the stress of the job. Grim.|Foster:person|stress|
-m144|gs#1|s|question|s8|Where were the outfalls that Hall objected to? Still inside London?|Hall:person;London:place|outfalls|
+m144|gs#1+2|s|question|s6|Where were the outfalls that Hall objected to? Still inside London?|Hall:person;London:place|outfalls|
 m145|gs#1|w|todo|item|Read the Stephen Halliday book on the Great Stink.|Stephen Halliday:person;Great Stink:other|book|
 m146|gs#2|w|quote|s5|"Elaborate" and "draconian" quality control, love that description.||quality control|
 m147|gs#2|s|connection|s7|First public body to do batch testing, that's basically the origin of acceptance testing.||acceptance testing;batch testing|
 m148|gs#2|s|question|s4|What's the weakness of Portland cement when it gets overheated?||portland cement|
 m149|gs#2|s|claim|s2|Lambeth and Pimlico being below the high water mark explains why they needed pumping stations.|Lambeth:place;Pimlico:place|pumping stations|
-m150|gs#3|s|claim|s8|This is the outbreak that finally killed the miasma theory, John Snow had been right for years.|John Snow:person|cholera;miasma|
+m150|gs#3+2|s|claim|s6|This is the outbreak that finally killed the miasma theory, John Snow had been right for years.|John Snow:person|cholera;miasma|
 m151|gs#3|s|reaction|s4|318 million bricks!||bricks|
 m152|gs#3|s|question|s7|Was the East London Water Company ever punished for this?|East London Water Company:org|accountability|
-m153|gs#3|w|todo|s9|Look up William Farr's report on the 1866 outbreak.|William Farr:person|cholera|
-m154|pc#1|s|reaction|s8|Two years ahead of schedule! When does that ever happen.||schedule|
+m153|gs#3+3|w|todo|s6|Look up William Farr's report on the 1866 outbreak.|William Farr:person|cholera|
+m154|pc#1+2|s|reaction|s6|Two years ahead of schedule! When does that ever happen.||schedule|
 m155|pc#1|s|question|s5|Why did Stevens resign? Burnout?|Stevens:person|resignation|
 m156|pc#1|s|claim|s6|Replacing Stevens with an Army engineer was Roosevelt taking direct control of the project.|Stevens:person;Roosevelt:person|project control|
 m157|pc#1|s|connection|s0|Bucyrus-Erie, my grandfather worked there in Milwaukee.|Bucyrus-Erie:org;Milwaukee:place||
@@ -167,16 +168,16 @@ m159|pc#2|s|claim|s4|So the canal actually got better under Panamanian control, 
 m160|pc#2|s|question|s6|10 to 30 accidents out of 14,000 transits, is that high for shipping?||accident rate|
 m161|pc#2|w|todo|s1|Look up Richard Halliburton's swim, there must be a book about it.|Richard Halliburton:person|swim|m158
 m162|pc#3|s|question|s7|Why did anyone think the Nicaragua canal could get financed?|Nicaragua:place|financing|
-m163|pc#3|s|claim|s9|The Nicaragua canal was always more of a land grab than a real project.|Nicaragua:place|land grab|m162
-m164|pc#3|w|todo|s10|Check whether Colombia's railway proposal ever went anywhere.|Colombia:place|railway|
-m165|tm#1|w|quote|s8|Windhandel, "air trade." Perfect word for it.||windhandel|
+m163|pc#3+3|s|claim|s6|The Nicaragua canal was always more of a land grab than a real project.|Nicaragua:place|land grab|m162
+m164|pc#3+3|w|todo|s7|Check whether Colombia's railway proposal ever went anywhere.|Colombia:place|railway|
+m165|tm#1+3|w|quote|s5|Windhandel, "air trade." Perfect word for it.||windhandel|
 m166|tm#1|s|connection|s7|No margin and no exchange clearing, that's exactly like crypto perps before the crash.||margin;crypto|
 m167|tm#1|s|question|s6|What's 3 guilders worth in today's money?||guilders|
 m168|tm#1|s|reaction|s6|Trading bulbs in taverns and paying wine money, love it.||taverns|
 m169|tm#2|s|claim|s7|Courts treating it as gambling is what actually ended the mania, not the price drop.||gambling;courts|
-m170|tm#2|s|question|s10|Who challenged Mackay's account in the 1980s?|Mackay:person|historiography|
+m170|tm#2+3|s|question|s7|Who challenged Mackay's account in the 1980s?|Mackay:person|historiography|
 m171|tm#2|w|todo|item|Read Extraordinary Popular Delusions, the Mackay book.|Extraordinary Popular Delusions:work;Mackay:person|book|
-m172|tm#3|s|claim|s8|So the famous tulip crash stories came from religious pamphlets. The whole story is basically propaganda.||pamphlets;propaganda|
+m172|tm#3+1|s|claim|s7|So the famous tulip crash stories came from religious pamphlets. The whole story is basically propaganda.||pamphlets;propaganda|
 m173|tm#3|s|question|s3|Is collective illusions the Todd Rose book? Sounds like it.|Todd Rose:person|collective illusions|
 m174|tm#3|w|todo|s0|Get Anne Goldgar's book on tulipmania.|Anne Goldgar:person|book|
 m175|tm#3|s|reaction|item|This article is way more interesting than I expected.|||

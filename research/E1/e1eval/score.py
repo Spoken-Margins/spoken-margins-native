@@ -19,8 +19,7 @@ def norm(s):
 
 
 def ent_match(a, b):
-    a, b = norm(a), norm(b)
-    return a == b or f" {a} " in f" {b} " or f" {b} " in f" {a} "
+    return norm(a) == norm(b)
 
 
 def head(topic, lemma):
@@ -118,7 +117,10 @@ def links(margins, get, lemma):
         if ek[a.id] & ek[b.id]:
             L["same_entity"].add((a.id, b.id))
         ra, rb = tuple(fa["referent"]), tuple(fb["referent"])
-        if a.source_id == b.source_id and ra[0] != "none" and (ra == rb if ra[0] == "item" else a.ctx_id == b.ctx_id and ra == rb):
+        # Compare span referents in the base window's numbering, since anchors can be shifted.
+        absa = ra if ra[0] != "span" else ("span", (a.base_ctx or a.ctx_id), ra[1] + a.shift)
+        absb = rb if rb[0] != "span" else ("span", (b.base_ctx or b.ctx_id), rb[1] + b.shift)
+        if a.source_id == b.source_id and ra[0] != "none" and absa == absb:
             L["same_referent"].add((a.id, b.id))
         if tk[a.id] & tk[b.id]:
             L["related_topic"].add((a.id, b.id))

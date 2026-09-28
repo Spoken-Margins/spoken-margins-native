@@ -10,6 +10,10 @@ data and code needed to reproduce them.
   transcripts (US government works, public domain) and 4 Wikipedia articles (CC BY-SA 4.0).
   Each row carries its URL and license. `scripts/fetch_sources.py` and
   `scripts/build_contexts.py` rebuild the file.
+- Windows named `#n+k` are window `#n` with the listener paused `k` sentences later. A Margin
+  written about a sentence after its base anchor sits in a shifted window with a 0–2 sentence
+  capture lag, so no referent points to audio the listener hadn't heard. Referent prediction
+  only considers sentences up to the anchor.
 - `data/margins_public.psv`: 175 Margins, written and labeled by the E1 agent. The sources are
   split into `dev` (ai, a2, a3, wf, ch), whose errors were the only ones looked at while
   tuning rules, and `test`, which is everything else.
@@ -22,6 +26,18 @@ data and code needed to reproduce them.
 
 Line format for the `.psv` sets:
 `id | ctx | capture (s/w) | kind | referent (sN/item/none) | text | entities (text:type;…) | topics | follows_up`
+
+## Known limits
+
+- The kind word lists were written by the same agent that wrote the public Margins, so the public
+  `test` split is optimistic. They were written before the held-out set existed, and its author
+  couldn't read them. Removing every list term that appears only in test or held-out Margins
+  (a deliberately pessimistic ablation from the M1 review) drops portable kind accuracy from
+  0.891 to 0.857 on public test and from 0.68 to 0.573 on held-out.
+- Topic labels are subjective, and two authors agree poorly, so topic F1 partly measures
+  labeler agreement.
+- Portable tags come from spaCy constrained to the NaturalLanguage shape. Apple's tagger will
+  differ; `swift/NLTagDump.swift` measures it.
 
 ## Baselines
 

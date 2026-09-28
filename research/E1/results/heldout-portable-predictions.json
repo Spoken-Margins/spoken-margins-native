@@ -131,7 +131,7 @@
   "kind": "todo",
   "referent": [
    "span",
-   9
+   5
   ],
   "entities": [
    [
@@ -199,7 +199,7 @@
   "kind": "claim",
   "referent": [
    "span",
-   9
+   6
   ],
   "entities": [],
   "topics": [
@@ -226,7 +226,7 @@
   "kind": "reaction",
   "referent": [
    "span",
-   8
+   7
   ],
   "entities": [],
   "topics": [
@@ -297,7 +297,7 @@
   "kind": "todo",
   "referent": [
    "span",
-   9
+   5
   ],
   "entities": [
    [
@@ -337,7 +337,7 @@
   "kind": "claim",
   "referent": [
    "span",
-   10
+   6
   ],
   "entities": [],
   "topics": [
@@ -349,7 +349,7 @@
   "kind": "claim",
   "referent": [
    "span",
-   9
+   0
   ],
   "entities": [],
   "topics": [
@@ -410,7 +410,7 @@
   "kind": "claim",
   "referent": [
    "span",
-   9
+   7
   ],
   "entities": [],
   "topics": [
@@ -478,7 +478,7 @@
   "kind": "reaction",
   "referent": [
    "span",
-   9
+   7
   ],
   "entities": [],
   "topics": [
@@ -547,7 +547,7 @@
   "kind": "claim",
   "referent": [
    "span",
-   7
+   5
   ],
   "entities": [],
   "topics": [
@@ -592,7 +592,7 @@
   "kind": "reaction",
   "referent": [
    "span",
-   9
+   5
   ],
   "entities": [],
   "topics": [
@@ -603,7 +603,7 @@
   "kind": "quote",
   "referent": [
    "span",
-   10
+   7
   ],
   "entities": [],
   "topics": [
@@ -678,7 +678,7 @@
   "kind": "claim",
   "referent": [
    "span",
-   7
+   3
   ],
   "entities": [],
   "topics": [
@@ -690,7 +690,7 @@
   "kind": "question",
   "referent": [
    "span",
-   3
+   4
   ],
   "entities": [
    [
@@ -706,7 +706,7 @@
   "kind": "claim",
   "referent": [
    "span",
-   8
+   7
   ],
   "entities": [],
   "topics": [
@@ -736,7 +736,7 @@
   "kind": "quote",
   "referent": [
    "span",
-   8
+   6
   ],
   "entities": [],
   "topics": [
@@ -821,7 +821,7 @@
   "kind": "claim",
   "referent": [
    "span",
-   8
+   7
   ],
   "entities": [
    [
@@ -838,7 +838,7 @@
   "kind": "question",
   "referent": [
    "span",
-   8
+   7
   ],
   "entities": [
    [
@@ -866,7 +866,7 @@
   "kind": "claim",
   "referent": [
    "span",
-   9
+   3
   ],
   "entities": [
    [
@@ -896,7 +896,7 @@
   "kind": "claim",
   "referent": [
    "span",
-   8
+   5
   ],
   "entities": [
    [
@@ -927,7 +927,7 @@
   "kind": "claim",
   "referent": [
    "span",
-   8
+   7
   ],
   "entities": [
    [
@@ -956,7 +956,7 @@
   "kind": "claim",
   "referent": [
    "span",
-   7
+   5
   ],
   "entities": [
    [
@@ -972,7 +972,7 @@
   "kind": "quote",
   "referent": [
    "span",
-   8
+   7
   ],
   "entities": [
    [
@@ -1001,7 +1001,7 @@
   "kind": "claim",
   "referent": [
    "span",
-   10
+   5
   ],
   "entities": [
    [
@@ -1018,7 +1018,7 @@
   "kind": "claim",
   "referent": [
    "span",
-   7
+   5
   ],
   "entities": [],
   "topics": [

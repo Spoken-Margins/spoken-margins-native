@@ -35,6 +35,8 @@ class Margin:
     entities: list = field(default_factory=list)  # [(text, type)]
     topics: list = field(default_factory=list)
     follows_up: str = None
+    base_ctx: str = None  # window before any anchor shift ("#2" for "#2+3")
+    shift: int = 0        # how many sentences later than the base window the listener paused
 
 
 def parse_referent(s):
@@ -64,6 +66,7 @@ def load_public(path=ROOT / "data" / "margins_public.psv", split=None):
             entities=[tuple(e.rsplit(":", 1)) for e in ents.split(";") if e],
             topics=[t for t in topics.split(";") if t],
             follows_up=follows or None,
+            base_ctx=c["ctx_id"].split("+")[0], shift=int(n.split("+")[1]) if "+" in n else 0,
         ))
     return out
 
