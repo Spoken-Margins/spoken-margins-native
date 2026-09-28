@@ -55,4 +55,42 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertTrue(PDFStructuredTextExtractor.isDownloadStamp("iv Downloaded on 25 September 2026"))
         XCTAssertFalse(PDFStructuredTextExtractor.isDownloadStamp("Downloaded on 25 September 2026 3 times by readers"))
     }
+
+    // MARK: Extraction v2 (C1 M3)
+
+    func testV2ReadsTheAppendixAfterAnAuthorYearReferenceList() {
+        // v1 cut everything after the references heading (#215) and missed author-year lists.
+        var lines = [
+            StructuredDocumentLine(text: "Discussion", role: .heading, level: 2),
+            StructuredDocumentLine(text: "The effect held.", role: .body),
+            StructuredDocumentLine(text: "References", role: .heading, level: 2),
+            StructuredDocumentLine(text: "Agarwal A, Halvorson LM (2005) Pituitary peptides. J Neurosci 72:451.", role: .body),
+            StructuredDocumentLine(text: "Abdul-Hay, S. O., and Thatcher, G. R. (2009). Selective modulation.", role: .body),
+            StructuredDocumentLine(text: "[3] C. Writer. Reading and listening. 2020.", role: .body),
+            StructuredDocumentLine(text: "Lee K, Park J (2019) Sleep. Nature 1:2.", role: .body),
+            StructuredDocumentLine(text: "Appendix A", role: .heading, level: 2),
+            StructuredDocumentLine(text: "Supplementary methods are read.", role: .body),
+        ]
+        PDFStructuredTextExtractor.labelReferenceLists(&lines)
+        XCTAssertEqual(lines.map(\.role), [.heading, .body, .heading, .reference, .reference, .reference, .reference, .heading, .body])
+    }
+
+    func testV2DoesNotTakeAProseMentionOfReferencesForAList() {
+        var lines = [
+            StructuredDocumentLine(text: "References", role: .body),
+            StructuredDocumentLine(text: "are listed at the end of each chapter, as in earlier editions.", role: .body),
+            StructuredDocumentLine(text: "The method is described below.", role: .body),
+        ]
+        PDFStructuredTextExtractor.labelReferenceLists(&lines)
+        XCTAssertEqual(lines.map(\.role), [.body, .body, .body])
+    }
+
+    func testV2RecognisesTitlePageAuthorsAndTableCaptions() {
+        XCTAssertTrue(PDFStructuredTextExtractor.looksLikeAuthorList("Ada Example1, Ben Sample2 and C. D. Third*"))
+        XCTAssertFalse(PDFStructuredTextExtractor.looksLikeAuthorList("1Department of Ecology, University of Lausanne, CH-1015 Lausanne"))
+        XCTAssertFalse(PDFStructuredTextExtractor.looksLikeAuthorList("We asked twelve researchers to listen to papers."))
+        XCTAssertTrue(PDFStructuredTextExtractor.isTableCaption("Table 3"))
+        XCTAssertTrue(PDFStructuredTextExtractor.isTableCaption("Table 2. Baseline characteristics"))
+        XCTAssertFalse(PDFStructuredTextExtractor.isTableCaption("Table 2 shows the results."))
+    }
 }

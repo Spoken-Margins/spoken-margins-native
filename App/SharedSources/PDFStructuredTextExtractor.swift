@@ -274,6 +274,7 @@ enum PDFStructuredTextExtractor {
             let pageOutline = outline.filter { $0.pageIndex == pageIndex }
             let tableOfContentsLines = tableOfContentsLineIndices(in: pageLines, pageIndex: pageIndex, outline: outline)
             let tableLines = tableLineIndices(in: pageLines, layout: layout)
+            let titlePage = pageIndex < 2 ? titlePageRoles(in: pageLines, isFirstPage: pageIndex == 0, bodySize: bodySize) : [:]
             for heading in pageOutline where !pageLines.contains(where: { headingKey($0.text) == headingKey(heading.title) }) {
                 result.append(StructuredDocumentLine(text: heading.title, role: .heading, pageIndex: pageIndex, level: heading.level))
                 insertedOutlineHeadingIDs.insert(heading.id)
@@ -284,6 +285,8 @@ enum PDFStructuredTextExtractor {
                     result.append(StructuredDocumentLine(text: line.text, role: role, pageIndex: pageIndex))
                 } else if tableOfContentsLines.contains(lineIndex) {
                     result.append(StructuredDocumentLine(text: line.text, role: .frontMatter, pageIndex: pageIndex))
+                } else if let role = titlePage[lineIndex] {
+                    result.append(StructuredDocumentLine(text: line.text, role: role, pageIndex: pageIndex))
                 } else if tableLines.contains(lineIndex) {
                     result.append(StructuredDocumentLine(text: line.text, role: .table, pageIndex: pageIndex))
                 } else if let heading = pageOutline.first(where: {
@@ -354,7 +357,7 @@ enum PDFStructuredTextExtractor {
         /// or a short fragment that is both off every body column and narrow.
         /// A full-width line is never a cell, and math isn't a table.
         func looksLikeTableCell(_ line: TextLine) -> Bool {
-            guard let bounds = line.bounds, lineWidth > 0, bounds.width < lineWidth * 0.8 else { return false }
+            guard let bounds = line.bounds, lineWidth > 0 else { return false }
             guard !looksLikeMath(line.text) else { return false }
             let tokens = line.text.split(separator: " ")
             guard !tokens.isEmpty else { return false }
@@ -363,9 +366,10 @@ enum PDFStructuredTextExtractor {
             let narrow = bounds.width < lineWidth * 0.5
             let otherSize = abs(line.pointSize - bodySize) >= 0.6
             if Double(numeric.count) / Double(tokens.count) >= 0.4 {
+                // A row of numbers can span the page, but not in body type at a column start.
                 return offColumn || narrow || otherSize
             }
-            return offColumn && narrow && tokens.count <= 12
+            return bounds.width < lineWidth * 0.8 && offColumn && narrow && tokens.count <= 12
         }
 
         /// Display math: operators, Greek or math-alphabet letters, arrows, or
@@ -389,17 +393,18 @@ enum PDFStructuredTextExtractor {
     /// paragraph's last line is never taken for a table.
     private static func tableLineIndices(in lines: [TextLine], layout: BodyLayout) -> Set<Int> {
         let cells = lines.map(layout.looksLikeTableCell)
-        let captions = lines.indices.filter {
-            lines[$0].text.range(of: #"^(?:Table|TABLE)\s+[0-9IVX]+[.:|]?(?:\s|$)"#, options: .regularExpression) != nil
-        }
-        var result = Set<Int>()
+        let captions = lines.indices.filter { isTableCaption(lines[$0].text) }
+        var result = captionedTableLines(in: lines, captions: captions, layout: layout)
         var index = 0
         while index < lines.count {
             guard cells[index] else { index += 1; continue }
-            // A run may bridge one short line that doesn't look like a cell (a wrapped label).
+            // A run may bridge one short line that doesn't look like a cell (a wrapped
+            // label), but not a phrase of running text between two formulas.
             func bridges(_ gap: Int) -> Bool {
-                gap + 1 < lines.count && cells[gap + 1] && !captions.contains(gap)
-                    && lines[gap].text.split(separator: " ").count <= 4
+                let words = lines[gap].text.split(separator: " ")
+                return gap + 1 < lines.count && cells[gap + 1] && !captions.contains(gap)
+                    && words.count <= 4
+                    && !words.contains { ["where", "and", "the", "of", "is", "are", "for", "with", "which", "that", "by", "to", "in"].contains($0.lowercased()) }
             }
             var end = index
             var probe = index + 1
@@ -413,6 +418,99 @@ enum PDFStructuredTextExtractor {
                 result.formUnion((index...end).filter { !captions.contains($0) })
             }
             index = end + 1
+        }
+        return result
+    }
+
+    /// Title-page matter (owner, #191): author names are read, the rest is not.
+    /// - Publishing boilerplate on the first two pages (licence, dates,
+    ///   correspondence, keywords, identifiers) is front matter. When it's in small
+    ///   print, so are the wrapped lines of its paragraph.
+    /// - On the first page, the block between the title and an explicit
+    ///   "Abstract" or "Summary" line is authors and affiliations. Without that
+    ///   line nothing is guessed, so an unlabelled abstract is never skipped.
+    private static func titlePageRoles(in lines: [TextLine], isFirstPage: Bool, bodySize: CGFloat) -> [Int: StructuredDocument.Role] {
+        var roles: [Int: StructuredDocument.Role] = [:]
+        let boilerplate = #"(?i)^(?:\*?\s*correspond|e-?mail\b|(?:received|accepted|revised|published|available online)\b.*\b(?:19|20)[0-9]{2}\b|article history|citation:|copyright|©|\(c\) \d{4}|open access\b|this (?:is an open access )?article is (?:licensed|distributed|an open access)|licensed under|creative commons|keywords?\b|key words\b|edited by\b|reviewed by\b|academic editor|handling editor|orcid\b|https?://(?:dx\.)?doi\.org|doi:|typeset using|preprint\b.*\bsubmitted|submitted to\b|\S+@\S+\.\S+)"#
+        var index = 0
+        while index < lines.count {
+            if lines[index].text.range(of: boilerplate, options: .regularExpression) != nil {
+                roles[index] = .frontMatter
+                // Its paragraph, if in small print: following lines in the same size, up to a dozen.
+                var next = index + 1
+                while next < lines.count, next <= index + 12,
+                      lines[index].pointSize < bodySize - 0.3,
+                      abs(lines[next].pointSize - lines[index].pointSize) < 0.3,
+                      lines[next].text.range(of: #"^(?:abstract|summary|introduction|background|[0-9]+\.?\s+\p{Lu})"#, options: [.regularExpression, .caseInsensitive]) == nil {
+                    roles[next] = .frontMatter
+                    next += 1
+                }
+                index = next
+            } else {
+                index += 1
+            }
+        }
+        guard isFirstPage,
+              let abstract = lines.firstIndex(where: {
+                  $0.text.range(of: #"^(?:abstract|summary|a b s t r a c t)\b"#, options: [.regularExpression, .caseInsensitive]) != nil
+              }), abstract > 0 else { return roles }
+        for index in 0..<abstract where roles[index] == nil {
+            // The title and any other display type are read.
+            if lines[index].pointSize >= bodySize + 1.5 { continue }
+            let text = lines[index].text
+            if looksLikeAuthorList(text) {
+                roles[index] = .authors
+            } else if !looksLikeProse(text) {
+                roles[index] = .frontMatter
+            }
+        }
+        return roles
+    }
+
+    /// A sentence, not an affiliation: eight or more words, mostly lower case.
+    static func looksLikeProse(_ text: String) -> Bool {
+        let words = text.split(separator: " ").filter { $0.first?.isLetter == true }
+        return words.count >= 8
+            && Double(words.filter { $0.first?.isLowercase == true }.count) / Double(words.count) >= 0.5
+            && text.range(of: #"(?i)univ|department|institut|hospital|laborator|college|school of|faculty of"#, options: .regularExpression) == nil
+    }
+
+    /// "Ada Example¹, Ben Sample² and C. D. Third*": capitalised names joined by
+    /// commas or "and", nearly no lower-case words, no institution or address.
+    static func looksLikeAuthorList(_ text: String) -> Bool {
+        guard text.range(of: #"(?i)@|univ|department|dept\.|institut|cent(?:er|re)|school|faculty|hospital|laborator|college|academy|street|road|avenue|\b[A-Z]{1,2}-?[0-9]{4,5}\b"#, options: .regularExpression) == nil else { return false }
+        let words = text.split(whereSeparator: { " ,;*†‡§".contains($0) }).filter { $0.first?.isLetter == true }
+        let names = words.filter { $0.first?.isUppercase == true }
+        let lower = words.filter { $0.first?.isLowercase == true && !["and", "de", "van", "von", "der", "da", "del", "di", "la", "le"].contains(String($0)) }
+        return names.count >= 2 && lower.count <= max(0, words.count / 5)
+    }
+
+    static func isTableCaption(_ text: String) -> Bool {
+        text.range(of: #"^(?:Table|TABLE)\s+[0-9IVXS]+[0-9.]*(?:[.:|]|\s*$|\s+\p{Lu})"#, options: .regularExpression) != nil
+    }
+
+    /// Lines that follow a "Table N" caption in smaller type than the body: the
+    /// table itself, whatever its cells say. The caption is the "Table N" line and
+    /// the lines after it in the same type size (at most four); the table runs
+    /// until body-size text, a heading-size line, or another caption.
+    private static func captionedTableLines(in lines: [TextLine], captions: [Int], layout: BodyLayout) -> Set<Int> {
+        var result = Set<Int>()
+        for caption in captions {
+            let captionSize = lines[caption].pointSize
+            guard captionSize > 0, captionSize < layout.bodySize + 0.3 else { continue }
+            var index = caption + 1
+            while index < lines.count, index <= caption + 4, abs(lines[index].pointSize - captionSize) < 0.2,
+                  !isTableCaption(lines[index].text) {
+                index += 1
+            }
+            while index < lines.count {
+                let line = lines[index]
+                guard line.pointSize > 0, line.pointSize < layout.bodySize - 0.4,
+                      !isTableCaption(line.text),
+                      line.text.range(of: #"^(?:Fig(?:ure)?\.?|FIGURE)\s+[0-9]"#, options: .regularExpression) == nil else { break }
+                result.insert(index)
+                index += 1
+            }
         }
         return result
     }
