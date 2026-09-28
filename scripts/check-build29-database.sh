@@ -6,8 +6,9 @@
 #   scripts/check-build29-database.sh
 #
 # 1. The current SessionKit writes a database through the real import paths
-#    (Build29DatabaseFixtureTests): a v1 PDF item and an extraction v2 PDF item
-#    with its I13 document, each with a session and a written Margin.
+#    (Build29DatabaseFixtureTests): a v1 PDF item, an extraction v2 PDF item
+#    with its I13 document, and a v1 item moved to v2 by a re-import, each
+#    with a session and a written Margin.
 # 2. Build 29's SessionKit and SessionKitPersistence sources, taken from the
 #    testflight/0.1-build-29 tag, are built into a small reader
 #    (scripts/build29-db-reader) that opens it the way Build 29 does.

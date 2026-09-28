@@ -50,6 +50,10 @@ for entry in expected {
     do { margins = try store.loadInterjections(sessionId: sessionId) } catch { fail("\(itemId): Margins don't load: \(error)") }
     guard let margin = margins.first(where: { $0.id == marginId }) else { fail("\(itemId): Margin \(marginId) missing") }
     guard margin.anchor.endChar <= text.count else { fail("\(itemId): Margin anchor runs past Item.text") }
+    if let words = entry["marginWords"] as? String {
+        let opened = String(Array(text)[margin.anchor.startChar..<margin.anchor.endChar])
+        guard opened == words else { fail("\(itemId): Margin opens at \"\(opened)\", not \"\(words)\"") }
+    }
     print("ok   \(itemId): \(text.count) characters, Margin \(marginId) at \(margin.anchor.startChar)..<\(margin.anchor.endChar)")
 }
 let quarantined = (try? store.quarantinedRecordCount()) ?? -1
