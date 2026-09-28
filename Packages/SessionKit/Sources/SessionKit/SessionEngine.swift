@@ -289,12 +289,18 @@ public final class SessionEngine {
     public func updateSpeechPlaybackSettings(voiceIdentifier: String?, rate: Float) throws -> SessionSnapshot {
         try requirePlayback("updateSpeechPlaybackSettings")
         try audio.configureSpeechSettings(voiceIdentifier: voiceIdentifier, rate: rate)
-        guard currentSession != nil,
+        guard var session = currentSession,
               snapshot.targetType == TargetType.itemTextTTS.rawValue
                 || snapshot.targetType == TargetType.assistantTurnTTS.rawValue
                 || snapshot.targetType == TargetType.summaryTurnTTS.rawValue else {
             return snapshot
         }
+        // Rate is one number (I14). `rate` is the listener's speed stored as multiplier × 0.5.
+        // The restart below re-applies the session's rate, so it has to be that same speed, or
+        // the old rate (often 1×) overwrites the new one and Now Playing reports it.
+        session.playbackRate = SpeechRateRule.multiplier(forStoredRate: rate)
+        currentSession = session
+        try persistSession(session)
         return try restartPlaybackFromCurrentPosition()
     }
 
