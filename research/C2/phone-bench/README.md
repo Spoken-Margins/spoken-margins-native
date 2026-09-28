@@ -10,7 +10,7 @@ M2 needs render speed measured on the owner's iPhone 17 Pro in Low Power Mode wh
   2. The same at **4 steps**. `SupertonicNarrationRenderer.render` rejects fewer than 5 steps (line 172), so call the runtime directly or widen the guard in the debug build.
   3. KittenTTS nano 0.8 **fp32**, from pre-tokenized input ids.
   4. Kokoro-82M v1.0 **fp32**, from pre-tokenized tokens (style row = token count − 1, input wrapped as `[0, *tokens, 0]`, speed 1.0).
-  5. **Pocket TTS**, if the community ONNX export (Hugging Face `KevinAHM/pocket-tts-onnx`) loads on onnxruntime. It tied Kokoro in the blind listen. Check its license first; if it won't run, skip it and say so.
+  5. **Pocket TTS (alba)**: the lead candidate after the blind listen. Try the community ONNX export (Hugging Face `KevinAHM/pocket-tts-onnx`) on onnxruntime first, then MLX. Check the export's license. Measure time to first streamed audio as well as time to first chunk. If neither runtime works on iOS, say so on #192; that's the finding.
   6. **Samantha** through `AVSpeechSynthesizer.write(_:toBufferCallback:)`, rate `AVSpeechUtteranceDefaultSpeechRate`.
 - **Inputs:** [`inputs.json`](inputs.json) has the exact chunks and token ids for all three passages. That's why the phone needs no phonemizer (and no GPL code) for this benchmark. Model files come from `../fetch_models.sh`. Side-load them into the debug build's Documents folder; don't bundle them.
 - **What to measure**, per engine and passage, with each engine warmed up on one short sentence first:

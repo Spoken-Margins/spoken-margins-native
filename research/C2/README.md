@@ -64,25 +64,40 @@ Ratings are 1–5 per passage (narrative / scientific / dialogue). Letters were 
 | A | Piper ljspeech high | 4 / 3 / 3 | 3.3 | yes (blocked on license anyway) |
 | D | KittenTTS nano fp32 | 3 / 3 / 3 | 3.0 | yes |
 | C | Supertonic 3, 4 steps | 2 / 3 / 2 | 2.3 | **no** |
-| F | Samantha | 2 / 2 / 2 | 2.0 | no. *F had no audio on the page (it's rendered on the Mac), so these ratings aren't from listening. Re-rate F once it's added.* |
+| F | Samantha (the system voice today) | 2 / 2 / 2 | 2.0 | no |
 
-## Recommendation (provisional until the Mac and phone numbers are in)
+## Mac results (partial, 2026-09-28)
 
-The listen rules out the 4-step Supertonic fallback. The two voices you liked best (5.0) are also the two heaviest, so the phone benchmark now decides.
+From the Mac session's commit 819b006 ([results/darwin/](results/darwin/)):
 
-**Make the fallback Kokoro-82M, provided it holds 4× real time on the phone in Low Power Mode while warm. If it doesn't, use KittenTTS nano.**
+| Candidate | Speed ×RT, 4 thr / 1 thr | First audio |
+| --- | ---: | ---: |
+| Supertonic 3, 8 steps | 5.1 / 2.5 | 1.7 s |
+| Supertonic 3, 4 steps | 9.6 / 4.5 | 0.9 s |
+| Pocket TTS (alba) | 4.2 / 3.5 | 1.5 s (first streamed audio 0.07 s) |
+| Samantha | 15.3 | — |
 
-- **Why Kokoro over Pocket TTS (both rated 5.0):**
-  - Kokoro runs on the onnxruntime the app already links, and it had the fewest word errors on the scientific passage (5%, against 24% for Pocket).
-  - Pocket needs an iOS runtime port (a community ONNX export or MLX), and its first full chunk was the slowest here, although it can start streaming in 0.2 s.
-  - Pocket stays the alternative if Kokoro is too slow on the phone and a Pocket port turns out faster. The Mac session should try the community ONNX export in the phone benchmark.
-- **Kokoro's costs:**
-  - **App size:** 332 MB at fp32, or about 98 MB if int8 turns out fast on Apple silicon (on this x86 CPU it was 3–5× slower than fp32; the Mac run checks this).
-  - **Engineering:** a non-GPL replacement for misaki's espeak-ng fallback, used only for words missing from its 6 MB Apache lexicon (six such words across the three passages here).
-  - **Speed:** 1.1× real time on one Xeon thread, so whether it passes depends on Apple silicon being several times faster per core. Kyutai's figures suggest it is, but that's unmeasured.
-- **If Kokoro fails the phone budget:** KittenTTS nano fp32. You rated it acceptable (3.0). It's the fastest neural voice here (4.6× on one thread) at about 60 MB. It needs a non-GPL front end that imitates espeak's phonemes, which is about a week of work with a quality risk.
-- **Supertonic 8 steps stays the preferred voice** whenever policy allows it (you rated it 4.0). The fallback only covers the conditions in the I14 draft. After a memory warning, a 332 MB Kokoro is a poor fit, so the system voice stays the last resort there, visibly labelled.
-- **App-size cost to accept:** about 332 MB for Kokoro fp32 (about 98 MB if int8 works on the phone), or about 60 MB for Kitten.
+Kokoro, Kitten and Piper produced no Mac numbers, because espeak-ng couldn't find its data on macOS. `engines/kitten.py` now passes the data path explicitly; this is untested on a Mac. misaki already does this for Kokoro and still failed there, so the Mac session needs to look at Kokoro directly.
+
+## Recommendation (provisional until the phone benchmark)
+
+The listen rules out the 4-step Supertonic fallback (2.3, not acceptable). Samantha, the system voice the app falls back to today, scored lowest (2.0), so replacing it is worth an app-size cost.
+
+**Make the fallback Kyutai Pocket TTS (voice alba), provided it holds 4× real time on the phone in Low Power Mode while warm. Kokoro is the alternative, and KittenTTS the safety net.**
+
+- **Why Pocket TTS:**
+  - You rated it 5.0, tied with Kokoro and above today's Supertonic (4.0).
+  - It's the only 5.0 voice with an Apple number. It does 3.5× real time on one Mac core, faster than the 8-step Supertonic the app already runs (2.5×).
+  - It streams, so audio starts in under 0.1 s on the Mac.
+  - The license needs no engineering: MIT code, CC BY 4.0 weights, and no phonemizer at all, only an attribution line.
+- **Pocket's costs and risks:**
+  - **App size:** about 225 MB (fp32 weights plus one voice).
+  - **Runtime:** it needs an iOS runtime. It's PyTorch today; the options are a community ONNX export on the onnxruntime the app already links, or MLX. This is the main risk, and the phone benchmark has to prove it.
+  - **Normalization:** its scientific-passage word errors are high (24–29%), which the I14 normalizer is meant to fix. The voice itself is fine.
+- **Kokoro (also 5.0)** wins if the Pocket port fails or runs slower on the phone. It already runs on onnxruntime, but it's 332 MB (98 MB if int8 is fast on Apple silicon), still has no Apple speed number, and needs a non-GPL fallback for unknown words.
+- **KittenTTS nano (3.0, acceptable)** is the safety net if neither passes the phone budget. It's about 60 MB and fast, but needs a non-GPL front end built first.
+- **Supertonic 8 steps stays the preferred voice** whenever policy allows it. After a memory warning, a 225 MB model is a poor fit, so the system voice remains the labelled last resort there.
+- **App-size cost to accept:** about 225 MB for Pocket (Kokoro 332 MB or 98 MB; Kitten about 60 MB).
 
 ## What's waiting
 
@@ -96,9 +111,9 @@ It installs the harness, fetches the models, runs every benchmark (`results/darw
 
 **(owner)** In this order:
 
-1. **Blind listen:** done 2026-09-28. Re-rate F (Samantha) once the Mac run adds it.
+1. **Blind listen:** done 2026-09-28.
 2. **Phone benchmark:** once the Mac session has built it, run it warm, in Low Power Mode, as described in [phone-bench/README.md](phone-bench/README.md), and share the JSON on #192.
-3. **Accept the app-size cost:** about 332 MB for Kokoro fp32 (about 98 MB if int8 is fast on the phone), or about 60 MB for Kitten.
+3. **Accept the app-size cost:** about 225 MB for Pocket TTS (Kokoro 332 MB or 98 MB; Kitten about 60 MB).
 
 ## Files
 

@@ -41,8 +41,9 @@ class Engine:
         self.vkey = v
         self.speed = cfg.get("speed_priors", {}).get(v, 1.0)
         EspeakWrapper.set_library(espeakng_loader.get_library_path())
-        import os
-        os.environ["ESPEAK_DATA_PATH"] = espeakng_loader.get_data_path()
+        # The macOS libespeak-ng wheel has its CI build path compiled in, so the
+        # environment variable alone isn't enough there; pass the path explicitly.
+        EspeakWrapper.set_data_path(espeakng_loader.get_data_path())
         self.ph = EspeakBackend(language="en-us", preserve_punctuation=True, with_stress=True)
 
     def synth(self, text):
