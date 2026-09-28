@@ -1,0 +1,177 @@
+<title>Kitten Front-End A/B</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<style>
+:root {
+  --paper: #eef1f3;
+  --panel: #fbfcfc;
+  --ink: #16202b;
+  --muted: #56626e;
+  --line: #cfd6dc;
+  --accent: #1e6a86;
+  --accent-ink: #ffffff;
+  --mark: #b77a0c;
+  --mark-soft: #f4e6c7;
+  --ok: #2e7d4f;
+  --ok-soft: #dcefe3;
+  --no: #a23b32;
+  --no-soft: #f5dedb;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --read: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #10161d; --panel: #18212a; --ink: #e4e9ee; --muted: #9aa7b3; --line: #2d3a46;
+    --accent: #63b4d2; --accent-ink: #0c1318; --mark: #e0a53a; --mark-soft: #3a2f18;
+    --ok: #6cc592; --ok-soft: #1c3526; --no: #e2857b; --no-soft: #3d201d;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #10161d; --panel: #18212a; --ink: #e4e9ee; --muted: #9aa7b3; --line: #2d3a46;
+  --accent: #63b4d2; --accent-ink: #0c1318; --mark: #e0a53a; --mark-soft: #3a2f18;
+  --ok: #6cc592; --ok-soft: #1c3526; --no: #e2857b; --no-soft: #3d201d;
+}
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink); font: 16px/1.5 var(--read); padding: 24px 16px 64px; }
+.wrap { max-width: 760px; margin: 0 auto; display: grid; gap: 28px; }
+header { display: grid; gap: 10px; }
+.eyebrow { font: 600 12px/1 var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+h1 { font: 700 clamp(28px, 6vw, 40px)/1.05 var(--display); margin: 0; text-wrap: balance; }
+h2 { font: 600 22px/1.2 var(--display); margin: 0; text-wrap: balance; }
+p { margin: 0; max-width: 65ch; }
+.how { display: grid; gap: 6px; padding-left: 1.2em; margin: 0; color: var(--muted); max-width: 65ch; }
+.how b { color: var(--ink); font-weight: 600; }
+section.passage { display: grid; gap: 14px; }
+.ptext { font-style: italic; color: var(--muted); border-left: 3px solid var(--line); padding-left: 12px; font-size: 15px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.voice { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: grid; gap: 10px; }
+.voice.playing { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.vhead { display: flex; align-items: center; gap: 10px; }
+.letter { font: 700 26px/1 var(--display); width: 1.4em; }
+.play { flex: 1; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 999px; padding: 9px 14px; background: var(--accent); color: var(--accent-ink); font: 600 15px/1 var(--display); letter-spacing: .02em; cursor: pointer; }
+.play:disabled { background: var(--line); color: var(--muted); cursor: default; }
+.play:focus-visible, .star:focus-visible, .yn:focus-visible, button:focus-visible, textarea:focus-visible { outline: 2px solid var(--mark); outline-offset: 2px; }
+.time { font: 12px/1 var(--mono); color: inherit; opacity: .85; font-variant-numeric: tabular-nums; margin-left: auto; }
+.bar { height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+.stars { display: flex; gap: 4px; }
+.star { flex: 1; border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 6px; padding: 7px 0; font: 500 14px/1 var(--mono); cursor: pointer; }
+.star.on { background: var(--mark-soft); border-color: var(--mark); color: var(--ink); }
+.pending { font: 500 13px/1.3 var(--display); color: var(--muted); letter-spacing: .02em; }
+.scale { font: 12px/1.3 var(--display); color: var(--muted); letter-spacing: .03em; }
+section.verdict { display: grid; gap: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.vrow { display: grid; grid-template-columns: 2.2em 5.5em 1fr; gap: 10px; align-items: center; padding-block: 8px; border-top: 1px solid var(--line); }
+.vrow:first-of-type { border-top: 0; }
+.avg { font: 500 14px/1 var(--mono); font-variant-numeric: tabular-nums; }
+.yns { display: flex; gap: 6px; flex-wrap: wrap; }
+.yn { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 999px; padding: 6px 10px; font: 500 13px/1 var(--display); cursor: pointer; }
+.yn.on[data-v="yes"] { background: var(--ok-soft); border-color: var(--ok); color: var(--ink); }
+.yn.on[data-v="no"] { background: var(--no-soft); border-color: var(--no); color: var(--ink); }
+textarea { width: 100%; min-height: 84px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); font: 15px/1.4 var(--read); padding: 8px; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.btn { border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: var(--accent-ink); padding: 10px 16px; font: 600 15px/1 var(--display); cursor: pointer; }
+.btn.ghost { background: transparent; color: var(--accent); }
+.status { font: 13px/1.3 var(--display); color: var(--muted); }
+pre#out { white-space: pre-wrap; font: 12px/1.4 var(--mono); background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin: 0; overflow-x: auto; }
+footer { font: 13px/1.4 var(--display); color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }
+
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.choice { display: flex; gap: 6px; flex-wrap: wrap; }
+.choice .yn.on { background: var(--mark-soft); border-color: var(--mark); color: var(--ink); }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Spoken Margins · C2 voice · M3</div>
+    <h1>Which reading sounds right?</h1>
+    <p>Both clips are the same fallback voice (KittenTTS). They differ only in how the text is turned into speech sounds before the voice reads it. One is the current open-source component we can't ship; the other is our replacement. Every clip is matched for loudness.</p>
+    <ol class="how">
+      <li><b>Use headphones</b> and play X and Y for each passage.</li>
+      <li>Pick <b>X better</b>, <b>Same</b> or <b>Y better</b>. Judge pronunciation and how natural it sounds, not the words chosen.</li>
+      <li>Tap <b>Save choices</b>. The answer key is a separate file; don't open it until you've saved.</li>
+    </ol>
+  </header>
+  <div id="items"></div>
+  <section class="verdict" aria-labelledby="vh">
+    <h2 id="vh">Notes</h2>
+    <label for="notes" class="scale">Anything mispronounced, or anything that sounded off</label>
+    <textarea id="notes" placeholder="Mispronounced words, odd rhythm, anything you noticed."></textarea>
+    <div class="actions">
+      <button class="btn" id="save" type="button">Save choices</button>
+      <button class="btn ghost" id="copy" type="button">Copy as text</button>
+      <span class="status" id="status" role="status"></span>
+    </div>
+    <pre id="out" hidden></pre>
+  </section>
+  <footer>Built by the C2 research harness (research/C2/frontend on branch ws/c2-voice).</footer>
+</div>
+
+<script>
+const DATA = {"items": [{"id": "p1-narrative", "title": "Narrative", "text": "The ferry left Anacortes a little after seven, and by the time it cleared the harbor the fog had already begun to lift. Maria stood at the rail with her coffee going cold, watching the islands come up out of the grey one at a time. She had made this crossing a hundred times, but never once, she realized, had she actually looked.", "clips": {"X": "audio/p1-narrative-X.mp3", "Y": "audio/p1-narrative-Y.mp3"}}, {"id": "p2-scientific", "title": "Scientific", "text": "In a randomized, double-blind trial of 1,284 adults (mean age 61.3 years), daily supplementation with 2,000 IU of vitamin D3 did not reduce the incidence of type 2 diabetes compared with placebo (hazard ratio, 0.88; 95% CI, 0.75 to 1.04; p = 0.12). Serum 25-hydroxyvitamin D rose from 28 to 54 ng/mL. These findings are consistent with earlier meta-analyses [12, 14] but contrast with observational data reported by Pittas et al.", "clips": {"X": "audio/p2-scientific-X.mp3", "Y": "audio/p2-scientific-Y.mp3"}}, {"id": "p3-conversational", "title": "Essay with dialogue", "text": "\"Honestly?\" she said. \"I don't think the problem is the software. It's that nobody reads the manual.\" He laughed, but she wasn't joking. Here's the thing: when a tool is hard to use, we blame ourselves first, then the tool, and only much later the people who decided it should work that way. Why is that?", "clips": {"X": "audio/p3-conversational-X.mp3", "Y": "audio/p3-conversational-Y.mp3"}}, {"id": "h1-names-numbers", "title": "Names and numbers", "text": "On March 3rd, 2024, Dr. Nakamura flew from Reykjav\u00edk to Ouagadougou with 1,250 kg of equipment, arriving 36 hours later, about 2.5 times slower than planned.", "clips": {"X": "audio/h1-names-numbers-X.mp3", "Y": "audio/h1-names-numbers-Y.mp3"}}, {"id": "h2-stats", "title": "Statistics", "text": "The effect was small but reliable (\u03b2 = 0.21, SE = 0.04, p < 0.001), and remained after adjusting for age, BMI, and baseline HbA1c (n = 3,412).", "clips": {"X": "audio/h2-stats-X.mp3", "Y": "audio/h2-stats-Y.mp3"}}, {"id": "h3-methods", "title": "Methods", "text": "Cells were incubated at 37 \u00b0C for 48 h in 5% CO2, then washed twice with PBS and lysed in RIPA buffer containing 1 mM EDTA.", "clips": {"X": "audio/h3-methods-X.mp3", "Y": "audio/h3-methods-Y.mp3"}}, {"id": "h4-rare-words", "title": "Rare words", "text": "The archaeologist catalogued the chthonic iconography, noting the palimpsest's idiosyncratic marginalia and a surprisingly well-preserved quincunx.", "clips": {"X": "audio/h4-rare-words-X.mp3", "Y": "audio/h4-rare-words-Y.mp3"}}, {"id": "h5-citations", "title": "Citations", "text": "Earlier work found similar effects [4, 7\u20139], although Smith et al. reported the opposite in a smaller cohort (Smith et al., 2019; Lee, 2021).", "clips": {"X": "audio/h5-citations-X.mp3", "Y": "audio/h5-citations-Y.mp3"}}, {"id": "h6-dialogue", "title": "Dialogue", "text": "\"You're kidding,\" said Priya. \"We read that paper twice, and nobody noticed the typo?\" Tom shrugged. \"It's 11:45, let's just fix it.\"", "clips": {"X": "audio/h6-dialogue-X.mp3", "Y": "audio/h6-dialogue-Y.mp3"}}]};
+const STORE = "c2-frontend-ab-v1";
+let state = { pick: {}, notes: "" };
+try { const s = JSON.parse(localStorage.getItem(STORE) || "null"); if (s) state = Object.assign(state, s); } catch (e) {}
+const persist = () => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {} };
+const audio = new Audio(); audio.preload = "none";
+let current = null;
+const fmt = s => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+function stop() { audio.pause(); if (current) { current.card.classList.remove("playing"); current.btn.firstChild.textContent = "▶ Play " + current.label; } current = null; }
+function play(card, btn, src, bar, time, label) {
+  if (current && current.card === card) { stop(); return; }
+  stop(); audio.src = src; audio.currentTime = 0; audio.play().catch(() => {});
+  current = { card, btn, bar, time, label }; card.classList.add("playing"); btn.firstChild.textContent = "❚❚ Pause " + label;
+}
+audio.addEventListener("timeupdate", () => { if (!current || !audio.duration) return;
+  current.bar.style.width = (100 * audio.currentTime / audio.duration) + "%";
+  current.time.textContent = fmt(audio.currentTime) + " / " + fmt(audio.duration); });
+audio.addEventListener("ended", stop);
+function render() {
+  const root = document.getElementById("items"); root.innerHTML = "";
+  DATA.items.forEach((it, i) => {
+    const sec = document.createElement("section"); sec.className = "passage";
+    sec.innerHTML = `<div class="eyebrow">Passage ${i + 1} of ${DATA.items.length}</div><h2></h2><p class="ptext"></p><div class="pair"></div><div class="choice" role="group"></div>`;
+    sec.querySelector("h2").textContent = it.title; sec.querySelector(".ptext").textContent = it.text;
+    const pair = sec.querySelector(".pair");
+    ["X", "Y"].forEach(label => {
+      const card = document.createElement("div"); card.className = "voice";
+      card.innerHTML = `<div class="vhead"><button class="play" type="button">▶ Play ${label}<span class="time"></span></button></div><div class="bar"><i></i></div>`;
+      const btn = card.querySelector(".play");
+      btn.addEventListener("click", () => play(card, btn, it.clips[label], card.querySelector(".bar i"), card.querySelector(".time"), label));
+      pair.appendChild(card);
+    });
+    const ch = sec.querySelector(".choice"); ch.setAttribute("aria-label", "Your choice for " + it.title);
+    [["X", "X better"], ["same", "Same"], ["Y", "Y better"]].forEach(([v, text]) => {
+      const b = document.createElement("button"); b.type = "button"; b.className = "yn" + (state.pick[it.id] === v ? " on" : ""); b.textContent = text;
+      b.setAttribute("aria-pressed", state.pick[it.id] === v ? "true" : "false");
+      b.addEventListener("click", () => { state.pick[it.id] = state.pick[it.id] === v ? undefined : v; persist(); render(); });
+      ch.appendChild(b);
+    });
+    root.appendChild(sec);
+  });
+}
+function summary() {
+  return ["C2 front-end A/B (" + new Date().toISOString().slice(0, 10) + ")"].concat(
+    DATA.items.map(it => `${it.title}: ${state.pick[it.id] || "-"}`)).concat(state.notes.trim() ? ["Notes: " + state.notes.trim()] : []).join("\n");
+}
+const notes = document.getElementById("notes"); notes.value = state.notes || "";
+notes.addEventListener("input", () => { state.notes = notes.value; persist(); });
+const status = document.getElementById("status"), out = document.getElementById("out");
+document.getElementById("copy").addEventListener("click", () => { const t = summary(); out.textContent = t; out.hidden = false;
+  navigator.clipboard.writeText(t).then(() => { status.textContent = "Copied. Paste it into issue #192."; }, () => { status.textContent = "Copy was blocked. Select the text below and copy it."; }); });
+let db = null;
+document.getElementById("save").addEventListener("click", async () => {
+  const t = summary(); out.textContent = t; out.hidden = false;
+  if (!db) { status.textContent = "Saving isn't available in this view. Use Copy as text and paste it into issue #192."; return; }
+  status.textContent = "Saving…";
+  try { await db.collection("choices").add({ savedAt: new Date().toISOString(), pick: state.pick, notes: state.notes, summary: t });
+        status.textContent = "Saved. The agent can read your choices now."; }
+  catch (e) { status.textContent = "Couldn't save (" + (e && e.code || "error") + "). Use Copy as text and paste it into issue #192."; }
+});
+render();
+if (window.claude && window.claude.use) window.claude.use("db").then(d => { db = d; }).catch(() => {});
+</script>

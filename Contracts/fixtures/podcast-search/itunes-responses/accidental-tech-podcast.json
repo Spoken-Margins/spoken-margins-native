@@ -1,0 +1,10 @@
+
+
+
+{
+ "resultCount":1,
+ "results": [
+{"wrapperType":"track", "kind":"podcast", "collectionId":617416468, "trackId":617416468, "artistName":"Marco Arment, Casey Liss, John Siracusa", "collectionName":"Accidental Tech Podcast", "trackName":"Accidental Tech Podcast", "collectionCensoredName":"Accidental Tech Podcast", "trackCensoredName":"Accidental Tech Podcast", "collectionViewUrl":"https://podcasts.apple.com/us/podcast/accidental-tech-podcast/id617416468?uo=4", "feedUrl":"https://cdn.atp.fm/rss/public?wtvryzdm", "trackViewUrl":"https://podcasts.apple.com/us/podcast/accidental-tech-podcast/id617416468?uo=4", "artworkUrl30":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts126/v4/91/22/42/9122426f-df98-4302-6ba3-da67b0648e70/mza_5041274938111919910.png/30x30bb.jpg", "artworkUrl60":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts126/v4/91/22/42/9122426f-df98-4302-6ba3-da67b0648e70/mza_5041274938111919910.png/60x60bb.jpg", "artworkUrl100":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts126/v4/91/22/42/9122426f-df98-4302-6ba3-da67b0648e70/mza_5041274938111919910.png/100x100bb.jpg", "collectionPrice":0.00, "trackPrice":0.00, "collectionHdPrice":0, "releaseDate":"2026-09-17T21:26:00Z", "collectionExplicitness":"notExplicit", "trackExplicitness":"cleaned", "trackCount":710, "trackTimeMillis":7662, "country":"USA", "currency":"USD", "primaryGenreName":"Technology", "contentAdvisoryRating":"Clean", "artworkUrl600":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts126/v4/91/22/42/9122426f-df98-4302-6ba3-da67b0648e70/mza_5041274938111919910.png/600x600bb.jpg", "genreIds":["1318", "26"], "genres":["Technology", "Podcasts"]}]
+}
+
+

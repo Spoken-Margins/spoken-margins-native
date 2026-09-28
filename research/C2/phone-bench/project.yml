@@ -1,0 +1,70 @@
+# VoiceBench: C2 M2's throwaway phone benchmark (see README.md). Its own bundle ID, so it can
+# never replace Spoken Margins or touch its Library. Regenerate with `xcodegen generate` here.
+name: VoiceBench
+options:
+  bundleIdPrefix: com.spokenmargins
+  deploymentTarget:
+    iOS: "26.0"
+packages:
+  SessionKit:
+    path: ../../../Packages/SessionKit
+  onnxruntime:
+    url: https://github.com/microsoft/onnxruntime-swift-package-manager.git
+    exactVersion: 1.24.2
+targets:
+  VoiceBench:
+    type: application
+    platform: iOS
+    sources:
+      - path: VoiceBench
+        excludes:
+          - Models
+      - path: VoiceBench/Models/kitten-nano-0.8-fp32.onnx
+        buildPhase: resources
+      - path: VoiceBench/Models/kitten-nano-0.8-int8.onnx
+        buildPhase: resources
+      # Today's voice, exactly as the shipping app bundles it (a folder named Supertonic).
+      - path: ../../../App/SpokenMarginsApp/Resources/Supertonic
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - package: SessionKit
+        product: SessionKitSupertonic
+      - package: onnxruntime
+        product: onnxruntime
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.voicebench
+        PRODUCT_NAME: VoiceBench
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: J8SWC6J3VY
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.0"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: VoiceBench
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+        INFOPLIST_KEY_UIFileSharingEnabled: YES
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.0"
+        REMOVE_STATIC_EXECUTABLES_FROM_EMBEDDED_BUNDLES: YES
+    postBuildScripts:
+      - name: Normalize and Re-sign Embedded Framework
+        script: |
+          "$SRCROOT/../../../scripts/normalize-embedded-framework-minimum-os.sh" \
+            "$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/onnxruntime.framework" \
+            "$IPHONEOS_DEPLOYMENT_TARGET"
+        basedOnDependencyAnalysis: false
+schemes:
+  VoiceBench:
+    build:
+      targets:
+        VoiceBench: all
+    # Run in Release so Supertonic's Swift code is optimized, as it is in the shipping app;
+    # a Debug build would make today's voice look slower than it is.
+    run:
+      config: Release
+    archive:
+      config: Release

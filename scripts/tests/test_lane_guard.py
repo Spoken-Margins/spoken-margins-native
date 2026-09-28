@@ -38,6 +38,7 @@ class LaneGuardTests(unittest.TestCase):
                         '.venv/bin/python scripts/verify-tests.py --plan app',
                         'python3 scripts/verify-tests.py --plan=adapters',
                         'bash scripts/smoke-simulator.sh',
+                        '/usr/bin/python3 scripts/lane-runner.py --pr 1 --event-head a --merge-sha b --run-id 1',
                         'open -a Simulator',
                         'killall Simulator',
                         'cd /tmp && timeout 600 xcrun simctl boot X',

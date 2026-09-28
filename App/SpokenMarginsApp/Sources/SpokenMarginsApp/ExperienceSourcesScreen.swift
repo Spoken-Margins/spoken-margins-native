@@ -9,6 +9,7 @@ struct ExperienceSourcesScreen: View {
     }
 
     @EnvironmentObject private var model: Gate1AppModel
+    @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var filter: Filter = .all
@@ -23,6 +24,13 @@ struct ExperienceSourcesScreen: View {
                 filterBar
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 Section {
+                    Button {
+                        catalogDrawer.present()
+                    } label: {
+                        Label("Browse top podcasts", systemImage: "square.grid.2x2")
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                    .accessibilityIdentifier("sources.browseCatalog")
                     NavigationLink("Read Later Services") { ReadLaterScreen() }
                     NavigationLink("Import Listening Edition") { ListeningEditionImportScreen() }
                 }

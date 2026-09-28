@@ -1,0 +1,32 @@
+{
+  "engine": "supertonic3-int8-M2-4step",
+  "threads": 1,
+  "cpu": "arm",
+  "load_s": 0.48,
+  "passages": {
+    "p1-narrative": {
+      "ttfa_s": 1.865,
+      "render_s": 4.934,
+      "audio_s": 22.21,
+      "rtf": 0.222,
+      "chunks": 3
+    },
+    "p2-scientific": {
+      "ttfa_s": 5.313,
+      "render_s": 8.777,
+      "audio_s": 39.99,
+      "rtf": 0.219,
+      "chunks": 2
+    },
+    "p3-conversational": {
+      "ttfa_s": 0.514,
+      "render_s": 4.663,
+      "audio_s": 20.97,
+      "rtf": 0.222,
+      "chunks": 3
+    }
+  },
+  "rtf": 0.221,
+  "speed_x": 4.53,
+  "ttfa_s_median": 1.865
+}

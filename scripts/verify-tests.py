@@ -64,6 +64,12 @@ def select_simulator(devices, device=None, ios=None):
 
 
 TEST_RUNNER_NAME = 'SpokenMargins Test Runner'
+APP_TEST_TARGET = 'SpokenMarginsAppTests'
+
+
+def selected(test, selector):
+    """Whether an -only-testing selector (Target/Class or Target/Class/method) covers a test ID."""
+    return test == selector or test.startswith(selector + '/')
 
 
 def dedicated_simulator(devices, ios=None):
@@ -266,10 +272,18 @@ class Run:
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed during fast verification')
 
-    def xcode(self, plan, device, rebuild, ios=None):
+    def xcode(self, plan, device, rebuild, ios=None, only=()):
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
+        # T3 runs a few test classes or methods of a plan. Each selector must name tests in the plan.
+        selectors = [s if s.startswith(f'{APP_TEST_TARGET}/') else f'{APP_TEST_TARGET}/{s}' for s in only]
+        planned = plan_tests(ROOT, name)
+        unmatched = [s for s in selectors if not any(selected(test, s) for test in planned)]
+        if unmatched:
+            raise RuntimeError(f'Not in the {name} test plan: {", ".join(unmatched)}')
+        if selectors:
+            self.manifest['only_testing'] = selectors
         devices = json.loads(capture(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
         if device:
             chosen = select_simulator(devices, device, ios)
@@ -314,8 +328,9 @@ class Run:
                 bundle_id = plistlib.loads((app / 'Info.plist').read_bytes())['CFBundleIdentifier']
                 subprocess.run(['xcrun', 'simctl', 'uninstall', chosen['udid'], bundle_id],
                                cwd=ROOT, capture_output=True, timeout=60)
-            expected = plan_tests(ROOT, name)
-            self.command('xcode-tests', base + ['test-without-building', '-parallel-testing-enabled', 'NO',
+            expected = {test for test in planned if not selectors or any(selected(test, s) for s in selectors)}
+            self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
+                         'test-without-building', '-parallel-testing-enabled', 'NO',
                          '-collect-test-diagnostics', 'never',
                          '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(self.output / 'tests.xcresult')],
                          timeout=timeout, expected=expected, tests=True)
@@ -336,6 +351,8 @@ def main():
     parser.add_argument('--rebuild', action='store_true', help='Ignore the compatible build stamp')
     parser.add_argument('--output', type=Path, help='New evidence directory')
     parser.add_argument('--list', action='store_true', help='Inspect selection without running tests')
+    parser.add_argument('--only-testing', action='append', default=[], metavar='CLASS[/METHOD]',
+                        help='Xcode plans: run only these tests of the plan (repeatable); unknown ones fail the run')
     args = parser.parse_args()
     if errors := validate():
         parser.error('; '.join(errors))
@@ -353,7 +370,7 @@ def main():
             if args.plan in ('fast', 'release'):
                 run.fast()
             if args.plan != 'fast':
-                run.xcode(args.plan, args.device, args.rebuild, args.ios)
+                run.xcode(args.plan, args.device, args.rebuild, args.ios, args.only_testing)
             if input_identity() != run.manifest['input_sha256']:
                 raise RuntimeError('Inputs changed during verification; rerun on a stable source state')
             run.manifest['status'] = 'verified'

@@ -1,0 +1,8 @@
+{
+  "source": "Listening page db, collection ratings, saved 2026-09-28T14:29:11Z",
+  "key": {"A": "piper-en_US-ljspeech-high", "B": "pocket-alba", "C": "supertonic3-int8-M2-4step", "D": "kitten-nano-fp32-0.8-Jasper", "E": "supertonic3-int8-M2-8step", "F": "samantha-mac (not rendered at the time)", "G": "kokoro-fp32-af_heart"},
+  "ratings": {"A": [4, 3, 3], "B": [5, 5, 5], "C": [2, 3, 2], "D": [3, 3, 3], "E": [4, 4, 4], "F": [2, 2, 2], "G": [5, 5, 5]},
+  "passage_order": ["p1-narrative", "p2-scientific", "p3-conversational"],
+  "acceptable_as_fallback": {"A": "yes", "B": "yes", "C": "no", "D": "yes", "E": "yes", "F": "no", "G": "yes"},
+  "notes": ""
+}

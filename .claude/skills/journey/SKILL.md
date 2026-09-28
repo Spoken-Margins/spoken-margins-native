@@ -15,19 +15,25 @@ That worktree is the desk's home, not a test subject: keep it detached at `origi
 
 ## Setup for one request
 
+The Test Desk takes **T4 and T5** requests. T2 and T3 go to the self-hosted runner (`.github/workflows/lane.yml`), so skip those even when they carry `lane:queued`.
+
+
 1. **Worktree at the requested commit.** Never test in a stream's worktree or the owner's checkout:
    `git worktree add --detach .claude/worktrees/lane-<id> <sha>`
 2. **Build** there with the wrapper, which queues for a Mac-wide build slot and uses `.build/dd` in that worktree:
    `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS Simulator' build`
    The app is then at `.build/dd/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app`.
-3. **Simulator.** Use the Test Desk's own device. Never use the owner's journey simulator, and never `SpokenMargins Test Runner`, which `--plan app` erases. At most two simulators may run on the Mac at once, so check `xcrun simctl list devices booted` first.
-4. **Install over the existing app, and don't erase it.** Journeys need a Library with history (docs/journeys.md). Erase only if the request asks for a fresh install.
+3. **Simulator.** Journeys run on the lane's standing simulator, on **iOS 26.5**. That is the same device the Test Desk uses for its own T3 runs. Don't use iOS 27: its Apple Intelligence services crash-flood on this Mac (#184).
+   - A second device, when a journey needs one (J5), is a temporary simulator created for the job and deleted afterwards. Never create another long-lived simulator; that's the owner's disk rule.
+   - The lane runner's T3 jobs use their own temporary simulator (named `SM Lane Runner …`), so at most two lane simulators run at once. Before booting a second device, run `xcrun simctl list devices booted`, and wait if two are already booted.
+4. **Install the build.** `--plan app` wipes the app's data on the standing device, so a lane journey starts from an empty Library and builds the history it needs within the job (J2, J3 and J5 do this). J4 installs the previous shipped build first. Journeys over real long-lived history belong to the owner's device pass.
 5. Evidence goes in `artifacts/lane/<id>/` in the main checkout. It is git-ignored, so the PR gets paths, not images.
 
 ## Driving
 
 - Drive with computer use: real taps and screenshots. Claude Desktop's simulator pane doesn't support Xcode 27 yet. Don't inject state or use test-only launch arguments.
 - Follow docs/journeys.md step by step. After each step, record what the screen shows, which item or Margin is playing, and whether its clock advanced.
+- **After each step, check for new crash reports**, so a flood is caught at its first step: `find ~/Library/Logs/DiagnosticReports -name '*.ips' -newer <marker file touched before the step>`. Record any you find.
 - **Stop at the first failure.** Record the step, the expected and the observed behavior, and a screenshot path.
 - You can't hear audio. A moving clock shows the app thinks it's playing. Mark audible content "owner to confirm".
 

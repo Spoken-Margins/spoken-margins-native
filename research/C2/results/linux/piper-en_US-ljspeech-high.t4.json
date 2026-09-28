@@ -1,0 +1,32 @@
+{
+  "engine": "piper-en_US-ljspeech-high",
+  "threads": 4,
+  "cpu": "x86_64",
+  "load_s": 3.54,
+  "passages": {
+    "p1-narrative": {
+      "ttfa_s": 1.839,
+      "render_s": 5.251,
+      "audio_s": 19.74,
+      "rtf": 0.266,
+      "chunks": 3
+    },
+    "p2-scientific": {
+      "ttfa_s": 7.589,
+      "render_s": 11.856,
+      "audio_s": 44.47,
+      "rtf": 0.267,
+      "chunks": 2
+    },
+    "p3-conversational": {
+      "ttfa_s": 0.497,
+      "render_s": 4.85,
+      "audio_s": 18.22,
+      "rtf": 0.266,
+      "chunks": 3
+    }
+  },
+  "rtf": 0.266,
+  "speed_x": 3.75,
+  "ttfa_s_median": 1.839
+}

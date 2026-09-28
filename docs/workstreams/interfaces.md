@@ -23,6 +23,7 @@ This page sets **what crosses each seam and what must stay true**. It deliberate
   - A candidate is never presented as certain when the resolver isn't. This is the same principle as podcast anchors: an honest "is this it?" beats a confidently wrong follow.
   - Each resolver is independent and testable on the host with recorded responses. Adding a resolver doesn't mean editing the others.
   - Feed URLs that carry a private token (paid Substack, private podcast feeds) are marked private and never leave the device, including in packets (#168).
+- **Published (B1 M1):** `Contracts/schemas/source-resolution.schema.json` with fixtures in `Contracts/fixtures/source-resolution/`; Swift `SourceResolver`, `SourceResolverRegistry`, `StubSourceResolver` and `CatalogSourceResolver` in `SessionKit/SourceResolution.swift`.
 
 ## I2. Followed source and catalog entry
 
@@ -30,6 +31,7 @@ This page sets **what crosses each seam and what must stay true**. It deliberate
 
 - **Crosses:** what a followed source is (builds on `Contracts/schemas/followed-source.schema.json`), plus a **catalog entry** for sources the user hasn't followed yet (the onboarding "top podcasts" list, suggestions). Includes category and kind tags so D3 can filter.
 - **Invariants:** the catalog can be refreshed without an app update (#69), and the app works offline with a bundled snapshot. Following never downloads episodes by itself.
+- **Published (B1 M1):** `Contracts/schemas/source-catalog.schema.json` and `source-catalog-manifest.schema.json`, fixtures in `Contracts/fixtures/source-catalog*/`, the snapshot in `Site/onboarding/catalog/v1/` (built by `research/B1/build_catalog.py`); Swift `SourceCatalog`, `SourceCatalogValidator` and `SourceCatalogStore` in SessionKit. Followed sources are unchanged: a followed source finds its catalog entry with `SourceCatalog.entry(matchingFeedURL:)`.
 
 ## I3. Bridge manifest and fetch recipes
 
@@ -133,7 +135,7 @@ This page sets **what crosses each seam and what must stay true**. It deliberate
   - how each I13 role is spoken: skipped, announced ("Figure 2: …"), or read, and how citation and footnote markers sound.
 - **Invariants:** power state alone never silently changes the voice (#183). Any fallback has a visible, loggable reason, and the chosen voice comes back when the reason clears. Rate is one number: the app's rate is never multiplied by the system accessibility rate. Chunk boundaries never show as pause/resume.
 
-### Published: how each kind of text is spoken (C2, 2026-09-28)
+### Published: how each kind of text is spoken (C2, 2026-09-28; roles beyond the first table added the same day)
 
 These rules apply to every engine, including the fallback and the system voice, so switching voices never changes *what* is said. Roles stay advisory (I13): the speech path applies these defaults, and per-role listener settings can come later. The Swift type that carries them lands with C2 M1 (#183). Engine selection and the rate rule above are unchanged by this section. Background and evidence: `research/C2/I14-draft.md` on `ws/c2-voice`.
 
@@ -148,6 +150,12 @@ These rules apply to every engine, including the fallback and the system voice, 
 | footnote | Skipped | Footnote text isn't read where it appears. |
 | reference (bibliography) | Skipped | Announced once, "References skipped." Reading resumes at the next segment that isn't a reference, such as an appendix. |
 | header, footer | Skipped, silent | Running heads and page numbers are never read. |
+| title, abstract | Read | Like body text. |
+| authors | Read | The names only, once, after the title (owner decision, #191). |
+| front matter (the rest of the title page: affiliations, emails, identifiers, dates, keywords) | Skipped, silent | An announcement would only be noise here. |
+| back matter (funding, author contributions, competing interests, data availability, acknowledgements, reviewer reports) | Skipped | Announced once, "Back matter skipped." Reading resumes at the next segment that isn't back matter, such as an appendix. |
+| equation (display) | Announced, not read | "Equation." A run of consecutive equations is announced once. Inline math stays part of the body and is read as printed. |
+| unknown, or a role added later | Read | So nothing is lost while roles are added. |
 
 **Markers inside body text.**
 - **Numeric citations** are silent: `[12]`, `[12, 14]`, `[3–5]`, and superscript numbers after a word or punctuation.
@@ -175,7 +183,7 @@ These rules apply to every engine, including the fallback and the system voice, 
 | Table with caption `Table 1. Baseline characteristics.` | "Table 1: Baseline characteristics. Table not read." |
 
 **Invariants for consumers (C1 M3 and every narration path):**
-- A role's text never disappears silently. It's read, or it's announced as skipped ("Table not read", "References skipped"). Header and footer are the one exception: they're always silent.
+- A role's text never disappears silently. It's read, or it's announced as skipped ("Table not read", "References skipped", "Back matter skipped", "Equation"). The only silent roles are header, footer, footnote and front matter.
 - Skipping never moves anchors. Written Margins anchor to the extracted text, not to what's spoken (I13).
 
 ## I15. Stable UI identifiers

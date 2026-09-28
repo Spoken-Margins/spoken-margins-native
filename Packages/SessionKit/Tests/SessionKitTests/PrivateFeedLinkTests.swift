@@ -152,6 +152,32 @@ final class PrivateFeedLinkTests: XCTestCase {
         XCTAssertEqual(ShareableLinkPolicy.shareableLink("http://example.com/essay"), "http://example.com/essay")
     }
 
+    /// #209: Amperwave (Audacy) feeds from Apple's top charts end in 32 hex digits without
+    /// hyphens, which `UUID(uuidString:)` rejects, so they were stripped from packets as private.
+    /// The exemption is scoped to that public feed host; the same shape elsewhere stays private.
+    func testPublicAmperwaveFeedKeepsItsLinkButTheSameShapeElsewhereStaysPrivate() {
+        let publicFeeds = [
+            "https://rss.amperwave.net/v2/feed/audacynetwork/16aa3c6bf526fae9db63070c73cad09f",
+            "https://rss.amperwave.net/v2/feed/audacynetwork/e69da14a26973f1dc761432876205254"
+        ]
+        for feed in publicFeeds {
+            XCTAssertEqual(ShareableLinkPolicy.shareableLink(feed), feed, feed)
+        }
+        let stillPrivate = [
+            // A private token of the same shape on any other host.
+            "https://feeds.example.net/v2/feed/network/16aa3c6bf526fae9db63070c73cad09f",
+            // Longer than a hyphenless UUID, or not hex: still a secret on Amperwave too.
+            "https://rss.amperwave.net/v2/feed/audacynetwork/16aa3c6bf526fae9db63070c73cad09f16aa3c6b",
+            "https://rss.amperwave.net/v2/feed/audacynetwork/Zk9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZn",
+            // Private markers and credential parameters are never exempt.
+            "https://rss.amperwave.net/v2/feed/private/16aa3c6bf526fae9db63070c73cad09f",
+            "https://rss.amperwave.net/v2/feed/audacynetwork/16aa3c6bf526fae9db63070c73cad09f?token=abc"
+        ]
+        for link in stillPrivate {
+            XCTAssertNil(ShareableLinkPolicy.shareableLink(link), link)
+        }
+    }
+
     func testLinkPolicyRejectsLinksThatCanGrantAccess() {
         let privateLinks = [
             "https://www.patreon.com/rss/someshow?auth=abc",

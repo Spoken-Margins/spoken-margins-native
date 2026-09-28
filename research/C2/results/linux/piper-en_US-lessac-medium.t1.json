@@ -1,0 +1,32 @@
+{
+  "engine": "piper-en_US-lessac-medium",
+  "threads": 1,
+  "cpu": "x86_64",
+  "load_s": 2.98,
+  "passages": {
+    "p1-narrative": {
+      "ttfa_s": 0.795,
+      "render_s": 2.114,
+      "audio_s": 17.37,
+      "rtf": 0.122,
+      "chunks": 3
+    },
+    "p2-scientific": {
+      "ttfa_s": 3.087,
+      "render_s": 4.597,
+      "audio_s": 35.6,
+      "rtf": 0.129,
+      "chunks": 2
+    },
+    "p3-conversational": {
+      "ttfa_s": 0.23,
+      "render_s": 2.097,
+      "audio_s": 17.79,
+      "rtf": 0.118,
+      "chunks": 3
+    }
+  },
+  "rtf": 0.124,
+  "speed_x": 8.03,
+  "ttfa_s_median": 0.795
+}
