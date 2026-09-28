@@ -92,5 +92,20 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertTrue(PDFStructuredTextExtractor.isTableCaption("Table 3"))
         XCTAssertTrue(PDFStructuredTextExtractor.isTableCaption("Table 2. Baseline characteristics"))
         XCTAssertFalse(PDFStructuredTextExtractor.isTableCaption("Table 2 shows the results."))
+        XCTAssertTrue(PDFStructuredTextExtractor.isFigureCaption("Fig. 3 (a) Survival by arm."))
+        XCTAssertTrue(PDFStructuredTextExtractor.isFigureCaption("FIGURE 1. Study design"))
+        XCTAssertFalse(PDFStructuredTextExtractor.isFigureCaption("Figure 3 shows a decline."))
+    }
+
+    func testV2JoinsTheFragmentsOfAMultiLineEquationButNotProse() {
+        var lines = [
+            StructuredDocumentLine(text: "𝑓(𝑥) = ∑ 𝑎ᵢ", role: .equation, pageIndex: 1),
+            StructuredDocumentLine(text: "(3)", role: .body, pageIndex: 1),
+            StructuredDocumentLine(text: "𝑔(𝑥) = ∫ 𝑓", role: .equation, pageIndex: 1),
+            StructuredDocumentLine(text: "where both terms", role: .body, pageIndex: 1),
+            StructuredDocumentLine(text: "ℎ = 𝑓 ∘ 𝑔", role: .equation, pageIndex: 1),
+        ]
+        PDFStructuredTextExtractor.joinEquationFragments(&lines)
+        XCTAssertEqual(lines.map(\.role), [.equation, .equation, .equation, .body, .equation])
     }
 }

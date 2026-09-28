@@ -273,7 +273,17 @@ enum PDFStructuredTextExtractor {
             guard let page = document.page(at: pageIndex) else { continue }
             let pageOutline = outline.filter { $0.pageIndex == pageIndex }
             let tableOfContentsLines = tableOfContentsLineIndices(in: pageLines, pageIndex: pageIndex, outline: outline)
-            let tableLines = tableLineIndices(in: pageLines, layout: layout)
+            let (tableLines, figureLines) = tableAndFigureLineIndices(
+                in: pageLines,
+                layout: layout,
+                // A long table runs on for pages after its caption.
+                nearTableCaption: (max(0, pageIndex - 3)...min(pages.count - 1, pageIndex + 1)).contains { neighbour in
+                    pages[neighbour].contains { isTableCaption($0.text) }
+                },
+                nearFigureCaption: (max(0, pageIndex - 1)...min(pages.count - 1, pageIndex + 1)).contains { neighbour in
+                    pages[neighbour].contains { isFigureCaption($0.text) }
+                }
+            )
             let titlePage = pageIndex < 2 ? titlePageRoles(in: pageLines, isFirstPage: pageIndex == 0, bodySize: bodySize) : [:]
             for heading in pageOutline where !pageLines.contains(where: { headingKey($0.text) == headingKey(heading.title) }) {
                 result.append(StructuredDocumentLine(text: heading.title, role: .heading, pageIndex: pageIndex, level: heading.level))
@@ -289,6 +299,10 @@ enum PDFStructuredTextExtractor {
                     result.append(StructuredDocumentLine(text: line.text, role: role, pageIndex: pageIndex))
                 } else if tableLines.contains(lineIndex) {
                     result.append(StructuredDocumentLine(text: line.text, role: .table, pageIndex: pageIndex))
+                } else if figureLines.contains(lineIndex) {
+                    result.append(StructuredDocumentLine(text: line.text, role: .figureText, pageIndex: pageIndex))
+                } else if layout.looksLikeDisplayMath(line) {
+                    result.append(StructuredDocumentLine(text: line.text, role: .equation, pageIndex: pageIndex))
                 } else if let heading = pageOutline.first(where: {
                     !insertedOutlineHeadingIDs.contains($0.id) && headingKey($0.title) == key
                 }) {
@@ -304,7 +318,22 @@ enum PDFStructuredTextExtractor {
             }
         }
         labelReferenceLists(&result)
+        joinEquationFragments(&result)
         return result
+    }
+
+    /// A multi-line display equation comes out as several lines with its number
+    /// ("(3)") or a lone symbol between them. Those fragments join the equation,
+    /// so the listener hears one "Equation not read." for it, not one per line.
+    static func joinEquationFragments(_ lines: inout [StructuredDocumentLine]) {
+        guard lines.count >= 3 else { return }
+        for index in 1..<(lines.count - 1) where lines[index].role == .body {
+            let before = lines[index - 1], after = lines[index + 1]
+            guard before.role == .equation, after.role == .equation, before.pageIndex == after.pageIndex else { continue }
+            let tokens = lines[index].text.split(separator: " ")
+            let fragment = tokens.count <= 3 && !tokens.contains { $0.count >= 4 && $0.allSatisfy(\.isLetter) && $0.first?.isLowercase == true }
+            if fragment { lines[index].role = .equation }
+        }
     }
 
     /// A references heading followed by bibliography-shaped lines starts a
@@ -372,6 +401,29 @@ enum PDFStructuredTextExtractor {
             return bounds.width < lineWidth * 0.8 && offColumn && narrow && tokens.count <= 12
         }
 
+        /// A display equation: math set apart from the text column (centred or
+        /// narrow), not a sentence with some symbols in it.
+        func looksLikeDisplayMath(_ line: TextLine) -> Bool {
+            guard let bounds = line.bounds, lineWidth > 0 else { return false }
+            let offColumn = !columnStarts.contains { abs($0 - bounds.minX) <= 4 }
+            guard offColumn && bounds.width < lineWidth * 0.7 else { return false }
+            let words = line.text.split(separator: " ").filter { $0.count >= 3 && $0.allSatisfy(\.isLetter) }
+            guard words.filter({ $0.first?.isLowercase == true }).count <= 1 else { return false }
+            // Stricter than looksLikeMath: "|" in link rows and "+", "=" in labels
+            // such as "Scn2a+/+ (n=24)" are not equations.
+            let mathScalars = line.text.unicodeScalars.filter { scalar in
+                "×·∑∏∫√∂∇≤≥≈≠∈∀∃∞".unicodeScalars.contains(scalar)
+                    || (0x0391...0x03C9).contains(scalar.value)
+                    || (0x2100...0x214F).contains(scalar.value)
+                    || (0x2190...0x22FF).contains(scalar.value)
+                    || (0x1D400...0x1D7FF).contains(scalar.value)
+            }
+            if mathScalars.count >= 2 { return true }
+            let tokens = line.text.split(separator: " ")
+            let single = tokens.filter { $0.count == 1 && $0.first?.isLetter == true }
+            return line.text.contains("=") && tokens.count >= 3 && Double(single.count) / Double(tokens.count) >= 0.4
+        }
+
         /// Display math: operators, Greek or math-alphabet letters, arrows, or
         /// mostly one-letter tokens.
         func looksLikeMath(_ text: String) -> Bool {
@@ -390,11 +442,22 @@ enum PDFStructuredTextExtractor {
 
     /// Runs of table-cell lines on one page. A run next to a "Table N" caption
     /// needs three lines; any other run needs five, so a short list or a
-    /// paragraph's last line is never taken for a table.
-    private static func tableLineIndices(in lines: [TextLine], layout: BodyLayout) -> Set<Int> {
+    /// paragraph's last line is never taken for a table. An uncaptioned run is a
+    /// table only when a table caption is on this page, the next, or the three
+    /// before (long tables run on). Failing that, a run of three or more near a
+    /// figure caption is text printed inside the figure: axis ticks, panel
+    /// labels, screenshots.
+    private static func tableAndFigureLineIndices(
+        in lines: [TextLine],
+        layout: BodyLayout,
+        nearTableCaption: Bool,
+        nearFigureCaption: Bool
+    ) -> (table: Set<Int>, figure: Set<Int>) {
         let cells = lines.map(layout.looksLikeTableCell)
-        let captions = lines.indices.filter { isTableCaption(lines[$0].text) }
-        var result = captionedTableLines(in: lines, captions: captions, layout: layout)
+        let captions = lines.indices.filter { isTableCaption(lines[$0].text) || isFigureCaption(lines[$0].text) }
+        let tableCaptions = captions.filter { isTableCaption(lines[$0].text) }
+        var result = captionedTableLines(in: lines, captions: tableCaptions, layout: layout)
+        var figure = Set<Int>()
         var index = 0
         while index < lines.count {
             guard cells[index] else { index += 1; continue }
@@ -413,13 +476,20 @@ enum PDFStructuredTextExtractor {
                 probe += 1
             }
             let length = end - index + 1
-            let captioned = captions.contains { $0 >= index - 3 && $0 <= end + 3 }
-            if length >= (captioned ? 3 : 5) {
-                result.formUnion((index...end).filter { !captions.contains($0) })
+            let captioned = tableCaptions.contains { $0 >= index - 3 && $0 <= end + 3 }
+            let run = (index...end).filter { !captions.contains($0) && !result.contains($0) }
+            if captioned ? length >= 3 : (nearTableCaption && length >= 5) {
+                result.formUnion(run)
+            } else if nearFigureCaption && length >= 3 {
+                figure.formUnion(run)
             }
             index = end + 1
         }
-        return result
+        return (result, figure)
+    }
+
+    static func isFigureCaption(_ text: String) -> Bool {
+        text.range(of: #"^(?:Fig(?:ure)?\.?|FIG(?:URE)?\.?)\s*[0-9S]+[0-9.]*(?:[.:|]|\s*$|\s+\p{Lu}|\s*\()"#, options: .regularExpression) != nil
     }
 
     /// Title-page matter (owner, #191): author names are read, the rest is not.
