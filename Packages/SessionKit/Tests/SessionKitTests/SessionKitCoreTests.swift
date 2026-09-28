@@ -424,6 +424,60 @@ final class SessionKitCoreTests: XCTestCase {
         }
     }
 
+    func testExtractionV2PDFIsSpokenPerI14WhilePositionsStayInItemText() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let store = try SQLiteSessionStore(path: path)
+        let audio = RecordingAudioClient()
+        let profile = RuntimeCapabilityProfile(id: "pdf", displayName: "PDF", capabilities: [
+            "sync": ["browser_session_handoff", "canonical_persistence"],
+            "playback": ["realtime_tts"],
+        ])
+        let engine = SessionEngine(profile: profile, repository: store, audio: audio)
+        let document = StructuredDocumentBuilder.build(lines: [
+            StructuredDocumentLine(text: "J Biol 12 (2020) 1-9", role: .pageHeader, pageIndex: 0),
+            StructuredDocumentLine(text: "Methods", role: .heading, pageIndex: 0, level: 2),
+            StructuredDocumentLine(text: "Levels rose [12] as expected.", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "Participant Sessions P1 14", role: .table, pageIndex: 0),
+            StructuredDocumentLine(text: "References", role: .heading, pageIndex: 1, level: 2),
+            StructuredDocumentLine(text: "[12] A. Author. A cited title. 2019.", role: .reference, pageIndex: 1),
+            StructuredDocumentLine(text: "Appendix", role: .heading, pageIndex: 1, level: 2),
+            StructuredDocumentLine(text: "Supplementary methods are read.", role: .body, pageIndex: 1),
+        ], engine: "pdfkit_baseline", version: 2, pageCount: 2)
+        let handoff = BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: "shared-file://share-sheet/Paper.pdf", title: "Paper"),
+            text: "# Paper\n\nv1 markdown is ignored when a v2 document comes with it.",
+            contentFormat: .markdown
+        )
+
+        let item = try engine.importBrowserTextInBackground(handoff, structuredDocument: document)
+
+        XCTAssertEqual(item.text, document.text, "Item.text is the canonical v2 text, references and all")
+        XCTAssertEqual(try store.loadStructuredDocument(itemId: item.id), document)
+        XCTAssertEqual(try store.loadListeningMap(itemId: item.id)?.chapters.map(\.title).contains("Appendix"), true)
+
+        _ = try engine.startSession(itemId: item.id)
+        let spoken = try XCTUnwrap(audio.preparedTexts.last)
+        XCTAssertTrue(spoken.contains("References skipped."))
+        XCTAssertTrue(spoken.contains("Table not read."))
+        for unheard in ["A cited title", "P1 14", "J Biol", "[12]"] {
+            XCTAssertFalse(spoken.contains(unheard), unheard)
+        }
+
+        // The engine reports its position in the spoken text; the session keeps Item.text's.
+        let itemText = try XCTUnwrap(item.text)
+        let spokenAppendix = spoken.distance(from: spoken.startIndex, to: try XCTUnwrap(spoken.range(of: "Appendix")).lowerBound)
+        let sourceAppendix = itemText.distance(from: itemText.startIndex, to: try XCTUnwrap(itemText.range(of: "Appendix")).lowerBound)
+        audio.currentOffset = spokenAppendix
+        _ = try engine.pause()
+        let sessionId = try XCTUnwrap(engine.snapshot.sessionId)
+        XCTAssertEqual(try store.loadSession(id: sessionId)?.position.charOffset, sourceAppendix)
+
+        _ = try engine.resumePlayback()
+        XCTAssertEqual(audio.playedOffsets.last, spokenAppendix, "resuming starts at the same words")
+    }
+
     func testPodcastIdentitySeparatesDefaultFilenamesAndTitlePrefixesAcrossPersistence() throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
