@@ -5,13 +5,16 @@ Run by .github/workflows/lane.yml on the Mac's self-hosted runner, in a checkout
 into next. Agent sessions can't run it (the lane guard blocks it); they ask by commenting a request
 and adding the lane:queued label. Formats: docs/workstreams/test-lane.md.
 
-- T4 and T5 requests belong to the Test Desk and are left alone.
+- The runner takes the newest T2/T3 request it hasn't answered yet. T4 and T5 requests belong to the
+  Test Desk: while one is waiting, the runner leaves lane:queued in place so the Test Desk sees it.
 - The newest commit wins: if the PR moved on since this run was queued, a newer run tests it.
-- An identical request (same commit, tier and tests) that already has a report runs once.
+- A request identical to one that already has a PASS or FAIL report (same commit merged into the
+  same next, tier and tests) runs once. After an INCONCLUSIVE report, asking again runs again.
 - T2 builds for simulator and device (unsigned) through scripts/xcodebuild-lane.
 - T3 runs the named app-hosted tests through verify-tests.py on a temporary iOS 26 simulator,
   created for the job and deleted afterwards (iOS 27's Apple Intelligence services crash-flood
-  on this Mac, #184).
+  on this Mac, #184). It waits while two simulators are already booted, and a crash flood stops it.
+- A timeout interrupts the whole process group, so no xcodebuild keeps running outside the slots.
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
 default ~/Library/Caches/SpokenMarginsLane/evidence), SM_LANE_TOOLS (a checkout whose .venv and
@@ -26,6 +29,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -43,10 +47,16 @@ T2_BUILDS = (('simulator', ["-destination", "generic/platform=iOS Simulator", "b
              ('device', ["-destination", "generic/platform=iOS", "CODE_SIGNING_ALLOWED=NO", "build"]))
 BUILD_TIMEOUT = 1800
 T3_TIMEOUT = 3600
+INTERRUPT_GRACE = 120
 T3_IOS_MAJOR = 26
 T3_DEVICE_TYPE = 'com.apple.CoreSimulator.SimDeviceType.iPhone-17'
+RUNNER_SIMULATOR_PREFIX = 'SM Lane Runner '
+MAX_BOOTED_SIMULATORS = 2
+SIMULATOR_WAIT = 1800
 MARKER = re.compile(r'<!-- lane-request: (\{.*?\}) -->')
+NOTE = '<!-- lane-note -->'
 REQUEST = re.compile(r'^\s*/lane\s+(T\d)\b', re.M)
+REPORT = re.compile(r'^Lane report \S+ — (PASS|FAIL|INCONCLUSIVE)', re.M)
 
 
 # ---- Requests -----------------------------------------------------------------------------------
@@ -68,16 +78,35 @@ def parse_request(body: str) -> dict | None:
     return None
 
 
-def latest_request(comments: list[dict]) -> dict | None:
-    """The newest comment that is a lane request, with its URL; reports are never requests."""
-    for comment in reversed(comments):
+def is_runner_comment(body: str) -> bool:
+    return bool(MARKER.search(body)) or NOTE in body
+
+
+def pending_requests(comments: list[dict]) -> tuple[dict | None, bool]:
+    """The newest T2/T3 request the runner hasn't answered, and whether a T4/T5 request is waiting.
+
+    A runner request is answered once a runner report or note comes after it. A Test Desk request
+    is waiting until a report that isn't the runner's (the Test Desk's) comes after it.
+    """
+    runner_request, runner_answered, desk_request, desk_answered = None, -1, -1, -1
+    for index, comment in enumerate(comments):
         body = comment.get('body') or ''
-        if body.lstrip().startswith('Lane report') or MARKER.search(body):
+        if is_runner_comment(body):
+            runner_answered = index
+            continue
+        if REPORT.search(body):
+            desk_answered = index
             continue
         request = parse_request(body)
-        if request:
-            return dict(request, url=comment.get('html_url'), author=(comment.get('user') or {}).get('login'))
-    return None
+        if not request:
+            continue
+        if request['tier'] in RUNNER_TIERS:
+            runner_request = (index, dict(request, url=comment.get('html_url'),
+                                          author=(comment.get('user') or {}).get('login')))
+        else:
+            desk_request = index
+    newest = runner_request[1] if runner_request and runner_request[0] > runner_answered else None
+    return newest, desk_request > desk_answered
 
 
 def identity(tier: str, commit: str, merge: str, tests: list[str]) -> dict:
@@ -86,15 +115,17 @@ def identity(tier: str, commit: str, merge: str, tests: list[str]) -> dict:
 
 
 def earlier_report(comments: list[dict], wanted: dict) -> str | None:
-    """URL of a lane report already posted for this exact commit, tier and tests."""
+    """URL of a PASS or FAIL lane report already posted for this exact request. INCONCLUSIVE doesn't count."""
     for comment in comments:
-        match = MARKER.search(comment.get('body') or '')
-        if match:
-            try:
-                if json.loads(match.group(1)) == wanted:
-                    return comment.get('html_url') or 'an earlier comment'
-            except ValueError:
-                continue
+        body = comment.get('body') or ''
+        match, verdict = MARKER.search(body), REPORT.search(body)
+        if not match or not verdict or verdict.group(1) == 'INCONCLUSIVE':
+            continue
+        try:
+            if json.loads(match.group(1)) == wanted:
+                return comment.get('html_url') or 'an earlier comment'
+        except ValueError:
+            continue
     return None
 
 
@@ -117,6 +148,27 @@ def report(request_id: str, verdict: str, head: str, merge: str, tier: str, wher
     return '\n'.join(lines) + f'\n<!-- lane-request: {json.dumps(wanted, sort_keys=True)} -->\n'
 
 
+# ---- Processes ----------------------------------------------------------------------------------
+
+def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUPT_GRACE) -> int | None:
+    """Run in a new process group and return its exit code, or None if it timed out.
+
+    On timeout the whole group gets SIGINT first, so verify-tests.py and xcodebuild-lane stop their
+    own xcodebuild and record the interruption, then SIGKILL if it's still there after the grace.
+    """
+    process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        return process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGINT)
+        try:
+            process.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+        return None
+
+
 # ---- T2 -----------------------------------------------------------------------------------------
 
 def first_errors(log: Path, limit: int = 5) -> list[str]:
@@ -134,18 +186,14 @@ def first_errors(log: Path, limit: int = 5) -> list[str]:
     return list(dict.fromkeys(found))[:limit]
 
 
-def run_t2(evidence: Path, runner=subprocess.run) -> tuple[str, str, list[str]]:
+def run_t2(evidence: Path, runner=run_bounded) -> tuple[str, str, list[str]]:
     results, details = [], []
     for name, args in T2_BUILDS:
         log = evidence / f't2-{name}.log'
         command = [str(ROOT / 'scripts/xcodebuild-lane'), '-project', 'SpokenMarginsNative.xcodeproj',
                    '-scheme', 'SpokenMarginsApp', *args]
         with log.open('w') as handle:
-            try:
-                code = runner(command, cwd=ROOT, stdout=handle, stderr=subprocess.STDOUT,
-                              timeout=BUILD_TIMEOUT).returncode
-            except subprocess.TimeoutExpired:
-                code = None
+            code = runner(command, handle, BUILD_TIMEOUT)
         if code == 0:
             results.append(f'{name} build (pass)')
         else:
@@ -176,7 +224,10 @@ def plan_for_tests(selectors: list[str], plans: dict[str, set]) -> tuple[dict[st
 
 
 def summarize_manifest(manifest: dict) -> dict:
-    """Test counts, failed tests, crash reports and whether a flood or timeout stopped the run."""
+    """Test counts, failed tests, crash reports and whether a flood or timeout stopped the run.
+
+    A build that was interrupted (timeout or flood) is not a build failure: that's INCONCLUSIVE.
+    """
     summary = {'passed': 0, 'failed': [], 'crashes': [], 'flood': False, 'interrupted': False, 'build_failed': False}
     for step in manifest.get('steps', []):
         for test, record in (step.get('tests') or {}).items():
@@ -187,16 +238,42 @@ def summarize_manifest(manifest: dict) -> dict:
         summary['crashes'] += [Path(p).name for p in step.get('simulator_crash_reports', [])]
         summary['flood'] |= bool(step.get('simulator_crash_report'))
         summary['interrupted'] |= bool(step.get('interrupted'))
-        summary['build_failed'] |= step.get('name') == 'build-for-testing' and bool(step.get('errors'))
+        summary['build_failed'] |= (step.get('name') == 'build-for-testing' and bool(step.get('errors'))
+                                    and not step.get('interrupted'))
     return summary
 
 
 def t3_verdict(summaries: list[dict], statuses: list[str]) -> str:
-    if all(status == 'verified' for status in statuses):
+    if statuses and all(status == 'verified' for status in statuses):
         return 'PASS'
     if any(s['failed'] or s['build_failed'] for s in summaries):
         return 'FAIL'
     return 'INCONCLUSIVE'
+
+
+def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[list, list, list, list]:
+    """Run each plan's selectors; stop at the first crash flood (AGENTS.md: don't reboot in a loop)."""
+    summaries, statuses, ran, details = [], [], [], []
+    plans = list(grouped.items())
+    for position, (plan, selectors) in enumerate(plans):
+        output = evidence / f'verify-{plan}'
+        manifest = run_plan(plan, selectors, output)
+        summary = summarize_manifest(manifest)
+        summaries.append(summary)
+        statuses.append(manifest.get('status', 'missing'))
+        ran.append(f'{", ".join(s.split("/", 1)[1] for s in selectors)} ({summary["passed"]} passed'
+                   f'{", " + str(len(summary["failed"])) + " failed" if summary["failed"] else ""})')
+        for test in summary['failed'][:10]:
+            details.append(f'{test} — expected: passes. observed: failed. evidence: {output}/tests.xcresult')
+        if manifest.get('status') != 'verified' and not summary['failed']:
+            details.append(f'{plan}: {manifest.get("error") or manifest.get("status")}. evidence: {output}/manifest.json')
+        if summary['flood']:
+            skipped = [p for p, _ in plans[position + 1:]]
+            if skipped:
+                details.append(f'Stopped after the crash flood; not run: {", ".join(skipped)}.')
+                statuses.append('not run')
+            break
+    return summaries, statuses, ran, details
 
 
 def newest_runtime(major: int) -> str | None:
@@ -205,6 +282,21 @@ def newest_runtime(major: int) -> str | None:
               if r.get('isAvailable') and r.get('platform') == 'iOS' and r.get('version', '').split('.')[0] == str(major)]
     usable.sort(key=lambda r: [int(x) for x in r['version'].split('.')])
     return usable[-1]['identifier'] if usable else None
+
+
+def booted_simulators() -> int:
+    devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'booted', '--json'], text=True))
+    return sum(len(group) for group in devices.get('devices', {}).values())
+
+
+def wait_for_simulator_room(count=booted_simulators, max_wait: float = SIMULATOR_WAIT, poll: float = 15) -> bool:
+    """Wait while the Mac already runs its limit of simulators (the Test Desk may have two up for J5)."""
+    started = time.monotonic()
+    while count() >= MAX_BOOTED_SIMULATORS:
+        if time.monotonic() - started >= max_wait:
+            return False
+        time.sleep(poll)
+    return True
 
 
 def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str, str, list[str], str, str]:
@@ -222,36 +314,27 @@ def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str,
     if not runtime:
         return ('INCONCLUSIVE', 'no simulator', 'nothing', [f'No iOS {T3_IOS_MAJOR} simulator runtime is installed.'],
                 'none', '')
-    name = f'SM Lane Runner {request_id}'
-    udid = subprocess.check_output(['xcrun', 'simctl', 'create', name, T3_DEVICE_TYPE, runtime], text=True).strip()
+    if not wait_for_simulator_room():
+        return ('INCONCLUSIVE', 'no simulator', 'nothing', [f'{MAX_BOOTED_SIMULATORS} simulators stayed booted for '
+                f'{duration(SIMULATOR_WAIT)}, so the lane did not start another.'], 'none', '')
+    udid = subprocess.check_output(['xcrun', 'simctl', 'create', RUNNER_SIMULATOR_PREFIX + request_id,
+                                    T3_DEVICE_TYPE, runtime], text=True).strip()
     where = f'temporary iPhone 17, {runtime.rsplit(".", 1)[-1].replace("iOS-", "iOS ").replace("-", ".")}'
     python = ROOT / '.venv/bin/python'
-    summaries, statuses, ran, details = [], [], [], []
+
+    def run_plan(plan, selectors, output):
+        command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', plan,
+                   '--device', udid, '--output', str(output)]
+        for selector in selectors:
+            command += ['--only-testing', selector]
+        with (evidence / f'verify-{plan}.log').open('w') as log:
+            if run_bounded(command, log, T3_TIMEOUT) is None:
+                return {**_read_manifest(output), 'status': 'timed out',
+                        'error': f'no result after {duration(T3_TIMEOUT)}; interrupted'}
+        return _read_manifest(output) or {'status': 'missing', 'error': 'verify-tests.py wrote no manifest'}
+
     try:
-        for plan, selectors in grouped.items():
-            output = evidence / f'verify-{plan}'
-            command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', plan,
-                       '--device', udid, '--output', str(output)]
-            for selector in selectors:
-                command += ['--only-testing', selector]
-            with (evidence / f'verify-{plan}.log').open('w') as log:
-                try:
-                    subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, timeout=T3_TIMEOUT)
-                except subprocess.TimeoutExpired:
-                    details.append(f'{plan}: no result after {duration(T3_TIMEOUT)}; stopped.')
-            try:
-                manifest = json.loads((output / 'manifest.json').read_text())
-            except (OSError, ValueError):
-                manifest = {'status': 'missing', 'error': 'verify-tests.py wrote no manifest'}
-            summary = summarize_manifest(manifest)
-            summaries.append(summary)
-            statuses.append(manifest.get('status', 'missing'))
-            ran.append(f'{", ".join(s.split("/", 1)[1] for s in selectors)} ({summary["passed"]} passed'
-                       f'{", " + str(len(summary["failed"])) + " failed" if summary["failed"] else ""})')
-            for test in summary['failed'][:10]:
-                details.append(f'{test} — expected: passes. observed: failed. evidence: {output}/tests.xcresult')
-            if manifest.get('status') != 'verified' and not summary['failed']:
-                details.append(f'{plan}: {manifest.get("error") or manifest.get("status")}. evidence: {output}/manifest.json')
+        summaries, statuses, ran, details = run_plans(grouped, run_plan, evidence)
     finally:
         subprocess.run(['xcrun', 'simctl', 'shutdown', udid], capture_output=True, timeout=120)
         subprocess.run(['xcrun', 'simctl', 'delete', udid], capture_output=True, timeout=120)
@@ -262,6 +345,13 @@ def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str,
         crashes += ' (simulator shut down, run stopped)'
     cc = '@uncomposed: crash flood on the lane runner.' if flood else ''
     return t3_verdict(summaries, statuses), where, '; '.join(ran), details, crashes, cc
+
+
+def _read_manifest(output: Path) -> dict:
+    try:
+        return json.loads((output / 'manifest.json').read_text())
+    except (OSError, ValueError):
+        return {}
 
 
 # ---- GitHub -------------------------------------------------------------------------------------
@@ -294,19 +384,26 @@ class GitHub:
 
 # ---- Main ---------------------------------------------------------------------------------------
 
-def cleanup(github: GitHub) -> int:
-    """After a cancelled or crashed job: delete leftover runner simulators and clear lane:running."""
+def sweep_runner_simulators() -> None:
+    """Delete simulators a previous runner job left behind (only this one runner makes them)."""
     devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', '--json'], text=True))
     for group in devices.get('devices', {}).values():
         for device in group:
-            if device.get('name', '').startswith('SM Lane Runner '):
+            if device.get('name', '').startswith(RUNNER_SIMULATOR_PREFIX):
                 subprocess.run(['xcrun', 'simctl', 'shutdown', device['udid']], capture_output=True, timeout=120)
                 subprocess.run(['xcrun', 'simctl', 'delete', device['udid']], capture_output=True, timeout=120)
                 print(f'Deleted leftover simulator {device["name"]}')
-    if RUNNING in {label['name'] for label in github.pull().get('labels', [])}:
-        github.relabel(RUNNING, None)
-        github.comment('Lane: the run was cancelled or crashed before its report. Request it again if it is '
-                       'still needed.')
+
+
+def cleanup(github: GitHub, run_url: str) -> int:
+    """After a failed or cancelled job: remove leftovers, say so on the PR, and free the labels."""
+    sweep_runner_simulators()
+    _, desk_waiting = pending_requests(github.comments())
+    github.comment(f'Lane: the runner stopped before reporting ({run_url}). If it is still needed, comment '
+                   f'the request again and add lane:queued.\n{NOTE}')
+    github.relabel(RUNNING, None)
+    if not desk_waiting:
+        github.relabel(QUEUED, None)
     return 0
 
 
@@ -322,42 +419,42 @@ def main(argv=None) -> int:
     parser.add_argument('--event-head', required=True, help='head SHA the triggering event saw')
     parser.add_argument('--merge-sha', required=True, help='the merge commit this checkout is on')
     parser.add_argument('--run-id', required=True)
-    parser.add_argument('--cleanup', action='store_true', help='tidy up after a cancelled or crashed job')
+    parser.add_argument('--cleanup', action='store_true', help='tidy up after a cancelled or failed job')
     args = parser.parse_args(argv)
-    github = GitHub(os.environ['GH_REPO'], args.pr)
+    repo = os.environ['GH_REPO']
+    github = GitHub(repo, args.pr)
+    run_url = f'{os.environ.get("GITHUB_SERVER_URL", "https://github.com")}/{repo}/actions/runs/{args.run_id}'
     if args.cleanup:
-        return cleanup(github)
-    pull = github.pull()
-    labels = {label['name'] for label in pull.get('labels', [])}
-    head = pull['head']['sha']
-    if QUEUED not in labels:
-        print('No lane:queued label; nothing to do.')
-        return 0
+        return cleanup(github, run_url)
+    sweep_runner_simulators()
+    head = github.pull()['head']['sha']
     if head != args.event_head:
         print(f'The PR moved on to {head[:7]} since this run was queued; the newer run tests it.')
         return 0
     comments = github.comments()
-    request = latest_request(comments)
+    request, desk_waiting = pending_requests(comments)
     if request is None:
-        github.comment('Lane: this PR has the lane:queued label but no `/lane T…` request comment. '
-                       'See docs/workstreams/test-lane.md for the format.')
-        github.relabel(QUEUED, None)
-        return 0
-    if request['tier'] not in RUNNER_TIERS:
-        print(f'{request["tier"]} requests are the Test Desk\'s; leaving it queued.')
+        if not desk_waiting:
+            github.comment('Lane: lane:queued is set, but there is no `/lane T2` or `/lane T3` request comment newer '
+                           'than the last lane report, so nothing ran. Comment the request (format in '
+                           f'docs/workstreams/test-lane.md), then add lane:queued.\n{NOTE}')
+            github.relabel(QUEUED, None)
+        print('No unanswered T2/T3 request; nothing to do.')
         return 0
     wanted = identity(request['tier'], head, args.merge_sha, request['tests'])
     done_before = earlier_report(comments, wanted)
     if done_before:
-        github.comment(f'Lane: identical {request["tier"]} request for {head[:7]} already reported: {done_before}')
-        github.relabel(QUEUED, DONE)
+        github.comment(f'Lane: identical {request["tier"]} request for {head[:7]} already reported: {done_before}\n{NOTE}')
+        if not desk_waiting:
+            github.relabel(QUEUED, DONE)
         return 0
     request_id = f'pr{args.pr}-r{args.run_id}'
     evidence = Path(os.environ.get('SM_LANE_EVIDENCE_DIR') or
                     Path.home() / 'Library/Caches/SpokenMarginsLane/evidence') / request_id
     evidence.mkdir(parents=True, exist_ok=True)
     (evidence / 'request.json').write_text(json.dumps(dict(request, head=head, merge=args.merge_sha), indent=2))
-    github.relabel(QUEUED, RUNNING)
+    if not desk_waiting:  # a waiting T4/T5 keeps lane:queued so the Test Desk still sees it
+        github.relabel(QUEUED, RUNNING)
     link_tools(Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Documents/GitHub/spoken-margins-native'))
     started = time.monotonic()
     requested = request.get('commit', '')
@@ -378,10 +475,9 @@ def main(argv=None) -> int:
                   'journeys and anything a listener notices (T4), audible content (owner)', wanted, cc)
     (evidence / 'report.md').write_text(body)
     print(body)
-    try:
-        github.comment(body)
-    finally:
-        github.relabel(RUNNING, DONE)
+    github.comment(body)  # if this fails, the job fails and the tidy step says so on the PR
+    _, desk_waiting = pending_requests(github.comments())
+    github.relabel(RUNNING, QUEUED if desk_waiting else DONE)
     shutil.rmtree(ROOT / '.build/dd', ignore_errors=True)
     shutil.rmtree(ROOT / '.build/verification', ignore_errors=True)
     return 0
