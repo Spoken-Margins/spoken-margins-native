@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Home Explorations</title>
+<meta name="description" content="Five Home screen designs for Spoken Margins: each shows one thing to continue, something to start from your Library, something to pull in from your shows, and a Margin worth sharing.">
+<style>
+:root {
+  --pg-bg: #eceeea; --pg-panel: #f8f9f6; --pg-ink: #171d1a; --pg-muted: #5c665f; --pg-line: #d5dad2;
+  --pg-accent: #1b4f7a; --pg-good: #0072b2; --pg-warn: #e69f00; --pg-chip: #e0e5dd;
+  --bg: #f7f6f1; --panel: #ffffff; --ink: #1c1f1e; --muted: #6a726d; --line: #e4e2da; --soft: #eceff3;
+  --accent: #1b4f7a; --new: #0072b2; --share: #b5541a; --friend: #5446b8; --friend-soft: #eeecfa;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --pg-bg: #0f1312; --pg-panel: #171c1a; --pg-ink: #e7ebe8; --pg-muted: #9aa49e; --pg-line: #2b332f; --pg-accent: #8ec1ea; --pg-chip: #232b28;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --pg-bg: #0f1312; --pg-panel: #171c1a; --pg-ink: #e7ebe8; --pg-muted: #9aa49e; --pg-line: #2b332f; --pg-accent: #8ec1ea; --pg-chip: #232b28;
+  color-scheme: dark;
+}
+[hidden] { display: none !important; }
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--pg-bg); color: var(--pg-ink); font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; -webkit-text-size-adjust: 100%; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+button:focus-visible { outline: 2px solid var(--pg-accent); outline-offset: 2px; }
+.i { width: 22px; height: 22px; flex: none; }
+
+.app { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.strip { display: flex; align-items: center; gap: 6px; padding: 6px 10px; min-height: 48px; border-bottom: 1px solid var(--pg-line); background: var(--pg-panel); overflow-x: auto; scrollbar-width: none; }
+.strip .dir { font-weight: 650; white-space: nowrap; font-size: 14px; margin-right: 4px; }
+.strip .pick { flex: none; min-height: 36px; min-width: 36px; padding: 0 10px; border-radius: 99px; border: 1px solid var(--pg-line); font-size: 13px; font-weight: 650; white-space: nowrap; }
+.strip .pick.on { background: var(--pg-accent); color: #fff; border-color: var(--pg-accent); }
+.strip .sp { flex: 1; }
+.stage { flex: 1; min-height: 0; display: flex; justify-content: center; gap: 28px; padding: 20px 16px; }
+.device { flex: none; display: flex; align-items: flex-start; }
+.phone { position: relative; overflow: hidden; width: 390px; height: min(844px, calc(100vh - 110px)); min-height: 600px; border-radius: 46px; border: 10px solid #0b0d0c; box-shadow: 0 30px 60px -30px rgba(0,0,0,.45); display: flex; flex-direction: column; background: var(--bg); color: var(--ink); isolation: isolate; }
+.phone .statusbar { flex: none; height: 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; font-size: 14px; font-weight: 650; }
+.screens { position: relative; flex: 1; min-height: 0; }
+.scr { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.scr > .body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
+.notes { width: 460px; max-width: 100%; overflow: auto; background: var(--pg-panel); border: 1px solid var(--pg-line); border-radius: 18px; padding: 22px 22px 28px; }
+.notes h1 { font-size: 22px; margin: 0 0 6px; }
+.notes h2 { font-size: 12px; letter-spacing: .09em; text-transform: uppercase; color: var(--pg-muted); margin: 24px 0 8px; }
+.notes p, .notes li { max-width: 62ch; }
+.notes ol, .notes ul { padding-left: 18px; margin: 6px 0; }
+.notes li { margin: 5px 0; }
+.notes .lede { color: var(--pg-muted); margin: 0; }
+.notes .close-notes { display: none; }
+.notes .legend { display: grid; gap: 6px; font-size: 13.5px; }
+.notes .legend div { display: flex; align-items: center; gap: 10px; }
+.notes table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.notes th, .notes td { text-align: left; padding: 6px; border-bottom: 1px solid var(--pg-line); vertical-align: top; }
+.notes th { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--pg-muted); }
+@media (max-width: 860px) {
+  .strip .pick .nm { display: none; }
+  .stage { padding: 0; gap: 0; }
+  .device { flex: 1; min-width: 0; align-items: stretch; }
+  .phone { width: 100%; height: 100%; min-height: 0; border: 0; border-radius: 0; box-shadow: none; }
+  .phone .statusbar { display: none; }
+  .notes { position: fixed; inset: 0; z-index: 50; width: auto; border-radius: 0; border: 0; padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(28px + env(safe-area-inset-bottom, 0px)); }
+  .notes .close-notes { display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; float: right; border-radius: 99px; border: 1px solid var(--pg-line); font-weight: 600; }
+}
+@media (min-width: 861px) { #notesBtn { display: none; } .notes[hidden] { display: block !important; } }
+.toast { position: absolute; left: 12px; right: 12px; bottom: 100px; z-index: 30; padding: 12px 16px; min-height: 48px; border-radius: 16px; background: #101412; color: #f1f4ef; font-size: 14px; transform: translateY(20px); opacity: 0; pointer-events: none; transition: .2s; }
+.toast.show { transform: none; opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+
+/* ---------- shared home vocabulary ---------- */
+.nav { flex: none; display: flex; align-items: center; padding: 8px 8px 0 20px; min-height: 56px; gap: 6px; }
+.nav h1 { flex: 1; margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -.02em; }
+.nav h1 small { display: block; font-size: 12.5px; font-weight: 600; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; margin-top: -2px; }
+.nav .av { width: 44px; height: 44px; border-radius: 50%; background: var(--ink); color: var(--bg); display: grid; place-items: center; font-weight: 700; }
+.cv { border-radius: 12px; display: grid; place-items: center; font-family: "New York", "Iowan Old Style", Georgia, serif; flex: none; background: #1b4f7a; color: #dff0ff; position: relative; }
+.cv.art { background: #efdcb6; color: #6c4a12; } .cv.pdf { background: #e7e1f3; color: #4b3f93; } .cv.sub { background: #f3d9cf; color: #8a3423; } .cv.fn { background: #d8e6ef; color: #23506e; } .cv.dt { background: #d9ebe3; color: #1d5a45; } .cv.oq { background: #f1e3c7; color: #6b4c0f; }
+/* glanceable icons */
+.ring { position: absolute; right: -6px; bottom: -6px; width: 26px; height: 26px; border-radius: 50%; background: var(--panel); display: grid; place-items: center; }
+.ring svg { width: 22px; height: 22px; transform: rotate(-90deg); }
+.ring circle { fill: none; stroke-width: 3.2; }
+.ring .tr { stroke: var(--line); } .ring .pr { stroke: var(--accent); stroke-linecap: round; }
+.dot { position: absolute; top: -4px; right: -4px; width: 14px; height: 14px; border-radius: 50%; background: var(--new); border: 2px solid var(--panel); }
+.mgc { position: absolute; left: -6px; bottom: -6px; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 99px; background: var(--share); color: #fff; font-size: 11.5px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; gap: 3px; border: 2px solid var(--panel); }
+.mgc .i { width: 12px; height: 12px; }
+.faces { display: flex; position: absolute; right: -6px; top: -6px; }
+.faces span { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 9.5px; font-weight: 800; border: 2px solid var(--panel); margin-left: -7px; background: var(--friend); }
+.faces span:first-child { margin-left: 0; }
+.k { font-size: 11.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.k b { color: var(--ink); }
+.sec { display: flex; align-items: baseline; justify-content: space-between; padding: 16px 20px 6px; }
+.sec h3 { margin: 0; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 700; display: flex; align-items: center; gap: 6px; }
+.sec h3 .i { width: 16px; height: 16px; }
+.sec .all { color: var(--accent); font-weight: 650; font-size: 14px; min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: flex-end; margin: -12px 0; }
+.lane { display: flex; gap: 14px; overflow-x: auto; padding: 8px 20px 12px; scroll-snap-type: x mandatory; scrollbar-width: none; }
+.lane::-webkit-scrollbar { display: none; }
+.lane .card { flex: none; width: 128px; scroll-snap-align: start; display: flex; flex-direction: column; gap: 8px; }
+.lane .card .cv { width: 128px; height: 128px; font-size: 40px; }
+.lane .card .t { font-weight: 650; font-size: 14px; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.lane .card .s { font-size: 12px; color: var(--muted); }
+.lane .card.wide { width: 220px; }
+.lane .qcard { flex: none; width: 250px; scroll-snap-align: start; padding: 14px; border-radius: 18px; background: var(--panel); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; min-height: 150px; }
+.lane .qcard .q { font-family: "New York", Georgia, serif; font-size: 16.5px; line-height: 1.35; flex: 1; }
+.lane .qcard .src { font-size: 12px; color: var(--muted); }
+.lane .qcard .row { display: flex; align-items: center; gap: 8px; }
+.lane .qcard .row .cv { width: 32px; height: 32px; font-size: 13px; border-radius: 8px; }
+.lane .qcard .sh { flex: none; margin-left: auto; width: 44px; height: 44px; border-radius: 50%; background: var(--share); color: #fff; display: grid; place-items: center; margin-right: -8px; margin-bottom: -8px; }
+.hero { margin: 4px 20px 0; padding: 16px; border-radius: 22px; background: #16323f; color: #eaf3f7; display: flex; gap: 14px; align-items: center; width: calc(100% - 40px); }
+.hero .cv { width: 72px; height: 72px; font-size: 28px; background: #a6d8e6; color: #16323f; border-radius: 16px; }
+.hero .g { flex: 1; min-width: 0; }
+.hero .k { color: #a6d8e6; }
+.hero .t { font-weight: 700; font-size: 17px; line-height: 1.2; margin-top: 3px; }
+.hero .s { font-size: 12.5px; opacity: .8; margin-top: 4px; }
+.hero .pb { width: 52px; height: 52px; border-radius: 50%; background: #a6d8e6; color: #16323f; display: grid; place-items: center; flex: none; }
+.tabbar { flex: none; border-top: 1px solid var(--line); background: var(--panel); padding: 4px 18px calc(6px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; justify-content: space-between; }
+.tabbar .tb { width: 76px; display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 50px; justify-content: center; font-size: 11px; font-weight: 650; color: #8e9896; }
+.tabbar .tb.on { color: var(--accent); }
+.tabbar .rec { width: 60px; height: 60px; margin-top: -18px; border-radius: 50%; background: var(--share); color: #fff; display: grid; place-items: center; box-shadow: 0 0 0 5px var(--bg); }
+.mini { flex: none; margin: 0 10px 6px; padding: 6px 8px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
+.mini .cv { width: 40px; height: 40px; font-size: 16px; border-radius: 9px; }
+.mini .mt { font-size: 13.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini .ms { font-size: 12px; color: var(--muted); }
+.mini .pp { margin-left: auto; width: 44px; height: 44px; display: grid; place-items: center; }
+
+/* ---------- 1 · Shelves ---------- */
+.h1 .chips { display: flex; gap: 8px; padding: 6px 20px 2px; overflow-x: auto; scrollbar-width: none; }
+.h1 .chip { flex: none; min-height: 40px; padding: 0 14px; border-radius: 99px; border: 1px solid var(--line); background: var(--panel); font-size: 13.5px; font-weight: 600; }
+.h1 .chip.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+/* ---------- 2 · Four tiles ---------- */
+.h2 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 6px 20px 8px; }
+.h2 .tile { border-radius: 22px; padding: 14px; min-height: 178px; display: flex; flex-direction: column; justify-content: space-between; background: var(--panel); border: 1px solid var(--line); position: relative; }
+.h2 .tile .cv { width: 56px; height: 56px; font-size: 22px; }
+.h2 .tile .t { font-weight: 700; font-size: 14.5px; line-height: 1.2; margin-top: 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.h2 .tile .s { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.h2 .tile .k { display: flex; align-items: center; gap: 6px; }
+.h2 .tile .k .i { width: 14px; height: 14px; }
+.h2 .tile.cont { background: #16323f; color: #eaf3f7; border-color: #16323f; }
+.h2 .tile.cont .k, .h2 .tile.cont .s { color: #a6d8e6; }
+.h2 .tile.cont .cv { background: #a6d8e6; color: #16323f; }
+.h2 .tile.share .q { font-family: "New York", Georgia, serif; font-size: 14.5px; line-height: 1.3; margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.h2 .tile .go { position: absolute; right: 12px; bottom: 12px; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--soft); color: var(--accent); }
+.h2 .tile.cont .go { background: #a6d8e6; color: #16323f; }
+.h2 .tile.share .go { background: var(--share); color: #fff; }
+.h2 .tile > div { padding-right: 40px; }
+.h2 .lane .card { width: 96px; }
+.h2 .lane .card .cv { width: 96px; height: 96px; font-size: 32px; }
+
+/* ---------- 3 · Deck ---------- */
+.h3 .deck { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; gap: 12px; padding: 4px 20px 6px; }
+.h3 .deck::-webkit-scrollbar { display: none; }
+.h3 .dcard { flex: none; width: calc(100% - 28px); scroll-snap-align: center; border-radius: 26px; padding: 18px; min-height: 420px; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); position: relative; }
+.h3 .dcard .cv { width: 100%; height: 190px; font-size: 64px; border-radius: 18px; }
+.h3 .dcard .k { margin-top: 14px; display: flex; align-items: center; gap: 6px; }
+.h3 .dcard .k .i { width: 14px; height: 14px; }
+.h3 .dcard .t { font-weight: 800; font-size: 21px; line-height: 1.15; margin-top: 6px; letter-spacing: -.01em; }
+.h3 .dcard .s { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.h3 .dcard .why { font-size: 13.5px; margin-top: 8px; color: var(--ink); }
+.h3 .dcard .btn { margin-top: auto; min-height: 52px; border-radius: 16px; background: var(--accent); color: #fff; font-weight: 700; font-size: 15.5px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.h3 .dcard.share .btn { background: var(--share); }
+.h3 .dcard.share .q { font-family: "New York", Georgia, serif; font-size: 19px; line-height: 1.35; margin-top: 10px; }
+.h3 .dcard.share .cv { height: 120px; font-size: 44px; }
+.h3 .dots { display: flex; justify-content: center; gap: 6px; padding: 8px 0 2px; }
+.h3 .dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.h3 .dots span.on { background: var(--ink); width: 18px; border-radius: 4px; }
+.h3 .more { padding: 4px 20px 0; font-size: 13px; color: var(--muted); display: flex; gap: 14px; }
+
+/* ---------- 4 · Bento ---------- */
+.h4 .bento { display: grid; grid-template-columns: repeat(6, 1fr); grid-auto-rows: 88px; gap: 10px; padding: 6px 20px 12px; }
+.h4 .b { border-radius: 20px; background: var(--panel); border: 1px solid var(--line); padding: 12px; position: relative; display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; }
+.h4 .b .k { display: flex; align-items: center; gap: 5px; position: absolute; left: 12px; top: 12px; }
+.h4 .b .k .i { width: 13px; height: 13px; }
+.h4 .b .t { font-weight: 700; font-size: 14px; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.h4 .b .s { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.h4 .b .cv { position: absolute; right: 12px; top: 12px; width: 44px; height: 44px; font-size: 18px; }
+.h4 .b .t, .h4 .b .s, .h4 .b .q { padding-right: 56px; }
+.h4 .cont { grid-column: span 6; grid-row: span 2; background: #16323f; color: #eaf3f7; border-color: #16323f; }
+.h4 .cont .k, .h4 .cont .s { color: #a6d8e6; }
+.h4 .cont .cv { width: 72px; height: 72px; font-size: 28px; background: #a6d8e6; color: #16323f; }
+.h4 .cont .t { font-size: 18px; }
+.h4 .cont .pb { position: absolute; right: 12px; bottom: 12px; width: 48px; height: 48px; border-radius: 50%; background: #a6d8e6; color: #16323f; display: grid; place-items: center; }
+.h4 .start { grid-column: span 3; grid-row: span 2; }
+.h4 .pull, .h4 .pull2 { grid-column: span 3; grid-row: span 1; justify-content: flex-start; gap: 4px; }
+.h4 .pull .k, .h4 .pull2 .k { position: static; }
+.h4 .pull .cv, .h4 .pull2 .cv { position: static; width: 32px; height: 32px; font-size: 14px; border-radius: 9px; }
+.h4 .pull .rw, .h4 .pull2 .rw { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.h4 .pull .t, .h4 .pull2 .t { -webkit-line-clamp: 2; font-size: 12.5px; padding-right: 0; line-height: 1.15; }
+.h4 .pull .s, .h4 .pull2 .s { display: none; }
+.h4 .share { grid-column: span 6; grid-row: span 2; background: #fbf1ea; border-color: #f1d9c8; }
+.h4 .share .q { font-family: "New York", Georgia, serif; font-size: 16px; line-height: 1.35; }
+.h4 .share .sh { position: absolute; right: 12px; bottom: 12px; width: 44px; height: 44px; border-radius: 50%; background: var(--share); color: #fff; display: grid; place-items: center; }
+.h4 .share .cv { top: 12px; right: 12px; }
+.h4 .club { grid-column: span 6; grid-row: span 1; background: var(--friend-soft); border-color: #dcd8f5; }
+.h4 .club .fc { display: flex; }
+.h4 .club .fc span { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 11px; font-weight: 800; border: 2px solid var(--friend-soft); margin-left: -8px; background: var(--friend); }
+.h4 .club .fc span:first-child { margin-left: 0; }
+.h4 .club .t { font-size: 13.5px; }
+
+/* ---------- 5 · Stories ---------- */
+.h5 .stories { display: flex; gap: 14px; overflow-x: auto; padding: 6px 20px 6px; scrollbar-width: none; }
+.h5 .stories::-webkit-scrollbar { display: none; }
+.h5 .story { flex: none; width: 68px; display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11px; font-weight: 650; color: var(--muted); text-align: center; }
+.h5 .story .o { width: 66px; height: 66px; border-radius: 50%; padding: 3px; background: conic-gradient(var(--new) 0 100%, var(--line) 0); display: grid; place-items: center; }
+.h5 .story .o.seen { background: var(--line); }
+.h5 .story .o.half { background: conic-gradient(var(--new) 0 50%, var(--line) 0); }
+.h5 .story .cv { width: 56px; height: 56px; border-radius: 50%; font-size: 22px; border: 3px solid var(--bg); }
+.h5 .story .n { position: absolute; }
+.h5 .story .t { display: block; width: 68px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h5 .story.add .o { background: var(--soft); }
+.h5 .story.add .cv { background: var(--soft); color: var(--accent); }
+.h5 .start2 { display: flex; gap: 12px; padding: 4px 20px 8px; }
+.h5 .st { flex: 1; min-width: 0; border-radius: 18px; background: var(--panel); border: 1px solid var(--line); padding: 12px; display: flex; gap: 10px; align-items: center; }
+.h5 .st .cv { width: 48px; height: 48px; font-size: 18px; }
+.h5 .st .t { font-weight: 650; font-size: 13.5px; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.h5 .st .s { font-size: 11.5px; color: var(--muted); }
+.h5 .share { margin: 0 20px; padding: 14px; border-radius: 18px; background: #fbf1ea; border: 1px solid #f1d9c8; display: flex; gap: 12px; align-items: center; }
+.h5 .share .q { font-family: "New York", Georgia, serif; font-size: 15.5px; line-height: 1.35; }
+.h5 .share .src { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.h5 .share .sh { width: 44px; height: 44px; border-radius: 50%; background: var(--share); color: #fff; display: grid; place-items: center; flex: none; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="i-share" viewBox="0 0 24 24"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z" fill="currentColor"/></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4.5" width="4" height="15" rx="1" fill="currentColor"/><rect x="14" y="4.5" width="4" height="15" rx="1" fill="currentColor"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+<symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+<symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-6.5 8 6.5V20h-5.5v-5h-5v5H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+<symbol id="i-rss" viewBox="0 0 24 24"><path d="M5 5a14 14 0 0 1 14 14M5 11a8 8 0 0 1 8 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="6" cy="18" r="2" fill="currentColor"/></symbol>
+<symbol id="i-books" viewBox="0 0 24 24"><path d="M4 4.5h4v15H4zM10 4.5h4v15h-4zM15.5 5.5l3.8-1 3.2 14.6-3.8 1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+<symbol id="i-quote" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+<symbol id="i-resume" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 9v6l5-3z" fill="currentColor"/></symbol>
+<symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M5 20h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 19a6 6 0 0 1 12 0M15.5 5a3.5 3.5 0 0 1 0 7M17 13.5a5.5 5.5 0 0 1 4 5.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+</defs></svg>
+
+<div class="app">
+  <header class="strip">
+    <div class="dir">Home ×5</div>
+    <button class="pick on" data-pick="h1">1<span class="nm"> Shelves</span></button>
+    <button class="pick" data-pick="h2">2<span class="nm"> Four tiles</span></button>
+    <button class="pick" data-pick="h3">3<span class="nm"> Deck</span></button>
+    <button class="pick" data-pick="h4">4<span class="nm"> Bento</span></button>
+    <button class="pick" data-pick="h5">5<span class="nm"> Stories</span></button>
+    <span class="sp"></span>
+    <button class="pick" id="notesBtn">Notes</button>
+  </header>
+  <main class="stage">
+    <div class="device"><div class="phone" id="phone">
+      <div class="statusbar"><span>9:41</span><i>&#9679;&#9679;&#9679; &#9646;</i></div>
+      <div class="screens">
+
+<!-- ===== 1 · Shelves ===== -->
+<section class="scr h1" data-id="h1">
+  <div class="nav"><h1>Home<small>Monday, Sep 28</small></h1><button class="av" data-toast="Settings">C</button></div>
+  <div class="body">
+    <button class="hero" data-toast="Resumes at 18:12"><span class="cv">L<span class="ring"><svg viewBox="0 0 22 22"><circle class="tr" cx="11" cy="11" r="8"/><circle class="pr" cx="11" cy="11" r="8" stroke-dasharray="50.3" stroke-dashoffset="32.7"/></svg></span></span><div class="g"><div class="k">Continue</div><div class="t">Why we stopped reading slowly</div><div class="s">The Long Middle · 33 min left · 3 Margins</div></div><span class="pb"><svg class="i"><use href="#i-play"/></svg></span></button>
+    <div class="sec"><h3><svg class="i"><use href="#i-books"/></svg>Start something you saved</h3><button class="all" data-toast="Opens Library">41</button></div>
+    <div class="lane">
+      <button class="card" data-toast="Reads the PDF aloud"><span class="cv pdf">S<span class="mgc"><svg class="i"><use href="#i-quote"/></svg>1</span></span><div class="t">Sleep spindles and memory consolidation</div><div class="s">PDF · 48 min read</div></button>
+      <button class="card" data-toast="Reads the article aloud"><span class="cv art">T</span><div class="t">What the tide tables knew</div><div class="s">Article · 14 min</div></button>
+      <button class="card" data-toast="Plays the episode"><span class="cv art">H<span class="ring"><svg viewBox="0 0 22 22"><circle class="tr" cx="11" cy="11" r="8"/><circle class="pr" cx="11" cy="11" r="8" stroke-dasharray="50.3" stroke-dashoffset="15"/></svg></span></span><div class="t">The case for boredom</div><div class="s">Harbor Review · 12 min left</div></button>
+      <button class="card" data-toast="Reads the PDF aloud"><span class="cv pdf">G</span><div class="t">Glacial lake outburst floods: a review</div><div class="s">PDF · 41 pages</div></button>
+      <button class="card" data-toast="Reads the essay aloud"><span class="cv sub">M</span><div class="t">The maintenance mindset</div><div class="s">Substack · 7 min</div></button>
+    </div>
+    <div class="sec"><h3><svg class="i"><use href="#i-rss"/></svg>Pull in from your shows</h3><button class="all" data-toast="Opens Following">23 new</button></div>
+    <div class="lane">
+      <button class="card" data-toast="Adds to Library and plays"><span class="cv fn">F<span class="dot"></span></span><div class="t">The frog that survives freezing</div><div class="s">Field Notes Radio · 28 min</div></button>
+      <button class="card" data-toast="Adds to Library and plays"><span class="cv sub">S<span class="dot"></span></span><div class="t">On fixing what isn’t broken yet</div><div class="s">Small Engines · 9 min</div></button>
+      <button class="card" data-toast="Adds to Library and plays"><span class="cv dt">D<span class="dot"></span></span><div class="t">The Missoula floods, part 2</div><div class="s">Deep Time · 52 min</div></button>
+      <button class="card" data-toast="Adds to Library and plays"><span class="cv oq">O<span class="dot"></span><span class="faces"><span>P</span><span style="background:#0072b2">S</span></span></span><div class="t">The last lighthouse keeper</div><div class="s">Open Questions · 2 friends listened</div></button>
+      <button class="card" data-toast="Adds to Library and plays"><span class="cv art">H<span class="dot"></span></span><div class="t">A short history of the pause</div><div class="s">Harbor Review · 17 min</div></button>
+    </div>
+    <div class="sec"><h3><svg class="i"><use href="#i-share"/></svg>Worth sharing</h3><button class="all" data-toast="Opens Margins">7</button></div>
+    <div class="lane">
+      <div class="qcard"><div class="q">Attention is a budget you spend twice: once reading, once re-reading.</div><div class="row"><span class="cv">L</span><div class="src">Why we stopped reading slowly · 18:12 · voice</div><button class="sh" data-toast="Share sheet: pick a person (2nd tap)" aria-label="Share"><svg class="i"><use href="#i-share"/></svg></button></div></div>
+      <div class="qcard"><div class="q">Boredom as a waiting room for ideas. The kids’ car rides were exactly this.</div><div class="row"><span class="cv art">H</span><div class="src">The case for boredom · 6:05 · voice</div><button class="sh" data-toast="Share sheet: pick a person (2nd tap)" aria-label="Share"><svg class="i"><use href="#i-share"/></svg></button></div></div>
+      <div class="qcard"><div class="q">Figure 3 seems to contradict the abstract. Ask Sam.</div><div class="row"><span class="cv pdf">S</span><div class="src">Sleep spindles · Fig. 3 · voice</div><button class="sh" data-toast="Share sheet: pick a person (2nd tap)" aria-label="Share"><svg class="i"><use href="#i-share"/></svg></button></div></div>
+    </div>
+    <div style="height:16px"></div>
+  </div>
+  <nav class="tabbar"><button class="tb on"><svg class="i"><use href="#i-home"/></svg>Home</button><button class="tb" data-toast="Following"><svg class="i"><use href="#i-rss"/></svg>Following</button><button class="rec" data-toast="Hold to record" aria-label="Record"><svg class="i"><use href="#i-mic"/></svg></button><button class="tb" data-toast="Library"><svg class="i"><use href="#i-books"/></svg>Library</button><button class="tb" data-toast="Margins"><svg class="i"><use href="#i-quote"/></svg>Margins</button></nav>
+</section>
+
+<!-- ===== 2 · Four tiles ===== -->
+<section class="scr h2" data-id="h2" hidden>
+  <div class="nav"><h1>Home<small>Four things, one screen</small></h1><button class="av" data-toast="Settings">C</button></div>
+  <div class="body">
+    <div class="grid">
+      <button class="tile cont" data-toast="Resumes at 18:12"><span class="cv">L<span class="ring"><svg viewBox="0 0 22 22"><circle class="tr" cx="11" cy="11" r="8"/><circle class="pr" cx="11" cy="11" r="8" stroke-dasharray="50.3" stroke-dashoffset="32.7"/></svg></span></span><div><div class="k"><svg class="i"><use href="#i-resume"/></svg>Continue</div><div class="t">Why we stopped reading slowly</div><div class="s">33 min left</div></div><span class="go"><svg class="i"><use href="#i-play"/></svg></span></button>
+      <button class="tile" data-toast="Reads the PDF aloud"><span class="cv pdf">S<span class="mgc"><svg class="i"><use href="#i-quote"/></svg>1</span></span><div><div class="k"><svg class="i"><use href="#i-books"/></svg>Start · saved</div><div class="t">Sleep spindles and memory consolidation</div><div class="s">PDF · 48 min</div></div><span class="go"><svg class="i"><use href="#i-play"/></svg></span></button>
+      <button class="tile" data-toast="Adds to Library and plays"><span class="cv fn">F<span class="dot"></span></span><div><div class="k"><svg class="i"><use href="#i-rss"/></svg>Pull in · new</div><div class="t">The frog that survives freezing</div><div class="s">Field Notes Radio · 28 min</div></div><span class="go"><svg class="i"><use href="#i-down"/></svg></span></button>
+      <button class="tile share" data-toast="Share sheet: pick a person (2nd tap)"><span class="cv">L<span class="mgc"><svg class="i"><use href="#i-quote"/></svg>3</span></span><div><div class="k"><svg class="i"><use href="#i-share"/></svg>Share</div><div class="q">“Attention is a budget you spend twice.”</div><div class="s">Your Margin · 18:12</div></div><span class="go"><svg class="i"><use href="#i-share"/></svg></span></button>
+    </div>
+    <div class="sec"><h3>More of each</h3><button class="all" data-toast="Shuffles the four">Shuffle</button></div>
+    <div class="lane">
+      <button class="card" data-toast="Plays"><span class="cv art">H<span class="ring"><svg viewBox="0 0 22 22"><circle class="tr" cx="11" cy="11" r="8"/><circle class="pr" cx="11" cy="11" r="8" stroke-dasharray="50.3" stroke-dashoffset="15"/></svg></span></span><div class="t">The case for boredom</div><div class="s">12 min left</div></button>
+      <button class="card" data-toast="Reads aloud"><span class="cv art">T</span><div class="t">What the tide tables knew</div><div class="s">Saved · 14 min</div></button>
+      <button class="card" data-toast="Adds and plays"><span class="cv sub">S<span class="dot"></span></span><div class="t">On fixing what isn’t broken yet</div><div class="s">New · 9 min</div></button>
+      <button class="card" data-toast="Adds and plays"><span class="cv dt">D<span class="dot"></span></span><div class="t">The Missoula floods, part 2</div><div class="s">New · 52 min</div></button>
+      <button class="card" data-toast="Adds and plays"><span class="cv oq">O<span class="dot"></span><span class="faces"><span>P</span><span style="background:#0072b2">S</span></span></span><div class="t">The last lighthouse keeper</div><div class="s">2 friends listened</div></button>
+      <button class="card" data-toast="Share sheet"><span class="cv pdf">S<span class="mgc"><svg class="i"><use href="#i-quote"/></svg>1</span></span><div class="t">Figure 3 contradicts the abstract</div><div class="s">Your Margin · share</div></button>
+    </div>
+  </div>
+  <nav class="tabbar"><button class="tb on"><svg class="i"><use href="#i-home"/></svg>Home</button><button class="tb" data-toast="Following"><svg class="i"><use href="#i-rss"/></svg>Following</button><button class="rec" data-toast="Hold to record" aria-label="Record"><svg class="i"><use href="#i-mic"/></svg></button><button class="tb" data-toast="Library"><svg class="i"><use href="#i-books"/></svg>Library</button><button class="tb" data-toast="Margins"><svg class="i"><use href="#i-quote"/></svg>Margins</button></nav>
+</section>
+
+<!-- ===== 3 · Deck ===== -->
+<section class="scr h3" data-id="h3" hidden>
+  <div class="nav"><h1>Today<small>Four cards, swipe sideways</small></h1><button class="av" data-toast="Settings">C</button></div>
+  <div class="body">
+    <div class="deck" id="deck">
+      <div class="dcard"><span class="cv">L<span class="ring" style="right:10px;bottom:10px;width:34px;height:34px"><svg viewBox="0 0 22 22" style="width:30px;height:30px"><circle class="tr" cx="11" cy="11" r="8"/><circle class="pr" cx="11" cy="11" r="8" stroke-dasharray="50.3" stroke-dashoffset="32.7"/></svg></span></span><div class="k"><svg class="i"><use href="#i-resume"/></svg>Continue · 33 min left</div><div class="t">Why we stopped reading slowly</div><div class="s">The Long Middle · Ep. 41</div><div class="why">You stopped at 18:12, right after your Margin about attention as a budget.</div><button class="btn" data-toast="Resumes at 18:12"><svg class="i"><use href="#i-play"/></svg>Resume</button></div>
+      <div class="dcard"><span class="cv pdf">S<span class="mgc" style="left:10px;bottom:10px"><svg class="i"><use href="#i-quote"/></svg>1</span></span><div class="k"><svg class="i"><use href="#i-books"/></svg>Start · from your Library</div><div class="t">Sleep spindles and memory consolidation</div><div class="s">PDF · Ramírez et al. · 48 min read aloud</div><div class="why">You saved it Thursday and already left one Margin on Figure 3.</div><button class="btn" data-toast="Reads the PDF aloud"><svg class="i"><use href="#i-play"/></svg>Start reading</button></div>
+      <div class="dcard"><span class="cv fn">F<span class="dot" style="top:10px;right:10px;width:18px;height:18px"></span></span><div class="k"><svg class="i"><use href="#i-rss"/></svg>Pull in · new from your shows</div><div class="t">The frog that survives freezing</div><div class="s">Field Notes Radio · 28 min · today</div><div class="why">You finish Field Notes episodes more than any other show.</div><button class="btn" data-toast="Adds to Library and plays"><svg class="i"><use href="#i-down"/></svg>Pull in and play</button></div>
+      <div class="dcard share"><span class="cv">L</span><div class="k"><svg class="i"><use href="#i-share"/></svg>Share · a Margin worth sending</div><div class="q">“Attention is a budget you spend twice: once reading, once re-reading.”</div><div class="s">Your voice Margin · 18:12 · Priya listens to this show too</div><button class="btn" data-toast="Share sheet: pick a person (2nd tap)"><svg class="i"><use href="#i-share"/></svg>Share with someone</button></div>
+    </div>
+    <div class="dots" id="dots"><span class="on"></span><span></span><span></span><span></span></div>
+    <div class="more"><span>Tuesday Readers · 3 new</span><span>·</span><span>23 new episodes</span><span>·</span><span>41 saved</span></div>
+  </div>
+  <div class="mini"><span class="cv">L</span><div style="min-width:0"><div class="mt">Why we stopped reading slowly</div><div class="ms">18:12 · The Long Middle</div></div><button class="pp" data-toast="Pause" aria-label="Pause"><svg class="i"><use href="#i-pause"/></svg></button></div>
+  <nav class="tabbar"><button class="tb on"><svg class="i"><use href="#i-home"/></svg>Today</button><button class="tb" data-toast="Following"><svg class="i"><use href="#i-rss"/></svg>Following</button><button class="rec" data-toast="Hold to record" aria-label="Record"><svg class="i"><use href="#i-mic"/></svg></button><button class="tb" data-toast="Library"><svg class="i"><use href="#i-books"/></svg>Library</button><button class="tb" data-toast="Margins"><svg class="i"><use href="#i-quote"/></svg>Margins</button></nav>
+</section>
+
+<!-- ===== 4 · Bento ===== -->
+<section class="scr h4" data-id="h4" hidden>
+  <div class="nav"><h1>Home<small>Monday, Sep 28</small></h1><button class="av" data-toast="Settings">C</button></div>
+  <div class="body">
+    <div class="bento">
+      <button class="b cont" data-toast="Resumes at 18:12"><div class="k"><svg class="i"><use href="#i-resume"/></svg>Continue</div><span class="cv">L</span><div class="t">Why we stopped reading slowly</div><div class="s">The Long Middle · 33 min left · 3 Margins</div><span class="pb"><svg class="i"><use href="#i-play"/></svg></span></button>
+      <button class="b start" data-toast="Reads the PDF aloud"><div class="k"><svg class="i"><use href="#i-books"/></svg>Start</div><span class="cv pdf">S<span class="mgc"><svg class="i"><use href="#i-quote"/></svg>1</span></span><div class="t">Sleep spindles and memory consolidation</div><div class="s">Saved Thu · 48 min</div></button>
+      <button class="b pull" data-toast="Adds and plays"><div class="k"><svg class="i"><use href="#i-rss"/></svg>Pull in · 28 min</div><div class="rw"><span class="cv fn">F<span class="dot"></span></span><div class="t">The frog that survives freezing</div></div></button>
+      <button class="b pull2" data-toast="Adds and plays"><div class="k"><svg class="i"><use href="#i-rss"/></svg>Pull in · 9 min</div><div class="rw"><span class="cv sub">S<span class="dot"></span></span><div class="t">On fixing what isn’t broken yet</div></div></button>
+      <button class="b share" data-toast="Share sheet: pick a person (2nd tap)"><div class="k"><svg class="i"><use href="#i-share"/></svg>Worth sharing</div><span class="cv">L</span><div class="q">“Attention is a budget you spend twice: once reading, once re-reading.”</div><div class="s">Your Margin · 18:12 · voice</div><span class="sh"><svg class="i"><use href="#i-share"/></svg></span></button>
+      <button class="b club" data-toast="Opens the club’s new Margins"><div class="fc"><span>P</span><span style="background:#0072b2">S</span><span style="background:#8a6a12">M</span></div><div class="t">Tuesday Readers · 3 new Margins on what you’re listening to</div></button>
+    </div>
+    <div class="sec"><h3>More to pull in</h3><button class="all" data-toast="Opens Following">23</button></div>
+    <div class="lane">
+      <button class="card" data-toast="Adds and plays"><span class="cv dt">D<span class="dot"></span></span><div class="t">The Missoula floods, part 2</div><div class="s">Deep Time · 52 min</div></button>
+      <button class="card" data-toast="Adds and plays"><span class="cv oq">O<span class="dot"></span><span class="faces"><span>P</span><span style="background:#0072b2">S</span></span></span><div class="t">The last lighthouse keeper</div><div class="s">Open Questions</div></button>
+      <button class="card" data-toast="Adds and plays"><span class="cv art">H<span class="dot"></span></span><div class="t">A short history of the pause</div><div class="s">Harbor Review · 17 min</div></button>
+      <button class="card" data-toast="Adds and plays"><span class="cv">N<span class="dot"></span></span><div class="t">Why maps lie a little</div><div class="s">Old Maps · 31 min</div></button>
+    </div>
+  </div>
+  <nav class="tabbar"><button class="tb on"><svg class="i"><use href="#i-home"/></svg>Home</button><button class="tb" data-toast="Following"><svg class="i"><use href="#i-rss"/></svg>Following</button><button class="rec" data-toast="Hold to record" aria-label="Record"><svg class="i"><use href="#i-mic"/></svg></button><button class="tb" data-toast="Library"><svg class="i"><use href="#i-books"/></svg>Library</button><button class="tb" data-toast="Margins"><svg class="i"><use href="#i-quote"/></svg>Margins</button></nav>
+</section>
+
+<!-- ===== 5 · Stories ===== -->
+<section class="scr h5" data-id="h5" hidden>
+  <div class="nav"><h1>Home<small>Rings mean unheard</small></h1><button class="av" data-toast="Settings">C</button></div>
+  <div class="body">
+    <div class="stories">
+      <button class="story add" data-toast="Paste a link, open a file, find a show"><span class="o"><span class="cv"><svg class="i"><use href="#i-plus"/></svg></span></span><span class="t">Add</span></button>
+      <button class="story" data-toast="Field Notes Radio: 2 new"><span class="o"><span class="cv fn">F</span></span><span class="t">Field Notes</span></button>
+      <button class="story" data-toast="Small Engines: 1 new"><span class="o"><span class="cv sub">S</span></span><span class="t">Small Engines</span></button>
+      <button class="story" data-toast="Deep Time: 1 new"><span class="o"><span class="cv dt">D</span></span><span class="t">Deep Time</span></button>
+      <button class="story" data-toast="Harbor Review: 3 new, 1 heard"><span class="o half"><span class="cv art">H</span></span><span class="t">Harbor Review</span></button>
+      <button class="story" data-toast="Open Questions: 1 new"><span class="o"><span class="cv oq">O</span></span><span class="t">Open Questions</span></button>
+      <button class="story" data-toast="The Long Middle: nothing new"><span class="o seen"><span class="cv">L</span></span><span class="t">Long Middle</span></button>
+      <button class="story" data-toast="Old Maps: nothing new"><span class="o seen"><span class="cv">N</span></span><span class="t">Old Maps</span></button>
+      <button class="story" data-toast="52 more shows"><span class="o seen"><span class="cv" style="background:var(--soft);color:var(--accent);font-family:-apple-system,system-ui,sans-serif;font-size:14px;font-weight:700">+52</span></span><span class="t">All shows</span></button>
+    </div>
+    <div class="sec"><h3><svg class="i"><use href="#i-resume"/></svg>Continue</h3></div>
+    <button class="hero" data-toast="Resumes at 18:12"><span class="cv">L<span class="ring"><svg viewBox="0 0 22 22"><circle class="tr" cx="11" cy="11" r="8"/><circle class="pr" cx="11" cy="11" r="8" stroke-dasharray="50.3" stroke-dashoffset="32.7"/></svg></span></span><div class="g"><div class="k">33 min left</div><div class="t">Why we stopped reading slowly</div><div class="s">The Long Middle · 3 Margins so far</div></div><span class="pb"><svg class="i"><use href="#i-play"/></svg></span></button>
+    <div class="sec"><h3><svg class="i"><use href="#i-books"/></svg>Start from your Library</h3><button class="all" data-toast="Opens Library">41</button></div>
+    <div class="start2">
+      <button class="st" data-toast="Reads the PDF aloud"><span class="cv pdf">S<span class="mgc"><svg class="i"><use href="#i-quote"/></svg>1</span></span><div><div class="t">Sleep spindles and memory consolidation</div><div class="s">PDF · 48 min</div></div></button>
+      <button class="st" data-toast="Reads the article aloud"><span class="cv art">T</span><div><div class="t">What the tide tables knew</div><div class="s">Article · 14 min</div></div></button>
+    </div>
+    <div class="sec"><h3><svg class="i"><use href="#i-share"/></svg>Worth sharing</h3><button class="all" data-toast="Opens Margins">7</button></div>
+    <div class="share"><div><div class="q">“Attention is a budget you spend twice: once reading, once re-reading.”</div><div class="src">Your Margin · Why we stopped reading slowly · 18:12</div></div><button class="sh" data-toast="Share sheet: pick a person (2nd tap)" aria-label="Share"><svg class="i"><use href="#i-share"/></svg></button></div>
+    <div style="height:16px"></div>
+  </div>
+  <nav class="tabbar"><button class="tb on"><svg class="i"><use href="#i-home"/></svg>Home</button><button class="tb" data-toast="Following"><svg class="i"><use href="#i-rss"/></svg>Following</button><button class="rec" data-toast="Hold to record" aria-label="Record"><svg class="i"><use href="#i-mic"/></svg></button><button class="tb" data-toast="Library"><svg class="i"><use href="#i-books"/></svg>Library</button><button class="tb" data-toast="Margins"><svg class="i"><use href="#i-quote"/></svg>Margins</button></nav>
+</section>
+
+      </div>
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </div></div>
+
+    <aside class="notes" id="notes" hidden>
+      <button class="close-notes">Close</button>
+      <h1>Five Home screens</h1>
+      <p class="lede">Every one shows the same four things: one item to continue, at least one to start from your Library, at least one to pull in from your shows, and a Margin worth sharing. They differ in how the eye finds them.</p>
+
+      <h2>Glanceable icons (same in all five)</h2>
+      <div class="legend">
+        <div><span class="cv" style="width:34px;height:34px;font-size:14px">L<span class="ring"><svg viewBox="0 0 22 22"><circle class="tr" cx="11" cy="11" r="8"/><circle class="pr" cx="11" cy="11" r="8" stroke-dasharray="50.3" stroke-dashoffset="32.7"/></svg></span></span><span>Progress ring: how far you are. Full ring means finished.</span></div>
+        <div><span class="cv fn" style="width:34px;height:34px;font-size:14px">F<span class="dot"></span></span><span>Blue dot: new from a show you follow, not yet in your Library.</span></div>
+        <div><span class="cv pdf" style="width:34px;height:34px;font-size:14px">S<span class="mgc"><svg class="i"><use href="#i-quote"/></svg>1</span></span><span>Orange count: Margins you have on this item.</span></div>
+        <div><span class="cv oq" style="width:34px;height:34px;font-size:14px">O<span class="faces"><span>P</span><span style="background:#0072b2">S</span></span></span><span>Faces: friends who listened or left Margins.</span></div>
+      </div>
+
+      <h2>1 · Shelves</h2>
+      <p>What Apple Podcasts, Audible and Apple Books do: a Continue hero, then horizontal shelves named by intent. Cover art carries the status icons, so a row can be read in a second. Familiar, scales to any amount of content, and the shelf order is the priority order.</p>
+      <h2>2 · Four tiles</h2>
+      <p>Spotify's shortcut grid, cut to exactly four: Continue, Start, Pull in, Share. One screen, nothing to scroll for, every tile is a 1-tap action. The "More of each" shelf underneath is optional. Best if you want Home to be a launcher, not a feed.</p>
+      <h2>3 · Deck</h2>
+      <p>One card per intent, swiped sideways, with a sentence saying why it's there ("you finish Field Notes episodes more than any other show"). Slowest to scan but the most persuasive; each card has one button. Like Apple News Today or a daily briefing.</p>
+      <h2>4 · Bento</h2>
+      <p>Apple Music's Top Picks and the widget grid: tiles of different sizes, size is importance. Continue is the biggest, Share gets a full-width tile so the quote is readable, Pull in gets two small ones. Dense but still one screen, and the club appears as a thin row only when there is news.</p>
+      <h2>5 · Stories</h2>
+      <p>Instagram's story ring for the feed: one circle per show, ring means unheard, half ring means partly heard, grey means nothing new. That is 60 shows made glanceable in one strip, and it doubles as the way in to Following. Below it, Continue, two Start tiles and the Share card.</p>
+
+      <h2>Home tap budget (all five)</h2>
+      <table><tr><th>Task</th><th>Taps</th></tr><tr><td>Continue the current item</td><td>1</td></tr><tr><td>Start something saved</td><td>1</td></tr><tr><td>Pull in a new episode and play it</td><td>1</td></tr><tr><td>Share the suggested Margin to a friend</td><td>2</td></tr><tr><td>Record (mic in the tab bar)</td><td>1 hold</td></tr></table>
+      <p class="lede" style="margin-top:8px">Taps here show a toast saying what would happen; this page is for judging the layout, not the flows.</p>
+    </aside>
+  </main>
+</div>
+
+<script>
+(function () {
+  const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const phone = $('#phone'), toast = $('#toast'); let tt;
+  function pick(id) { $$('.scr', phone).forEach(s => s.hidden = s.dataset.id !== id); $$('[data-pick]').forEach(b => b.classList.toggle('on', b.dataset.pick === id)); const b = $(`.scr[data-id="${id}"] .body`); if (b) b.scrollTop = 0; try { localStorage.setItem('home-pick', id); } catch (e) {} }
+  document.addEventListener('click', e => {
+    const p = e.target.closest('[data-pick]'); if (p) { pick(p.dataset.pick); return; }
+    if (e.target.closest('#notesBtn')) { $('#notes').hidden = false; return; }
+    if (e.target.closest('.close-notes')) { $('#notes').hidden = true; return; }
+    const t = e.target.closest('[data-toast]'); if (t && phone.contains(t)) { e.preventDefault(); toast.textContent = t.dataset.toast; toast.classList.add('show'); clearTimeout(tt); tt = setTimeout(() => toast.classList.remove('show'), 2200); }
+  });
+  const deck = $('#deck'), dots = $$('#dots span');
+  if (deck) deck.addEventListener('scroll', () => { const i = Math.round(deck.scrollLeft / (deck.firstElementChild.offsetWidth + 12)); dots.forEach((d, j) => d.classList.toggle('on', j === i)); }, { passive: true });
+  let start = 'h1'; try { start = localStorage.getItem('home-pick') || 'h1'; } catch (e) {}
+  if (!$(`.scr[data-id="${start}"]`)) start = 'h1';
+  pick(start);
+  if (window.matchMedia('(max-width: 860px)').matches) $('#notes').hidden = true;
+})();
+</script>
+</body>
+</html>

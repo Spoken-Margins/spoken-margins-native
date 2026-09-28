@@ -49,3 +49,7 @@ python3 Design/D1-directions/v2/build.py <outdir>   # also writes copies for pub
 Serve the folder with any static server (`python3 -m http.server --directory Design/D1-directions/v2`). In a browser console, `Engine.walk('share', ['.mg [data-share="m1"]', '.person[data-arg="Priya"]'])` runs a task programmatically and returns the measured taps. `audit.js` (paste it into the console) opens every screen and sheet and reports horizontal overflow, elements outside the phone and tap targets under 44 pt.
 
 All shows, people and quotes are made up.
+
+## Home explorations (after the owner's review)
+
+The owner didn't click with any of the three directions and asked for a fantastic Home screen instead: horizontal shelves rather than lists, glanceable icons, and on every Home one thing to continue, at least one to start from the Library, at least one to pull in from a followed show, and a Margin worth sharing. [home-explorations.html](home-explorations.html) ([artifact](https://claude.ai/artifact/XoL4cddmfFPwspHSfjATXF)) holds five designs in one page: 1 Shelves, 2 Four tiles, 3 Deck, 4 Bento, 5 Stories. Its Notes panel has the review of what comparable apps do and the shared icon legend. It is self-contained (no build step).
