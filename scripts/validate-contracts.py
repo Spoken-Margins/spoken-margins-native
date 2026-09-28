@@ -40,6 +40,8 @@ PATH_SCHEMA_RULES = [
     ("fixtures/source-catalog/*.json", "source-catalog.schema.json"),
     ("fixtures/source-catalog-manifest/*.json", "source-catalog-manifest.schema.json"),
     ("fixtures/source-resolution/*.json", "source-resolution.schema.json"),
+    ("fixtures/podcast-search/test-names.json", "podcast-search-test-list.schema.json"),
+    ("fixtures/podcast-search/itunes-responses/*.json", "itunes-search-response.schema.json"),
     ("traces/*.json", "session-trace.schema.json"),
 ]
 
