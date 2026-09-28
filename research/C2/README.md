@@ -52,21 +52,37 @@ How to read these numbers:
 - **Supertonic 3:** MIT code, OpenRAIL-M model (use-based restrictions), already handled by the app's Supertonic Terms gate.
 - **Pocket TTS:** MIT code and CC BY 4.0 weights, so the app needs an attribution line. The voice-cloning weights are gated with a prohibited-use list; the ungated no-cloning weights are enough.
 
-## Recommendation (provisional until the Mac, phone and listening results are in)
+## Blind listen (owner, 2026-09-28)
 
-**Make the fallback Supertonic 3 at 4 steps, and keep the system voice only as the last resort.**
+Ratings are 1–5 per passage (narrative / scientific / dialogue). Letters were revealed after the ratings were saved. Raw data: [results/blind-listen-2026-09-28.json](results/blind-listen-2026-09-28.json).
 
-- **It meets the bars as far as the cloud can tell.** It renders 1.8× faster than today's 8 steps (3.9× real time on one Xeon thread, where 8 steps manages 2.2×). It adds 0 MB. There's no license work: it's the same files, already behind the Terms gate. One code change is needed: `SupertonicNarrationRenderer.render` accepts only 5–12 steps (`SupertonicNarrationRenderer.swift:172`), so the guard has to allow 4. It keeps the listener's chosen voice (M2 stays M2), which is what the brief's outcome is really about. The first audio arrives in about 1.3 s instead of 2.3 s.
-- **What would change it:**
-  - **If the blind listen rates C clearly below E**, or the phone benchmark puts 4 steps under **4× real time in Low Power Mode while warm**, the runner-up is **KittenTTS nano fp32**. It's the fastest neural voice here (4.6× on one thread, about 60 MB), but it needs a non-GPL front end built first (about a week of work, with a quality risk).
-  - **Kokoro** has the best words-right score and is the likely listening favourite, but at 326 MB fp32 and 1.1× on one thread it doesn't fit a fallback budget unless int8 turns out fast on Apple silicon (the Mac run checks this).
-  - **Pocket TTS** is license-clean and streams from 0.2 s, but it needs an iOS runtime port and was the slowest here. Watch it; don't pick it now.
-  - **Piper** is out on licensing.
-- **Two cases it doesn't cover.** It's the same 148 MB model on the same CPU, only doing about half the work:
-  - After a **memory warning**, 4 steps uses the same memory as 8 steps.
-  - At thermal **`.critical`**, any neural rendering adds heat.
-  - For those two conditions the system voice stays the fallback, visibly labelled, per the I14 draft. At thermal **`.serious`**, 4 steps is the fallback, provided the phone benchmark shows it holding 4× real time when warm. If it doesn't, `.serious` goes to the system voice as well.
-- **App-size cost to accept:** 0 MB for the recommendation. If the runner-up is needed instead: about 60 MB for Kitten nano fp32 (about 27 MB if int8 is fast on the phone).
+| Letter | Candidate | Ratings | Average | Acceptable as the fallback? |
+| --- | --- | --- | ---: | --- |
+| G | Kokoro-82M fp32 | 5 / 5 / 5 | 5.0 | yes |
+| B | Pocket TTS (alba) | 5 / 5 / 5 | 5.0 | yes |
+| E | Supertonic 3, 8 steps (today) | 4 / 4 / 4 | 4.0 | yes |
+| A | Piper ljspeech high | 4 / 3 / 3 | 3.3 | yes (blocked on license anyway) |
+| D | KittenTTS nano fp32 | 3 / 3 / 3 | 3.0 | yes |
+| C | Supertonic 3, 4 steps | 2 / 3 / 2 | 2.3 | **no** |
+| F | Samantha | 2 / 2 / 2 | 2.0 | no. *F had no audio on the page (it's rendered on the Mac), so these ratings aren't from listening. Re-rate F once it's added.* |
+
+## Recommendation (provisional until the Mac and phone numbers are in)
+
+The listen rules out the 4-step Supertonic fallback. The two voices you liked best (5.0) are also the two heaviest, so the phone benchmark now decides.
+
+**Make the fallback Kokoro-82M, provided it holds 4× real time on the phone in Low Power Mode while warm. If it doesn't, use KittenTTS nano.**
+
+- **Why Kokoro over Pocket TTS (both rated 5.0):**
+  - Kokoro runs on the onnxruntime the app already links, and it had the fewest word errors on the scientific passage (5%, against 24% for Pocket).
+  - Pocket needs an iOS runtime port (a community ONNX export or MLX), and its first full chunk was the slowest here, although it can start streaming in 0.2 s.
+  - Pocket stays the alternative if Kokoro is too slow on the phone and a Pocket port turns out faster. The Mac session should try the community ONNX export in the phone benchmark.
+- **Kokoro's costs:**
+  - **App size:** 332 MB at fp32, or about 98 MB if int8 turns out fast on Apple silicon (on this x86 CPU it was 3–5× slower than fp32; the Mac run checks this).
+  - **Engineering:** a non-GPL replacement for misaki's espeak-ng fallback, used only for words missing from its 6 MB Apache lexicon (six such words across the three passages here).
+  - **Speed:** 1.1× real time on one Xeon thread, so whether it passes depends on Apple silicon being several times faster per core. Kyutai's figures suggest it is, but that's unmeasured.
+- **If Kokoro fails the phone budget:** KittenTTS nano fp32. You rated it acceptable (3.0). It's the fastest neural voice here (4.6× on one thread) at about 60 MB. It needs a non-GPL front end that imitates espeak's phonemes, which is about a week of work with a quality risk.
+- **Supertonic 8 steps stays the preferred voice** whenever policy allows it (you rated it 4.0). The fallback only covers the conditions in the I14 draft. After a memory warning, a 332 MB Kokoro is a poor fit, so the system voice stays the last resort there, visibly labelled.
+- **App-size cost to accept:** about 332 MB for Kokoro fp32 (about 98 MB if int8 works on the phone), or about 60 MB for Kitten.
 
 ## What's waiting
 
@@ -80,9 +96,9 @@ It installs the harness, fetches the models, runs every benchmark (`results/darw
 
 **(owner)** In this order:
 
-1. **Blind listen** (about 15 minutes, headphones): open the listening page on the phone, rate every clip 1–5, answer "Acceptable as the fallback?" per letter, and tap **Save ratings**. You can do this now; the Samantha clip (F) is added after the Mac run, and you can rate it then.
+1. **Blind listen:** done 2026-09-28. Re-rate F (Samantha) once the Mac run adds it.
 2. **Phone benchmark:** once the Mac session has built it, run it warm, in Low Power Mode, as described in [phone-bench/README.md](phone-bench/README.md), and share the JSON on #192.
-3. **Accept the app-size cost:** 0 MB for the recommendation, or about 60 MB if the listen or the phone sends it to Kitten.
+3. **Accept the app-size cost:** about 332 MB for Kokoro fp32 (about 98 MB if int8 is fast on the phone), or about 60 MB for Kitten.
 
 ## Files
 
