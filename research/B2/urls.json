@@ -1,0 +1,303 @@
+{
+ "about": "Substack links a listener might hand the app. `expect_feed` is the publication feed the resolver must find (null: not a Substack; generic discovery keeps it). `item` marks links that would be an article item in the Library (so the suggestion path applies). Recorded responses: fixtures/ (python3 record.py).",
+ "cases": [
+  {
+   "id": "post-custom-clean",
+   "category": "post",
+   "item": true,
+   "url": "https://www.astralcodexten.com/p/the-specter-of-neuralese",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "post-custom-email-utm",
+   "category": "post+tracking",
+   "item": true,
+   "url": "https://www.astralcodexten.com/p/the-specter-of-neuralese?utm_source=substack&utm_medium=email&utm_content=share",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "post-custom-web-share-r",
+   "category": "post+tracking",
+   "item": true,
+   "url": "https://www.astralcodexten.com/p/your-book-review-lee-kuan-yews-memoirs?r=4abcd&utm_campaign=post&utm_medium=web",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "post-custom-fragment",
+   "category": "post",
+   "item": true,
+   "url": "https://www.astralcodexten.com/p/the-specter-of-neuralese#footnote-1",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "post-custom-comments",
+   "category": "post",
+   "item": false,
+   "url": "https://www.astralcodexten.com/p/the-specter-of-neuralese/comments",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "post-custom-old-2022",
+   "category": "old post",
+   "item": true,
+   "url": "https://www.astralcodexten.com/p/spring-meetups-in-seventy-cities",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "post-custom-old-2026-01",
+   "category": "old post",
+   "item": true,
+   "url": "https://www.astralcodexten.com/p/open-thread-418",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "post-subdomain-redirects-to-custom",
+   "category": "post",
+   "item": true,
+   "url": "https://astralcodexten.substack.com/p/the-specter-of-neuralese",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "post-subdomain-old-utm",
+   "category": "old post+tracking",
+   "item": true,
+   "url": "https://garymarcus.substack.com/p/promises-are-cheap?utm_source=substack&utm_medium=email",
+   "expect_feed": "https://garymarcus.substack.com/feed"
+  },
+  {
+   "id": "post-subdomain-recent",
+   "category": "post",
+   "item": true,
+   "url": "https://garymarcus.substack.com/p/breaking-ai-agent-incident-toll-has",
+   "expect_feed": "https://garymarcus.substack.com/feed"
+  },
+  {
+   "id": "post-on-substack-old-2023",
+   "category": "old post",
+   "item": true,
+   "url": "https://on.substack.com/p/meet-your-fellow-writers",
+   "expect_feed": "https://on.substack.com/feed"
+  },
+  {
+   "id": "post-noahpinion-recent-r",
+   "category": "post+tracking",
+   "item": true,
+   "url": "https://www.noahpinion.blog/p/roundup-88-is-it-time-to-panic-yet?r=2xyz",
+   "expect_feed": "https://www.noahpinion.blog/feed"
+  },
+  {
+   "id": "post-thefp-large-page",
+   "category": "post (page near 1 MB)",
+   "item": true,
+   "url": "https://www.thefp.com/p/james-blair-fulton-sheen-midterms",
+   "expect_feed": "https://www.thefp.com/feed"
+  },
+  {
+   "id": "post-zvi-long",
+   "category": "post",
+   "item": true,
+   "url": "https://thezvi.substack.com/p/ai-187-coming-into-play",
+   "expect_feed": "https://thezvi.substack.com/feed"
+  },
+  {
+   "id": "post-paid-truncated",
+   "category": "paid post",
+   "item": true,
+   "url": "https://www.slowboring.com/p/upzoned-overbid-under-construction?utm_source=substack&utm_medium=email",
+   "expect_feed": "https://www.slowboring.com/feed"
+  },
+  {
+   "id": "post-podcast-episode",
+   "category": "audio post",
+   "item": true,
+   "url": "https://www.dwarkesh.com/p/noam-brown",
+   "expect_feed": "https://www.dwarkesh.com/feed"
+  },
+  {
+   "id": "post-podcast-lenny-utm",
+   "category": "audio post+tracking",
+   "item": true,
+   "url": "https://www.lennysnewsletter.com/p/jev-for-beginners-how-to-use-it-and?utm_source=post-email-title&publication_id=10845&post_id=1&utm_campaign=email-post-title&isFreemail=true&r=abc&triedRedirect=true&utm_medium=email",
+   "expect_feed": "https://www.lennysnewsletter.com/feed"
+  },
+  {
+   "id": "post-paid-podcast",
+   "category": "paid audio post",
+   "item": true,
+   "url": "https://www.slowboring.com/p/jane-jacobss-urbanism-without-economics",
+   "expect_feed": "https://www.slowboring.com/feed"
+  },
+  {
+   "id": "share-open-substack-pub",
+   "category": "Substack app share link",
+   "item": false,
+   "url": "https://open.substack.com/pub/astralcodexten/p/your-book-review-lee-kuan-yews-memoirs?r=4abcd&utm_campaign=post&utm_medium=web&showWelcomeOnShare=true",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "share-home-post-id",
+   "category": "Substack app share link",
+   "item": false,
+   "url": "https://substack.com/home/post/p-210681369",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "share-handle-post-id",
+   "category": "Substack app share link",
+   "item": false,
+   "url": "https://substack.com/@astralcodexten/p-210681369",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "share-inbox-post",
+   "category": "Substack app share link",
+   "item": false,
+   "url": "https://substack.com/inbox/post/210681369",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "share-app-link-email",
+   "category": "email 'open in app' link",
+   "item": false,
+   "url": "https://substack.com/app-link/post?publication_id=89120&post_id=210681369",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "home-custom",
+   "category": "home page",
+   "item": false,
+   "url": "https://www.astralcodexten.com/",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "home-custom-apex",
+   "category": "home page",
+   "item": false,
+   "url": "https://astralcodexten.com",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "home-subdomain",
+   "category": "home page",
+   "item": false,
+   "url": "https://garymarcus.substack.com/",
+   "expect_feed": "https://garymarcus.substack.com/feed"
+  },
+  {
+   "id": "home-subdomain-to-custom",
+   "category": "home page",
+   "item": false,
+   "url": "https://noahpinion.substack.com",
+   "expect_feed": "https://www.noahpinion.blog/feed"
+  },
+  {
+   "id": "home-thefp-over-1mb",
+   "category": "home page (over 1 MB)",
+   "item": false,
+   "url": "https://www.thefp.com/",
+   "expect_feed": "https://www.thefp.com/feed"
+  },
+  {
+   "id": "home-oneusefulthing",
+   "category": "home page",
+   "item": false,
+   "url": "https://www.oneusefulthing.org/",
+   "expect_feed": "https://www.oneusefulthing.org/feed"
+  },
+  {
+   "id": "home-honest-broker",
+   "category": "home page",
+   "item": false,
+   "url": "https://www.honest-broker.com",
+   "expect_feed": "https://www.honest-broker.com/feed"
+  },
+  {
+   "id": "archive-page",
+   "category": "archive/about",
+   "item": false,
+   "url": "https://www.astralcodexten.com/archive?sort=new",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "about-page",
+   "category": "archive/about",
+   "item": false,
+   "url": "https://www.slowboring.com/about",
+   "expect_feed": "https://www.slowboring.com/feed"
+  },
+  {
+   "id": "feed-custom",
+   "category": "/feed link",
+   "item": false,
+   "url": "https://www.astralcodexten.com/feed",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "feed-subdomain-large",
+   "category": "/feed link",
+   "item": false,
+   "url": "https://thezvi.substack.com/feed",
+   "expect_feed": "https://thezvi.substack.com/feed"
+  },
+  {
+   "id": "feed-http",
+   "category": "/feed link (http)",
+   "item": false,
+   "url": "http://www.astralcodexten.com/feed",
+   "expect_feed": "https://www.astralcodexten.com/feed"
+  },
+  {
+   "id": "feed-subdomain-to-custom",
+   "category": "/feed link",
+   "item": false,
+   "url": "https://noahpinion.substack.com/feed",
+   "expect_feed": "https://www.noahpinion.blog/feed"
+  },
+  {
+   "id": "feed-public-podcast",
+   "category": "/feed link (podcast)",
+   "item": false,
+   "url": "https://api.substack.com/feed/podcast/69345.rss",
+   "expect_feed": "https://api.substack.com/feed/podcast/69345.rss",
+   "note": "Dwarkesh Podcast's public podcast feed; the paid-subscriber version has the same shape at /feed/podcast/<id>/private/<token>.rss"
+  },
+  {
+   "id": "profile-handle",
+   "category": "profile",
+   "item": false,
+   "url": "https://substack.com/@noahpinion",
+   "expect_feed": "https://www.noahpinion.blog/feed",
+   "max_confidence": 0.8
+  },
+  {
+   "id": "profile-subdomain-redirect",
+   "category": "profile",
+   "item": false,
+   "url": "https://lennysnewsletter.substack.com/",
+   "expect_feed": "https://na12.substack.com/feed",
+   "note": "Trap: lennysnewsletter.substack.com is NOT Lenny's Newsletter (that is lenny.substack.com -> www.lennysnewsletter.com). It redirects to an unrelated @lennysnewsletter profile. The resolver may only offer that profile's publication as a low-confidence 'is this it?'.",
+   "max_confidence": 0.8
+  },
+  {
+   "id": "subdomain-to-custom-lenny",
+   "category": "home page",
+   "item": false,
+   "url": "https://lenny.substack.com/",
+   "expect_feed": "https://www.lennysnewsletter.com/feed"
+  },
+  {
+   "id": "control-ghost-site",
+   "category": "not Substack (control)",
+   "item": false,
+   "url": "https://www.platformer.news/",
+   "expect_feed": null
+  },
+  {
+   "id": "control-substack-notes",
+   "category": "not a publication (control)",
+   "item": false,
+   "url": "https://substack.com/notes",
+   "expect_feed": null
+  }
+ ]
+}

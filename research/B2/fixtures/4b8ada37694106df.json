@@ -1,0 +1,14 @@
+{
+ "url": "https://lenny.substack.com/",
+ "kind": "html",
+ "status": 301,
+ "headers": {
+  "content-type": "text/plain; charset=utf-8",
+  "location": "https://www.lennysnewsletter.com/",
+  "x-served-by": "Substack",
+  "content-length": "67"
+ },
+ "body": "Moved Permanently. Redirecting to https://www.lennysnewsletter.com/",
+ "original_bytes": 67,
+ "trimmed": false
+}
