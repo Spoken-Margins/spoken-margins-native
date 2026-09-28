@@ -94,6 +94,17 @@ def content_title(title: str, show_names: list[str]) -> str:
     return " ".join(keep) or title
 
 
+def search_term(title: str, show_names: list[str]) -> str:
+    """A title search Apple can answer: its search wants every word to match,
+    so a run-on title with several segments finds nothing. Use the first
+    segment that isn't the show's name."""
+    content = content_title(title, show_names)
+    for seg in title_segments(content):
+        if len(tokens(seg)) >= 2:
+            return seg[:100]
+    return content[:100]
+
+
 def _date(value: str | None) -> dt.date | None:
     if not value:
         return None
@@ -119,6 +130,7 @@ class ShowCandidate:
     artist: str
     strength: float           # 0..1, how well the video backs this show's identity
     via: list[str]
+    episodes: int = 0          # Apple's trackCount; look-alike shows are usually tiny
 
 
 def _source_tokens(text: str) -> set[str]:
@@ -154,7 +166,7 @@ def _name_support(show: dict, sources: list[tuple[str, str]], searched: str | No
                 best = max(best, 1.0)
             # Part of a short name, not a phrase inside a keyword-stuffed one
             # ("... Andrew Huberman, Joe Rogan, Stress, Anxiety ...").
-            elif src_tokens <= target and len(target) - len(src_tokens) <= 3 \
+            elif src_tokens <= target and len(target) - len(src_tokens) <= 4 and len(target) <= 6 \
                     and searched is not None and fold(searched) == fold(src) \
                     and (len(src_tokens) >= 2 or kind in ("channel", "linked")):
                 best = max(best, 0.8)
@@ -225,7 +237,8 @@ def find_shows(video: VideoEvidence, limit: int = 3) -> list[ShowCandidate]:
             found[cid].via.append(via)
         else:
             found[cid] = ShowCandidate(cid, show.get("collectionName") or "",
-                                       show.get("artistName") or "", strength, [via])
+                                       show.get("artistName") or "", strength, [via],
+                                       show.get("trackCount") or 0)
 
     # An Apple Podcasts link names a show, but descriptions also link guests'
     # shows and sponsors, so it adds support rather than proof.
@@ -238,8 +251,10 @@ def find_shows(video: VideoEvidence, limit: int = 3) -> list[ShowCandidate]:
         for show in itunes.search_shows(term, limit=8):
             consider(show, f"search:{term}", term)
 
-    # Stable sort: among equally backed shows, Apple's relevance order decides.
-    ranked = sorted(found.values(), key=lambda s: -s.strength)
+    # Among shows the video backs, the one with the most episodes first: a
+    # search for "Syntax" or "Lex Fridman" also returns tiny look-alikes with
+    # the exact name, which would otherwise crowd out the real show.
+    ranked = sorted(found.values(), key=lambda s: (-(s.strength >= 0.8), -s.episodes, -s.strength))
     return [s for s in ranked if s.strength >= 0.6][:limit]
 
 
@@ -465,7 +480,7 @@ def match(video: VideoEvidence) -> Result:
     if not ok:
         # Older episodes (beyond the latest 200) and shows the video doesn't
         # name only surface through an episode search by title.
-        for ep in itunes.search_episodes(content_title(video.title, show_names)[:100]):
+        for ep in itunes.search_episodes(search_term(video.title, show_names)):
             episodes.setdefault(_key(ep), ep)
         scored = _rank(episodes, video, by_id, show_names, lookups)
         ok, why = _decide(scored, video) if scored else (False, "")
