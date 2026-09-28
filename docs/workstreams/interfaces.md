@@ -133,7 +133,7 @@ This page sets **what crosses each seam and what must stay true**. It deliberate
   - how each I13 role is spoken: skipped, announced ("Figure 2: …"), or read, and how citation and footnote markers sound.
 - **Invariants:** power state alone never silently changes the voice (#183). Any fallback has a visible, loggable reason, and the chosen voice comes back when the reason clears. Rate is one number: the app's rate is never multiplied by the system accessibility rate. Chunk boundaries never show as pause/resume.
 
-### Published: how each kind of text is spoken (C2, 2026-09-28)
+### Published: how each kind of text is spoken (C2, 2026-09-28; roles beyond the first table added the same day)
 
 These rules apply to every engine, including the fallback and the system voice, so switching voices never changes *what* is said. Roles stay advisory (I13): the speech path applies these defaults, and per-role listener settings can come later. The Swift type that carries them lands with C2 M1 (#183). Engine selection and the rate rule above are unchanged by this section. Background and evidence: `research/C2/I14-draft.md` on `ws/c2-voice`.
 
@@ -148,6 +148,12 @@ These rules apply to every engine, including the fallback and the system voice, 
 | footnote | Skipped | Footnote text isn't read where it appears. |
 | reference (bibliography) | Skipped | Announced once, "References skipped." Reading resumes at the next segment that isn't a reference, such as an appendix. |
 | header, footer | Skipped, silent | Running heads and page numbers are never read. |
+| title, abstract | Read | Like body text. |
+| authors | Read | The names only, once, after the title (owner decision, #191). |
+| front matter (the rest of the title page: affiliations, emails, identifiers, dates, keywords) | Skipped, silent | An announcement would only be noise here. |
+| back matter (funding, author contributions, competing interests, data availability, acknowledgements, reviewer reports) | Skipped | Announced once, "Back matter skipped." Reading resumes at the next segment that isn't back matter, such as an appendix. |
+| equation (display) | Announced, not read | "Equation." A run of consecutive equations is announced once. Inline math stays part of the body and is read as printed. |
+| unknown, or a role added later | Read | So nothing is lost while roles are added. |
 
 **Markers inside body text.**
 - **Numeric citations** are silent: `[12]`, `[12, 14]`, `[3–5]`, and superscript numbers after a word or punctuation.
@@ -175,7 +181,7 @@ These rules apply to every engine, including the fallback and the system voice, 
 | Table with caption `Table 1. Baseline characteristics.` | "Table 1: Baseline characteristics. Table not read." |
 
 **Invariants for consumers (C1 M3 and every narration path):**
-- A role's text never disappears silently. It's read, or it's announced as skipped ("Table not read", "References skipped"). Header and footer are the one exception: they're always silent.
+- A role's text never disappears silently. It's read, or it's announced as skipped ("Table not read", "References skipped", "Back matter skipped", "Equation"). The only silent roles are header, footer, footnote and front matter.
 - Skipping never moves anchors. Written Margins anchor to the extracted text, not to what's spoken (I13).
 
 ## I15. Stable UI identifiers
