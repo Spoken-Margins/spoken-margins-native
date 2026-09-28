@@ -57,11 +57,18 @@ final class SourceCatalogTests: XCTestCase {
         XCTAssertEqual(catalog.entries(forSubject: nil).count, catalog.entries.count)
     }
 
-    func testEntryMatchingFeedURLIgnoresCaseSchemeAndTrailingSlash() throws {
+    func testEntryMatchingFeedURLFoldsSchemeAndHostCaseButNotPath() throws {
         let catalog = try Self.fixtureCatalog()
         let entry = try XCTUnwrap(catalog.entries.first)
-        let variant = entry.feedURL.replacingOccurrences(of: "https://", with: "HTTP://").uppercased() + "/"
+        var components = try XCTUnwrap(URLComponents(string: entry.feedURL))
+        components.scheme = "HTTP"
+        components.host = components.host?.uppercased()
+        let variant = try XCTUnwrap(components.string) + "/"
         XCTAssertEqual(catalog.entry(matchingFeedURL: variant)?.id, entry.id)
+        // Feed paths are case-sensitive: a path differing only in case is another feed.
+        let otherCase = entry.feedURL.replacingOccurrences(of: "Sl5CSM3S", with: "sl5csm3s")
+        XCTAssertNotEqual(otherCase, entry.feedURL, "fixture's first entry is The Daily")
+        XCTAssertNil(catalog.entry(matchingFeedURL: otherCase))
         XCTAssertNil(catalog.entry(matchingFeedURL: "https://example.com/not-in-catalog.xml"))
     }
 

@@ -111,7 +111,12 @@ def validate_source_catalog(path: Path) -> list[str]:
     provenance_ids = {item["id"] for item in catalog.get("provenance", [])}
     if len(entry_ids) != len(set(entry_ids)):
         errors.append(f"{path}: duplicate entry ids")
-    feeds = [entry["feedURL"].lower() for entry in catalog.get("entries", [])]
+    # Scheme and host fold case; paths don't (Simplecast ids are mixed case).
+    feeds = []
+    for entry in catalog.get("entries", []):
+        scheme, _, rest = entry["feedURL"].partition("://")
+        host, slash, path = rest.partition("/")
+        feeds.append(f"{scheme.lower()}://{host.lower()}{slash}{path}".rstrip("/"))
     if len(feeds) != len(set(feeds)):
         errors.append(f"{path}: duplicate feed URLs")
     for entry in catalog.get("entries", []):

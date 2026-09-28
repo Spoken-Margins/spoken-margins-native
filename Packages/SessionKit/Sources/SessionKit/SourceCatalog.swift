@@ -203,7 +203,8 @@ public struct SourceCatalog: Codable, Equatable, Sendable {
         if components.path.count > 1, components.path.hasSuffix("/") {
             components.path.removeLast()
         }
-        return components.string?.lowercased()
+        // Paths are case-sensitive (Simplecast ids are mixed case), so only scheme and host fold.
+        return components.string
     }
 }
 
