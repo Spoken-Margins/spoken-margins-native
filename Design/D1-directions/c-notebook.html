@@ -1,0 +1,1023 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Margin Notebook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&display=swap">
+<style>
+/* Shared shell for the D1 direction prototypes: outer page, phone frame,
+   screen/sheet mechanics, task HUD, and the system surfaces (share sheet,
+   Messages) that look the same whatever the app's direction. */
+
+:root {
+  --pg-bg: #e9ece6;
+  --pg-panel: #f7f8f4;
+  --pg-ink: #17201b;
+  --pg-muted: #5b675f;
+  --pg-line: #d3d9cf;
+  --pg-accent: #14503a;
+  --pg-good: #1d6b43;
+  --pg-warn: #9a5b12;
+  --pg-chip: #dfe6dc;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --pg-bg: #0e1311;
+    --pg-panel: #151c19;
+    --pg-ink: #e6ece7;
+    --pg-muted: #9aa89f;
+    --pg-line: #2a3530;
+    --pg-accent: #7ad69e;
+    --pg-good: #7ad69e;
+    --pg-warn: #f0b760;
+    --pg-chip: #22302a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --pg-bg: #0e1311;
+  --pg-panel: #151c19;
+  --pg-ink: #e6ece7;
+  --pg-muted: #9aa89f;
+  --pg-line: #2a3530;
+  --pg-accent: #7ad69e;
+  --pg-good: #7ad69e;
+  --pg-warn: #f0b760;
+  --pg-chip: #22302a;
+  color-scheme: dark;
+}
+
+[hidden] { display: none !important; }
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  background: var(--pg-bg);
+  color: var(--pg-ink);
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Instrument Sans", system-ui, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--pg-accent); outline-offset: 2px; }
+
+/* ---------- outer page ---------- */
+.app { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.strip {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 16px; min-height: 44px;
+  border-bottom: 1px solid var(--pg-line);
+  background: var(--pg-panel);
+}
+.strip .dir { font-weight: 650; white-space: nowrap; }
+.strip .dir small { color: var(--pg-muted); font-weight: 450; }
+.hud {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--pg-muted);
+}
+.hud .hud-task { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hud .count {
+  font-variant-numeric: tabular-nums; font-weight: 700; color: var(--pg-ink);
+  background: var(--pg-chip); border-radius: 99px; padding: 2px 9px; white-space: nowrap;
+}
+.hud.done .count { background: var(--pg-good); color: var(--pg-panel); }
+.hud.over .count { background: var(--pg-warn); color: var(--pg-panel); }
+.strip .btn {
+  min-height: 34px; padding: 0 12px; border-radius: 99px;
+  border: 1px solid var(--pg-line); font-size: 13px; font-weight: 600; white-space: nowrap;
+}
+.stage { flex: 1; min-height: 0; display: flex; justify-content: center; gap: 32px; padding: 24px 16px; }
+.device { flex: none; display: flex; align-items: flex-start; }
+.phone {
+  position: relative; overflow: hidden;
+  width: 390px; height: min(844px, calc(100vh - 110px)); min-height: 600px;
+  border-radius: 46px; border: 10px solid #0b0d0c;
+  box-shadow: 0 30px 60px -30px rgba(0,0,0,.45);
+  display: flex; flex-direction: column;
+  isolation: isolate;
+}
+.phone .statusbar {
+  flex: none; height: 44px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 28px; font-size: 14px; font-weight: 650;
+}
+.phone .statusbar i { font-style: normal; letter-spacing: 1px; font-size: 12px; }
+
+.guide {
+  width: 440px; max-width: 100%; overflow: auto;
+  background: var(--pg-panel); border: 1px solid var(--pg-line); border-radius: 18px;
+  padding: 22px 22px 28px;
+}
+.guide h1 { font-size: 22px; line-height: 1.2; margin: 0 0 6px; text-wrap: balance; }
+.guide h2 { font-size: 12px; letter-spacing: .09em; text-transform: uppercase; color: var(--pg-muted); margin: 26px 0 10px; }
+.guide p, .guide li { color: var(--pg-ink); max-width: 62ch; }
+.guide .lede { color: var(--pg-muted); margin: 0; }
+.guide ul { padding-left: 18px; margin: 6px 0; }
+.guide li { margin: 4px 0; }
+.guide .close-guide { display: none; }
+.tasks { display: grid; gap: 8px; }
+.task {
+  display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center;
+  border: 1px solid var(--pg-line); border-radius: 12px; padding: 10px 12px;
+}
+.task b { font-weight: 620; }
+.task .meta { grid-column: 1; font-size: 13px; color: var(--pg-muted); }
+.task .meta .res { color: var(--pg-good); font-weight: 650; }
+.task button {
+  grid-row: 1 / span 2; grid-column: 2;
+  min-height: 44px; padding: 0 14px; border-radius: 99px;
+  background: var(--pg-accent); color: var(--pg-panel); font-weight: 650; font-size: 14px;
+}
+.tapwrap { overflow-x: auto; }
+table.taps { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.taps th, table.taps td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--pg-line); vertical-align: top; }
+table.taps th { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--pg-muted); font-weight: 600; }
+table.taps td.n { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
+table.taps td.today { color: var(--pg-muted); white-space: nowrap; }
+.navmap { font: 12.5px/1.5 ui-monospace, "JetBrains Mono", Menlo, monospace; background: var(--pg-bg); border-radius: 10px; padding: 12px; white-space: pre; overflow-x: auto; }
+.note { font-size: 13px; color: var(--pg-muted); }
+
+/* phone-width: the page is the phone */
+@media (max-width: 860px) {
+  .stage { padding: 0; gap: 0; min-width: 0; overflow: hidden; }
+  .device { flex: 1; min-width: 0; align-items: stretch; }
+  .phone { width: 100%; height: 100%; min-height: 0; border: 0; border-radius: 0; box-shadow: none; }
+  .phone .statusbar { display: none; }
+  .guide {
+    position: fixed; inset: 0; z-index: 50; width: auto; border-radius: 0; border: 0;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(28px + env(safe-area-inset-bottom, 0px));
+  }
+  .guide .close-guide {
+    display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; float: right;
+    border-radius: 99px; border: 1px solid var(--pg-line); font-weight: 600;
+  }
+  .strip .dir small { display: none; }
+}
+@media (min-width: 861px) { #guideBtn { display: none; } .guide[hidden] { display: block !important; } }
+
+/* ---------- screen + sheet mechanics (inside the phone) ---------- */
+.screens { position: relative; flex: 1; min-height: 0; }
+.scr { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
+.scr > .body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.phone [data-when] { display: none; }
+.phone[data-chrome~="tabs"] [data-when~="tabs"],
+.phone[data-chrome~="mini"] [data-when~="mini"] { display: flex; }
+
+.sheet { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; justify-content: flex-end; }
+.sheet > .scrim { position: absolute; inset: 0; background: rgba(0,0,0,.38); opacity: 0; transition: opacity .2s; }
+.sheet > .card {
+  position: relative; max-height: 92%; display: flex; flex-direction: column;
+  transform: translateY(100%); transition: transform .24s cubic-bezier(.2,.8,.2,1);
+  border-radius: 22px 22px 0 0; overflow: hidden;
+}
+.sheet > .card.full { height: 94%; }
+.sheet.open > .scrim { opacity: 1; }
+.sheet.open > .card { transform: none; }
+.sheet .card > .scroll { overflow-y: auto; flex: 1; min-height: 0; }
+.grab { width: 38px; height: 5px; border-radius: 3px; background: currentColor; opacity: .25; margin: 8px auto 2px; flex: none; }
+@media (prefers-reduced-motion: reduce) {
+  .sheet > .card, .sheet > .scrim, .toast { transition: none !important; }
+}
+
+.toast {
+  position: absolute; left: 12px; right: 12px; bottom: 96px; z-index: 30;
+  display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 16px; min-height: 52px;
+  border-radius: 16px; background: #101412; color: #f1f4ef; font-size: 14px;
+  box-shadow: 0 12px 30px -12px rgba(0,0,0,.5);
+  transform: translateY(20px); opacity: 0; pointer-events: none; transition: .2s;
+}
+.toast.show { transform: none; opacity: 1; pointer-events: auto; }
+.toast .t-msg { flex: 1; }
+.toast .t-act { min-height: 44px; padding: 0 16px; border-radius: 99px; background: #dbed8d; color: #10201a; font-weight: 700; }
+
+/* ---------- system share sheet (iOS look, same in every direction) ---------- */
+.ios { background: #f2f2f6; color: #111; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+.ios .sh-head { display: flex; gap: 12px; align-items: center; padding: 10px 16px 14px; border-bottom: 1px solid #d9d9de; }
+.ios .pkt-icon { width: 46px; height: 46px; border-radius: 11px; background: #173a2f; color: #dbed8d; display: grid; place-items: center; font-weight: 800; font-size: 13px; flex: none; }
+.ios .sh-title { font-weight: 650; font-size: 15px; line-height: 1.25; }
+.ios .sh-sub { font-size: 13px; color: #6d6d72; }
+.ios .sh-x { margin-left: auto; width: 32px; height: 32px; border-radius: 50%; background: #e3e3e8; color: #6d6d72; font-weight: 700; flex: none; }
+.ios .preview { margin: 12px 16px 4px; background: #fff; border-radius: 14px; padding: 12px 14px; font-size: 13.5px; }
+.ios .preview .pv-quote { font-size: 15px; line-height: 1.35; margin: 4px 0 8px; }
+.ios .preview .pv-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.ios .preview .pv-chip { font-size: 12px; background: #eef0f3; border-radius: 99px; padding: 3px 9px; color: #333; }
+.ios .preview .pv-chip.off { text-decoration: line-through; color: #8a8a8f; }
+.ios .preview .pv-change { color: #0a64d8; font-weight: 600; font-size: 13px; }
+.ios .people { display: flex; gap: 16px; padding: 14px 16px 8px; overflow-x: auto; }
+.ios .person { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 64px; font-size: 11.5px; text-align: center; }
+.ios .person .av { width: 60px; height: 60px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 20px; position: relative; }
+.ios .person .av::after { content: ""; position: absolute; right: -2px; bottom: -2px; width: 22px; height: 22px; border-radius: 6px; background: #34c759; border: 2px solid #f2f2f6; }
+.ios .apps { display: flex; gap: 18px; padding: 10px 16px 14px; border-top: 1px solid #d9d9de; overflow-x: auto; }
+.ios .appi { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11.5px; width: 60px; }
+.ios .appi span.ic { width: 56px; height: 56px; border-radius: 13px; display: grid; place-items: center; color: #fff; font-weight: 700; }
+.ios .acts { margin: 0 16px 20px; background: #fff; border-radius: 12px; }
+.ios .acts button { display: flex; width: 100%; justify-content: space-between; padding: 0 16px; min-height: 46px; align-items: center; font-size: 16px; border-bottom: 1px solid #ececf0; }
+.ios .acts button:last-child { border-bottom: 0; }
+
+/* ---------- Messages (for "open a shared packet") ---------- */
+.msgs { background: #fff; color: #111; }
+.msgs .m-top { flex: none; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 0 8px; border-bottom: 1px solid #e5e5ea; font-size: 12px; background: #f7f7f9; }
+.msgs .m-top .av { width: 44px; height: 44px; border-radius: 50%; background: #6b5bd6; color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 17px; }
+.msgs .m-body { padding: 16px 12px; display: flex; flex-direction: column; gap: 8px; }
+.msgs .bub { max-width: 76%; padding: 8px 13px; border-radius: 18px; background: #e9e9eb; font-size: 15.5px; line-height: 1.3; }
+.msgs .bub.me { align-self: flex-end; background: #0a7cff; color: #fff; }
+.msgs .attach { max-width: 78%; border-radius: 18px; background: #e9e9eb; overflow: hidden; text-align: left; }
+.msgs .attach .a-art { background: #173a2f; color: #dbed8d; padding: 16px 14px; font-size: 13px; }
+.msgs .attach .a-art b { display: block; font-size: 17px; color: #fff; margin-top: 4px; line-height: 1.25; }
+.msgs .attach .a-meta { padding: 8px 14px 10px; font-size: 12.5px; color: #555; }
+.msgs .hint { align-self: center; font-size: 12px; color: #8a8a8f; margin-top: 10px; text-align: center; max-width: 30ch; }
+
+/* ---------- export note sheet (shared content, direction tokens) ---------- */
+.exp { background: var(--sheet, #fff); color: var(--ink, #111); }
+.exp .ex-head { padding: 6px 18px 10px; }
+.exp .ex-head h3 { margin: 0; font-size: 19px; }
+.exp .ex-head p { margin: 2px 0 0; font-size: 13px; opacity: .7; }
+.exp pre.note-md {
+  margin: 0 16px; padding: 12px 14px; border-radius: 12px; background: rgba(127,127,127,.1);
+  font: 12px/1.5 ui-monospace, "JetBrains Mono", Menlo, monospace; white-space: pre-wrap; max-height: 260px; overflow: auto;
+}
+.exp .ex-dest { display: flex; gap: 8px; align-items: center; padding: 12px 18px 0; font-size: 13px; }
+.exp .ex-dest b { font-weight: 650; }
+.exp .ex-dest .chg { margin-left: auto; font-weight: 650; color: var(--accent, #14503a); min-height: 44px; }
+.exp .ex-actions { display: grid; gap: 8px; padding: 12px 16px 22px; }
+.exp .ex-actions .primary { min-height: 52px; border-radius: 14px; background: var(--accent, #14503a); color: var(--on-accent, #fff); font-weight: 700; font-size: 16px; }
+.exp .ex-actions .secondary { min-height: 46px; border-radius: 14px; border: 1px solid rgba(127,127,127,.35); font-weight: 600; }
+
+/* ---------- incoming packet sheet ---------- */
+.pkt { background: var(--sheet, #fff); color: var(--ink, #111); padding-bottom: 22px; }
+.pkt .pk-who { display: flex; gap: 12px; align-items: center; padding: 8px 18px 4px; }
+.pkt .pk-who .av { width: 44px; height: 44px; border-radius: 50%; background: #6b5bd6; color: #fff; display: grid; place-items: center; font-weight: 700; }
+.pkt .pk-who b { display: block; font-size: 17px; }
+.pkt .pk-who span { font-size: 13px; opacity: .7; }
+.pkt blockquote { margin: 12px 18px; padding: 12px 14px; border-radius: 14px; background: rgba(107,91,214,.1); border-left: 3px solid #6b5bd6; font-size: 15.5px; line-height: 1.4; }
+.pkt .pk-src { margin: 0 18px; font-size: 13px; opacity: .8; }
+.pkt .pk-note { margin: 10px 18px 0; font-size: 12.5px; opacity: .7; }
+.pkt .pk-actions { display: grid; gap: 8px; padding: 16px 16px 0; }
+.pkt .pk-actions .primary { min-height: 54px; border-radius: 14px; background: #6b5bd6; color: #fff; font-weight: 700; font-size: 16px; }
+.pkt .pk-actions .secondary { min-height: 44px; border-radius: 14px; font-weight: 600; opacity: .8; }
+
+
+/* ===== Direction C: Notebook. Your thoughts are the home; listening feeds them. ===== */
+.phone.dirC {
+  --bg: #fbfaf5; --panel: #ffffff; --ink: #1d2621; --muted: #67716b; --line: #e8e4d8; --rule: #eab6a9;
+  --accent: #1f5a43; --on-accent: #ffffff; --soft: #eef2ea; --coral: #b4452f; --friend: #5446b8; --friend-soft: #f0eefb; --ochre: #c38a2a;
+  --sheet: #ffffff;
+  background: var(--bg); color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+}
+.dirC .i { width: 22px; height: 22px; flex: none; }
+.dirC .serif { font-family: "Newsreader", "New York", Georgia, serif; }
+.dirC .top { flex: none; display: flex; align-items: flex-end; gap: 8px; padding: 10px 16px 6px; }
+.dirC .top h1 { font-family: "Newsreader", "New York", Georgia, serif; font-weight: 600; font-size: 34px; line-height: 1; margin: 0; flex: 1; letter-spacing: -.015em; }
+.dirC .top h1 em { font-style: italic; font-weight: 400; color: var(--coral); }
+.dirC .av { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; flex: none; background: var(--ink); color: var(--bg); }
+.dirC .rb { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; border: 1px solid var(--line); background: var(--panel); flex: none; }
+.dirC .seg { display: flex; gap: 18px; padding: 2px 16px 0; border-bottom: 1px solid var(--line); flex: none; }
+.dirC .seg button { min-height: 44px; font-weight: 650; font-size: 15px; color: var(--muted); border-bottom: 2.5px solid transparent; }
+.dirC .seg button.on { color: var(--ink); border-color: var(--ink); }
+.dirC .strip2 { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.dirC .strip2 .t { font-weight: 650; font-size: 14.5px; }
+.dirC .strip2 .s { font-size: 12.5px; color: var(--muted); }
+.dirC .pill { min-height: 44px; padding: 0 16px; border-radius: 99px; font-weight: 650; font-size: 14.5px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: none; }
+.dirC .pill.fill { background: var(--ink); color: var(--bg); }
+.dirC .pill.green { background: var(--accent); color: var(--on-accent); }
+.dirC .pill.line { border: 1.5px solid var(--ink); }
+.dirC .pill.line.on { background: var(--soft); border-color: var(--soft); color: var(--accent); }
+.dirC .pill.ghost { color: var(--accent); padding: 0 8px; }
+
+/* the notebook page: a ruled margin down the left */
+.dirC .page { position: relative; padding: 0 16px 28px 58px; }
+.dirC .page::before { content: ""; position: absolute; left: 40px; top: 0; bottom: 0; width: 1.5px; background: var(--rule); }
+.dirC .dayh { font-size: 12px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); padding: 18px 0 4px; }
+.dirC .ent { position: relative; padding: 10px 0 8px; border-bottom: 1px dashed var(--line); }
+.dirC .ent::before { content: ""; position: absolute; left: -23px; top: 18px; width: 10px; height: 10px; background: var(--coral); transform: rotate(45deg); }
+.dirC .ent.fr::before { background: var(--friend); border-radius: 50%; transform: none; }
+.dirC .ent .who { font-size: 12.5px; font-weight: 700; color: var(--coral); display: flex; gap: 6px; align-items: center; }
+.dirC .ent.fr .who { color: var(--friend); }
+.dirC .ent .who .new { font-size: 10px; background: var(--friend); color: #fff; border-radius: 99px; padding: 1px 6px; letter-spacing: .05em; }
+.dirC .ent .q { font-family: "Newsreader", "New York", Georgia, serif; font-size: 19px; line-height: 1.35; margin: 3px 0 4px; }
+.dirC .ent .src { font-size: 12.5px; color: var(--muted); }
+.dirC .ent .acts { display: flex; gap: 2px; margin: 4px 0 0 -12px; }
+.dirC .ent .acts button { min-height: 44px; padding: 0 12px; border-radius: 99px; display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 650; color: var(--accent); }
+.dirC .ent.fr .acts button { color: var(--friend); }
+.dirC .club { margin: 12px 0 4px; padding: 14px; border-radius: 16px; background: var(--friend-soft); display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; }
+.dirC .faces { display: flex; }
+.dirC .faces span { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 12px; font-weight: 700; border: 2px solid var(--friend-soft); margin-left: -8px; }
+.dirC .faces span:first-child { margin-left: 0; }
+.dirC .aside { margin: 14px 0 4px; padding: 12px 14px; border-radius: 16px; border: 1px solid var(--line); background: var(--panel); display: flex; gap: 12px; align-items: center; }
+.dirC .aside .k { font-size: 11.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.dirC .aside .t { font-weight: 650; font-size: 14.5px; line-height: 1.25; }
+.dirC .cv { width: 46px; height: 46px; border-radius: 11px; display: grid; place-items: center; font-family: "Newsreader", Georgia, serif; font-size: 19px; flex: none; background: #1f5a43; color: #dbed8d; }
+.dirC .cv.art { background: #efdcb6; color: #6c4a12; } .dirC .cv.pdf { background: #e7e1f3; color: #4b3f93; } .dirC .cv.sub { background: #f3d9cf; color: #8a3423; } .dirC .cv.fn { background: #d8e6ef; color: #23506e; }
+
+/* Listen */
+.dirC .hero { margin: 8px 16px 6px; padding: 14px; border-radius: 18px; background: #173a2f; color: #eef4e6; display: flex; gap: 14px; align-items: center; width: calc(100% - 32px); text-align: left; }
+.dirC .hero .cv { width: 58px; height: 58px; background: #dbed8d; color: #173a2f; font-size: 24px; }
+.dirC .hero .t { font-weight: 650; line-height: 1.25; }
+.dirC .hero .s { font-size: 12.5px; opacity: .75; }
+.dirC .hero .pb { width: 48px; height: 48px; border-radius: 50%; background: #dbed8d; color: #173a2f; display: grid; place-items: center; flex: none; margin-left: auto; }
+.dirC .chips { display: flex; gap: 8px; overflow-x: auto; padding: 10px 16px 6px; scrollbar-width: none; }
+.dirC .chip { flex: none; min-height: 44px; padding: 0 14px; border-radius: 99px; border: 1px solid var(--line); background: var(--panel); font-size: 14px; font-weight: 600; }
+.dirC .chip.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.dirC .row { display: flex; gap: 12px; align-items: center; padding: 10px 16px; min-height: 68px; border-bottom: 1px solid var(--line); }
+.dirC .row .g { flex: 1; min-width: 0; }
+.dirC .row .t { font-weight: 650; font-size: 15px; line-height: 1.25; }
+.dirC .row .s { font-size: 12.5px; color: var(--muted); }
+.dirC .row .ib { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: var(--accent); flex: none; }
+.dirC .row .ib.add { background: var(--soft); }
+.dirC .row .ib.pl { background: var(--accent); color: #fff; }
+.dirC .row .mc { font-size: 12px; color: var(--coral); font-weight: 700; }
+.dirC .bar { height: 3px; border-radius: 2px; background: var(--soft); margin-top: 7px; }
+.dirC .bar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
+.dirC .search { display: flex; align-items: center; gap: 8px; margin: 10px 16px 0; min-height: 44px; padding: 0 12px; border-radius: 12px; background: #f0ede3; color: var(--muted); }
+.dirC .hint { font-size: 12.5px; color: var(--muted); padding: 8px 16px; }
+.dirC .navbar { flex: none; display: flex; align-items: center; min-height: 52px; padding: 4px 8px; gap: 4px; }
+.dirC .navbar .nb-back { display: flex; align-items: center; min-height: 44px; padding-right: 10px; color: var(--accent); font-weight: 600; font-size: 16px; }
+.dirC .navbar .nb-t { flex: 1; text-align: center; font-weight: 650; margin-right: 70px; }
+
+/* tab bar with the record button in the middle */
+.dirC .mini { flex: none; margin: 0 10px 6px; padding: 6px 6px 6px 8px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line); align-items: center; gap: 8px; box-shadow: 0 8px 20px -14px rgba(0,0,0,.35); }
+.dirC .mini .mo { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 48px; text-align: left; }
+.dirC .mini .cv { width: 40px; height: 40px; font-size: 16px; }
+.dirC .mini .mt { font-size: 13.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dirC .mini .ms { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.dirC .mini .pp { width: 48px; height: 48px; display: grid; place-items: center; }
+.dirC .tabbar { flex: none; border-top: 1px solid var(--line); background: rgba(251,250,245,.96); padding: 2px 18px calc(4px + env(safe-area-inset-bottom, 0px)); align-items: center; justify-content: space-between; }
+.dirC .tabbar .tb { width: 96px; display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 52px; justify-content: center; font-size: 11.5px; font-weight: 650; color: #929a94; }
+.dirC .tabbar .tb.on { color: var(--ink); }
+.dirC .tabbar .rec { width: 70px; height: 70px; margin-top: -22px; border-radius: 50%; background: var(--coral); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 10.5px; font-weight: 800; letter-spacing: .03em; box-shadow: 0 0 0 5px var(--bg), 0 10px 20px -8px rgba(180,69,47,.6); }
+.dirC .tabbar .rec .i { width: 26px; height: 26px; }
+
+/* Now Playing: the transcript with Margins in the margin */
+.dirC .scr.np { background: #fdfcf8; }
+.dirC .np .src { display: flex; align-items: center; gap: 10px; padding: 0 16px; }
+.dirC .np .src .cv { width: 40px; height: 40px; font-size: 16px; }
+.dirC .np .follow { margin-left: auto; min-height: 44px; padding: 0 14px; border-radius: 99px; border: 1.5px solid var(--accent); color: var(--accent); font-weight: 700; font-size: 14px; }
+.dirC .np .follow.on { background: var(--accent); color: #fff; }
+.dirC .np h3 { font-family: "Newsreader", Georgia, serif; font-size: 23px; line-height: 1.15; margin: 8px 16px 6px; font-weight: 600; }
+.dirC .np .banner { margin: 4px 16px 6px; padding: 10px 12px; border-radius: 12px; background: var(--friend-soft); color: var(--friend); font-size: 13.5px; }
+.dirC .tx { position: relative; padding: 4px 16px 10px 58px; }
+.dirC .tx::before { content: ""; position: absolute; left: 40px; top: 0; bottom: 0; width: 1.5px; background: var(--rule); }
+.dirC .tx p { font-family: "Newsreader", Georgia, serif; font-size: 17px; line-height: 1.5; margin: 0 0 12px; color: #8b928d; position: relative; }
+.dirC .tx p.now { color: var(--ink); }
+.dirC .tx p.now::after { content: ""; position: absolute; left: -10px; top: 4px; bottom: 4px; width: 3px; background: var(--accent); border-radius: 2px; }
+.dirC .tx time { position: absolute; left: -54px; width: 38px; text-align: right; font: 600 11px/1.9 -apple-system, system-ui, sans-serif; color: var(--muted); font-variant-numeric: tabular-nums; }
+.dirC .tx .mg { position: relative; margin: -4px 0 14px; padding: 8px 10px; border-radius: 12px; background: #fbeee9; font-size: 14px; display: flex; gap: 8px; align-items: flex-start; }
+.dirC .tx .mg::before { content: ""; position: absolute; left: -23px; top: 12px; width: 10px; height: 10px; background: var(--coral); transform: rotate(45deg); }
+.dirC .tx .mg.fr { background: var(--friend-soft); }
+.dirC .tx .mg.fr::before { background: var(--friend); border-radius: 50%; transform: none; }
+.dirC .tx .mg b { color: var(--coral); }
+.dirC .tx .mg.fr b { color: var(--friend); }
+.dirC .tx .mg .ib { width: 44px; height: 44px; margin: -8px -6px -8px auto; display: grid; place-items: center; color: var(--accent); flex: none; }
+.dirC .np-ctl { flex: none; border-top: 1px solid var(--line); background: var(--panel); padding: 8px 14px calc(12px + env(safe-area-inset-bottom, 0px)); }
+.dirC .np-ctl .scrub { height: 4px; border-radius: 2px; background: var(--soft); position: relative; margin: 6px 4px 4px; }
+.dirC .np-ctl .scrub i { position: absolute; left: 0; top: 0; bottom: 0; width: 35%; background: var(--accent); border-radius: 2px; }
+.dirC .np-ctl .scrub b { position: absolute; left: 35%; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: var(--accent); }
+.dirC .np-ctl .times { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; padding: 0 4px; }
+.dirC .np-ctl .row3 { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.dirC .np-ctl .tb { width: 48px; height: 48px; display: grid; place-items: center; }
+.dirC .np-ctl .tb .i { width: 28px; height: 28px; }
+.dirC .np-ctl .ppb { width: 58px; height: 58px; border-radius: 50%; background: var(--ink); color: var(--bg); display: grid; place-items: center; }
+.dirC .np-ctl .skim { flex: 1; min-height: 48px; border-radius: 14px; background: var(--friend-soft); color: var(--friend); font-weight: 700; font-size: 13.5px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.dirC .np-ctl .recb { width: 58px; height: 58px; border-radius: 50%; background: var(--coral); color: #fff; display: grid; place-items: center; }
+
+/* recording sheet */
+.dirC .recs { background: var(--panel); color: var(--ink); }
+.dirC .recs .rt { display: flex; align-items: center; padding: 4px 8px 0; }
+.dirC .recs .rt .cancel { min-height: 44px; padding: 0 12px; color: var(--muted); }
+.dirC .recs .rt .s { margin-left: auto; margin-right: 12px; font-size: 13px; color: var(--muted); }
+.dirC .recs .quote { margin: 8px 20px 0; padding-left: 14px; border-left: 2px solid var(--rule); font-family: "Newsreader", Georgia, serif; font-style: italic; font-size: 16px; color: var(--muted); line-height: 1.45; }
+.dirC .recs .draft { margin: 18px 20px 0; font-family: "Newsreader", Georgia, serif; font-size: 22px; line-height: 1.35; min-height: 90px; }
+.dirC .recs .draft .cur { display: inline-block; width: 2px; height: 22px; background: var(--coral); vertical-align: -3px; animation: bl 1s steps(2) infinite; }
+@keyframes bl { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .dirC .recs .draft .cur { animation: none; } }
+.dirC .recs .lvl { margin: 18px 20px 0; display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--coral); font-weight: 700; font-variant-numeric: tabular-nums; }
+.dirC .recs .lvl i { flex: 1; height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--coral) 60%, #f3d9cf 60%); }
+.dirC .recs .rf { padding: 18px 16px 24px; display: grid; gap: 8px; }
+.dirC .recs .save { min-height: 62px; border-radius: 18px; background: var(--coral); color: #fff; font-weight: 750; font-size: 17.5px; }
+.dirC .recs .alt { min-height: 44px; color: var(--muted); font-weight: 600; }
+
+/* review */
+.dirC .rvh { padding: 0 16px 8px; }
+.dirC .rvh .k { font-size: 12.5px; color: var(--muted); }
+.dirC .rvh h2 { font-family: "Newsreader", Georgia, serif; font-size: 25px; line-height: 1.15; margin: 4px 0 4px; font-weight: 600; }
+.dirC .rvplay { margin: 6px 16px 4px; width: calc(100% - 32px); min-height: 54px; border-radius: 16px; background: var(--friend); color: #fff; font-weight: 700; font-size: 16px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+/* first run */
+.dirC .fr-h { padding: 22px 20px 6px; }
+.dirC .fr-h h1 { font-family: "Newsreader", Georgia, serif; font-size: 36px; line-height: 1.05; margin: 0 0 8px; font-weight: 600; letter-spacing: -.015em; }
+.dirC .fr-h h1 em { color: var(--coral); font-weight: 400; }
+.dirC .fr-h p { margin: 0; color: var(--muted); font-size: 15px; max-width: 34ch; }
+.dirC .fr-foot { flex: none; padding: 10px 16px calc(14px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); display: flex; gap: 10px; background: var(--panel); }
+
+/* settings */
+.dirC .sh { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 20px 20px 6px; font-weight: 700; }
+.dirC .sg { margin: 0 16px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); overflow: hidden; }
+.dirC .set { display: flex; align-items: center; min-height: 52px; padding: 0 14px; width: 100%; text-align: left; border-top: 1px solid var(--line); font-size: 15.5px; gap: 10px; }
+.dirC .set:first-child { border-top: 0; }
+.dirC .set .v { margin-left: auto; color: var(--muted); font-size: 14px; }
+.dirC .set .sw { margin-left: auto; width: 50px; height: 30px; border-radius: 99px; background: var(--accent); position: relative; flex: none; }
+.dirC .set .sw::after { content: ""; position: absolute; right: 3px; top: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; }
+.dirC .sf { margin: 8px 20px 0; font-size: 12.5px; color: var(--muted); }
+.dirC .sheet .card.c { background: var(--sheet); color: var(--ink); }
+.dirC .intake { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 8px 16px 24px; }
+.dirC .intake button { min-height: 96px; border-radius: 16px; background: var(--bg); border: 1px solid var(--line); text-align: left; padding: 12px; display: flex; flex-direction: column; justify-content: space-between; font-weight: 650; }
+.dirC .intake button span { font-size: 12.5px; color: var(--muted); font-weight: 500; }
+.dirC .shh { padding: 4px 18px 8px; font-size: 18px; font-weight: 700; }
+.dirC .toast { bottom: 150px; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z" fill="currentColor"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4.5" width="4" height="15" rx="1" fill="currentColor"/><rect x="14" y="4.5" width="4" height="15" rx="1" fill="currentColor"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M5 9l7 7 7-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-skim" viewBox="0 0 24 24"><path d="M4 6l6 6-6 6M11 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="20.5" cy="12" r="1.8" fill="currentColor"/></symbol>
+    <symbol id="i-rw" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.5-5.8M4 4v4.5h4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="15.5" font-size="7.5" text-anchor="middle" fill="currentColor" font-family="system-ui" font-weight="700">15</text></symbol>
+    <symbol id="i-ff" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.5-5.8M20 4v4.5h-4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><text x="12" y="15.5" font-size="7.5" text-anchor="middle" fill="currentColor" font-family="system-ui" font-weight="700">30</text></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="18.5" cy="12" r="1.8" fill="currentColor"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-6.5 8 6.5V20h-5.5v-5h-5v5H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-rss" viewBox="0 0 24 24"><path d="M5 5a14 14 0 0 1 14 14M5 11a8 8 0 0 1 8 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="6" cy="18" r="2" fill="currentColor"/></symbol>
+    <symbol id="i-books" viewBox="0 0 24 24"><path d="M4 4.5h4v15H4zM10 4.5h4v15h-4zM15.5 5.5l3.8-1 3.2 14.6-3.8 1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-quote" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-headph" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="14" width="5" height="7" rx="1.5" fill="currentColor"/><rect x="16" y="14" width="5" height="7" rx="1.5" fill="currentColor"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 3h8l5 5v13H6z M14 3v5h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-reply" viewBox="0 0 24 24"><path d="M10 6L4 12l6 6M4 12h10a6 6 0 0 1 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+  <header class="strip">
+    <div class="dir">C · Notebook <small>direction 3 of 3</small></div>
+    <div class="hud" id="hud"></div>
+    <button class="btn" id="resetBtn">Reset</button>
+    <button class="btn" id="guideBtn">Tasks</button>
+  </header>
+  <main class="stage">
+    <div class="device">
+      <div class="phone dirC" id="phone">
+        <div class="statusbar"><span>9:41</span><i>&#9679;&#9679;&#9679; &#9646;</i></div>
+        <div class="screens">
+
+<!-- ============ FIRST RUN (one screen) ============ -->
+<section class="scr" data-id="first" data-chrome="">
+  <div class="fr-h"><h1>Your listening, <em>with margins.</em></h1><p>Follow a few shows to fill your notebook with things worth thinking about. You can add articles and PDFs later.</p></div>
+  <div class="chips"><button class="chip on" data-tap>Popular</button><button class="chip" data-tap>Books</button><button class="chip" data-tap>Science</button><button class="chip" data-tap>History</button><button class="chip" data-tap>Ideas</button></div>
+  <div class="body">
+    <div class="row"><span class="cv">L</span><div class="g"><div class="t">The Long Middle</div><div class="s">Reading, attention, ideas &middot; weekly</div></div><button class="pill line" data-toggle data-on-text="Following" data-emit="fr-followed">Follow</button></div>
+    <div class="row"><span class="cv fn">F</span><div class="g"><div class="t">Field Notes Radio</div><div class="s">Science stories &middot; twice a week</div></div><button class="pill line" data-toggle data-on-text="Following" data-emit="fr-followed">Follow</button></div>
+    <div class="row"><span class="cv sub">S</span><div class="g"><div class="t">Small Engines</div><div class="s">Substack &middot; essays on maintenance</div></div><button class="pill line" data-toggle data-on-text="Following" data-emit="fr-followed">Follow</button></div>
+    <div class="row"><span class="cv art">H</span><div class="g"><div class="t">Harbor Review</div><div class="s">Long reads, narrated &middot; daily</div></div><button class="pill line" data-toggle data-on-text="Following" data-emit="fr-followed">Follow</button></div>
+    <div class="row"><span class="cv pdf">D</span><div class="g"><div class="t">Deep Time</div><div class="s">Geology and history &middot; monthly</div></div><button class="pill line" data-toggle data-on-text="Following" data-emit="fr-followed">Follow</button></div>
+    <div class="row"><span class="cv">O</span><div class="g"><div class="t">Open Questions</div><div class="s">Philosophy, gently &middot; weekly</div></div><button class="pill line" data-toggle data-on-text="Following" data-emit="fr-followed">Follow</button></div>
+  </div>
+  <div class="fr-foot"><button class="pill line" style="flex:1" data-tap data-toast="(Sketch) Paste a link or import shows (OPML)">Paste a link</button><button class="pill fill" style="flex:1" data-tabgo="notebook">Continue</button></div>
+</section>
+
+<!-- ============ NOTEBOOK (home) ============ -->
+<section class="scr" data-id="notebook" data-tab="notebook" data-chrome="tabs mini">
+  <div class="top"><h1>Notebook</h1><button class="av" data-go="settings" aria-label="Settings">C</button></div>
+  <div class="seg"><button class="on" data-tap>Everyone</button><button data-tap>Mine</button><button data-tap>Friends</button><button data-tap><svg class="i" style="width:18px;height:18px;vertical-align:-4px"><use href="#i-search"/></svg> Search</button></div>
+  <div class="strip2"><div style="flex:1"><div class="t">This week &middot; 7 Margins</div><div class="s">4 items &middot; 3 from friends &middot; Sep 22&ndash;28</div></div><button class="pill fill" data-sheet="export">Export note</button></div>
+  <div class="body"><div class="page">
+    <button class="club" data-go="review">
+      <div class="faces"><span style="background:#6b5bd6">P</span><span style="background:#2f6fb4">S</span><span style="background:#a17218">J</span></div>
+      <div style="flex:1"><div style="font-weight:650">Tuesday Readers</div><div style="font-size:12.5px;color:var(--muted)">3 new on this week&rsquo;s episode</div></div>
+      <svg class="i" style="color:var(--friend)"><use href="#i-back" transform="rotate(180 12 12)"/></svg>
+    </button>
+    <div class="dayh">Today</div>
+    <div class="ent"><div class="who">You</div><div class="q">&ldquo;Attention is a budget you spend twice.&rdquo;</div><div class="src">Why we stopped reading slowly &middot; The Long Middle &middot; 18:12 &middot; voice 0:24</div>
+      <div class="acts"><button data-go="player"><svg class="i"><use href="#i-play"/></svg>Hear it in place</button><button data-share="m1"><svg class="i"><use href="#i-share"/></svg>Share</button></div></div>
+    <div class="ent fr"><div class="who">Priya <span class="new">NEW</span></div><div class="q">&ldquo;He&rsquo;s wrong about audiobooks. Listening is reading, you just can&rsquo;t skim it.&rdquo;</div><div class="src">Same episode &middot; 22:05 &middot; voice 0:31</div>
+      <div class="acts"><button data-act="playPacket"><svg class="i"><use href="#i-play"/></svg>Hear it in place</button><button data-sheet="rec"><svg class="i"><use href="#i-reply"/></svg>Reply</button></div></div>
+    <div class="aside"><span class="cv art">H</span><div style="flex:1;min-width:0"><div class="k">Something to think about</div><div class="t">The case for boredom &middot; 14 min article</div></div><button class="pill green" data-go="player">Listen</button></div>
+    <div class="dayh">Thursday</div>
+    <div class="ent"><div class="who">You</div><div class="q">&ldquo;Boredom as a waiting room for ideas. The kids&rsquo; car rides were exactly this.&rdquo;</div><div class="src">The case for boredom &middot; Harbor Review &middot; 6:05</div>
+      <div class="acts"><button data-go="player"><svg class="i"><use href="#i-play"/></svg>Hear it in place</button><button data-share="m3"><svg class="i"><use href="#i-share"/></svg>Share</button></div></div>
+    <div class="ent"><div class="who">You</div><div class="q">&ldquo;Figure 3 seems to contradict the abstract. Ask Sam.&rdquo;</div><div class="src">Sleep spindles and memory consolidation &middot; PDF &middot; Fig. 3</div>
+      <div class="acts"><button data-go="player"><svg class="i"><use href="#i-play"/></svg>Hear it in place</button><button data-share="m4"><svg class="i"><use href="#i-share"/></svg>Share</button></div></div>
+    <div class="aside"><span class="cv fn">F</span><div style="flex:1;min-width:0"><div class="k">New here? Follow one</div><div class="t">Field Notes Radio</div></div><button class="pill line" data-toggle data-on-text="Following">Follow</button></div>
+  </div></div>
+</section>
+
+<!-- ============ LISTEN (Following + Library) ============ -->
+<section class="scr" data-id="listen" data-tab="listen" data-chrome="tabs mini">
+  <div class="top"><h1>Listen</h1><button class="rb" data-sheet="add" aria-label="Add to Library"><svg class="i"><use href="#i-plus"/></svg></button></div>
+  <div class="seg"><button class="on" data-act="lpane" data-arg="new">New &middot; 23</button><button data-act="lpane" data-arg="lib">Library</button><button data-go="manage" style="margin-left:auto;color:var(--accent)">60 shows &rsaquo;</button></div>
+  <div class="body">
+    <button class="hero" data-go="player"><span class="cv">L</span><span style="flex:1;min-width:0"><div class="t">Why we stopped reading slowly</div><div class="s">Continue &middot; 34 min left &middot; 2 Margins</div></span><span class="pb"><svg class="i"><use href="#i-play"/></svg></span></button>
+    <div data-lpane="new">
+      <div class="chips"><button class="chip on" data-tap>All new</button><button class="chip" data-tap>Under 20 min</button><button class="chip" data-tap>Podcasts</button><button class="chip" data-tap>Articles</button><button class="chip" data-tap>Friends are on it</button></div>
+      <div class="hint">Swipe right to save to Library, left to dismiss.</div>
+      <div class="row"><span class="cv fn">F</span><div class="g"><div class="t">The last lighthouse keepers</div><div class="s">Field Notes Radio &middot; 41 min &middot; today</div></div><button class="ib add" data-tap data-toast="Saved to Library" aria-label="Save"><svg class="i"><use href="#i-plus"/></svg></button><button class="ib pl" data-go="player" aria-label="Play"><svg class="i"><use href="#i-play"/></svg></button></div>
+      <div class="row"><span class="cv sub">S</span><div class="g"><div class="t">Notes on maintenance</div><div class="s">Small Engines &middot; 11 min article &middot; today</div></div><button class="ib add" data-tap data-toast="Saved to Library" aria-label="Save"><svg class="i"><use href="#i-plus"/></svg></button><button class="ib pl" data-go="player" aria-label="Play"><svg class="i"><use href="#i-play"/></svg></button></div>
+      <div class="row"><span class="cv art">H</span><div class="g"><div class="t">Harbor Review &middot; 4 today</div><div class="s">The case for boredom and 3 more</div></div><button class="ib" data-tap data-toast="(Sketch) Expands the 4" aria-label="Show all"><svg class="i"><use href="#i-down"/></svg></button></div>
+      <div class="row"><span class="cv">L</span><div class="g"><div class="t">Marginalia, a history</div><div class="s">The Long Middle &middot; 47 min &middot; <span class="mc">Priya left 2 Margins</span></div></div><button class="ib add" data-tap data-toast="Saved to Library" aria-label="Save"><svg class="i"><use href="#i-plus"/></svg></button><button class="ib pl" data-go="player" aria-label="Play"><svg class="i"><use href="#i-play"/></svg></button></div>
+      <div class="row"><span class="cv pdf">D</span><div class="g"><div class="t">What the rocks remember</div><div class="s">Deep Time &middot; 58 min &middot; yesterday</div></div><button class="ib add" data-tap data-toast="Saved to Library" aria-label="Save"><svg class="i"><use href="#i-plus"/></svg></button><button class="ib pl" data-go="player" aria-label="Play"><svg class="i"><use href="#i-play"/></svg></button></div>
+      <div class="hint">14 more this week from 9 shows.</div>
+    </div>
+    <div data-lpane="lib" hidden>
+      <div class="search"><svg class="i"><use href="#i-search"/></svg>Title, show or author</div>
+      <div class="chips"><button class="chip on" data-tap>In progress &amp; unplayed</button><button class="chip" data-tap>All</button><button class="chip" data-tap>Played</button><button class="chip" data-tap>PDFs</button><button class="chip" data-tap>Most Margins</button></div>
+      <div class="row"><span class="cv pdf">P</span><div class="g"><div class="t">Sleep spindles and memory consolidation</div><div class="s">PDF &middot; 30 min left &middot; <span class="mc">1 Margin</span></div><div class="bar"><i style="width:22%"></i></div></div><button class="ib pl" data-go="player" aria-label="Play"><svg class="i"><use href="#i-play"/></svg></button></div>
+      <div class="row"><span class="cv art">H</span><div class="g"><div class="t">The case for boredom</div><div class="s">Article &middot; 8 min left &middot; <span class="mc">1 Margin</span></div><div class="bar"><i style="width:45%"></i></div></div><button class="ib pl" data-go="player" aria-label="Play"><svg class="i"><use href="#i-play"/></svg></button></div>
+      <div class="row"><span class="cv sub">S</span><div class="g"><div class="t">Notes on maintenance</div><div class="s">Article &middot; 11 min</div></div><button class="ib pl" data-go="player" aria-label="Play"><svg class="i"><use href="#i-play"/></svg></button></div>
+      <div class="hint">41 played items are under Played.</div>
+    </div>
+  </div>
+</section>
+
+<section class="scr" data-id="manage" data-chrome="mini">
+  <div class="navbar"><button class="nb-back" data-back><svg class="i"><use href="#i-back"/></svg>Listen</button><span class="nb-t">60 shows</span></div>
+  <div class="search" style="margin-top:0"><svg class="i"><use href="#i-search"/></svg>Search your shows</div>
+  <div class="chips"><button class="chip on" data-tap>Newest</button><button class="chip" data-tap>A&ndash;Z</button><button class="chip" data-tap>Least played</button><button class="chip" data-tap>Muted</button></div>
+  <div class="body" id="manageList"></div>
+  <div style="flex:none;padding:10px 16px;border-top:1px solid var(--line);display:flex;gap:8px"><button class="pill fill" style="flex:1" data-tap data-toast="(Sketch) Paste a feed, Substack or YouTube link">Add a show</button><button class="pill line" data-tap data-toast="(Sketch) OPML">OPML</button></div>
+</section>
+
+<!-- ============ NOW PLAYING ============ -->
+<section class="scr np" data-id="player" data-chrome="">
+  <div class="navbar" style="justify-content:space-between"><button class="rb" data-back aria-label="Close player"><svg class="i"><use href="#i-down"/></svg></button><button class="rb" data-tap data-toast="(Sketch) Speed, sleep, chapters, item details" aria-label="More"><svg class="i"><use href="#i-more"/></svg></button></div>
+  <div class="body">
+    <div class="src"><span class="cv">L</span><div><div style="font-weight:650;font-size:14.5px">The Long Middle</div><div style="font-size:12.5px;color:var(--muted)">Podcast &middot; episode 212</div></div><button class="follow" data-toggle data-on-text="&#10003; Following" data-emit="followed">+ Follow</button></div>
+    <h3>Why we stopped reading slowly</h3>
+    <div class="banner" id="pktBanner" hidden><b>Playing Priya&rsquo;s Margin</b> at 22:05, then the episode carries on.</div>
+    <div class="tx">
+      <p><time>16:40</time>We used to think of skimming as a skill. You learn it in school, you get good at it, and it saves you time.</p>
+      <p><time>17:55</time>But skimming has a cost we never priced in: you stop deciding, sentence by sentence, what matters.</p>
+      <div class="mg"><div><b>You &middot; 18:12</b><br>&ldquo;Attention is a budget you spend twice.&rdquo;</div><button class="ib" data-share="m1" aria-label="Share your Margin"><svg class="i"><use href="#i-share"/></svg></button></div>
+      <p class="now"><time>18:20</time>&hellip;and the thing is, when you can&rsquo;t skim, you have to decide what matters <i>while</i> it&rsquo;s happening.</p>
+      <p><time>20:10</time>Which is why audio is interesting. You can&rsquo;t glance ahead. You can only go back.</p>
+      <div class="mg fr"><div><b>Priya &middot; 22:05</b><br>&ldquo;Listening is reading, you just can&rsquo;t skim it.&rdquo;</div></div>
+      <p><time>23:30</time>So is listening to a book reading it? I want to say no, and I think I&rsquo;m wrong.</p>
+    </div>
+  </div>
+  <div class="np-ctl">
+    <div class="scrub"><i></i><b></b></div>
+    <div class="times"><span>18:20</span><span>&minus;33:50</span></div>
+    <div class="row3">
+      <button class="tb" data-tap aria-label="Back 15 seconds"><svg class="i"><use href="#i-rw"/></svg></button>
+      <button class="ppb" data-toggle aria-label="Play or pause"><svg class="i"><use href="#i-pause"/></svg></button>
+      <button class="skim" data-tap data-toast="Skimmed to 22:05, Priya's Margin"><svg class="i"><use href="#i-skim"/></svg>Skim to 22:05</button>
+      <button class="recb" data-sheet="rec" aria-label="Add a Margin"><svg class="i"><use href="#i-mic"/></svg></button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ REVIEW ============ -->
+<section class="scr" data-id="review" data-chrome="mini">
+  <div class="navbar"><button class="nb-back" data-back><svg class="i"><use href="#i-back"/></svg>Notebook</button><span class="nb-t">Tuesday Readers</span></div>
+  <div class="body">
+    <div class="rvh"><div class="k">This week &middot; The Long Middle</div><h2>Why we stopped reading slowly</h2><div class="k">3 new since Friday &middot; you&rsquo;re at 18:20</div></div>
+    <button class="rvplay" data-act="playPacket"><svg class="i"><use href="#i-play"/></svg>Hear the 3 new, each in place</button>
+    <div class="page">
+      <div class="dayh">In episode order</div>
+      <div class="ent"><div class="who">You &middot; 18:12</div><div class="q">&ldquo;Attention is a budget you spend twice.&rdquo;</div></div>
+      <div class="ent fr"><div class="who">Priya &middot; 22:05 <span class="new">NEW</span></div><div class="q">&ldquo;He&rsquo;s wrong about audiobooks. Listening is reading, you just can&rsquo;t skim it.&rdquo;</div>
+        <div class="acts"><button data-act="playPacket"><svg class="i"><use href="#i-play"/></svg>In place</button><button data-sheet="rec"><svg class="i"><use href="#i-reply"/></svg>Reply</button></div></div>
+      <div class="ent fr"><div class="who">Jonah &middot; 31:02 <span class="new">NEW</span></div><div class="q">&ldquo;My grandfather read the paper aloud every morning. Same thing?&rdquo;</div>
+        <div class="acts"><button data-go="player"><svg class="i"><use href="#i-play"/></svg>In place</button><button data-sheet="rec"><svg class="i"><use href="#i-reply"/></svg>Reply</button></div></div>
+      <div class="ent fr"><div class="who">Sam &middot; ~40:10 <span class="new">NEW</span></div><div class="q">&ldquo;The 1978 study is Kintsch. It says the opposite.&rdquo;</div><div class="src">Placed approximately</div>
+        <div class="acts"><button data-go="player"><svg class="i"><use href="#i-play"/></svg>In place</button><button data-sheet="rec"><svg class="i"><use href="#i-reply"/></svg>Reply</button></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SETTINGS ============ -->
+<section class="scr" data-id="settings" data-chrome="">
+  <div class="navbar"><button class="nb-back" data-back><svg class="i"><use href="#i-back"/></svg>Notebook</button><span class="nb-t">Settings</span></div>
+  <div class="body">
+    <div class="sh">Your notebook</div>
+    <div class="sg"><button class="set" data-tap>Notes folder<span class="v">Obsidian &rsaquo; Spoken Margins &rsaquo;</span></button><button class="set" data-tap>Weekly note<span class="v">Sundays &rsaquo;</span></button><button class="set" data-tap>Transcribe on this iPhone<span class="sw"></span></button></div>
+    <div class="sh">Listening</div>
+    <div class="sg"><button class="set" data-tap>Reading voice<span class="v">Ava (Enhanced) &rsaquo;</span></button><button class="set" data-tap>Speed<span class="v">1.2&times; &rsaquo;</span></button><button class="set" data-tap>Pause while I talk<span class="sw"></span></button></div>
+    <div class="sh">Sharing</div>
+    <div class="sg"><button class="set" data-tap>Name on shared Margins<span class="v">Cole &rsaquo;</span></button><button class="set" data-tap>Groups<span class="v">Tuesday Readers &rsaquo;</span></button></div>
+    <div class="sf">Private feed links never leave your phone.</div>
+    <div class="sh">Storage &amp; help</div>
+    <div class="sg"><button class="set" data-tap>Downloads<span class="v">2.1 GB &rsaquo;</span></button><button class="set" data-tap>How Margins work<span class="v">&rsaquo;</span></button><button class="set" data-go="diag">For testers<span class="v">Diagnostics &rsaquo;</span></button></div>
+    <div class="sf" style="margin-bottom:28px">Spoken Margins 0.1 (30)</div>
+  </div>
+</section>
+<section class="scr" data-id="diag" data-chrome="">
+  <div class="navbar"><button class="nb-back" data-back><svg class="i"><use href="#i-back"/></svg>Settings</button><span class="nb-t">For testers</span></div>
+  <div class="body"><p class="sf" style="margin:4px 20px 10px">Every diagnostic from today&rsquo;s Settings, moved here unchanged.</p>
+    <div class="sg"><button class="set" data-tap>Playback clock log<span class="v">&rsaquo;</span></button><button class="set" data-tap>Listening map tools<span class="v">&rsaquo;</span></button><button class="set" data-tap>Voice engine and fallback<span class="v">&rsaquo;</span></button><button class="set" data-tap>Diagnostics bundle<span class="v">&rsaquo;</span></button><button class="set" data-tap>On-device AI<span class="v">Off &rsaquo;</span></button></div></div>
+</section>
+
+        </div><!-- /screens -->
+
+        <div class="mini" data-when="mini">
+          <button class="mo" data-go="player" aria-label="Open Now Playing"><span class="cv">L</span><span style="min-width:0"><div class="mt">Why we stopped reading slowly</div><div class="ms">18:20 &middot; next Margin in 3:45</div></span></button>
+          <button class="pp" data-toggle aria-label="Play or pause"><svg class="i"><use href="#i-pause"/></svg></button>
+        </div>
+        <nav class="tabbar" data-when="tabs">
+          <button class="tb" data-tabgo="notebook"><svg class="i"><use href="#i-quote"/></svg>Notebook</button>
+          <button class="rec" data-sheet="rec" aria-label="Add a Margin to what's playing"><svg class="i"><use href="#i-mic"/></svg>MARGIN</button>
+          <button class="tb" data-tabgo="listen"><svg class="i"><use href="#i-headph"/></svg>Listen</button>
+        </nav>
+
+        <div class="sheet" data-id="rec" hidden>
+          <div class="scrim"></div>
+          <div class="card full recs" role="dialog" aria-label="Recording a Margin">
+            <div class="rt"><button class="cancel" data-close data-toast="Discarded. The episode carries on.">Cancel</button><span class="s">The Long Middle paused at 18:20</span></div>
+            <p class="quote">&ldquo;&hellip;when you can&rsquo;t skim, you have to decide what matters while it&rsquo;s happening.&rdquo;</p>
+            <p class="draft">The skim is the enemy, not the screen<span class="cur"></span></p>
+            <div class="lvl"><span>0:09</span><i></i><span>Listening</span></div>
+            <div style="flex:1"></div>
+            <div class="rf">
+              <button class="save" data-close data-emit="recorded" data-act="saved">Save to notebook &amp; resume</button>
+              <button class="alt" data-tap data-toast="(Sketch) Switch to typing">Type instead</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="sheet" data-id="add" hidden>
+          <div class="scrim" data-close></div>
+          <div class="card c"><div class="grab"></div><div class="shh">Add to Library</div>
+            <div class="intake">
+              <button data-close data-toast="(Sketch) Paste a link">Link<span>Podcast, article, Substack, YouTube</span></button>
+              <button data-close data-toast="(Sketch) Paste text">Paste text<span>Read it aloud</span></button>
+              <button data-close data-toast="(Sketch) Files picker">PDF or document<span>Papers, EPUB, Word</span></button>
+              <button data-close data-toast="(Sketch) Files picker">Audio file<span>Audiobooks, recordings</span></button>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /phone -->
+    </div>
+
+    <aside class="guide" id="guide">
+      <button class="close-guide">Close</button>
+      <h1>C &middot; Notebook</h1>
+      <p class="lede">What you think is the home screen. The Notebook is a running page of your Margins and your friends&rsquo;, in the order they happened, with the book club at the top. Listen holds everything to play (new from Following, plus your Library). The big coral button in the middle of the tab bar adds a Margin to whatever is playing, from anywhere.</p>
+
+      <h2>Try a task</h2>
+      <div class="tasks" id="taskList"></div>
+
+      <h2>Tap budgets</h2>
+      <div class="tapwrap"><table class="taps">
+        <thead><tr><th>Task</th><th>Taps</th><th>Path</th><th>Today</th></tr></thead>
+        <tbody>
+          <tr><td>Share a Margin to a friend</td><td class="n">2</td><td>Notebook &rsaquo; Share on the Margin &rsaquo; Priya</td><td class="today">8&ndash;10</td></tr>
+          <tr><td>Follow what&rsquo;s playing</td><td class="n">1</td><td>Now Playing &rsaquo; + Follow</td><td class="today">&mdash;</td></tr>
+          <tr><td>Follow a podcast on first run</td><td class="n">1</td><td>First screen &rsaquo; Follow</td><td class="today">no first run</td></tr>
+          <tr><td>Record a Margin</td><td class="n">2</td><td>Margin button (any tab) &rsaquo; Save to notebook &amp; resume</td><td class="today">&mdash;</td></tr>
+          <tr><td>Export this week as a note</td><td class="n">2</td><td>Notebook &rsaquo; Export note &rsaquo; Save note</td><td class="today">~5 (+6&ndash;8 folder setup)</td></tr>
+          <tr><td>Open a shared packet and hear it</td><td class="n">2</td><td>Tap the file in Messages &rsaquo; Play her Margin in place</td><td class="today">&mdash;</td></tr>
+        </tbody>
+      </table></div>
+
+      <h2>Where things live</h2>
+      <div class="navmap">Tabs:  Notebook | (&#9679; Margin) | Listen
+Notebook  = Home: week + export, book club,
+          your and friends' Margins by day (Share),
+          one to try, one show to follow
+Listen    Continue; New (Following) | Library;
+          "60 shows" opens manage
+&#9679;         records on what's playing, from any tab
+Overlays  Now Playing (transcript with Margins in
+          the margin), Recording, Share, Export
+Pushed    Settings (your initial), Tuesday Readers</div>
+
+      <h2>What you get, what it costs</h2>
+      <ul>
+        <li><b>Says what the app is for.</b> A new listener sees Margins first, so &ldquo;talk back to what you hear&rdquo; is obvious. Sharing, the weekly note and the book club all live on the home screen, which is why this has the lowest tap counts.</li>
+        <li><b>Recording from anywhere.</b> The Margin button is always one tap away and always means the same thing.</li>
+        <li><b>Cost:</b> on day one the Notebook is empty, so it leans on first run and the &ldquo;one to try&rdquo; card. Following and Library share a tab, which is fine at 60 shows but may crowd a heavy Library. The transcript player needs a transcript or text; podcasts without one fall back to the chapter list.</li>
+      </ul>
+      <h2>Brief checklist</h2>
+      <p class="note">First run &middot; Home (the Notebook) &middot; Following (Listen &rsaquo; New; &ldquo;60 shows&rdquo;) &middot; Library (Listen &rsaquo; Library) &middot; Margins (the Notebook, with Mine / Friends / Search) &middot; Now Playing with recording and Skim &middot; Share &middot; Settings &middot; reviewing friends&rsquo; new Margins (Tuesday Readers). All content is made up.</p>
+    </aside>
+  </main>
+</div>
+
+<script>
+/* Tiny click-through engine shared by the D1 direction prototypes.
+   Screens are <section class="scr" data-id>, sheets are <div class="sheet" data-id>.
+   Anything with a data-go / data-tabgo / data-back / data-sheet / data-close /
+   data-share / data-toggle / data-emit / data-act / data-tap attribute counts
+   as one tap. A task starts from a known screen and ends when its goal event
+   is emitted, so the tap counter in the strip is the tap budget, measured. */
+(function () {
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+
+  // Sample content. Every show, person and quote here is illustrative.
+  const DATA = {
+    margins: {
+      m1: { who: 'You', item: 'Why we stopped reading slowly', show: 'The Long Middle', at: '18:12', kind: 'Voice · 0:24',
+            text: 'This is Priya’s point about re-reading: attention is a budget you spend twice.' },
+      m2: { who: 'You', item: 'Why we stopped reading slowly', show: 'The Long Middle', at: '31:40', kind: 'Written',
+            text: 'Find the 1978 study he cites before Tuesday.' },
+      m3: { who: 'You', item: 'The case for boredom', show: 'Harbor Review', at: '6:05', kind: 'Voice · 0:41',
+            text: 'Boredom as a waiting room for ideas. The kids’ car rides were exactly this.' },
+      m4: { who: 'You', item: 'Sleep spindles and memory consolidation', show: 'Ramírez et al. · PDF', at: 'Fig. 3', kind: 'Voice · 0:18',
+            text: 'Figure 3 seems to contradict the abstract. Ask Sam.' },
+      m0: { who: 'You', item: 'Why we stopped reading slowly', show: 'The Long Middle', at: '18:40', kind: 'Voice · 0:12',
+            text: 'Just recorded: “the skim is the enemy, not the screen.”' },
+    },
+  };
+
+  const COMMON = `
+  <section class="scr msgs" data-id="messages" data-chrome="">
+    <div class="m-top"><div class="av">P</div><div>Priya</div></div>
+    <div class="body"><div class="m-body">
+      <div class="bub">ok this bit at 22 min is exactly what we argued about</div>
+      <button class="attach" data-act="openPacket" aria-label="Open Priya's Margin in Spoken Margins">
+        <div class="a-art">SPOKEN MARGINS · Margin<b>Priya on “Why we stopped reading slowly”</b></div>
+        <div class="a-meta">Voice · 0:31 · at 22:05 · priya.spokenmargins</div>
+      </button>
+      <div class="bub">listen to it where it happens</div>
+      <div class="hint">This is Messages, outside the app. Tap the attachment.</div>
+    </div></div>
+  </section>
+
+  <div class="sheet" data-id="share" hidden>
+    <div class="scrim" data-close></div>
+    <div class="card ios" role="dialog" aria-label="Share sheet">
+      <div class="grab"></div>
+      <div class="sh-head">
+        <div class="pkt-icon">SM</div>
+        <div><div class="sh-title" data-f="title">Your Margin</div><div class="sh-sub" data-f="sub">Spoken Margins packet</div></div>
+        <button class="sh-x" data-close aria-label="Close">✕</button>
+      </div>
+      <div class="scroll">
+        <div class="preview">
+          <div class="sh-sub">What they’ll get</div>
+          <div class="pv-quote" data-f="quote"></div>
+          <div class="pv-row">
+            <span class="pv-chip" data-f="kind">Voice</span>
+            <span class="pv-chip">Transcript</span>
+            <span class="pv-chip">Plays at <b data-f="at"></b></span>
+            <span class="pv-chip off">Your private feed link</span>
+          </div>
+          <div style="margin-top:8px"><button class="pv-change" data-tap data-toast="(Sketch) Choose: voice + transcript, transcript only, or with 20 s of source audio">Change what’s included</button></div>
+        </div>
+        <div class="people">
+          <button class="person" data-emit="shared" data-close data-act="sent" data-arg="Priya"><span class="av" style="background:#6b5bd6">P</span>Priya</button>
+          <button class="person" data-emit="shared" data-close data-act="sent" data-arg="Tuesday Readers"><span class="av" style="background:#b4452f">TR</span>Tuesday Readers</button>
+          <button class="person" data-emit="shared" data-close data-act="sent" data-arg="Sam"><span class="av" style="background:#2f6fb4">S</span>Sam</button>
+          <button class="person" data-emit="shared" data-close data-act="sent" data-arg="Mum"><span class="av" style="background:#a17218">M</span>Mum</button>
+        </div>
+        <div class="apps">
+          <button class="appi" data-emit="shared" data-close data-act="sent" data-arg="Messages"><span class="ic" style="background:#34c759">✉</span>Messages</button>
+          <button class="appi" data-emit="shared" data-close data-act="sent" data-arg="Mail"><span class="ic" style="background:#1f8cf5">@</span>Mail</button>
+          <button class="appi" data-emit="shared" data-close data-act="sent" data-arg="WhatsApp"><span class="ic" style="background:#25a35a">W</span>WhatsApp</button>
+          <button class="appi" data-close data-toast="Saved to Files"><span class="ic" style="background:#3b82f6">F</span>Files</button>
+        </div>
+        <div class="acts">
+          <button data-close data-toast="Copied transcript and timestamp">Copy text <span>⧉</span></button>
+          <button data-close data-toast="Saved to Files">Save to Files <span>⤓</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sheet" data-id="packet" hidden>
+    <div class="scrim" data-close></div>
+    <div class="card pkt" role="dialog" aria-label="Shared Margin">
+      <div class="grab"></div>
+      <div class="pk-who"><div class="av">P</div><div><b>Priya shared a Margin</b><span>Voice · 0:31 · recorded Saturday</span></div></div>
+      <blockquote>“He’s wrong about audiobooks. Listening is reading, you just can’t skim it, and that’s the point.”</blockquote>
+      <p class="pk-src">On <b>Why we stopped reading slowly</b> · The Long Middle · at 22:05</p>
+      <p class="pk-note">You don’t have this episode yet. Play adds it to your Library and starts ten seconds before her Margin.</p>
+      <div class="pk-actions">
+        <button class="primary" data-act="playPacket" data-emit="packet-played">▶︎  Play her Margin in place</button>
+        <button class="secondary" data-close data-toast="Saved to Margins · From friends">Save for later</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sheet" data-id="export" hidden>
+    <div class="scrim" data-close></div>
+    <div class="card exp" role="dialog" aria-label="Export this week">
+      <div class="grab"></div>
+      <div class="ex-head"><h3>This week as a note</h3><p>7 Margins from 4 items · Sep 22–28</p></div>
+      <pre class="note-md"># Week of Sep 22 – Listening notes
+
+## Why we stopped reading slowly — The Long Middle
+- **18:12** (voice) This is Priya’s point about re-reading:
+  attention is a budget you spend twice.
+- **31:40** Find the 1978 study he cites before Tuesday.
+- **40:10** → Sam: “The 1978 study is Kintsch.”
+
+## The case for boredom — Harbor Review
+- **6:05** (voice) Boredom as a waiting room for ideas.
+
+## Sleep spindles and memory consolidation — PDF
+- **Fig. 3** (voice) Figure 3 seems to contradict the abstract.
+  Ask Sam.
+…</pre>
+      <div class="ex-dest"><span>Saves to</span><b>Obsidian › Spoken Margins</b><button class="chg" data-tap data-toast="(First time only) the Files picker opens to choose a folder: +2 taps, once">Change</button></div>
+      <div class="ex-actions">
+        <button class="primary" data-emit="exported" data-close data-toast="Saved “Week of Sep 22.md” to Obsidian">Save note</button>
+        <button class="secondary" data-close data-share="week">Share as file…</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" role="status" aria-live="polite"><span class="t-msg"></span><button class="t-act" hidden></button></div>`;
+
+  const S = { stack: [], task: null, taps: 0, results: {} };
+  let phone, initial, hooks, hud;
+  const ACTION = '[data-go],[data-tabgo],[data-back],[data-sheet],[data-close],[data-emit],[data-toast],[data-act],[data-share],[data-toggle],[data-tap]';
+
+  function show(id, push = true) {
+    const el = $(`.scr[data-id="${id}"]`, phone);
+    if (!el) { console.warn('no screen', id); return; }
+    $$('.scr', phone).forEach(s => { s.hidden = s !== el; });
+    if (push && S.stack[S.stack.length - 1] !== id) S.stack.push(id);
+    phone.dataset.chrome = el.dataset.chrome || '';
+    phone.dataset.screen = id;
+    if (el.dataset.tab) $$('[data-tabgo]', phone).forEach(t => t.classList.toggle('on', t.dataset.tabgo === el.dataset.tab));
+    const b = $('.body', el); if (b && push) b.scrollTop = 0;
+    hooks.onShow && hooks.onShow(id, el, api);
+  }
+  function tabgo(id) { S.stack = []; show(id); }
+  function back() { if (S.stack.length > 1) { S.stack.pop(); show(S.stack[S.stack.length - 1], false); } }
+  function openSheet(id) {
+    const sh = $(`.sheet[data-id="${id}"]`, phone); if (!sh) { console.warn('no sheet', id); return; }
+    sh.hidden = false; sh.offsetHeight; sh.classList.add('open');
+  }
+  function closeSheet(id) {
+    const list = id ? [$(`.sheet[data-id="${id}"]`, phone)] : $$('.sheet.open', phone).slice(-1);
+    list.forEach(sh => { if (!sh) return; sh.classList.remove('open'); setTimeout(() => { if (!sh.classList.contains('open')) sh.hidden = true; }, 230); });
+  }
+  function closeAll() { $$('.sheet', phone).forEach(sh => { sh.classList.remove('open'); sh.hidden = true; }); }
+  let tt;
+  function toast(msg, action) {
+    const t = $('.toast', phone), a = $('.t-act', t);
+    $('.t-msg', t).textContent = msg;
+    Array.from(a.attributes).forEach(at => { if (at.name.startsWith('data-')) a.removeAttribute(at.name); });
+    a.hidden = !action;
+    if (action) { a.textContent = action.label; Object.entries(action.attrs || {}).forEach(([k, v]) => a.setAttribute(k, v)); }
+    t.classList.add('show'); clearTimeout(tt);
+    tt = setTimeout(() => t.classList.remove('show'), action ? 5000 : 2600);
+  }
+  function share(id) {
+    const m = DATA.margins[id];
+    const sh = $('.sheet[data-id="share"]', phone);
+    const f = k => $(`[data-f="${k}"]`, sh);
+    if (id === 'week') {
+      f('title').textContent = 'Week of Sep 22.md'; f('sub').textContent = 'Markdown note · 7 Margins';
+      f('quote').textContent = '# Week of Sep 22 – Listening notes…'; f('kind').textContent = 'Note'; f('at').textContent = '—';
+    } else if (m) {
+      f('title').textContent = `${m.who === 'You' ? 'Your' : m.who + '’s'} Margin on “${m.item}”`;
+      f('sub').textContent = `${m.show} · Spoken Margins packet`;
+      f('quote').textContent = `“${m.text}”`; f('kind').textContent = m.kind; f('at').textContent = m.at;
+    }
+    openSheet('share');
+  }
+  function emit(name) {
+    hooks.onEmit && hooks.onEmit(name, api);
+    if (S.task && !S.task.done && S.task.goal === name) {
+      S.task.done = true;
+      const prev = S.results[S.task.id];
+      S.results[S.task.id] = prev == null ? S.taps : Math.min(prev, S.taps);
+      renderHud(); renderTasks();
+    }
+  }
+  function countTap() { if (S.task && !S.task.done) { S.taps++; renderHud(); } }
+
+  function renderHud() {
+    hud.classList.remove('done', 'over');
+    if (!S.task) {
+      hud.innerHTML = '<span class="hud-task">Exploring freely</span>';
+      return;
+    }
+    const t = S.task;
+    const over = S.taps > t.budget;
+    if (t.done) hud.classList.add(over ? 'over' : 'done'); else if (over) hud.classList.add('over');
+    hud.innerHTML = `<span class="count">${S.taps} / ${t.budget}</span><span class="hud-task">${t.done ? 'Done: ' : ''}${t.name}</span>`;
+  }
+  function renderTasks() {
+    const list = $('#taskList'); if (!list) return;
+    list.innerHTML = hooks.tasks.map(t => {
+      const r = S.results[t.id];
+      return `<div class="task"><b>${t.name}</b><button data-task="${t.id}">Try</button>
+        <span class="meta">Budget ${t.budget} tap${t.budget > 1 ? 's' : ''} · starts ${t.from}${r != null ? ` · <span class="res">you did it in ${r}</span>` : ''}</span></div>`;
+    }).join('');
+  }
+  function startTask(id) {
+    const t = hooks.tasks.find(x => x.id === id);
+    phone.innerHTML = initial; S.stack = [];
+    S.task = Object.assign({}, t, { done: false }); S.taps = 0;
+    t.start(api);
+    renderHud(); closeGuide();
+  }
+  function reset() { phone.innerHTML = initial; S.stack = []; S.task = null; S.taps = 0; hooks.home(api); renderHud(); }
+  function openGuide() { const g = $('#guide'); g.hidden = false; }
+  function closeGuide() { if (window.matchMedia('(max-width: 860px)').matches) $('#guide').hidden = true; }
+
+  const api = { show, tabgo, back, openSheet, closeSheet, closeAll, toast, share, emit, $, $$, get phone() { return phone; }, DATA };
+
+  function init(dir) {
+    hooks = dir;
+    phone = $('#phone'); hud = $('#hud');
+    phone.insertAdjacentHTML('beforeend', COMMON);
+    initial = phone.innerHTML;
+
+    hooks.openPacket = hooks.openPacket || function (el, arg, a) { a.show(hooks.packetLanding || 'home'); a.openSheet('packet'); };
+    hooks.sent = hooks.sent || function (el, who, a) { setTimeout(() => a.toast(`Sent to ${who}`), 120); };
+
+    phone.addEventListener('click', e => {
+      const el = e.target.closest(ACTION);
+      if (!el || !phone.contains(el) || el.hasAttribute('data-hold')) return;
+      e.preventDefault();
+      countTap();
+      const d = el.dataset;
+      if (d.act && hooks[d.act]) hooks[d.act](el, d.arg, api);
+      let togOn = true;
+      if ('toggle' in d) {
+        el.classList.toggle('on'); togOn = el.classList.contains('on');
+        if (d.onText) { if (d.offText == null) d.offText = el.textContent; el.textContent = togOn ? d.onText : d.offText; }
+        el.setAttribute('aria-pressed', togOn);
+      }
+      if ('close' in d) closeSheet(d.close || undefined);
+      if ('back' in d) back();
+      if (d.tabgo) { closeAll(); tabgo(d.tabgo); }
+      if (d.go) { if (!('keep' in d)) closeAll(); show(d.go); }
+      if (d.sheet) openSheet(d.sheet);
+      if (d.share) share(d.share);
+      if (d.toast) toast(d.toast);
+      if (d.emit && togOn) d.emit.split(' ').forEach(emit);
+    });
+
+    // Press-and-hold controls (direction B records this way).
+    let holding = null, t0 = 0;
+    phone.addEventListener('pointerdown', e => {
+      const el = e.target.closest('[data-hold]'); if (!el) return;
+      e.preventDefault(); holding = el; t0 = Date.now();
+      phone.classList.add('holding'); hooks.holdStart && hooks.holdStart(el, api);
+    });
+    const end = () => {
+      if (!holding) return; const el = holding; holding = null;
+      phone.classList.remove('holding');
+      const long = Date.now() - t0 > 450;
+      if (long) countTap();
+      hooks.holdEnd && hooks.holdEnd(el, long, api);
+    };
+    window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
+    phone.addEventListener('contextmenu', e => { if (e.target.closest('[data-hold]')) e.preventDefault(); });
+
+    document.addEventListener('click', e => {
+      const b = e.target.closest('[data-task]'); if (b) { startTask(b.dataset.task); return; }
+      if (e.target.closest('#guideBtn')) openGuide();
+      if (e.target.closest('.close-guide')) $('#guide').hidden = true;
+      if (e.target.closest('#resetBtn')) reset();
+    });
+    if (window.matchMedia('(max-width: 860px)').matches) $('#guide').hidden = true;
+    renderTasks(); hooks.home(api); renderHud();
+  }
+
+  window.Engine = { init, DATA };
+})();
+
+</script>
+<script>
+(function () {
+  const SHOWS = ['The Long Middle','Field Notes Radio','Harbor Review','Small Engines','Deep Time','Open Questions','Slow Science','The Night Library','Common Ground','Kitchen Table Economics','Ordinary Machines','Paper Trail','North Sea Stories','The Archive Hour','Second Draft','Weather & Climate Weekly','Soft Power','The Tinkerer','Old Maps','Quiet Rooms','Brain Matters','Garden Variety','Signal Path','Bookish','Unsettled','Long Now Talks','Tidewater','The Margins Club','Useful Fictions','Mud & Stone','Night Shift','A Public Square','Plain Numbers','The Repair Shop','Field Guide','Glass Half','Low Tide','City Rooms','Parallax','First Principles','Keel & Rudder','Mothlight','The Commons','Hinterland','Small Wonders','Crosswind','The Reading Room','Open Water','Overstory','Salt & Iron','Late Style','Halflife','Moonlit Maths','The Understory','Common Place','Straight Lines','Wild Card','Tuning Fork','Nightjar','Afterword'];
+  const nb = a => a.tabgo('notebook');
+  const tasks = [
+    { id: 'share', name: 'Share a Margin to a friend', budget: 2, goal: 'shared', from: 'Notebook', start: nb },
+    { id: 'followp', name: 'Follow what’s playing', budget: 1, goal: 'followed', from: 'Now Playing', start: a => { nb(a); a.show('player'); } },
+    { id: 'first', name: 'Follow a podcast on first run', budget: 1, goal: 'fr-followed', from: 'first launch', start: a => a.show('first') },
+    { id: 'record', name: 'Record a Margin', budget: 2, goal: 'recorded', from: 'Notebook', start: nb },
+    { id: 'export', name: 'Export this week’s Margins as a note', budget: 2, goal: 'exported', from: 'Notebook', start: nb },
+    { id: 'packet', name: 'Open a shared packet and hear it', budget: 2, goal: 'packet-played', from: 'Messages', start: a => a.show('messages') },
+  ];
+  Engine.init({
+    tasks,
+    home: nb,
+    packetLanding: 'notebook',
+    lpane(el, which, a) {
+      a.$$('[data-lpane]', a.phone).forEach(p => { p.hidden = p.dataset.lpane !== which; });
+      a.$$('[data-act="lpane"]', a.phone).forEach(b => b.classList.toggle('on', b.dataset.arg === which));
+    },
+    onShow(id, el, a) {
+      if (id === 'manage') {
+        const list = a.$('#manageList', a.phone);
+        if (!list.children.length) list.innerHTML = SHOWS.map((s, i) =>
+          `<div class="row" style="min-height:60px"><span class="cv ${['','fn','art','sub','pdf'][i % 5]}">${s.startsWith('The ') ? s[4] : s[0]}</span><div class="g"><div class="t">${s}</div><div class="s">${i < 23 ? 'New today' : (i % 7) + 2 + ' days ago'}${i % 9 === 4 ? ' &middot; muted' : ''}</div></div><button class="ib" data-tap data-toast="(Sketch) Mute, notify or unfollow ${s}" aria-label="Options for ${s}"><svg class="i"><use href="#i-more"/></svg></button></div>`).join('');
+      }
+    },
+    playPacket(el, arg, a) { a.closeAll(); a.show('player'); a.$('#pktBanner', a.phone).hidden = false; },
+    saved(el, arg, a) { setTimeout(() => a.toast('Saved to your notebook at 18:20', { label: 'Share', attrs: { 'data-share': 'm0' } }), 150); },
+  });
+})();
+</script>
+</body>
+</html>
