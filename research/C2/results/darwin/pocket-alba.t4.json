@@ -1,0 +1,35 @@
+{
+  "engine": "pocket-alba",
+  "threads": 4,
+  "cpu": "arm",
+  "load_s": 34.06,
+  "passages": {
+    "p1-narrative": {
+      "ttfa_s": 1.479,
+      "render_s": 4.074,
+      "audio_s": 17.46,
+      "rtf": 0.233,
+      "chunks": 3,
+      "stream_ttfa_s": 0.069
+    },
+    "p2-scientific": {
+      "ttfa_s": 5.581,
+      "render_s": 8.773,
+      "audio_s": 36.09,
+      "rtf": 0.243,
+      "chunks": 2,
+      "stream_ttfa_s": 0.068
+    },
+    "p3-conversational": {
+      "ttfa_s": 0.539,
+      "render_s": 4.032,
+      "audio_s": 17.62,
+      "rtf": 0.229,
+      "chunks": 3,
+      "stream_ttfa_s": 0.063
+    }
+  },
+  "rtf": 0.237,
+  "speed_x": 4.22,
+  "ttfa_s_median": 1.479
+}
