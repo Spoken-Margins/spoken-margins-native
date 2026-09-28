@@ -1,12 +1,15 @@
+import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 
@@ -99,6 +102,24 @@ class BuildSlotTests(unittest.TestCase):
         _, err = quick.communicate(timeout=30)
         self.assertEqual(quick.returncode, 0)
         self.assertIn('acquired after 0s', err)
+
+
+@unittest.skipUnless(shutil.which('xcodebuild'), 'needs Xcode')
+class VerifyTestsSlotTests(unittest.TestCase):
+    def test_runner_xcodebuild_steps_take_a_slot_and_record_it(self):
+        spec = importlib.util.spec_from_file_location('verification', SCRIPTS / 'verify-tests.py')
+        verification = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(SCRIPTS))
+        spec.loader.exec_module(verification)
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary) / 'state'
+            with unittest.mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}):
+                run = verification.Run(Path(temporary) / 'run', 'test')
+                run.command('xcode-version', ['xcodebuild', '-version'])
+            entry = run.manifest['steps'][0]
+            self.assertEqual(entry['build_slot']['slot'], 0)
+            self.assertEqual(entry['exit_code'], 0)
+            self.assertTrue((state / 'xcodebuild-slot-0.lock').exists())
 
 
 if __name__ == '__main__':
