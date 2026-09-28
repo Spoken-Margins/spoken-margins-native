@@ -458,7 +458,8 @@ def _rank(episodes, video, by_id, show_names, lookups):
         for i, (d, key) in enumerate(items):
             others = [o for j, (o, _) in enumerate(items) if j != i]
             rival = others[0] if others else 0.0
-            distinct[key] = max(0.0, d - rival) if rival >= 0.4 else d
+            # Clearly ahead (by 0.3 or more): the description singles it out.
+            distinct[key] = d if rival < 0.4 or d - rival >= 0.3 else max(0.0, d - rival)
 
     scored = []
     for key, ep in episodes.items():
