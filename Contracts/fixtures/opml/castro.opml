@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="1.1">
+  <head>
+    <title>Castro Subscriptions</title>
+  </head>
+  <body>
+    <outline type="rss" text="99% Invisible" xmlUrl="https://feeds.simplecast.com/BqbsxVfO"/>
+    <outline type="rss" text="Radiolab" xmlUrl="https://feeds.simplecast.com/EmVW7VGp"/>
+    <outline type="rss" text="Darknet Diaries" xmlUrl="https://podcast.darknetdiaries.com"/>
+  </body>
+</opml>
