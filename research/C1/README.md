@@ -16,6 +16,7 @@ Stream C1's research half (brief: `docs/workstreams/streams/C1-pdf.md`, tracking
 | `tools/reference_extract.py` | Reference-parser baselines: `pymupdf-raw` and `pdfminer`. |
 | `tools/score.py` | The scorer: spoken text in, per-paper scores out (`results/<extractor>/scores.json`). |
 | `tools/report.py` | Writes `results/REPORT.md` from every `scores.json`. |
+| `tools/precheck.py` | C1 M2: cheap pre-check features, a threshold rule fitted on the corpus, and its recall and false alarms, in sample and leave-one-out. It needs the app's own output (a Mac run) for a real result. |
 | `tools/inspect_alignment.py` | Prints one paper's spoken text with each run of words tagged by category, so you can check the scorer by eye. |
 | `tools/test_score.py`, `tools/test_net.py` | Unit tests for the scorer, both parsers, and the downloader's handling of cut-off and mismatched files. |
 | `mac/` | **(Mac)** `c1-extract`, a command-line tool that runs the app's `PDFStructuredTextExtractor` over the corpus, plus `run.sh`, which does fetch, build, extract, score and report in one go. |
@@ -31,7 +32,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python tools/reference_extract.py pymupdf-raw
 .venv/bin/python tools/score.py --extractor pymupdf-raw
 .venv/bin/python tools/report.py
-.venv/bin/python -m unittest tools/test_score.py tools/test_net.py
+.venv/bin/python -m unittest tools/test_score.py tools/test_net.py tools/test_precheck.py
 ```
 
 ### (Mac) Score the app's own extractor
