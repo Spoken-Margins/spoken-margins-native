@@ -53,7 +53,8 @@ Roles are advisory. **I14 decides how each role sounds.** The "likely treatment"
 | `footnote` | Footnote text | skip inline; maybe read at the paragraph end |
 | `equation` | Display equation | say "equation" |
 | `reference` | Bibliography entry | skip |
-| `front_matter` | Authors, affiliations, identifiers, dates, licence lines | skip, except maybe the author list |
+| `authors` | The author names on the title page | read (owner, #191) |
+| `front_matter` | Affiliations, emails, identifiers, dates, licence lines | skip (C1 proposes silently; C2 to confirm) |
 | `back_matter` | Acknowledgements, funding, contributions, competing interests, data availability, reviewer reports | skip |
 | `page_header`, `page_footer` | Running heads, page numbers, download stamps | skip |
 | `unknown` | The extractor couldn't tell | read |

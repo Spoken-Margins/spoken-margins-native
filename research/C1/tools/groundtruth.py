@@ -6,7 +6,7 @@ Output shape (one JSON file per corpus entry, `cache/gt/<id>.json`):
      "segments": [{"role": ..., "text": ..., "markers": [...], "label": ...}]}
 
 Roles follow the I13 draft (research/C1/I13/): title, heading, abstract, body,
-caption, table, footnote, equation, reference, front_matter, back_matter.
+caption, table, footnote, equation, reference, authors, front_matter, back_matter.
 Inline citation and footnote markers are taken *out* of body text and kept
 as markers with the character offset where they sat, so the scorer can see
 how an extractor rendered each one. Inline math becomes a marker too:
@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from lxml import etree, html as lxml_html
 
 BLOCK_ROLES = {"title", "heading", "abstract", "body", "caption", "table", "footnote",
-               "equation", "reference", "front_matter", "back_matter"}
+               "equation", "reference", "authors", "front_matter", "back_matter"}
 
 
 @dataclass
@@ -224,6 +224,17 @@ def jats_block(b: Builder, el, role: str):
         jats_inline(b, el)
         b.close()
         return
+    if name == "contrib":
+        # The author's name is read (owner, #191); affiliations, emails and
+        # the rest of the title page are front matter.
+        for child in el:
+            if local(child.tag) in ("name", "string-name", "collab", "name-alternatives"):
+                b.open("authors")
+                jats_inline(b, child)
+                b.close()
+            else:
+                jats_block(b, child, "front_matter")
+        return
     if name in ("list-item", "def-item"):
         for child in el:
             jats_block(b, child, role)
@@ -365,7 +376,20 @@ def latexml_block(b: Builder, el, role: str):
         latexml_inline(b, el)
         b.close()
         return
-    if "ltx_authors" in c or "ltx_keywords" in c or "ltx_classification" in c or "ltx_date" in c:
+    if "ltx_authors" in c:
+        # Names are read (owner, #191); affiliations and emails are front matter.
+        for node in el.iter():
+            nc = classes(node)
+            if "ltx_personname" in nc:
+                b.open("authors")
+                latexml_inline(b, node)
+                b.close()
+            elif "ltx_contact" in nc:
+                b.open("front_matter")
+                latexml_inline(b, node)
+                b.close()
+        return
+    if "ltx_keywords" in c or "ltx_classification" in c or "ltx_date" in c:
         b.open("front_matter")
         latexml_inline(b, el)
         b.close()

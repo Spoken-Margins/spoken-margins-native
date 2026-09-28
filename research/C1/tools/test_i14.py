@@ -33,6 +33,11 @@ class ProjectionTests(unittest.TestCase):
         self.assertNotIn("Proc. Example Conf.", self.text)       # page footer
         self.assertNotIn("Listening to Papers\n", self.text.replace("Listening to Papers: A", ""))  # page header
 
+    def test_author_names_are_read_and_the_rest_of_the_title_page_is_not(self):
+        # Owner, #191: names read; affiliations, emails, identifiers skipped.
+        self.assertTrue(any(line.startswith("Ada Example") for line in self.lines))
+        self.assertNotIn("Example University", self.text)
+
     def test_caption_label_is_not_said_twice(self):
         self.assertIn("Figure 1: Listening sessions by hour of day.", self.lines)
         self.assertNotIn("Figure 1.", self.lines)

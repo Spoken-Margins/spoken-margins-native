@@ -5,9 +5,9 @@
     "version": 1,
     "sourceSHA256": null,
     "pageCount": 2,
-    "textSHA256": "2e4022dca261ca590c48a155a9080b7d99690163e318da51861f256f9ba813fa"
+    "textSHA256": "c2f4edb08580958b96372d206f4a4f15f924c5cac5fe437307d43ab4a0265619"
   },
-  "text": "Listening to Papers: A Field Study\n\nAda Example¹, Ben Sample²\n¹ Example University ² Sample Institute\n\nAbstract\n\nWe asked twelve researchers to listen to papers on their commute.\n\n1 Introduction\n\nListening is slower than reading [3], but it fits into time that reading cannot use.¹ Figure 1 shows when participants listened.\n\n¹ Commutes, walks and chores.\n\nProc. Example Conf. 2026 · 1\n\nListening to Papers\n\nFigure 1: Listening sessions by hour of day.\n\nTable 1: Sessions per participant.\n\nParticipant Sessions P1 14 P2 9\n\nMost sessions happened before 9 a.m. The energy E = mc² of a morning commute is, of course, a metaphor.\n\nReferences\n\n[3] C. Writer. Reading and listening. J. Examples, 2020.",
+  "text": "Listening to Papers: A Field Study\n\nAda Example¹, Ben Sample²\n\n¹ Example University ² Sample Institute\n\nAbstract\n\nWe asked twelve researchers to listen to papers on their commute.\n\n1 Introduction\n\nListening is slower than reading [3], but it fits into time that reading cannot use.¹ Figure 1 shows when participants listened.\n\n¹ Commutes, walks and chores.\n\nProc. Example Conf. 2026 · 1\n\nListening to Papers\n\nFigure 1: Listening sessions by hour of day.\n\nTable 1: Sessions per participant.\n\nParticipant Sessions P1 14 P2 9\n\nMost sessions happened before 9 a.m. The energy E = mc² of a morning commute is, of course, a metaphor.\n\nReferences\n\n[3] C. Writer. Reading and listening. J. Examples, 2020.",
   "segments": [
     {
       "id": "s0",
@@ -20,10 +20,19 @@
     },
     {
       "id": "s1",
-      "role": "front_matter",
+      "role": "authors",
       "range": {
         "start": 36,
-        "length": 65
+        "length": 25
+      },
+      "pageIndex": 0
+    },
+    {
+      "id": "s1a",
+      "role": "front_matter",
+      "range": {
+        "start": 63,
+        "length": 39
       },
       "pageIndex": 0
     },
@@ -31,7 +40,7 @@
       "id": "s2",
       "role": "heading",
       "range": {
-        "start": 103,
+        "start": 104,
         "length": 8
       },
       "pageIndex": 0,
@@ -41,7 +50,7 @@
       "id": "s3",
       "role": "abstract",
       "range": {
-        "start": 113,
+        "start": 114,
         "length": 65
       },
       "pageIndex": 0
@@ -50,7 +59,7 @@
       "id": "s4",
       "role": "heading",
       "range": {
-        "start": 180,
+        "start": 181,
         "length": 14
       },
       "pageIndex": 0,
@@ -60,7 +69,7 @@
       "id": "s5",
       "role": "body",
       "range": {
-        "start": 196,
+        "start": 197,
         "length": 128
       },
       "pageIndex": 0
@@ -69,7 +78,7 @@
       "id": "s6",
       "role": "footnote",
       "range": {
-        "start": 326,
+        "start": 327,
         "length": 29
       },
       "pageIndex": 0
@@ -78,7 +87,7 @@
       "id": "s7",
       "role": "page_footer",
       "range": {
-        "start": 357,
+        "start": 358,
         "length": 28
       },
       "pageIndex": 0
@@ -87,7 +96,7 @@
       "id": "s8",
       "role": "page_header",
       "range": {
-        "start": 387,
+        "start": 388,
         "length": 19
       },
       "pageIndex": 1
@@ -96,7 +105,7 @@
       "id": "s9",
       "role": "caption",
       "range": {
-        "start": 408,
+        "start": 409,
         "length": 44
       },
       "pageIndex": 1,
@@ -106,7 +115,7 @@
       "id": "s10",
       "role": "caption",
       "range": {
-        "start": 454,
+        "start": 455,
         "length": 34
       },
       "pageIndex": 1,
@@ -116,7 +125,7 @@
       "id": "s11",
       "role": "table",
       "range": {
-        "start": 490,
+        "start": 491,
         "length": 31
       },
       "pageIndex": 1,
@@ -126,7 +135,7 @@
       "id": "s12",
       "role": "body",
       "range": {
-        "start": 523,
+        "start": 524,
         "length": 103
       },
       "pageIndex": 1
@@ -135,7 +144,7 @@
       "id": "s13",
       "role": "heading",
       "range": {
-        "start": 628,
+        "start": 629,
         "length": 10
       },
       "pageIndex": 1,
@@ -145,7 +154,7 @@
       "id": "s14",
       "role": "reference",
       "range": {
-        "start": 640,
+        "start": 641,
         "length": 56
       },
       "pageIndex": 1
@@ -155,7 +164,7 @@
     {
       "kind": "citation",
       "range": {
-        "start": 229,
+        "start": 230,
         "length": 3
       },
       "label": "3",
@@ -164,7 +173,7 @@
     {
       "kind": "footnote",
       "range": {
-        "start": 280,
+        "start": 281,
         "length": 1
       },
       "label": "1",
@@ -173,7 +182,7 @@
     {
       "kind": "figure_reference",
       "range": {
-        "start": 282,
+        "start": 283,
         "length": 8
       },
       "label": "Figure 1",
@@ -182,7 +191,7 @@
     {
       "kind": "math",
       "range": {
-        "start": 571,
+        "start": 572,
         "length": 7
       },
       "label": null,

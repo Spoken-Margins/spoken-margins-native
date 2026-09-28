@@ -49,7 +49,8 @@ ROLE_RULES = {
     "reference": "announce",   # once per run: "References skipped."
     "page_header": "silent",
     "page_footer": "silent",
-    "front_matter": "read",    # proposed: read (the author list); pending C2 and the owner
+    "authors": "read",         # owner, #191: author names are read
+    "front_matter": "silent",  # owner: the rest of the title page is skipped; silently is C1's proposal to C2
     "back_matter": "announce", # proposed: "Back matter skipped." once per run
     "equation": "announce",    # proposed: "Equation."
     "unknown": "read",         # proposed

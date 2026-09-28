@@ -67,7 +67,7 @@ Every step except 0 needs the Mac (PDFKit, SessionKit tests, the lane). The clou
 - `tools/i14.py` projects an I13 document to what's said under I14: roles read, announced or skipped, and citation and footnote markers silent.
 - The scorer counts I14's announcements ("References skipped.", "Table not read.", "Figure 2.") as `announcement`, not as clutter.
 - It reports `markers_silent_share`, the share of markers spoken as I14 asks (not at all).
-- Ground truth run through the projection (`gt-i14` in the report) scores **4.8% median clutter, 0.1% missing, 100% of markers silent**. That's the floor M3 can approach. What's left is math read aloud and the author list.
+- Ground truth run through the projection (`gt-i14` in the report) scores **0.2% median clutter, 0.1% missing, 100% of markers silent**. That's the floor M3 can approach. Math read aloud is what remains, and it's concentrated in the math-heavy papers M2 warns about.
 - Scoring the app's I13 output needs `c1-extract` to write it, which comes with step 2.
 
 **Step 1 (Mac): guard existing Margins before anything changes.** This lands first, alone.
@@ -135,23 +135,23 @@ A SessionKit projection turns an I13 document into spoken text. It uses C2's I14
 
 ## Open questions
 
-1. **For C2: the roles I14 doesn't list.** I14's table has no row for `front_matter`, `back_matter`, `equation`, `abstract`, `title` or `unknown`. Proposed defaults:
+1. **For C2: the roles I14 doesn't list.** I14's table has no row for `front_matter`, `back_matter`, `equation`, `abstract`, `title` or `unknown`. The owner settled the author list: names are read. Proposed defaults for the rest:
 
    | Role | Proposed default |
    | --- | --- |
    | `title`, `abstract` | read |
-   | `front_matter` | read the author list, skip affiliations, identifiers and dates |
+   | `front_matter` (affiliations, emails, identifiers, dates) | skipped silently, like running heads |
    | `back_matter` | skipped with "Back matter skipped." |
    | `equation` | "Equation." |
    | `unknown` | read |
 
    Back matter matters for the target (see the table above).
-2. **For the owner: should author names be read?** Title-page matter costs a median 0.6 minutes per paper. Researchers may want to hear who wrote it.
-3. **For the owner: table detection with Vision.** The Vision detector is the better detector but costs import time.
-   - One option is to run it after import as a background pass, which quietly produces a v2+ extraction.
-   - The listener would then hear tables announced only once that pass finishes.
-   - Or it stays within the 20% budget, if measured to fit.
-4. **For the owner: the old "citation 12" behaviour.** I14 makes numeric citations silent. Today's app says "citation 12", so listeners who are used to that will hear a change.
+
+**Answered by the owner (#191):**
+
+- **Author names** are read. The rest of the title page (affiliations, emails, identifiers, dates) is skipped. I13 gets an `authors` role for the names.
+- **Tables:** build and measure the fast layout rule first. The background Vision pass is allowed as a fallback if the fast rule misses the roughly 90% table detection the target needs, under I13's version rule.
+- **Citations:** numeric and parenthetical citations go silent per I14. Step 4 removes "citation 12" for PDFs.
 
 ## What is explicitly not in M3
 

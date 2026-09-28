@@ -100,7 +100,7 @@ class GroundTruthTests(unittest.TestCase):
         <back><ref-list><ref id="b1"><mixed-citation>A. Paper. 2020.</mixed-citation></ref></ref-list></back></article>"""
         segments = groundtruth.jats_segments(xml)
         roles = [s["role"] for s in segments]
-        self.assertEqual(roles, ["title", "front_matter", "heading", "body", "caption", "body", "reference"])
+        self.assertEqual(roles, ["title", "authors", "heading", "body", "caption", "body", "reference"])
         self.assertIn("Li Wei", segments[1]["text"])
         body = segments[3]
         self.assertEqual([m["kind"] for m in body["markers"]], ["citation", "footnote"])
@@ -108,6 +108,19 @@ class GroundTruthTests(unittest.TestCase):
         self.assertNotIn("[1]", body["text"].replace(" ", ""))
         self.assertEqual(segments[5]["markers"][0]["kind"], "math")
         self.assertEqual(segments[4]["label"], "Figure 1")
+
+    def test_author_names_are_separate_from_affiliations(self):
+        xml = b"""<article><front><article-meta><contrib-group><contrib>
+        <name><surname>Li</surname><given-names>Wei</given-names></name><email>wei@example.org</email>
+        </contrib><aff>Example University</aff></contrib-group></article-meta></front></article>"""
+        segments = groundtruth.jats_segments(xml)
+        self.assertEqual([(s["role"], s["text"]) for s in segments],
+                         [("authors", "Li Wei"), ("front_matter", "wei@example.org"), ("front_matter", "Example University")])
+        html = b"""<html><body><article><div class="ltx_authors"><span class="ltx_creator ltx_role_author">
+        <span class="ltx_personname">Ada Example</span><span class="ltx_contact ltx_role_affiliation">Example University</span>
+        </span></div></article></body></html>"""
+        self.assertEqual([(s["role"], s["text"]) for s in groundtruth.latexml_segments(html)],
+                         [("authors", "Ada Example"), ("front_matter", "Example University")])
 
     def test_latexml_footnote_leaves_the_paragraph(self):
         html = b"""<html><body><article class="ltx_document"><h1 class="ltx_title ltx_title_document">T</h1>

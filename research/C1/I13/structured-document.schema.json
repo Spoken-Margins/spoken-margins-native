@@ -84,7 +84,7 @@
       "enum": [
         "title", "heading", "abstract", "body",
         "caption", "table", "footnote", "equation", "reference",
-        "front_matter", "back_matter",
+        "authors", "front_matter", "back_matter",
         "page_header", "page_footer",
         "unknown"
       ]
