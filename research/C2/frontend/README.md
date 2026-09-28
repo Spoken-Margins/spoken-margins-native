@@ -30,16 +30,18 @@ Kitten was trained on espeak's phoneme spelling, so the job is to produce **espe
 
 | Passage | espeak front end | This front end |
 | --- | ---: | ---: |
-| Narrative | 3% | 3% |
-| Scientific (M2 passage) | 30% | 12% |
+| Narrative | 3% | 4% |
+| Scientific (M2 passage) | 30% | 10% |
 | Essay with dialogue | 3% | 0% |
-| Names and numbers | 30% | 18% |
-| Statistics | 52% | 32% |
-| Lab methods | 21% | 15% |
+| Names and numbers | 30% | 15% |
+| Statistics | 43% | 26% |
+| Lab methods | 16% | 15% |
 | Rare words | 13% | 9% |
 | Citations | 69% | 0% |
-| Dialogue | 13% | 8% |
-| **Mean** | **26%** | **11%** |
+| Dialogue | 12% | 9% |
+| **Mean** | **24%** | **10%** |
+
+These figures come after the comma fix below (2026-09-28). Narrative is within noise: its three runs were 5%, 3% and 3%.
 
 Most of the gain is normalization. espeak reads "95% CI" as "sigh", "ng/mL" as "N G slash M L", "p < 0.001" as "P0-001", and reads "[4, 7–9]" and "et al." aloud.
 
@@ -54,6 +56,19 @@ Most of the gain is normalization. espeak reads "95% CI" as "sigh", "ng/mL" as "
 | 2,000 most common words, **CMUdict only** (no misaki) | 74% | 4.3% |
 
 The remaining differences are mostly unstressed vowel quality (ə against ɪ or ᵻ), which is hard to hear. The listen decides whether they matter.
+
+## Owner A/B listen (2026-09-28)
+
+Saved on the A/B page. The letters were decoded with the answer key after saving.
+
+| Passage | Preferred |
+| --- | --- |
+| Narrative, Scientific, Essay with dialogue, Statistics, Lab methods | **new front end** |
+| Rare words, Dialogue | same |
+| Names and numbers, Citations | espeak front end |
+
+- **Result:** the new front end wins 6, espeak 2, with 2 ties. That passes the bar: at least "Same" on narrative, essay and dialogue.
+- **The owner's note:** "both have trouble with numbers with commas in them (e.g. 1,124 kg)". Kitten drops "one thousand" from "one thousand two hundred fifty" (heard as "250", 3 of 3 renders). With a comma after the scale word ("one thousand, two hundred fifty") it's heard correctly 3 of 3, and the same holds for "1,284 adults". `int_words` now adds that comma. This affects the Names and numbers passage the owner preferred espeak on, whose clips were rendered before the fix.
 
 ## Licenses of what would ship
 

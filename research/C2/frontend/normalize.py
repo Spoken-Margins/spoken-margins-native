@@ -27,13 +27,14 @@ def int_words(n: int) -> str:
     for value, name in SCALES:
         if n >= value:
             rest = n % value
-            return int_words(n // value) + " " + name + (" " + int_words(rest) if rest else "")
+            # a comma after the scale word: without it Kitten drops 'one thousand' ('1,250' heard as '250')
+            return int_words(n // value) + " " + name + (", " + int_words(rest) if rest else "")
     return str(n)
 
 
 def year_words(n: int) -> str:
     if 2000 <= n <= 2009:
-        return int_words(n)
+        return "two thousand" + (" " + ONES[n - 2000] if n > 2000 else "")
     hi, lo = divmod(n, 100)
     if lo == 0:
         return int_words(hi) + " hundred"
