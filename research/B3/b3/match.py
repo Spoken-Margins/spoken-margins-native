@@ -523,7 +523,8 @@ def match(video: VideoEvidence) -> Result:
     # Offer candidates only when there is something worth offering: an
     # identified show, or an episode that matches strongly on its own.
     plausible = [c for c, sg, sh in scored[:5]
-                 if (sh is not None and sh.strength >= 0.8 and c.score >= 0.35)
+                 if (sh is not None and sh.strength >= 0.8 and c.score >= 0.35
+                     and (sg.title >= 0.5 or (sg.days is not None and sg.days <= 30)))
                  or (sg.title >= 0.6 and sg.duration in ("match", "close")
                      and sg.days is not None and sg.days <= 3)
                  or (sg.desc >= 0.6 and sg.days is not None and sg.days <= 7)
