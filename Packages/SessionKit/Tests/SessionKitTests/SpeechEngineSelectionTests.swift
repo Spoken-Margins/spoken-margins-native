@@ -81,17 +81,21 @@ final class SpeechEngineSelectionTests: XCTestCase {
         XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "caption"), .announceLabelThenRead)
         XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "table"), .announceAndSkip(notice: "Table not read."))
         XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "reference"), .skipWithNoticeOnce(notice: "References skipped."))
-        for skipped in ["footnote", "page_header", "page_footer"] {
+        // Roles settled in #226.
+        XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "authors"), .read)
+        XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "back_matter"), .skipWithNoticeOnce(notice: "Back matter skipped."))
+        XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "equation"), .skipWithNoticeOnce(notice: "Equation."))
+        for skipped in ["footnote", "front_matter", "page_header", "page_footer"] {
             XCTAssertEqual(DocumentSpeechRules.treatment(forRole: skipped), .skip, skipped)
         }
         XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "a_role_added_later"), .read, "unknown roles are read, never lost")
     }
 
-    func testOnlyHeadersFootersAndFootnotesAreEverSilent() {
-        let roles = ["title", "heading", "abstract", "body", "caption", "table", "footnote", "equation", "reference",
+    func testOnlyHeadersFootersFootnotesAndFrontMatterAreEverSilent() {
+        let roles = ["title", "authors", "heading", "abstract", "body", "caption", "table", "footnote", "equation", "reference",
                      "front_matter", "back_matter", "page_header", "page_footer", "unknown"]
         let silent = roles.filter { DocumentSpeechRules.treatment(forRole: $0) == .skip }
-        XCTAssertEqual(Set(silent), ["footnote", "page_header", "page_footer"])
+        XCTAssertEqual(Set(silent), ["footnote", "front_matter", "page_header", "page_footer"])
     }
 
     func testCitationAndFootnoteMarkersAreSilentAndOtherMarkersRead() {

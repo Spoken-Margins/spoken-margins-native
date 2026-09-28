@@ -177,12 +177,13 @@ public enum SpokenMarkerTreatment: Equatable, Sendable {
 
 /// I14 role rules for I13 documents, keyed by the raw role and marker strings in C1's draft
 /// schema. Roles are advisory (I13); these rules decide the sound. A role's text never disappears
-/// silently except running headers and footers (and footnotes, which are skipped in place).
+/// silently except headers, footers, footnotes (skipped in place) and front matter.
 /// Web articles keep `SpeechTextNormalizer`'s own handling.
 public enum DocumentSpeechRules {
     public static func treatment(forRole role: String) -> SpokenRoleTreatment {
         switch role {
-        case "body", "title", "abstract", "unknown":
+        case "body", "title", "abstract", "authors", "unknown":
+            // Authors: the names only, once, after the title (owner decision, #191).
             return .read
         case "heading":
             return .readWithPauses(before: 0.7, after: 0.4)
@@ -191,15 +192,14 @@ public enum DocumentSpeechRules {
         case "table":
             return .announceAndSkip(notice: "Table not read.")
         case "equation":
-            // Not in the published table. Treated like a table so it isn't dropped silently.
-            return .announceAndSkip(notice: "Equation not read.")
+            // Display equations; a run of them is announced once. Inline math stays in the body.
+            return .skipWithNoticeOnce(notice: "Equation.")
         case "reference":
             return .skipWithNoticeOnce(notice: "References skipped.")
-        case "footnote", "page_header", "page_footer":
+        case "back_matter":
+            return .skipWithNoticeOnce(notice: "Back matter skipped.")
+        case "footnote", "front_matter", "page_header", "page_footer":
             return .skip
-        case "front_matter", "back_matter":
-            // Not in the published table. Read, so nothing disappears silently, until C2 decides.
-            return .read
         default:
             return .read
         }
