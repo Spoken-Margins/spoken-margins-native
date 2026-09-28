@@ -241,6 +241,9 @@ protocol Gate2LiveActivityControlling: AnyObject {
         upcomingSharedMargins: [Gate2LiveActivityNavigationEntry]
     )
     func endAll()
+    /// Ends every activity with its current content and lets iOS remove it at `date`, so the
+    /// card goes on time even if the app never runs again (#193, option 2).
+    func handOffDismissal(at date: Date) async
 }
 
 struct Gate2SharedMarginActivityPrompt: Equatable, Sendable {
@@ -266,10 +269,15 @@ final class Gate2CompactControlController {
     private var liveActivityLifecycle = LiveActivityLifecycle()
     private var liveActivityLifecycleStatus = "none"
     private var idleDeadlineTask: Task<Void, Never>?
+    private var handOffTask: Task<Void, Never>?
+    private var endHandOffBackgroundTask: (@MainActor () -> Void)?
     private let now: () -> Date
+    private let isAppInBackground: @MainActor () -> Bool
+    private let beginBackgroundTask: @MainActor (String) -> (@MainActor () -> Void)
     #if canImport(AVFoundation) && os(iOS)
-    private var audioInterruptionObserver: Gate2AudioInterruptionEndObserver?
+    private var audioInterruptionObserver: Gate2AudioInterruptionObserver?
     #endif
+    private var appLifecycleObserver: Gate2AppLifecycleObserver?
     private let liveSpeechNowPlaying = Gate2LiveSpeechNowPlayingController()
     private var nowPlayingEnabled = true
     private var lastPublishedSnapshot: CompactControlSnapshot?
@@ -282,15 +290,26 @@ final class Gate2CompactControlController {
     init(
         liveActivity: (any Gate2LiveActivityControlling)? = nil,
         now: @escaping () -> Date = Date.init,
-        notificationCenter: NotificationCenter = .default
+        notificationCenter: NotificationCenter = .default,
+        isAppInBackground: @escaping @MainActor () -> Bool = Gate2AppState.isInBackground,
+        beginBackgroundTask: @escaping @MainActor (String) -> (@MainActor () -> Void) = Gate2AppState.beginBackgroundTask
     ) {
         self.liveActivity = liveActivity ?? Gate2LiveActivityController()
         self.now = now
+        self.isAppInBackground = isAppInBackground
+        self.beginBackgroundTask = beginBackgroundTask
         #if canImport(AVFoundation) && os(iOS)
-        audioInterruptionObserver = Gate2AudioInterruptionEndObserver(center: notificationCenter) { [weak self] shouldResume in
-            self?.handleAudioInterruptionEnded(shouldResume: shouldResume)
-        }
+        audioInterruptionObserver = Gate2AudioInterruptionObserver(
+            center: notificationCenter,
+            onBegan: { [weak self] in self?.handleAudioInterruptionBegan() },
+            onEnded: { [weak self] shouldResume in self?.handleAudioInterruptionEnded(shouldResume: shouldResume) }
+        )
         #endif
+        appLifecycleObserver = Gate2AppLifecycleObserver(
+            center: notificationCenter,
+            onBackground: { [weak self] in self?.scheduleHandOffIfNeeded() },
+            onForeground: { [weak self] in self?.handleAppReturnedToForeground() }
+        )
     }
 
     var snapshot: CompactControlSnapshot? {
@@ -375,6 +394,61 @@ final class Gate2CompactControlController {
         liveActivity.endAll()
         liveActivityLifecycleStatus = "ended_\(reason.rawValue)"
         scheduleIdleDeadlineCheck()
+        cancelHandOff()
+    }
+
+    /// A phone call or another app took the audio: that pause never hands off to iOS.
+    func handleAudioInterruptionBegan() {
+        liveActivityLifecycle.audioInterruptionBegan()
+        cancelHandOff()
+    }
+
+    /// Runs when the grace after a locked pause ends. Internal so tests can fire it on an
+    /// injected clock instead of waiting.
+    func handOffIfDue() async {
+        guard let dismissAt = liveActivityLifecycle.handOffIfDue(appInBackground: isAppInBackground(), now: now()) else {
+            finishHandOffTask()
+            return
+        }
+        liveActivityLifecycleStatus = "handed_off_to_system"
+        scheduleIdleDeadlineCheck()
+        await liveActivity.handOffDismissal(at: dismissAt)
+        finishHandOffTask()
+    }
+
+    private func handleAppReturnedToForeground() {
+        liveActivityLifecycle.appReturnedToForeground()
+        cancelHandOff()
+    }
+
+    /// A listener pause with the app in the background (phone locked, or paused from AirPods or
+    /// the Lock Screen) hands the removal to iOS after the grace. A background task keeps the app
+    /// running through the grace; otherwise iOS would suspend it first.
+    private func scheduleHandOffIfNeeded() {
+        guard let handOffAt = liveActivityLifecycle.scheduleHandOff(appInBackground: isAppInBackground(), now: now()) else {
+            cancelHandOff()
+            return
+        }
+        guard handOffTask == nil else { return }
+        endHandOffBackgroundTask = beginBackgroundTask("Spoken Margins Live Activity hand-off")
+        let delay = max(0, handOffAt.timeIntervalSince(now()))
+        handOffTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            await self?.handOffIfDue()
+        }
+        liveActivityLifecycleStatus = "hand_off_scheduled"
+    }
+
+    private func cancelHandOff() {
+        handOffTask?.cancel()
+        finishHandOffTask()
+    }
+
+    private func finishHandOffTask() {
+        handOffTask = nil
+        endHandOffBackgroundTask?()
+        endHandOffBackgroundTask = nil
     }
 
     func setNowPlayingEnabled(_ enabled: Bool) {
@@ -469,9 +543,15 @@ final class Gate2CompactControlController {
                 upcomingSharedMargins: upcomingSharedMargins
             )
             liveActivityLifecycleStatus = staleDate == nil ? "live" : "paused_idle_deadline"
+            if staleDate == nil {
+                cancelHandOff()
+            } else {
+                scheduleHandOffIfNeeded()
+            }
         case .end(let reason):
             liveActivity.endAll()
             liveActivityLifecycleStatus = "ended_\(reason.rawValue)"
+            cancelHandOff()
         case .hidden(let reason):
             liveActivityLifecycleStatus = "ended_\(reason.rawValue)"
         }
@@ -652,7 +732,43 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
         #endif
     }
 
+    func handOffDismissal(at date: Date) async {
+        #if SPOKEN_MARGINS_LEGACY
+        status = "unavailable_legacy"
+        #else
+        publishGeneration += 1
+        let generation = publishGeneration
+        let previousActivityTask = activityTask
+        status = "handing_off"
+        #if canImport(ActivityKit)
+        let task = Task { @MainActor in
+            await previousActivityTask?.value
+            guard generation == publishGeneration else { return }
+            let count = await Self.handOffActivities(dismissAt: date)
+            guard generation == publishGeneration else { return }
+            activityId = nil
+            adoptedSessionId = nil
+            status = count > 0 ? "handed_off" : "not_ready"
+        }
+        activityTask = task
+        await task.value
+        #else
+        status = "unavailable"
+        #endif
+        #endif
+    }
+
     #if canImport(ActivityKit)
+    private nonisolated static func handOffActivities(dismissAt date: Date) async -> Int {
+        var count = 0
+        for activity in Activity<Gate2LiveActivityAttributes>.activities
+        where activity.activityState == .active || activity.activityState == .stale {
+            await activity.end(activity.content, dismissalPolicy: .after(date))
+            count += 1
+        }
+        return count
+    }
+
     private nonisolated static func publishActivity(
         sessionId: String,
         state: Gate2LiveActivityAttributes.ContentState,
@@ -663,6 +779,13 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
         var matchingActivities: [Activity<Gate2LiveActivityAttributes>] = []
         var endedCount = 0
         for activity in activities {
+            // A card handed off to iOS is ended but still on screen, saying "Paused". It can't be
+            // updated, so it goes now and a new card is requested.
+            if activity.activityState == .ended {
+                await end(activity)
+                endedCount += 1
+                continue
+            }
             if Gate2LiveActivityPolicy.shouldEnd(activitySessionId: activity.attributes.sessionId, currentSessionId: sessionId) {
                 await end(activity)
                 endedCount += 1
@@ -717,19 +840,31 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
 }
 
 #if canImport(AVFoundation) && os(iOS)
-/// Reports when an `AVAudioSession` interruption ends, and whether the system says playback may resume.
-private final class Gate2AudioInterruptionEndObserver {
+/// Reports `AVAudioSession` interruptions: when one begins, and when it ends whether the system
+/// says playback may resume.
+private final class Gate2AudioInterruptionObserver {
     private let center: NotificationCenter
     private var token: NSObjectProtocol?
 
-    init(center: NotificationCenter, onEnded: @escaping @MainActor @Sendable (_ shouldResume: Bool) -> Void) {
+    init(
+        center: NotificationCenter,
+        onBegan: @escaping @MainActor @Sendable () -> Void,
+        onEnded: @escaping @MainActor @Sendable (_ shouldResume: Bool) -> Void
+    ) {
         self.center = center
         token = center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { notification in
             guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-                  AVAudioSession.InterruptionType(rawValue: rawType) == .ended else { return }
-            let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
-            let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
-            MainActor.assumeIsolated { onEnded(shouldResume) }
+                  let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
+            switch type {
+            case .began:
+                MainActor.assumeIsolated { onBegan() }
+            case .ended:
+                let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
+                MainActor.assumeIsolated { onEnded(shouldResume) }
+            @unknown default:
+                break
+            }
         }
     }
 
@@ -738,6 +873,67 @@ private final class Gate2AudioInterruptionEndObserver {
     }
 }
 #endif
+
+/// Reports the app entering the background and returning to the foreground.
+private final class Gate2AppLifecycleObserver {
+    private let center: NotificationCenter
+    private var tokens: [NSObjectProtocol] = []
+
+    init(center: NotificationCenter, onBackground: @escaping @MainActor @Sendable () -> Void, onForeground: @escaping @MainActor @Sendable () -> Void) {
+        self.center = center
+        #if canImport(UIKit)
+        tokens.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { onBackground() }
+        })
+        tokens.append(center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { onForeground() }
+        })
+        #endif
+    }
+
+    deinit {
+        for token in tokens { center.removeObserver(token) }
+    }
+}
+
+/// The app's real background state and background tasks, injectable for tests.
+enum Gate2AppState {
+    @MainActor
+    static func isInBackground() -> Bool {
+        #if canImport(UIKit)
+        UIApplication.shared.applicationState == .background
+        #else
+        false
+        #endif
+    }
+
+    /// Begins a background task and returns the call that ends it. iOS ends it early if time runs out.
+    @MainActor
+    static func beginBackgroundTask(_ name: String) -> (@MainActor () -> Void) {
+        #if canImport(UIKit)
+        let token = BackgroundTaskToken()
+        token.identifier = UIApplication.shared.beginBackgroundTask(withName: name) {
+            MainActor.assumeIsolated { token.end() }
+        }
+        return { token.end() }
+        #else
+        return {}
+        #endif
+    }
+
+    #if canImport(UIKit)
+    @MainActor
+    private final class BackgroundTaskToken {
+        var identifier: UIBackgroundTaskIdentifier = .invalid
+
+        func end() {
+            guard identifier != .invalid else { return }
+            UIApplication.shared.endBackgroundTask(identifier)
+            identifier = .invalid
+        }
+    }
+    #endif
+}
 
 @MainActor
 private final class Gate2LiveSpeechNowPlayingController {

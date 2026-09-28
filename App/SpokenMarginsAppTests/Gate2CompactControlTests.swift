@@ -1,4 +1,5 @@
 import AVFoundation
+import UIKit
 import XCTest
 @testable import SessionKit
 @testable import SpokenMarginsApp
@@ -583,6 +584,111 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertNil(liveActivity.lastStaleDate)
     }
 
+    // MARK: Owner decision #193 (option 2): a locked pause hands the removal to iOS after the grace.
+
+    private func makeLockedPauseHarness() -> (Gate1AppModel, Gate2CompactControlController, RecordingLiveActivityController, TestClock, TestAppState, NotificationCenter) {
+        let clock = TestClock()
+        let app = TestAppState()
+        let center = NotificationCenter()
+        let liveActivity = RecordingLiveActivityController()
+        let controller = Gate2CompactControlController(
+            liveActivity: liveActivity,
+            now: { clock.now },
+            notificationCenter: center,
+            isAppInBackground: { app.isInBackground },
+            beginBackgroundTask: { _ in
+                app.beganBackgroundTasks += 1
+                return { app.endedBackgroundTasks += 1 }
+            }
+        )
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), gate2CompactControls: controller)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        return (model, controller, liveActivity, clock, app, center)
+    }
+
+    func testLockedPauseHandsTheRemovalToIOSAfterTheGrace() async {
+        let (model, controller, liveActivity, clock, app, _) = makeLockedPauseHarness()
+        let grace = LiveActivityLifecycle.lockedPauseGrace
+        app.isInBackground = true // paused from AirPods or the Lock Screen
+        let pausedAt = clock.now
+        model.dispatchGate2CompactCommand(.pause)
+        XCTAssertEqual(controller.diagnostics()["gate2LiveActivityLifecycle"], "hand_off_scheduled")
+        XCTAssertEqual(app.beganBackgroundTasks, 1, "a background task keeps the app running through the grace")
+
+        clock.now = pausedAt.addingTimeInterval(grace)
+        await controller.handOffIfDue()
+        XCTAssertEqual(liveActivity.handOffDates, [pausedAt.addingTimeInterval(LiveActivityLifecycle.pausedIdleLimit)],
+                       "iOS removes the card at the 30-minute deadline")
+        XCTAssertEqual(controller.diagnostics()["gate2LiveActivityLifecycle"], "handed_off_to_system")
+        XCTAssertEqual(app.endedBackgroundTasks, app.beganBackgroundTasks, "the background task is always ended")
+
+        let publishes = liveActivity.publishCallCount
+        model.refreshLockScreenSurfacesForLifecycle()
+        XCTAssertEqual(liveActivity.publishCallCount, publishes, "a paused refresh doesn't request a new card")
+        model.dispatchGate2CompactCommand(.play)
+        XCTAssertGreaterThan(liveActivity.publishCallCount, publishes, "resuming asks for a card again")
+    }
+
+    func testQuickLockedPauseAndResumeKeepsTheCard() async {
+        let (model, controller, liveActivity, clock, app, _) = makeLockedPauseHarness()
+        app.isInBackground = true
+        let pausedAt = clock.now
+        model.dispatchGate2CompactCommand(.pause)
+        clock.now = pausedAt.addingTimeInterval(8)
+        model.dispatchGate2CompactCommand(.play)
+        XCTAssertEqual(app.endedBackgroundTasks, app.beganBackgroundTasks, "resuming cancels the pending hand-off")
+
+        clock.now = pausedAt.addingTimeInterval(LiveActivityLifecycle.lockedPauseGrace + 1)
+        await controller.handOffIfDue()
+        XCTAssertTrue(liveActivity.handOffDates.isEmpty)
+    }
+
+    func testPhoneCallPauseNeverHandsOffEitherOrder() async {
+        let grace = LiveActivityLifecycle.lockedPauseGrace
+        let began: [AnyHashable: Any] = [AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue]
+
+        // The interruption is reported, then the pause arrives.
+        let (model, controller, liveActivity, clock, app, center) = makeLockedPauseHarness()
+        app.isInBackground = true
+        center.post(name: AVAudioSession.interruptionNotification, object: nil, userInfo: began)
+        let pausedAt = clock.now
+        model.dispatchGate2CompactCommand(.pause)
+        XCTAssertEqual(app.beganBackgroundTasks, 0, "no hand-off is scheduled for a call")
+        clock.now = pausedAt.addingTimeInterval(grace)
+        await controller.handOffIfDue()
+        XCTAssertTrue(liveActivity.handOffDates.isEmpty, "the card stays to resume after the call")
+
+        // The pause arrives first; the interruption cancels the scheduled hand-off.
+        let (model2, controller2, liveActivity2, clock2, app2, center2) = makeLockedPauseHarness()
+        app2.isInBackground = true
+        model2.dispatchGate2CompactCommand(.pause)
+        XCTAssertEqual(app2.beganBackgroundTasks, 1)
+        center2.post(name: AVAudioSession.interruptionNotification, object: nil, userInfo: began)
+        XCTAssertEqual(app2.endedBackgroundTasks, 1)
+        clock2.now = clock2.now.addingTimeInterval(grace)
+        await controller2.handOffIfDue()
+        XCTAssertTrue(liveActivity2.handOffDates.isEmpty)
+    }
+
+    func testPauseInTheAppHandsOffOnlyOnceTheAppGoesToTheBackground() async {
+        let (model, controller, liveActivity, clock, app, center) = makeLockedPauseHarness()
+        let pausedAt = clock.now
+        model.dispatchGate2CompactCommand(.pause)
+        XCTAssertEqual(app.beganBackgroundTasks, 0, "paused on screen: the app manages the card")
+
+        app.isInBackground = true
+        center.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        XCTAssertEqual(app.beganBackgroundTasks, 1, "locking the phone starts the grace")
+
+        app.isInBackground = false
+        center.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+        XCTAssertEqual(app.endedBackgroundTasks, 1, "coming back cancels it")
+        clock.now = pausedAt.addingTimeInterval(LiveActivityLifecycle.lockedPauseGrace + 1)
+        await controller.handOffIfDue()
+        XCTAssertTrue(liveActivity.handOffDates.isEmpty)
+    }
+
     /// C3 M1: when another app keeps the audio (the interruption ends without `shouldResume`), the
     /// paused activity ends at once. A phone call ends with `shouldResume`, so the activity stays.
     func testInterruptionEndingWithoutResumeEndsThePausedLiveActivity() {
@@ -862,4 +968,18 @@ private final class RecordingLiveActivityController: Gate2LiveActivityControllin
         endAllCallCount += 1
         status = "ended"
     }
+
+    private(set) var handOffDates: [Date] = []
+
+    func handOffDismissal(at date: Date) async {
+        handOffDates.append(date)
+        status = "handed_off"
+    }
+}
+
+@MainActor
+private final class TestAppState {
+    var isInBackground = false
+    var beganBackgroundTasks = 0
+    var endedBackgroundTasks = 0
 }

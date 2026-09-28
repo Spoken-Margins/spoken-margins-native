@@ -9,14 +9,22 @@ import Foundation
 ///   paused activity ends at once. An ordinary interruption such as a phone call only pauses, so the
 ///   activity stays and the listener can resume afterwards.
 /// - Once ended, it stays ended until listening resumes; a later paused refresh doesn't bring it back.
+/// - Owner decision (#193, option 2): when the listener pauses with the phone locked, the removal
+///   is handed to iOS after a short grace, so the card goes on time even if the app never runs
+///   again. Pauses caused by an interruption (a phone call, another app) never hand off.
 public struct LiveActivityLifecycle: Equatable, Sendable {
     /// Thirty minutes covers a coffee break or a phone call, and is short enough that a listener
     /// who has moved on doesn't find a paused card on the Lock Screen for the rest of the day.
     public static let pausedIdleLimit: TimeInterval = 30 * 60
+    /// A quick pause and resume with the phone locked keeps the card. iOS gives a background
+    /// task about 30 seconds, so the hand-off must happen well inside that.
+    public static let lockedPauseGrace: TimeInterval = 20
 
     public enum EndReason: String, Equatable, Sendable {
         case idleLimit = "idle_limit"
         case interruptionWithoutResume = "interruption_without_resume"
+        /// Ended with a dismissal at the idle deadline; iOS removes it then.
+        case handedOffToSystem = "handed_off_to_system"
     }
 
     public enum Decision: Equatable, Sendable {
@@ -31,6 +39,8 @@ public struct LiveActivityLifecycle: Equatable, Sendable {
     private var pausedSessionId: String?
     private var pausedSince: Date?
     private var endReason: EndReason?
+    private var pauseCausedByInterruption = false
+    private var handOffAt: Date?
 
     public init() {}
 
@@ -46,7 +56,9 @@ public struct LiveActivityLifecycle: Equatable, Sendable {
     ///   - isPaused: the session is paused and not recording.
     public mutating func observe(sessionId: String?, isListening: Bool, isPaused: Bool, now: Date) -> Decision {
         guard let sessionId, !isListening, isPaused else {
-            reset()
+            // An interruption can be reported just before its pause arrives; keep that mark
+            // until a pause has actually happened and listening resumed.
+            if pausedSince != nil || endReason != nil || !isListening { reset() }
             return .show(staleDate: nil)
         }
         if pausedSessionId != sessionId || pausedSince == nil {
@@ -73,9 +85,45 @@ public struct LiveActivityLifecycle: Equatable, Sendable {
         return .end(.interruptionWithoutResume)
     }
 
+    /// An audio interruption began (a phone call, or another app took the audio). The pause it
+    /// causes never hands off to iOS, so the card is there to resume after a call.
+    public mutating func audioInterruptionBegan() {
+        pauseCausedByInterruption = true
+        handOffAt = nil
+    }
+
+    /// When a paused card should be handed to iOS: the grace end, if the app is in the background
+    /// and the listener (not an interruption) paused. Nil when nothing should be scheduled.
+    public mutating func scheduleHandOff(appInBackground: Bool, now: Date) -> Date? {
+        guard appInBackground, !pauseCausedByInterruption, idleDeadline != nil else {
+            handOffAt = nil
+            return nil
+        }
+        if handOffAt == nil { handOffAt = now.addingTimeInterval(Self.lockedPauseGrace) }
+        return handOffAt
+    }
+
+    /// The app is back in front: a pending hand-off is dropped (the app can manage the card again).
+    public mutating func appReturnedToForeground() {
+        handOffAt = nil
+    }
+
+    /// Called when the grace timer fires. Returns the date iOS should remove the card, or nil when
+    /// the listener resumed, the app came back, or an interruption took over in the meantime.
+    public mutating func handOffIfDue(appInBackground: Bool, now: Date) -> Date? {
+        guard appInBackground, !pauseCausedByInterruption,
+              let handOffAt, now >= handOffAt,
+              let deadline = idleDeadline else { return nil }
+        self.handOffAt = nil
+        endReason = .handedOffToSystem
+        return deadline
+    }
+
     private mutating func reset() {
         pausedSessionId = nil
         pausedSince = nil
         endReason = nil
+        pauseCausedByInterruption = false
+        handOffAt = nil
     }
 }
