@@ -147,6 +147,10 @@ public protocol StructuredDocumentRepository {
     func saveStructuredDocument(_ document: StructuredDocument, itemId: String) throws
     /// The newest extraction version stored for the item, if any.
     func loadStructuredDocument(itemId: String) throws -> StructuredDocument?
+    func loadSessions(itemId: String) throws -> [Session]
+    /// Moves an item to a new extraction: its text, chapters, Margin anchors,
+    /// session positions and document, all or nothing.
+    func applyStructuredDocumentUpgrade(_ upgrade: StructuredDocumentUpgrade) throws
 }
 
 public protocol SessionRepository: AnyObject, Sendable,

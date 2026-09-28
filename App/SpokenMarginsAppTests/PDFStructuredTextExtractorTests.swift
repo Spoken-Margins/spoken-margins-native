@@ -2,6 +2,7 @@ import XCTest
 import PDFKit
 import UIKit
 import SessionKit
+import SessionKitPersistence
 import SessionKitSharing
 @testable import SpokenMarginsApp
 
@@ -107,5 +108,114 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         ]
         PDFStructuredTextExtractor.joinEquationFragments(&lines)
         XCTAssertEqual(lines.map(\.role), [.equation, .equation, .equation, .body, .equation])
+    }
+
+    // MARK: C1 M3: written Margins on a PDF imported under v1 (I13 rule 1d/1e)
+
+    /// Four pages with a running head and page numbers, a sentence that crosses the
+    /// page 1-2 break, and a numbered reference list.
+    private func listeningStudyPDF() throws -> PDFDocument {
+        let format = UIGraphicsPDFRendererFormat()
+        format.documentInfo = [kCGPDFContextTitle as String: "Listening Study"]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792), format: format)
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 11)]
+        let heading: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 16)]
+        let pages: [[(String, [NSAttributedString.Key: Any])]] = [
+            [("Methods", heading), ("We asked twelve researchers to listen to papers during their commute.", body),
+             ("Each participant listened for four weeks and kept a short diary of sessions.", body),
+             ("Across all participants the effect held", body)],
+            [("across cohorts and across the four weeks of the study without exception.", body),
+             ("Listening was slower than reading but fitted into time that reading could not use.", body)],
+            [("Results", heading), ("Most sessions happened before nine in the morning on weekdays.", body),
+             ("Participants said the figures were the hardest part to follow by ear.", body)],
+            [("Participants asked for tables to be announced rather than read aloud.", body),
+             ("References", heading), ("[1] A. Writer. Reading and listening. J Examples, 2020.", body),
+             ("[2] B. Reader. Commutes and attention. J Examples, 2021.", body),
+             ("[3] C. Listener. Audio papers. J Examples, 2022.", body),
+             ("[4] D. Hearer. Spoken margins. J Examples, 2023.", body)],
+        ]
+        let data = renderer.pdfData { context in
+            for (index, lines) in pages.enumerated() {
+                context.beginPage()
+                ("Journal of Listening Studies 12 (2026)" as NSString).draw(at: CGPoint(x: 60, y: 30), withAttributes: body)
+                var y: CGFloat = 90
+                for (text, attributes) in lines {
+                    (text as NSString).draw(at: CGPoint(x: 60, y: y), withAttributes: attributes)
+                    y += 24
+                }
+                ("\(index + 1)" as NSString).draw(at: CGPoint(x: 300, y: 750), withAttributes: body)
+            }
+        }
+        return try XCTUnwrap(PDFDocument(data: data))
+    }
+
+    /// Imports the PDF under v1, writes Margins on `marginWords`, re-imports it under v2.
+    private func reimportUnderV2(marginWords: [String]) throws -> (sameItem: Bool, marginsOpenAtTheirWords: Bool, v1TextKept: Bool) {
+        let pdf = try listeningStudyPDF()
+        let path = FileManager.default.temporaryDirectory.appending(path: "c1-m3-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let store = try SQLiteSessionStore(path: path)
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "pdf", displayName: "PDF", capabilities: ["sync": ["canonical_persistence"]]), repository: store)
+        let url = "shared-file://share-sheet/Listening%20Study.pdf"
+        let v1 = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: "Listening Study"),
+            text: try PDFStructuredTextExtractor.markdown(from: pdf),
+            contentFormat: .markdown
+        ))
+        let v1Text = try XCTUnwrap(v1.text)
+        let session = Session(id: "session-m3", itemId: v1.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: v1.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        try store.saveSession(session)
+        for (index, words) in marginWords.enumerated() {
+            let start = v1Text.distance(from: v1Text.startIndex, to: try XCTUnwrap(v1Text.range(of: words), words).lowerBound)
+            try store.saveInterjection(Interjection(
+                id: "margin-\(index)", itemId: v1.id, sessionId: session.id, targetType: .item, targetId: v1.id,
+                createdAt: Date(timeIntervalSince1970: Double(index)), roughPercent: 0,
+                anchor: Anchor(anchorType: .text, startChar: start, endChar: start + words.count, anchorBefore: "", anchorAfter: ""),
+                audioPath: nil, audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
+                displayText: "Margin \(index)", status: "active"
+            ))
+        }
+
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        let reimported = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: try XCTUnwrap(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: document))),
+            text: document.text,
+            contentFormat: .plainText
+        ), structuredDocument: document)
+
+        let item = try store.loadItem(id: v1.id)
+        let characters = Array(item.text ?? "")
+        let margins = try store.loadInterjections(sessionId: session.id).sorted { $0.id < $1.id }
+        let openAtTheirWords = margins.count == marginWords.count && margins.enumerated().allSatisfy { index, margin in
+            margin.anchor.endChar <= characters.count
+                && String(characters[margin.anchor.startChar..<margin.anchor.endChar]) == marginWords[index]
+        }
+        return (reimported.id == v1.id, openAtTheirWords, item.text == v1Text)
+    }
+
+    func testMarginsOnAPDFImportedUnderV1OpenAtTheSameWordsAfterV2() throws {
+        let moved = try reimportUnderV2(marginWords: [
+            "We asked twelve researchers",          // start
+            "Most sessions happened",               // middle
+            "tables to be announced",               // end
+        ])
+        XCTAssertTrue(moved.sameItem, "every Margin lands on the same words, so the item moves to v2")
+        XCTAssertFalse(moved.v1TextKept)
+        XCTAssertTrue(moved.marginsOpenAtTheirWords)
+    }
+
+    func testAPDFStaysOnV1WhenAMarginsWordsChangeUnderV2() throws {
+        // v1 keeps page 1's page number inside the sentence that crosses the break;
+        // v2 also keeps the next page's running head there, so the words differ.
+        let stayed = try reimportUnderV2(marginWords: [
+            "We asked twelve researchers",
+            "the effect held\n1\nacross cohorts",
+            "tables to be announced",
+        ])
+        XCTAssertFalse(stayed.sameItem, "the v2 text becomes its own edition")
+        XCTAssertTrue(stayed.v1TextKept)
+        XCTAssertTrue(stayed.marginsOpenAtTheirWords)
     }
 }

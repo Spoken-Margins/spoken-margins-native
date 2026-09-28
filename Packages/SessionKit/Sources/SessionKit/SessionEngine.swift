@@ -3398,6 +3398,21 @@ public final class SessionEngine {
             // Margin anchors. Retain the original edition and give changed text its
             // own identity.
             if let existing = try existingItem(id: itemId), existing.text != text {
+                // C1 M3 step 5: a PDF re-imported with a newer extraction moves the
+                // existing item to it when every Margin and position lands on the same
+                // words (I13 rule 1d). Otherwise it stays, and the new text becomes
+                // its own edition as before.
+                if let document, existing.deletedAt == nil, currentSession?.itemId != existing.id,
+                   let store = repository as? any (SessionRepository & StructuredDocumentRepository),
+                   case .success(let upgrade) = try StructuredDocumentUpgrader.plan(
+                       existing: existing,
+                       document: document,
+                       listeningMap: StructuredDocumentImport.listeningMap(for: document, title: existing.title, itemId: existing.id),
+                       repository: store
+                   ) {
+                    try store.applyStructuredDocumentUpgrade(upgrade)
+                    return (upgrade.item, upgrade.listeningMap, document)
+                }
                 let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
                 itemId += "-edition-\(digest)"
             }

@@ -386,4 +386,16 @@ extension InMemorySessionRepository: StructuredDocumentRepository {
     public func loadStructuredDocument(itemId: String) throws -> StructuredDocument? {
         structuredDocuments[itemId]?.max { $0.key < $1.key }?.value
     }
+
+    public func loadSessions(itemId: String) throws -> [Session] {
+        sessions.values.filter { $0.itemId == itemId }.sorted { $0.id < $1.id }
+    }
+
+    public func applyStructuredDocumentUpgrade(_ upgrade: StructuredDocumentUpgrade) throws {
+        items[upgrade.item.id] = upgrade.item
+        mapsByItemId[upgrade.item.id] = upgrade.listeningMap
+        upgrade.interjections.forEach { interjections[$0.id] = $0 }
+        upgrade.sessions.forEach { sessions[$0.id] = $0 }
+        try saveStructuredDocument(upgrade.document, itemId: upgrade.item.id)
+    }
 }

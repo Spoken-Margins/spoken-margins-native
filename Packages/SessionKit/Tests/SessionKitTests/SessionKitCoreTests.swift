@@ -424,6 +424,106 @@ final class SessionKitCoreTests: XCTestCase {
         }
     }
 
+    /// Imports a PDF's v1 text, writes Margins on the given words and a position, then
+    /// re-imports it with a v2 document. Returns the store, the v1 item and the result.
+    private func reimportV1PDFWithV2(
+        v2Lines: [StructuredDocumentLine],
+        marginWords: [String],
+        positionWords: String
+    ) throws -> (store: SQLiteSessionStore, v1: Item, reimported: Item, margins: [Interjection], session: Session, path: String) {
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        let store = try SQLiteSessionStore(path: path)
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "pdf", displayName: "PDF", capabilities: ["sync": ["canonical_persistence"]]), repository: store)
+        let url = "shared-file://share-sheet/Paper.pdf"
+        let v1 = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: "Paper"),
+            text: "# Paper\n\n## Methods\n\nWe measured sleep in adults.\nThe effect held across cohorts.\n\n## Results\n\nSleep improved with morning light.",
+            contentFormat: .markdown
+        ))
+        let text = try XCTUnwrap(v1.text)
+        func offset(_ words: String) throws -> Int {
+            text.distance(from: text.startIndex, to: try XCTUnwrap(text.range(of: words)).lowerBound)
+        }
+        let session = Session(id: "session-v1", itemId: v1.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: v1.id, position: Position(charOffset: try offset(positionWords)), completionPercent: 40, playbackRate: 1)
+        try store.saveSession(session)
+        let margins = try marginWords.enumerated().map { index, words -> Interjection in
+            let start = try offset(words)
+            let margin = Interjection(
+                id: "margin-\(index)", itemId: v1.id, sessionId: session.id, targetType: .item, targetId: v1.id,
+                createdAt: Date(timeIntervalSince1970: Double(index)), roughPercent: 10,
+                anchor: Anchor(anchorType: .text, startChar: start, endChar: start + words.count, anchorBefore: "", anchorAfter: ""),
+                audioPath: nil, audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
+                displayText: "Margin \(index)", status: "active"
+            )
+            try store.saveInterjection(margin)
+            return margin
+        }
+        let document = StructuredDocumentBuilder.build(lines: v2Lines, engine: "pdfkit_baseline", version: 2, pageCount: 2)
+        let reimported = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: "Paper"),
+            text: document.text,
+            contentFormat: .plainText
+        ), structuredDocument: document)
+        return (store, v1, reimported, margins, session, path)
+    }
+
+    private func words(_ margin: Interjection, in text: String) -> String? {
+        let characters = Array(text)
+        guard margin.anchor.endChar <= characters.count else { return nil }
+        return String(characters[margin.anchor.startChar..<margin.anchor.endChar])
+    }
+
+    func testReimportMovesAV1PDFToV2WhenEveryMarginLandsOnTheSameWords() throws {
+        let marginWords = ["Methods", "The effect held across cohorts", "morning light"]
+        let result = try reimportV1PDFWithV2(v2Lines: [
+            StructuredDocumentLine(text: "Paper", role: .title, pageIndex: 0),
+            StructuredDocumentLine(text: "J Biol 12 (2020) 1-9", role: .pageHeader, pageIndex: 0),
+            StructuredDocumentLine(text: "Methods", role: .heading, pageIndex: 0, level: 2),
+            StructuredDocumentLine(text: "We measured sleep in adults.", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "The effect held across cohorts.", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "Results", role: .heading, pageIndex: 1, level: 2),
+            StructuredDocumentLine(text: "Sleep improved with morning light.", role: .body, pageIndex: 1),
+            StructuredDocumentLine(text: "References", role: .reference, pageIndex: 1),
+            StructuredDocumentLine(text: "[1] A. Author. Title. 2020.", role: .reference, pageIndex: 1),
+        ], marginWords: marginWords, positionWords: "Sleep improved")
+        defer { try? FileManager.default.removeItem(atPath: result.path) }
+
+        XCTAssertEqual(result.reimported.id, result.v1.id, "the same item moves; no second Library row")
+        let newText = try XCTUnwrap(try result.store.loadItem(id: result.v1.id).text)
+        XCTAssertTrue(newText.contains("J Biol 12"))
+        XCTAssertNotNil(try result.store.loadStructuredDocument(itemId: result.v1.id))
+        let moved = try result.store.loadInterjections(sessionId: result.session.id).sorted { $0.id < $1.id }
+        XCTAssertEqual(moved.map { words($0, in: newText) }, marginWords, "every Margin opens at the same words")
+        let position = try XCTUnwrap(try result.store.loadSession(id: result.session.id)?.position.charOffset)
+        XCTAssertEqual(String(Array(newText)[position...].prefix(14)), "Sleep improved")
+        XCTAssertEqual(try result.store.listItems().count, 1)
+    }
+
+    func testReimportLeavesAV1PDFAloneWhenAMarginsWordsChange() throws {
+        // v1 removed a running head from the middle of a sentence that crossed a page;
+        // v2 keeps the head there, so "effect held across" is no longer one run of text.
+        let marginWords = ["Methods", "effect held across", "morning light"]
+        let result = try reimportV1PDFWithV2(v2Lines: [
+            StructuredDocumentLine(text: "Methods", role: .heading, pageIndex: 0, level: 2),
+            StructuredDocumentLine(text: "We measured sleep in adults.", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "The effect held", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "J Biol 12 (2020) 1-9", role: .pageHeader, pageIndex: 1),
+            StructuredDocumentLine(text: "across cohorts.", role: .body, pageIndex: 1),
+            StructuredDocumentLine(text: "Results", role: .heading, pageIndex: 1, level: 2),
+            StructuredDocumentLine(text: "Sleep improved with morning light.", role: .body, pageIndex: 1),
+        ], marginWords: marginWords, positionWords: "Sleep improved")
+        defer { try? FileManager.default.removeItem(atPath: result.path) }
+
+        XCTAssertNotEqual(result.reimported.id, result.v1.id, "the new text becomes its own edition")
+        let kept = try result.store.loadItem(id: result.v1.id)
+        XCTAssertEqual(kept.text, result.v1.text, "the v1 item keeps its text")
+        XCTAssertNil(try result.store.loadStructuredDocument(itemId: result.v1.id))
+        XCTAssertEqual(try result.store.loadInterjections(sessionId: result.session.id).sorted { $0.id < $1.id }, result.margins, "its Margins are untouched")
+        XCTAssertEqual(try result.store.loadSession(id: result.session.id)?.position, result.session.position)
+    }
+
     func testExtractionV2PDFIsSpokenPerI14WhilePositionsStayInItemText() throws {
         let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
         defer { try? FileManager.default.removeItem(atPath: path) }

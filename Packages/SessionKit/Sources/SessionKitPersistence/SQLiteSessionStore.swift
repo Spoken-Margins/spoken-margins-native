@@ -1037,4 +1037,18 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         let documents: [StructuredDocument] = try loadByItem(kind: Self.structuredDocumentKind, itemId: itemId)
         return documents.max { $0.extraction.version < $1.extraction.version }
     }
+
+    public func applyStructuredDocumentUpgrade(_ upgrade: StructuredDocumentUpgrade) throws {
+        let itemId = upgrade.item.id
+        try withTransaction {
+            try saveItem(upgrade.item)
+            try deleteRecords(kind: "listening_map", itemId: itemId)
+            if let map = upgrade.listeningMap {
+                try save(kind: "listening_map", id: map.id, sessionId: nil, itemId: itemId, value: map)
+            }
+            for interjection in upgrade.interjections { try saveInterjection(interjection) }
+            for session in upgrade.sessions { try saveSession(session) }
+            try saveStructuredDocument(upgrade.document, itemId: itemId)
+        }
+    }
 }
