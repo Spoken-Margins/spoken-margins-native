@@ -1,0 +1,223 @@
+{
+ "all": {
+  "n": 75,
+  "kind": {
+   "accuracy": 0.68,
+   "question": {
+    "p": 1.0,
+    "r": 0.533,
+    "f1": 0.696,
+    "tp": 8,
+    "fp": 0,
+    "fn": 7
+   },
+   "todo": {
+    "p": 1.0,
+    "r": 0.818,
+    "f1": 0.9,
+    "tp": 9,
+    "fp": 0,
+    "fn": 2
+   },
+   "quote": {
+    "p": 0.667,
+    "r": 0.5,
+    "f1": 0.571,
+    "tp": 4,
+    "fp": 2,
+    "fn": 4
+   },
+   "connection": {
+    "p": 1.0,
+    "r": 0.273,
+    "f1": 0.429,
+    "tp": 3,
+    "fp": 0,
+    "fn": 8
+   },
+   "claim": {
+    "p": 0.474,
+    "r": 0.947,
+    "f1": 0.632,
+    "tp": 18,
+    "fp": 20,
+    "fn": 1
+   },
+   "reaction": {
+    "p": 0.818,
+    "r": 0.818,
+    "f1": 0.818,
+    "tp": 9,
+    "fp": 2,
+    "fn": 2
+   },
+   "confusion": {
+    "question": {
+     "question": 8,
+     "todo": 0,
+     "quote": 0,
+     "connection": 0,
+     "claim": 7,
+     "reaction": 0
+    },
+    "todo": {
+     "question": 0,
+     "todo": 9,
+     "quote": 0,
+     "connection": 0,
+     "claim": 2,
+     "reaction": 0
+    },
+    "quote": {
+     "question": 0,
+     "todo": 0,
+     "quote": 4,
+     "connection": 0,
+     "claim": 2,
+     "reaction": 2
+    },
+    "connection": {
+     "question": 0,
+     "todo": 0,
+     "quote": 1,
+     "connection": 3,
+     "claim": 7,
+     "reaction": 0
+    },
+    "claim": {
+     "question": 0,
+     "todo": 0,
+     "quote": 1,
+     "connection": 0,
+     "claim": 18,
+     "reaction": 0
+    },
+    "reaction": {
+     "question": 0,
+     "todo": 0,
+     "quote": 0,
+     "connection": 0,
+     "claim": 2,
+     "reaction": 9
+    }
+   }
+  },
+  "referent": {
+   "accuracy": 0.733,
+   "within_one_sentence": 0.84,
+   "by_gold_scope": {
+    "span": {
+     "correct": 55,
+     "n": 73
+    },
+    "none": {
+     "correct": 0,
+     "n": 1
+    },
+    "item": {
+     "correct": 0,
+     "n": 1
+    }
+   },
+   "anchor_sentence_baseline": 0.293
+  },
+  "entities": {
+   "person": {
+    "p": 0.7,
+    "r": 0.875,
+    "f1": 0.778,
+    "tp": 7,
+    "fp": 3,
+    "fn": 1
+   },
+   "place": {
+    "p": 0.875,
+    "r": 0.778,
+    "f1": 0.824,
+    "tp": 7,
+    "fp": 1,
+    "fn": 2
+   },
+   "org": {
+    "p": 1.0,
+    "r": 0.5,
+    "f1": 0.667,
+    "tp": 1,
+    "fp": 0,
+    "fn": 1
+   },
+   "work": {
+    "p": 0.0,
+    "r": 0.0,
+    "f1": 0.0,
+    "tp": 0,
+    "fp": 1,
+    "fn": 4
+   },
+   "other": {
+    "p": 0.5,
+    "r": 0.625,
+    "f1": 0.556,
+    "tp": 5,
+    "fp": 5,
+    "fn": 3
+   },
+   "any": {
+    "p": 0.933,
+    "r": 0.903,
+    "f1": 0.918,
+    "tp": 28,
+    "fp": 2,
+    "fn": 3
+   },
+   "typed": {
+    "p": 0.667,
+    "r": 0.645,
+    "f1": 0.656,
+    "tp": 20,
+    "fp": 10,
+    "fn": 11
+   }
+  },
+  "topics": {
+   "p": 0.16,
+   "r": 0.253,
+   "f1": 0.196
+  },
+  "links": {
+   "same_entity": {
+    "p": 1.0,
+    "r": 1.0,
+    "f1": 1.0,
+    "tp": 2,
+    "fp": 0,
+    "fn": 0
+   },
+   "same_referent": {
+    "p": 0.714,
+    "r": 1.0,
+    "f1": 0.833,
+    "tp": 5,
+    "fp": 2,
+    "fn": 0
+   },
+   "related_topic": {
+    "p": 0.2,
+    "r": 0.167,
+    "f1": 0.182,
+    "tp": 2,
+    "fp": 8,
+    "fn": 10
+   },
+   "follows_up": {
+    "p": 0.5,
+    "r": 0.125,
+    "f1": 0.2,
+    "tp": 1,
+    "fp": 1,
+    "fn": 7
+   }
+  }
+ },
+ "tagger": "recorded NLTagger"
+}

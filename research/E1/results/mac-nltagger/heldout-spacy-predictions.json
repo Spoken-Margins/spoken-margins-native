@@ -1,0 +1,1044 @@
+{
+ "h001": {
+  "kind": "quote",
+  "referent": [
+   "span",
+   4
+  ],
+  "entities": [],
+  "topics": [
+   "council",
+   "officer"
+  ]
+ },
+ "h002": {
+  "kind": "todo",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [],
+  "topics": [
+   "group",
+   "engineer"
+  ]
+ },
+ "h003": {
+  "kind": "quote",
+  "referent": [
+   "span",
+   6
+  ],
+  "entities": [],
+  "topics": [
+   "decision"
+  ]
+ },
+ "h004": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [],
+  "topics": [
+   "auto responder bot",
+   "inbox"
+  ]
+ },
+ "h005": {
+  "kind": "reaction",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [],
+  "topics": []
+ },
+ "h006": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   6
+  ],
+  "entities": [
+   [
+    "Tycho",
+    "person"
+   ],
+   [
+    "Tycho",
+    "person"
+   ]
+  ],
+  "topics": [
+   "pole landing site",
+   "debris"
+  ]
+ },
+ "h007": {
+  "kind": "question",
+  "referent": [
+   "span",
+   6
+  ],
+  "entities": [
+   [
+    "Tycho",
+    "person"
+   ]
+  ],
+  "topics": [
+   "pole"
+  ]
+ },
+ "h008": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   6
+  ],
+  "entities": [],
+  "topics": [
+   "geology field camp",
+   "buddy"
+  ]
+ },
+ "h009": {
+  "kind": "reaction",
+  "referent": [
+   "span",
+   6
+  ],
+  "entities": [],
+  "topics": [
+   "flight director"
+  ]
+ },
+ "h010": {
+  "kind": "quote",
+  "referent": [
+   "span",
+   3
+  ],
+  "entities": [],
+  "topics": [
+   "home",
+   "whole family"
+  ]
+ },
+ "h011": {
+  "kind": "todo",
+  "referent": [
+   "span",
+   5
+  ],
+  "entities": [
+   [
+    "Artemis III",
+    "other"
+   ]
+  ],
+  "topics": [
+   "launch date"
+  ]
+ },
+ "h012": {
+  "kind": "reaction",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [
+   [
+    "hose",
+    "person"
+   ]
+  ],
+  "topics": [
+   "fire",
+   "information"
+  ]
+ },
+ "h013": {
+  "kind": "reaction",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [
+   [
+    "hose",
+    "person"
+   ]
+  ],
+  "topics": [
+   "ugh fire"
+  ]
+ },
+ "h014": {
+  "kind": "todo",
+  "referent": [
+   "none",
+   null
+  ],
+  "entities": [
+   [
+    "Dana",
+    "person"
+   ]
+  ],
+  "topics": [
+   "astronaut training",
+   "self"
+  ]
+ },
+ "h015": {
+  "kind": "quote",
+  "referent": [
+   "span",
+   1
+  ],
+  "entities": [],
+  "topics": [
+   "failure",
+   "option"
+  ]
+ },
+ "h016": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   6
+  ],
+  "entities": [],
+  "topics": [
+   "trust",
+   "foundation"
+  ]
+ },
+ "h017": {
+  "kind": "question",
+  "referent": [
+   "span",
+   5
+  ],
+  "entities": [
+   [
+    "Zaragoza",
+    "org"
+   ]
+  ],
+  "topics": [
+   "abort landing site"
+  ]
+ },
+ "h018": {
+  "kind": "reaction",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [],
+  "topics": [
+   "ascent engine"
+  ]
+ },
+ "h019": {
+  "kind": "todo",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [],
+  "topics": [
+   "inflatable habitat"
+  ]
+ },
+ "h020": {
+  "kind": "connection",
+  "referent": [
+   "span",
+   3
+  ],
+  "entities": [
+   [
+    "Rumspringa",
+    "person"
+   ]
+  ],
+  "topics": [
+   "phone",
+   "silent retreat"
+  ]
+ },
+ "h021": {
+  "kind": "todo",
+  "referent": [
+   "span",
+   5
+  ],
+  "entities": [],
+  "topics": [
+   "phone",
+   "free weekend"
+  ]
+ },
+ "h022": {
+  "kind": "todo",
+  "referent": [
+   "span",
+   6
+  ],
+  "entities": [
+   [
+    "CHAPEA",
+    "org"
+   ],
+   [
+    "Thor",
+    "person"
+   ]
+  ],
+  "topics": [
+   "movie"
+  ]
+ },
+ "h023": {
+  "kind": "todo",
+  "referent": [
+   "span",
+   5
+  ],
+  "entities": [
+   [
+    "Ash",
+    "other"
+   ]
+  ],
+  "topics": [
+   "movie",
+   "astronaut"
+  ]
+ },
+ "h024": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   5
+  ],
+  "entities": [],
+  "topics": [
+   "same sim"
+  ]
+ },
+ "h025": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   6
+  ],
+  "entities": [],
+  "topics": [
+   "cloud cover",
+   "dry air matter"
+  ]
+ },
+ "h026": {
+  "kind": "todo",
+  "referent": [
+   "span",
+   6
+  ],
+  "entities": [],
+  "topics": [
+   "cold dry air",
+   "pole"
+  ]
+ },
+ "h027": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   0
+  ],
+  "entities": [
+   [
+    "linear",
+    "org"
+   ]
+  ],
+  "topics": [
+   "algebra sophomore",
+   "fog"
+  ]
+ },
+ "h028": {
+  "kind": "reaction",
+  "referent": [
+   "span",
+   6
+  ],
+  "entities": [],
+  "topics": [
+   "hrs"
+  ]
+ },
+ "h029": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   0
+  ],
+  "entities": [],
+  "topics": [
+   "nitrogen",
+   "door"
+  ]
+ },
+ "h030": {
+  "kind": "claim",
+  "referent": [
+   "item",
+   null
+  ],
+  "entities": [],
+  "topics": [
+   "lunar dust coating",
+   "dust"
+  ]
+ },
+ "h031": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   2
+  ],
+  "entities": [
+   [
+    "Mir",
+    "place"
+   ]
+  ],
+  "topics": []
+ },
+ "h032": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [],
+  "topics": [
+   "ground sample",
+   "uv"
+  ]
+ },
+ "h033": {
+  "kind": "quote",
+  "referent": [
+   "span",
+   3
+  ],
+  "entities": [
+   [
+    "Hathaway Brown",
+    "person"
+   ],
+   [
+    "MISSE",
+    "other"
+   ]
+  ],
+  "topics": [
+   "high school girl",
+   "niece robotic club"
+  ]
+ },
+ "h034": {
+  "kind": "question",
+  "referent": [
+   "span",
+   5
+  ],
+  "entities": [],
+  "topics": [
+   "octopus ink melanin",
+   "radiation"
+  ]
+ },
+ "h035": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   4
+  ],
+  "entities": [],
+  "topics": [
+   "registry",
+   "representation problem"
+  ]
+ },
+ "h036": {
+  "kind": "todo",
+  "referent": [
+   "span",
+   4
+  ],
+  "entities": [],
+  "topics": [
+   "bone registry"
+  ]
+ },
+ "h037": {
+  "kind": "reaction",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [],
+  "topics": [
+   "result"
+  ]
+ },
+ "h038": {
+  "kind": "question",
+  "referent": [
+   "span",
+   4
+  ],
+  "entities": [],
+  "topics": [
+   "radiation",
+   "station"
+  ]
+ },
+ "h039": {
+  "kind": "todo",
+  "referent": [
+   "span",
+   4
+  ],
+  "entities": [],
+  "topics": [
+   "radiation",
+   "paper"
+  ],
+  "follows_up": "h038"
+ },
+ "h040": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   4
+  ],
+  "entities": [],
+  "topics": [
+   "balance",
+   "brain"
+  ]
+ },
+ "h041": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   5
+  ],
+  "entities": [
+   [
+    "Calgary",
+    "place"
+   ],
+   [
+    "Lisbon",
+    "place"
+   ]
+  ],
+  "topics": [
+   "mental map",
+   "week"
+  ]
+ },
+ "h042": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   5
+  ],
+  "entities": [],
+  "topics": [
+   "body turn",
+   "landmark"
+  ]
+ },
+ "h043": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   2
+  ],
+  "entities": [],
+  "topics": [
+   "brain change"
+  ]
+ },
+ "h044": {
+  "kind": "todo",
+  "referent": [
+   "span",
+   1
+  ],
+  "entities": [
+   [
+    "Anna",
+    "person"
+   ],
+   [
+    "ep 402 w",
+    "work"
+   ]
+  ],
+  "topics": [
+   "wife",
+   "w/"
+  ]
+ },
+ "h045": {
+  "kind": "reaction",
+  "referent": [
+   "span",
+   5
+  ],
+  "entities": [
+   [
+    "1111",
+    "org"
+   ]
+  ],
+  "topics": [
+   "calling"
+  ]
+ },
+ "h046": {
+  "kind": "quote",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [],
+  "topics": [
+   "phone booth"
+  ]
+ },
+ "h047": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   3
+  ],
+  "entities": [],
+  "topics": [
+   "datum center",
+   "space"
+  ]
+ },
+ "h048": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [
+   [
+    "Chris Williams",
+    "person"
+   ]
+  ],
+  "topics": [
+   "plant experiment"
+  ]
+ },
+ "h049": {
+  "kind": "question",
+  "referent": [
+   "span",
+   1
+  ],
+  "entities": [],
+  "topics": [
+   "lander",
+   "rover suit"
+  ]
+ },
+ "h050": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   4
+  ],
+  "entities": [],
+  "topics": [
+   "weight power saving",
+   "real selling"
+  ]
+ },
+ "h051": {
+  "kind": "connection",
+  "referent": [
+   "span",
+   4
+  ],
+  "entities": [],
+  "topics": [
+   "copper",
+   "house"
+  ]
+ },
+ "h052": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   3
+  ],
+  "entities": [],
+  "topics": [
+   "next generation"
+  ]
+ },
+ "h053": {
+  "kind": "question",
+  "referent": [
+   "span",
+   4
+  ],
+  "entities": [
+   [
+    "TDRS",
+    "other"
+   ]
+  ],
+  "topics": [
+   "commercial relay"
+  ]
+ },
+ "h054": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [],
+  "topics": [
+   "drone",
+   "rover"
+  ]
+ },
+ "h055": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [
+   [
+    "Ingenuity",
+    "org"
+   ],
+   [
+    "Mars",
+    "place"
+   ],
+   [
+    "Moon",
+    "place"
+   ]
+  ],
+  "topics": []
+ },
+ "h056": {
+  "kind": "quote",
+  "referent": [
+   "span",
+   6
+  ],
+  "entities": [],
+  "topics": [
+   "block",
+   "ice"
+  ]
+ },
+ "h057": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   3
+  ],
+  "entities": [
+   [
+    "Moon",
+    "place"
+   ]
+  ],
+  "topics": [
+   "payload",
+   "small country"
+  ]
+ },
+ "h058": {
+  "kind": "todo",
+  "referent": [
+   "span",
+   3
+  ],
+  "entities": [
+   [
+    "Artemis Accords",
+    "org"
+   ]
+  ],
+  "topics": [
+   "signatory"
+  ]
+ },
+ "h059": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   6
+  ],
+  "entities": [],
+  "topics": [
+   "tie",
+   "contradiction"
+  ]
+ },
+ "h060": {
+  "kind": "connection",
+  "referent": [
+   "span",
+   2
+  ],
+  "entities": [
+   [
+    "Flight Centre",
+    "place"
+   ]
+  ],
+  "topics": [
+   "village tribe",
+   "family"
+  ]
+ },
+ "h061": {
+  "kind": "quote",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [],
+  "topics": [
+   "third"
+  ]
+ },
+ "h062": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [
+   [
+    "Hello Internet",
+    "other"
+   ]
+  ],
+  "topics": [
+   "internet",
+   "queue"
+  ]
+ },
+ "h063": {
+  "kind": "question",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [
+   [
+    "Hall",
+    "other"
+   ]
+  ],
+  "topics": [
+   "outfall",
+   "capital"
+  ]
+ },
+ "h064": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [],
+  "topics": [
+   "cement testing"
+  ]
+ },
+ "h065": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   3
+  ],
+  "entities": [
+   [
+    "QA",
+    "org"
+   ]
+  ],
+  "topics": [
+   "sewer",
+   "concrete"
+  ]
+ },
+ "h066": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [],
+  "topics": [
+   "water company fault",
+   "tide"
+  ],
+  "follows_up": "h063"
+ },
+ "h067": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   5
+  ],
+  "entities": [
+   [
+    "John Snow",
+    "person"
+   ]
+  ],
+  "topics": [
+   "water",
+   "pump story"
+  ]
+ },
+ "h068": {
+  "kind": "question",
+  "referent": [
+   "span",
+   5
+  ],
+  "entities": [
+   [
+    "Stevens",
+    "person"
+   ]
+  ],
+  "topics": []
+ },
+ "h069": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [
+   [
+    "Goethals",
+    "org"
+   ]
+  ],
+  "topics": [
+   "schedule"
+  ]
+ },
+ "h070": {
+  "kind": "reaction",
+  "referent": [
+   "span",
+   1
+  ],
+  "entities": [],
+  "topics": [
+   "whole canal"
+  ]
+ },
+ "h071": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   5
+  ],
+  "entities": [
+   [
+    "Nicaragua",
+    "place"
+   ]
+  ],
+  "topics": [
+   "canal"
+  ]
+ },
+ "h072": {
+  "kind": "quote",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [],
+  "topics": [
+   "bulb",
+   "hand"
+  ]
+ },
+ "h073": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   7
+  ],
+  "entities": [],
+  "topics": [
+   "market",
+   "exchange"
+  ]
+ },
+ "h074": {
+  "kind": "todo",
+  "referent": [
+   "span",
+   5
+  ],
+  "entities": [
+   [
+    "Mackay",
+    "person"
+   ]
+  ],
+  "topics": [
+   "version"
+  ]
+ },
+ "h075": {
+  "kind": "claim",
+  "referent": [
+   "span",
+   5
+  ],
+  "entities": [],
+  "topics": [
+   "victim damage",
+   "pamphlet"
+  ]
+ }
+}

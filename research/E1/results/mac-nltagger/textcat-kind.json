@@ -1,0 +1,410 @@
+{
+ "public": {
+  "all": {
+   "accuracy": 0.76,
+   "question": {
+    "p": 0.976,
+    "r": 0.952,
+    "f1": 0.964,
+    "tp": 40,
+    "fp": 1,
+    "fn": 2
+   },
+   "todo": {
+    "p": 0.737,
+    "r": 0.933,
+    "f1": 0.824,
+    "tp": 28,
+    "fp": 10,
+    "fn": 2
+   },
+   "quote": {
+    "p": 1.0,
+    "r": 0.769,
+    "f1": 0.87,
+    "tp": 10,
+    "fp": 0,
+    "fn": 3
+   },
+   "connection": {
+    "p": 0.818,
+    "r": 0.409,
+    "f1": 0.545,
+    "tp": 9,
+    "fp": 2,
+    "fn": 13
+   },
+   "claim": {
+    "p": 0.788,
+    "r": 0.667,
+    "f1": 0.722,
+    "tp": 26,
+    "fp": 7,
+    "fn": 13
+   },
+   "reaction": {
+    "p": 0.476,
+    "r": 0.69,
+    "f1": 0.563,
+    "tp": 20,
+    "fp": 22,
+    "fn": 9
+   },
+   "confusion": {
+    "question": {
+     "question": 40,
+     "todo": 1,
+     "quote": 0,
+     "connection": 0,
+     "claim": 1,
+     "reaction": 0
+    },
+    "todo": {
+     "question": 0,
+     "todo": 28,
+     "quote": 0,
+     "connection": 0,
+     "claim": 0,
+     "reaction": 2
+    },
+    "quote": {
+     "question": 0,
+     "todo": 0,
+     "quote": 10,
+     "connection": 0,
+     "claim": 0,
+     "reaction": 3
+    },
+    "connection": {
+     "question": 0,
+     "todo": 3,
+     "quote": 0,
+     "connection": 9,
+     "claim": 3,
+     "reaction": 7
+    },
+    "claim": {
+     "question": 1,
+     "todo": 2,
+     "quote": 0,
+     "connection": 0,
+     "claim": 26,
+     "reaction": 10
+    },
+    "reaction": {
+     "question": 0,
+     "todo": 4,
+     "quote": 0,
+     "connection": 2,
+     "claim": 3,
+     "reaction": 20
+    }
+   }
+  },
+  "dev": {
+   "accuracy": 0.786,
+   "question": {
+    "p": 1.0,
+    "r": 1.0,
+    "f1": 1.0,
+    "tp": 12,
+    "fp": 0,
+    "fn": 0
+   },
+   "todo": {
+    "p": 0.8,
+    "r": 0.8,
+    "f1": 0.8,
+    "tp": 8,
+    "fp": 2,
+    "fn": 2
+   },
+   "quote": {
+    "p": 1.0,
+    "r": 0.6,
+    "f1": 0.75,
+    "tp": 3,
+    "fp": 0,
+    "fn": 2
+   },
+   "connection": {
+    "p": 1.0,
+    "r": 0.556,
+    "f1": 0.714,
+    "tp": 5,
+    "fp": 0,
+    "fn": 4
+   },
+   "claim": {
+    "p": 0.818,
+    "r": 0.818,
+    "f1": 0.818,
+    "tp": 9,
+    "fp": 2,
+    "fn": 2
+   },
+   "reaction": {
+    "p": 0.467,
+    "r": 0.778,
+    "f1": 0.583,
+    "tp": 7,
+    "fp": 8,
+    "fn": 2
+   },
+   "confusion": {
+    "question": {
+     "question": 12,
+     "todo": 0,
+     "quote": 0,
+     "connection": 0,
+     "claim": 0,
+     "reaction": 0
+    },
+    "todo": {
+     "question": 0,
+     "todo": 8,
+     "quote": 0,
+     "connection": 0,
+     "claim": 0,
+     "reaction": 2
+    },
+    "quote": {
+     "question": 0,
+     "todo": 0,
+     "quote": 3,
+     "connection": 0,
+     "claim": 0,
+     "reaction": 2
+    },
+    "connection": {
+     "question": 0,
+     "todo": 1,
+     "quote": 0,
+     "connection": 5,
+     "claim": 1,
+     "reaction": 2
+    },
+    "claim": {
+     "question": 0,
+     "todo": 0,
+     "quote": 0,
+     "connection": 0,
+     "claim": 9,
+     "reaction": 2
+    },
+    "reaction": {
+     "question": 0,
+     "todo": 1,
+     "quote": 0,
+     "connection": 0,
+     "claim": 1,
+     "reaction": 7
+    }
+   }
+  },
+  "test": {
+   "accuracy": 0.748,
+   "question": {
+    "p": 0.966,
+    "r": 0.933,
+    "f1": 0.949,
+    "tp": 28,
+    "fp": 1,
+    "fn": 2
+   },
+   "todo": {
+    "p": 0.714,
+    "r": 1.0,
+    "f1": 0.833,
+    "tp": 20,
+    "fp": 8,
+    "fn": 0
+   },
+   "quote": {
+    "p": 1.0,
+    "r": 0.875,
+    "f1": 0.933,
+    "tp": 7,
+    "fp": 0,
+    "fn": 1
+   },
+   "connection": {
+    "p": 0.667,
+    "r": 0.308,
+    "f1": 0.421,
+    "tp": 4,
+    "fp": 2,
+    "fn": 9
+   },
+   "claim": {
+    "p": 0.773,
+    "r": 0.607,
+    "f1": 0.68,
+    "tp": 17,
+    "fp": 5,
+    "fn": 11
+   },
+   "reaction": {
+    "p": 0.481,
+    "r": 0.65,
+    "f1": 0.553,
+    "tp": 13,
+    "fp": 14,
+    "fn": 7
+   },
+   "confusion": {
+    "question": {
+     "question": 28,
+     "todo": 1,
+     "quote": 0,
+     "connection": 0,
+     "claim": 1,
+     "reaction": 0
+    },
+    "todo": {
+     "question": 0,
+     "todo": 20,
+     "quote": 0,
+     "connection": 0,
+     "claim": 0,
+     "reaction": 0
+    },
+    "quote": {
+     "question": 0,
+     "todo": 0,
+     "quote": 7,
+     "connection": 0,
+     "claim": 0,
+     "reaction": 1
+    },
+    "connection": {
+     "question": 0,
+     "todo": 2,
+     "quote": 0,
+     "connection": 4,
+     "claim": 2,
+     "reaction": 5
+    },
+    "claim": {
+     "question": 1,
+     "todo": 2,
+     "quote": 0,
+     "connection": 0,
+     "claim": 17,
+     "reaction": 8
+    },
+    "reaction": {
+     "question": 0,
+     "todo": 3,
+     "quote": 0,
+     "connection": 2,
+     "claim": 2,
+     "reaction": 13
+    }
+   }
+  }
+ },
+ "heldout": {
+  "all": {
+   "accuracy": 0.6,
+   "question": {
+    "p": 0.619,
+    "r": 0.867,
+    "f1": 0.722,
+    "tp": 13,
+    "fp": 8,
+    "fn": 2
+   },
+   "todo": {
+    "p": 1.0,
+    "r": 0.455,
+    "f1": 0.625,
+    "tp": 5,
+    "fp": 0,
+    "fn": 6
+   },
+   "quote": {
+    "p": 0.75,
+    "r": 0.375,
+    "f1": 0.5,
+    "tp": 3,
+    "fp": 1,
+    "fn": 5
+   },
+   "connection": {
+    "p": 0.778,
+    "r": 0.636,
+    "f1": 0.7,
+    "tp": 7,
+    "fp": 2,
+    "fn": 4
+   },
+   "claim": {
+    "p": 0.545,
+    "r": 0.632,
+    "f1": 0.585,
+    "tp": 12,
+    "fp": 10,
+    "fn": 7
+   },
+   "reaction": {
+    "p": 0.357,
+    "r": 0.455,
+    "f1": 0.4,
+    "tp": 5,
+    "fp": 9,
+    "fn": 6
+   },
+   "confusion": {
+    "question": {
+     "question": 13,
+     "todo": 0,
+     "quote": 0,
+     "connection": 0,
+     "claim": 1,
+     "reaction": 1
+    },
+    "todo": {
+     "question": 1,
+     "todo": 5,
+     "quote": 1,
+     "connection": 1,
+     "claim": 2,
+     "reaction": 1
+    },
+    "quote": {
+     "question": 1,
+     "todo": 0,
+     "quote": 3,
+     "connection": 0,
+     "claim": 2,
+     "reaction": 2
+    },
+    "connection": {
+     "question": 0,
+     "todo": 0,
+     "quote": 0,
+     "connection": 7,
+     "claim": 1,
+     "reaction": 3
+    },
+    "claim": {
+     "question": 4,
+     "todo": 0,
+     "quote": 0,
+     "connection": 1,
+     "claim": 12,
+     "reaction": 2
+    },
+    "reaction": {
+     "question": 2,
+     "todo": 0,
+     "quote": 0,
+     "connection": 0,
+     "claim": 4,
+     "reaction": 5
+    }
+   }
+  }
+ }
+}

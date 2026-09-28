@@ -1,0 +1,659 @@
+{
+ "all": {
+  "n": 175,
+  "kind": {
+   "accuracy": 0.897,
+   "question": {
+    "p": 0.953,
+    "r": 0.976,
+    "f1": 0.965,
+    "tp": 41,
+    "fp": 2,
+    "fn": 1
+   },
+   "todo": {
+    "p": 0.938,
+    "r": 1.0,
+    "f1": 0.968,
+    "tp": 30,
+    "fp": 2,
+    "fn": 0
+   },
+   "quote": {
+    "p": 0.75,
+    "r": 0.923,
+    "f1": 0.828,
+    "tp": 12,
+    "fp": 4,
+    "fn": 1
+   },
+   "connection": {
+    "p": 1.0,
+    "r": 0.727,
+    "f1": 0.842,
+    "tp": 16,
+    "fp": 0,
+    "fn": 6
+   },
+   "claim": {
+    "p": 0.792,
+    "r": 0.974,
+    "f1": 0.874,
+    "tp": 38,
+    "fp": 10,
+    "fn": 1
+   },
+   "reaction": {
+    "p": 1.0,
+    "r": 0.69,
+    "f1": 0.816,
+    "tp": 20,
+    "fp": 0,
+    "fn": 9
+   },
+   "confusion": {
+    "question": {
+     "question": 41,
+     "todo": 1,
+     "quote": 0,
+     "connection": 0,
+     "claim": 0,
+     "reaction": 0
+    },
+    "todo": {
+     "question": 0,
+     "todo": 30,
+     "quote": 0,
+     "connection": 0,
+     "claim": 0,
+     "reaction": 0
+    },
+    "quote": {
+     "question": 0,
+     "todo": 0,
+     "quote": 12,
+     "connection": 0,
+     "claim": 1,
+     "reaction": 0
+    },
+    "connection": {
+     "question": 1,
+     "todo": 1,
+     "quote": 0,
+     "connection": 16,
+     "claim": 4,
+     "reaction": 0
+    },
+    "claim": {
+     "question": 0,
+     "todo": 0,
+     "quote": 1,
+     "connection": 0,
+     "claim": 38,
+     "reaction": 0
+    },
+    "reaction": {
+     "question": 1,
+     "todo": 0,
+     "quote": 3,
+     "connection": 0,
+     "claim": 5,
+     "reaction": 20
+    }
+   }
+  },
+  "referent": {
+   "accuracy": 0.777,
+   "within_one_sentence": 0.857,
+   "by_gold_scope": {
+    "span": {
+     "correct": 131,
+     "n": 165
+    },
+    "item": {
+     "correct": 5,
+     "n": 9
+    },
+    "none": {
+     "correct": 0,
+     "n": 1
+    }
+   },
+   "anchor_sentence_baseline": 0.257
+  },
+  "entities": {
+   "person": {
+    "p": 0.733,
+    "r": 0.846,
+    "f1": 0.786,
+    "tp": 22,
+    "fp": 8,
+    "fn": 4
+   },
+   "place": {
+    "p": 0.731,
+    "r": 0.864,
+    "f1": 0.792,
+    "tp": 19,
+    "fp": 7,
+    "fn": 3
+   },
+   "org": {
+    "p": 0.312,
+    "r": 0.333,
+    "f1": 0.323,
+    "tp": 5,
+    "fp": 11,
+    "fn": 10
+   },
+   "work": {
+    "p": 0.625,
+    "r": 0.625,
+    "f1": 0.625,
+    "tp": 5,
+    "fp": 3,
+    "fn": 3
+   },
+   "other": {
+    "p": 0.375,
+    "r": 0.3,
+    "f1": 0.333,
+    "tp": 6,
+    "fp": 10,
+    "fn": 14
+   },
+   "any": {
+    "p": 0.792,
+    "r": 0.835,
+    "f1": 0.813,
+    "tp": 76,
+    "fp": 20,
+    "fn": 15
+   },
+   "typed": {
+    "p": 0.594,
+    "r": 0.626,
+    "f1": 0.61,
+    "tp": 57,
+    "fp": 39,
+    "fn": 34
+   }
+  },
+  "topics": {
+   "p": 0.347,
+   "r": 0.455,
+   "f1": 0.393
+  },
+  "links": {
+   "same_entity": {
+    "p": 0.56,
+    "r": 0.824,
+    "f1": 0.667,
+    "tp": 14,
+    "fp": 11,
+    "fn": 3
+   },
+   "same_referent": {
+    "p": 0.476,
+    "r": 0.714,
+    "f1": 0.571,
+    "tp": 10,
+    "fp": 11,
+    "fn": 4
+   },
+   "related_topic": {
+    "p": 0.157,
+    "r": 0.371,
+    "f1": 0.22,
+    "tp": 13,
+    "fp": 70,
+    "fn": 22
+   },
+   "follows_up": {
+    "p": 0.2,
+    "r": 0.308,
+    "f1": 0.242,
+    "tp": 4,
+    "fp": 16,
+    "fn": 9
+   }
+  }
+ },
+ "dev": {
+  "n": 56,
+  "kind": {
+   "accuracy": 0.911,
+   "question": {
+    "p": 1.0,
+    "r": 1.0,
+    "f1": 1.0,
+    "tp": 12,
+    "fp": 0,
+    "fn": 0
+   },
+   "todo": {
+    "p": 1.0,
+    "r": 1.0,
+    "f1": 1.0,
+    "tp": 10,
+    "fp": 0,
+    "fn": 0
+   },
+   "quote": {
+    "p": 0.8,
+    "r": 0.8,
+    "f1": 0.8,
+    "tp": 4,
+    "fp": 1,
+    "fn": 1
+   },
+   "connection": {
+    "p": 1.0,
+    "r": 0.778,
+    "f1": 0.875,
+    "tp": 7,
+    "fp": 0,
+    "fn": 2
+   },
+   "claim": {
+    "p": 0.733,
+    "r": 1.0,
+    "f1": 0.846,
+    "tp": 11,
+    "fp": 4,
+    "fn": 0
+   },
+   "reaction": {
+    "p": 1.0,
+    "r": 0.778,
+    "f1": 0.875,
+    "tp": 7,
+    "fp": 0,
+    "fn": 2
+   },
+   "confusion": {
+    "question": {
+     "question": 12,
+     "todo": 0,
+     "quote": 0,
+     "connection": 0,
+     "claim": 0,
+     "reaction": 0
+    },
+    "todo": {
+     "question": 0,
+     "todo": 10,
+     "quote": 0,
+     "connection": 0,
+     "claim": 0,
+     "reaction": 0
+    },
+    "quote": {
+     "question": 0,
+     "todo": 0,
+     "quote": 4,
+     "connection": 0,
+     "claim": 1,
+     "reaction": 0
+    },
+    "connection": {
+     "question": 0,
+     "todo": 0,
+     "quote": 0,
+     "connection": 7,
+     "claim": 2,
+     "reaction": 0
+    },
+    "claim": {
+     "question": 0,
+     "todo": 0,
+     "quote": 0,
+     "connection": 0,
+     "claim": 11,
+     "reaction": 0
+    },
+    "reaction": {
+     "question": 0,
+     "todo": 0,
+     "quote": 1,
+     "connection": 0,
+     "claim": 1,
+     "reaction": 7
+    }
+   }
+  },
+  "referent": {
+   "accuracy": 0.804,
+   "within_one_sentence": 0.875,
+   "by_gold_scope": {
+    "span": {
+     "correct": 42,
+     "n": 51
+    },
+    "item": {
+     "correct": 3,
+     "n": 4
+    },
+    "none": {
+     "correct": 0,
+     "n": 1
+    }
+   },
+   "anchor_sentence_baseline": 0.268
+  },
+  "entities": {
+   "person": {
+    "p": 0.5,
+    "r": 0.8,
+    "f1": 0.615,
+    "tp": 4,
+    "fp": 4,
+    "fn": 1
+   },
+   "place": {
+    "p": 0.6,
+    "r": 0.6,
+    "f1": 0.6,
+    "tp": 3,
+    "fp": 2,
+    "fn": 2
+   },
+   "org": {
+    "p": 0.125,
+    "r": 0.5,
+    "f1": 0.2,
+    "tp": 1,
+    "fp": 7,
+    "fn": 1
+   },
+   "work": {
+    "p": 1.0,
+    "r": 0.667,
+    "f1": 0.8,
+    "tp": 2,
+    "fp": 0,
+    "fn": 1
+   },
+   "other": {
+    "p": 0.667,
+    "r": 0.222,
+    "f1": 0.333,
+    "tp": 2,
+    "fp": 1,
+    "fn": 7
+   },
+   "any": {
+    "p": 0.808,
+    "r": 0.875,
+    "f1": 0.84,
+    "tp": 21,
+    "fp": 5,
+    "fn": 3
+   },
+   "typed": {
+    "p": 0.462,
+    "r": 0.5,
+    "f1": 0.48,
+    "tp": 12,
+    "fp": 14,
+    "fn": 12
+   }
+  },
+  "topics": {
+   "p": 0.414,
+   "r": 0.514,
+   "f1": 0.459
+  },
+  "links": {
+   "same_entity": {
+    "p": 0.667,
+    "r": 0.667,
+    "f1": 0.667,
+    "tp": 2,
+    "fp": 1,
+    "fn": 1
+   },
+   "same_referent": {
+    "p": 0.6,
+    "r": 1.0,
+    "f1": 0.75,
+    "tp": 3,
+    "fp": 2,
+    "fn": 0
+   },
+   "related_topic": {
+    "p": 0.273,
+    "r": 0.375,
+    "f1": 0.316,
+    "tp": 3,
+    "fp": 8,
+    "fn": 5
+   },
+   "follows_up": {
+    "p": 0.25,
+    "r": 0.5,
+    "f1": 0.333,
+    "tp": 1,
+    "fp": 3,
+    "fn": 1
+   }
+  }
+ },
+ "test": {
+  "n": 119,
+  "kind": {
+   "accuracy": 0.891,
+   "question": {
+    "p": 0.935,
+    "r": 0.967,
+    "f1": 0.951,
+    "tp": 29,
+    "fp": 2,
+    "fn": 1
+   },
+   "todo": {
+    "p": 0.909,
+    "r": 1.0,
+    "f1": 0.952,
+    "tp": 20,
+    "fp": 2,
+    "fn": 0
+   },
+   "quote": {
+    "p": 0.727,
+    "r": 1.0,
+    "f1": 0.842,
+    "tp": 8,
+    "fp": 3,
+    "fn": 0
+   },
+   "connection": {
+    "p": 1.0,
+    "r": 0.692,
+    "f1": 0.818,
+    "tp": 9,
+    "fp": 0,
+    "fn": 4
+   },
+   "claim": {
+    "p": 0.818,
+    "r": 0.964,
+    "f1": 0.885,
+    "tp": 27,
+    "fp": 6,
+    "fn": 1
+   },
+   "reaction": {
+    "p": 1.0,
+    "r": 0.65,
+    "f1": 0.788,
+    "tp": 13,
+    "fp": 0,
+    "fn": 7
+   },
+   "confusion": {
+    "question": {
+     "question": 29,
+     "todo": 1,
+     "quote": 0,
+     "connection": 0,
+     "claim": 0,
+     "reaction": 0
+    },
+    "todo": {
+     "question": 0,
+     "todo": 20,
+     "quote": 0,
+     "connection": 0,
+     "claim": 0,
+     "reaction": 0
+    },
+    "quote": {
+     "question": 0,
+     "todo": 0,
+     "quote": 8,
+     "connection": 0,
+     "claim": 0,
+     "reaction": 0
+    },
+    "connection": {
+     "question": 1,
+     "todo": 1,
+     "quote": 0,
+     "connection": 9,
+     "claim": 2,
+     "reaction": 0
+    },
+    "claim": {
+     "question": 0,
+     "todo": 0,
+     "quote": 1,
+     "connection": 0,
+     "claim": 27,
+     "reaction": 0
+    },
+    "reaction": {
+     "question": 1,
+     "todo": 0,
+     "quote": 2,
+     "connection": 0,
+     "claim": 4,
+     "reaction": 13
+    }
+   }
+  },
+  "referent": {
+   "accuracy": 0.765,
+   "within_one_sentence": 0.849,
+   "by_gold_scope": {
+    "span": {
+     "correct": 89,
+     "n": 114
+    },
+    "item": {
+     "correct": 2,
+     "n": 5
+    }
+   },
+   "anchor_sentence_baseline": 0.252
+  },
+  "entities": {
+   "person": {
+    "p": 0.818,
+    "r": 0.857,
+    "f1": 0.837,
+    "tp": 18,
+    "fp": 4,
+    "fn": 3
+   },
+   "place": {
+    "p": 0.762,
+    "r": 0.941,
+    "f1": 0.842,
+    "tp": 16,
+    "fp": 5,
+    "fn": 1
+   },
+   "org": {
+    "p": 0.5,
+    "r": 0.308,
+    "f1": 0.381,
+    "tp": 4,
+    "fp": 4,
+    "fn": 9
+   },
+   "work": {
+    "p": 0.5,
+    "r": 0.6,
+    "f1": 0.545,
+    "tp": 3,
+    "fp": 3,
+    "fn": 2
+   },
+   "other": {
+    "p": 0.308,
+    "r": 0.364,
+    "f1": 0.333,
+    "tp": 4,
+    "fp": 9,
+    "fn": 7
+   },
+   "any": {
+    "p": 0.786,
+    "r": 0.821,
+    "f1": 0.803,
+    "tp": 55,
+    "fp": 15,
+    "fn": 12
+   },
+   "typed": {
+    "p": 0.643,
+    "r": 0.672,
+    "f1": 0.657,
+    "tp": 45,
+    "fp": 25,
+    "fn": 22
+   }
+  },
+  "topics": {
+   "p": 0.316,
+   "r": 0.424,
+   "f1": 0.362
+  },
+  "links": {
+   "same_entity": {
+    "p": 0.667,
+    "r": 0.8,
+    "f1": 0.727,
+    "tp": 8,
+    "fp": 4,
+    "fn": 2
+   },
+   "same_referent": {
+    "p": 0.438,
+    "r": 0.636,
+    "f1": 0.519,
+    "tp": 7,
+    "fp": 9,
+    "fn": 4
+   },
+   "related_topic": {
+    "p": 0.191,
+    "r": 0.474,
+    "f1": 0.273,
+    "tp": 9,
+    "fp": 38,
+    "fn": 10
+   },
+   "follows_up": {
+    "p": 0.188,
+    "r": 0.273,
+    "f1": 0.222,
+    "tp": 3,
+    "fp": 13,
+    "fn": 8
+   }
+  }
+ },
+ "tagger": "recorded NLTagger"
+}
