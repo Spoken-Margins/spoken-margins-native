@@ -42,6 +42,7 @@
 }
 
 [hidden] { display: none !important; }
+*, *::before, *::after { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
   background: var(--pg-bg);

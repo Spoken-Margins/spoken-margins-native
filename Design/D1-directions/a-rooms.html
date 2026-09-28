@@ -52,6 +52,7 @@
 }
 
 [hidden] { display: none !important; }
+*, *::before, *::after { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
   background: var(--pg-bg);
@@ -367,7 +368,7 @@ table.taps td.today { color: var(--pg-muted); white-space: nowrap; }
 .dirA .ahead .ah .mk.fr { background: #a79cff; border-radius: 50%; }
 .dirA .ahead .ah.here { color: #dbed8d; font-weight: 700; }
 .dirA .ahead .ah.here .mk { background: #dbed8d; border-radius: 2px; width: 12px; height: 3px; }
-.dirA .ahead .ah .approx { font-size: 11px; color: #b4c3b8; margin-left: auto; }
+.dirA .ahead .ah .approx { white-space: nowrap; font-size: 11px; color: #b4c3b8; margin-left: auto; }
 .dirA .ahead .ah .ib { color: #dbed8d; width: 40px; height: 40px; margin-left: auto; }
 .dirA .scrub { margin: 14px 18px 0; }
 .dirA .scrub .track { height: 6px; border-radius: 3px; background: rgba(255,255,255,.18); position: relative; }
