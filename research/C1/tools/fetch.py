@@ -98,6 +98,23 @@ def measured_tags(entry: dict, facts: dict) -> list[str]:
     return tags
 
 
+def download_pdf(entry: dict) -> bytes:
+    """The manifest's PDF, checked against its recorded sha256. arXiv PDFs fall
+    back to export.arxiv.org, arXiv's mirror for programmatic access."""
+    expected = entry.get("measured", {}).get("sha256")
+    urls = [entry["pdf_url"]]
+    if entry["source"] == "arxiv":
+        urls.append(entry["pdf_url"].replace("https://arxiv.org/", "https://export.arxiv.org/"))
+    error = None
+    for url in urls:
+        try:
+            return net.get(url, sha256=expected)
+        except net.FetchError as failure:
+            error = failure
+            print(f"  {url}: {failure}", file=sys.stderr)
+    raise error
+
+
 def fetch_entry(entry: dict, entries_by_id: dict) -> dict:
     PDF_DIR.mkdir(parents=True, exist_ok=True)
     GT_DIR.mkdir(parents=True, exist_ok=True)
@@ -110,7 +127,7 @@ def fetch_entry(entry: dict, entries_by_id: dict) -> dict:
                 base_path.write_bytes(net.get(base["pdf_url"]))
             rasterize(base_path, pdf_path)
         else:
-            pdf_path.write_bytes(net.get(entry["pdf_url"]))
+            pdf_path.write_bytes(download_pdf(entry))
     gt_path = GT_DIR / f"{entry['id']}.json"
     raw = net.get(entry["ground_truth"]["url"])
     kind = entry["ground_truth"]["kind"]

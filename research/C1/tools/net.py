@@ -9,6 +9,7 @@ arXiv, bioRxiv and OpenAlex rate-limit aggressively.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import time
 import urllib.error
 import urllib.parse
@@ -27,6 +28,7 @@ HOST_SPACING = {
     "eutils.ncbi.nlm.nih.gov": 0.4,
 }
 DEFAULT_SPACING = 0.3
+RETRY_DELAY = 5.0  # seconds before the first retry; doubles each time
 _last_request: dict[str, float] = {}
 
 
@@ -50,11 +52,16 @@ def _wait_for(host: str) -> None:
     _last_request[host] = time.monotonic()
 
 
-def get(url: str, *, cache: bool = True, attempts: int = 5, timeout: int = 120) -> bytes:
+def get(url: str, *, cache: bool = True, attempts: int = 5, timeout: int = 120,
+        sha256: str | None = None) -> bytes:
     """Returns the body of a 200 response, raising FetchError otherwise.
 
     404s are cached as misses too, so probing for optional files (an arXiv
     HTML rendering that doesn't exist) isn't repeated on every run.
+
+    A body shorter than its Content-Length, or one whose SHA-256 doesn't match
+    `sha256` when given, is retried and never cached: on the Mac run a
+    6 MB arXiv PDF arrived cut off at 5 MB.
     """
     path = _cache_path(url)
     miss = path.with_suffix(".404")
@@ -63,15 +70,28 @@ def get(url: str, *, cache: bool = True, attempts: int = 5, timeout: int = 120) 
     if cache and miss.exists():
         raise FetchError(url, 404, "cached miss")
     host = urllib.parse.urlsplit(url).hostname or ""
-    delay = 5.0
+    delay = RETRY_DELAY
     for attempt in range(attempts):
         _wait_for(host)
-        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 body = response.read()
+                expected = response.headers.get("Content-Length")
+            problem = None
+            if expected and expected.isdigit() and len(body) < int(expected):
+                problem = f"truncated: {len(body)} of {expected} bytes"
+            elif sha256 and hashlib.sha256(body).hexdigest() != sha256:
+                problem = "sha256 differs from the manifest"
+            if problem:
+                if attempt + 1 < attempts:
+                    time.sleep(delay)
+                    delay *= 2
+                    continue
+                raise FetchError(url, None, problem)
         except urllib.error.HTTPError as error:
-            if error.code in (429, 500, 502, 503, 504) and attempt + 1 < attempts:
+            # arXiv answers 406 to some clients intermittently; it isn't final.
+            if error.code in (406, 429, 500, 502, 503, 504) and attempt + 1 < attempts:
                 retry_after = error.headers.get("Retry-After")
                 time.sleep(float(retry_after) if retry_after and retry_after.isdigit() else delay)
                 delay *= 2
@@ -80,7 +100,7 @@ def get(url: str, *, cache: bool = True, attempts: int = 5, timeout: int = 120) 
                 miss.parent.mkdir(parents=True, exist_ok=True)
                 miss.write_text(url)
             raise FetchError(url, error.code, error.reason) from None
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+        except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.IncompleteRead) as error:
             if attempt + 1 < attempts:
                 time.sleep(delay)
                 delay *= 2
