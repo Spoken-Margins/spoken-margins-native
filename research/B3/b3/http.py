@@ -14,13 +14,14 @@ import gzip
 import hashlib
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
-FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "http"
+FIXTURES = Path(os.environ.get("B3_FIXTURES") or Path(__file__).resolve().parent.parent / "fixtures" / "http")
 USER_AGENT = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) "
     "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
@@ -117,8 +118,9 @@ def _live(url, method, body, headers):
                 return resp.read(), resp.status
         except urllib.error.HTTPError as e:
             # Apple's throttle: back off and retry rather than record a 403.
-            if e.code in (403, 429) and "itunes.apple.com" in url and attempts < 6:
-                time.sleep(15 * attempts)
+            if e.code in (403, 429) and "itunes.apple.com" in url and attempts < 8:
+                print(f"[http] {e.code} from Apple, backing off (attempt {attempts})", file=sys.stderr)
+                time.sleep(20 * attempts)
                 continue
             if e.code in (404, 400, 410):
                 return e.read() or b"", e.code
