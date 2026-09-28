@@ -24,14 +24,26 @@ This all happens on the device, with no server call, ever. Without on-device AI,
 - Apple's NaturalLanguage framework offers deterministic, on-device named-entity recognition and lemmatization. It's a candidate for the no-AI path.
 - The owner's constraint on vaults: **no AI over the vault, ever, not even on-device.** Only the listener's own Margins are processed, and matching against notes is by synonyms and patterns.
 
+**Research in the cloud with spaCy (M1).** The owner suggested spaCy, and it works in the cloud environment. `pip install spacy` succeeds, and the English model installs from Hugging Face (`pip install https://huggingface.co/spacy/en_core_web_sm/resolve/main/en_core_web_sm-any-py3-none-any.whl`), since GitHub downloads may be blocked. It's the right tool for designing the taxonomy, labeling quickly and scoring. But spaCy can't ship in the iOS app, so score two baselines:
+- **Upper bound:** anything spaCy can do.
+- **Portable:** only what the phone can reproduce deterministically: Apple NaturalLanguage's entity types (person, place, organization), lemmas and parts of speech, plus word lists and regular expressions.
+
+The gap between them tells M2 whether the no-AI path is good enough or needs a small bundled model.
+
+**The owner's own Margins.** The owner can export their Margins and attach the files when starting this stream's session. Either works:
+- Margins tab → Export Sessions: one Markdown file per session, with source context around each Margin.
+- The notes folder, if Margin Output is set up: one `Margin-<id>.md` per Margin, with context before and after.
+
+In Files, long-press the folder → Compress, then attach the zip. Keep the raw export out of git: it's the owner's personal thinking plus publishers' text. Commit only labels keyed by Margin ID, plus scores. A later session needs the zip re-attached.
+
 ## Milestones
 
-**M1: What "good" means.**
+**M1: What "good" means** (cloud).
 - Done when:
   - A small taxonomy (statement kinds, referent, entities, link types) is written on the tracking issue.
-  - A labeled evaluation set of at least 150 Margins with their source context exists, built from Margins written against public podcasts and articles.
-  - (owner) If the owner provides an export of their own Margins, it's added as a second set. The owner decides whether it may be committed.
-  - A deterministic baseline is scored on it.
+  - A labeled evaluation set of at least 150 Margins with their source context exists, built from Margins written against public podcasts and articles and committed under `research/E1/`.
+  - Both baselines (spaCy upper bound, portable) are scored on it, with per-category results.
+  - (owner) If the owner attaches their own export, it's labeled as a second set and both baselines are scored on it too. Only its labels and scores are committed.
 
 **M2: On-device producers.**
 - Done when both producers (Foundation Models where available, deterministic otherwise) fill I7 for every new Margin, and on the evaluation set:

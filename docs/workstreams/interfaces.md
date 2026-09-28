@@ -84,7 +84,7 @@ This page sets **what crosses each seam and what must stay true**. It deliberate
 
 ## I9. Episode identity
 
-**Owner:** C4, the anchors work (`docs/podcast-anchor-plan.md`). It takes #177 after D4 M0 fixes #168, which #177 builds on. **Consumers:** E3 `maps` (lookups), F1 `coop` (joining packets from many people), D4 `share`.
+**Owner:** C4, the anchors work (`docs/podcast-anchor-plan.md`). It takes #177 once branch `private-feed-urls` (the #168 fix, `ShareableLinkPolicy`) is merged, since #177 builds on it. **Consumers:** E3 `maps` (lookups), F1 `coop` (joining packets from many people), D4 `share`.
 
 - **Crosses:** a way to say "these two copies are the same episode" across listeners, even when their audio differs: the episode GUID (#177: the app doesn't store it yet, although the packet manifest already has an `episodeGUID` field), the normalized enclosure, feed plus title plus date, and acoustic landmarks.
 - **Invariants:** a server lookup by episode shouldn't reveal a listener's library in the clear. Use a coarse shard or hash prefix and match locally.

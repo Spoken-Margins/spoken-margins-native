@@ -13,7 +13,7 @@ Everything is anonymous. There are no accounts; installs that submit junk can be
 - M2 (server design) in the cloud. **Effort: xhigh.**
 - M3 on both.
 
-**Waits for.** M1: nothing. M2: B4 M1 (server foundation and I11). M3: B4 M1, plus I9 (episode identity; C4 stores episode GUIDs in #177 after D4 M0 fixes #168), and the owner's decision on the route.
+**Waits for.** M1: nothing. M2: B4 M1 (server foundation and I11). M3: B4 M1, plus I9 (episode identity; C4 stores episode GUIDs in #177, building on the #168 fix from `private-feed-urls`), and the owner's decision on the route.
 
 **Seams.** Owns **I8** (listening map extensions), with E1 for entity fields. Uses I9 and I11.
 

@@ -19,6 +19,7 @@
 - `PlaybackScreen` (about 1,460 lines, moving to its own file in A2 M1) has transport, Skim, record and write a Margin, sleep timer, speed, Mix, Text, Timeline, Conversation and More.
 - Skim today: plays the current scene's summary, then seeks. Pressing again while the summary plays skips it. It needs a prepared listening map with summaries, and says so when it's missing.
 - The parked branch tried Skim-to-Margin with a 120 s lead-in and stranded the source (the 19:08 stall). Take the idea, not the code.
+- Branch `play-this-moment` (going into Build 30) already has #158 (tap a shared Margin to play its moment) and #159 ("Play this moment" plays the Margin itself). Both run through `MarginMomentConductor` in SessionKitAudio. Build on them; don't redo them.
 
 ## Milestones
 
@@ -33,8 +34,8 @@
 **M2: Margin navigation.**
 - Done when:
   - Skim moves to the next chapter or Margin, with a lead-in that a second press skips (#182).
-  - "Play this moment" plays lead-in → Margin → continues (#159).
-  - The next Margin is previewed (#167). Tapping a shared Margin in the timeline plays its moment (#158).
+  - "Play this moment" (#159) and tap-to-play for shared Margins (#158), from `play-this-moment`, still work and now run through the coordinator.
+  - The next Margin is previewed (#167).
   - All of it runs through the A2 coordinator, adding no playback state to the model.
   - Coordinator-level host tests cover each path, including interruption and seeking while paused.
   - Lane T4 runs J3 and J5.

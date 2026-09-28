@@ -8,7 +8,7 @@ Replace this section when the focus changes; do not append to it.
 
 - **Baseline:** Build 29, tag `testflight/0.1-build-29` (`fcc4974`), is the last shipped build (internal TestFlight, 2026-09-25).
 - **Parallel workstreams:** work is split into streams, each with a brief, in [docs/workstreams/](docs/workstreams/README.md). Start there: it lists the streams, what gates what, and the first testable build (Build 30).
-- **Working branch:** streams branch `ws/<id>` from `next` and open PRs into `next`. Only the owner moves `main`.
+- **Working branch:** streams branch `ws/<id>` from `next` and open PRs into `next`. Only the owner moves `main`. Build 30 work already on branches `play-this-moment` (#156, #158, #159, #166) and `private-feed-urls` (#168) goes into `next` first.
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.

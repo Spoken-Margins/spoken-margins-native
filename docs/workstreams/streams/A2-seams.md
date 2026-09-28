@@ -15,6 +15,7 @@
 - `PlaybackScreen` is about 1,460 lines inside the root view. `SettingsScreen`, `ExportScreen` and `BatchExportScreen` also live there.
 - `AppNavigationState` (in `ExperienceModels.swift`) keeps per-root paths that the root view mostly ignores.
 - Playback today: source playback via `SessionEngine`, plus separate players for the Skim bridge (`startSkimBridge` / `completeSkimBridge`), Margin audio and imported commentary. The parked branch's playback work is reference only.
+- Branch `play-this-moment` (going into Build 30) adds `MarginMomentConductor` (lead-in → Margin → continue) and `HeardAudioWindowRecorder` on the podcast tap, and grows `Gate1AppModel` by about 325 lines. M2 folds the conductor into the coordinator; it isn't a fifth player.
 
 ## Milestones
 

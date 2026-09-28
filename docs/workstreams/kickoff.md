@@ -9,8 +9,10 @@ You own stream <ID> of Spoken Margins. Read AGENTS.md, docs/workstreams/README.m
 docs/workstreams/streams/<ID>-*.md, and only the seams in docs/workstreams/interfaces.md
 that the brief names.
 
-Branch: ws/<id> from origin/next (create it if it doesn't exist; merge origin/next in
-at least daily). Open a draft PR into next early, and put lane requests on that PR.
+Branch: ws/<id> from origin/next, or from origin/claude/project-planning-voice-notes-neoatx
+if next doesn't exist yet. Merge origin/next in at least daily once it exists. Cloud
+research code and fixtures go under research/<id>/. Open a draft PR into next once it
+exists, and put lane requests on that PR.
 
 Work milestone by milestone. For each milestone:
 1. Say in two or three sentences how you intend to reach it and what you will measure.

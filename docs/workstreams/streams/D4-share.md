@@ -32,8 +32,9 @@
 
 ## Milestones
 
-**M0: Stop the leak** (Wave 0, target: Build 30).
-- Done when #168 is fixed: a packet never carries a private feed URL (one with a token or credentials) in any field. A host test builds packets from items with private feeds and inspects every string.
+**M0: Stop the leak** (target: Build 30). **Already implemented** on branch `private-feed-urls` (`ShareableLinkPolicy`, `PrivateFeedLinkTests`). What's left is getting it into `next`.
+- Done when that branch is merged into `next` with lane T3 green and J5 passing.
+  - A host test shows packets from items with private feeds carry no private URL in any string.
   - Packets from this build still import into Build 29 (test).
   - C4 builds #177 on this fix. Note it on #177 when this lands.
 
