@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Named verification plans with bounded processes and auditable execution evidence."""
 import argparse
+import contextlib
 import datetime
 import fcntl
 import hashlib
@@ -16,6 +17,7 @@ import sys
 import time
 
 from check_posterboard_repair import new_crash
+from lane_slots import build_slot
 
 from test_inventory import ROOT, plan_tests, swift_tests, validate
 
@@ -173,7 +175,6 @@ class Run:
         self.manifest['steps'].append(entry)
         self.save()
         print(f'{name} …', flush=True)
-        start = time.monotonic()
         device = self.manifest.get('destination', {}).get('udid')
         reports = Path.home() / 'Library/Logs/DiagnosticReports'
         if device and self.crash_baseline is None:
@@ -181,7 +182,13 @@ class Run:
                 raise RuntimeError('Simulator crash reports are unavailable')
             self.crash_baseline = {p: (p.stat().st_mtime_ns, p.stat().st_size)
                                    for p in reports.glob('*.ips')}
-        with (self.output / f'{name}.log').open('w') as log:
+        # xcodebuild shares the Mac-wide build slots with every session; the wait isn't timed.
+        slot = build_slot(f'verify-tests {self.manifest["plan"]} {name}') if args[0] == 'xcodebuild' \
+            else contextlib.nullcontext()
+        with (self.output / f'{name}.log').open('w') as log, slot as held:
+            if held:
+                entry['build_slot'] = held
+            start = time.monotonic()
             process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                                        start_new_session=True)
             try:
