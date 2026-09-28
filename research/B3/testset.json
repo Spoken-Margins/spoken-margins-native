@@ -543,6 +543,21 @@
    "note": "same title; YouTube cut is 21 minutes shorter"
   },
   {
+   "id": "2SyX3sudRrY",
+   "url": "https://www.youtube.com/watch?v=2SyX3sudRrY",
+   "category": "full_episode",
+   "show": "The Vergecast",
+   "feed_url": "https://feeds.megaphone.fm/vergecast",
+   "expected": {
+    "guid": "ca490244-c3c7-11f0-8340-ef1cc61061e0",
+    "title": "Phones don't have lights",
+    "published": "2026-09-25",
+    "duration_s": 5505,
+    "audio_url": "https://www.podtrac.com/pts/redirect.mp3/pdst.fm/e/pscrb.fm/rss/p/mgln.ai/e/257/traffic.megaphone.fm/VMP8397561892.mp3"
+   },
+   "note": "retitled in the feed (\"Phones don't have lights\"); identical description, same day. First labeled not_in_feed by mistake; the matcher found it"
+  },
+  {
    "id": "EmEzGv-i-AQ",
    "url": "https://www.youtube.com/watch?v=EmEzGv-i-AQ",
    "category": "full_episode",
@@ -574,15 +589,6 @@
    "feed_url": "https://feed.syntax.fm/rss",
    "expected": null,
    "note": "YouTube-only video; no feed item of its length or topic"
-  },
-  {
-   "id": "2SyX3sudRrY",
-   "url": "https://www.youtube.com/watch?v=2SyX3sudRrY",
-   "category": "not_in_feed",
-   "show": "The Vergecast",
-   "feed_url": "https://feeds.megaphone.fm/vergecast",
-   "expected": null,
-   "note": "not in the feed as of 2026-09-28"
   },
   {
    "id": "HwmqZTnb7Co",

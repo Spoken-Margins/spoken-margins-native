@@ -344,16 +344,17 @@ class Signals:
 
 
 def score_episode(ep: dict, video: VideoEvidence, show: ShowCandidate | None,
-                  show_names: list[str], boilerplate: frozenset = frozenset()
-                  ) -> tuple[Candidate, Signals]:
+                  show_names: list[str], boilerplate: frozenset = frozenset(),
+                  desc: float | None = None) -> tuple[Candidate, Signals]:
     ep_title = ep.get("trackName") or ""
     yt_title = content_title(video.title, show_names)
     t_sim = max(title_similarity(yt_title, ep_title), title_similarity(video.title, ep_title))
     yt_nums, ep_nums = episode_numbers(video.title), episode_numbers(ep_title)
     number = bool(yt_nums & ep_nums) if yt_nums and ep_nums else None
-    desc = _description_overlap(video.description or "",
-                                ep.get("description") or ep.get("shortDescription") or "",
-                                boilerplate)
+    if desc is None:
+        desc = _description_overlap(video.description or "",
+                                    ep.get("description") or ep.get("shortDescription") or "",
+                                    boilerplate)
     days = days_apart(video.published, ep.get("releaseDate"))
     ep_s = int(ep["trackTimeMillis"] / 1000) if ep.get("trackTimeMillis") else None
     duration = _duration_agreement(video.duration_s, ep_s)
@@ -439,15 +440,34 @@ def _episode_show(ep: dict, video: VideoEvidence, by_id: dict, sig: "Signals",
 
 
 def _rank(episodes, video, by_id, show_names, lookups):
-    scored = []
     boiler = _boilerplate(list(episodes.values()))
-    for ep in episodes.values():
+    raw = {}
+    for key, ep in episodes.items():
         bp = boiler.get(ep.get("collectionId") or 0, frozenset())
-        _, sig = score_episode(ep, video, None, show_names, bp)
+        raw[key] = _description_overlap(video.description or "",
+                                        ep.get("description") or ep.get("shortDescription") or "", bp)
+    # Description evidence counts only as far as it singles this episode out.
+    # A clip's description is often the show's standard links and notes, which
+    # overlap every episode alike; then it says nothing about which one.
+    by_show: dict[int, list[tuple[float, str]]] = {}
+    for key, ep in episodes.items():
+        by_show.setdefault(ep.get("collectionId") or 0, []).append((raw[key], key))
+    distinct = {}
+    for items in by_show.values():
+        items.sort(reverse=True)
+        for i, (d, key) in enumerate(items):
+            others = [o for j, (o, _) in enumerate(items) if j != i]
+            rival = others[0] if others else 0.0
+            distinct[key] = max(0.0, d - rival) if rival >= 0.4 else d
+
+    scored = []
+    for key, ep in episodes.items():
+        bp = boiler.get(ep.get("collectionId") or 0, frozenset())
+        _, sig = score_episode(ep, video, None, show_names, bp, distinct[key])
         if sig.title < 0.15 and not sig.number and sig.desc < 0.4:
             continue
         show = _episode_show(ep, video, by_id, sig, lookups)
-        cand, sig = score_episode(ep, video, show, show_names, bp)
+        cand, sig = score_episode(ep, video, show, show_names, bp, distinct[key])
         scored.append((cand, sig, show))
     scored.sort(key=lambda x: -x[0].score)
     return scored

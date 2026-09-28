@@ -38,10 +38,10 @@ GBT_XIQl5fg	full_episode	The Indicator from Planet Money	https://feeds.npr.org/5
 gYEAdTt5-j8	full_episode	Call Her Daddy	https://feeds.simplecast.com/mKn_QmLS	eabdaece-226d-4365-af75-002f9ef293fb	same title and day
 Q8yFrGwIftE	full_episode	a16z Podcast	https://feeds.simplecast.com/JGE3yC0V	ad703a5b-581f-4220-a4aa-55ad60535ace	retitled on YouTube; same day
 W9-UG1hvMYs	full_episode	The Standup	https://rss2.flightcast.com/pmgqiszts7kfhopzaq8el6yw.xml	flightcast:01M3B6HTBBK0QK8JT6SB5Q4XR2	same title; YouTube cut is 21 minutes shorter
+2SyX3sudRrY	full_episode	The Vergecast	https://feeds.megaphone.fm/vergecast	ca490244-c3c7-11f0-8340-ef1cc61061e0	retitled in the feed ("Phones don't have lights"); identical description, same day. First labeled not_in_feed by mistake; the matcher found it
 EmEzGv-i-AQ	full_episode	Impaulsive	https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/acd3f8a1-3824-4e5f-ab92-b4b300f0cf57/f4ff3c4f-5606-4c61-9c5a-b4b300f0cf7a/podcast.rss	f32877da-178f-4356-a44c-b4bb014df026	retitled; durations within 1s
 f6cjAEr08qk	not_in_feed	Dwarkesh Podcast	https://api.substack.com/feed/podcast/69345.rss	-	not in the feed as of 2026-09-28; trap: older Sarah Paine episodes
 7ZWB79HRRUw	not_in_feed	Syntax	https://feed.syntax.fm/rss	-	YouTube-only video; no feed item of its length or topic
-2SyX3sudRrY	not_in_feed	The Vergecast	https://feeds.megaphone.fm/vergecast	-	not in the feed as of 2026-09-28
 HwmqZTnb7Co	not_in_feed	The Standup	https://rss2.flightcast.com/pmgqiszts7kfhopzaq8el6yw.xml	-	ThePrimeagen main channel; his podcast feed exists but this video is not in it
 BHPDsGVciDk	not_in_feed	The Standup	https://rss2.flightcast.com/pmgqiszts7kfhopzaq8el6yw.xml	-	The PrimeTime channel reaction video; not in The Standup feed
 fEXfXqCrZDw	clip	Big Technology Podcast	https://feeds.megaphone.fm/LI3617121267	-	16-minute cut of the 62-minute 2026-09-23 episode, despite "(Full Conversation)"
