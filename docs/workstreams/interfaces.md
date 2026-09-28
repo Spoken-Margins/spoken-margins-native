@@ -135,6 +135,51 @@ This page sets **what crosses each seam and what must stay true**. It deliberate
   - how each I13 role is spoken: skipped, announced ("Figure 2: …"), or read, and how citation and footnote markers sound.
 - **Invariants:** power state alone never silently changes the voice (#183). Any fallback has a visible, loggable reason, and the chosen voice comes back when the reason clears. Rate is one number: the app's rate is never multiplied by the system accessibility rate. Chunk boundaries never show as pause/resume.
 
+### Published: how each kind of text is spoken (C2, 2026-09-28)
+
+These rules apply to every engine, including the fallback and the system voice, so switching voices never changes *what* is said. Roles stay advisory (I13): the speech path applies these defaults, and per-role listener settings can come later. The Swift type that carries them lands with C2 M1 (#183). Engine selection and the rate rule above are unchanged by this section. Background and evidence: `research/C2/I14-draft.md` on `ws/c2-voice`.
+
+**Roles.**
+
+| I13 role | Default | How it sounds |
+| --- | --- | --- |
+| body | Read | As written, after normalization (below). |
+| heading | Read | About 0.7 s of silence before and 0.4 s after. The word "heading" is never spoken. A section number is read: "2.1 Methods" → "two point one, Methods". |
+| caption | Announced | "Figure 2." then a short pause, then the caption text. It's read where the reading order places it, never inside a sentence. While it plays, the player may show the figure (I13 position). |
+| table | Announced, not read | "Table 3: *caption*. Table not read." The cells are skipped. |
+| footnote | Skipped | Footnote text isn't read where it appears. |
+| reference (bibliography) | Skipped | Announced once, "References skipped." Reading resumes at the next segment that isn't a reference, such as an appendix. |
+| header, footer | Skipped, silent | Running heads and page numbers are never read. |
+
+**Markers inside body text.**
+- **Numeric citations** are silent: `[12]`, `[12, 14]`, `[3–5]`, and superscript numbers after a word or punctuation.
+- **Parenthetical author–year citations** are silent: `(Smith et al., 2020; Lee, 2019)`.
+- **Narrative citations** are read, because the name is part of the sentence. "et al." is spoken as "and colleagues": "reported by Pittas et al." → "reported by Pittas and colleagues".
+- **Footnote markers** are silent: superscript letters, symbols, and superscript numbers that aren't citations.
+
+**Normalization before any engine.**
+- **Numbers:** `1,284` → "one thousand two hundred eighty-four"; `61.3` → "sixty-one point three"; `0.75 to 1.04` and `10–20` → "10 to 20".
+- **Statistics:** `p = 0.12` → "p equals 0.12"; `p < 0.001` → "p less than 0.001"; `95% CI` → "95 percent confidence interval"; `±`, `×`, `≥`, `≤` spoken as words.
+- **Units after a number:** `ng/mL` → "nanograms per milliliter". Also `mg`, `kg`, `µm`, `°C`. `IU` → "I U".
+- **Greek letters** are spoken by name: `α` → "alpha".
+- **Everything else** goes to the engine as written: chemical and gene names, and anything else pronounceable. Nothing pronounceable is spelled out.
+
+**Examples** (input → what's spoken):
+
+| Input | Spoken |
+| --- | --- |
+| `…compared with placebo (hazard ratio, 0.88; 95% CI, 0.75 to 1.04; p = 0.12).` | "…compared with placebo, hazard ratio 0.88, 95 percent confidence interval 0.75 to 1.04, p equals 0.12." |
+| `…consistent with earlier meta-analyses [12, 14] but…` | "…consistent with earlier meta-analyses but…" |
+| `…as shown previously (Lee, 2019).` | "…as shown previously." |
+| `Serum levels rose from 28 to 54 ng/mL.` | "Serum levels rose from 28 to 54 nanograms per milliliter." |
+| Heading `3.2 Statistical analysis` | pause, "three point two, Statistical analysis", pause |
+| Caption `Figure 4. Kaplan–Meier curves by arm.` | "Figure 4." pause "Kaplan–Meier curves by arm." |
+| Table with caption `Table 1. Baseline characteristics.` | "Table 1: Baseline characteristics. Table not read." |
+
+**Invariants for consumers (C1 M3 and every narration path):**
+- A role's text never disappears silently. It's read, or it's announced as skipped ("Table not read", "References skipped"). Header and footer are the one exception: they're always silent.
+- Skipping never moves anchors. Written Margins anchor to the extracted text, not to what's spoken (I13).
+
 ## I15. Stable UI identifiers
 
 **Owner:** A2 `seams`. **Consumers:** G1 `guides`, the Test Desk's journeys, any UI test.

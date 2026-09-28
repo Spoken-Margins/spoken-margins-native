@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""xcodebuild through the Mac-wide build semaphore, with this worktree's own DerivedData.
+
+Usage: scripts/xcodebuild-lane <xcodebuild arguments>
+
+- Waits for one of the two Mac-wide build slots (scripts/lane_slots.py), so stream sessions and
+  the lane never run more than two builds at once. Queued builds print who holds the slots.
+- Adds `-derivedDataPath <worktree>/.build/dd` unless the arguments already name one. A shared
+  DerivedData across branches produces false "does not conform" errors (AGENTS.md).
+- Information-only calls (-version, -list, -showBuildSettings, -exportArchive, ...) skip both.
+"""
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lane_slots import build_slot  # noqa: E402
+
+NO_BUILD_FLAGS = {'-version', '-list', '-showsdks', '-showBuildSettings', '-showdestinations',
+                  '-showTestPlans', '-help', '-h', '-usage', '-license', '-checkFirstLaunchStatus',
+                  '-runFirstLaunch', '-exportArchive', '-importLocalizations', '-exportNotarizedApp',
+                  '-create-xcframework'}
+
+
+def worktree_root():
+    try:
+        return Path(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True,
+                                            stderr=subprocess.DEVNULL).strip())
+    except (OSError, subprocess.CalledProcessError):
+        return Path.cwd()
+
+
+def main(argv):
+    xcodebuild = os.environ.get('SM_LANE_XCODEBUILD', 'xcodebuild')
+    if any(arg in NO_BUILD_FLAGS for arg in argv):
+        os.execvp(xcodebuild, [xcodebuild, *argv])
+    args = list(argv)
+    if '-derivedDataPath' not in args:
+        args += ['-derivedDataPath', str(worktree_root() / '.build/dd')]
+    derived = args[args.index('-derivedDataPath') + 1]
+    action = next((a for a in reversed(argv) if not a.startswith('-') and '=' not in a
+                   and a in {'build', 'build-for-testing', 'archive', 'test', 'test-without-building',
+                             'analyze', 'clean', 'install', 'installsrc', 'docbuild'}), 'build')
+    label = f'xcodebuild {action}'
+    with build_slot(label):
+        print(f'[lane] DerivedData: {derived}', file=sys.stderr, flush=True)
+        process = subprocess.Popen([xcodebuild, *args])
+
+        def forward(signum, _frame):
+            process.send_signal(signum)
+
+        for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(signum, forward)
+        result = process.wait()
+    return 128 - result if result < 0 else result
+
+
+if __name__ == '__main__':
+    raise SystemExit(main(sys.argv[1:]))
