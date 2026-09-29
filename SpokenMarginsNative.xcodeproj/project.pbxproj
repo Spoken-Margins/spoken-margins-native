@@ -60,6 +60,7 @@
 		4CF539FBC54D635647751674 /* emoji-article-crash-regression.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */; };
 		4D3FF8A43019053BD3454A2B /* ExperienceSourcesScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FCCBE1821C609CB049229E0 /* ExperienceSourcesScreen.swift */; };
 		4EB9C4988DDEA400406B44F5 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 9AC0CEE299A474FCA1DE58BE /* popup.js */; };
+		4EFF5E2EC1016CB8D11C11B8 /* SupertonicOutputGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F793A74D3F80D9019804935 /* SupertonicOutputGuard.swift */; };
 		5100737C3FF12315CC9E0A84 /* Build23ImportedMarginPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F7F8E49CA642502095FF5EF /* Build23ImportedMarginPresentation.swift */; };
 		53B2B7122FB63029D3F970FA /* omny-episode-page.html in Resources */ = {isa = PBXBuildFile; fileRef = 97EBC691BBA97D01C8A53DB4 /* omny-episode-page.html */; };
 		541E1FB141EC8A331312980A /* PodcastDownloadCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD16E224F3B90976DC86B3EF /* PodcastDownloadCoordinator.swift */; };
@@ -255,6 +256,7 @@
 		1E25AC74A37BFC74DC071AF2 /* SharingRightsPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingRightsPresentation.swift; sourceTree = "<group>"; };
 		1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "emoji-article-crash-regression.txt"; sourceTree = "<group>"; };
 		1F04BCB2671DE0E5E8AEAD58 /* ExperienceAddSourceFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExperienceAddSourceFlow.swift; sourceTree = "<group>"; };
+		1F793A74D3F80D9019804935 /* SupertonicOutputGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupertonicOutputGuard.swift; sourceTree = "<group>"; };
 		208887C2A5F9291DC2B15A07 /* ListeningReadyNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListeningReadyNotifications.swift; sourceTree = "<group>"; };
 		282F12E56B1FBA513CF76483 /* CatalogDrawerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogDrawerTests.swift; sourceTree = "<group>"; };
 		2A1D315905D0C2CA14001952 /* OfflineStorageLedgerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineStorageLedgerTests.swift; sourceTree = "<group>"; };
@@ -698,6 +700,7 @@
 				AA18A80986464844DBC4C095 /* SpokenMarginsTermsView.swift */,
 				8EFFA356312CB5D37089484A /* StreamingSpeechQueue.swift */,
 				B5E071274013CEC4CC92BA4E /* SupertonicLegalView.swift */,
+				1F793A74D3F80D9019804935 /* SupertonicOutputGuard.swift */,
 				C90FD1B2793835178CD00BB7 /* SupertonicPreparedAudioAssembler.swift */,
 				BBBCF88CB3BBA3E1465E524F /* SupertonicSpeechPlaybackClient.swift */,
 			);
@@ -1107,6 +1110,7 @@
 				7470A25713E0F8722A24EE2B /* SpokenMarginsTermsView.swift in Sources */,
 				6C2E2AE467E044A0E63C7899 /* StreamingSpeechQueue.swift in Sources */,
 				4A154B7078113866A8416F4D /* SupertonicLegalView.swift in Sources */,
+				4EFF5E2EC1016CB8D11C11B8 /* SupertonicOutputGuard.swift in Sources */,
 				753422BE0617A8122A91813E /* SupertonicPreparedAudioAssembler.swift in Sources */,
 				724D32B090D395D1F580422B /* SupertonicSpeechPlaybackClient.swift in Sources */,
 			);

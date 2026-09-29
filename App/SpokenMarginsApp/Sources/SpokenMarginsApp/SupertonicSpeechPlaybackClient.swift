@@ -22,21 +22,6 @@ protocol SupertonicRendering: Sendable {
 
 extension SupertonicNarrationRenderer: SupertonicRendering {}
 
-enum RenderedSpeechChunkBoundary: String, Sendable {
-    case sentence
-    case comma
-    case whitespace
-    case hard
-
-    var transitionDelay: TimeInterval {
-        switch self {
-        case .sentence: 0.12
-        case .comma: 0.05
-        case .whitespace, .hard: 0
-        }
-    }
-}
-
 enum RenderedSpeechGenerationState: String, Equatable, Sendable {
     case inactive
     case rendering
@@ -59,124 +44,6 @@ struct RenderedSpeechGenerationProgress: Equatable, Sendable {
 struct PreparedChunkLookupResult: Sendable {
     var audioURL: URL
     var duration: TimeInterval
-}
-
-struct RenderedSpeechSourceSlice: Equatable, Sendable {
-    var text: String
-    var sourceLength: Int
-    var boundary: RenderedSpeechChunkBoundary
-}
-
-struct RenderedSpeechPlannedSlice: Equatable, Sendable {
-    var startOffset: Int
-    var slice: RenderedSpeechSourceSlice
-}
-
-enum RenderedSpeechChunker {
-    /// Plans a complete source in one forward pass. Repeatedly calling
-    /// `sourceSlice(from:startOffset:)` for increasing offsets restarts String
-    /// indexing at the beginning and becomes quadratic for book-length text.
-    static func sourceSlices(
-        from source: String,
-        maxCharacters: Int = 240
-    ) -> [RenderedSpeechPlannedSlice] {
-        let maximum = max(1, maxCharacters)
-        var remaining = source[...]
-        var startOffset = 0
-        var result: [RenderedSpeechPlannedSlice] = []
-        result.reserveCapacity(max(1, source.utf8.count / maximum))
-
-        while !remaining.isEmpty {
-            let prefix = String(remaining.prefix(maximum))
-            let slice = selectChunkPrefix(prefix, maxCharacters: maximum)
-            guard !slice.text.isEmpty, slice.sourceLength > 0 else { break }
-            result.append(RenderedSpeechPlannedSlice(startOffset: startOffset, slice: slice))
-            guard let next = remaining.index(
-                remaining.startIndex,
-                offsetBy: slice.sourceLength,
-                limitedBy: remaining.endIndex
-            ) else { break }
-            remaining = remaining[next...]
-            startOffset += slice.sourceLength
-        }
-        return result
-    }
-
-    static func sourceSlice(
-        from source: String,
-        startOffset: Int,
-        maxCharacters: Int = 240
-    ) -> RenderedSpeechSourceSlice {
-        let clampedOffset = max(0, min(startOffset, source.count))
-        let start = source.index(source.startIndex, offsetBy: clampedOffset)
-        let remainingLength = source.distance(from: start, to: source.endIndex)
-        let length = min(maxCharacters, remainingLength)
-        let hardEnd = source.index(start, offsetBy: length)
-        return selectChunkPrefix(String(source[start..<hardEnd]), maxCharacters: maxCharacters)
-    }
-
-    static func selectChunkPrefix(
-        _ prefix: String,
-        maxCharacters: Int = 240
-    ) -> RenderedSpeechSourceSlice {
-        let minimumUsefulLength = min(80, max(24, maxCharacters / 3))
-        let sentenceCharacters = CharacterSet(charactersIn: ".!?\n;:")
-        if let sentence = boundary(
-            in: prefix,
-            characters: sentenceCharacters,
-            includeBoundary: true,
-            minimumUsefulLength: minimumUsefulLength
-        ) {
-            return sentence.withBoundary(.sentence)
-        }
-        if let comma = boundary(
-            in: prefix,
-            characters: CharacterSet(charactersIn: ","),
-            includeBoundary: true,
-            minimumUsefulLength: minimumUsefulLength
-        ) {
-            return comma.withBoundary(.comma)
-        }
-        if let whitespace = boundary(
-            in: prefix,
-            characters: .whitespacesAndNewlines,
-            includeBoundary: false,
-            minimumUsefulLength: minimumUsefulLength
-        ) {
-            return whitespace.withBoundary(.whitespace)
-        }
-        let normalized = SpeechTextNormalizer.normalize(prefix)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return RenderedSpeechSourceSlice(
-            text: normalized,
-            sourceLength: prefix.count,
-            boundary: .hard
-        )
-    }
-
-    private static func boundary(
-        in prefix: String,
-        characters: CharacterSet,
-        includeBoundary: Bool,
-        minimumUsefulLength: Int
-    ) -> RenderedSpeechSourceSlice? {
-        guard let range = prefix.rangeOfCharacter(from: characters, options: .backwards) else {
-            return nil
-        }
-        let end = includeBoundary ? range.upperBound : range.lowerBound
-        guard prefix.distance(from: prefix.startIndex, to: end) >= minimumUsefulLength else {
-            return nil
-        }
-        let selected = String(prefix[..<end])
-        let normalized = SpeechTextNormalizer.normalize(selected)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return nil }
-        return RenderedSpeechSourceSlice(
-            text: normalized,
-            sourceLength: prefix.distance(from: prefix.startIndex, to: range.upperBound),
-            boundary: .hard
-        )
-    }
 }
 
 final class RenderedSpeechDiskCache: @unchecked Sendable {
@@ -320,12 +187,6 @@ final class RenderedSpeechDiskCache: @unchecked Sendable {
                   values.isRegularFile == true else { return nil }
             return (url, values.fileSize ?? 0, values.contentModificationDate ?? .distantPast)
         }
-    }
-}
-
-private extension RenderedSpeechSourceSlice {
-    func withBoundary(_ boundary: RenderedSpeechChunkBoundary) -> Self {
-        .init(text: text, sourceLength: sourceLength, boundary: boundary)
     }
 }
 
@@ -555,7 +416,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         speed: Float,
         fallbackVoiceIdentifier: String?,
         fallbackRate: Float,
-        maxCharacters: Int = 240,
+        maxCharacters: Int = RenderedSpeechChunker.spokenCostBudget,
         startupBufferChunkCount: Int = 1,
         diskCache: RenderedSpeechDiskCache? = nil,
         preparedAudioDirectory: URL? = nil,
