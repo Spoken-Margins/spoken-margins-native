@@ -270,7 +270,7 @@ final class SupertonicSpeechTests: XCTestCase {
         let wav = try makeTestWAV(duration: 1)
         defer { try? FileManager.default.removeItem(at: wav) }
         try await coordinator.commit(itemId: "item-258", signature: signature, plan: plan, sourceText: text, audioURL: wav, durationMs: 1_000)
-        let durable = try await XCTUnwrapAsync(await coordinator.committedChunk(itemId: "item-258", signature: signature, plan: plan))
+        let durable = try await XCTUnwrapAsync(await coordinator.committedChunk(itemId: "item-258", signature: signature, plan: plan, sourceText: text))
 
         let renderer = try SupertonicNarrationRenderer(
             assets: SupertonicAssetLocation(rootURL: resources),
@@ -284,7 +284,7 @@ final class SupertonicSpeechTests: XCTestCase {
             observesPlayerLifecycle: false,
             fallbackClient: RecordingFallbackAudioClient(),
             preparedChunkLookup: { _, _, requested in
-                requested.startOffset == 0 ? try? await coordinator.committedChunk(itemId: "item-258", signature: signature, plan: plan) : nil
+                requested.startOffset == 0 ? try? await coordinator.committedChunk(itemId: "item-258", signature: signature, plan: plan, sourceText: text) : nil
             }
         )
         _ = try client.prepareSpeechText(text)
@@ -296,7 +296,7 @@ final class SupertonicSpeechTests: XCTestCase {
         _ = await renderer.diagnostics()
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: durable.audioURL.path), "the durable prepared chunk survives stop")
-        let again = try await coordinator.committedChunk(itemId: "item-258", signature: signature, plan: plan)
+        let again = try await coordinator.committedChunk(itemId: "item-258", signature: signature, plan: plan, sourceText: text)
         XCTAssertEqual(again?.audioURL, durable.audioURL, "and is still retrievable")
         await renderer.unload()
     }
@@ -308,7 +308,7 @@ final class SupertonicSpeechTests: XCTestCase {
     // #258: with a Listening Map overview, the engine speaks "Overview. …" before the article.
     // Lookups carried that whole text and chunks planned across it, so no prepared chunk ever
     // matched and a fully prepared article was rendered again. They now ask for the article's own
-    // prepared chunks, with the article's text.
+    // prepared chunks, with the article plan's identity.
     func testLookupsWithASpokenPrefaceAskForTheArticlesPreparedChunks() async throws {
         let template = try makeTestWAV(duration: 0.1)
         defer { try? FileManager.default.removeItem(at: template) }
@@ -334,12 +334,78 @@ final class SupertonicSpeechTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(20))
         }
         let asked = log.values
-        XCTAssertTrue(asked.allSatisfy { $0.0 == article }, "lookups carry the article's text")
+        XCTAssertTrue(asked.allSatisfy { $0.0 == NarrationChunkPlanner.identity(ofArticle: article) },
+                      "lookups carry the article plan's identity (#312)")
         let byIndex = Dictionary(asked.map { ($0.1.index, $0.1) }, uniquingKeysWith: { first, _ in first })
         for chunk in prepared {
             XCTAssertEqual(byIndex[chunk.index], chunk, "chunk \(chunk.index) matches the prepared plan")
         }
         try client.stop()
+    }
+
+    // #312: the player, background preparation and assembly must split an article the same way.
+    // All three now take the article plan from NarrationChunkPlanner; the player's lookups must ask
+    // for exactly the background plan, with or without a spoken Overview preface.
+    func testPlayerLookupsMatchTheBackgroundPlanWithAndWithoutAPreface() async throws {
+        let article = (1...8).map { "Sentence \($0) of the article carries enough ordinary words to fill part of a chunk." }
+            .joined(separator: " ")
+        let prepared = backgroundPlan(article)
+        for preface in ["", "Overview. The paper studies evaluation agents and how they choose their tools.\n\n"] {
+            let asked = try await preparedLookups(spoken: preface + article, article: article, waitFor: prepared.count)
+            XCTAssertTrue(asked.allSatisfy { $0.0 == NarrationChunkPlanner.identity(ofArticle: article) },
+                          "lookups carry the article plan's identity (preface: \(!preface.isEmpty))")
+            let byIndex = Dictionary(asked.map { ($0.1.index, $0.1) }, uniquingKeysWith: { first, _ in first })
+            XCTAssertEqual(byIndex.count, prepared.count, "preface: \(!preface.isEmpty)")
+            for chunk in prepared {
+                XCTAssertEqual(byIndex[chunk.index], chunk, "chunk \(chunk.index) matches (preface: \(!preface.isEmpty))")
+            }
+        }
+    }
+
+    // #312: a bare "<" in the Overview and a ">" in the article. Normalizing the whole spoken text
+    // eats across the seam, so the spoken article no longer matches the prepared one. The player
+    // used to ask for prepared chunks by position anyway, which could play another stretch's audio.
+    func testASeamThatChangesTheSpokenArticleMatchesNoPreparedAudio() async throws {
+        let article = "Results > baseline in every run. " + (1...8).map {
+            "Sentence \($0) of the article carries enough ordinary words to fill part of a chunk."
+        }.joined(separator: " ")
+        let preface = "Overview. Cost < quality for these agents.\n\n"
+        let normalized = NarrationChunkPlanner.articlePlan(article).normalizedText
+        XCTAssertNotEqual(String(SpeechTextNormalizer.normalize(preface + article).suffix(normalized.count)), normalized,
+                          "the seam changes the spoken article (precondition)")
+        let prepared = backgroundPlan(article)
+        let asked = try await preparedLookups(spoken: preface + article, article: article, waitFor: prepared.count)
+        let wrong = asked.filter { !prepared.contains($0.1) }
+        XCTAssertTrue(wrong.isEmpty, "\(wrong.count) lookups asked for plans background preparation never made")
+    }
+
+    /// Background preparation's plan, as the app builds it.
+    private func backgroundPlan(_ article: String) -> [PreparedChunkPlan] {
+        NarrationChunkPlanner.articlePlan(article).chunks.map {
+            PreparedChunkPlan(index: $0.index, startOffset: $0.startOffset, sourceLength: $0.sourceLength, text: $0.text)
+        }
+    }
+
+    private func preparedLookups(spoken: String, article: String, waitFor count: Int) async throws -> [(String, PreparedChunkPlan)] {
+        let template = try makeTestWAV(duration: 0.1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = PreparedLookupLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: CountingAudioSupertonicRenderer(templateURL: template), voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            articleText: { _ in article },
+            preparedChunkLookup: { _, identity, plan in log.add(identity, plan); return nil }
+        )
+        _ = try client.prepareSpeechText(spoken)
+        try client.play(targetId: "item", from: 0)
+        for _ in 0..<150 where Set(log.values.map { $0.1.index }).count < count {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        try client.stop()
+        return log.values
     }
 
     func testSelectableCatalogExposesOnlyJamesLilyAndSystem() {

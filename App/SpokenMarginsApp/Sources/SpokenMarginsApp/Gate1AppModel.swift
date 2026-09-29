@@ -10814,25 +10814,27 @@ final class Gate1AppModel: ObservableObject {
                         self?.updateOnDeviceSpeechGenerationProgress(progress)
                     }
                 },
-                onPreparationPlan: { itemId, sourceText, plan in
-                    // A turn is not a Library item. A source with an audible
-                    // overview also has different chunk boundaries from its
-                    // source-only offline representation; disk cache still
-                    // serves both, keyed by exact spoken text.
+                onPreparationPlan: { itemId, articleIdentity, plan in
+                    // A turn is not a Library item. The player's article chunks
+                    // share the article plan's identity with background
+                    // preparation (#312); a changed article matches nothing.
                     guard let signature = try? await signatureTask.value,
-                          let item = try? store.loadItem(id: itemId), item.text == sourceText else { return }
+                          let item = try? store.loadItem(id: itemId), let sourceText = item.text,
+                          NarrationChunkPlanner.identity(ofArticle: sourceText) == articleIdentity else { return }
                     _ = try? await coordinator.begin(itemId: itemId, sourceText: sourceText, signature: signature, plan: plan, schedulesJob: false)
                 },
-                onPreparedChunk: { itemId, sourceText, plan, audioURL, durationMs in
+                onPreparedChunk: { itemId, articleIdentity, plan, audioURL, durationMs in
                     guard let signature = try? await signatureTask.value,
-                          let item = try? store.loadItem(id: itemId), item.text == sourceText else { return }
+                          let item = try? store.loadItem(id: itemId), let sourceText = item.text,
+                          NarrationChunkPlanner.identity(ofArticle: sourceText) == articleIdentity else { return }
                     try? await coordinator.commit(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText, audioURL: audioURL, durationMs: durationMs)
                 },
                 articleText: { itemId in try? store.loadItem(id: itemId).text },
-                preparedChunkLookup: { itemId, sourceText, plan in
+                preparedChunkLookup: { itemId, articleIdentity, plan in
                     guard let signature = try? await signatureTask.value,
-                          let item = try? store.loadItem(id: itemId), item.text == sourceText else { return nil }
-                    return try? await coordinator.committedChunk(itemId: itemId, signature: signature, plan: plan)
+                          let item = try? store.loadItem(id: itemId), let sourceText = item.text,
+                          NarrationChunkPlanner.identity(ofArticle: sourceText) == articleIdentity else { return nil }
+                    return try? await coordinator.committedChunk(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText)
                 },
                 onPreparedAudio: { [weak self] itemId, prepared in
                     Task { @MainActor [weak self] in
@@ -15362,7 +15364,9 @@ final class Gate1AppModel: ObservableObject {
                 plan: plan,
                 maximumChunkCount: job.maximumChunkCount
             )
-            let completedIndexes = Set(manifest.chunks.map(\.index))
+            let completedIndexes = Set(
+                PreparedAudioCoordinator.matchingChunks(in: manifest, plan: plan, sourceText: sourceText).map(\.index)
+            )
             let ledger = offlineStorageLedger ?? OfflineStorageLedger(repository: store, rootDirectory: support)
             offlineStorageLedger = ledger
             let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
@@ -15373,7 +15377,7 @@ final class Gate1AppModel: ObservableObject {
             guard let next = eligiblePlan.first(where: { !completedIndexes.contains($0.index) }) else {
                 // All chunks are intact but nothing is assembled (#278): assemble now, because it
                 // otherwise happens only right after the last chunk is committed.
-                if manifest.isCompleteButUnassembled, manifest.plannedChunkCount == plan.count {
+                if manifest.isCompleteButUnassembled, manifest.plannedChunkCount == plan.count, completedIndexes.count == plan.count {
                     try await finishBackgroundPreparedAudio(
                         item: item, sourceText: sourceText, voice: voice, signature: signature,
                         manifest: manifest, plan: plan, store: store, ledger: ledger,
@@ -15438,7 +15442,7 @@ final class Gate1AppModel: ObservableObject {
             recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count)])
             job.nextChunkIndex = updated.chunks.count
             job.lastFailureCode = nil
-            if updated.chunks.count == plan.count {
+            if PreparedAudioCoordinator.matchingChunks(in: updated, plan: plan, sourceText: sourceText).count == plan.count {
                 try store.saveAudioPreparationJob(job)
                 try await finishBackgroundPreparedAudio(
                     item: item,
@@ -15550,21 +15554,20 @@ final class Gate1AppModel: ObservableObject {
         coordinator: PreparedAudioCoordinator,
         support: URL
     ) async throws {
-        let byIndex = Dictionary(uniqueKeysWithValues: manifest.chunks.map { ($0.index, $0) })
+        // Only chunks saved for the same stretch of the text (#312); a stale one is rendered again first.
+        let byIndex = Dictionary(uniqueKeysWithValues: PreparedAudioCoordinator.matchingChunks(
+            in: manifest, plan: plan, sourceText: sourceText
+        ).map { ($0.index, $0) })
+        let articleChunks = NarrationChunkPlanner.articlePlan(sourceText).chunks
         let chunks = try plan.map { entry -> SupertonicPreparedChunk in
-            guard let committed = byIndex[entry.index] else {
+            guard let committed = byIndex[entry.index], articleChunks.indices.contains(entry.index) else {
                 throw SessionKitError.persistenceFailed("prepared_chunk_missing")
             }
-            let slice = RenderedSpeechChunker.sourceSlice(
-                from: SpeechTextNormalizer.normalize(sourceText),
-                startOffset: entry.startOffset,
-                maxCharacters: RenderedSpeechChunker.spokenCostBudget
-            )
             return SupertonicPreparedChunk(
                 startOffset: entry.startOffset,
                 sourceLength: entry.sourceLength,
                 text: entry.text,
-                boundary: slice.boundary,
+                boundary: articleChunks[entry.index].boundary,
                 audioURL: support.appending(path: "PreparedAudio/\(committed.relativePath)")
             )
         }
@@ -15615,13 +15618,9 @@ final class Gate1AppModel: ObservableObject {
 
     private nonisolated static func preparedChunkPlan(for sourceText: String) -> [PreparedChunkPlan] {
         preparationPlanCache.value(for: sourceText) {
-            let normalized = SpeechTextNormalizer.normalize(sourceText)
-            return RenderedSpeechChunker.sourceSlices(from: normalized, maxCharacters: RenderedSpeechChunker.spokenCostBudget)
-                .enumerated()
-                .map { index, planned in
-                    PreparedChunkPlan(index: index, startOffset: planned.startOffset,
-                                      sourceLength: planned.slice.sourceLength, text: planned.slice.text)
-                }
+            NarrationChunkPlanner.articlePlan(sourceText).chunks.map {
+                PreparedChunkPlan(index: $0.index, startOffset: $0.startOffset, sourceLength: $0.sourceLength, text: $0.text)
+            }
         }
     }
 

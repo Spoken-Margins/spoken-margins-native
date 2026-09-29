@@ -67,7 +67,7 @@ enum SupertonicRenderIdentity {
     private static let bundledHashes = BundledModelHashCache()
     static let modelRevision = "supertonic-3-int8"
     static let normalizationVersion = "speech-normalizer.v3"
-    static let chunkingVersion = "rendered-speech-chunker.v2"
+    static let chunkingVersion = NarrationChunkPlanner.version
 
     static func make(
         assets: SupertonicAssetLocation,
@@ -235,7 +235,11 @@ actor PreparedAudioCoordinator {
         guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId),
               manifest.signature == signature,
               manifest.state == .preparing || manifest.state == .pausedForThermal else { return }
-        if manifest.chunks.contains(where: { $0.index == plan.index }) { return }
+        if let existing = manifest.chunks.first(where: { $0.index == plan.index }) {
+            if existing.sourceRange == Self.sourceRange(of: plan, manifest: manifest, sourceText: sourceText) { return }
+            // Saved for another stretch of the text (#312): replace it rather than keep it forever.
+            manifest.chunks.removeAll { $0.index == plan.index }
+        }
 
         let directory = rootDirectory
             .appending(path: safePath(itemId), directoryHint: .isDirectory)
@@ -250,17 +254,10 @@ actor PreparedAudioCoordinator {
         let data = try Data(contentsOf: temporary, options: [.mappedIfSafe])
         if fileManager.fileExists(atPath: destination.path) { try fileManager.removeItem(at: destination) }
         try fileManager.moveItem(at: temporary, to: destination)
-        let characterRange = plan.startOffset..<(plan.startOffset + plan.sourceLength)
-        let locator = LegacySourceOffsetAdapter.locator(
-            documentId: manifest.sourcePackageId,
-            segmentId: "chunk-\(plan.index)",
-            characterRange: characterRange,
-            in: sourceText
-        )
         manifest.chunks.append(PreparedAudioChunk(
             id: "\(manifestId)-chunk-\(plan.index)",
             index: plan.index,
-            sourceRange: locator,
+            sourceRange: Self.sourceRange(of: plan, manifest: manifest, sourceText: sourceText),
             relativePath: relativePath(destination),
             byteCount: Int64(data.count),
             checksumSHA256: SupertonicRenderIdentity.sha256(data),
@@ -330,12 +327,15 @@ actor PreparedAudioCoordinator {
         return Int64(data.count) == chunk.byteCount && SupertonicRenderIdentity.sha256(data) == chunk.checksumSHA256
     }
 
-    func committedChunk(itemId: String, signature: TTSRenderSignature, plan: PreparedChunkPlan) throws -> PreparedChunkLookupResult? {
+    /// The committed audio for `plan`, only when it was saved for the same stretch of `sourceText`.
+    /// Matching the index alone could hand back another stretch's audio if the plan shifted (#312).
+    func committedChunk(itemId: String, signature: TTSRenderSignature, plan: PreparedChunkPlan, sourceText: String) throws -> PreparedChunkLookupResult? {
         let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
         guard let manifest = try repository.loadPreparedAudioManifest(id: manifestId),
               manifest.signature == signature,
               manifest.state == .preparing || manifest.state == .pausedForThermal || manifest.state == .readyOffline,
-              let chunk = manifest.chunks.first(where: { $0.index == plan.index }) else { return nil }
+              let chunk = manifest.chunks.first(where: { $0.index == plan.index }),
+              chunk.sourceRange == Self.sourceRange(of: plan, manifest: manifest, sourceText: sourceText) else { return nil }
         let url = rootDirectory.appending(path: chunk.relativePath)
         guard fileManager.fileExists(atPath: url.path) else { return nil }
         let data = try Data(contentsOf: url, options: [.mappedIfSafe])
@@ -349,6 +349,26 @@ actor PreparedAudioCoordinator {
             return nil
         }
         return PreparedChunkLookupResult(audioURL: url, duration: Double(chunk.durationMs) / 1_000)
+    }
+
+    /// The committed chunks saved for the same stretch of `sourceText` as `plan` plans. Background
+    /// preparation and assembly count only these, as the player's lookups do (#312).
+    static func matchingChunks(
+        in manifest: PreparedAudioManifest, plan: [PreparedChunkPlan], sourceText: String
+    ) -> [PreparedAudioChunk] {
+        let planned = Dictionary(plan.map { ($0.index, $0) }, uniquingKeysWith: { first, _ in first })
+        return manifest.chunks.filter { chunk in
+            planned[chunk.index].map { chunk.sourceRange == sourceRange(of: $0, manifest: manifest, sourceText: sourceText) } ?? false
+        }
+    }
+
+    private static func sourceRange(of plan: PreparedChunkPlan, manifest: PreparedAudioManifest, sourceText: String) -> SourceLocator {
+        LegacySourceOffsetAdapter.locator(
+            documentId: manifest.sourcePackageId,
+            segmentId: "chunk-\(plan.index)",
+            characterRange: plan.startOffset..<(plan.startOffset + plan.sourceLength),
+            in: sourceText
+        )
     }
 
     private func relativePath(_ url: URL) -> String {
