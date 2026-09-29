@@ -177,6 +177,54 @@ final class LiveActivityLifecycleTests: XCTestCase {
         XCTAssertEqual(call.scheduleHandOff(appInBackground: true, now: nextPause), nextPause.addingTimeInterval(grace))
     }
 
+    // MARK: #245: another app took over the audio.
+
+    func testAnotherAppPlayingEndsAPausedCardAtOnce() {
+        var lifecycle = LiveActivityLifecycle()
+        _ = lifecycle.observe(sessionId: "s1", isListening: true, isPaused: false, now: start)
+        lifecycle.audioInterruptionBegan() // Spotify took the audio
+        _ = lifecycle.observe(sessionId: "s1", isListening: false, isPaused: true, now: start.addingTimeInterval(1))
+        XCTAssertTrue(lifecycle.isPausedCardOnScreen)
+        XCTAssertEqual(lifecycle.otherAudioChecked(isOtherAudioPlaying: true, isPhoneCallActive: false), .end(.otherAudioTookOver))
+        XCTAssertEqual(
+            lifecycle.observe(sessionId: "s1", isListening: false, isPaused: true, now: start.addingTimeInterval(6)),
+            .hidden(.otherAudioTookOver)
+        )
+        XCTAssertFalse(lifecycle.isPausedCardOnScreen)
+    }
+
+    func testListenerPauseThenAnotherAppEndsTheCardToo() {
+        var lifecycle = LiveActivityLifecycle()
+        _ = lifecycle.observe(sessionId: "s1", isListening: false, isPaused: true, now: start)
+        XCTAssertNil(lifecycle.otherAudioChecked(isOtherAudioPlaying: false, isPhoneCallActive: false), "nothing else playing yet")
+        XCTAssertEqual(lifecycle.otherAudioChecked(isOtherAudioPlaying: true, isPhoneCallActive: false), .end(.otherAudioTookOver))
+    }
+
+    func testPhoneCallKeepsTheCardEvenWhenOtherAudioIsReported() {
+        var lifecycle = LiveActivityLifecycle()
+        _ = lifecycle.observe(sessionId: "s1", isListening: true, isPaused: false, now: start)
+        lifecycle.audioInterruptionBegan()
+        _ = lifecycle.observe(sessionId: "s1", isListening: false, isPaused: true, now: start.addingTimeInterval(1))
+        XCTAssertNil(lifecycle.otherAudioChecked(isOtherAudioPlaying: true, isPhoneCallActive: true))
+        XCTAssertTrue(lifecycle.isPausedCardOnScreen, "still there to resume after the call")
+    }
+
+    func testAHandedOffCardIsDismissedWhenAnotherAppPlays() {
+        var lifecycle = LiveActivityLifecycle()
+        _ = lifecycle.observe(sessionId: "s1", isListening: false, isPaused: true, now: start)
+        _ = lifecycle.scheduleHandOff(appInBackground: true, now: start)
+        XCTAssertNotNil(lifecycle.handOffIfDue(appInBackground: true, now: start.addingTimeInterval(grace)))
+        XCTAssertTrue(lifecycle.isPausedCardOnScreen, "ended, but on screen until the deadline")
+        XCTAssertEqual(lifecycle.otherAudioChecked(isOtherAudioPlaying: true, isPhoneCallActive: false), .end(.otherAudioTookOver))
+    }
+
+    func testOtherAudioWhileWeArePlayingOrWithNoSessionChangesNothing() {
+        var lifecycle = LiveActivityLifecycle()
+        XCTAssertNil(lifecycle.otherAudioChecked(isOtherAudioPlaying: true, isPhoneCallActive: false), "no session")
+        _ = lifecycle.observe(sessionId: "s1", isListening: true, isPaused: false, now: start)
+        XCTAssertNil(lifecycle.otherAudioChecked(isOtherAudioPlaying: true, isPhoneCallActive: false), "mixing while we play")
+    }
+
     func testInterruptionWhileListeningOrWithoutASessionChangesNothing() {
         var lifecycle = LiveActivityLifecycle()
         XCTAssertNil(lifecycle.audioInterruptionEnded(shouldResume: false), "no session")
