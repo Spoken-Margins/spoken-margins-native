@@ -31,6 +31,12 @@ elif args[0] == "create":
     print("FRESH-0000-0000")
 elif args[0] == "boot":
     start = time.time()
+    gate = os.environ.get("FAKE_BOOT_GATE")
+    if gate:  # hold the boot open until the test says so
+        open(gate + ".started", "w").close()
+        deadline = time.time() + 60
+        while not os.path.exists(gate + ".release") and time.time() < deadline:
+            time.sleep(0.02)
     time.sleep(float(os.environ.get("FAKE_BOOT_SECONDS", "0.1")))
     log({"boot": args[1], "start": start, "end": time.time()})
     if os.environ.get("FAKE_BOOT") == "invalid":
@@ -170,15 +176,26 @@ class LaneSimTests(unittest.TestCase):
         self.assertIn('crashed during boot', lane_sim.unsafe_devices()[UDID]['reason'])
 
     def test_no_build_can_start_while_a_simulator_boots(self):
-        with mock.patch.dict(os.environ, {'FAKE_BOOT_SECONDS': '1.5'}):
+        # Deterministic: the fake boot holds itself open until released, so the build attempt always lands
+        # mid-boot, however slowly this Mac starts processes (it once failed at a load average of 235).
+        gate = str(Path(self.temporary.name) / 'gate')
+        with mock.patch.dict(os.environ, {'FAKE_BOOT_GATE': gate}):
             booting = threading.Thread(target=lane_sim.boot, args=(UDID, 'test'), kwargs={'out': self.quiet})
             booting.start()
-            time.sleep(0.5)
-            with self.assertRaises(TimeoutError):
-                with lane_slots.build_slot('a stream build', out=self.quiet, max_wait=0.3):
-                    pass
-            booting.join()
-        with lane_slots.build_slot('after the boot', out=self.quiet, max_wait=1):
+            for _ in range(3000):
+                if os.path.exists(gate + '.started'):
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail('the fake boot never started')
+            try:
+                with self.assertRaises(TimeoutError):
+                    with lane_slots.build_slot('a stream build', out=self.quiet, max_wait=0.3):
+                        pass
+            finally:
+                open(gate + '.release', 'w').close()
+                booting.join(60)
+        with lane_slots.build_slot('after the boot', out=self.quiet, max_wait=5):
             pass
 
     def test_it_waits_while_another_simulator_is_booted(self):

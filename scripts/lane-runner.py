@@ -239,8 +239,11 @@ def summarize_manifest(manifest: dict) -> dict:
 
     A build that was interrupted (timeout or flood) is not a build failure: that's INCONCLUSIVE.
     """
-    summary = {'passed': 0, 'failed': [], 'crashes': [], 'flood': False, 'interrupted': False, 'build_failed': False}
+    summary = {'passed': 0, 'failed': [], 'crashes': [], 'flood': False, 'interrupted': False, 'build_failed': False,
+               'out_of_time': None}
     for step in manifest.get('steps', []):
+        if step.get('interrupted') and not step.get('simulator_crash_report') and step.get('timeout_seconds'):
+            summary['out_of_time'] = (step.get('name'), step.get('timeout_seconds'))
         for test, record in (step.get('tests') or {}).items():
             if record.get('status') == 'passed':
                 summary['passed'] += 1
@@ -276,6 +279,12 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[
                    f'{", " + str(len(summary["failed"])) + " failed" if summary["failed"] else ""})')
         for test in summary['failed'][:10]:
             details.append(f'{test} — expected: passes. observed: failed. evidence: {output}/tests.xcresult')
+        if summary['out_of_time']:
+            step, limit = summary['out_of_time']
+            what = {'xcode-tests': 'test run', 'build-for-testing': 'build'}.get(step, step)
+            details.append(f'{plan}: the {what} ran out of its own {duration(limit)} budget (verify-tests.py `{step}`) '
+                           f'after {summary["passed"]} passing test{"s" if summary["passed"] != 1 else ""}. '
+                           'The simulator\'s boot has a separate budget and had finished before it started.')
         if manifest.get('status') != 'verified' and not summary['failed']:
             details.append(f'{plan}: {manifest.get("error") or manifest.get("status")}. evidence: {output}/manifest.json')
         if summary['flood']:
@@ -340,19 +349,21 @@ def _t3_on_fresh_device(grouped, request_id, evidence, runtime):
         with (evidence / f'verify-{plan}.log').open('w') as log:
             if run_bounded(command, log, T3_TIMEOUT) is None:
                 return {**_read_manifest(output), 'status': 'timed out',
-                        'error': f'no result after {duration(T3_TIMEOUT)}; interrupted'}
+                        'error': f'the runner\'s {duration(T3_TIMEOUT)} budget for the whole verify-tests.py run '
+                                 '(build and tests) ran out; interrupted'}
         return _read_manifest(output) or {'status': 'missing', 'error': 'verify-tests.py wrote no manifest'}
 
     try:
         boot_started = time.monotonic()
         with (evidence / 'first-boot.log').open('w') as log:
             problem = first_boot(udid, log)
+        boot_seconds = time.monotonic() - boot_started  # the boot alone, before any build or test
         if problem:
             return ('INCONCLUSIVE', where, 'nothing', [f'The fresh simulator did not boot: {problem} '
                     f'evidence: {evidence}/first-boot.log'], 'watched during boot', '')
         lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot')  # stops the device at a SpringBoard crash
         summaries, statuses, ran, details = run_plans(grouped, run_plan, evidence)
-        details.insert(0, f'first boot of the fresh simulator took {duration(time.monotonic() - boot_started)}')
+        details.insert(0, f'first boot of the fresh simulator took {duration(boot_seconds)}')
     finally:
         lane_sim.release(udid)
     watched = lane_sim.unsafe_devices().get(udid)
