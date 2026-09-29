@@ -525,6 +525,120 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(try result.store.listItems().count, 1)
     }
 
+    /// A v1 PDF with the given sessions (each with one Margin on `words`), re-imported
+    /// with a v2 document that inserts a running head before the body.
+    private func reimportWithSessions(_ sessions: [(session: Session, marginId: String, words: String)]) throws -> (store: SQLiteSessionStore, v1: Item, path: String, reimported: Item) {
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        let store = try SQLiteSessionStore(path: path)
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "pdf", displayName: "PDF", capabilities: ["sync": ["canonical_persistence"]]), repository: store)
+        let url = "shared-file://share-sheet/Paper.pdf"
+        let v1 = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: "Paper"),
+            text: "# Paper\n\n## Methods\n\nWe measured sleep in adults.\nThe effect held across cohorts.\n\n## Results\n\nSleep improved with morning light.",
+            contentFormat: .markdown
+        ))
+        let text = try XCTUnwrap(v1.text)
+        for entry in sessions {
+            var session = entry.session
+            session.itemId = v1.id
+            session.currentTargetId = session.currentTargetType == .itemTextTTS ? v1.id : session.currentTargetId
+            try store.saveSession(session)
+            let start = text.distance(from: text.startIndex, to: try XCTUnwrap(text.range(of: entry.words)).lowerBound)
+            try store.saveInterjection(Interjection(
+                id: entry.marginId, itemId: v1.id, sessionId: session.id, targetType: .item, targetId: v1.id,
+                createdAt: Date(timeIntervalSince1970: 1), roughPercent: 10,
+                anchor: Anchor(anchorType: .text, startChar: start, endChar: start + entry.words.count, anchorBefore: "", anchorAfter: ""),
+                audioPath: nil, audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
+                displayText: "Margin", status: "active"
+            ))
+        }
+        let document = StructuredDocumentBuilder.build(lines: [
+            StructuredDocumentLine(text: "Paper", role: .title, pageIndex: 0),
+            StructuredDocumentLine(text: "J Biol 12 (2020) 1-9", role: .pageHeader, pageIndex: 0),
+            StructuredDocumentLine(text: "Methods", role: .heading, pageIndex: 0, level: 2),
+            StructuredDocumentLine(text: "We measured sleep in adults.", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "The effect held across cohorts.", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "Results", role: .heading, pageIndex: 1, level: 2),
+            StructuredDocumentLine(text: "Sleep improved with morning light.", role: .body, pageIndex: 1),
+        ], engine: "pdfkit_baseline", version: 2, pageCount: 2)
+        let reimported = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: "Paper"),
+            text: document.text,
+            contentFormat: .plainText
+        ), structuredDocument: document)
+        return (store, v1, path, reimported)
+    }
+
+    func testReimportMovesEachSessionsMarginWhenTwoSessionsShareAMarginId() throws {
+        // #220 audit 1: Margin ids are numbered per session ("ij-001" in each), and the
+        // upgrade keyed moved ranges by id alone, so one Margin took the other's passage.
+        func session(_ id: String) -> Session {
+            Session(id: id, itemId: "", status: "finished", phase: .finished, currentTargetType: .itemTextTTS, currentTargetId: "", position: Position(), completionPercent: 100, playbackRate: 1)
+        }
+        let result = try reimportWithSessions([
+            (session("session-a"), "ij-001", "measured sleep"),
+            (session("session-b"), "ij-001", "morning light"),
+        ])
+        defer { try? FileManager.default.removeItem(atPath: result.path) }
+        XCTAssertEqual(result.reimported.id, result.v1.id, "the item moves to v2")
+        let text = try XCTUnwrap(try result.store.loadItem(id: result.v1.id).text)
+        XCTAssertEqual(try result.store.loadInterjections(sessionId: "session-a").map { words($0, in: text) }, ["measured sleep"])
+        XCTAssertEqual(try result.store.loadInterjections(sessionId: "session-b").map { words($0, in: text) }, ["morning light"])
+    }
+
+    func testReimportLeavesAPositionInASummaryOrReplyWhereItIs() throws {
+        // #220 audit 2: a session paused in a summary or AI reply keeps its position in
+        // the reply's text, not the PDF's; the upgrade moved it as if it were a PDF offset.
+        let reply = Session(id: "session-reply", itemId: "", status: "paused", phase: .aiResponsePlayback, currentTargetType: .assistantTurnTTS, currentTargetId: "turn-1", position: Position(charOffset: 40, chapterId: "turn-chapter"), completionPercent: 30, playbackRate: 1)
+        let listening = Session(id: "session-listen", itemId: "", status: "paused", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: "", position: Position(), completionPercent: 0, playbackRate: 1)
+        let result = try reimportWithSessions([
+            (reply, "ij-001", "measured sleep"),
+            (listening, "ij-001", "morning light"),
+        ])
+        defer { try? FileManager.default.removeItem(atPath: result.path) }
+        XCTAssertEqual(result.reimported.id, result.v1.id, "a reply position doesn't block the move")
+        let kept = try XCTUnwrap(try result.store.loadSession(id: "session-reply"))
+        XCTAssertEqual(kept.position, reply.position, "the reply position is untouched")
+    }
+
+    func testAV2DocumentSavedForThePlayingTextIsUsedOnTheNextPlay() throws {
+        // #220 audit 5: the projection cache kept "no document" for an item after a
+        // re-import saved a document for the same text, so "[12]" was still spoken.
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let store = try SQLiteSessionStore(path: path)
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "pdf", displayName: "PDF", capabilities: [
+            "sync": ["browser_session_handoff", "canonical_persistence"],
+            "playback": ["realtime_tts"],
+        ]), repository: store, audio: audio)
+        let url = "shared-file://share-sheet/Paper.pdf"
+        let item = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: "Paper"),
+            text: "The effect held [12] in every cohort.",
+            contentFormat: .markdown
+        ))
+        _ = try engine.startSession(itemId: item.id)
+        XCTAssertTrue(try XCTUnwrap(audio.preparedTexts.last).contains("[12]"), "v1: no document yet")
+        _ = try engine.pause()
+
+        let document = StructuredDocumentBuilder.build(lines: [
+            StructuredDocumentLine(text: try XCTUnwrap(item.text), role: .body, pageIndex: 0),
+        ], engine: "pdfkit_baseline", version: 2, pageCount: 1)
+        XCTAssertEqual(document.text, item.text)
+        _ = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: "Paper"),
+            text: document.text,
+            contentFormat: .plainText
+        ), structuredDocument: document)
+        _ = try engine.resumePlayback()
+        XCTAssertFalse(try XCTUnwrap(audio.preparedTexts.last).contains("[12]"), "the new document's I14 projection is used")
+    }
+
     func testReimportLeavesAV1PDFAloneWhenAMarginsWordsChange() throws {
         // v1 removed a running head from the middle of a sentence that crossed a page;
         // v2 keeps the head there, so "effect held across" is no longer one run of text.

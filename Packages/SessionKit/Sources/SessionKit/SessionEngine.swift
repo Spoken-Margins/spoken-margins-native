@@ -752,6 +752,8 @@ public final class SessionEngine {
     private func saveStructuredDocument(_ document: StructuredDocument?, itemId: String) throws {
         guard let document, let store = repository as? StructuredDocumentRepository else { return }
         try store.saveStructuredDocument(document, itemId: itemId)
+        // The cache may hold "no document" for this item's text (#220 audit 5).
+        if listenableCache?.itemId == itemId { listenableCache = nil }
     }
 
     @discardableResult

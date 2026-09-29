@@ -47,9 +47,12 @@ public enum StructuredDocumentUpgrader {
         let nonText = margins.filter { $0.anchor.anchorType != .text }.map(\.id)
         guard nonText.isEmpty else { return .failure(.nonTextAnchor(marginIds: nonText)) }
 
+        // Margin ids are numbered per session ("ij-001" in each; the store keys them
+        // by session and id), so a moved range is tracked by both.
+        func key(_ margin: Interjection) -> String { "\(margin.sessionId)::\(margin.id)" }
         let anchors = margins.map {
             StructuredDocumentMigration.TextAnchor(
-                id: $0.id, start: $0.anchor.startChar, end: $0.anchor.endChar,
+                id: key($0), start: $0.anchor.startChar, end: $0.anchor.endChar,
                 before: $0.anchor.anchorBefore, after: $0.anchor.anchorAfter
             )
         }
@@ -62,6 +65,12 @@ public enum StructuredDocumentUpgrader {
         var movedSessions: [Session] = []
         var unplacedSessions: [String] = []
         for var session in sessions {
+            // Only an item-text position counts in the PDF's text. A session paused in a
+            // summary or AI reply counts in that turn's text, so it stays as it is.
+            guard session.currentTargetType == .itemTextTTS else {
+                movedSessions.append(session)
+                continue
+            }
             guard let offset = StructuredDocumentMigration.placePosition(session.position.charOffset, from: oldText, into: document.text) else {
                 unplacedSessions.append(session.id)
                 continue
@@ -78,7 +87,7 @@ public enum StructuredDocumentUpgrader {
         let newEdition = SHA256.hash(data: Data(document.text.utf8)).map { String(format: "%02x", $0) }.joined()
         let movedMargins = margins.map { margin -> Interjection in
             var moved = margin
-            if let range = placed[margin.id] {
+            if let range = placed[key(margin)] {
                 moved.anchor.startChar = range.lowerBound
                 moved.anchor.endChar = range.upperBound
             }
