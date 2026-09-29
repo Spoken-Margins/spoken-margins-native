@@ -15669,9 +15669,19 @@ final class Gate1AppModel: ObservableObject {
                 await self.refreshFollowedSources(force: true)
                 self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
             } catch {
+                await self.recordFollowFailure(error)
                 self.reportFailure(error, context: "Follow source failed")
             }
         }
+    }
+
+    /// #244: a failed Follow said only "FollowedSourceError". Record the case, host and steps.
+    private func recordFollowFailure(_ error: Error) async {
+        guard let coordinator = followedSourceCoordinator else {
+            diagnostics["followSourceFailure"] = FollowedSourceCoordinator.diagnosticCode(for: error)
+            return
+        }
+        diagnostics["followSourceFailure"] = await coordinator.failureDiagnostic(for: error)
     }
 
     /// B1 drawer: follows a catalog feed (always a public https feed) in one tap. Throws so the
@@ -15833,6 +15843,7 @@ final class Gate1AppModel: ObservableObject {
                 await self.refreshFollowedSources(force: true)
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
             } catch {
+                await self.recordFollowFailure(error)
                 self.reportFailure(error, context: "Follow source failed")
             }
         }
@@ -15910,6 +15921,7 @@ final class Gate1AppModel: ObservableObject {
                 self.diagnostics["sourceFollowSuggestion"] = "offered:\(eligible.count)"
             } catch {
                 self.diagnostics["sourceFollowSuggestion"] = "unavailable:\(String(describing: type(of: error)))"
+                await self.recordFollowFailure(error)
             }
         }
     }
