@@ -152,8 +152,8 @@ class ProcessTests(unittest.TestCase):
                       'def stop(*_):\n    print("interrupted, stopping xcodebuild", flush=True); sys.exit(130)\n'
                       'signal.signal(signal.SIGINT, stop)\ntime.sleep(30)\n')
             started = time.monotonic()
-            self.assertIsNone(lane.run_bounded([sys.executable, '-c', script], log, timeout=0.5, grace=10))
-            self.assertLess(time.monotonic() - started, 10)
+            self.assertIsNone(lane.run_bounded([sys.executable, '-c', script], log, timeout=0.5, grace=20))
+            self.assertLess(time.monotonic() - started, 15)  # the SIGINT path, not the SIGKILL after 20 s
             log.seek(0)
             self.assertIn('interrupted, stopping xcodebuild', log.read())
 
