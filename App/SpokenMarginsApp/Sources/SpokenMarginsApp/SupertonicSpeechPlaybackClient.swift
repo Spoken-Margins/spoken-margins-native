@@ -397,6 +397,8 @@ enum SupertonicResourcePolicy {
 final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unchecked Sendable {
     typealias FallbackHandler = @Sendable (_ reason: String, _ charOffset: Int, _ targetId: String) -> Void
     typealias RestoreHandler = @Sendable (_ targetId: String) -> Void
+    /// Which way a play request went, for diagnostics (#235).
+    typealias ResumeDecisionHandler = @Sendable (_ fields: [String: String]) -> Void
     typealias GenerationStateHandler = @Sendable (RenderedSpeechGenerationState) -> Void
     typealias GenerationProgressHandler = @Sendable (RenderedSpeechGenerationProgress) -> Void
     typealias PreparedAudioHandler = @Sendable (_ itemId: String, _ prepared: PreparedTextAudio) -> Void
@@ -524,6 +526,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// to Supertonic at the next play once the condition clears).
     private var resourceFallbackTargetIds: Set<String> = []
     private let onRestore: RestoreHandler?
+    private let onResumeDecision: ResumeDecisionHandler?
     private var preparedAudioAssemblyStarted = false
     private var generationState = RenderedSpeechGenerationState.inactive
     private var shouldResumeAfterInterruption = false
@@ -571,6 +574,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onPreparedAudio: PreparedAudioHandler? = nil,
         onFallback: FallbackHandler? = nil,
         onRestore: RestoreHandler? = nil,
+        onResumeDecision: ResumeDecisionHandler? = nil,
         renderWaitLimit: Duration = .seconds(15)
     ) {
         self.renderer = renderer
@@ -608,6 +612,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.onPreparedAudio = onPreparedAudio
         self.onFallback = onFallback
         self.onRestore = onRestore
+        self.onResumeDecision = onResumeDecision
         self.renderWaitLimit = renderWaitLimit
         super.init()
         installAudioSessionObservers()
@@ -662,7 +667,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return
         }
         let spokenOffset = spokenOffset(forSourceOffset: charOffset)
-        switch resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset) {
+        let before = resumeDiagnostics(targetId: targetId, spokenOffset: spokenOffset)
+        let action = resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset)
+        reportResumeDecision(action, before: before)
+        switch action {
         case .resumePlayer(let player):
             try activateAudioSession()
             player.playImmediately(atRate: lock.withLock { playbackRate })
@@ -862,6 +870,18 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         if snapshot.2 { return .confirmed }
         return snapshot.3 ? .pending : .confirmed
+    }
+
+    /// True while the start waits for a chunk that is rendering and whose render deadline applies
+    /// (the same condition that lets that deadline fall back to the iOS voice), so the engine's
+    /// start watchdog doesn't fail a start that is only waiting on Supertonic (#235).
+    func isAwaitingRenderedAudio(targetId: String) -> Bool {
+        lock.withLock {
+            guard !fallbackIsActive, currentTargetId == targetId, pendingStartTargetId == targetId,
+                  transportIntent == .playing, playbackFailure == nil, !inFlightOffsets.isEmpty else { return false }
+            if startedTargetId == nil { return true }
+            return pendingAutoplayOffset.map(inFlightOffsets.contains) ?? false
+        }
     }
 
     /// Supertonic is a user-selected voice. Backgrounding during its initial
@@ -1799,10 +1819,59 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 pendingStartTargetId = targetId
                 initialPlaybackOffset = inFlight.startOffset
                 initialRequestedSpokenOffset = spokenOffset
+                // The finished render must play, and the render deadline must cover the wait.
+                pendingAutoplayOffset = inFlight.startOffset
                 return .awaitPendingRender
             }
             return .none
         }
+    }
+
+    /// The client's state when a play request arrives, before `resumeAction` changes it. The next
+    /// device export then says why a resume restarted rendering or waited (#235).
+    private func resumeDiagnostics(targetId: String, spokenOffset: Int) -> [String: String] {
+        lock.withLock {
+            let chunkState: String
+            if renderedCache.values.contains(where: {
+                spokenOffset >= $0.request.startOffset && spokenOffset < $0.request.startOffset + max(1, $0.request.sourceLength)
+            }) {
+                chunkState = "rendered"
+            } else if generationPlan.contains(where: {
+                inFlightOffsets.contains($0.startOffset)
+                    && spokenOffset >= $0.startOffset && spokenOffset < $0.startOffset + max(1, $0.sourceLength)
+            }) {
+                chunkState = "rendering"
+            } else {
+                chunkState = "not_rendered"
+            }
+            return [
+                "intent": String(describing: transportIntent),
+                "sameTarget": String(currentTargetId == targetId),
+                "sameText": String(activeSourceText == preparedSourceText),
+                "hasPlayer": String(player != nil),
+                "inPlayerChunk": String(player != nil && spokenOffset >= currentStartOffset
+                    && spokenOffset <= currentStartOffset + max(0, currentChunkLength)),
+                "offsetFromChunk": String(spokenOffset - currentStartOffset),
+                "chunk": chunkState,
+                "autoplayMarked": String(pendingAutoplayOffset != nil),
+                "cached": String(renderedCache.count),
+                "inFlight": String(inFlightOffsets.count),
+                "started": String(startedTargetId == targetId)
+            ]
+        }
+    }
+
+    private func reportResumeDecision(_ action: ResumeAction, before: [String: String]) {
+        guard let onResumeDecision else { return }
+        var fields = before
+        switch action {
+        case .resumePlayer: fields["path"] = "resume_player"
+        case .seekPlayer: fields["path"] = "seek_player"
+        case .playCached: fields["path"] = "play_cached"
+        case .awaitPendingRender: fields["path"] = "await_render"
+        case .none: fields["path"] = "restart_rendering"
+        }
+        onResumeDecision(fields)
     }
 
     private func playerTime(_ player: AVPlayer?) -> TimeInterval {

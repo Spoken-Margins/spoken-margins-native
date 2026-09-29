@@ -16,7 +16,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
 - T3 runs the named app-hosted tests through verify-tests.py on a fresh iOS 26 simulator, created
   for the job and deleted afterwards. It is booted under the lane's boot rules (scripts/lane_sim.py):
   one boot at a time, no builds meanwhile, no retry after a failed boot, a stop at the first crash
-  during boot, and a long wait for the first boot's data migration. A crash flood stops the run.
+  during boot, and a long wait for the first boot's data migration. The job holds the Mac's one
+  simulator slot throughout, so it never runs alongside a Test Desk job. A crash flood stops the run.
 - A timeout interrupts the whole process group, so no xcodebuild keeps running outside the slots.
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
@@ -52,6 +53,9 @@ BUILD_TIMEOUT = 1800
 T3_TIMEOUT = 3600
 INTERRUPT_GRACE = 120
 RUNNER_SIMULATOR_PREFIX = 'SM Lane Runner '
+# How long a T3 waits for the Mac's one simulator slot (a Test Desk job may hold it); keeps the job
+# inside lane.yml's 150-minute limit together with the boot and the test run.
+RUNNER_SLOT_WAIT = 3600
 MARKER = re.compile(r'<!-- lane-request: (\{.*?\}) -->')
 NOTE = '<!-- lane-note -->'
 REQUEST = re.compile(r'^\s*/lane\s+(T\d)\b', re.M)
@@ -160,7 +164,10 @@ def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUP
     On timeout the whole group gets SIGINT first, so verify-tests.py and xcodebuild-lane stop their
     own xcodebuild and record the interruption, then SIGKILL if it's still there after the grace.
     """
-    process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    # The child gets default SIGINT handling even if this process was started with it ignored (as
+    # background jobs are), or the interrupt below would be silently ignored all the way down.
+    process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                               preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
     try:
         return process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -232,8 +239,11 @@ def summarize_manifest(manifest: dict) -> dict:
 
     A build that was interrupted (timeout or flood) is not a build failure: that's INCONCLUSIVE.
     """
-    summary = {'passed': 0, 'failed': [], 'crashes': [], 'flood': False, 'interrupted': False, 'build_failed': False}
+    summary = {'passed': 0, 'failed': [], 'crashes': [], 'flood': False, 'interrupted': False, 'build_failed': False,
+               'out_of_time': None}
     for step in manifest.get('steps', []):
+        if step.get('interrupted') and not step.get('simulator_crash_report') and step.get('timeout_seconds'):
+            summary['out_of_time'] = (step.get('name'), step.get('timeout_seconds'))
         for test, record in (step.get('tests') or {}).items():
             if record.get('status') == 'passed':
                 summary['passed'] += 1
@@ -269,6 +279,12 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[
                    f'{", " + str(len(summary["failed"])) + " failed" if summary["failed"] else ""})')
         for test in summary['failed'][:10]:
             details.append(f'{test} — expected: passes. observed: failed. evidence: {output}/tests.xcresult')
+        if summary['out_of_time']:
+            step, limit = summary['out_of_time']
+            what = {'xcode-tests': 'test run', 'build-for-testing': 'build'}.get(step, step)
+            details.append(f'{plan}: the {what} ran out of its own {duration(limit)} budget (verify-tests.py `{step}`) '
+                           f'after {summary["passed"]} passing test{"s" if summary["passed"] != 1 else ""}. '
+                           'The simulator\'s boot has a separate budget and had finished before it started.')
         if manifest.get('status') != 'verified' and not summary['failed']:
             details.append(f'{plan}: {manifest.get("error") or manifest.get("status")}. evidence: {output}/manifest.json')
         if summary['flood']:
@@ -280,14 +296,18 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[
     return summaries, statuses, ran, details
 
 
-def first_boot(udid: str, log) -> str | None:
-    """Boot the fresh simulator under the lane's boot rules (scripts/lane_sim.py). None when ready, else why not."""
+def first_boot(udid: str, log) -> tuple:
+    """Boot the fresh simulator under the lane's boot rules (scripts/lane_sim.py).
+
+    Returns (None when ready or the reason it isn't, details such as the memory pressure at boot).
+    """
     import lane_sim
+    info = {}
     try:
-        lane_sim.boot(udid, f'runner boot {udid}', out=log)
+        lane_sim.boot(udid, f'runner boot {udid}', out=log, info=info, first_boot=True)
     except lane_sim.BootError as error:
-        return str(error)
-    return None
+        return str(error), info
+    return None, info
 
 
 def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str, str, list[str], str, str]:
@@ -306,6 +326,21 @@ def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str,
     if not runtime:
         return ('INCONCLUSIVE', 'no simulator', 'nothing', [f'No iOS {lane_sim.IOS_MAJOR} simulator runtime is installed.'],
                 'none', '')
+    from lane_slots import acquire_simulator_slot, release_handle
+    try:
+        slot = acquire_simulator_slot(f'runner T3 {request_id}', out=sys.stdout, max_wait=RUNNER_SLOT_WAIT)
+    except TimeoutError as error:
+        return ('INCONCLUSIVE', 'no simulator', 'nothing', ['The Mac\'s simulator slots stayed busy (a Test Desk job or '
+                f'another run, and no room for a second simulator), so this run did not start one: {error}'], 'none', '')
+    try:
+        return _t3_on_fresh_device(grouped, request_id, evidence, runtime)
+    finally:
+        release_handle(slot)
+
+
+def _t3_on_fresh_device(grouped, request_id, evidence, runtime):
+    """The T3 job proper; the caller holds the simulator slot throughout."""
+    import lane_sim
     udid = lane_sim.create_temporary(RUNNER_SIMULATOR_PREFIX + request_id)
     where = f'fresh iPhone 17, {runtime.rsplit(".", 1)[-1].replace("iOS-", "iOS ").replace("-", ".")}'
     python = ROOT / '.venv/bin/python'
@@ -318,22 +353,39 @@ def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str,
         with (evidence / f'verify-{plan}.log').open('w') as log:
             if run_bounded(command, log, T3_TIMEOUT) is None:
                 return {**_read_manifest(output), 'status': 'timed out',
-                        'error': f'no result after {duration(T3_TIMEOUT)}; interrupted'}
+                        'error': f'the runner\'s {duration(T3_TIMEOUT)} budget for the whole verify-tests.py run '
+                                 '(build and tests) ran out; interrupted'}
         return _read_manifest(output) or {'status': 'missing', 'error': 'verify-tests.py wrote no manifest'}
 
     try:
         boot_started = time.monotonic()
         with (evidence / 'first-boot.log').open('w') as log:
-            problem = first_boot(udid, log)
+            problem, boot_info = first_boot(udid, log)
+        boot_seconds = time.monotonic() - boot_started  # the boot alone, before any build or test
         if problem:
-            return ('INCONCLUSIVE', where, 'nothing', [f'The fresh simulator did not boot: {problem} '
-                    f'evidence: {evidence}/first-boot.log'], 'watched during boot', '')
-        lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot')  # stops the device at a SpringBoard crash
+            details = [f'The fresh simulator did not boot: {problem} evidence: {evidence}/first-boot.log']
+            if boot_info.get('period') == 'two-simulator' and 'not ready after' in problem \
+                    and lane_sim.back_to_one_simulator(f'a two-simulator T3 boot ({request_id}) timed out: {problem}'):
+                details.append('This boot ran while two simulators were up, so the lane is back to one simulator '
+                               '(noted on #184).')
+            return 'INCONCLUSIVE', where, 'nothing', details, 'watched during boot', ''
+        lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot',  # stops the device at a SpringBoard crash
+                               crash_window=boot_info.get('boot_window'))
         summaries, statuses, ran, details = run_plans(grouped, run_plan, evidence)
-        details.insert(0, f'first boot of the fresh simulator took {duration(time.monotonic() - boot_started)}')
+        details.insert(0, f'first boot of the fresh simulator took {duration(boot_seconds)} (memory pressure at boot: '
+                          f'{boot_info.get("pressure", "unknown")}, after waiting {boot_info.get("pressure_waited", 0)}s; '
+                          f'{boot_info.get("period", "one-simulator")} period)')
+        if boot_info.get('tolerated'):
+            details.insert(1, f'tolerated one SpringBoard change in the first 30 s of the first boot (owner\'s rule, '
+                              f'#184): {boot_info["tolerated"]}')
     finally:
         lane_sim.release(udid)
     watched = lane_sim.unsafe_devices().get(udid)
+    if watched and watched['reason'].startswith('late crash report'):
+        # A crash during the boot, reported after it: the device is marked unsafe, but the run itself went on.
+        details.append(f'after the run started, a crash report arrived for a crash during the boot ({watched["reason"]}); '
+                       'the device was marked unsafe and deleted')
+        watched = None
     crash_names = [c for s in summaries for c in s['crashes']]
     flood = any(s['flood'] for s in summaries) or bool(watched)
     crashes = ('crash flood: ' if flood else '') + (', '.join(crash_names) if crash_names else 'none')
@@ -344,6 +396,11 @@ def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str,
         crashes += ' (simulator shut down, run stopped)'
     cc = '@uncomposed: SpringBoard crashed on the lane runner\'s simulator.' if flood else ''
     verdict = 'INCONCLUSIVE' if watched else t3_verdict(summaries, statuses)  # a simulator crash, not the app
+    timed_out = any(s['out_of_time'] for s in summaries) or 'timed out' in statuses
+    if verdict == 'INCONCLUSIVE' and timed_out and boot_info.get('period') == 'two-simulator' \
+            and lane_sim.back_to_one_simulator(f'a two-simulator T3 run ({request_id}) ended INCONCLUSIVE on a timeout.'):
+        details.append('This ran while two simulators were up and timed out, so the lane is back to one simulator '
+                       '(noted on #184).')
     return verdict, where, '; '.join(ran), details, crashes, cc
 
 

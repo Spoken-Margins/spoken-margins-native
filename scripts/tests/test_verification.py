@@ -96,10 +96,10 @@ class VerificationTests(unittest.TestCase):
 
     def test_app_tests_use_a_dedicated_runner_not_the_booted_journey_simulator(self):
         devices = self.simulator_inventory()
-        devices['com.apple.CoreSimulator.SimRuntime.iOS-27'][0]['state'] = 'Booted'
+        devices['com.apple.CoreSimulator.SimRuntime.iOS-26'][0]['state'] = 'Booted'
         runner, template = verification.dedicated_simulator(devices)
         self.assertIsNone(runner)
-        self.assertEqual(template['udid'], '27')
+        self.assertEqual((template['udid'], template['state']), ('26', 'Shutdown'))
         devices['com.apple.CoreSimulator.SimRuntime.iOS-26'].append({
             'udid': 'runner', 'name': verification.TEST_RUNNER_NAME, 'state': 'Shutdown', 'isAvailable': True,
             'deviceTypeIdentifier': 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
@@ -110,6 +110,24 @@ class VerificationTests(unittest.TestCase):
         runner, template = verification.dedicated_simulator(devices, ios=27)
         self.assertIsNone(runner, 'a runner on another OS is not reused when an OS is required')
         self.assertEqual(template['udid'], '27')
+
+    def test_the_default_runner_stays_on_the_lane_ios_even_when_a_newer_one_exists(self):
+        # 31A5C797, an iOS 27 "SpokenMargins Test Runner", was the default and crash-flooded (#184).
+        devices = self.simulator_inventory()
+        devices['com.apple.CoreSimulator.SimRuntime.iOS-27'].append({
+            'udid': '31A5C797', 'name': verification.TEST_RUNNER_NAME, 'state': 'Shutdown', 'isAvailable': True,
+            'deviceTypeIdentifier': 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
+        })
+        runner, template = verification.dedicated_simulator(devices)
+        self.assertIsNone(runner)
+        self.assertEqual(template['runtime'], 'com.apple.CoreSimulator.SimRuntime.iOS-26')
+        self.assertEqual(verification.dedicated_simulator(devices, ios=27)[0]['udid'], '31A5C797')  # only if asked
+
+    def test_a_device_on_the_unsafe_list_is_refused_however_it_was_chosen(self):
+        chosen = {'udid': '31A5C797', 'name': verification.TEST_RUNNER_NAME}
+        with self.assertRaisesRegex(RuntimeError, "unsafe list: iOS 27 flood.*lane-sim-boot --fresh"):
+            verification.refuse_unsafe(chosen, {'31A5C797': {'reason': 'iOS 27 flood'}})
+        verification.refuse_unsafe(chosen, {'OTHER': {'reason': 'x'}})  # not listed: fine
 
     def test_simulator_minimum_matches_shipping_targets(self):
         import re

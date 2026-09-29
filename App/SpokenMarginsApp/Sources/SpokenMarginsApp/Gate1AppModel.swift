@@ -6405,21 +6405,29 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    /// #217: waits as long as the system prompt is up; a slow Allow is still a yes.
     private func requestMicrophonePermission(timeoutSeconds: TimeInterval = 10) async -> Bool {
         if let microphonePermissionRequest { return await microphonePermissionRequest() }
-        return await withTaskGroup(of: Bool.self) { group in
-            group.addTask {
-                await SystemRecordingClient.requestRecordPermission()
-            }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
-                return false
-            }
-            let granted = await group.next() ?? false
-            group.cancelAll()
-            diagnostics["lastMicrophonePermissionResult"] = granted ? "granted" : "denied_or_timeout"
-            return granted
+        let granted = await PermissionPromptWait.awaitAnswer(
+            request: { await SystemRecordingClient.requestRecordPermission() },
+            currentStatus: { Self.microphonePermissionStatus() },
+            timeout: .seconds(timeoutSeconds)
+        )
+        diagnostics["lastMicrophonePermissionResult"] = granted ? "granted" : "denied"
+        return granted
+    }
+
+    private nonisolated static func microphonePermissionStatus() -> PermissionPromptStatus {
+        #if canImport(AVFoundation) && os(iOS)
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted: return .granted
+        case .denied: return .denied
+        case .undetermined: return .undetermined
+        @unknown default: return .undetermined
         }
+        #else
+        return .granted
+        #endif
     }
 
     /// Publish acknowledgement before synchronous recorder/store finalization.
@@ -10891,6 +10899,9 @@ final class Gate1AppModel: ObservableObject {
                         self.allowAudioPreparation(itemId: itemId)
                         self.diagnostics["supertonicFallbackRestored"] = itemId
                     }
+                },
+                onResumeDecision: { [weak self] fields in
+                    Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) }
                 }
             )
         }
@@ -15623,9 +15634,11 @@ final class Gate1AppModel: ObservableObject {
             ))
             try? await ledger.adoptExistingAssets()
             let residualOverage = try? await ledger.enforceBudget()
+            let reconciled = await ledger.lastReconciliation?.summary ?? "failed"
             let ledgerBytes = try? await ledger.inventoryBytes()
             let filesystemBytes = await ledger.directFilesystemBytes()
             await MainActor.run { [weak self] in
+                self?.diagnostics["offlineLedgerReconciled"] = reconciled
                 self?.diagnostics["offlineLedgerBytes"] = "\(ledgerBytes ?? 0)"
                 self?.diagnostics["offlineFilesystemBytes"] = "\(filesystemBytes)"
                 self?.diagnostics["offlineResidualOverageBytes"] = "\(residualOverage ?? 0)"
@@ -15711,9 +15724,19 @@ final class Gate1AppModel: ObservableObject {
                 await self.refreshFollowedSources(force: true)
                 self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
             } catch {
+                await self.recordFollowFailure(error)
                 self.reportFailure(error, context: "Follow source failed")
             }
         }
+    }
+
+    /// #244: a failed Follow said only "FollowedSourceError". Record the case, host and steps.
+    private func recordFollowFailure(_ error: Error) async {
+        guard let coordinator = followedSourceCoordinator else {
+            diagnostics["followSourceFailure"] = FollowedSourceCoordinator.diagnosticCode(for: error)
+            return
+        }
+        diagnostics["followSourceFailure"] = await coordinator.failureDiagnostic(for: error)
     }
 
     /// B1 drawer: follows a catalog feed (always a public https feed) in one tap. Throws so the
@@ -15771,6 +15794,19 @@ final class Gate1AppModel: ObservableObject {
             sourceTitle: row.sourceTitle,
             subscriptions: feedSubscriptions
         )
+    }
+
+    /// The selected item's Follow button: an article follows its publication, not a podcast (#243).
+    var manualFollowButtonTitle: String {
+        ManualFollowPolicy.buttonTitle(mediaType: selectedItemMediaType, isFollowing: isFollowingSelectedSource)
+    }
+
+    var manualFollowButtonSymbol: String {
+        ManualFollowPolicy.buttonSymbol(mediaType: selectedItemMediaType)
+    }
+
+    private var selectedItemMediaType: String {
+        libraryItems.first(where: { $0.id == selectedItem.id })?.mediaType ?? "podcast"
     }
 
     nonisolated static func isSourceAlreadyFollowed(
@@ -15875,6 +15911,7 @@ final class Gate1AppModel: ObservableObject {
                 await self.refreshFollowedSources(force: true)
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
             } catch {
+                await self.recordFollowFailure(error)
                 self.reportFailure(error, context: "Follow source failed")
             }
         }
@@ -15952,6 +15989,7 @@ final class Gate1AppModel: ObservableObject {
                 self.diagnostics["sourceFollowSuggestion"] = "offered:\(eligible.count)"
             } catch {
                 self.diagnostics["sourceFollowSuggestion"] = "unavailable:\(String(describing: type(of: error)))"
+                await self.recordFollowFailure(error)
             }
         }
     }

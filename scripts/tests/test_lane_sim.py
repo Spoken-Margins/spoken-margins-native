@@ -31,6 +31,12 @@ elif args[0] == "create":
     print("FRESH-0000-0000")
 elif args[0] == "boot":
     start = time.time()
+    gate = os.environ.get("FAKE_BOOT_GATE")
+    if gate:  # hold the boot open until the test says so
+        open(gate + ".started", "w").close()
+        deadline = time.time() + 60
+        while not os.path.exists(gate + ".release") and time.time() < deadline:
+            time.sleep(0.02)
     time.sleep(float(os.environ.get("FAKE_BOOT_SECONDS", "0.1")))
     log({"boot": args[1], "start": start, "end": time.time()})
     if os.environ.get("FAKE_BOOT") == "invalid":
@@ -44,9 +50,9 @@ elif args[0] == "bootstatus":
         time.sleep(60)
     time.sleep(float(os.environ.get("FAKE_READY_SECONDS", "0.1")))
 elif args[0] == "shutdown":
-    log({"shutdown": args[1]})
+    log({"shutdown": args[1], "at": time.time()})
 elif args[0] == "delete":
-    log({"delete": args[1]})
+    log({"delete": args[1], "at": time.time()})
 '''
 
 PS_OUTPUT = """41094     1 launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/7E6701FC-0783-4C87-90D8-180CCDAC5280/data/var/run/launchd_bootstrap.plist
@@ -76,8 +82,13 @@ class LaneSimTests(unittest.TestCase):
         fake.chmod(0o755)
         (folder / 'reports').mkdir()
         self.record = folder / 'record.jsonl'
+        self.comments = folder / 'gh-comments.txt'  # never the real #184
+        gh = folder / 'gh'
+        gh.write_text(f'#!/bin/sh\nprintf "%s\\n---\\n" "$*" >> "{self.comments}"\n')
+        gh.chmod(0o755)
         self.env = {'SM_LANE_STATE_DIR': str(folder / 'state'), 'SM_LANE_SIMCTL': str(fake),
-                    'SM_LANE_CRASH_REPORTS': str(folder / 'reports'), 'FAKE_RECORD': str(self.record)}
+                    'SM_LANE_CRASH_REPORTS': str(folder / 'reports'), 'FAKE_RECORD': str(self.record),
+                    'SM_LANE_MEMORY_PRESSURE': '1', 'SM_LANE_GH': str(gh)}
         patches = [mock.patch.dict(os.environ, self.env), mock.patch.object(lane_sim, 'CRASH_POLL_SECONDS', 0.05),
                    mock.patch.object(lane_slots, 'POLL_SECONDS', 0.05)]
         for patch in patches:
@@ -87,6 +98,10 @@ class LaneSimTests(unittest.TestCase):
         self.addCleanup(self.quiet.close)
 
     def records(self):
+        """What the fake simctl did, without timestamps (see timed() for those)."""
+        return [{k: v for k, v in r.items() if k != 'at'} for r in self.timed()]
+
+    def timed(self):
         return [json.loads(line) for line in self.record.read_text().splitlines()] if self.record.exists() else []
 
     def test_a_healthy_boot_returns_when_ready_and_marks_nothing(self):
@@ -104,7 +119,7 @@ class LaneSimTests(unittest.TestCase):
             lane_sim.boot(UDID, 'retry', out=self.quiet)
         self.assertEqual(sum('boot' in r for r in self.records()), 1)  # the retry never reached simctl
 
-    def poll_loop(self, *, ready=(), springboard=((None, None),), reports=(), timeout=900):
+    def poll_loop(self, *, ready=(), springboard=((None, None),), reports=(), timeout=900, tolerate_until=None):
         """Run wait_until_ready with scripted signals and a fake clock; returns (outcome, polls, stops)."""
         ready, reports = list(ready), list(reports)
         now, stops, polls = [0.0], [], [0]
@@ -119,12 +134,43 @@ class LaneSimTests(unittest.TestCase):
         monitor = lane_sim.SpringBoardMonitor(UDID, sequence(*springboard), clock=lambda: now[0])
         with mock.patch.object(lane_sim, 'stop', side_effect=lambda udid, reason: stops.append(reason)):
             try:
-                lane_sim.wait_until_ready(UDID, is_ready, monitor, lambda: reports.pop(0) if reports else None,
-                                          timeout, clock=lambda: now[0], sleep=sleep, poll=1.0)
+                self.tolerated = lane_sim.wait_until_ready(
+                    UDID, is_ready, monitor, lambda: reports.pop(0) if reports else None, timeout,
+                    clock=lambda: now[0], sleep=sleep, poll=1.0, tolerate_until=tolerate_until)
                 outcome = 'ready'
             except lane_sim.BootError as error:
                 outcome = str(error)
         return outcome, polls[0], stops
+
+    # The owner's rule (#184, "fine with one simulator failure or crash"): one SpringBoard change in the
+    # first 30 s of a first boot is tolerated; a second one, or any crash report, still stops the boot.
+    def test_a_first_boot_tolerates_one_early_springboard_change(self):
+        outcome, polls, stops = self.poll_loop(ready=[False] * 4 + [True], tolerate_until=30,
+                                               springboard=[(10, 20), (10, 20), (10, 21), (10, 21)])
+        self.assertEqual((outcome, stops), ('ready', []))
+        self.assertEqual(self.tolerated, 'SpringBoard restarted (pid 20 -> 21)')
+        outcome, _, stops = self.poll_loop(ready=[False] * 6 + [True], tolerate_until=30,
+                                           springboard=[(10, 20), (10, None), (10, None), (10, None), (10, None), (10, 22)])
+        self.assertEqual((outcome, stops), ('ready', []))  # a vanish, then a new SpringBoard: one change
+
+    def test_a_second_change_in_a_first_boot_still_stops(self):
+        outcome, _, stops = self.poll_loop(tolerate_until=30, springboard=[(10, 20), (10, 21), (10, 22)])
+        self.assertIn('SpringBoard restarted (pid 21 -> 22) while booting', outcome)
+        self.assertEqual(stops, ['SpringBoard restarted (pid 21 -> 22) during boot'])
+
+    def test_a_change_after_the_first_30_s_still_stops(self):
+        states = [(10, 20)] * 35 + [(10, 21)]
+        outcome, _, stops = self.poll_loop(tolerate_until=30, springboard=states)
+        self.assertIn('SpringBoard restarted (pid 20 -> 21) while booting', outcome)
+
+    def test_a_crash_report_stops_a_first_boot_even_after_a_tolerated_change(self):
+        outcome, _, stops = self.poll_loop(tolerate_until=30, springboard=[(10, 20), (10, 21), (10, 21)],
+                                           reports=[None, None, Path('SpringBoard-x.ips')])
+        self.assertIn('SpringBoard-x.ips while booting', outcome)
+
+    def test_a_device_that_is_not_booting_for_the_first_time_gets_no_tolerance(self):
+        outcome, _, _ = self.poll_loop(springboard=[(10, 20), (10, 21)])
+        self.assertIn('SpringBoard restarted', outcome)
 
     def test_a_crash_while_booting_stops_at_the_first_report(self):
         report = Path('SpringBoard-2026-09-29-095801.ips')
@@ -143,6 +189,34 @@ class LaneSimTests(unittest.TestCase):
         self.assertIn('not ready after 5s', outcome)
         self.assertEqual(stops, [])
         self.assertIn({'shutdown': UDID}, self.records())
+
+    def test_every_springboard_change_during_boot_is_logged_with_its_time(self):
+        # Three first boots stopped on an early SpringBoard exit with no crash report (#184); the log is
+        # how the next ones get explained rather than inferred.
+        import io
+        out = io.StringIO()
+        now = [0.0]
+        states = [(10, None), (10, 20), (10, 20), (10, None)]
+        monitor = lane_sim.SpringBoardMonitor(UDID, lambda udid: states.pop(0) if len(states) > 1 else states[0],
+                                              grace=3, clock=lambda: now[0])
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        with mock.patch.object(lane_sim, 'stop'):
+            with self.assertRaises(lane_sim.BootError):
+                lane_sim.wait_until_ready(UDID, lambda: False, monitor, lambda: None, 900, clock=lambda: now[0],
+                                          sleep=sleep, poll=1.0, out=out)
+        self.assertEqual(out.getvalue().splitlines(), [
+            '[lane] +1.0s SpringBoard pid 20 up (launchd_sim 10)',
+            '[lane] +3.0s SpringBoard pid 20 gone, launchd_sim 10 still running'])
+
+    def test_a_shutdown_is_logged_once(self):
+        events = []
+        monitor = lane_sim.SpringBoardMonitor(UDID, sequence((10, 20), (None, None)), on_event=events.append)
+        for _ in range(5):
+            monitor.check()
+        self.assertEqual(events, ['SpringBoard pid 20 up (launchd_sim 10)', 'device shut down'])
 
     def test_a_device_that_gets_ready_returns(self):
         self.assertEqual(self.poll_loop(ready=[False, False, True]), ('ready', 3, []))
@@ -166,33 +240,179 @@ class LaneSimTests(unittest.TestCase):
         self.assertIn('crashed during boot', lane_sim.unsafe_devices()[UDID]['reason'])
 
     def test_no_build_can_start_while_a_simulator_boots(self):
-        with mock.patch.dict(os.environ, {'FAKE_BOOT_SECONDS': '1.5'}):
+        # Deterministic: the fake boot holds itself open until released, so the build attempt always lands
+        # mid-boot, however slowly this Mac starts processes (it once failed at a load average of 235).
+        gate = str(Path(self.temporary.name) / 'gate')
+        with mock.patch.dict(os.environ, {'FAKE_BOOT_GATE': gate}):
             booting = threading.Thread(target=lane_sim.boot, args=(UDID, 'test'), kwargs={'out': self.quiet})
             booting.start()
-            time.sleep(0.5)
-            with self.assertRaises(TimeoutError):
-                with lane_slots.build_slot('a stream build', out=self.quiet, max_wait=0.3):
-                    pass
-            booting.join()
-        with lane_slots.build_slot('after the boot', out=self.quiet, max_wait=1):
+            for _ in range(3000):
+                if os.path.exists(gate + '.started'):
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail('the fake boot never started')
+            try:
+                with self.assertRaises(TimeoutError):
+                    with lane_slots.build_slot('a stream build', out=self.quiet, max_wait=0.3):
+                        pass
+            finally:
+                open(gate + '.release', 'w').close()
+                booting.join(60)
+        with lane_slots.build_slot('after the boot', out=self.quiet, max_wait=5):
             pass
 
-    def test_it_waits_while_two_other_simulators_are_booted(self):
+    def test_a_boot_waits_for_normal_memory_pressure_but_never_fails_on_it(self):
+        now = [0.0]
+        levels = iter([4, 2, 1])
+        name, waited = lane_sim.wait_for_normal_pressure(600, poll=10, level=lambda: next(levels),
+                                                         clock=lambda: now[0], sleep=lambda s: now.__setitem__(0, now[0] + s))
+        self.assertEqual((name, waited), ('normal', 20))
+        now[0] = 0.0
+        name, waited = lane_sim.wait_for_normal_pressure(600, poll=10, level=lambda: 2, clock=lambda: now[0],
+                                                         sleep=lambda s: now.__setitem__(0, now[0] + s))
+        self.assertEqual((name, waited), ('warn', 600))  # gives up waiting, boots anyway
+
+    def test_the_boot_records_memory_pressure_and_failures_name_it(self):
+        info = {}
+        lane_sim.boot(UDID, 'test', out=self.quiet, info=info)
+        self.assertEqual((info['pressure'], info['pressure_waited'], info['tolerated']), ('normal', 0, None))
+        other = '22222222-0000-0000-0000-000000000000'
+        with mock.patch.dict(os.environ, {'FAKE_BOOT': 'invalid', 'SM_LANE_MEMORY_PRESSURE': '4'}), \
+                mock.patch.object(lane_sim, 'PRESSURE_WAIT', 0):
+            with self.assertRaisesRegex(lane_sim.BootError, 'Invalid argument.*Memory pressure at boot: critical'):
+                lane_sim.boot(other, 'test', out=self.quiet)
+
+    def test_it_never_boots_a_third_simulator(self):
         with mock.patch.dict(os.environ, {'FAKE_BOOTED': 'X,Y'}):
-            with self.assertRaisesRegex(lane_sim.BootError, 'stayed booted'):
+            with self.assertRaisesRegex(lane_sim.BootError, 'another simulator stayed booted'):
                 lane_sim.wait_for_room(UDID, max_wait=0.1, poll=0.02)
+        with mock.patch.dict(os.environ, {'FAKE_BOOTED': 'X'}):
+            lane_sim.wait_for_room(UDID, max_wait=0.1, poll=0.02)  # the slots decide about a second one
         seen = iter([{'X', 'Y'}, {'X'}])
         lane_sim.wait_for_room(UDID, max_wait=5, poll=0.01, booted=lambda: next(seen))
 
-    def test_two_boots_at_once_run_one_after_the_other(self):
-        env = {**os.environ, 'FAKE_BOOT_SECONDS': '1'}
-        boots = [subprocess.Popen([sys.executable, str(SCRIPTS / 'lane-sim-boot'), udid, '--no-watch'], env=env,
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for udid in ('A-1', 'B-2')]
-        outputs = [b.communicate(timeout=60) for b in boots]
-        self.assertEqual([b.returncode for b in boots], [0, 0], outputs)
-        first, second = sorted((r for r in self.records() if 'boot' in r), key=lambda r: r['start'])
-        self.assertGreaterEqual(second['start'], first['end'] - 0.05)
-        self.assertIn('waiting for a simulator boot lock', ''.join(err for _, err in outputs))
+    def test_builds_get_one_slot_while_a_simulator_job_runs(self):
+        with lane_slots.build_slot('first', out=self.quiet), lane_slots.build_slot('second', out=self.quiet, max_wait=1):
+            pass  # two at once without a simulator job
+        with lane_slots.simulator_slot('a T4 job', out=self.quiet):
+            self.assertTrue(lane_slots.simulator_job_running())
+            with lane_slots.build_slot('first', out=self.quiet):
+                with self.assertRaisesRegex(TimeoutError, 'only 1 of 2 while a simulator job runs'):
+                    with lane_slots.build_slot('second', out=self.quiet, max_wait=0.3):
+                        pass
+        self.assertFalse(lane_slots.simulator_job_running())
+
+    def test_the_runner_does_not_start_a_simulator_while_another_job_holds_the_slot(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('lane_runner_for_slot', SCRIPTS / 'lane-runner.py')
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        with mock.patch.object(runner, 'RUNNER_SLOT_WAIT', 0.2), \
+                mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '2'}), \
+                mock.patch.object(lane_sim, 'create_temporary', side_effect=AssertionError('made a simulator')), \
+                lane_slots.simulator_slot('the Test Desk', out=self.quiet), mock.patch('sys.stdout', self.quiet):
+            verdict, _, _, details, _, _ = runner.run_t3(['AppNavigationStateTests'], 'r1', Path(self.temporary.name))
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertIn('simulator slots stayed busy', details[0])
+        self.assertIn('memory pressure is warn', details[0])
+
+    # The second slot (#184): a job may always start alone; joining a running one needs normal memory
+    # pressure and the second slot switched on.
+    def test_a_second_job_joins_only_while_pressure_is_normal_and_the_slot_is_on(self):
+        with lane_slots.simulator_slot('first', out=self.quiet):
+            with lane_slots.simulator_slot('second', out=self.quiet, max_wait=1):
+                self.assertEqual(lane_slots.simulator_jobs_running(), 2)
+                with self.assertRaises(TimeoutError):  # never a third
+                    with lane_slots.simulator_slot('third', out=self.quiet, max_wait=0.3):
+                        pass
+            with mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '2'}):
+                with self.assertRaisesRegex(TimeoutError, 'memory pressure is warn'):
+                    with lane_slots.simulator_slot('second', out=self.quiet, max_wait=0.3):
+                        pass
+            lane_slots.disable_second_slot('test')
+            with self.assertRaisesRegex(TimeoutError, 'switched off'):
+                with lane_slots.simulator_slot('second', out=self.quiet, max_wait=0.3):
+                    pass
+            lane_slots.enable_second_slot()
+            with lane_slots.simulator_slot('second', out=self.quiet, max_wait=1):
+                pass
+
+    def test_a_lone_job_starts_whatever_the_pressure(self):
+        with mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '4'}):
+            with lane_slots.simulator_slot('alone', out=self.quiet, max_wait=1):
+                self.assertEqual(lane_slots.simulator_jobs_running(), 1)
+
+    def test_a_free_first_slot_is_not_a_way_around_the_brake(self):
+        # First job ended, second still running: a new job would be the second one again.
+        handle = lane_slots.acquire([lane_slots.SIMULATOR_SLOTS[1]], 'simulator slot', 'running second', self.quiet)[0]
+        try:
+            with mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '2'}):
+                with self.assertRaises(TimeoutError):
+                    with lane_slots.simulator_slot('new', out=self.quiet, max_wait=0.3):
+                        pass
+        finally:
+            lane_slots.release_handle(handle)
+
+    def test_the_boot_reports_one_or_two_simulator_periods(self):
+        info = {}
+        with lane_slots.simulator_slot('this job', out=self.quiet):
+            lane_sim.boot(UDID, 'test', out=self.quiet, info=info)
+        self.assertEqual(info['period'], 'one-simulator')
+        with lane_slots.simulator_slot('other job', out=self.quiet), lane_slots.simulator_slot('this job', out=self.quiet):
+            lane_sim.boot('33333333-0000-0000-0000-000000000000', 'test', out=self.quiet, info=info)
+        self.assertEqual(info['period'], 'two-simulator')
+        self.assertIn('two-simulator period', (Path(self.env['SM_LANE_STATE_DIR']) / 'boot-events.log').read_text())
+
+    def test_the_watcher_goes_back_to_one_after_ten_minutes_of_warn_with_two_up(self):
+        clock = iter(range(0, 100000, 100))  # each look at the clock is 100 s later
+        announced = []
+        with lane_slots.simulator_slot('first', out=self.quiet), lane_slots.simulator_slot('second', out=self.quiet), \
+                mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '2'}), \
+                mock.patch.object(lane_sim, 'announce', side_effect=announced.append):
+            states = [(10, 20)] * 12 + [(None, None)]
+            monitor = lane_sim.SpringBoardMonitor(UDID, lambda udid: states.pop(0) if len(states) > 1 else states[0])
+            lane_sim.watch(UDID, poll=0.001, monitor=monitor, now=lambda: next(clock))
+        self.assertFalse(lane_slots.second_slot_status()[0])
+        self.assertIn('switched off', lane_slots.second_slot_status()[1])
+        self.assertEqual(len(announced), 1)
+        self.assertIn('back to one simulator', announced[0])
+
+    def test_the_switch_on_the_command_line(self):
+        helper = [sys.executable, str(SCRIPTS / 'lane-sim-boot'), '--second-slot']
+        env = dict(os.environ)
+        off = subprocess.run(helper + ['off', 'journeys', 'too', 'slow'], env=env, capture_output=True, text=True, timeout=60)
+        self.assertIn('not available (the second slot is switched off', off.stdout)
+        comment = self.comments.read_text()
+        self.assertIn('issue comment 184', comment)
+        self.assertIn('back to one simulator.** journeys too slow (switched off by hand)', comment)
+        subprocess.run(helper + ['off', 'again'], env=env, capture_output=True, timeout=60)
+        self.assertEqual(self.comments.read_text(), comment)  # said once, not again while it stays off
+        on = subprocess.run(helper + ['on'], env=env, capture_output=True, text=True, timeout=60)
+        self.assertIn('second simulator slot: available', on.stdout)
+        self.assertNotEqual(subprocess.run(helper + ['off'], env=env, capture_output=True, text=True).returncode, 0)
+
+    def test_a_second_simulator_job_waits_until_the_first_is_done_while_the_second_slot_is_off(self):
+        helper = [sys.executable, str(SCRIPTS / 'lane-sim-boot')]
+        lane_slots.disable_second_slot('test')
+        first = subprocess.run(helper + ['A-1'], env=dict(os.environ), capture_output=True, text=True, timeout=60)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertTrue(lane_slots.simulator_job_running())  # the watcher holds it after the helper exited
+        second = subprocess.Popen(helper + ['B-2'], env=dict(os.environ), stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True)
+        time.sleep(1.5)
+        self.assertIsNone(second.poll())
+        self.assertNotIn('B-2', [r.get('boot') for r in self.records()])
+        subprocess.run(helper + ['--done', 'A-1'], env=dict(os.environ), capture_output=True, timeout=60)
+        out, err = second.communicate(timeout=60)
+        self.assertEqual((second.returncode, out), (0, 'B-2\n'), err)
+        self.assertIn('waiting for a simulator slot', err)
+        timed = self.timed()
+        released = next(r['at'] for r in timed if r.get('delete') == 'A-1')
+        booted = next(r['start'] for r in timed if r.get('boot') == 'B-2')
+        self.assertGreaterEqual(booted, released)
+        subprocess.run(helper + ['--done', 'B-2'], env=dict(os.environ), capture_output=True, timeout=60)
+        self.assertFalse(lane_slots.simulator_job_running())
 
     def test_fresh_boots_with_a_watcher_and_done_removes_both(self):
         helper = [sys.executable, str(SCRIPTS / 'lane-sim-boot')]
@@ -238,6 +458,54 @@ class LaneSimTests(unittest.TestCase):
         shutdown = lane_sim.SpringBoardMonitor(UDID, sequence((10, 20), (10, None), (None, None)), grace=3, clock=clock)
         self.assertEqual([shutdown.check() for _ in range(3)], [None, None, 'shut down'])
 
+    def test_a_first_boot_with_one_change_boots_and_is_logged(self):
+        info = {}
+        with mock.patch.dict(os.environ, {'FAKE_READY_SECONDS': '1'}), \
+                mock.patch.object(lane_sim, 'CRASH_POLL_SECONDS', 0.05), \
+                mock.patch.object(lane_sim, 'device_processes', sequence((10, 20), (10, 20), (10, 21))):
+            lane_sim.boot(UDID, 'test', out=self.quiet, info=info, first_boot=True)
+        self.assertEqual(info['tolerated'], 'SpringBoard restarted (pid 20 -> 21)')
+        self.assertEqual(len(info['boot_window']), 2)
+        log = (Path(self.env['SM_LANE_STATE_DIR']) / 'boot-events.log').read_text()
+        self.assertIn('boot started (first boot', log)
+        self.assertIn('tolerated: SpringBoard restarted (pid 20 -> 21)', log)
+        self.assertIn('one change tolerated', log)
+        self.assertNotIn(UDID, lane_sim.unsafe_devices())
+
+    def test_a_good_boot_is_logged_too(self):
+        lane_sim.boot(UDID, 'test', out=self.quiet, first_boot=True)
+        log = (Path(self.env['SM_LANE_STATE_DIR']) / 'boot-events.log').read_text()
+        self.assertRegex(log, r'ready after \d+s, no SpringBoard change')
+
+    def test_the_crash_time_comes_from_the_report_body_not_its_write_time(self):
+        header = '{"app_name":"SpringBoard","timestamp":"2026-09-29 09:59:24.00 -0400"}\n'
+        body = '{"captureTime" : "2026-09-29 09:58:01.9897 -0400"}'
+        self.assertEqual(lane_sim.report_time(header + body), lane_sim.report_time(
+            '{"timestamp":"2026-09-29 09:58:01.9897 -0400"}\n{}'))
+        self.assertIsNotNone(lane_sim.report_time(header))  # the header is the fallback
+        self.assertIsNone(lane_sim.report_time('not a report'))
+
+    def test_the_watcher_marks_a_late_crash_report_from_the_boot_and_ignores_later_crashes(self):
+        import datetime
+        folder = Path(self.env['SM_LANE_CRASH_REPORTS'])
+        start = time.time() - 100
+        window = (start, start + 20)
+
+        def report(name, crash_at):
+            stamp = datetime.datetime.fromtimestamp(crash_at).astimezone().strftime('%Y-%m-%d %H:%M:%S.%f %z')
+            (folder / name).write_text('{"app_name":"x","timestamp":"2000-01-01 00:00:00.00 +0000"}\n'
+                                       f'{{"captureTime" : "{stamp}", "path": "com.apple.CoreSimulator.SimDevice.{UDID}"}}')
+
+        report('SpokenMarginsApp-later.ips', start + 60)  # an app crash during a later test: not the boot
+        self.assertIsNone(lane_sim.late_report(folder, UDID, window))
+        report('SpringBoard-late.ips', start + 10)
+        self.assertEqual(lane_sim.late_report(folder, UDID, window).name, 'SpringBoard-late.ips')
+        monitor = lane_sim.SpringBoardMonitor(UDID, sequence((10, 20), (10, 20), (None, None)))
+        self.assertEqual(lane_sim.watch(UDID, poll=0.01, monitor=monitor, crash_window=window), 'shut down')
+        self.assertIn('late crash report for a crash during boot: SpringBoard-late.ips',
+                      lane_sim.unsafe_devices()[UDID]['reason'])
+        self.assertNotIn({'shutdown': UDID}, self.records())  # marked after the fact; the device wasn't stopped
+
     def test_boot_wires_the_springboard_monitor_into_the_watch(self):
         # End to end with the fake simctl: bootstatus waits 60 s, so only the monitor can end the boot.
         with mock.patch.dict(os.environ, {'FAKE_READY_SECONDS': '60'}), \
@@ -255,8 +523,16 @@ class LaneSimTests(unittest.TestCase):
         stop_flag, _, _ = lane_sim.watch_files(other)
         stop_flag.parent.mkdir(parents=True, exist_ok=True)
         stop_flag.write_text('released')
-        self.assertEqual(lane_sim.watch(other, poll=0.01, monitor=lane_sim.SpringBoardMonitor(other, sequence((10, 20)))),
+        checks = []
+        states = [(10, 20), (10, None), (None, None)]  # released: SpringBoard ends, then the device goes
+
+        def processes(udid):
+            checks.append(udid)
+            return states.pop(0) if len(states) > 1 else states[0]
+
+        self.assertEqual(lane_sim.watch(other, poll=0.01, monitor=lane_sim.SpringBoardMonitor(other, processes)),
                          'released')
+        self.assertEqual(len(checks), 3)  # it held on (and held any slot) until the device was gone
         self.assertNotIn(other, lane_sim.unsafe_devices())
 
     def test_the_helper_refuses_an_unsafe_device_with_a_stop_message(self):
@@ -274,7 +550,7 @@ class LaneSimTests(unittest.TestCase):
         spec.loader.exec_module(runner)
         with mock.patch.object(lane_sim, 'LOCK_WAIT', 0.2), \
                 lane_slots.simulator_boot_lock('the Test Desk', out=self.quiet):
-            problem = runner.first_boot(UDID, self.quiet)
+            problem, _ = runner.first_boot(UDID, self.quiet)
         self.assertIn('the lane stayed busy', problem)
         self.assertEqual(self.records(), [])
 

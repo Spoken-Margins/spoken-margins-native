@@ -4,12 +4,19 @@
   scripts/lane-sim-boot --fresh "SM Lane Desk pr220"   create a fresh iOS 26 iPhone, boot it, print its UDID
   scripts/lane-sim-boot <udid>                          boot an existing device
   scripts/lane-sim-boot --done <udid>                   stop its watcher, shut it down, delete it
+  scripts/lane-sim-boot --second-slot status|on|off [reason]   the second simulator slot's switch
 
+It first takes a simulator slot and the device's background watcher keeps it until --done. A job can
+always start when no other simulator job runs; it may join one only while memory pressure is normal
+and the second slot is on (on this 16 GB Mac two simulators plus builds filled swap, #184). While
+any simulator job runs, builds get one slot. The lane goes back to one simulator by itself when a
+two-simulator run times out or pressure stays at warn for 10 minutes with two up.
 One boot at a time Mac-wide, no builds while it boots, never a retry after a failed boot, and a stop
-at the first SpringBoard crash. After the boot, a background watcher keeps watching SpringBoard and
-shuts the device down (and marks it unsafe) at the first crash; its log is next to the lane's state
+at the first SpringBoard crash. After the boot, the watcher keeps watching SpringBoard and shuts the
+device down (and marks it unsafe) at the first crash; its log is next to the lane's state
 (~/Library/Caches/SpokenMarginsLane/watch-<udid>.log). A device that failed is marked unsafe: remove
 it with --done and start again with --fresh. Journeys use a fresh device per request.
+Always finish with --done: until then the device keeps the simulator slot.
 Exit 0 when ready; the UDID is the only thing printed on stdout.
 """
 import argparse
@@ -18,6 +25,9 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lane_sim  # noqa: E402
+from lane_slots import acquire_simulator_slot, release_handle  # noqa: E402
+
+SLOT_WAIT = 7200
 
 
 def main(argv):
@@ -27,29 +37,64 @@ def main(argv):
     target.add_argument('--fresh', metavar='NAME', help='create a fresh temporary device with this name first')
     target.add_argument('--done', metavar='UDID', help='stop the watcher, shut the device down and delete it')
     target.add_argument('--watch', metavar='UDID', help=argparse.SUPPRESS)  # the background watcher itself
+    target.add_argument('--second-slot', nargs='+', metavar=('status|on|off', 'REASON'),
+                        help='show or switch the second simulator slot; "off" needs a reason')
+    parser.add_argument('--crash-window', nargs=2, type=float, help=argparse.SUPPRESS)  # the boot, for the late check
     parser.add_argument('--timeout', type=float, default=lane_sim.FIRST_BOOT_TIMEOUT,
                         help='seconds to wait for readiness (default %(default).0f)')
-    parser.add_argument('--no-watch', action='store_true', help='skip the background SpringBoard watcher')
     args = parser.parse_args(argv)
+    if args.second_slot:
+        import lane_slots
+        action, reason = args.second_slot[0], ' '.join(args.second_slot[1:])
+        if action == 'on':
+            lane_slots.enable_second_slot()
+        elif action == 'off':
+            if not reason:
+                parser.error('--second-slot off needs a reason')
+            lane_sim.back_to_one_simulator(f'{reason} (switched off by hand)')
+        elif action != 'status':
+            parser.error('--second-slot takes status, on or off')
+        allowed, why = lane_slots.second_slot_status()
+        print(f'second simulator slot: {"available" if allowed else "not available"} ({why}); '
+              f'simulator jobs running: {lane_slots.simulator_jobs_running()}')
+        return 0
     if args.watch:
         print(f'[lane] watching {args.watch}', flush=True)
-        print(f'[lane] watcher for {args.watch} ended: {lane_sim.watch(args.watch)}', flush=True)
+        window = tuple(args.crash_window) if args.crash_window else None
+        print(f'[lane] watcher for {args.watch} ended: {lane_sim.watch(args.watch, crash_window=window)}', flush=True)
         return 0
     if args.done:
         lane_sim.release(args.done)
         print(f'[lane] {args.done} released: watcher stopped, shut down, deleted', file=sys.stderr)
         return 0
+    name = args.fresh or args.udid
+    try:
+        slot = acquire_simulator_slot(f'lane-sim-boot {name} (its watcher holds it until --done)',
+                                      max_wait=SLOT_WAIT)
+    except TimeoutError as error:
+        print(f'[lane] STOP: the simulator slot stayed busy: {error}', file=sys.stderr)
+        return 4
     try:
         udid = lane_sim.create_temporary(args.fresh) if args.fresh else args.udid
         if args.fresh:
             print(f'[lane] created {args.fresh}: {udid}', file=sys.stderr)
-        seconds = lane_sim.boot(udid, f'lane-sim-boot {udid}', timeout=args.timeout)
+        info = {}
+        seconds = lane_sim.boot(udid, f'lane-sim-boot {udid}', timeout=args.timeout, info=info,
+                                first_boot=bool(args.fresh))
+        lane_sim.start_watcher(udid, Path(__file__).resolve(), slot=slot, crash_window=info.get('boot_window'))
+        if info.get('tolerated'):
+            print(f'[lane] tolerated one SpringBoard change during the first boot ({info["tolerated"]}); the watcher '
+                  'rechecks crash reports for the next few minutes and marks the device unsafe if one names it',
+                  file=sys.stderr)
     except lane_sim.BootError as error:
+        release_handle(slot)
         print(f'[lane] STOP: {error}', file=sys.stderr)
         return 3
-    if not args.no_watch:
-        lane_sim.start_watcher(udid, Path(__file__).resolve())
-    print(f'[lane] {udid} is ready after {seconds:.0f}s' + ('' if args.no_watch else '; watcher running'),
+    except BaseException:
+        release_handle(slot)
+        raise
+    slot.close()  # the watcher inherited the slot and holds it, holder note included, until --done
+    print(f'[lane] {udid} is ready after {seconds:.0f}s; its watcher holds the simulator slot until --done',
           file=sys.stderr)
     print(udid)
     return 0

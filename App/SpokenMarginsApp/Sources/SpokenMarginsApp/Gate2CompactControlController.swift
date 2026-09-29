@@ -13,6 +13,9 @@ import AVFoundation
 #if canImport(UIKit)
 import UIKit
 #endif
+#if canImport(CallKit) && os(iOS)
+import CallKit
+#endif
 
 struct Gate2NowPlayingCommandAvailability: Equatable {
     var canPlay: Bool
@@ -269,10 +272,12 @@ final class Gate2CompactControlController {
     private var liveActivityLifecycle = LiveActivityLifecycle()
     private var liveActivityLifecycleStatus = "none"
     private var idleDeadlineTask: Task<Void, Never>?
-    private var handOffTask: Task<Void, Never>?
-    private var endHandOffBackgroundTask: (@MainActor () -> Void)?
+    private var watchTask: Task<Void, Never>?
+    private var endWatchBackgroundTask: (@MainActor () -> Void)?
     private let now: () -> Date
     private let isAppInBackground: @MainActor () -> Bool
+    private let isOtherAudioPlaying: @MainActor () -> Bool
+    private let isPhoneCallActive: @MainActor () -> Bool
     private let beginBackgroundTask: @MainActor (String) -> (@MainActor () -> Void)
     #if canImport(AVFoundation) && os(iOS)
     private var audioInterruptionObserver: Gate2AudioInterruptionObserver?
@@ -292,11 +297,15 @@ final class Gate2CompactControlController {
         now: @escaping () -> Date = Date.init,
         notificationCenter: NotificationCenter = .default,
         isAppInBackground: @escaping @MainActor () -> Bool = Gate2AppState.isInBackground,
+        isOtherAudioPlaying: @escaping @MainActor () -> Bool = Gate2AppState.isOtherAudioPlaying,
+        isPhoneCallActive: @escaping @MainActor () -> Bool = Gate2AppState.isPhoneCallActive,
         beginBackgroundTask: @escaping @MainActor (String) -> (@MainActor () -> Void) = Gate2AppState.beginBackgroundTask
     ) {
         self.liveActivity = liveActivity ?? Gate2LiveActivityController()
         self.now = now
         self.isAppInBackground = isAppInBackground
+        self.isOtherAudioPlaying = isOtherAudioPlaying
+        self.isPhoneCallActive = isPhoneCallActive
         self.beginBackgroundTask = beginBackgroundTask
         #if canImport(AVFoundation) && os(iOS)
         audioInterruptionObserver = Gate2AudioInterruptionObserver(
@@ -307,7 +316,7 @@ final class Gate2CompactControlController {
         #endif
         appLifecycleObserver = Gate2AppLifecycleObserver(
             center: notificationCenter,
-            onBackground: { [weak self] in self?.scheduleHandOffIfNeeded() },
+            onBackground: { [weak self] in self?.startBackgroundWatchIfNeeded() },
             onForeground: { [weak self] in self?.handleAppReturnedToForeground() }
         )
     }
@@ -394,61 +403,90 @@ final class Gate2CompactControlController {
         liveActivity.endAll()
         liveActivityLifecycleStatus = "ended_\(reason.rawValue)"
         scheduleIdleDeadlineCheck()
-        cancelHandOff()
+        cancelWatch()
     }
 
-    /// A phone call or another app took the audio: that pause never hands off to iOS.
+    /// A phone call or another app took the audio: that pause never hands off to iOS. A call keeps
+    /// the card for resuming; otherwise the app watches for another app's audio (#245).
     func handleAudioInterruptionBegan() {
         liveActivityLifecycle.audioInterruptionBegan()
-        cancelHandOff()
+        if isPhoneCallActive() {
+            cancelWatch()
+        } else {
+            startBackgroundWatchIfNeeded()
+        }
+    }
+
+    /// #245: if another app is playing audio while our card is paused in the background, and no call
+    /// is active, the card ends now. Internal so tests can run a check without waiting.
+    @discardableResult
+    func checkForOtherAudio() -> Bool {
+        guard isAppInBackground(),
+              case .end(let reason)? = liveActivityLifecycle.otherAudioChecked(
+                isOtherAudioPlaying: isOtherAudioPlaying(),
+                isPhoneCallActive: isPhoneCallActive()
+              ) else { return false }
+        liveActivity.endAll()
+        liveActivityLifecycleStatus = "ended_\(reason.rawValue)"
+        scheduleIdleDeadlineCheck()
+        cancelWatch()
+        return true
     }
 
     /// Runs when the grace after a locked pause ends. Internal so tests can fire it on an
     /// injected clock instead of waiting.
     func handOffIfDue() async {
         guard let dismissAt = liveActivityLifecycle.handOffIfDue(appInBackground: isAppInBackground(), now: now()) else {
-            finishHandOffTask()
+            finishWatch()
             return
         }
         liveActivityLifecycleStatus = "handed_off_to_system"
         scheduleIdleDeadlineCheck()
         await liveActivity.handOffDismissal(at: dismissAt)
-        finishHandOffTask()
+        finishWatch()
     }
 
     private func handleAppReturnedToForeground() {
         liveActivityLifecycle.appReturnedToForeground()
-        cancelHandOff()
+        cancelWatch()
     }
 
-    /// A listener pause with the app in the background (phone locked, or paused from AirPods or
-    /// the Lock Screen) hands the removal to iOS after the grace. A background task keeps the app
-    /// running through the grace; otherwise iOS would suspend it first.
-    private func scheduleHandOffIfNeeded() {
-        guard let handOffAt = liveActivityLifecycle.scheduleHandOff(appInBackground: isAppInBackground(), now: now()) else {
-            cancelHandOff()
+    /// A pause with the app in the background (phone locked, paused from AirPods or the Lock Screen,
+    /// or the listener switched apps). For the grace, the app checks every few seconds whether another
+    /// app is playing audio, and ends the card at once if so (#245). At the end of the grace, a
+    /// listener pause hands the removal to iOS (#193). A background task keeps the app running
+    /// through the watch; otherwise iOS would suspend it first. Not during a phone call.
+    private func startBackgroundWatchIfNeeded() {
+        guard isAppInBackground(), !isPhoneCallActive(), liveActivityLifecycle.isPausedCardOnScreen else {
+            cancelWatch()
             return
         }
-        guard handOffTask == nil else { return }
-        endHandOffBackgroundTask = beginBackgroundTask("Spoken Margins Live Activity hand-off")
-        let delay = max(0, handOffAt.timeIntervalSince(now()))
-        handOffTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(delay))
+        let handOffAt = liveActivityLifecycle.scheduleHandOff(appInBackground: true, now: now())
+        guard watchTask == nil else { return }
+        endWatchBackgroundTask = beginBackgroundTask("Spoken Margins Live Activity watch")
+        let interval = LiveActivityLifecycle.otherAudioCheckInterval
+        let checks = max(1, Int(LiveActivityLifecycle.lockedPauseGrace / interval))
+        watchTask = Task { @MainActor [weak self] in
+            for _ in 0..<checks {
+                try? await Task.sleep(for: .seconds(interval))
+                guard !Task.isCancelled, let self else { return }
+                if self.checkForOtherAudio() { return }
+            }
             guard !Task.isCancelled else { return }
             await self?.handOffIfDue()
         }
-        liveActivityLifecycleStatus = "hand_off_scheduled"
+        liveActivityLifecycleStatus = handOffAt == nil ? "watching_other_audio" : "hand_off_scheduled"
     }
 
-    private func cancelHandOff() {
-        handOffTask?.cancel()
-        finishHandOffTask()
+    private func cancelWatch() {
+        watchTask?.cancel()
+        finishWatch()
     }
 
-    private func finishHandOffTask() {
-        handOffTask = nil
-        endHandOffBackgroundTask?()
-        endHandOffBackgroundTask = nil
+    private func finishWatch() {
+        watchTask = nil
+        endWatchBackgroundTask?()
+        endWatchBackgroundTask = nil
     }
 
     func setNowPlayingEnabled(_ enabled: Bool) {
@@ -544,14 +582,14 @@ final class Gate2CompactControlController {
             )
             liveActivityLifecycleStatus = staleDate == nil ? "live" : "paused_idle_deadline"
             if staleDate == nil {
-                cancelHandOff()
+                cancelWatch()
             } else {
-                scheduleHandOffIfNeeded()
+                startBackgroundWatchIfNeeded()
             }
         case .end(let reason):
             liveActivity.endAll()
             liveActivityLifecycleStatus = "ended_\(reason.rawValue)"
-            cancelHandOff()
+            cancelWatch()
         case .hidden(let reason):
             liveActivityLifecycleStatus = "ended_\(reason.rawValue)"
         }
@@ -906,6 +944,30 @@ enum Gate2AppState {
         false
         #endif
     }
+
+    /// Whether another app is playing audio now (#245).
+    @MainActor
+    static func isOtherAudioPlaying() -> Bool {
+        #if canImport(AVFoundation) && os(iOS)
+        AVAudioSession.sharedInstance().isOtherAudioPlaying
+        #else
+        false
+        #endif
+    }
+
+    /// Whether a phone or VoIP call is in progress. A call's pause keeps the card (#193).
+    @MainActor
+    static func isPhoneCallActive() -> Bool {
+        #if canImport(CallKit) && os(iOS)
+        callObserver.calls.contains { !$0.hasEnded }
+        #else
+        false
+        #endif
+    }
+
+    #if canImport(CallKit) && os(iOS)
+    @MainActor private static let callObserver = CXCallObserver()
+    #endif
 
     /// Begins a background task and returns the call that ends it. iOS ends it early if time runs out.
     @MainActor

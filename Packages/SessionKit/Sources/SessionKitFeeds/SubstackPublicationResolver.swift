@@ -77,15 +77,30 @@ public struct SubstackPublicationResolver: Sendable {
 
     /// The publication feed for `link`, or nil when it isn't a Substack (generic discovery keeps it).
     public func resolve(_ link: String) async -> SubstackPublication? {
+        await resolveExplained(link).publication
+    }
+
+    /// The same, with a short trace of each step for diagnostics (#244: a failed Follow said only
+    /// "FollowedSourceError"). The trace names hosts and statuses, never a full link or a token.
+    public func resolveExplained(_ link: String) async -> (publication: SubstackPublication?, trace: [String]) {
+        let trace = Trace()
+        let publication = await resolve(link, trace: trace)
+        return (publication, trace.steps)
+    }
+
+    private func resolve(_ link: String, trace: Trace) async -> SubstackPublication? {
         let raw = link.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let components = URLComponents(string: raw),
               let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
-              let host = components.host?.lowercased(), !host.isEmpty else { return nil }
+              let host = components.host?.lowercased(), !host.isEmpty else {
+            trace.add("not an http(s) link")
+            return nil
+        }
         if Self.isPrivateFeedURL(raw) {
-            return await feedLink(raw, isPrivate: true)
+            return await feedLink(raw, isPrivate: true, trace: trace)
         }
         if Self.matches(raw, Self.publicPodcastFeed) {
-            return await feedLink(raw, isPrivate: false)
+            return await feedLink(raw, isPrivate: false, trace: trace)
         }
         // Substack serves everything over https; an http link is upgraded, never fetched as http.
         var upgraded = components
@@ -98,16 +113,16 @@ public struct SubstackPublicationResolver: Sendable {
 
         if host == "open.substack.com", let name = Self.firstCapture(path, #"^/pub/([A-Za-z0-9-]+)(?:/|$)"#) {
             evidence.append("open.substack.com share link names publication '\(name.lowercased())'")
-            return await confirm(origin: "https://\(name.lowercased()).substack.com", evidence: evidence, confidence: 0.95).publication
+            return await confirm(origin: "https://\(name.lowercased()).substack.com", evidence: evidence, confidence: 0.95, trace: trace).publication
         }
         if Self.substackAppHosts.contains(host), let handle = Self.firstCapture(path, #"^/@([A-Za-z0-9_.-]+)/?$"#) {
-            return await profile(handle: handle, evidence: evidence)
+            return await profile(handle: handle, evidence: evidence, trace: trace)
         }
         if !Self.platformHosts.contains(host) {
             if host.hasSuffix(".substack.com") {
                 evidence.append("Substack subdomain '\(host.split(separator: ".")[0])'")
             }
-            switch await confirm(origin: Self.origin(of: httpsURL), evidence: evidence, confidence: 0.95, requiresSubstack: true) {
+            switch await confirm(origin: Self.origin(of: httpsURL), evidence: evidence, confidence: 0.95, requiresSubstack: true, trace: trace) {
             case .found(let publication):
                 return publication
             case .notSubstack:
@@ -123,19 +138,44 @@ public struct SubstackPublicationResolver: Sendable {
         // substack.com post links and the fallback above: Substack redirects to the post or the
         // publication, and the final URL names it. The query is kept, because app-link needs
         // publication_id and post_id to redirect.
-        guard let response = try? await fetch(httpsURL, .html),
-              response.status == 200,
-              Self.servedBySubstack(response) else { return nil }
+        guard let response = await fetchTraced(httpsURL, .html, label: "page on \(host)", trace: trace) else { return nil }
+        guard response.status == 200 else {
+            trace.add("page on \(host): status \(response.status)")
+            return nil
+        }
+        guard Self.servedBySubstack(response) else {
+            trace.add("page on \(host): not served by Substack")
+            return nil
+        }
         let finalHost = response.url.host?.lowercased() ?? ""
         if Self.substackAppHosts.contains(finalHost),
            let handle = Self.firstCapture(response.url.path, #"^/@([A-Za-z0-9_.-]+)/?$"#) {
             evidence.append("redirected to profile @\(handle)")
-            return await profile(handle: handle, evidence: evidence)
+            return await profile(handle: handle, evidence: evidence, trace: trace)
         }
         // A Substack app page that isn't a publication (notes, sign-in), or no progress.
-        guard !Self.platformHosts.contains(finalHost), finalHost != host else { return nil }
+        guard !Self.platformHosts.contains(finalHost), finalHost != host else {
+            trace.add("page on \(host): no redirect to a publication")
+            return nil
+        }
         evidence.append("redirected to \(Self.stripTracking(response.url.absoluteString))")
-        return await confirm(origin: Self.origin(of: response.url), evidence: evidence, confidence: 0.95, requiresSubstack: true).publication
+        return await confirm(origin: Self.origin(of: response.url), evidence: evidence, confidence: 0.95, requiresSubstack: true, trace: trace).publication
+    }
+
+    /// Per-call trace of what each step saw.
+    private final class Trace: @unchecked Sendable {
+        private(set) var steps: [String] = []
+        func add(_ step: String) { steps.append(step) }
+    }
+
+    private func fetchTraced(_ url: URL, _ kind: SubstackFetchKind, label: String, trace: Trace) async -> SubstackFetchResponse? {
+        do {
+            return try await fetch(url, kind)
+        } catch {
+            let nsError = error as NSError
+            trace.add("\(label): fetch failed (\(nsError.domain) \(nsError.code))")
+            return nil
+        }
     }
 
     // MARK: - Steps
@@ -155,15 +195,28 @@ public struct SubstackPublicationResolver: Sendable {
         origin: String,
         evidence: [String],
         confidence: Double,
-        requiresSubstack: Bool = false
+        requiresSubstack: Bool = false,
+        trace: Trace
     ) async -> Confirmation {
+        let label = "\(origin.replacingOccurrences(of: "https://", with: ""))/feed"
         guard let feedURL = URL(string: "\(origin)/feed"),
-              let response = try? await fetch(feedURL, .feed),
-              response.status == 200 else { return .unavailable }
-        if requiresSubstack, !Self.feedIsFromSubstack(response) { return .notSubstack }
-        guard let parsed = try? parser.parse(data: response.body, contentType: response.header("content-type")) else {
+              let response = await fetchTraced(feedURL, .feed, label: label, trace: trace) else { return .unavailable }
+        guard response.status == 200 else {
+            trace.add("\(label): status \(response.status)")
             return .unavailable
         }
+        if requiresSubstack, !Self.feedIsFromSubstack(response) {
+            trace.add("\(label): not Substack")
+            return .notSubstack
+        }
+        let parsed: ParsedFeed
+        do {
+            parsed = try parser.parse(data: response.body, contentType: response.header("content-type"))
+        } catch {
+            trace.add("\(label): feed didn't parse (\(error))")
+            return .unavailable
+        }
+        trace.add("\(label): Substack feed, \(parsed.items.count) items")
         let finalFeed = Self.stripTracking(response.url.absoluteString)
         var feed = parsed
         feed.feedURL = finalFeed
@@ -179,15 +232,19 @@ public struct SubstackPublicationResolver: Sendable {
         ))
     }
 
-    private func profile(handle: String, evidence: [String]) async -> SubstackPublication? {
+    private func profile(handle: String, evidence: [String], trace: Trace) async -> SubstackPublication? {
         guard let url = URL(string: "https://substack.com/@\(handle)"),
-              let response = try? await fetch(url, .html),
-              response.status == 200 else { return nil }
+              let response = await fetchTraced(url, .html, label: "profile @\(handle)", trace: trace) else { return nil }
+        guard response.status == 200 else {
+            trace.add("profile @\(handle): status \(response.status)")
+            return nil
+        }
         let body = String(decoding: response.body, as: UTF8.self)
         guard let match = body.range(
             of: #"primaryPublication\\":\{\\"id\\":\d+,\\"subdomain\\":\\"([a-z0-9-]+)\\""#,
             options: .regularExpression
         ), let subdomain = Self.firstCapture(String(body[match]), #"subdomain\\":\\"([a-z0-9-]+)\\""#) else {
+            trace.add("profile @\(handle): no primary publication")
             return nil
         }
         let window = String(body[match.upperBound...].prefix(400))
@@ -195,19 +252,20 @@ public struct SubstackPublicationResolver: Sendable {
         let origin = custom.map { "https://\($0)" } ?? "https://\(subdomain).substack.com"
         // A writer can run several publications; the profile names only the primary one.
         let named = evidence + ["profile @\(handle): primary publication '\(subdomain)'"]
-        return await confirm(origin: origin, evidence: named, confidence: 0.8).publication
+        return await confirm(origin: origin, evidence: named, confidence: 0.8, trace: trace).publication
     }
 
     /// A Substack podcast feed link pasted as is: public, or a subscriber's private one.
-    private func feedLink(_ link: String, isPrivate: Bool) async -> SubstackPublication? {
+    private func feedLink(_ link: String, isPrivate: Bool, trace: Trace) async -> SubstackPublication? {
+        let label = isPrivate ? "private feed link" : "podcast feed link"
         guard let url = URL(string: link),
-              let response = try? await fetch(url, .feed),
-              response.status == 200,
+              let response = await fetchTraced(url, .feed, label: label, trace: trace) else { return nil }
+        guard response.status == 200,
               var parsed = try? parser.parse(data: response.body, contentType: response.header("content-type")) else {
+            trace.add("\(label): status \(response.status) or didn't parse")
             return nil
         }
         parsed.feedURL = link
-        let label = isPrivate ? "private feed link" : "podcast feed link"
         let audio = parsed.items.filter { $0.audioURL != nil }.count
         return SubstackPublication(
             kind: isPrivate ? .privateFeed : .podcastFeed,

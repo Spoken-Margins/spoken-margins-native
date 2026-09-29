@@ -3632,9 +3632,9 @@ struct ManualSourceFollowButton: View {
                     if model.isFollowingSelectedSource {
                         ProgressView()
                     } else {
-                        Image(systemName: "dot.radiowaves.left.and.right")
+                        Image(systemName: model.manualFollowButtonSymbol)
                     }
-                    Text(model.isFollowingSelectedSource ? "Following Podcast…" : "Follow Podcast")
+                    Text(model.manualFollowButtonTitle)
                 }
                 .frame(maxWidth: appearance == .playback ? 430 : .infinity)
             }

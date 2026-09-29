@@ -596,6 +596,8 @@ final class Gate2CompactControlTests: XCTestCase {
             now: { clock.now },
             notificationCenter: center,
             isAppInBackground: { app.isInBackground },
+            isOtherAudioPlaying: { app.isOtherAudioPlaying },
+            isPhoneCallActive: { app.isInCall },
             beginBackgroundTask: { _ in
                 app.beganBackgroundTasks += 1
                 return { app.endedBackgroundTasks += 1 }
@@ -651,6 +653,7 @@ final class Gate2CompactControlTests: XCTestCase {
         // The interruption is reported, then the pause arrives.
         let (model, controller, liveActivity, clock, app, center) = makeLockedPauseHarness()
         app.isInBackground = true
+        app.isInCall = true
         center.post(name: AVAudioSession.interruptionNotification, object: nil, userInfo: began)
         let pausedAt = clock.now
         model.dispatchGate2CompactCommand(.pause)
@@ -664,11 +667,72 @@ final class Gate2CompactControlTests: XCTestCase {
         app2.isInBackground = true
         model2.dispatchGate2CompactCommand(.pause)
         XCTAssertEqual(app2.beganBackgroundTasks, 1)
+        app2.isInCall = true
         center2.post(name: AVAudioSession.interruptionNotification, object: nil, userInfo: began)
         XCTAssertEqual(app2.endedBackgroundTasks, 1)
         clock2.now = clock2.now.addingTimeInterval(grace)
         await controller2.handOffIfDue()
         XCTAssertTrue(liveActivity2.handOffDates.isEmpty)
+    }
+
+    // MARK: #245: another app took over the audio.
+
+    /// The owner's original complaint: the card stayed after switching to another audio app.
+    func testAnotherAppTakingTheAudioEndsTheCardWithinSeconds() {
+        let (model, controller, liveActivity, clock, app, center) = makeLockedPauseHarness()
+        app.isInBackground = true
+        center.post(name: AVAudioSession.interruptionNotification, object: nil, userInfo: [
+            AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue
+        ])
+        model.dispatchGate2CompactCommand(.pause)
+        XCTAssertEqual(app.beganBackgroundTasks, 1, "the app keeps running to watch for the other app")
+        let endsBefore = liveActivity.endAllCallCount
+
+        app.isOtherAudioPlaying = true // Spotify is playing
+        clock.now = clock.now.addingTimeInterval(LiveActivityLifecycle.otherAudioCheckInterval)
+        XCTAssertTrue(controller.checkForOtherAudio())
+        XCTAssertEqual(liveActivity.endAllCallCount, endsBefore + 1, "the card leaves at the first check")
+        XCTAssertEqual(controller.diagnostics()["gate2LiveActivityLifecycle"], "ended_other_audio_took_over")
+        XCTAssertEqual(app.endedBackgroundTasks, app.beganBackgroundTasks)
+
+        let publishes = liveActivity.publishCallCount
+        model.refreshLockScreenSurfacesForLifecycle()
+        XCTAssertEqual(liveActivity.publishCallCount, publishes, "a paused refresh doesn't bring it back")
+    }
+
+    func testLockedPauseThenAnotherAppEndsTheCard() {
+        let (model, controller, liveActivity, _, app, _) = makeLockedPauseHarness()
+        app.isInBackground = true
+        model.dispatchGate2CompactCommand(.pause) // paused from AirPods
+        XCTAssertFalse(controller.checkForOtherAudio(), "nothing else playing: the card stays")
+        let endsBefore = liveActivity.endAllCallCount
+        app.isOtherAudioPlaying = true
+        XCTAssertTrue(controller.checkForOtherAudio())
+        XCTAssertEqual(liveActivity.endAllCallCount, endsBefore + 1)
+    }
+
+    func testPhoneCallKeepsTheCardEvenWhileOtherAudioIsReported() {
+        let (model, controller, liveActivity, _, app, center) = makeLockedPauseHarness()
+        app.isInBackground = true
+        app.isInCall = true
+        center.post(name: AVAudioSession.interruptionNotification, object: nil, userInfo: [
+            AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue
+        ])
+        model.dispatchGate2CompactCommand(.pause)
+        let endsBefore = liveActivity.endAllCallCount
+        app.isOtherAudioPlaying = true
+        XCTAssertFalse(controller.checkForOtherAudio())
+        XCTAssertEqual(liveActivity.endAllCallCount, endsBefore, "the card stays to resume after the call")
+    }
+
+    func testQuickPauseInOurOwnAppKeepsTheCard() {
+        let (model, controller, liveActivity, _, app, _) = makeLockedPauseHarness()
+        model.dispatchGate2CompactCommand(.pause) // on screen, in our app
+        let endsBefore = liveActivity.endAllCallCount
+        app.isOtherAudioPlaying = true
+        XCTAssertFalse(controller.checkForOtherAudio())
+        XCTAssertEqual(liveActivity.endAllCallCount, endsBefore)
+        XCTAssertEqual(app.beganBackgroundTasks, 0, "no watch while the app is on screen")
     }
 
     func testPauseInTheAppHandsOffOnlyOnceTheAppGoesToTheBackground() async {
@@ -980,6 +1044,8 @@ private final class RecordingLiveActivityController: Gate2LiveActivityControllin
 @MainActor
 private final class TestAppState {
     var isInBackground = false
+    var isOtherAudioPlaying = false
+    var isInCall = false
     var beganBackgroundTasks = 0
     var endedBackgroundTasks = 0
 }

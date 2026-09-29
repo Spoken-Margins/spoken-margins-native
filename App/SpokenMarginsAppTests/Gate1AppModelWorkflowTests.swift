@@ -3993,6 +3993,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         ]
 
         XCTAssertTrue(model.canManuallyFollowSelectedSource)
+        XCTAssertEqual(model.manualFollowButtonTitle, "Follow Podcast")
     }
 
     /// B2 M1: an article from Safari (a Substack post with tracking) offers Follow right away,
@@ -4011,6 +4012,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             )
         ]
         XCTAssertTrue(model.canManuallyFollowSelectedSource)
+        XCTAssertEqual(model.manualFollowButtonTitle, "Follow Publication", "#243: not \"Follow Podcast\"")
 
         model.libraryItems = [
             LibraryItemRow(id: "article", title: "Pasted notes", status: "Ready", canDelete: true, mediaType: "text")

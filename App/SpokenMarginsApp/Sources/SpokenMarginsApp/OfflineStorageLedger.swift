@@ -23,6 +23,8 @@ actor OfflineStorageLedger {
     private let repository: any SessionRepository
     private let rootDirectory: URL
     private let fileManager: FileManager
+    /// The last reconciliation's counts, for diagnostics (#259).
+    private(set) var lastReconciliation: OfflineLedgerReconciliation?
 
     init(repository: any SessionRepository, rootDirectory: URL, fileManager: FileManager = .default) {
         self.repository = repository
@@ -36,11 +38,20 @@ actor OfflineStorageLedger {
             try repository.deleteOfflineStorageReservation(id: expired.id)
         }
         let budget = try repository.loadOfflineStorageBudget()
-        let assets = try repository.loadOwnedOfflineAssets()
+        var assets = try repository.loadOwnedOfflineAssets()
         let reservations = try repository.loadOfflineStorageReservations()
-        let used = OfflineStoragePlanner.usageBytes(assets: assets, reservations: reservations, now: now)
+        var used = OfflineStoragePlanner.usageBytes(assets: assets, reservations: reservations, now: now)
         let requested = max(0, byteCount)
-        let deficit = max(0, used + requested - budget.limitBytes)
+        var deficit = max(0, used + requested - budget.limitBytes)
+        if deficit > 0 {
+            // Charges for files that no longer exist must not evict real audio or refuse the
+            // request (#259). Reconcile before planning any eviction.
+            if !(try reconcileWithDisk()).isEmpty {
+                assets = try repository.loadOwnedOfflineAssets()
+                used = OfflineStoragePlanner.usageBytes(assets: assets, reservations: reservations, now: now)
+                deficit = max(0, used + requested - budget.limitBytes)
+            }
+        }
         if deficit > 0 {
             var (plan, references) = try evictionPlan(requiredBytes: deficit, assets: assets)
             guard plan.reclaimableBytes >= deficit else {
@@ -141,6 +152,7 @@ actor OfflineStorageLedger {
     /// recorded user assets remain non-evictable; the returned value is any
     /// residual overage that cannot be reclaimed safely.
     func enforceBudget(now: Date = Date()) throws -> Int64 {
+        try reconcileWithDisk()
         let budget = try repository.loadOfflineStorageBudget()
         let assets = try repository.loadOwnedOfflineAssets()
         let reservations = try repository.loadOfflineStorageReservations()
@@ -150,6 +162,24 @@ actor OfflineStorageLedger {
         var (plan, references) = try evictionPlan(requiredBytes: deficit, assets: assets)
         try execute(plan: plan, assets: assets, references: &references)
         return max(0, deficit - plan.reclaimableBytes)
+    }
+
+    /// Brings the rows in line with the disk (#259): rows for missing files are dropped, sizes come
+    /// from disk, and rows naming one file become one. Never deletes a file.
+    @discardableResult
+    func reconcileWithDisk() throws -> OfflineLedgerReconciliation {
+        let plan = OfflineLedgerReconciliation.plan(assets: try repository.loadOwnedOfflineAssets()) { relative in
+            let url = rootDirectory.appending(path: relative)
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return .missing }
+            guard !isDirectory.boolValue,
+                  let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize else { return .other }
+            return .file(byteCount: Int64(size))
+        }
+        for id in plan.removedAssetIds { try repository.deleteOwnedOfflineAsset(id: id) }
+        for asset in plan.updatedAssets { try repository.saveOwnedOfflineAsset(asset) }
+        lastReconciliation = plan
+        return plan
     }
 
     func directFilesystemBytes() -> Int64 {

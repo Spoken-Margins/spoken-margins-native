@@ -146,27 +146,58 @@ class ReportTests(unittest.TestCase):
 class ProcessTests(unittest.TestCase):
     """Timeouts stop the whole group, so no xcodebuild keeps running outside the build slots."""
 
+    # The child needs time to start Python and install its signal handling before the timeout fires.
+    # At a load average near 400 (two simulators, full swap) that took more than the 0.5 s these tests
+    # once allowed, so the interrupt arrived first and the child died without a trace (#249). Children
+    # start with -S (no site import) and report when they're ready; a child that still isn't ready
+    # when the timeout fires means the Mac was too overloaded to test this, and the test says so.
+    STARTUP = 5.0
+
+    def ready_or_skip(self, text):
+        if 'ready' not in text:
+            self.skipTest(f'the child did not start within {self.STARTUP:.0f} s; the Mac is too overloaded to test this')
+
     def test_a_timeout_interrupts_the_group_so_the_child_can_record_it(self):
         with tempfile.TemporaryDirectory() as temporary, open(Path(temporary) / 'log', 'w+') as log:
             script = ('import signal, sys, time\n'
                       'def stop(*_):\n    print("interrupted, stopping xcodebuild", flush=True); sys.exit(130)\n'
-                      'signal.signal(signal.SIGINT, stop)\ntime.sleep(30)\n')
-            started = time.monotonic()
-            self.assertIsNone(lane.run_bounded([sys.executable, '-c', script], log, timeout=0.5, grace=10))
-            self.assertLess(time.monotonic() - started, 10)
+                      'signal.signal(signal.SIGINT, stop)\nprint("ready", flush=True)\ntime.sleep(60)\n')
+            self.assertIsNone(lane.run_bounded([sys.executable, '-S', '-c', script], log, timeout=self.STARTUP, grace=60))
             log.seek(0)
-            self.assertIn('interrupted, stopping xcodebuild', log.read())
+            text = log.read()
+            self.ready_or_skip(text)
+            # The handler's line proves the SIGINT path (a SIGKILL leaves no line). No time bound: on a Mac
+            # with swap nearly full, the child can take many seconds to run its handler (#184).
+            self.assertIn('interrupted, stopping xcodebuild', text)
+
+    def test_the_interrupt_works_even_if_the_runner_was_started_ignoring_it(self):
+        # Background jobs start with SIGINT ignored, and children inherit that. A child relying on
+        # Python's default handling must still be interrupted, not survive until SIGKILL.
+        with tempfile.TemporaryDirectory() as temporary, open(Path(temporary) / 'log', 'w+') as log:
+            script = 'import time\nprint("ready", flush=True)\ntime.sleep(60)\n'
+            previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+            try:
+                self.assertIsNone(lane.run_bounded([sys.executable, '-S', '-c', script], log, timeout=self.STARTUP,
+                                                   grace=60))
+            finally:
+                signal.signal(signal.SIGINT, previous)
+            log.seek(0)
+            text = log.read()
+            self.ready_or_skip(text)
+            self.assertIn('KeyboardInterrupt', text)  # default handling reached the child; a SIGKILL leaves no trace
 
     def test_a_group_that_ignores_the_interrupt_is_killed_with_its_children(self):
-        with tempfile.TemporaryDirectory() as temporary, open(Path(temporary) / 'log', 'w') as log:
+        with tempfile.TemporaryDirectory() as temporary, open(Path(temporary) / 'log', 'w+') as log:
             pid_file = Path(temporary) / 'child.pid'
             script = ('import signal, subprocess, sys, time\nsignal.signal(signal.SIGINT, signal.SIG_IGN)\n'
-                      'child = subprocess.Popen([sys.executable, "-c", "import signal, time; '
-                      'signal.signal(signal.SIGINT, signal.SIG_IGN); time.sleep(60)"])\n'
-                      f'open({str(pid_file)!r}, "w").write(str(child.pid))\ntime.sleep(60)\n')
-            self.assertIsNone(lane.run_bounded([sys.executable, '-c', script], log, timeout=1, grace=0.5))
+                      'child = subprocess.Popen([sys.executable, "-S", "-c", "import signal, time; '
+                      'signal.signal(signal.SIGINT, signal.SIG_IGN); time.sleep(120)"])\n'
+                      f'open({str(pid_file)!r}, "w").write(str(child.pid))\nprint("ready", flush=True)\ntime.sleep(120)\n')
+            self.assertIsNone(lane.run_bounded([sys.executable, '-S', '-c', script], log, timeout=self.STARTUP, grace=0.5))
+            log.seek(0)
+            self.ready_or_skip(log.read())
             child = int(pid_file.read_text())
-            for _ in range(50):
+            for _ in range(100):
                 try:
                     os.kill(child, 0)
                 except ProcessLookupError:
@@ -205,6 +236,103 @@ class T3Tests(unittest.TestCase):
                                                     'simulator_crash_reports': ['/r/x.ips'], 'interrupted': True}]})
         self.assertTrue(flood['flood'])
         self.assertEqual(lane.t3_verdict([flood], ['failed_or_incomplete']), 'INCONCLUSIVE')
+
+    def test_a_report_names_the_budget_that_ran_out(self):
+        manifest = {'status': 'failed_or_incomplete', 'steps': [
+            {'name': 'simulator-ready', 'seconds': 0.2, 'timeout_seconds': 180},
+            {'name': 'xcode-tests', 'seconds': 600.1, 'timeout_seconds': 600, 'interrupted': True,
+             'tests': {f'T/A/test{n}': {'status': 'passed'} for n in range(7)}}]}
+        summaries, statuses, _, details = lane.run_plans({'app': ['T/A']}, lambda *_: manifest, Path('/e'))
+        self.assertEqual(summaries[0]['out_of_time'], ('xcode-tests', 600))
+        self.assertIn('the test run ran out of its own 10m00s budget (verify-tests.py `xcode-tests`) after 7 passing '
+                      'tests', details[0])
+        self.assertIn("boot has a separate budget", details[0])
+        self.assertEqual(lane.t3_verdict(summaries, statuses), 'INCONCLUSIVE')
+
+    def test_the_reported_boot_time_is_the_boot_alone(self):
+        # #248's reports said "first boot took 17m57s" while the boot took about 4.5 min: the clock was read
+        # after the tests. Here the boot takes 65 s of fake time and the tests another 900.
+        now = [0.0]
+        fake_time = mock.Mock(monotonic=lambda: now[0])
+
+        def boot(*_):
+            now[0] += 65
+            return None, {'pressure': 'warn', 'pressure_waited': 600}
+
+        def tests(*_):
+            now[0] += 900
+            return [lane.summarize_manifest({'steps': []})], ['verified'], ['A (1 passed)'], []
+
+        import lane_sim
+        with mock.patch.object(lane, 'time', fake_time), \
+                mock.patch.object(lane_sim, 'create_temporary', return_value='U'), \
+                mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release'), \
+                mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
+                mock.patch.object(lane, 'first_boot', side_effect=boot), \
+                mock.patch.object(lane, 'run_plans', side_effect=tests), \
+                tempfile.TemporaryDirectory() as temporary:
+            verdict, _, _, details, _, _ = lane._t3_on_fresh_device({'app': ['T/A']}, 'r', Path(temporary),
+                                                                     'com.apple.CoreSimulator.SimRuntime.iOS-26-5')
+        self.assertEqual((verdict, details[0]), ('PASS', 'first boot of the fresh simulator took 1m05s (memory pressure '
+                                                         'at boot: warn, after waiting 600s; one-simulator period)'))
+
+    def test_a_tolerated_change_and_a_late_crash_report_are_reported_without_changing_the_verdict(self):
+        import lane_sim
+        with mock.patch.object(lane_sim, 'create_temporary', return_value='U'), \
+                mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release'), \
+                mock.patch.object(lane_sim, 'unsafe_devices', return_value={'U': {
+                    'reason': 'late crash report for a crash during boot: SpringBoard-x.ips'}}), \
+                mock.patch.object(lane, 'first_boot', return_value=(None, {
+                    'pressure': 'normal', 'pressure_waited': 0, 'tolerated': 'SpringBoard restarted (pid 1 -> 2)',
+                    'boot_window': (0.0, 1.0)})), \
+                mock.patch.object(lane, 'run_plans', return_value=([lane.summarize_manifest({'steps': []})], ['verified'],
+                                                                   ['A (1 passed)'], [])), \
+                tempfile.TemporaryDirectory() as temporary:
+            verdict, _, _, details, crashes, cc = lane._t3_on_fresh_device(
+                {'app': ['T/A']}, 'r', Path(temporary), 'com.apple.CoreSimulator.SimRuntime.iOS-26-5')
+        self.assertEqual((verdict, cc), ('PASS', ''))
+        self.assertIn("tolerated one SpringBoard change in the first 30 s of the first boot (owner's rule, #184)", details[1])
+        self.assertTrue(any('marked unsafe and deleted' in line for line in details))
+        self.assertEqual(crashes, 'none')
+
+    def _t3_with(self, boot, plans, back_to_one):
+        import lane_sim
+        with mock.patch.object(lane_sim, 'create_temporary', return_value='U'), \
+                mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release'), \
+                mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
+                mock.patch.object(lane_sim, 'back_to_one_simulator', back_to_one), \
+                mock.patch.object(lane, 'first_boot', return_value=boot), \
+                mock.patch.object(lane, 'run_plans', return_value=plans), \
+                tempfile.TemporaryDirectory() as temporary:
+            return lane._t3_on_fresh_device({'app': ['T/A']}, 'r7', Path(temporary),
+                                            'com.apple.CoreSimulator.SimRuntime.iOS-26-5')
+
+    def test_a_two_simulator_run_that_times_out_puts_the_lane_back_to_one_simulator(self):
+        # The lead's brake (#184): any two-simulator run INCONCLUSIVE from a timeout means back to one.
+        out_of_time = lane.summarize_manifest({'steps': [{'name': 'xcode-tests', 'seconds': 600.1,
+                                                          'timeout_seconds': 600, 'interrupted': True}]})
+        for period, expected in (('two-simulator', 1), ('one-simulator', 0)):
+            with self.subTest(period=period):
+                back_to_one = mock.Mock(return_value=True)
+                plans = ([out_of_time], ['failed_or_incomplete'], ['A (0 passed)'], [])
+                verdict, _, _, details, _, _ = self._t3_with((None, {'pressure': 'normal', 'period': period}), plans,
+                                                             back_to_one)
+                self.assertEqual(verdict, 'INCONCLUSIVE')
+                self.assertEqual(back_to_one.call_count, expected)
+                self.assertIn(f'{period} period', details[0])
+                self.assertEqual(any('back to one simulator' in line for line in details), bool(expected))
+        passing = ([lane.summarize_manifest({'steps': []})], ['verified'], ['A (1 passed)'], [])
+        back_to_one = mock.Mock(return_value=True)
+        self.assertEqual(self._t3_with((None, {'period': 'two-simulator'}), passing, back_to_one)[0], 'PASS')
+        back_to_one.assert_not_called()
+
+    def test_a_two_simulator_boot_that_times_out_puts_the_lane_back_to_one_simulator(self):
+        for problem, expected in (('not ready after 900s; shut down (not marked unsafe).', 1),
+                                  ('SpringBoard restarted twice during boot', 0)):
+            with self.subTest(problem=problem):
+                back_to_one = mock.Mock(return_value=True)
+                verdict = self._t3_with((problem, {'period': 'two-simulator'}), None, back_to_one)[0]
+                self.assertEqual((verdict, back_to_one.call_count), ('INCONCLUSIVE', expected))
 
     def test_a_flood_stops_the_remaining_plans(self):
         calls = []

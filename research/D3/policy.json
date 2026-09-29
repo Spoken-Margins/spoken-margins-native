@@ -1,0 +1,11 @@
+{
+  "schema_version": "ranking-policy.draft-1",
+  "recency_half_life_days": 10.0,
+  "weights": {
+    "listened_share": 1.8,
+    "finish_rate": 2.2,
+    "margin_count": 0.35,
+    "share_count": 0.55,
+    "dismiss_rate": -2.4
+  }
+}

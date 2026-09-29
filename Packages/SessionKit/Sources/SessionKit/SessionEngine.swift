@@ -30,6 +30,9 @@ public final class SessionEngine {
     private let linkResolver: LinkResolutionClient
     private let textAudio: TextAudioPreparationClient?
     private let playbackStartTimeout: TimeInterval
+    /// However long rendered audio takes, a start ends by then (#235).
+    private var playbackStartWaitCap: TimeInterval { playbackStartTimeout * 4 }
+    private var playbackStartFirstPendingAt: Date?
     private let now: () -> Date
     private(set) var recordingAnchor: Anchor?
     private var recordingTargetType: InterjectionTargetType?
@@ -3040,9 +3043,17 @@ public final class SessionEngine {
                 playbackStartPendingTargetId = targetId
                 playbackStartPendingAttemptId = attemptId
                 playbackStartDeadline = now().addingTimeInterval(playbackStartTimeout)
+                playbackStartFirstPendingAt = now()
                 return .pending
             }
             if let playbackStartDeadline, now() >= playbackStartDeadline {
+                // A slow on-device render isn't a stalled start: the client's own render deadline
+                // and fallback cover it. The cap still ends a start that never resolves (#235).
+                if audio.isAwaitingRenderedAudio(targetId: targetId),
+                   now().timeIntervalSince(playbackStartFirstPendingAt ?? now()) < playbackStartWaitCap {
+                    self.playbackStartDeadline = now().addingTimeInterval(playbackStartTimeout)
+                    return .pending
+                }
                 return recoverPlaybackStart(
                     targetId: targetId, attemptId: attemptId, failure: "playback_start_timeout"
                 )
@@ -3157,6 +3168,7 @@ public final class SessionEngine {
         playbackStartPendingAttemptId = nil
         playbackStartPendingTargetId = nil
         playbackStartDeadline = nil
+        playbackStartFirstPendingAt = nil
     }
 
     private func preparedTextAudioStatus(for item: Item?) -> String? {
