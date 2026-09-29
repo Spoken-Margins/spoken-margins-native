@@ -395,6 +395,29 @@ final class OfflineStorageLedgerTests: XCTestCase {
                        "the kept file stays in the ledger")
     }
 
+    func testDiscardingAStaleAssembledFileKeepsItWhenAnItemPlaysIt() async throws {
+        // #344 re-audit: narration assembled for an upgraded PDF's old text was deleted
+        // without asking whether another item plays the same file.
+        let fixture = try makeFixture(limit: 1_000)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let played = fixture.root.appending(path: "PreparedSupertonicAudio/played.m4a")
+        let stale = fixture.root.appending(path: "PreparedSupertonicAudio/stale.m4a")
+        try FileManager.default.createDirectory(at: played.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(count: 7).write(to: played)
+        try Data(count: 7).write(to: stale)
+        let article = narratedArticle(played)
+        try fixture.repository.saveItem(article)
+
+        let keptPlayed = try await fixture.ledger.discardUncommittedFile(played)
+        let removedStale = try await fixture.ledger.discardUncommittedFile(stale)
+
+        XCTAssertFalse(keptPlayed)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: played.path), "the article still plays it")
+        XCTAssertEqual(try fixture.repository.loadItem(id: "item-article"), article)
+        XCTAssertTrue(removedStale)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path), "nothing plays it")
+    }
+
     private func makeFixture(limit: Int64) throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "offline-ledger-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

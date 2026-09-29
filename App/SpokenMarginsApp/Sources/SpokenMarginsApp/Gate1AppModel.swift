@@ -15602,7 +15602,7 @@ final class Gate1AppModel: ObservableObject {
             )
             let assembledURL = prepared.media.url.flatMap(URL.init(string:))
             guard stillCurrent() else {
-                if let assembledURL, assembledURL.isFileURL { try? FileManager.default.removeItem(at: assembledURL) }
+                if let assembledURL, assembledURL.isFileURL { _ = try? await ledger.discardUncommittedFile(assembledURL) }
                 try? await ledger.release(reservationId: assemblyReservation.id)
                 return
             }

@@ -147,16 +147,31 @@ actor OfflineStorageLedger {
     /// Deletes one item's prepared audio (assembled narration and chunks) and their ledger
     /// rows, and nothing else: no recordings, Margins or other items' files. Used after the
     /// item moved to a new PDF extraction, so its audio no longer matches its text (#322).
+    ///
+    /// A file any item still plays stays, with its row (#344). Unlike eviction, nothing is
+    /// detached: another item's narration still matches its own text.
     func removePreparedAudio(itemId: String) throws -> Int64 {
         var removed: Int64 = 0
+        let references = PreparedNarrationFallback.FileReferences(items: try repository.listItems(includeDeleted: true))
         for asset in try repository.loadOwnedOfflineAssets()
         where asset.itemId == itemId && (asset.category == .preparedAudio || asset.category == .preparedChunk) {
-            let url = rootDirectory.appending(path: asset.relativePath)
-            if fileManager.fileExists(atPath: url.path) { try fileManager.removeItem(at: url) }
+            guard try removeFileNoItemPlays(rootDirectory.appending(path: asset.relativePath), references: references) else { continue }
             try repository.deleteOwnedOfflineAsset(id: asset.id)
             removed += asset.byteCount
         }
         return removed
+    }
+
+    /// Deletes a prepared file nothing was committed for, such as narration assembled
+    /// for text its item no longer has, unless an item plays it (#344).
+    @discardableResult
+    func discardUncommittedFile(_ url: URL) throws -> Bool {
+        try removeFileNoItemPlays(url, references: PreparedNarrationFallback.FileReferences(items: try repository.listItems(includeDeleted: true)))
+    }
+
+    private func removeFileNoItemPlays(_ url: URL, references: PreparedNarrationFallback.FileReferences) throws -> Bool {
+        if fileManager.fileExists(atPath: url.path) { try fileManager.removeItem(at: url) }
+        return true
     }
 
     func inventoryBytes() throws -> Int64 {
