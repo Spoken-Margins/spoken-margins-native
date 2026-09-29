@@ -1,0 +1,76 @@
+import Foundation
+
+/// #359: the words a Library row uses for what an item is and where it came from.
+/// A row used to show the stored media type ("Transcript Backed Media") and a raw
+/// URL as its byline, and the two PDF readers differed only by an unlabelled icon.
+public enum LibraryRowWording {
+    /// The kind the Library filter sorts an item under.
+    public static func contentType(
+        mediaType: String,
+        sourceReference: String?,
+        sourceReferenceType: String?
+    ) -> LibraryContentTypeFilter {
+        if sourceReference?.lowercased().contains(".pdf") == true { return .pdf }
+        switch mediaType.lowercased() {
+        case "pdf": return .pdf
+        case "epub": return .epub
+        case "article", TargetType.browserOwnedMedia.rawValue: return .article
+        case "podcast", TargetType.transcriptBackedMedia.rawValue: return .podcast
+        case "audiobook": return .audiobook
+        default:
+            return sourceReferenceType == "url" ? .article : .text
+        }
+    }
+
+    /// The kind in words, matching the Library filter's names so a listener can
+    /// filter by what a row says. `usesNewReader` marks a PDF read through the
+    /// structured-document reader, so it can be told apart from an older import
+    /// of the same file.
+    public static func kindLabel(
+        mediaType: String,
+        sourceReference: String?,
+        sourceReferenceType: String?,
+        usesNewReader: Bool
+    ) -> String {
+        if mediaType.lowercased() == "guided_tour" { return "Guided tour" }
+        switch contentType(mediaType: mediaType, sourceReference: sourceReference, sourceReferenceType: sourceReferenceType) {
+        case .pdf: return usesNewReader ? "PDF, new reader" : "PDF"
+        case .epub: return "EPUB"
+        case .article: return "Article"
+        case .podcast: return "Podcast"
+        case .audiobook: return "Audiobook"
+        case .text, .all: return "Text"
+        }
+    }
+
+    /// Who or where an item is from, or nil when there's nothing worth showing.
+    /// A web address shows as its site ("arxiv.org"), never as the raw URL.
+    public static func byline(sourceTitle: String?, author: String?, title: String) -> String? {
+        for candidate in [sourceTitle, author] {
+            guard var value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { continue }
+            if value.hasPrefix("[["), value.hasSuffix("]]") {
+                value = String(value.dropFirst(2).dropLast(2))
+            }
+            if isAddress(value) {
+                guard let site = webSiteName(value) else { continue }
+                value = site
+            }
+            if value.caseInsensitiveCompare(title) != .orderedSame { return value }
+        }
+        return nil
+    }
+
+    /// A URL of any scheme ("https://…", "file://…", "bundled://…") or a bare "www." address.
+    private static func isAddress(_ value: String) -> Bool {
+        !value.contains(" ") && (value.contains("://") || value.lowercased().hasPrefix("www."))
+    }
+
+    /// The site of a web address, without "www."; nil for any other kind of address.
+    private static func webSiteName(_ value: String) -> String? {
+        let lowered = value.lowercased()
+        let web = lowered.hasPrefix("www.") ? "https://\(value)" : value
+        guard lowered.hasPrefix("www.") || lowered.hasPrefix("http://") || lowered.hasPrefix("https://"),
+              let host = URL(string: web)?.host?.lowercased(), !host.isEmpty else { return nil }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+}
