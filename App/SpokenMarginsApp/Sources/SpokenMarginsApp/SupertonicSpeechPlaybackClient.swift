@@ -258,6 +258,8 @@ enum SupertonicResourcePolicy {
 final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unchecked Sendable {
     typealias FallbackHandler = @Sendable (_ reason: String, _ charOffset: Int, _ targetId: String) -> Void
     typealias RestoreHandler = @Sendable (_ targetId: String) -> Void
+    /// A stall or its end, with the audio session's and player's state then (#288).
+    typealias StallHandler = @Sendable (_ kind: String, _ fields: [String: String]) -> Void
     /// Which way a play request went, for diagnostics (#235).
     typealias ResumeDecisionHandler = @Sendable (_ fields: [String: String]) -> Void
     typealias GenerationStateHandler = @Sendable (RenderedSpeechGenerationState) -> Void
@@ -388,6 +390,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// to Supertonic at the next play once the condition clears).
     private var resourceFallbackTargetIds: Set<String> = []
     private let onRestore: RestoreHandler?
+    private let onStall: StallHandler?
+    private let stallThreshold: Duration
+    private let stallSampleInterval: Duration
+    /// The chunk the player is playing, so a stalled player can be re-seated at the same point.
+    private var activeRequest: RenderRequest?
+    private var stallMonitor: Task<Void, Never>?
+    private var lastStallRecovery: ContinuousClock.Instant?
     private let onResumeDecision: ResumeDecisionHandler?
     private var preparedAudioAssemblyStarted = false
     private var generationState = RenderedSpeechGenerationState.inactive
@@ -436,6 +445,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onPreparedAudio: PreparedAudioHandler? = nil,
         onFallback: FallbackHandler? = nil,
         onRestore: RestoreHandler? = nil,
+        onStall: StallHandler? = nil,
+        stallThreshold: Duration = .seconds(5),
+        stallSampleInterval: Duration = .seconds(1),
         onResumeDecision: ResumeDecisionHandler? = nil,
         renderWaitLimit: Duration = .seconds(15)
     ) {
@@ -474,6 +486,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.onPreparedAudio = onPreparedAudio
         self.onFallback = onFallback
         self.onRestore = onRestore
+        self.onStall = onStall
+        self.stallThreshold = stallThreshold
+        self.stallSampleInterval = stallSampleInterval
         self.onResumeDecision = onResumeDecision
         self.renderWaitLimit = renderWaitLimit
         super.init()
@@ -536,6 +551,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         case .resumePlayer(let player):
             try activateAudioSession()
             player.playImmediately(atRate: lock.withLock { playbackRate })
+            startStallMonitorIfNeeded()
             return
         case .seekPlayer(let player, let time):
             try activateAudioSession()
@@ -546,6 +562,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 toleranceAfter: .zero
             )
             player.playImmediately(atRate: lock.withLock { playbackRate })
+            startStallMonitorIfNeeded()
             return
         case .playCached(let cached):
             playRenderedAudio(cached.url, duration: cached.duration, request: cached.request)
@@ -1511,6 +1528,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             }
             lock.withLock {
                 player = nextPlayer
+                activeRequest = request
                 activeAudioURL = audioURL
                 activeAudioDuration = duration
                 currentTargetId = request.targetId
@@ -1545,6 +1563,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             } else {
                 startPlayer(nextPlayer, item: item, request: request)
             }
+            startStallMonitorIfNeeded()
         } catch {
             diskCache?.invalidate(audioURL)
             discardAudio(audioURL)
@@ -1555,6 +1574,86 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 reason: "supertonic_playback_failed"
             )
         }
+    }
+
+    /// The player's own state for the playback heartbeat (#288).
+    func playerDiagnostics() -> [String: String] {
+        lock.withLock { AudioSessionDiagnostics.fields(for: fallbackIsActive ? nil : player) }
+    }
+
+    /// Watches the player's clock while playback is intended. AVPlayer can report "playing" while
+    /// nothing is heard (#288); a clock that stops moving for `stallThreshold` is logged with the
+    /// session's and player's state, and the player is re-seated at the same point. A wait at a
+    /// chunk boundary (no player) isn't a stall: the render deadline covers it.
+    private func startStallMonitorIfNeeded() {
+        let interval = stallSampleInterval
+        let thresholdMs = Int(stallThreshold.components.seconds * 1_000
+            + stallThreshold.components.attoseconds / 1_000_000_000_000_000)
+        lock.withLock {
+            guard stallMonitor == nil else { return }
+            stallMonitor = Task { [weak self] in
+                var detector = PlaybackStallDetector(thresholdMs: thresholdMs, minimumProgressMs: 100)
+                let start = ContinuousClock.now
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: interval)
+                    guard let self else { return }
+                    let sample = self.lock.withLock { () -> (active: Bool, intends: Bool, clock: Int?) in
+                        let intends = self.transportIntent == .playing && !self.fallbackIsActive && self.player != nil
+                        let time = self.playerTime(self.player)
+                        return (self.transportIntent == .playing, intends, self.currentStartOffset * 1_000_000 + Int(time * 1_000))
+                    }
+                    let elapsed = ContinuousClock.now - start
+                    let uptimeMs = Int(elapsed.components.seconds * 1_000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
+                    if let event = detector.observe(uptimeMs: uptimeMs, mediaTimeMs: sample.intends ? sample.clock : nil,
+                                                    intendsToPlay: sample.intends) {
+                        await MainActor.run { self.handleStallEvent(event) }
+                    }
+                    if !sample.active {
+                        self.lock.withLock { self.stallMonitor = nil }
+                        return
+                    }
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func handleStallEvent(_ event: PlaybackStallDetector.Event) {
+        let player = lock.withLock { self.player }
+        var fields = AudioSessionDiagnostics.fields().merging(AudioSessionDiagnostics.fields(for: player)) { first, _ in first }
+        switch event {
+        case .stalled(_, let forMs):
+            fields["stalledMs"] = String(forMs)
+            let recovering = lock.withLock { () -> Bool in
+                if let last = lastStallRecovery, ContinuousClock.now - last < .seconds(30) { return false }
+                lastStallRecovery = .now
+                return true
+            }
+            fields["recovery"] = recovering ? "reseat_player" : "skipped_recent_recovery"
+            onStall?("supertonic.stall", fields)
+            if recovering { reseatStalledPlayer() }
+        case .ended(_, _, let stalledForMs):
+            fields["stalledMs"] = String(stalledForMs)
+            onStall?("supertonic.stall_ended", fields)
+        }
+    }
+
+    /// Re-activates the session and plays the same chunk from the same point in a new player.
+    private func reseatStalledPlayer() {
+        let snapshot = lock.withLock { () -> (URL, TimeInterval, RenderRequest, TimeInterval)? in
+            guard transportIntent == .playing, let request = activeRequest, let url = activeAudioURL else { return nil }
+            let time = playerTime(player)
+            player?.pause()
+            player?.replaceCurrentItem(with: nil)
+            player = nil
+            let fraction = activeAudioDuration > 0 ? time / activeAudioDuration : 0
+            initialPlaybackOffset = request.startOffset
+            initialRequestedSpokenOffset = request.startOffset + Int((Double(request.sourceLength) * fraction).rounded(.down))
+            return (url, activeAudioDuration, request, time)
+        }
+        guard let (url, duration, request, _) = snapshot else { return }
+        try? activateAudioSession()
+        playRenderedAudio(url, duration: duration, request: request)
     }
 
     private func assemblePreparedAudioIfComplete(generation expectedGeneration: UUID) {

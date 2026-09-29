@@ -657,15 +657,22 @@ final class Gate1AppModel: ObservableObject {
             || previous.lastFailure != snapshot.lastFailure
         guard changed || (snapshot.status.isPlaybackActive && now - lastPlaybackEventCheckpoint >= 30) else { return }
         lastPlaybackEventCheckpoint = now
-        playbackEventRecording.record("playback.state", [
+        var fields: [String: String] = [
             "item": DeveloperDiagnosticRecording.token(snapshot.itemId),
             "target": DeveloperDiagnosticRecording.token(snapshot.targetId),
             "status": snapshot.status.rawValue,
             "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
             "durationMs": String(snapshot.currentPlaybackDurationMs ?? -1),
+            // For live speech the media clock is -1; the text offset shows whether it advances (#288).
+            "textOffset": String(snapshot.currentTextStart ?? -1),
             "failure": DeveloperDiagnosticRecording.token(snapshot.lastFailure),
             "failureDetail": PlaybackFailureDetail.privacySafe(snapshot.lastFailure)
-        ])
+        ]
+        if snapshot.status.isPlaybackActive {
+            fields.merge(AudioSessionDiagnostics.fields()) { current, _ in current }
+            fields.merge((speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.playerDiagnostics() ?? [:]) { current, _ in current }
+        }
+        playbackEventRecording.record("playback.state", fields)
     }
 
     private func configureDeveloperDiagnosticRecording() {
@@ -10899,6 +10906,9 @@ final class Gate1AppModel: ObservableObject {
                         self.allowAudioPreparation(itemId: itemId)
                         self.diagnostics["supertonicFallbackRestored"] = itemId
                     }
+                },
+                onStall: { [weak self] kind, fields in
+                    Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) }
                 },
                 onResumeDecision: { [weak self] fields in
                     Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) }

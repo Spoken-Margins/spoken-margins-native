@@ -305,6 +305,54 @@ final class SupertonicSpeechTests: XCTestCase {
         try XCTUnwrap(value, file: file, line: line)
     }
 
+    private func stallClient(_ log: StallEventLog, template: URL, plays: Bool) -> SupertonicSpeechPlaybackClient {
+        SupertonicSpeechPlaybackClient(
+            renderer: CountingAudioSupertonicRenderer(templateURL: template), voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                log.started()
+                if plays { player.volume = 0; player.playImmediately(atRate: rate) }
+            },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            onStall: { kind, fields in log.stall(kind, fields) },
+            stallThreshold: .milliseconds(400), stallSampleInterval: .milliseconds(100)
+        )
+    }
+
+    // #288: the player says it's playing but its clock doesn't move. It must be noticed, logged
+    // with the session's and player's state, and re-seated, at most once per 30 s.
+    func testAPlayerWhoseClockStopsIsLoggedAndReseated() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: false)
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "stall", from: 0)
+        for _ in 0..<150 where log.startCount < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.values.first, "supertonic.stall")
+        XCTAssertEqual(log.lastFields["recovery"], "reseat_player")
+        XCTAssertNotNil(log.lastFields["playerRate"])
+        XCTAssertNotNil(log.lastFields["sessionCategory"], "the session's state is recorded")
+        XCTAssertGreaterThanOrEqual(log.startCount, 2, "the player was re-seated")
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertEqual(log.values.filter { $0 == "supertonic.stall" }.count, 1, "at most one re-seat per 30 s")
+        try client.stop()
+    }
+
+    func testAPlayerThatIsPlayingIsNotAStall() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: true)
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "playing", from: 0)
+        try await Task.sleep(for: .milliseconds(1_500))
+        XCTAssertTrue(log.values.isEmpty, "\(log.values)")
+        XCTAssertEqual(log.startCount, 1)
+        try client.stop()
+    }
+
     func testSelectableCatalogExposesOnlyJamesLilyAndSystem() {
         XCTAssertEqual(AppTTSVoiceSelection.allCases, [.james, .lily, .system])
         XCTAssertEqual(AppTTSVoiceSelection.james.rawValue, "supertonic:M2")
@@ -2024,6 +2072,18 @@ private final class PreparedChunkCommitGate: @unchecked Sendable {
         let index = lock.withLock { commits += 1; return commits }
         if index == 2 { for await _ in stream {} }
     }
+}
+
+private final class StallEventLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var kinds: [String] = []
+    private var starts = 0
+    private var last: [String: String] = [:]
+    var values: [String] { lock.withLock { kinds } }
+    var startCount: Int { lock.withLock { starts } }
+    var lastFields: [String: String] { lock.withLock { last } }
+    func stall(_ kind: String, _ fields: [String: String]) { lock.withLock { kinds.append(kind); last = fields } }
+    func started() { lock.withLock { starts += 1 } }
 }
 
 private actor CancellationAwareSupertonicRenderer: SupertonicRendering {
