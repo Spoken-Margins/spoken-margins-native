@@ -41,7 +41,7 @@ elif args[0] == "bootstatus":
         time.sleep(0.2)
         with open(os.path.join(os.environ["SM_LANE_CRASH_REPORTS"], "SpringBoard-2026-09-29-095801.ips"), "w") as handle:
             handle.write("FBSystemShellInitialize com.apple.CoreSimulator.SimDevice." + args[1])
-        time.sleep(10)
+        time.sleep(60)
     time.sleep(float(os.environ.get("FAKE_READY_SECONDS", "0.1")))
 elif args[0] == "shutdown":
     log({"shutdown": args[1]})
@@ -104,12 +104,64 @@ class LaneSimTests(unittest.TestCase):
             lane_sim.boot(UDID, 'retry', out=self.quiet)
         self.assertEqual(sum('boot' in r for r in self.records()), 1)  # the retry never reached simctl
 
+    def poll_loop(self, *, ready=(), springboard=((None, None),), reports=(), timeout=900):
+        """Run wait_until_ready with scripted signals and a fake clock; returns (outcome, polls, stops)."""
+        ready, reports = list(ready), list(reports)
+        now, stops, polls = [0.0], [], [0]
+
+        def is_ready():
+            polls[0] += 1
+            return ready.pop(0) if ready else False
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        monitor = lane_sim.SpringBoardMonitor(UDID, sequence(*springboard), clock=lambda: now[0])
+        with mock.patch.object(lane_sim, 'stop', side_effect=lambda udid, reason: stops.append(reason)):
+            try:
+                lane_sim.wait_until_ready(UDID, is_ready, monitor, lambda: reports.pop(0) if reports else None,
+                                          timeout, clock=lambda: now[0], sleep=sleep, poll=1.0)
+                outcome = 'ready'
+            except lane_sim.BootError as error:
+                outcome = str(error)
+        return outcome, polls[0], stops
+
     def test_a_crash_while_booting_stops_at_the_first_report(self):
-        started = time.monotonic()
+        report = Path('SpringBoard-2026-09-29-095801.ips')
+        outcome, polls, stops = self.poll_loop(reports=[None, None, report])
+        self.assertIn('SpringBoard-2026-09-29-095801.ips while booting', outcome)
+        self.assertEqual(polls, 3)  # stopped at the first report, not later
+        self.assertEqual(stops, ['crashed during boot: SpringBoard-2026-09-29-095801.ips'])
+
+    def test_a_springboard_restart_stops_the_boot_before_any_report_arrives(self):
+        outcome, polls, stops = self.poll_loop(springboard=[(10, 20), (10, 20), (10, 21)])
+        self.assertIn('SpringBoard restarted (pid 20 -> 21) while booting', outcome)
+        self.assertEqual((polls, stops), (3, ['SpringBoard restarted (pid 20 -> 21) during boot']))
+
+    def test_a_device_that_never_gets_ready_is_shut_down_but_not_marked(self):
+        outcome, _, stops = self.poll_loop(timeout=5)
+        self.assertIn('not ready after 5s', outcome)
+        self.assertEqual(stops, [])
+        self.assertIn({'shutdown': UDID}, self.records())
+
+    def test_a_device_that_gets_ready_returns(self):
+        self.assertEqual(self.poll_loop(ready=[False, False, True]), ('ready', 3, []))
+
+    def test_new_crash_finds_only_new_reports_for_this_device(self):
+        folder = Path(self.env['SM_LANE_CRASH_REPORTS'])
+        (folder / 'old.ips').write_text(f'com.apple.CoreSimulator.SimDevice.{UDID}')
+        baseline = lane_sim.crash_snapshot(folder)
+        (folder / 'other-device.ips').write_text('com.apple.CoreSimulator.SimDevice.99999999-0000')
+        self.assertIsNone(lane_sim.new_crash(folder, baseline, UDID))
+        (folder / 'SpringBoard-new.ips').write_text(f'FBSystemShellInitialize com.apple.CoreSimulator.SimDevice.{UDID}')
+        self.assertEqual(lane_sim.new_crash(folder, baseline, UDID).name, 'SpringBoard-new.ips')
+
+    def test_boot_wires_the_real_report_folder_into_the_watch(self):
+        # End to end with the fake simctl: its bootstatus writes a report and then waits 60 s, so only the
+        # crash watch can end the boot. No timing bounds; the deterministic rules are tested above.
         with mock.patch.dict(os.environ, {'FAKE_CRASH': '1'}):
             with self.assertRaisesRegex(lane_sim.BootError, 'SpringBoard-2026-09-29-095801.ips while booting'):
                 lane_sim.boot(UDID, 'test', out=self.quiet)
-        self.assertLess(time.monotonic() - started, 5)
         self.assertIn({'shutdown': UDID}, self.records())
         self.assertIn('crashed during boot', lane_sim.unsafe_devices()[UDID]['reason'])
 
@@ -186,13 +238,12 @@ class LaneSimTests(unittest.TestCase):
         shutdown = lane_sim.SpringBoardMonitor(UDID, sequence((10, 20), (10, None), (None, None)), grace=3, clock=clock)
         self.assertEqual([shutdown.check() for _ in range(3)], [None, None, 'shut down'])
 
-    def test_a_springboard_restart_while_booting_stops_the_boot_at_once(self):
-        with mock.patch.dict(os.environ, {'FAKE_READY_SECONDS': '10'}), \
+    def test_boot_wires_the_springboard_monitor_into_the_watch(self):
+        # End to end with the fake simctl: bootstatus waits 60 s, so only the monitor can end the boot.
+        with mock.patch.dict(os.environ, {'FAKE_READY_SECONDS': '60'}), \
                 mock.patch.object(lane_sim, 'device_processes', sequence((10, 20), (10, 20), (10, 21))):
-            started = time.monotonic()
             with self.assertRaisesRegex(lane_sim.BootError, 'SpringBoard restarted'):
                 lane_sim.boot(UDID, 'test', out=self.quiet)
-        self.assertLess(time.monotonic() - started, 5)
         self.assertIn('during boot', lane_sim.unsafe_devices()[UDID]['reason'])
 
     def test_the_watcher_stops_the_device_at_the_first_crash_and_leaves_a_released_one_alone(self):

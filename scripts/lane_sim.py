@@ -214,6 +214,31 @@ def release(udid: str, wait: float = 5.0) -> None:
     pid_file.unlink(missing_ok=True)
 
 
+def wait_until_ready(udid: str, is_ready, monitor, find_crash, timeout: float, clock=time.monotonic,
+                     sleep=time.sleep, poll: float | None = None) -> None:
+    """Poll until is_ready(); at the first SpringBoard sign or crash report, stop the device and raise.
+
+    The clock, sleep, monitor and crash source are injectable so the rules can be tested without
+    real timing or the real DiagnosticReports folder.
+    """
+    started = clock()
+    while not is_ready():
+        seen = monitor.check()
+        if seen and seen != 'shut down':
+            stop(udid, f'{seen} during boot')
+            raise BootError(f'{seen} while booting. The device is shut down and marked unsafe. '
+                            'Delete it and use a fresh device.')
+        crash = find_crash()
+        if crash:
+            stop(udid, f'crashed during boot: {crash.name}')
+            raise BootError(f'{crash.name} while booting. The device is shut down and marked '
+                            'unsafe. Delete it and use a fresh device.')
+        if clock() - started > timeout:
+            subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
+            raise BootError(f'not ready after {timeout:.0f}s; shut down (not marked unsafe).')
+        sleep(CRASH_POLL_SECONDS if poll is None else poll)
+
+
 @contextlib.contextmanager
 def all_build_slots(label: str, out, max_wait: float):
     with contextlib.ExitStack() as stack:
@@ -268,23 +293,9 @@ def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lo
                                     'do not retry it. Delete it and use a fresh device.')
                 ready = subprocess.Popen(simctl() + ['bootstatus', udid], stdout=subprocess.DEVNULL,
                                          stderr=subprocess.DEVNULL)
-                monitor = SpringBoardMonitor(udid)
                 try:
-                    while ready.poll() is None:
-                        seen = monitor.check()
-                        if seen and seen != 'shut down':
-                            stop(udid, f'{seen} during boot')
-                            raise BootError(f'{seen} while booting. The device is shut down and marked unsafe. '
-                                            'Delete it and use a fresh device.')
-                        crash = new_crash(reports, baseline, udid)
-                        if crash:
-                            stop(udid, f'crashed during boot: {crash.name}')
-                            raise BootError(f'{crash.name} while booting. The device is shut down and marked '
-                                            'unsafe. Delete it and use a fresh device.')
-                        if time.monotonic() - started > timeout:
-                            subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
-                            raise BootError(f'not ready after {timeout:.0f}s; shut down (not marked unsafe).')
-                        time.sleep(CRASH_POLL_SECONDS)
+                    wait_until_ready(udid, lambda: ready.poll() is not None, SpringBoardMonitor(udid),
+                                     lambda: new_crash(reports, baseline, udid), timeout)
                 finally:
                     if ready.poll() is None:
                         ready.kill()
