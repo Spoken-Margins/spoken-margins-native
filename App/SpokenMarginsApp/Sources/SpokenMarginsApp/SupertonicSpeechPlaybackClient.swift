@@ -457,6 +457,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         case seekPlayer(AVPlayer, TimeInterval)
         case playCached(CachedAudio)
         case awaitPendingRender
+        case renderPlanned(RenderRequest)
     }
 
     private let renderer: any SupertonicRendering
@@ -661,7 +662,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             reportGenerationState(.stopped)
             return
         }
-        let spokenOffset = spokenOffset(forSourceOffset: charOffset)
+        let spokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
         switch resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset) {
         case .resumePlayer(let player):
             try activateAudioSession()
@@ -681,6 +682,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             playRenderedAudio(cached.url, duration: cached.duration, request: cached.request)
             return
         case .awaitPendingRender:
+            return
+        case .renderPlanned(let request):
+            enqueueRender(request, shouldPlayWhenReady: false)
             return
         case .none:
             break
@@ -1804,7 +1808,39 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 initialRequestedSpokenOffset = spokenOffset
                 return .awaitPendingRender
             }
+            // Waiting at a boundary for a chunk that is planned but not yet rendering (for example
+            // while the previous chunk is still being saved): render it rather than restart the
+            // whole generation, and let the boundary marker play it (#235, Codex rank 3).
+            if let waitingOffset = pendingAutoplayOffset,
+               let planned = generationPlan.first(where: {
+                   $0.startOffset == waitingOffset
+                       && spokenOffset >= $0.startOffset
+                       && spokenOffset < $0.startOffset + max(1, $0.sourceLength)
+               }),
+               failedRenderReasons[planned.startOffset] == nil {
+                transportIntent = .playing
+                pendingStartTargetId = targetId
+                initialPlaybackOffset = planned.startOffset
+                initialRequestedSpokenOffset = spokenOffset
+                return .renderPlanned(planned)
+            }
             return .none
+        }
+    }
+
+    /// The spoken offset to resume at. An expansion such as " citation 1 " maps every spoken
+    /// character to one source offset, so a position saved in its later part maps back to its
+    /// first part. When a chunk boundary splits the expansion, that lands in the chunk already
+    /// played, and the resume restarted rendering. Resume at the current chunk instead (#235,
+    /// Codex rank 2).
+    private func resumeSpokenOffset(targetId: String, sourceOffset: Int) -> Int {
+        lock.withLock {
+            let first = preparedSpeechProjection.spokenCharacterOffset(atOrAfterSourceOffset: sourceOffset)
+            guard currentTargetId == targetId, first < currentStartOffset,
+                  preparedSpeechProjection.sourceOffset(atSpokenCharacterOffset: currentStartOffset) == sourceOffset else {
+                return first
+            }
+            return currentStartOffset
         }
     }
 

@@ -154,6 +154,98 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    private func silentTemplate(_ root: URL) throws -> URL {
+        let url = root.appending(path: "template.wav")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44_100))
+        buffer.frameLength = 44_100
+        try file.write(from: buffer)
+        return url
+    }
+
+    private func waitUntil(_ condition: () async -> Bool) async {
+        for _ in 0..<150 { if await condition() { return }; try? await Task.sleep(for: .milliseconds(20)) }
+    }
+
+    // #235, Codex rank 2: " [1] " is spoken " citation 1 ", every character mapped to the "[" offset. When a
+    // chunk boundary splits it, a pause in the second chunk maps back into the first, already played.
+    func testPauseInsideASplitCitationResumesTheCurrentChunk() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "rank2-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let renderer = TextRecordingSupertonicRenderer(template: try silentTemplate(root))
+        let starts = ResumeStartCounter()
+        let progress = GenerationProgressLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in starts.bump() },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            onGenerationProgress: { progress.append($0.completedChunks) }
+        )
+        let text = String(repeating: "a", count: 229) + " [1] " + String(repeating: "b", count: 300)
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "rank2", from: 0)
+        await waitUntil { starts.value >= 1 }
+        client.debugFinishActiveChunk()
+        await waitUntil { starts.value >= 2 }
+        XCTAssertEqual(starts.value, 2, "the second chunk plays")
+        let progressBefore = progress.completed.count
+        let paused = try XCTUnwrap(client.currentCharOffset())
+        try client.pause()
+        try client.play(targetId: "rank2", from: paused)
+        try? await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(progress.completed.dropFirst(progressBefore).contains(0),
+                       "no restart: progress never went back to 0 (\(progress.completed))")
+        let renders = await renderer.renders
+        XCTAssertEqual(Set(renders).count, renders.count, "no chunk rendered twice")
+        XCTAssertEqual(client.playbackStartStatus(targetId: "rank2"), .confirmed)
+        try client.stop()
+    }
+
+    // #235, Codex rank 3: while the previous chunk's commit is awaited, the next chunk is planned but not
+    // yet rendering. A pause and resume while waiting for it restarted rendering from scratch.
+    func testResumeWhileWaitingForAChunkNotYetRenderingKeepsTheGeneration() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "rank3-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let renderer = TextRecordingSupertonicRenderer(template: try silentTemplate(root))
+        let starts = ResumeStartCounter()
+        let gate = PreparedChunkCommitGate()
+        defer { gate.continuation.finish() }
+        let progress = GenerationProgressLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in starts.bump() },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            onGenerationProgress: { progress.append($0.completedChunks) },
+            onPreparedChunk: { _, _, _, _, _ in await gate.commit() }
+        )
+        let text = (1...12).map { "Sentence \($0) contains enough ordinary words to keep the narration moving through several chunks." }
+            .joined(separator: " ")
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "rank3", from: 0)
+        await waitUntil { starts.value >= 1 }
+        await waitUntil { await renderer.renders.count >= 2 }
+        client.debugFinishActiveChunk()
+        await waitUntil { starts.value >= 2 }
+        client.debugFinishActiveChunk()
+        // Waiting at the boundary for chunk 3, which isn't rendering: chunk 2's commit is held.
+        let rendersBefore = await renderer.renders.count
+        XCTAssertEqual(rendersBefore, 2)
+        let progressBefore = progress.completed.count
+        let paused = try XCTUnwrap(client.currentCharOffset())
+        try client.pause()
+        try client.play(targetId: "rank3", from: paused)
+        await waitUntil { starts.value >= 3 }
+        XCTAssertEqual(starts.value, 3, "the third chunk plays")
+        XCTAssertFalse(progress.completed.dropFirst(progressBefore).contains(0),
+                       "no restart: progress never went back to 0 (\(progress.completed))")
+        let renders = await renderer.renders
+        XCTAssertEqual(Set(renders).count, renders.count, "no chunk rendered twice")
+        try client.stop()
+    }
+
     func testSelectableCatalogExposesOnlyJamesLilyAndSystem() {
         XCTAssertEqual(AppTTSVoiceSelection.allCases, [.james, .lily, .system])
         XCTAssertEqual(AppTTSVoiceSelection.james.rawValue, "supertonic:M2")
@@ -1670,6 +1762,42 @@ private actor GatedDiscardSupertonicRenderer: SupertonicRendering {
         discards += 1
         for await _ in discardGate {}
         try? FileManager.default.removeItem(at: url)
+    }
+}
+
+private actor TextRecordingSupertonicRenderer: SupertonicRendering {
+    let template: URL
+    private(set) var renders: [String] = []
+    init(template: URL) { self.template = template }
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        renders.append(text)
+        let url = FileManager.default.temporaryDirectory.appending(path: "count-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: template, to: url)
+        return SupertonicNarrationResult(audioURL: url, duration: 1, sampleRate: 44_100, renderDuration: 0.01, sessionLoadCount: 1)
+    }
+    func discardGeneratedAudio(at url: URL) async { try? FileManager.default.removeItem(at: url) }
+}
+
+private final class ResumeStartCounter: @unchecked Sendable {
+    private let lock = NSLock(); private var n = 0
+    var value: Int { lock.withLock { n } }
+    func bump() { lock.withLock { n += 1 } }
+}
+
+private final class GenerationProgressLog: @unchecked Sendable {
+    private let lock = NSLock(); private var values: [Int] = []
+    var completed: [Int] { lock.withLock { values } }
+    func append(_ value: Int) { lock.withLock { values.append(value) } }
+}
+
+private final class PreparedChunkCommitGate: @unchecked Sendable {
+    let stream: AsyncStream<Void>; let continuation: AsyncStream<Void>.Continuation
+    private let lock = NSLock(); private var commits = 0
+    init() { (stream, continuation) = AsyncStream<Void>.makeStream() }
+    /// Holds the second chunk's commit, as a slow copy/hash/persist would.
+    func commit() async {
+        let index = lock.withLock { commits += 1; return commits }
+        if index == 2 { for await _ in stream {} }
     }
 }
 
