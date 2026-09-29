@@ -237,14 +237,14 @@ final class OfflineStorageLedgerTests: XCTestCase {
     func testStartupDropsRowsForMissingFilesAndTakesSizesFromDisk() async throws {
         let fixture = try makeFixture(limit: 100)
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let cache = fixture.root.appending(path: "RenderedSpeechCache", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
-        let gone = cache.appending(path: "gone.wav")
-        let shorter = cache.appending(path: "shorter.wav")
+        let directory = fixture.root.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let gone = directory.appending(path: "gone.m4a")
+        let shorter = directory.appending(path: "shorter.m4a")
         try Data(repeating: 1, count: 6).write(to: gone)
         try Data(repeating: 1, count: 6).write(to: shorter)
         try await fixture.ledger.adoptExistingAssets()
-        // The rendered cache deletes and rewrites files without telling the ledger.
+        // Something deletes and rewrites files without telling the ledger.
         try FileManager.default.removeItem(at: gone)
         try Data(repeating: 1, count: 2).write(to: shorter)
 
@@ -253,13 +253,13 @@ final class OfflineStorageLedgerTests: XCTestCase {
         _ = try await fixture.ledger.enforceBudget()
 
         let assets = try fixture.repository.loadOwnedOfflineAssets()
-        XCTAssertEqual(assets.map(\.relativePath), ["RenderedSpeechCache/shorter.wav"])
+        XCTAssertEqual(assets.map(\.relativePath), ["PreparedSupertonicAudio/shorter.m4a"])
         XCTAssertEqual(assets.first?.byteCount, 2)
         let inventory = try await fixture.ledger.inventoryBytes()
         let tracked = try await fixture.ledger.trackedFilesystemBytes()
         XCTAssertEqual(inventory, tracked)
         let summary = await fixture.ledger.lastReconciliation?.summary
-        XCTAssertEqual(summary, "missing=1 resized=1 merged=0 bytes=10")
+        XCTAssertEqual(summary, "missing=1 resized=1 merged=0 selfManaged=0 bytes=10")
     }
 
     func testOneFileIsChargedOnceWhenAdoptedAndThenCommittedByItsWriter() async throws {
@@ -347,6 +347,8 @@ final class OfflineStorageLedgerTests: XCTestCase {
         // The startup sequence: adopt, then enforce.
         try await fixture.ledger.adoptExistingAssets()
         _ = try await fixture.ledger.enforceBudget()
+        let summary = await fixture.ledger.lastReconciliation?.summary
+        XCTAssertEqual(summary, "missing=0 resized=0 merged=0 selfManaged=1 bytes=100", "Build 29's row is dropped")
         // An LRU pass: the cache now fits one file, so the next store evicts the other two.
         cache.setLimitBytes(100)
         let third = try cache.store(result, text: "three", voice: .m2, language: "en", speed: 1, synthesisSteps: 8)
@@ -361,6 +363,38 @@ final class OfflineStorageLedgerTests: XCTestCase {
         XCTAssertEqual(assets.map(\.relativePath), ["PodcastAudio/episode.m4a"], "the ledger doesn't track the rendered cache")
         XCTAssertTrue(FileManager.default.fileExists(atPath: episode.path), "a real download is never deleted")
         XCTAssertTrue(FileManager.default.fileExists(atPath: third.audioURL.path), "the ledger leaves the cache's files alone")
+    }
+
+    // #313: Clear Audio still clears the rendered speech cache now that the ledger doesn't track it,
+    // whether or not this launch has opened the cache.
+    func testClearAudioAlsoClearsTheRenderedSpeechCache() async throws {
+        let fixture = try makeFixture(limit: 1_000_000)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let episode = try writeAsset(fixture, relativePath: "PodcastAudio/episode.m4a", category: .podcast)
+        let directory = fixture.root.appending(path: "RenderedSpeechCache", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 5).write(to: directory.appending(path: "a.wav"))
+        try Data(repeating: 1, count: 5).write(to: directory.appending(path: "b.wav"))
+
+        let clearedUnopened = try await fixture.ledger.clearReproducibleAudio(renderedSpeechCache: nil)
+
+        XCTAssertEqual(clearedUnopened, 17)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: episode.path))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), [])
+
+        let rendered = fixture.root.appending(path: "rendered.wav")
+        try Data(repeating: 2, count: 100).write(to: rendered)
+        let cache = try RenderedSpeechDiskCache(directory: directory, limitBytes: 1_000)
+        let stored = try cache.store(
+            SupertonicNarrationResult(audioURL: rendered, duration: 1, sampleRate: 44_100, renderDuration: 0, sessionLoadCount: 0),
+            text: "one", voice: .m2, language: "en", speed: 1, synthesisSteps: 8
+        )
+
+        let clearedOpen = try await fixture.ledger.clearReproducibleAudio(renderedSpeechCache: cache)
+
+        XCTAssertEqual(clearedOpen, 100)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stored.audioURL.path))
+        XCTAssertEqual(cache.sizeBytes, 0)
     }
 
     private func writeAsset(_ fixture: Fixture, relativePath: String, category: OfflineAssetCategory) throws -> URL {

@@ -150,6 +150,19 @@ final class RenderedSpeechDiskCache: @unchecked Sendable {
         lock.withLock { cacheEntries().reduce(0) { $0 + $1.size } }
     }
 
+    /// Deletes every cached file and returns the bytes freed.
+    @discardableResult
+    func removeAll() -> Int64 {
+        lock.withLock { Self.removeAll(in: directory, fileManager: fileManager) }
+    }
+
+    /// The same, for a cache directory no instance has open.
+    static func removeAll(in directory: URL, fileManager: FileManager = .default) -> Int64 {
+        entries(in: directory, fileManager: fileManager).reduce(Int64(0)) { freed, entry in
+            (try? fileManager.removeItem(at: entry.url)) == nil ? freed : freed + Int64(entry.size)
+        }
+    }
+
     private func cacheURL(
         text: String,
         voice: SupertonicVoiceID,
@@ -175,6 +188,10 @@ final class RenderedSpeechDiskCache: @unchecked Sendable {
     }
 
     private func cacheEntries() -> [(url: URL, size: Int, modifiedAt: Date)] {
+        Self.entries(in: directory, fileManager: fileManager)
+    }
+
+    private static func entries(in directory: URL, fileManager: FileManager) -> [(url: URL, size: Int, modifiedAt: Date)] {
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
         let urls = (try? fileManager.contentsOfDirectory(
             at: directory,

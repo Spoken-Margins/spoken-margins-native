@@ -2063,9 +2063,9 @@ final class Gate1AppModel: ObservableObject {
 
     func clearReproducibleOfflineAudio() {
         guard let ledger = offlineStorageLedger else { return }
-        Task { [weak self] in
+        Task { [weak self, renderedSpeechDiskCache = self.renderedSpeechDiskCache] in
             do {
-                let bytes = try await ledger.clearReproducibleAssets(in: [.preparedAudio, .preparedChunk, .podcast, .guidedTour])
+                let bytes = try await ledger.clearReproducibleAudio(renderedSpeechCache: renderedSpeechDiskCache)
                 await MainActor.run {
                     self?.reportConfirmation("Cleared \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) of reproducible offline audio.")
                     self?.tryRefreshOfflineStorageUsage()

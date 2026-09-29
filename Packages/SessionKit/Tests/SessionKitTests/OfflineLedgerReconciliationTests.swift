@@ -19,12 +19,12 @@ final class OfflineLedgerReconciliationTests: XCTestCase {
 
     func testRowsForMissingFilesAreDroppedAndSizesComeFromDisk() {
         let assets = [
-            asset("adopted-gone", "RenderedSpeechCache/old.wav", 6),
-            asset("adopted-shorter", "RenderedSpeechCache/kept.wav", 6),
+            asset("adopted-gone", "PreparedAudio/item/chunks/0.wav", 6),
+            asset("adopted-shorter", "PreparedAudio/item/chunks/1.wav", 6),
             asset("unchanged", "PodcastAudio/episode.m4a", 4, category: .podcast)
         ]
         let disk: [String: OfflineLedgerReconciliation.PathState] = [
-            "RenderedSpeechCache/kept.wav": .file(byteCount: 2),
+            "PreparedAudio/item/chunks/1.wav": .file(byteCount: 2),
             "PodcastAudio/episode.m4a": .file(byteCount: 4)
         ]
         let plan = OfflineLedgerReconciliation.plan(assets: assets) { disk[$0] ?? .missing }
@@ -33,7 +33,7 @@ final class OfflineLedgerReconciliationTests: XCTestCase {
         XCTAssertEqual(plan.updatedAssets.map(\.id), ["adopted-shorter"])
         XCTAssertEqual(plan.updatedAssets.first?.byteCount, 2)
         XCTAssertEqual(plan.bytesNoLongerCharged, 10)
-        XCTAssertEqual(plan.summary, "missing=1 resized=1 merged=0 bytes=10")
+        XCTAssertEqual(plan.summary, "missing=1 resized=1 merged=0 selfManaged=0 bytes=10")
     }
 
     // #313: the rendered speech cache deletes files by its own LRU without telling the ledger. It
@@ -61,7 +61,9 @@ final class OfflineLedgerReconciliationTests: XCTestCase {
         let trackedOnDisk = disk.filter { !$0.key.hasPrefix("RenderedSpeechCache/") }.values.reduce(0, +)
         XCTAssertEqual(rows.reduce(0) { $0 + $1.byteCount }, trackedOnDisk, "the ledger total matches the disk")
         XCTAssertEqual(plan.removedAssetIds, ["adopted-a", "adopted-b"])
-        XCTAssertEqual(plan.bytesNoLongerCharged, 10)
+        XCTAssertEqual(plan.summary, "missing=0 resized=0 merged=0 selfManaged=2 bytes=10")
+        XCTAssertFalse(OfflineLedgerScope.isSelfManaged("RenderedSpeechCacheOld/a.wav"))
+        XCTAssertFalse(OfflineLedgerScope.isSelfManaged("PreparedAudio/RenderedSpeechCache/a.wav"))
     }
 
     func testRowsNamingOneFileBecomeOneKeepingTheWritersIdAndEveryProtection() {
