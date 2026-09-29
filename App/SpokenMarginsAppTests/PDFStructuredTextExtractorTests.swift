@@ -171,6 +171,34 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertEqual(StructuredDocumentSpeech.spokenLines(document), ["Reasoning and the aptitude, is revised, and CO2 levels rose in every cohort we studied."])
     }
 
+    func testV2SkipsTheAuthorNotesAtTheBottomOfPageOne() throws {
+        // #250 on arXiv 2608.09666: page 1's bulleted author notes ("• Corresponding
+        // author.", "• Email: ...") were read in the middle of an Introduction sentence.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10)]
+        let small: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 8)]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("Existing evaluation methods rely on fixed benchmarks and" as NSString).draw(at: CGPoint(x: 60, y: 80), withAttributes: body)
+            ("often produce single numerical scores as their outcomes." as NSString).draw(at: CGPoint(x: 60, y: 94), withAttributes: body)
+            ("• Corresponding author." as NSString).draw(at: CGPoint(x: 60, y: 690), withAttributes: small)
+            ("• Email: someone@example.edu" as NSString).draw(at: CGPoint(x: 60, y: 700), withAttributes: small)
+            ("• The authors are with S-Lab, Example Technological University;" as NSString).draw(at: CGPoint(x: 60, y: 710), withAttributes: small)
+            ("and the Example Institute of Science." as NSString).draw(at: CGPoint(x: 72, y: 720), withAttributes: small)
+            context.beginPage()
+            ("The second page continues the body text of the paper here." as NSString).draw(at: CGPoint(x: 60, y: 80), withAttributes: body)
+            ("• A bulleted point in body text stays, as a list item on page two." as NSString).draw(at: CGPoint(x: 60, y: 94), withAttributes: body)
+        }
+        let spoken = StructuredDocumentSpeech.spokenLines(
+            try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: data)))
+        ).joined(separator: " ")
+        for unheard in ["Corresponding author", "Email", "S-Lab", "Example Institute"] {
+            XCTAssertFalse(spoken.contains(unheard), unheard)
+        }
+        XCTAssertTrue(spoken.contains("often produce single numerical scores"))
+        XCTAssertTrue(spoken.contains("A bulleted point in body text stays"))
+    }
+
     func testV2TakesTheArXivSideStampForPageFurniture() {
         // #220 T4 and #162: "arXiv:2607.28282v1 [cs.CL] 30 Jul 2026", printed rotated
         // in the left margin of every arXiv paper, was read as the first sentence.
