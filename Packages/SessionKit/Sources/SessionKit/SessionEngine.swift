@@ -520,11 +520,6 @@ public final class SessionEngine {
         guard shouldPrepareGeneratedTextAudio(for: item) else {
             return snapshot
         }
-        // A render that started before a re-import upgraded the item was made from
-        // the old text; attaching it would write that text back (#344).
-        guard preparedAudio(prepared, matches: item) else {
-            throw SessionKitError.invalidCommandForState("attachPreparedTextAudio:source_text_changed")
-        }
         let updated = try applyPreparedTextAudio(prepared, to: item)
         if currentItem?.id == updated.id || currentSession?.itemId == updated.id {
             currentItem = updated
@@ -2689,7 +2684,9 @@ public final class SessionEngine {
               !sourceText.isEmpty else {
             return item
         }
-        guard let prepared = try textAudio.prepareTextAudio(itemId: item.id, title: item.title, text: sourceText) else {
+        // A cached render of text the item no longer has is ignored: it reads live.
+        guard let prepared = try textAudio.prepareTextAudio(itemId: item.id, title: item.title, text: sourceText),
+              preparedAudio(prepared, matches: item) else {
             return item
         }
         return try applyPreparedTextAudio(prepared, to: item)
@@ -2710,6 +2707,11 @@ public final class SessionEngine {
     }
 
     private func applyPreparedTextAudio(_ prepared: PreparedTextAudio, to item: Item) throws -> Item {
+        // A render of text the item no longer has, such as one that started before a
+        // re-import upgraded it, would write that text back over it (#344).
+        guard preparedAudio(prepared, matches: item) else {
+            throw SessionKitError.invalidCommandForState("applyPreparedTextAudio:source_text_changed")
+        }
         let transcriptId = item.transcriptId ?? "generated-transcript-\(item.id)"
         let map = currentMap?.itemId == item.id ? currentMap : (try? repository.loadListeningMap(itemId: item.id))
         let timeline = generatedTextTimeline(prepared.timeline, using: map)
@@ -2740,8 +2742,9 @@ public final class SessionEngine {
             return false
         }
         let text = item.text ?? ""
-        if prepared.normalizedText == text { return true }
-        let projected = SpeechTextNormalizer.projectForSystemSpeech(text).text
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if prepared.normalizedText == text || prepared.normalizedText == trimmed { return true }
+        let projected = SpeechTextNormalizer.projectForSystemSpeech(trimmed).text
         return prepared.normalizedText == projected
             || SpeechTextNormalizer.projectForSystemSpeech(prepared.normalizedText).text == projected
     }
