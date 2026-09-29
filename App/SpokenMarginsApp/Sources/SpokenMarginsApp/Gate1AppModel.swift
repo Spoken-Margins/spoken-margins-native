@@ -260,12 +260,6 @@ struct BatchSessionExportRow: Identifiable {
     var id: String { session.id }
 }
 
-struct BatchSessionExportResult: Equatable {
-    let exportedFileNames: [String]
-    let failures: [String]
-    let destinationName: String
-}
-
 enum OnboardingStep: String, CaseIterable, Identifiable, Hashable {
     case firstInterjection = "first_interjection"
     case reviewedTimeline = "reviewed_timeline"
