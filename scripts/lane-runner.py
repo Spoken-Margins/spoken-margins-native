@@ -330,8 +330,8 @@ def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str,
     try:
         slot = acquire_simulator_slot(f'runner T3 {request_id}', out=sys.stdout, max_wait=RUNNER_SLOT_WAIT)
     except TimeoutError as error:
-        return ('INCONCLUSIVE', 'no simulator', 'nothing', ['The Mac\'s one simulator slot stayed busy (a Test Desk '
-                f'job or another run), so this run did not start a second simulator: {error}'], 'none', '')
+        return ('INCONCLUSIVE', 'no simulator', 'nothing', ['The Mac\'s simulator slots stayed busy (a Test Desk job or '
+                f'another run, and no room for a second simulator), so this run did not start one: {error}'], 'none', '')
     try:
         return _t3_on_fresh_device(grouped, request_id, evidence, runtime)
     finally:
@@ -363,13 +363,18 @@ def _t3_on_fresh_device(grouped, request_id, evidence, runtime):
             problem, boot_info = first_boot(udid, log)
         boot_seconds = time.monotonic() - boot_started  # the boot alone, before any build or test
         if problem:
-            return ('INCONCLUSIVE', where, 'nothing', [f'The fresh simulator did not boot: {problem} '
-                    f'evidence: {evidence}/first-boot.log'], 'watched during boot', '')
+            details = [f'The fresh simulator did not boot: {problem} evidence: {evidence}/first-boot.log']
+            if boot_info.get('period') == 'two-simulator' and 'not ready after' in problem \
+                    and lane_sim.back_to_one_simulator(f'a two-simulator T3 boot ({request_id}) timed out: {problem}'):
+                details.append('This boot ran while two simulators were up, so the lane is back to one simulator '
+                               '(noted on #184).')
+            return 'INCONCLUSIVE', where, 'nothing', details, 'watched during boot', ''
         lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot',  # stops the device at a SpringBoard crash
                                crash_window=boot_info.get('boot_window'))
         summaries, statuses, ran, details = run_plans(grouped, run_plan, evidence)
         details.insert(0, f'first boot of the fresh simulator took {duration(boot_seconds)} (memory pressure at boot: '
-                          f'{boot_info.get("pressure", "unknown")}, after waiting {boot_info.get("pressure_waited", 0)}s)')
+                          f'{boot_info.get("pressure", "unknown")}, after waiting {boot_info.get("pressure_waited", 0)}s; '
+                          f'{boot_info.get("period", "one-simulator")} period)')
         if boot_info.get('tolerated'):
             details.insert(1, f'tolerated one SpringBoard change in the first 30 s of the first boot (owner\'s rule, '
                               f'#184): {boot_info["tolerated"]}')
@@ -391,6 +396,11 @@ def _t3_on_fresh_device(grouped, request_id, evidence, runtime):
         crashes += ' (simulator shut down, run stopped)'
     cc = '@uncomposed: SpringBoard crashed on the lane runner\'s simulator.' if flood else ''
     verdict = 'INCONCLUSIVE' if watched else t3_verdict(summaries, statuses)  # a simulator crash, not the app
+    timed_out = any(s['out_of_time'] for s in summaries) or 'timed out' in statuses
+    if verdict == 'INCONCLUSIVE' and timed_out and boot_info.get('period') == 'two-simulator' \
+            and lane_sim.back_to_one_simulator(f'a two-simulator T3 run ({request_id}) ended INCONCLUSIVE on a timeout.'):
+        details.append('This ran while two simulators were up and timed out, so the lane is back to one simulator '
+                       '(noted on #184).')
     return verdict, where, '; '.join(ran), details, crashes, cc
 
 

@@ -4,10 +4,13 @@
   scripts/lane-sim-boot --fresh "SM Lane Desk pr220"   create a fresh iOS 26 iPhone, boot it, print its UDID
   scripts/lane-sim-boot <udid>                          boot an existing device
   scripts/lane-sim-boot --done <udid>                   stop its watcher, shut it down, delete it
+  scripts/lane-sim-boot --second-slot status|on|off [reason]   the second simulator slot's switch
 
-It first takes the Mac's one simulator slot (waiting while the runner or another job has a
-simulator), and the device's background watcher keeps that slot until --done: on this 16 GB Mac
-two simulator jobs plus builds filled swap (#184). While the slot is held, builds get one slot.
+It first takes a simulator slot and the device's background watcher keeps it until --done. A job can
+always start when no other simulator job runs; it may join one only while memory pressure is normal
+and the second slot is on (on this 16 GB Mac two simulators plus builds filled swap, #184). While
+any simulator job runs, builds get one slot. The lane goes back to one simulator by itself when a
+two-simulator run times out or pressure stays at warn for 10 minutes with two up.
 One boot at a time Mac-wide, no builds while it boots, never a retry after a failed boot, and a stop
 at the first SpringBoard crash. After the boot, the watcher keeps watching SpringBoard and shuts the
 device down (and marks it unsafe) at the first crash; its log is next to the lane's state
@@ -34,10 +37,27 @@ def main(argv):
     target.add_argument('--fresh', metavar='NAME', help='create a fresh temporary device with this name first')
     target.add_argument('--done', metavar='UDID', help='stop the watcher, shut the device down and delete it')
     target.add_argument('--watch', metavar='UDID', help=argparse.SUPPRESS)  # the background watcher itself
+    target.add_argument('--second-slot', nargs='+', metavar=('status|on|off', 'REASON'),
+                        help='show or switch the second simulator slot; "off" needs a reason')
     parser.add_argument('--crash-window', nargs=2, type=float, help=argparse.SUPPRESS)  # the boot, for the late check
     parser.add_argument('--timeout', type=float, default=lane_sim.FIRST_BOOT_TIMEOUT,
                         help='seconds to wait for readiness (default %(default).0f)')
     args = parser.parse_args(argv)
+    if args.second_slot:
+        import lane_slots
+        action, reason = args.second_slot[0], ' '.join(args.second_slot[1:])
+        if action == 'on':
+            lane_slots.enable_second_slot()
+        elif action == 'off':
+            if not reason:
+                parser.error('--second-slot off needs a reason')
+            lane_sim.back_to_one_simulator(f'{reason} (switched off by hand)')
+        elif action != 'status':
+            parser.error('--second-slot takes status, on or off')
+        allowed, why = lane_slots.second_slot_status()
+        print(f'second simulator slot: {"available" if allowed else "not available"} ({why}); '
+              f'simulator jobs running: {lane_slots.simulator_jobs_running()}')
+        return 0
     if args.watch:
         print(f'[lane] watching {args.watch}', flush=True)
         window = tuple(args.crash_window) if args.crash_window else None
