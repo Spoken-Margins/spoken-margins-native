@@ -27,6 +27,22 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(doc.extraction.textSHA256?.count, 64)
     }
 
+    func testAMultiLineTitleIsOneSegmentThatKeepsItsLevelAndMakesNoChapter() throws {
+        // #272: a printed title is read once, isn't a chapter, and keeps the level
+        // the PDF item title is found by.
+        let doc = document([
+            StructuredDocumentLine(text: "Listening to Papers: A Field Study", role: .title, pageIndex: 0, level: 1),
+            StructuredDocumentLine(text: "of Researchers", role: .title, pageIndex: 0, level: 1),
+            StructuredDocumentLine(text: "Ada Example, Ben Sample", role: .authors, pageIndex: 0, level: 2),
+            StructuredDocumentLine(text: "1 Introduction", role: .heading, pageIndex: 0, level: 2),
+            StructuredDocumentLine(text: "Listening is slower than reading, but it fits.", role: .body, pageIndex: 0),
+        ])
+        XCTAssertEqual(doc.segments.map(\.role), [.title, .authors, .heading, .body])
+        XCTAssertEqual(doc.segments.map(\.level), [1, nil, 2, nil])
+        let chapters = StructuredDocumentImport.listeningMap(for: doc, title: "Listening to Papers", itemId: "item")?.chapters ?? []
+        XCTAssertFalse(chapters.contains { $0.title.contains("Field Study") || $0.title.contains("Ada Example") })
+    }
+
     func testSpeechFollowsI14AndMapsBackToTheCanonicalText() throws {
         let doc = document([
             StructuredDocumentLine(text: "J Biol 12 (2020) 1-9", role: .pageHeader, pageIndex: 0),
