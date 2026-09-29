@@ -13265,7 +13265,9 @@ final class Gate1AppModel: ObservableObject {
                 isIncluded: !hasStarredCandidates || interjection.isStarredForSharing == true,
                 approvedTranscript: transcript,
                 representationChoice: hasAudio ? .original : .textOnly,
-                warning: shareAnchorWarning(for: interjection),
+                warning: SharedMarginTextRequirement.hasReviewedText(transcript)
+                    ? shareAnchorWarning(for: interjection)
+                    : SharedMarginTextRequirement.reviewWarning,
                 anchorBefore: context.before,
                 anchorAfter: context.after
             )
@@ -13611,7 +13613,9 @@ final class Gate1AppModel: ObservableObject {
         sharingState.drafts[index].preparationMessage = nil
         sharingState.drafts[index].approvedTranscript = interjection.transcript ?? interjection.displayText ?? ""
         sharingState.drafts[index].representationChoice = originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
-        sharingState.drafts[index].warning = shareAnchorWarning(for: interjection)
+        sharingState.drafts[index].warning = SharedMarginTextRequirement.hasReviewedText(sharingState.drafts[index].approvedTranscript)
+            ? shareAnchorWarning(for: interjection)
+            : SharedMarginTextRequirement.reviewWarning
     }
 
     private func recordShareEdit(
@@ -13808,11 +13812,12 @@ final class Gate1AppModel: ObservableObject {
             sharingState.errorMessage = "Finish or cancel bulk preparation before sharing."
             return
         }
-        let drafts = sharingState.drafts.filter {
-            $0.isIncluded && !$0.approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
+        // A packet can't carry a Margin without words (#304), so say what was left out.
+        let included = sharingState.drafts.filter(\.isIncluded)
+        let drafts = included.filter { SharedMarginTextRequirement.hasReviewedText($0.approvedTranscript) }
+        let omission = SharedMarginTextRequirement.omissionNotice(omitted: included.count - drafts.count, remaining: drafts.count)
         guard !drafts.isEmpty else {
-            sharingState.errorMessage = "Select at least one Margin with reviewed text."
+            sharingState.errorMessage = omission ?? "Select at least one Margin with reviewed text."
             return
         }
         sharingState.isExporting = true
@@ -13933,7 +13938,8 @@ final class Gate1AppModel: ObservableObject {
                 isSharingInterjectionsPresented = false
                 isSharedSpokenMarginsPackagePresented = true
             }
-            diagnostics["lastSharedPackage"] = "margins=\(drafts.count);evidence=\(machineEvidence.count);map=\(mapProposals.isEmpty ? "preparing_or_unavailable" : "included")"
+            diagnostics["lastSharedPackage"] = "margins=\(drafts.count);omitted=\(included.count - drafts.count);evidence=\(machineEvidence.count);map=\(mapProposals.isEmpty ? "preparing_or_unavailable" : "included")"
+            if let omission { reportWarning(omission) }
         } catch {
             sharingState.isExporting = false
             sharingState.errorMessage = error.localizedDescription
