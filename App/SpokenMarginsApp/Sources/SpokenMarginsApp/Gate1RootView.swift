@@ -3414,7 +3414,7 @@ struct InterjectionDetailView: View {
                         model.toggleInterjectionAudioPlayback(current)
                     } label: {
                         Label(
-                            model.isPlayingInterjectionAudio(current) ? "Stop Recording" : "Play Original Recording",
+                            model.isPlayingInterjectionAudio(current) ? "Stop playing" : "Play Margin",
                             systemImage: model.isPlayingInterjectionAudio(current) ? "stop.fill" : "play.fill"
                         )
                     }
