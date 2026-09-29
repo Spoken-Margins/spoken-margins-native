@@ -9,7 +9,12 @@ So each boot:
 - waits while two simulators are already booted (the Mac's limit);
 - holds both build slots, so no build runs while a simulator boots;
 - never retries a failed `simctl boot`: it shuts the device down and marks it unsafe;
-- watches for crash reports from that device until it is ready, and stops at the first one.
+- watches the device's SpringBoard process until it is ready, and stops at the first restart or
+  disappearance (crash reports reach DiagnosticReports about 80 s late, after a flood is under way),
+  with crash reports as a second signal.
+After the boot, a background watcher (`lane-sim-boot --watch`) keeps watching SpringBoard and shuts
+the device down and marks it unsafe at the first crash. `lane-sim-boot --done <udid>` stops the
+watcher first, so an intentional shutdown isn't counted, then shuts the device down and deletes it.
 A fresh device's first boot migrates data for several minutes, hence the long readiness wait.
 
 The unsafe list is ~/Library/Caches/SpokenMarginsLane/unsafe-simulators.json. The lane guard blocks
@@ -107,6 +112,108 @@ def new_crash(reports: Path, baseline: dict, udid: str) -> Path | None:
     return None
 
 
+def device_processes(udid: str, ps_output: str | None = None) -> tuple:
+    """(launchd_sim pid, SpringBoard pid) for a booted device, read from `ps`; None where absent."""
+    text = ps_output if ps_output is not None else subprocess.check_output(['ps', '-axo', 'pid=,ppid=,command='], text=True)
+    rows = []
+    for line in text.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+            rows.append((int(parts[0]), int(parts[1]), parts[2]))
+    launchd = next((pid for pid, _, command in rows
+                    if command.split(' ', 1)[0].endswith('launchd_sim') and f'/{udid}/' in command), None)
+    springboard = next((pid for pid, parent, command in rows
+                        if launchd is not None and parent == launchd and command.endswith('SpringBoard.app/SpringBoard')),
+                       None)
+    return launchd, springboard
+
+
+class SpringBoardMonitor:
+    """Notices SpringBoard crashing on one device from its process ID, at once.
+
+    check() returns a description of a crash, 'shut down' when the device is gone, or None.
+    A vanished SpringBoard counts only if the device is still running after a short grace, because
+    an intentional shutdown also ends SpringBoard a moment before launchd_sim.
+    """
+
+    def __init__(self, udid: str, processes=None, grace: float = 3.0, clock=time.monotonic):
+        self.udid, self.grace, self.clock = udid, grace, clock
+        self.processes = processes if processes is not None else device_processes
+        self.seen, self.vanished_at = None, None
+
+    def check(self) -> str | None:
+        launchd, springboard = self.processes(self.udid)
+        if launchd is None:
+            return 'shut down' if self.seen is not None else None
+        if springboard is not None:
+            if self.seen is not None and springboard != self.seen:
+                return f'SpringBoard restarted (pid {self.seen} -> {springboard})'
+            self.seen, self.vanished_at = springboard, None
+            return None
+        if self.seen is None:
+            return None  # still booting
+        if self.vanished_at is None:
+            self.vanished_at = self.clock()
+            return None
+        if self.clock() - self.vanished_at >= self.grace:
+            return f'SpringBoard (pid {self.seen}) vanished while the device kept running'
+        return None
+
+
+def watch_files(udid: str) -> tuple:
+    folder = state_dir()
+    return folder / f'watch-{udid}.stop', folder / f'watch-{udid}.log', folder / f'watch-{udid}.pid'
+
+
+def watch(udid: str, poll: float = 1.0, monitor: SpringBoardMonitor | None = None) -> str:
+    """Watch a booted device until it shuts down or is released; stop it at the first SpringBoard crash."""
+    stop_flag, _, _ = watch_files(udid)
+    monitor = monitor or SpringBoardMonitor(udid)
+    while True:
+        if stop_flag.exists():
+            return 'released'
+        seen = monitor.check()
+        if seen == 'shut down':
+            return 'shut down'
+        if seen:
+            stop(udid, f'{seen} after boot')
+            return f'crash: {seen}; shut down and marked unsafe'
+        time.sleep(poll)
+
+
+def start_watcher(udid: str, helper: Path) -> None:
+    """Run `lane-sim-boot --watch <udid>` in the background, logging next to the lane's other state."""
+    stop_flag, log, pid_file = watch_files(udid)
+    stop_flag.unlink(missing_ok=True)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open('a') as handle:
+        watcher = subprocess.Popen([sys.executable, str(helper), '--watch', udid], stdout=handle,
+                                   stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+    pid_file.write_text(f'{watcher.pid}\n')
+
+
+def release(udid: str, wait: float = 5.0) -> None:
+    """Stop the device's watcher, then shut the device down and delete it."""
+    stop_flag, _, pid_file = watch_files(udid)
+    stop_flag.parent.mkdir(parents=True, exist_ok=True)
+    stop_flag.write_text('released\n')
+    try:
+        pid = int(pid_file.read_text())
+    except (OSError, ValueError):
+        pid = None
+    deadline = time.monotonic() + wait
+    while pid and time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
+    subprocess.run(simctl() + ['delete', udid], capture_output=True, timeout=120)
+    stop_flag.unlink(missing_ok=True)
+    pid_file.unlink(missing_ok=True)
+
+
 @contextlib.contextmanager
 def all_build_slots(label: str, out, max_wait: float):
     with contextlib.ExitStack() as stack:
@@ -161,8 +268,14 @@ def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lo
                                     'do not retry it. Delete it and use a fresh device.')
                 ready = subprocess.Popen(simctl() + ['bootstatus', udid], stdout=subprocess.DEVNULL,
                                          stderr=subprocess.DEVNULL)
+                monitor = SpringBoardMonitor(udid)
                 try:
                     while ready.poll() is None:
+                        seen = monitor.check()
+                        if seen and seen != 'shut down':
+                            stop(udid, f'{seen} during boot')
+                            raise BootError(f'{seen} while booting. The device is shut down and marked unsafe. '
+                                            'Delete it and use a fresh device.')
                         crash = new_crash(reports, baseline, udid)
                         if crash:
                             stop(udid, f'crashed during boot: {crash.name}')

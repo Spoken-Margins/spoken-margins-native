@@ -328,18 +328,23 @@ def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str,
         if problem:
             return ('INCONCLUSIVE', where, 'nothing', [f'The fresh simulator did not boot: {problem} '
                     f'evidence: {evidence}/first-boot.log'], 'watched during boot', '')
+        lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot')  # stops the device at a SpringBoard crash
         summaries, statuses, ran, details = run_plans(grouped, run_plan, evidence)
         details.insert(0, f'first boot of the fresh simulator took {duration(time.monotonic() - boot_started)}')
     finally:
-        subprocess.run(['xcrun', 'simctl', 'shutdown', udid], capture_output=True, timeout=120)
-        subprocess.run(['xcrun', 'simctl', 'delete', udid], capture_output=True, timeout=120)
+        lane_sim.release(udid)
+    watched = lane_sim.unsafe_devices().get(udid)
     crash_names = [c for s in summaries for c in s['crashes']]
-    flood = any(s['flood'] for s in summaries)
+    flood = any(s['flood'] for s in summaries) or bool(watched)
     crashes = ('crash flood: ' if flood else '') + (', '.join(crash_names) if crash_names else 'none')
-    if flood:
+    if watched:
+        crashes += f' (the SpringBoard watcher stopped the device: {watched["reason"]})'
+        statuses.append('stopped by the SpringBoard watcher')
+    elif flood:
         crashes += ' (simulator shut down, run stopped)'
-    cc = '@uncomposed: crash flood on the lane runner.' if flood else ''
-    return t3_verdict(summaries, statuses), where, '; '.join(ran), details, crashes, cc
+    cc = '@uncomposed: SpringBoard crashed on the lane runner\'s simulator.' if flood else ''
+    verdict = 'INCONCLUSIVE' if watched else t3_verdict(summaries, statuses)  # a simulator crash, not the app
+    return verdict, where, '; '.join(ran), details, crashes, cc
 
 
 def _read_manifest(output: Path) -> dict:

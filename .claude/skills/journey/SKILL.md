@@ -34,7 +34,8 @@ The Test Desk takes **T4 and T5** requests. T2 and T3 go to the self-hosted runn
    - **If the helper prints `STOP`, stop.** A failed boot or a crash during boot shuts the device down and marks it unsafe. Don't retry it, and don't boot it any other way; the guard blocks every command that names it except delete and shutdown. Delete it, and report on #184 before trying a fresh one if it happens twice.
    - J5's second device is another `--fresh` device.
    - Only run `xcodebuild` or `verify-tests.py --device` against a device the helper booted. The guard sends a raw `simctl boot` to the helper.
-   - When the request is done: `xcrun simctl shutdown "$UDID"` then `xcrun simctl delete "$UDID"`.
+   - After the boot, a background watcher checks the device's SpringBoard process every second. At the first SpringBoard crash it shuts the device down and marks it unsafe. Crash report files arrive about 80 s late, so they can't catch a flood in time. **If the device shuts down on its own, stop and report**; its reason is in `~/Library/Caches/SpokenMarginsLane/watch-<udid>.log`.
+   - When the request is done: `scripts/lane-sim-boot --done "$UDID"`. It stops the watcher first, so the shutdown isn't counted as a crash, then shuts the device down and deletes it.
 4. **Install the build.** A fresh device starts with an empty Library, so a lane journey builds the history it needs within the job (J2, J3 and J5 do this). J4 installs the previous shipped build first. Journeys over real long-lived history belong to the owner's device pass.
 5. Evidence goes in `artifacts/lane/<id>/` in the main checkout. It is git-ignored, so the PR gets paths, not images.
 
@@ -66,5 +67,5 @@ Don't reboot in a loop or switch devices. A single crash is noted in the report 
 ## Report and clean up
 
 1. Post the report on the PR in the test-lane.md format (PASS / FAIL / INCONCLUSIVE, per-step observations, evidence paths, crashes, what's not verified), then change the label from `lane:queued` to `lane:done`.
-2. Shut down and delete the fresh device or devices (`xcrun simctl shutdown`, then `xcrun simctl delete`).
+2. Remove the fresh device or devices with `scripts/lane-sim-boot --done <udid>`.
 3. Remove the worktree with `git worktree remove .claude/worktrees/lane-<id>`, which also deletes its DerivedData. Disk space on this Mac is tight.

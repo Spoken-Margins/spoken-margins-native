@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Boot a lane simulator under the lane's rules and wait until it is ready (scripts/lane_sim.py).
+"""Boot a lane simulator under the lane's rules, watch it, and remove it (scripts/lane_sim.py).
 
   scripts/lane-sim-boot --fresh "SM Lane Desk pr220"   create a fresh iOS 26 iPhone, boot it, print its UDID
   scripts/lane-sim-boot <udid>                          boot an existing device
+  scripts/lane-sim-boot --done <udid>                   stop its watcher, shut it down, delete it
 
 One boot at a time Mac-wide, no builds while it boots, never a retry after a failed boot, and a stop
-at the first crash report from the device. A device that failed is marked unsafe: delete it
-(`xcrun simctl delete <udid>`) and start again with --fresh. Journeys use a fresh device per request,
-deleted when the job ends. Exit 0 when ready; the UDID is the only thing printed on stdout.
+at the first SpringBoard crash. After the boot, a background watcher keeps watching SpringBoard and
+shuts the device down (and marks it unsafe) at the first crash; its log is next to the lane's state
+(~/Library/Caches/SpokenMarginsLane/watch-<udid>.log). A device that failed is marked unsafe: remove
+it with --done and start again with --fresh. Journeys use a fresh device per request.
+Exit 0 when ready; the UDID is the only thing printed on stdout.
 """
 import argparse
 from pathlib import Path
@@ -22,9 +25,20 @@ def main(argv):
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument('udid', nargs='?')
     target.add_argument('--fresh', metavar='NAME', help='create a fresh temporary device with this name first')
+    target.add_argument('--done', metavar='UDID', help='stop the watcher, shut the device down and delete it')
+    target.add_argument('--watch', metavar='UDID', help=argparse.SUPPRESS)  # the background watcher itself
     parser.add_argument('--timeout', type=float, default=lane_sim.FIRST_BOOT_TIMEOUT,
                         help='seconds to wait for readiness (default %(default).0f)')
+    parser.add_argument('--no-watch', action='store_true', help='skip the background SpringBoard watcher')
     args = parser.parse_args(argv)
+    if args.watch:
+        print(f'[lane] watching {args.watch}', flush=True)
+        print(f'[lane] watcher for {args.watch} ended: {lane_sim.watch(args.watch)}', flush=True)
+        return 0
+    if args.done:
+        lane_sim.release(args.done)
+        print(f'[lane] {args.done} released: watcher stopped, shut down, deleted', file=sys.stderr)
+        return 0
     try:
         udid = lane_sim.create_temporary(args.fresh) if args.fresh else args.udid
         if args.fresh:
@@ -33,7 +47,10 @@ def main(argv):
     except lane_sim.BootError as error:
         print(f'[lane] STOP: {error}', file=sys.stderr)
         return 3
-    print(f'[lane] {udid} is ready after {seconds:.0f}s', file=sys.stderr)
+    if not args.no_watch:
+        lane_sim.start_watcher(udid, Path(__file__).resolve())
+    print(f'[lane] {udid} is ready after {seconds:.0f}s' + ('' if args.no_watch else '; watcher running'),
+          file=sys.stderr)
     print(udid)
     return 0
 

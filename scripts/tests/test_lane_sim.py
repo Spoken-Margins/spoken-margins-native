@@ -45,7 +45,21 @@ elif args[0] == "bootstatus":
     time.sleep(float(os.environ.get("FAKE_READY_SECONDS", "0.1")))
 elif args[0] == "shutdown":
     log({"shutdown": args[1]})
+elif args[0] == "delete":
+    log({"delete": args[1]})
 '''
+
+PS_OUTPUT = """41094     1 launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/7E6701FC-0783-4C87-90D8-180CCDAC5280/data/var/run/launchd_bootstrap.plist
+41105 41094 /Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/System/Library/CoreServices/SpringBoard.app/SpringBoard
+51000     1 launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/AAAAAAAA-0000-0000-0000-000000000000/data/var/run/launchd_bootstrap.plist
+  900     1 /System/Library/CoreServices/SpringBoard.app/SpringBoard
+"""
+
+
+def sequence(*states):
+    """A processes() stand-in that returns each (launchd, springboard) state once, then repeats the last."""
+    states = list(states)
+    return lambda udid: states.pop(0) if len(states) > 1 else states[0]
 
 UDID = '11111111-2222-3333-4444-555555555555'
 
@@ -120,7 +134,7 @@ class LaneSimTests(unittest.TestCase):
 
     def test_two_boots_at_once_run_one_after_the_other(self):
         env = {**os.environ, 'FAKE_BOOT_SECONDS': '1'}
-        boots = [subprocess.Popen([sys.executable, str(SCRIPTS / 'lane-sim-boot'), udid], env=env,
+        boots = [subprocess.Popen([sys.executable, str(SCRIPTS / 'lane-sim-boot'), udid, '--no-watch'], env=env,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for udid in ('A-1', 'B-2')]
         outputs = [b.communicate(timeout=60) for b in boots]
         self.assertEqual([b.returncode for b in boots], [0, 0], outputs)
@@ -128,11 +142,71 @@ class LaneSimTests(unittest.TestCase):
         self.assertGreaterEqual(second['start'], first['end'] - 0.05)
         self.assertIn('waiting for a simulator boot lock', ''.join(err for _, err in outputs))
 
-    def test_fresh_creates_boots_and_prints_only_the_udid(self):
-        done = subprocess.run([sys.executable, str(SCRIPTS / 'lane-sim-boot'), '--fresh', 'SM Lane Desk pr220'],
-                              env=dict(os.environ), capture_output=True, text=True, timeout=60)
-        self.assertEqual((done.returncode, done.stdout), (0, 'FRESH-0000-0000\n'), done.stderr)
+    def test_fresh_boots_with_a_watcher_and_done_removes_both(self):
+        helper = [sys.executable, str(SCRIPTS / 'lane-sim-boot')]
+        booted = subprocess.run(helper + ['--fresh', 'SM Lane Desk pr220'], env=dict(os.environ),
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual((booted.returncode, booted.stdout), (0, 'FRESH-0000-0000\n'), booted.stderr)
         self.assertIn({'create': 'SM Lane Desk pr220'}, self.records())
+        _, log, pid_file = lane_sim.watch_files('FRESH-0000-0000')
+        watcher = int(pid_file.read_text())
+        os.kill(watcher, 0)  # running
+        done = subprocess.run(helper + ['--done', 'FRESH-0000-0000'], env=dict(os.environ), capture_output=True,
+                              text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        for _ in range(50):
+            try:
+                os.kill(watcher, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        else:
+            os.kill(watcher, 9)
+            self.fail('the watcher outlived --done')
+        self.assertIn({'shutdown': 'FRESH-0000-0000'}, self.records())
+        self.assertIn({'delete': 'FRESH-0000-0000'}, self.records())
+        self.assertIn('ended: released', log.read_text())
+        self.assertEqual(lane_sim.unsafe_devices(), {})
+
+    def test_processes_are_found_for_the_right_device_only(self):
+        self.assertEqual(lane_sim.device_processes('7E6701FC-0783-4C87-90D8-180CCDAC5280', PS_OUTPUT), (41094, 41105))
+        self.assertEqual(lane_sim.device_processes('AAAAAAAA-0000-0000-0000-000000000000', PS_OUTPUT), (51000, None))
+        self.assertEqual(lane_sim.device_processes(UDID, PS_OUTPUT), (None, None))
+
+    def test_the_monitor_sees_a_restart_or_a_vanished_springboard_but_not_a_shutdown(self):
+        now = [0.0]
+        clock = lambda: now[0]
+        booting = lane_sim.SpringBoardMonitor(UDID, sequence((None, None), (10, None), (10, 20), (10, 20), (10, 21)), clock=clock)
+        self.assertEqual([booting.check() for _ in range(5)][-1], 'SpringBoard restarted (pid 20 -> 21)')
+        vanished = lane_sim.SpringBoardMonitor(UDID, sequence((10, 20), (10, None)), grace=3, clock=clock)
+        self.assertIsNone(vanished.check())
+        self.assertIsNone(vanished.check())  # gone, but within the grace
+        now[0] = 5
+        self.assertEqual(vanished.check(), 'SpringBoard (pid 20) vanished while the device kept running')
+        shutdown = lane_sim.SpringBoardMonitor(UDID, sequence((10, 20), (10, None), (None, None)), grace=3, clock=clock)
+        self.assertEqual([shutdown.check() for _ in range(3)], [None, None, 'shut down'])
+
+    def test_a_springboard_restart_while_booting_stops_the_boot_at_once(self):
+        with mock.patch.dict(os.environ, {'FAKE_READY_SECONDS': '10'}), \
+                mock.patch.object(lane_sim, 'device_processes', sequence((10, 20), (10, 20), (10, 21))):
+            started = time.monotonic()
+            with self.assertRaisesRegex(lane_sim.BootError, 'SpringBoard restarted'):
+                lane_sim.boot(UDID, 'test', out=self.quiet)
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertIn('during boot', lane_sim.unsafe_devices()[UDID]['reason'])
+
+    def test_the_watcher_stops_the_device_at_the_first_crash_and_leaves_a_released_one_alone(self):
+        monitor = lane_sim.SpringBoardMonitor(UDID, sequence((10, 20), (10, 20), (10, 22)))
+        self.assertIn('crash: SpringBoard restarted', lane_sim.watch(UDID, poll=0.01, monitor=monitor))
+        self.assertIn({'shutdown': UDID}, self.records())
+        self.assertIn('after boot', lane_sim.unsafe_devices()[UDID]['reason'])
+        other = '99999999-0000-0000-0000-000000000000'
+        stop_flag, _, _ = lane_sim.watch_files(other)
+        stop_flag.parent.mkdir(parents=True, exist_ok=True)
+        stop_flag.write_text('released')
+        self.assertEqual(lane_sim.watch(other, poll=0.01, monitor=lane_sim.SpringBoardMonitor(other, sequence((10, 20)))),
+                         'released')
+        self.assertNotIn(other, lane_sim.unsafe_devices())
 
     def test_the_helper_refuses_an_unsafe_device_with_a_stop_message(self):
         lane_sim.mark_unsafe(UDID, 'simctl boot failed: Invalid argument')

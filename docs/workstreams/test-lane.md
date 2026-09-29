@@ -97,7 +97,8 @@ only where the listener's flow changed. Build through scripts/xcodebuild-lane.
 
 Simulators:
 - Every request gets a fresh iOS 26.5 device: UDID=$(scripts/lane-sim-boot --fresh
-  "SM Lane Desk <request>"). Delete it when the job ends. There is no standing lane device;
+  "SM Lane Desk <request>"). A watcher stops it at the first SpringBoard crash. Remove it when
+  the job ends with scripts/lane-sim-boot --done "$UDID". There is no standing lane device;
   942055FF is retired. iOS 27's Apple Intelligence services crash-flood on this Mac (#184).
 - If scripts/lane-sim-boot prints STOP, stop and report. Never retry a failed boot or boot a
   device another way; the guard blocks devices marked unsafe.
