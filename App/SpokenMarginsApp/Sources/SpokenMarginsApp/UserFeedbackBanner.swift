@@ -1,0 +1,141 @@
+import SwiftUI
+import SessionKit
+#if canImport(UIKit)
+import UIKit
+#endif
+
+struct UserFeedbackEvent: Identifiable, Equatable {
+    typealias Kind = FeedbackBannerPolicy.Kind
+
+    let id = UUID()
+    let kind: Kind
+    let message: String
+    /// Repeats the failed action. Only an error offers it, and the banner then shows Retry.
+    var retry: (@MainActor () -> Void)? = nil
+
+    /// Each event is new, so its id decides equality; the retry action can't be compared.
+    static func == (lhs: UserFeedbackEvent, rhs: UserFeedbackEvent) -> Bool {
+        lhs.id == rhs.id
+    }
+
+    func mayBeReplaced(by newer: UserFeedbackEvent) -> Bool {
+        FeedbackBannerPolicy.mayReplace(currentKind: kind, currentOffersRetry: retry != nil, with: newer.kind)
+    }
+}
+
+/// The app's top banner. Confirmations and warnings dismiss themselves and let taps through. An error
+/// stays until the listener closes it or retries (#310), so it takes taps.
+struct UserFeedbackBanner: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    let feedback: UserFeedbackEvent
+
+    var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: iconName)
+                    .foregroundStyle(iconColor)
+                Text(feedback.message)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(feedback.kind == .error ? 6 : 3)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("app.feedback.banner")
+            if feedback.kind == .error {
+                if let retry = feedback.retry {
+                    Button("Retry") {
+                        model.dismissFeedback(id: feedback.id)
+                        retry()
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(AppColors.evergreen)
+                    .accessibilityIdentifier("app.feedback.retry")
+                }
+                Button {
+                    model.dismissFeedback(id: feedback.id)
+                } label: {
+                    Image(systemName: "xmark")
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss")
+                .accessibilityIdentifier("app.feedback.dismiss")
+            }
+        }
+        .padding(12)
+        .foregroundStyle(AppColors.text)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppColors.border))
+        .padding(.top, 44)
+        .allowsHitTesting(feedback.kind == .error)
+        .task(id: feedback.id) {
+            #if canImport(UIKit)
+            UIAccessibility.post(notification: .announcement, argument: feedback.message)
+            #endif
+            guard let seconds = FeedbackBannerPolicy.autoDismissSeconds(for: feedback.kind) else { return }
+            do {
+                try await Task.sleep(for: .seconds(seconds))
+                model.dismissFeedback(id: feedback.id)
+            } catch {}
+        }
+    }
+
+    private var iconName: String {
+        switch feedback.kind {
+        case .success: "checkmark.circle.fill"
+        case .warning: "exclamationmark.triangle.fill"
+        case .error: "xmark.octagon.fill"
+        }
+    }
+
+    private var iconColor: Color {
+        switch feedback.kind {
+        case .success: .green
+        case .warning: .orange
+        case .error: .red
+        }
+    }
+}
+
+/// The last failure on an item, readable after its banner has gone (#310).
+struct ItemLastFailureCard: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    let itemId: String
+
+    var body: some View {
+        if let failure = model.itemFailures.lastFailure(itemId: itemId) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "xmark.octagon.fill")
+                    .foregroundStyle(.red)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Last problem, \(failure.occurredAt.formatted(date: .omitted, time: .shortened))")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppColors.secondaryText)
+                    Text(failure.message)
+                        .font(.subheadline)
+                        .foregroundStyle(AppColors.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                Spacer(minLength: 8)
+                Button {
+                    model.clearLastFailure(itemId: itemId)
+                } label: {
+                    Image(systemName: "xmark")
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear last problem")
+                .accessibilityIdentifier("item.lastFailure.clear")
+            }
+            .padding(12)
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppColors.border))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("item.lastFailure")
+        }
+    }
+}

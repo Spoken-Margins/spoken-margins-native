@@ -202,18 +202,6 @@ struct SourceLinkCandidateReviewState: Identifiable, Equatable {
     var id: String { request.id }
 }
 
-struct UserFeedbackEvent: Identifiable, Equatable {
-    enum Kind: Equatable {
-        case success
-        case warning
-        case error
-    }
-
-    let id = UUID()
-    let kind: Kind
-    let message: String
-}
-
 struct ItemDetailState {
     var id = ""
     var title = ""
@@ -720,6 +708,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var statusMessage = "Ready."
     @Published var lastError: String?
     @Published private(set) var feedbackEvent: UserFeedbackEvent?
+    @Published private(set) var itemFailures = ItemFailureLog()
     @Published var exportPreview = ""
     @Published private(set) var exportFileURL: URL?
     @Published private(set) var exportShareCandidates: [Interjection] = []
@@ -2471,7 +2460,7 @@ final class Gate1AppModel: ObservableObject {
                     speechFallbackReason = .memoryWarning
                     let message = SpeechFallbackReason.memoryWarning.listenerExplanation
                     statusMessage = message
-                    feedbackEvent = UserFeedbackEvent(kind: .warning, message: message)
+                    presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
                 }
             } catch {
                 reportFailure(error, context: "Memory-pressure voice recovery failed")
@@ -3180,7 +3169,9 @@ final class Gate1AppModel: ObservableObject {
             }
             return importResolvedSourceLink(request: request, result: result, startSession: shouldStartSession)
         } catch {
-            reportFailure(error, context: "Source link import failed")
+            reportFailure(error, context: "Source link import failed", retry: { [weak self] in
+                Task { await self?.importSourceLinkAsync(urlString: urlString, sourceSurface: sourceSurface, startSession: startSession) }
+            })
             return false
         }
     }
@@ -5863,6 +5854,8 @@ final class Gate1AppModel: ObservableObject {
         guard id == nil || feedbackEvent?.id == id else { return }
         feedbackEvent = nil
     }
+
+    func clearLastFailure(itemId: String) { itemFailures.clear(itemId: itemId) }
 
     func dismissLegacyLibraryResetNotice() {
         legacyLibraryResetNotice = nil
@@ -10890,7 +10883,7 @@ final class Gate1AppModel: ObservableObject {
                         self.diagnostics["supertonicFallbackOffset"] = "\(offset)"
                         let message = fallbackReason.listenerExplanation
                         self.statusMessage = message
-                        self.feedbackEvent = UserFeedbackEvent(kind: .warning, message: message)
+                        self.presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
                     }
                 },
                 onRestore: { [weak self] itemId in
@@ -14831,7 +14824,7 @@ final class Gate1AppModel: ObservableObject {
     /// otherwise apparent from the current interface.
     private func reportConfirmation(_ message: String) {
         reportSuccess(message)
-        feedbackEvent = UserFeedbackEvent(kind: .success, message: message)
+        presentFeedback(UserFeedbackEvent(kind: .success, message: message))
     }
 
     /// Presents degraded-but-successful behavior without styling it as either a
@@ -14839,12 +14832,12 @@ final class Gate1AppModel: ObservableObject {
     private func reportWarning(_ message: String) {
         statusMessage = message
         lastError = nil
-        feedbackEvent = UserFeedbackEvent(kind: .warning, message: message)
+        presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
         diagnostics["lastStatus"] = message
         diagnostics["recentFailure"] = "none"
     }
 
-    private func reportFailure(_ error: Error, context: String? = nil) {
+    private func reportFailure(_ error: Error, context: String? = nil, retry: (@MainActor () -> Void)? = nil) {
         let message: String
         if let urlError = error as? URLError {
             message = Self.userFacingMessage(for: urlError)
@@ -14854,7 +14847,7 @@ final class Gate1AppModel: ObservableObject {
         } else {
             message = String(describing: error)
         }
-        reportFailure([context, message].compactMap { $0 }.joined(separator: ": "))
+        reportFailure([context, message].compactMap { $0 }.joined(separator: ": "), retry: retry)
     }
 
     /// URLError's default description is a raw domain/code string, which is not useful to a listener.
@@ -14876,11 +14869,18 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func reportFailure(_ message: String) {
+    private func reportFailure(_ message: String, retry: (@MainActor () -> Void)? = nil) {
         statusMessage = "Error"
         lastError = message
-        feedbackEvent = UserFeedbackEvent(kind: .error, message: message)
+        presentFeedback(UserFeedbackEvent(kind: .error, message: message, retry: retry))
+        // The failure stays readable on the item the listener was looking at (#310).
+        itemFailures.record(message, itemId: screen == .item ? selectedItem.id : screen == .playback ? snapshot.itemId ?? "" : "")
         diagnostics["recentFailure"] = message
+    }
+
+    private func presentFeedback(_ event: UserFeedbackEvent) {
+        guard feedbackEvent?.mayBeReplaced(by: event) ?? true else { return }
+        feedbackEvent = event
     }
 
     private func refreshSelectedItem() {
