@@ -45,7 +45,7 @@ It compares your branch (uncommitted files included) with `origin/next`, prints 
    ```
 
    Keep it short.
-   - For T3, put the app test classes or methods on their own `tests:` line. `scripts/test-scope.py` suggests them.
+   - For T3, put the app test classes or methods on their own `tests:` line. `scripts/test-scope.py` suggests them. The runner adds test-scope's classes for your diff anyway, so `tests:` only needs what those classes leave out.
    - For T4, `run:` names the journeys (`J1, J7`).
    - Use `scenario:` only for a one-off check, with numbered steps and what passing looks like.
    - `watch for:` names the specific risk.
