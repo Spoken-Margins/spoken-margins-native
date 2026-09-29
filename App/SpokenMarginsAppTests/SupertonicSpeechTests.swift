@@ -182,6 +182,43 @@ final class SupertonicSpeechTests: XCTestCase {
         try XCTUnwrap(value, file: file, line: line)
     }
 
+    // #258: with a Listening Map overview, the engine speaks "Overview. …" before the article.
+    // Lookups carried that whole text and chunks planned across it, so no prepared chunk ever
+    // matched and a fully prepared article was rendered again. They now ask for the article's own
+    // prepared chunks, with the article's text.
+    func testLookupsWithASpokenPrefaceAskForTheArticlesPreparedChunks() async throws {
+        let template = try makeTestWAV(duration: 0.1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let article = (1...8).map { "Sentence \($0) of the article carries enough ordinary words to fill part of a chunk." }
+            .joined(separator: " ")
+        let preface = "Overview. The paper studies evaluation agents and how they choose their tools.\n\n"
+        let log = PreparedLookupLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: CountingAudioSupertonicRenderer(templateURL: template), voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            articleText: { _ in article },
+            preparedChunkLookup: { _, source, plan in log.add(source, plan); return nil }
+        )
+        let prepared = RenderedSpeechChunker.sourceSlices(from: SpeechTextNormalizer.normalize(article)).enumerated().map {
+            PreparedChunkPlan(index: $0.offset, startOffset: $0.element.startOffset,
+                              sourceLength: $0.element.slice.sourceLength, text: $0.element.slice.text)
+        }
+        _ = try client.prepareSpeechText(preface + article)
+        try client.play(targetId: "item", from: 0)
+        for _ in 0..<150 where Set(log.values.map { $0.1.index }).count < prepared.count {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let asked = log.values
+        XCTAssertTrue(asked.allSatisfy { $0.0 == article }, "lookups carry the article's text")
+        let byIndex = Dictionary(asked.map { ($0.1.index, $0.1) }, uniquingKeysWith: { first, _ in first })
+        for chunk in prepared {
+            XCTAssertEqual(byIndex[chunk.index], chunk, "chunk \(chunk.index) matches the prepared plan")
+        }
+        try client.stop()
+    }
+
     func testSelectableCatalogExposesOnlyJamesLilyAndSystem() {
         XCTAssertEqual(AppTTSVoiceSelection.allCases, [.james, .lily, .system])
         XCTAssertEqual(AppTTSVoiceSelection.james.rawValue, "supertonic:M2")
@@ -1834,6 +1871,13 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
         discardCount += 1
         try? FileManager.default.removeItem(at: url)
     }
+}
+
+private final class PreparedLookupLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [(String, PreparedChunkPlan)] = []
+    var values: [(String, PreparedChunkPlan)] { lock.withLock { entries } }
+    func add(_ source: String, _ plan: PreparedChunkPlan) { lock.withLock { entries.append((source, plan)) } }
 }
 
 private actor CancellationAwareSupertonicRenderer: SupertonicRendering {
