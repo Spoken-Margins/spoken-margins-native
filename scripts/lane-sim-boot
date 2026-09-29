@@ -1,42 +1,41 @@
 #!/usr/bin/env python3
-"""Boot a simulator through the Mac-wide simulator-boot lock, and wait until it is ready.
+"""Boot a lane simulator under the lane's rules and wait until it is ready (scripts/lane_sim.py).
 
-Usage: scripts/lane-sim-boot <udid> [--timeout SECONDS]
+  scripts/lane-sim-boot --fresh "SM Lane Desk pr220"   create a fresh iOS 26 iPhone, boot it, print its UDID
+  scripts/lane-sim-boot <udid>                          boot an existing device
 
-Two simulators booting at once crash-flooded SpringBoard onto the owner's screen (#184), so every
-lane boot (the Test Desk's, the runner's, verify-tests.py's) holds one lock from `simctl boot`
-until the device is ready. A first boot migrates data for several minutes, hence the long default.
-An already-booted device just gets the readiness check. Exit 0 when ready.
+One boot at a time Mac-wide, no builds while it boots, never a retry after a failed boot, and a stop
+at the first crash report from the device. A device that failed is marked unsafe: delete it
+(`xcrun simctl delete <udid>`) and start again with --fresh. Journeys use a fresh device per request,
+deleted when the job ends. Exit 0 when ready; the UDID is the only thing printed on stdout.
 """
 import argparse
-import os
 from pathlib import Path
-import shlex
-import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lane_slots import simulator_boot_lock  # noqa: E402
+import lane_sim  # noqa: E402
 
 
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('udid')
-    parser.add_argument('--timeout', type=float, default=900, help='seconds to wait for readiness (default 900)')
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument('udid', nargs='?')
+    target.add_argument('--fresh', metavar='NAME', help='create a fresh temporary device with this name first')
+    parser.add_argument('--timeout', type=float, default=lane_sim.FIRST_BOOT_TIMEOUT,
+                        help='seconds to wait for readiness (default %(default).0f)')
     args = parser.parse_args(argv)
-    simctl = shlex.split(os.environ.get('SM_LANE_SIMCTL', 'xcrun simctl'))
-    with simulator_boot_lock(f'boot {args.udid}'):
-        booted = subprocess.run(simctl + ['boot', args.udid], capture_output=True, text=True)
-        if booted.returncode and 'current state: Booted' not in booted.stderr:
-            print(f'[lane] simctl boot failed ({booted.returncode}): {booted.stderr.strip()}', file=sys.stderr)
-            return booted.returncode
-        try:
-            ready = subprocess.run(simctl + ['bootstatus', args.udid], timeout=args.timeout).returncode
-        except subprocess.TimeoutExpired:
-            print(f'[lane] {args.udid} not ready after {args.timeout:.0f}s', file=sys.stderr)
-            return 124
-    print(f'[lane] {args.udid} is ready' if ready == 0 else f'[lane] bootstatus exited {ready}', file=sys.stderr)
-    return ready
+    try:
+        udid = lane_sim.create_temporary(args.fresh) if args.fresh else args.udid
+        if args.fresh:
+            print(f'[lane] created {args.fresh}: {udid}', file=sys.stderr)
+        seconds = lane_sim.boot(udid, f'lane-sim-boot {udid}', timeout=args.timeout)
+    except lane_sim.BootError as error:
+        print(f'[lane] STOP: {error}', file=sys.stderr)
+        return 3
+    print(f'[lane] {udid} is ready after {seconds:.0f}s', file=sys.stderr)
+    print(udid)
+    return 0
 
 
 if __name__ == '__main__':

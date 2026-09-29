@@ -13,10 +13,10 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
 - A request identical to one that already has a PASS or FAIL report (same head merged into the
   same next, tier and tests) runs once. After an INCONCLUSIVE report, asking again runs again.
 - T2 builds for simulator and device (unsigned) through scripts/xcodebuild-lane.
-- T3 runs the named app-hosted tests through verify-tests.py on a temporary iOS 26 simulator,
-  created for the job, booted by this script (its first boot migrates data for minutes), and
-  deleted afterwards (iOS 27's Apple Intelligence services crash-flood
-  on this Mac, #184). It waits while two simulators are already booted, and a crash flood stops it.
+- T3 runs the named app-hosted tests through verify-tests.py on a fresh iOS 26 simulator, created
+  for the job and deleted afterwards. It is booted under the lane's boot rules (scripts/lane_sim.py):
+  one boot at a time, no builds meanwhile, no retry after a failed boot, a stop at the first crash
+  during boot, and a long wait for the first boot's data migration. A crash flood stops the run.
 - A timeout interrupts the whole process group, so no xcodebuild keeps running outside the slots.
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
@@ -51,14 +51,7 @@ T2_BUILDS = (('simulator', ["-destination", "generic/platform=iOS Simulator", "b
 BUILD_TIMEOUT = 1800
 T3_TIMEOUT = 3600
 INTERRUPT_GRACE = 120
-T3_IOS_MAJOR = 26
-T3_DEVICE_TYPE = 'com.apple.CoreSimulator.SimDeviceType.iPhone-17'
 RUNNER_SIMULATOR_PREFIX = 'SM Lane Runner '
-MAX_BOOTED_SIMULATORS = 2
-SIMULATOR_WAIT = 1800
-# A new simulator's first boot runs a one-off data migration (locationd and others) that took over
-# three minutes here while another simulator ran; verify-tests.py allows 180 s for readiness.
-FIRST_BOOT_TIMEOUT = 900
 MARKER = re.compile(r'<!-- lane-request: (\{.*?\}) -->')
 NOTE = '<!-- lane-note -->'
 REQUEST = re.compile(r'^\s*/lane\s+(T\d)\b', re.M)
@@ -287,47 +280,13 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[
     return summaries, statuses, ran, details
 
 
-def newest_runtime(major: int) -> str | None:
-    runtimes = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'runtimes', '--json'], text=True))
-    usable = [r for r in runtimes.get('runtimes', [])
-              if r.get('isAvailable') and r.get('platform') == 'iOS' and r.get('version', '').split('.')[0] == str(major)]
-    usable.sort(key=lambda r: [int(x) for x in r['version'].split('.')])
-    return usable[-1]['identifier'] if usable else None
-
-
-def booted_simulators() -> int:
-    devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'booted', '--json'], text=True))
-    return sum(len(group) for group in devices.get('devices', {}).values())
-
-
-def wait_for_simulator_room(count=booted_simulators, max_wait: float = SIMULATOR_WAIT, poll: float = 15) -> bool:
-    """Wait while the Mac already runs its limit of simulators (the Test Desk may have two up for J5)."""
-    started = time.monotonic()
-    while count() >= MAX_BOOTED_SIMULATORS:
-        if time.monotonic() - started >= max_wait:
-            return False
-        time.sleep(poll)
-    return True
-
-
-def first_boot(udid: str, log, runner=run_bounded) -> str | None:
-    """Boot a new simulator and wait out its first-boot migration. None when ready, else why not.
-
-    It holds the Mac-wide simulator-boot lock throughout: two simulators booting at once crash-flooded
-    SpringBoard onto the owner's screen (#184). verify-tests.py then finds the device booted, so it
-    only checks readiness and doesn't boot it.
-    """
-    from lane_slots import simulator_boot_lock
+def first_boot(udid: str, log) -> str | None:
+    """Boot the fresh simulator under the lane's boot rules (scripts/lane_sim.py). None when ready, else why not."""
+    import lane_sim
     try:
-        with simulator_boot_lock(f'runner boot {udid}', out=log, max_wait=SIMULATOR_WAIT):
-            booted = runner(['xcrun', 'simctl', 'boot', udid], log, 120)
-            if booted != 0:
-                return 'simctl boot ' + ('timed out' if booted is None else f'exited {booted}')
-            ready = runner(['xcrun', 'simctl', 'bootstatus', udid], log, FIRST_BOOT_TIMEOUT)
-            if ready != 0:
-                return f'not ready after {duration(FIRST_BOOT_TIMEOUT)}' if ready is None else f'bootstatus exited {ready}'
-    except TimeoutError as error:
-        return f'another simulator kept booting: {error}'
+        lane_sim.boot(udid, f'runner boot {udid}', out=log)
+    except lane_sim.BootError as error:
+        return str(error)
     return None
 
 
@@ -342,16 +301,13 @@ def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str,
     if unknown:
         return ('FAIL', 'no simulator', 'nothing', [f'Not in any app test plan: {", ".join(unknown)}. A named test '
                 'that does not exist is a failure (verify-tests.py rule).'], 'none', '')
-    runtime = newest_runtime(T3_IOS_MAJOR)
+    import lane_sim
+    runtime = lane_sim.newest_runtime()
     if not runtime:
-        return ('INCONCLUSIVE', 'no simulator', 'nothing', [f'No iOS {T3_IOS_MAJOR} simulator runtime is installed.'],
+        return ('INCONCLUSIVE', 'no simulator', 'nothing', [f'No iOS {lane_sim.IOS_MAJOR} simulator runtime is installed.'],
                 'none', '')
-    if not wait_for_simulator_room():
-        return ('INCONCLUSIVE', 'no simulator', 'nothing', [f'{MAX_BOOTED_SIMULATORS} simulators stayed booted for '
-                f'{duration(SIMULATOR_WAIT)}, so the lane did not start another.'], 'none', '')
-    udid = subprocess.check_output(['xcrun', 'simctl', 'create', RUNNER_SIMULATOR_PREFIX + request_id,
-                                    T3_DEVICE_TYPE, runtime], text=True).strip()
-    where = f'temporary iPhone 17, {runtime.rsplit(".", 1)[-1].replace("iOS-", "iOS ").replace("-", ".")}'
+    udid = lane_sim.create_temporary(RUNNER_SIMULATOR_PREFIX + request_id)
+    where = f'fresh iPhone 17, {runtime.rsplit(".", 1)[-1].replace("iOS-", "iOS ").replace("-", ".")}'
     python = ROOT / '.venv/bin/python'
 
     def run_plan(plan, selectors, output):
@@ -370,10 +326,10 @@ def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str,
         with (evidence / 'first-boot.log').open('w') as log:
             problem = first_boot(udid, log)
         if problem:
-            return ('INCONCLUSIVE', where, 'nothing', [f'The temporary simulator\'s first boot failed: {problem}. '
-                    f'evidence: {evidence}/first-boot.log'], 'not checked during boot', '')
+            return ('INCONCLUSIVE', where, 'nothing', [f'The fresh simulator did not boot: {problem} '
+                    f'evidence: {evidence}/first-boot.log'], 'watched during boot', '')
         summaries, statuses, ran, details = run_plans(grouped, run_plan, evidence)
-        details.insert(0, f'first boot of the temporary simulator took {duration(time.monotonic() - boot_started)}')
+        details.insert(0, f'first boot of the fresh simulator took {duration(time.monotonic() - boot_started)}')
     finally:
         subprocess.run(['xcrun', 'simctl', 'shutdown', udid], capture_output=True, timeout=120)
         subprocess.run(['xcrun', 'simctl', 'delete', udid], capture_output=True, timeout=120)
