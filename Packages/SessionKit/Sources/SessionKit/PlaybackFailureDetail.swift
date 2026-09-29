@@ -29,7 +29,11 @@ public enum PlaybackFailureDetail {
 
     private static let redactions: [(String, String)] = [
         (#"[A-Za-z][A-Za-z0-9+.-]*://[^\s\]\[;,]+"#, "<url>"),
-        (#"(?<![\w.])(?:~|/)[^\s\]\[;,]*/[^\s\]\[;,]*"#, "<path>"),
+        // A path runs through spaces ("Application Support") to its last slash, then its file
+        // name. Over-redacting prose after a path is the safe direction (#279).
+        (#"(?<![\w.])(?:~|/)[^\]\[;,\n"“”]*/[^\s\]\[;,"“”]*"#, "<path>"),
+        // Any slash-joined fragment a missed prefix left behind.
+        (#"[^\s\]\[;,"“”<>]*[^\s\]\[;,"“”<>/]/[^\s\]\[;,"“”<>]*"#, "<path>"),
         (#"[“"][^”"]*[”"]"#, "<name>")
     ]
 }

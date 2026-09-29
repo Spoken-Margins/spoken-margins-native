@@ -20,7 +20,13 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let model = Gate1AppModel(audioPlaybackClient: routed, databaseURLOverride: db)
         model.resetAndSeed()
         model.ttsVoiceSelection = .system
-        let audio = root.appending(path: "source.caf")
+        // The offline ledger is rooted at Application Support and reconciles
+        // rows against disk, so the owned file lives where production puts it.
+        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let sourcePath = "Audiobooks/source-\(UUID().uuidString).caf"
+        let audio = support.appending(path: sourcePath)
+        try FileManager.default.createDirectory(at: audio.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: audio) }
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1))
         let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 240_000))
         buffer.frameLength = buffer.frameCapacity
@@ -32,7 +38,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let hash = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
         let item = Item(id: "local-test", title: "Exact local source", mediaType: "audiobook", text: nil, externalReference: audio.absoluteString, status: "ready", externalReferenceType: "audiobook", media: ItemMedia(sourceType: .nativeMediaFile, url: audio.absoluteString, durationMs: 10_000, nativeMediaId: "source-audio"))
         try store.seed(item: item)
-        try store.saveOwnedOfflineAsset(OwnedOfflineAsset(id: "owned", itemId: item.id, category: .audiobook, relativePath: "source.caf", byteCount: Int64(bytes.count), checksumSHA256: hash, isReproducible: false))
+        try store.saveOwnedOfflineAsset(OwnedOfflineAsset(id: "owned", itemId: item.id, category: .audiobook, relativePath: sourcePath, byteCount: Int64(bytes.count), checksumSHA256: hash, isReproducible: false))
         let identity = model.localSharedItemIdentity(for: item)
         XCTAssertEqual(identity.itemType, .other)
         XCTAssertEqual(identity.exactEditionSHA256, hash)
@@ -105,7 +111,6 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         model.pause()
         // Reproduce a device update: the durable item URL points at a former
         // container, while the owned asset remains under the current support root.
-        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         let relocatedPath = "Audiobooks/relocated-\(UUID().uuidString).caf"
         let relocatedURL = support.appending(path: relocatedPath)
         try FileManager.default.createDirectory(at: relocatedURL.deletingLastPathComponent(), withIntermediateDirectories: true)

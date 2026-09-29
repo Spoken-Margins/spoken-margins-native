@@ -320,6 +320,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         case seekPlayer(AVPlayer, TimeInterval)
         case playCached(CachedAudio)
         case awaitPendingRender
+        case renderPlanned(RenderRequest)
     }
 
     private let renderer: any SupertonicRendering
@@ -527,7 +528,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             reportGenerationState(.stopped)
             return
         }
-        let spokenOffset = spokenOffset(forSourceOffset: charOffset)
+        let spokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
         let before = resumeDiagnostics(targetId: targetId, spokenOffset: spokenOffset)
         let action = resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset)
         reportResumeDecision(action, before: before)
@@ -550,6 +551,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             playRenderedAudio(cached.url, duration: cached.duration, request: cached.request)
             return
         case .awaitPendingRender:
+            return
+        case .renderPlanned(let request):
+            enqueueRender(request, shouldPlayWhenReady: false)
             return
         case .none:
             break
@@ -1211,7 +1215,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                             speed: 1.0,
                             synthesisSteps: 8
                        ) {
-                        await renderer.discardGeneratedAudio(at: rendered.audioURL)
+                        // The cached copy is what plays. Deleting the temporary original runs on
+                        // the renderer's serial queue, behind any other item's inference, so it
+                        // must not hold back publishing the chunk (#235).
+                        Task { await renderer.discardGeneratedAudio(at: rendered.audioURL) }
                         result = retained
                     } else {
                         result = rendered
@@ -1219,7 +1226,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 }
                 try Task.checkCancellation()
                 guard !performedInference || self?.onDeviceRenderingAllowed() != false else {
-                    await renderer.discardGeneratedAudio(at: result.audioURL)
+                    Task { await renderer.discardGeneratedAudio(at: result.audioURL) }
                     await MainActor.run {
                         self?.renderFailed(
                             request: request,
@@ -1684,7 +1691,39 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 pendingAutoplayOffset = inFlight.startOffset
                 return .awaitPendingRender
             }
+            // Waiting at a boundary for a chunk that is planned but not yet rendering (for example
+            // while the previous chunk is still being saved): render it rather than restart the
+            // whole generation, and let the boundary marker play it (#235, Codex rank 3).
+            if let waitingOffset = pendingAutoplayOffset,
+               let planned = generationPlan.first(where: {
+                   $0.startOffset == waitingOffset
+                       && spokenOffset >= $0.startOffset
+                       && spokenOffset < $0.startOffset + max(1, $0.sourceLength)
+               }),
+               failedRenderReasons[planned.startOffset] == nil {
+                transportIntent = .playing
+                pendingStartTargetId = targetId
+                initialPlaybackOffset = planned.startOffset
+                initialRequestedSpokenOffset = spokenOffset
+                return .renderPlanned(planned)
+            }
             return .none
+        }
+    }
+
+    /// The spoken offset to resume at. An expansion such as " citation 1 " maps every spoken
+    /// character to one source offset, so a position saved in its later part maps back to its
+    /// first part. When a chunk boundary splits the expansion, that lands in the chunk already
+    /// played, and the resume restarted rendering. Resume at the current chunk instead (#235,
+    /// Codex rank 2).
+    private func resumeSpokenOffset(targetId: String, sourceOffset: Int) -> Int {
+        lock.withLock {
+            let first = preparedSpeechProjection.spokenCharacterOffset(atOrAfterSourceOffset: sourceOffset)
+            guard currentTargetId == targetId, first < currentStartOffset,
+                  preparedSpeechProjection.sourceOffset(atSpokenCharacterOffset: currentStartOffset) == sourceOffset else {
+                return first
+            }
+            return currentStartOffset
         }
     }
 
@@ -1730,6 +1769,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         case .seekPlayer: fields["path"] = "seek_player"
         case .playCached: fields["path"] = "play_cached"
         case .awaitPendingRender: fields["path"] = "await_render"
+        case .renderPlanned: fields["path"] = "render_planned"
         case .none: fields["path"] = "restart_rendering"
         }
         onResumeDecision(fields)
