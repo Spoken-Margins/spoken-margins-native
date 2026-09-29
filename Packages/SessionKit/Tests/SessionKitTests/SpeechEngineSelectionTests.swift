@@ -51,6 +51,39 @@ final class SpeechEngineSelectionTests: XCTestCase {
         XCTAssertEqual(log, "thermal=serious lowPower=true power=external memoryBackoff=false")
     }
 
+    /// #314: a stop keeps its reason. Before, an assembly failure read as "using the iOS system
+    /// voice", which was wrong: playback never left the on-device voice.
+    func testEveryGenerationStopSaysWhyAndAnAssemblyFailureKeepsItsError() {
+        struct DiskFull: Error {}
+        let reason = SpeechGenerationStopReason.assemblyFailed(DiskFull())
+        XCTAssertEqual(reason, "prepared_audio_assembly_failed: DiskFull()")
+
+        let assembly = SpeechGenerationStopReason.listenerExplanation(stopReason: reason, fallbackReason: nil)
+        XCTAssertTrue(assembly.contains("Couldn't save the finished audio"), assembly)
+        XCTAssertFalse(assembly.contains("iOS system voice"), assembly)
+        XCTAssertEqual(
+            SpeechGenerationStopReason.listenerExplanation(stopReason: reason, fallbackReason: .deviceTooWarm),
+            assembly
+        )
+
+        XCTAssertEqual(
+            SpeechGenerationStopReason.listenerExplanation(stopReason: "supertonic_render_timeout", fallbackReason: .memoryWarning),
+            SpeechFallbackReason.memoryWarning.listenerExplanation
+        )
+        XCTAssertEqual(
+            SpeechGenerationStopReason.listenerExplanation(stopReason: "supertonic_render_timeout", fallbackReason: nil),
+            SpeechFallbackReason.renderTooSlow.listenerExplanation
+        )
+        XCTAssertEqual(
+            SpeechGenerationStopReason.listenerExplanation(stopReason: "memory_warning", fallbackReason: nil),
+            SpeechFallbackReason.memoryWarning.listenerExplanation
+        )
+        XCTAssertEqual(
+            SpeechGenerationStopReason.listenerExplanation(stopReason: nil, fallbackReason: nil),
+            "Generation stopped · using the iOS system voice"
+        )
+    }
+
     func testRateIsOneMultiplierMappedOntoTheMeasuredSystemCurve() {
         XCTAssertEqual(SpeechRateRule.systemSpeechRate(forMultiplier: 1), SpeechRateRule.systemDefaultRate)
         // The old mapping sent 1.75× as rate 0.875, which measured 3.1× real speed.

@@ -88,6 +88,32 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
     }
 }
 
+/// Why on-device narration stopped preparing (#314). The Supertonic client reports a code with
+/// every stop: diagnostics keep it whole, and the player turns it into one sentence.
+public enum SpeechGenerationStopReason {
+    /// Every chunk rendered, but joining them into one saved file failed.
+    public static let assemblyFailedCode = "prepared_audio_assembly_failed"
+    static let noReasonExplanation = "Generation stopped · using the iOS system voice"
+
+    /// The code plus the error, so a device report shows what went wrong.
+    public static func assemblyFailed(_ error: any Error) -> String {
+        "\(assemblyFailedCode): \(String(describing: error))"
+    }
+
+    /// One line for the player. An assembly failure is the newest event when it is the stop
+    /// reason, so it wins over an older fallback; otherwise the fallback reason keeps its
+    /// richer wording (it knows which resource refused rendering).
+    public static func listenerExplanation(stopReason: String?, fallbackReason: SpeechFallbackReason?) -> String {
+        if let stopReason, stopReason.hasPrefix(assemblyFailedCode) {
+            return "Couldn't save the finished audio on this iPhone. Tap Retry to try again."
+        }
+        if let fallbackReason { return fallbackReason.listenerExplanation }
+        guard let stopReason, !stopReason.isEmpty else { return noReasonExplanation }
+        if let known = SpeechFallbackReason(rawValue: stopReason) { return known.listenerExplanation }
+        return SpeechFallbackReason(supertonicCode: stopReason, resourceBlock: nil).listenerExplanation
+    }
+}
+
 public enum SpeechEnginePolicy {
     /// Nil when the on-device voice may render. Low Power Mode and charging are not reasons:
     /// the listener chose the voice, and narration is the task they asked for (#183).
