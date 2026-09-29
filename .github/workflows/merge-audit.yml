@@ -1,0 +1,37 @@
+# Flags merges into next that didn't go through the triage desk's merge check. See
+# scripts/merge_audit.py for the rule, and "The lead session" in docs/workstreams/kickoff.md.
+#
+# Trigger: every push to next, rather than pull_request `closed`. A pull_request run is built from
+# the PR's merge ref, which GitHub doesn't always refresh when next moves (#221 on #184), so an audit
+# could silently not run for exactly the merges it should catch. A push run always uses next's own
+# copy of this file, and it also sees a commit pushed to next without any pull request.
+#
+# It runs on a GitHub-hosted runner, so it never queues behind lane jobs on the Mac, and it never
+# reverts anything: it labels and comments.
+name: merge-audit
+
+on:
+  push:
+    branches: [next]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/merge_audit.py
+          sparse-checkout-cone-mode: false
+      - name: Audit the merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: python3 scripts/merge_audit.py --before "$BEFORE" --after "$AFTER"
