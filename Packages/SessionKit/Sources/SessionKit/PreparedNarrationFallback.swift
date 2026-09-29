@@ -91,6 +91,19 @@ public enum PreparedNarrationFallback {
         return max(startChar, min(offset, endChar))
     }
 
+    /// Once an item's narration is detached, its "ready offline" prepared audio must be prepared
+    /// again, or Prepare answers "already available offline" while the item plays live speech (#278).
+    public static func markPreparedAudioForRepreparation(
+        itemId: String, repository: any PreparedAudioRepository, now: Date = Date()
+    ) throws {
+        for var manifest in try repository.loadPreparedAudioManifests(itemId: itemId) where manifest.state == .readyOffline {
+            manifest.state = .needsRepreparation
+            manifest.failureCode = "narration_detached"
+            manifest.updatedAt = now
+            try repository.savePreparedAudioManifest(manifest)
+        }
+    }
+
     /// What deleting a stored file does to the items that play it.
     public enum FileRelease: Equatable, Sendable {
         /// No item plays the file.

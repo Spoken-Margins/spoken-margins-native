@@ -3664,6 +3664,49 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(try engine.syncPlaybackProgress().status, .failed)
     }
 
+    // #278: after the fallback detaches an article's narration, its prepared-audio manifest said
+    // "ready offline", so Prepare answered "already available offline" and never rendered again.
+    func testDetachingUnplayableNarrationMarksItsManifestForRepreparation() throws {
+        let fixture = try halfReadPreparedArticle(fileExists: true)
+        let signature = TTSRenderSignature(
+            engine: "supertonic", modelRevision: "3", assetManifestHash: "assets", voiceStyleHash: "voice",
+            synthesisParametersHash: "parameters", normalizationVersion: "n", chunkingVersion: "c", digest: "digest-278"
+        )
+        try fixture.repo.savePreparedAudioManifest(PreparedAudioManifest(
+            id: "prepared-\(fixture.item.id)-digest-278", itemId: fixture.item.id, sourcePackageId: "source",
+            signature: signature, state: .readyOffline, plannedChunkCount: 2
+        ))
+        let audio = RecordingAudioClient()
+        audio.startStatusByTarget[fixture.fileURL.absoluteString] = .failed("The operation could not be completed")
+        let engine = SessionEngine(profile: preparedArticleProfile, repository: fixture.repo, audio: audio)
+
+        _ = try engine.inspectSession(sessionId: fixture.session.id)
+        _ = try engine.resumePlayback()
+
+        let manifest = try XCTUnwrap(try fixture.repo.loadPreparedAudioManifests(itemId: fixture.item.id).first)
+        XCTAssertEqual(manifest.state, .needsRepreparation)
+    }
+
+    func testCompleteButUnassembledManifestIsRecognised() {
+        let signature = TTSRenderSignature(
+            engine: "supertonic", modelRevision: "3", assetManifestHash: "a", voiceStyleHash: "v",
+            synthesisParametersHash: "p", normalizationVersion: "n", chunkingVersion: "c", digest: "d"
+        )
+        func chunk(_ index: Int) -> PreparedAudioChunk {
+            PreparedAudioChunk(id: "c\(index)", index: index,
+                               sourceRange: SourceLocator(documentId: "s", segmentId: "g", utf8Start: 0, utf8End: 1),
+                               relativePath: "c\(index).wav", byteCount: 1, checksumSHA256: "x", durationMs: 1, committedAt: Date())
+        }
+        var manifest = PreparedAudioManifest(id: "m", itemId: "i", sourcePackageId: "s", signature: signature,
+                                             state: .preparing, plannedChunkCount: 2, chunks: [chunk(0), chunk(1)])
+        XCTAssertTrue(manifest.isCompleteButUnassembled)
+        manifest.state = .readyOffline
+        XCTAssertFalse(manifest.isCompleteButUnassembled)
+        manifest.state = .preparing
+        manifest.chunks = [chunk(0)]
+        XCTAssertFalse(manifest.isCompleteButUnassembled)
+    }
+
     // #277: the article was prepared again, so it now plays narration B (present), while the saved
     // session still targets the older narration A (gone). Opening it must not clear B, and must
     // resume B at the character the listener had reached.
