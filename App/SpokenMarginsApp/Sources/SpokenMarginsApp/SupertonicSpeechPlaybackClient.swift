@@ -266,7 +266,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     typealias GenerationProgressHandler = @Sendable (RenderedSpeechGenerationProgress) -> Void
     typealias PreparedAudioHandler = @Sendable (_ itemId: String, _ prepared: PreparedTextAudio) -> Void
     typealias PreparationPlanHandler = @Sendable (_ itemId: String, _ sourceText: String, _ plan: [PreparedChunkPlan]) async -> Void
-    typealias PreparedChunkHandler = @Sendable (_ itemId: String, _ sourceText: String, _ plan: PreparedChunkPlan, _ audioURL: URL, _ durationMs: Int) async -> Void
+    typealias PreparedChunkHandler = @Sendable (_ itemId: String, _ sourceText: String, _ plan: PreparedChunkPlan, _ audioURL: URL, _ durationMs: Int, _ engine: String) async -> Void
     typealias PreparedChunkLookup = @Sendable (_ itemId: String, _ sourceText: String, _ plan: PreparedChunkPlan) async -> PreparedChunkLookupResult?
     typealias InterruptionHandler = @Sendable (AudioPlaybackInterruptionEvent) -> Void
 
@@ -1261,7 +1261,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         speed: 1.0,
                         synthesisSteps: 8
                     )
-                    if let cache = self?.diskCache,
+                    // Only Supertonic's own audio is cached under its key. An iOS-voice stand-in
+                    // isn't, so the next play renders Supertonic again and re-checks it (#311).
+                    if rendered.engine == SupertonicNarrationResult.supertonicEngine,
+                       let cache = self?.diskCache,
                        let retained = try? cache.store(
                             rendered,
                             text: request.text,
@@ -1398,7 +1401,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 articleChunk.sourceText,
                 articleChunk.plan,
                 result.audioURL,
-                Int((result.duration * 1_000).rounded())
+                Int((result.duration * 1_000).rounded()),
+                result.engine
             )
         }
         guard lock.withLock({ generation == request.generation }) else { return }

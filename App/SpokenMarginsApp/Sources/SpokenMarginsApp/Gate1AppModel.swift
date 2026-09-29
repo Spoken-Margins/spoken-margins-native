@@ -10823,10 +10823,11 @@ final class Gate1AppModel: ObservableObject {
                           let item = try? store.loadItem(id: itemId), item.text == sourceText else { return }
                     _ = try? await coordinator.begin(itemId: itemId, sourceText: sourceText, signature: signature, plan: plan, schedulesJob: false)
                 },
-                onPreparedChunk: { itemId, sourceText, plan, audioURL, durationMs in
+                onPreparedChunk: { itemId, sourceText, plan, audioURL, durationMs, engine in
                     guard let signature = try? await signatureTask.value,
                           let item = try? store.loadItem(id: itemId), item.text == sourceText else { return }
-                    try? await coordinator.commit(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText, audioURL: audioURL, durationMs: durationMs)
+                    try? await coordinator.commit(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText,
+                                                  audioURL: audioURL, durationMs: durationMs, engine: engine)
                 },
                 articleText: { itemId in try? store.loadItem(id: itemId).text },
                 preparedChunkLookup: { itemId, sourceText, plan in
@@ -15411,7 +15412,8 @@ final class Gate1AppModel: ObservableObject {
                     plan: next,
                     sourceText: sourceText,
                     audioURL: rendered.audioURL,
-                    durationMs: Int((rendered.duration * 1_000).rounded())
+                    durationMs: Int((rendered.duration * 1_000).rounded()),
+                    engine: rendered.engine
                 )
             } catch {
                 try? await ledger.release(reservationId: reservation.id)

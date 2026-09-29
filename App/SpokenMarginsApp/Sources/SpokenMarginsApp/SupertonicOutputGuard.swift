@@ -13,6 +13,9 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
     private let onReplacement: @Sendable (String) -> Void
     private let lock = NSLock()
     private var replacements = 0
+    /// iOS-voice files this guard wrote. The renderer deletes only its own output, so the guard
+    /// deletes these itself (#311).
+    private var replacementURLs: Set<URL> = []
 
     init(
         wrapping inner: SupertonicRendering,
@@ -47,13 +50,15 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
                 to: replacementURL
             )
             await inner.discardGeneratedAudio(at: rendered.audioURL)
+            lock.withLock { _ = replacementURLs.insert(replacementURL) }
             report("system_voice:\(problem)")
             return SupertonicNarrationResult(
                 audioURL: replacementURL,
                 duration: duration,
                 sampleRate: rendered.sampleRate,
                 renderDuration: rendered.renderDuration,
-                sessionLoadCount: rendered.sessionLoadCount
+                sessionLoadCount: rendered.sessionLoadCount,
+                engine: SupertonicNarrationResult.systemVoiceEngine
             )
         } catch {
             try? FileManager.default.removeItem(at: replacementURL)
@@ -63,6 +68,10 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
     }
 
     func discardGeneratedAudio(at url: URL) async {
+        if lock.withLock({ replacementURLs.remove(url) }) != nil {
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
         await inner.discardGeneratedAudio(at: url)
     }
 

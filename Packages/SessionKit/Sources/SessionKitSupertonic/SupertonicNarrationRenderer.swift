@@ -59,19 +59,27 @@ public struct SupertonicNarrationResult: Equatable, Sendable {
     public let sampleRate: Int
     public let renderDuration: TimeInterval
     public let sessionLoadCount: Int
+    /// Which engine made the audio. The narration guard can substitute the iOS voice for a chunk
+    /// Supertonic garbled (#240), and that audio must not pass for Supertonic's (#311).
+    public let engine: String
+
+    public static let supertonicEngine = "supertonic"
+    public static let systemVoiceEngine = "system_voice"
 
     public init(
         audioURL: URL,
         duration: TimeInterval,
         sampleRate: Int,
         renderDuration: TimeInterval,
-        sessionLoadCount: Int
+        sessionLoadCount: Int,
+        engine: String = SupertonicNarrationResult.supertonicEngine
     ) {
         self.audioURL = audioURL
         self.duration = duration
         self.sampleRate = sampleRate
         self.renderDuration = renderDuration
         self.sessionLoadCount = sessionLoadCount
+        self.engine = engine
     }
 }
 

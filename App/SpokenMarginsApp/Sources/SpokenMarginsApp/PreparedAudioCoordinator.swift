@@ -229,7 +229,8 @@ actor PreparedAudioCoordinator {
         plan: PreparedChunkPlan,
         sourceText: String,
         audioURL: URL,
-        durationMs: Int
+        durationMs: Int,
+        engine: String? = nil
     ) throws {
         let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
         guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId),
@@ -264,7 +265,8 @@ actor PreparedAudioCoordinator {
             relativePath: relativePath(destination),
             byteCount: Int64(data.count),
             checksumSHA256: SupertonicRenderIdentity.sha256(data),
-            durationMs: durationMs
+            durationMs: durationMs,
+            engine: engine == manifest.signature.engine ? nil : engine
         ))
         manifest.chunks.sort { $0.index < $1.index }
         manifest.updatedAt = Date()
