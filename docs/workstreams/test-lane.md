@@ -46,6 +46,7 @@ Note for whoever builds the Test Desk: Claude Desktop's iOS Simulator pane curre
 
 - **Only the lane boots simulators.** A1 installs a `PreToolUse` hook in the Mac's **user-level** settings (`~/.claude/settings.json`), so it applies to every session whatever branch it started on. It blocks `xcrun simctl boot|install|launch`, `xcodebuild test`, and `verify-tests.py --plan app|adapters|ui|release` unless the session is the Test Desk. Stream agents then *can't* start a simulator flood by accident. `AGENTS.md` sends `--plan app` through the lane for this reason.
 - **Build semaphore.** Every `xcodebuild` on the Mac, from streams and from the lane, goes through one wrapper that allows two at a time and queues the rest.
+- **Host-test slots.** Every `verify-tests.py --plan fast` run holds one of two Mac-wide host-test slots, or the one slot while a simulator job runs. So does a full `swift test` through `scripts/host-test-lane swift test`, and `run-sessionkit-tests.sh` uses it. They are separate from the build slots. Single-suite `swift test --filter` runs stay ungated: after the first build they are incremental and short. Three ungated runs at once pushed the load to 471 (#350).
 - **Fresh DerivedData per worktree** (`AGENTS.md`: stale SessionKit modules give false "does not conform" errors).
 - **Crash-flood rule** as in `AGENTS.md`: three crashes of one process within a minute stops the lane, shuts that simulator down and notifies the owner. A lone crash is noted in the report and work continues.
 
