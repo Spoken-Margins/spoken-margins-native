@@ -343,6 +343,33 @@ final class OfflineStorageLedgerTests: XCTestCase {
         let ledger: OfflineStorageLedger
     }
 
+    func testRemovingAnItemsPreparedAudioLeavesEverythingElse() async throws {
+        // #322: after a PDF moves to the new extraction its prepared audio no longer matches.
+        let fixture = try makeFixture(limit: 1_000)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let assets = [
+            OwnedOfflineAsset(id: "chunk-a", itemId: "paper", category: .preparedChunk, relativePath: "PreparedAudio/paper/0.wav", byteCount: 10, isReproducible: true),
+            OwnedOfflineAsset(id: "artifact-a", itemId: "paper", category: .preparedAudio, relativePath: "PreparedAudio/paper/all.caf", byteCount: 20, isReproducible: true),
+            OwnedOfflineAsset(id: "recording-a", itemId: "paper", category: .recording, relativePath: "Recordings/ij-001.m4a", byteCount: 5, isReproducible: false),
+            OwnedOfflineAsset(id: "chunk-b", itemId: "other", category: .preparedChunk, relativePath: "PreparedAudio/other/0.wav", byteCount: 7, isReproducible: true),
+        ]
+        for asset in assets {
+            let url = fixture.root.appending(path: asset.relativePath)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(count: Int(asset.byteCount)).write(to: url)
+            try fixture.repository.saveOwnedOfflineAsset(asset)
+        }
+
+        let removed = try await fixture.ledger.removePreparedAudio(itemId: "paper")
+
+        XCTAssertEqual(removed, 30)
+        XCTAssertEqual(Set(try fixture.repository.loadOwnedOfflineAssets().map(\.id)), ["recording-a", "chunk-b"])
+        for asset in assets {
+            let exists = FileManager.default.fileExists(atPath: fixture.root.appending(path: asset.relativePath).path)
+            XCTAssertEqual(exists, ["recording-a", "chunk-b"].contains(asset.id), asset.id)
+        }
+    }
+
     private func makeFixture(limit: Int64) throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "offline-ledger-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

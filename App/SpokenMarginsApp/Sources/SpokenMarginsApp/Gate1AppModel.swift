@@ -3600,6 +3600,18 @@ final class Gate1AppModel: ObservableObject {
             throw SessionKitError.persistenceFailed("Browser text importer is unavailable.")
         }
         let item = try engine.importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument)
+        // A PDF that moved to the new extraction had its prepared audio retired in the same
+        // transaction (#322); its files and ledger rows go now. A new item has none.
+        if structuredDocument != nil, (try? store.loadPreparedAudioManifests(itemId: item.id))?.isEmpty == true,
+           let ledger = offlineStorageLedger {
+            let itemId = item.id
+            Task { [weak self] in
+                let result: String
+                do { result = "removed_bytes:\(try await ledger.removePreparedAudio(itemId: itemId))" }
+                catch { result = "failed:\(error.localizedDescription)" }
+                await MainActor.run { self?.diagnostics["retiredPreparedAudio:\(itemId)"] = result }
+            }
+        }
         libraryItems = try loadLibraryRows(store: store)
         scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
         diagnostics["lastBackgroundBrowserTextImport"] = item.id
