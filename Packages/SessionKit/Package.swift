@@ -70,6 +70,22 @@ let package = Package(
             name: "SessionKitFeeds",
             dependencies: ["SessionKit"]
         ),
+        // The last shipped build's packet reader, frozen for tests (scripts/freeze-shipped-reader.sh, #317).
+        // No product exposes these, so the app never links them.
+        .target(name: "ShippedSessionKit", path: "Tests/ShippedReader/SessionKit"),
+        .target(
+            name: "ShippedSessionKitSharing",
+            dependencies: [
+                "ShippedSessionKit",
+                .product(name: "ZIPFoundation", package: "ZIPFoundation")
+            ],
+            path: "Tests/ShippedReader/SessionKitSharing"
+        ),
+        .target(
+            name: "ShippedPacketReader",
+            dependencies: ["ShippedSessionKit", "ShippedSessionKitSharing"],
+            path: "Tests/ShippedReader/Reader"
+        ),
         .testTarget(
             name: "SessionKitTests",
             dependencies: [
@@ -81,6 +97,7 @@ let package = Package(
                 "SessionKitSupertonic",
                 "SessionKitEPUB",
                 "SessionKitFeeds",
+                "ShippedPacketReader",
                 .product(name: "ZIPFoundation", package: "ZIPFoundation")
             ]
         ),
