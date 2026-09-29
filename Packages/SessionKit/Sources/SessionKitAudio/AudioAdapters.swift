@@ -3003,6 +3003,11 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
         }
     }
 
+    public func isAwaitingRenderedAudio(targetId: String) -> Bool {
+        activeRoute == .media ? media.isAwaitingRenderedAudio(targetId: targetId)
+            : speech.isAwaitingRenderedAudio(targetId: targetId)
+    }
+
     public func playbackTransportState(targetId: String) -> PlaybackTransportState? {
         switch activeRoute {
         case .speech:

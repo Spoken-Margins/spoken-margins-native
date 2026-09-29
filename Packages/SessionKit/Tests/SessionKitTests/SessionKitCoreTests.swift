@@ -3611,6 +3611,59 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedTargets, [fixture.fileURL.absoluteString, fixture.item.id], "one fallback, then stop")
     }
 
+    // #235: a live-speech start waiting on audio that is still rendering isn't a stalled start.
+    func testStartWatchdogWaitsWhileTheClientIsRenderingThenCapsTheWait() throws {
+        let item = Item(id: "item-slow-render", title: "Slow render", mediaType: "text",
+                        text: "First sentence. Second sentence.", externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        audio.startStatus = .pending
+        audio.awaitingRenderedAudio = true
+        var clock = Date(timeIntervalSince1970: 1_000)
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(id: "phone", displayName: "Phone",
+                                              capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]),
+            repository: InMemorySessionRepository(items: [item.id: item]),
+            audio: audio, playbackStartTimeout: 10, now: { clock }
+        )
+        XCTAssertEqual(try engine.startSession(itemId: item.id).status, .starting)
+        for _ in 0..<3 {
+            clock = clock.addingTimeInterval(11)
+            XCTAssertEqual(try engine.syncPlaybackProgress().status, .starting, "still rendering at \(clock.timeIntervalSince1970 - 1_000) s")
+        }
+        audio.startStatus = .confirmed
+        XCTAssertEqual(try engine.syncPlaybackProgress().status, .playing, "plays when the audio lands")
+
+        // A start the client never resolves still ends at the cap.
+        _ = try engine.pause()
+        audio.startStatus = .pending
+        XCTAssertEqual(try engine.resumePlayback().status, .starting)
+        for _ in 0..<3 {
+            clock = clock.addingTimeInterval(11)
+            _ = try engine.syncPlaybackProgress()
+        }
+        clock = clock.addingTimeInterval(11)
+        let capped = try engine.syncPlaybackProgress()
+        XCTAssertEqual(capped.status, .failed)
+        XCTAssertEqual(capped.lastFailure, "playback_start_failed:playback_start_timeout")
+    }
+
+    func testStartWatchdogStillFailsAStartThatIsNotWaitingOnRendering() throws {
+        let item = Item(id: "item-stalled", title: "Stalled", mediaType: "text",
+                        text: "First sentence.", externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        audio.startStatus = .pending
+        var clock = Date(timeIntervalSince1970: 1_000)
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(id: "phone", displayName: "Phone",
+                                              capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]),
+            repository: InMemorySessionRepository(items: [item.id: item]),
+            audio: audio, playbackStartTimeout: 10, now: { clock }
+        )
+        _ = try engine.startSession(itemId: item.id)
+        clock = clock.addingTimeInterval(11)
+        XCTAssertEqual(try engine.syncPlaybackProgress().status, .failed)
+    }
+
     func testMediaChapterJumpKeepsRequestedPositionWhileTransportReportsOldPosition() throws {
         let audioFile = FileManager.default.temporaryDirectory
             .appending(path: "delayed-media-seek-\(UUID().uuidString).caf")
@@ -6701,6 +6754,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var mediaContexts: [PlaybackMediaContext?] = []
     var startStatus: PlaybackStartStatus = .confirmed
     var startStatusByTarget: [String: PlaybackStartStatus] = [:]
+    var awaitingRenderedAudio = false
     var transportState: PlaybackTransportState?
     var configuredSpeechSettings: [(String?, Float)] = []
     var remoteCommandHandlingStates: [Bool] = []
@@ -6834,6 +6888,10 @@ private final class RecordingAudioClient: AudioPlaybackClient {
 
     func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
         startStatusByTarget[targetId] ?? startStatus
+    }
+
+    func isAwaitingRenderedAudio(targetId: String) -> Bool {
+        awaitingRenderedAudio
     }
 
     func playbackTransportState(targetId: String) -> PlaybackTransportState? {

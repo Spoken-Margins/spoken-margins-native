@@ -872,6 +872,18 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         return snapshot.3 ? .pending : .confirmed
     }
 
+    /// True while the start waits for a chunk that is rendering and whose render deadline applies
+    /// (the same condition that lets that deadline fall back to the iOS voice), so the engine's
+    /// start watchdog doesn't fail a start that is only waiting on Supertonic (#235).
+    func isAwaitingRenderedAudio(targetId: String) -> Bool {
+        lock.withLock {
+            guard !fallbackIsActive, currentTargetId == targetId, pendingStartTargetId == targetId,
+                  transportIntent == .playing, playbackFailure == nil, !inFlightOffsets.isEmpty else { return false }
+            if startedTargetId == nil { return true }
+            return pendingAutoplayOffset.map(inFlightOffsets.contains) ?? false
+        }
+    }
+
     /// Supertonic is a user-selected voice. Backgrounding during its initial
     /// two-chunk buffer must never silently change the voice; playback remains
     /// pending until the selected renderer can continue.
@@ -1807,6 +1819,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 pendingStartTargetId = targetId
                 initialPlaybackOffset = inFlight.startOffset
                 initialRequestedSpokenOffset = spokenOffset
+                // The finished render must play, and the render deadline must cover the wait.
+                pendingAutoplayOffset = inFlight.startOffset
                 return .awaitPendingRender
             }
             return .none
