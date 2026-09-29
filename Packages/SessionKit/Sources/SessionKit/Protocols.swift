@@ -174,6 +174,9 @@ public protocol AudioPlaybackClient {
     func currentPlaybackDurationMs() -> Int?
     func isPlaybackComplete(targetId: String) -> Bool
     func playbackStartStatus(targetId: String) -> PlaybackStartStatus
+    /// True while a pending start is waiting for audio that is still being rendered, under the
+    /// client's own deadline and fallback. The engine's start watchdog then keeps waiting (#235).
+    func isAwaitingRenderedAudio(targetId: String) -> Bool
     func playbackTransportState(targetId: String) -> PlaybackTransportState?
     func setRemoteCommandHandlingEnabled(_ enabled: Bool)
     @discardableResult
@@ -349,6 +352,10 @@ public extension AudioPlaybackClient {
 
     func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
         .confirmed
+    }
+
+    func isAwaitingRenderedAudio(targetId: String) -> Bool {
+        false
     }
 
     func playbackTransportState(targetId: String) -> PlaybackTransportState? {

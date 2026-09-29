@@ -859,7 +859,7 @@ final class SupertonicSpeechTests: XCTestCase {
     // while Supertonic is behind the listener, and a second Play minutes later starts at once.
     // Real engine and real client, observing the real player as production does (a client that
     // doesn't observe it reports "started" with no player, which hides the failure). The chunk the
-    // listener resumes into is still rendering. Today the engine's 10 s start watchdog fails a
+    // listener resumes into is still rendering. The engine's 10 s start watchdog must not fail a
     // resume that is only waiting for that chunk.
     func testResumeWaitingOnASlowChunkIsNotFailedByTheStartWatchdog() async throws {
         let template = try makeTestWAV(duration: 3)
@@ -918,17 +918,15 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(decisions.values.last?["path"], "await_render")
         XCTAssertEqual(resumed.status, .starting, "the resume waits for the rendering chunk")
 
-        XCTExpectFailure("#235: the engine's start watchdog fails a resume that is only waiting for a Supertonic chunk") {
-            XCTAssertNotEqual(afterWatchdog.status, .failed)
-        }
+        XCTAssertEqual(afterWatchdog.status, .starting, "still waiting for Supertonic, not failed")
+        XCTAssertTrue(client.isAwaitingRenderedAudio(targetId: item.id))
 
-        // The chunk arrives after the watchdog. Record whether audio starts under a "failed" state.
         thirdRender.continuation.finish()
         for _ in 0..<150 where starts.value == startsBeforeRender {
             try? await Task.sleep(for: .milliseconds(20))
         }
-        let late = try engine.syncPlaybackProgress()
-        print("#235 after the slow chunk rendered: audio starts \(startsBeforeRender) -> \(starts.value), engine status \(late.status)")
+        XCTAssertEqual(starts.value, startsBeforeRender + 1, "the chunk plays when it lands")
+        try await waitForEngine(engine, status: .playing, "the resume confirms once the chunk plays")
         try client.stop()
     }
 
@@ -941,6 +939,72 @@ final class SupertonicSpeechTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(20))
         }
         XCTFail("\(message): engine stayed \(try engine.syncPlaybackProgress().status)", file: file, line: line)
+    }
+
+    // #235 backstop: if the chunk never renders, the client's own render deadline ends the wait in
+    // the iOS voice, so relaxing the engine's watchdog can't leave a start pending for ever.
+    func testResumeWaitingOnARenderThatNeverFinishesEndsInTheIOSVoice() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let neverRenders = AsyncStream<Void>.makeStream()
+        defer { neverRenders.continuation.finish() }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template, renderGates: [3: neverRenders.stream])
+        let starts = PlaybackStartCounter()
+        let fallback = RecordingFallbackAudioClient()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                _ = starts.increment()
+                player.volume = 0
+                player.playImmediately(atRate: rate)
+            },
+            observesPlayerLifecycle: true,
+            fallbackClient: fallback,
+            renderWaitLimit: .seconds(1)
+        )
+        let text = (1...12).map { index in
+            "Sentence \(index) contains enough ordinary words to keep the narration moving through several chunks."
+        }.joined(separator: " ")
+        let item = Item(id: "item-235-stuck", title: "Stuck chunk", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        var clock = Date(timeIntervalSince1970: 1_000)
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(
+                id: "phone", displayName: "Phone",
+                capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
+            ),
+            repository: InMemorySessionRepository(items: [item.id: item]),
+            audio: client,
+            playbackStartTimeout: 10,
+            now: { clock }
+        )
+
+        _ = try engine.startSession(itemId: item.id)
+        try await waitForEngine(engine, status: .playing, "the first chunk plays")
+        // Let the second chunk finish rendering first, so only the chunk that never renders can
+        // reach the render deadline, however loaded the machine is.
+        for _ in 0..<250 where client.debugRenderedCacheOffsets().isEmpty {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(client.debugRenderedCacheOffsets().isEmpty, "the second chunk rendered")
+        client.debugFinishActiveChunk()
+        for _ in 0..<150 where starts.value < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(starts.value, 2, "the second chunk plays")
+        client.debugFinishActiveChunk()
+        _ = try engine.pause()
+        _ = try engine.resumePlayback()
+        for _ in 0..<200 where fallback.playedOffsets.isEmpty {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(fallback.playedOffsets.isEmpty, "the render deadline fell back to the iOS voice")
+        XCTAssertFalse(client.isAwaitingRenderedAudio(targetId: item.id))
+        clock = clock.addingTimeInterval(11)
+        XCTAssertNotEqual(try engine.syncPlaybackProgress().status, .starting, "the start resolved rather than waiting")
+        try client.stop()
     }
 
     func testRenderGapTimeoutContinuesAfterFinishedPassage() async throws {

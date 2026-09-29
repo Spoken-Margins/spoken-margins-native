@@ -10753,7 +10753,7 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["renderedSpeechCacheLimitMB"] = "\(renderedSpeechCacheLimitMB)"
             diagnostics["renderedSpeechCacheBytes"] = "\(diskCache.sizeBytes)"
             return SupertonicSpeechPlaybackClient(
-                renderer: renderer,
+                renderer: supertonicOutputGuard(wrapping: renderer, systemVoice: selectedVoice),
                 voice: voice,
                 speed: Float(speechRate / 0.5),
                 fallbackVoiceIdentifier: selectedVoice.isEmpty ? nil : selectedVoice,
@@ -10952,6 +10952,14 @@ final class Gate1AppModel: ObservableObject {
         )
         supertonicRenderer = renderer
         return renderer
+    }
+
+    /// #240: chunks that fail the output check are read by the iOS voice; diagnostics say so.
+    private func supertonicOutputGuard(wrapping renderer: SupertonicRendering, systemVoice: String) -> SupertonicOutputGuard {
+        let voice = systemVoice.trimmingCharacters(in: .whitespacesAndNewlines)
+        return SupertonicOutputGuard(wrapping: renderer, systemVoiceIdentifier: voice.isEmpty ? nil : voice) { [weak self] summary in
+            Task { @MainActor [weak self] in self?.diagnostics["supertonicOutputCheck"] = summary }
+        }
     }
 
     private func makeMediaPlaybackClient() -> AudioPlaybackClient {
@@ -15334,7 +15342,7 @@ final class Gate1AppModel: ObservableObject {
             do {
                 try Task.checkCancellation()
                 recordDeveloperDiagnostic("preparation.render.begin", ["item": DeveloperDiagnosticRecording.token(item.id), "chunk": String(next.index)])
-                rendered = try await renderer.render(
+                rendered = try await supertonicOutputGuard(wrapping: renderer, systemVoice: speechVoiceIdentifier).render(
                     text: next.text,
                     voice: voice,
                     language: "en",
@@ -15498,7 +15506,7 @@ final class Gate1AppModel: ObservableObject {
             let slice = RenderedSpeechChunker.sourceSlice(
                 from: SpeechTextNormalizer.normalize(sourceText),
                 startOffset: entry.startOffset,
-                maxCharacters: 240
+                maxCharacters: RenderedSpeechChunker.spokenCostBudget
             )
             return SupertonicPreparedChunk(
                 startOffset: entry.startOffset,
@@ -15556,7 +15564,7 @@ final class Gate1AppModel: ObservableObject {
     private nonisolated static func preparedChunkPlan(for sourceText: String) -> [PreparedChunkPlan] {
         preparationPlanCache.value(for: sourceText) {
             let normalized = SpeechTextNormalizer.normalize(sourceText)
-            return RenderedSpeechChunker.sourceSlices(from: normalized, maxCharacters: 240)
+            return RenderedSpeechChunker.sourceSlices(from: normalized, maxCharacters: RenderedSpeechChunker.spokenCostBudget)
                 .enumerated()
                 .map { index, planned in
                     PreparedChunkPlan(index: index, startOffset: planned.startOffset,

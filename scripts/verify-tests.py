@@ -77,8 +77,11 @@ def dedicated_simulator(devices, ios=None):
     """App-hosted tests write into the app's container, so they never share the journey simulator (#164).
 
     Returns (runner, None) when the runner exists, else (None, template) to create it from: the newest
-    supported iPhone, ignoring which simulators happen to be booted.
+    supported iPhone, ignoring which simulators happen to be booted. Unless told otherwise it stays on
+    the lane's iOS (lane_sim.IOS_MAJOR): picking the newest runtime chose the iOS 27 Test Runner
+    31A5C797, and iOS 27's services crash-flood on this Mac (#184).
     """
+    ios = lane_sim.IOS_MAJOR if ios is None else ios
     runners = {runtime: [entry for entry in group if entry.get('name') == TEST_RUNNER_NAME]
                for runtime, group in devices.items()}
     try:
@@ -87,6 +90,14 @@ def dedicated_simulator(devices, ios=None):
         unbooted = {runtime: [dict(entry, state='Shutdown') for entry in group]
                     for runtime, group in devices.items()}
         return None, select_simulator(unbooted, ios=ios)
+
+
+def refuse_unsafe(chosen, unsafe):
+    """Never test on a device the lane marked unsafe, however it was chosen (by name or --device)."""
+    marked = unsafe.get(chosen['udid'])
+    if marked:
+        raise RuntimeError(f'{chosen.get("name")} ({chosen["udid"]}) is on the lane\'s unsafe list: {marked["reason"]}. '
+                           'Boot a fresh device with scripts/lane-sim-boot --fresh and pass it with --device.')
 
 
 def capture(command):
@@ -297,6 +308,7 @@ class Run:
                 chosen, _ = dedicated_simulator(devices, ios)
                 if chosen is None:
                     raise RuntimeError(f'Could not create the {TEST_RUNNER_NAME} simulator')
+        refuse_unsafe(chosen, lane_sim.unsafe_devices())
         self.manifest['destination'] = chosen
         self.command('generate', ['xcodegen', 'generate'])
         identity = input_identity()
