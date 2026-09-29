@@ -462,6 +462,36 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    // Re-audit of #346: from a paused A, choosing rendering C and then going back to A left C as
+    // the requested position, so the reported position (and the next pause and resume) jumped to C.
+    func testGoingBackToAPausedChunkReportsItsOwnPosition() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "xc3-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gateC = AsyncStream<Void>.makeStream()
+        defer { gateC.continuation.finish() }
+        let renderer = OrderGatedSupertonicRenderer(template: try crossChunkTemplate(root), gates: [3: gateC.stream])
+        let starts = ResumeStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { player, rate in starts.bump(); player.volume = 0; player.playImmediately(atRate: rate) },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient()
+        )
+        let offsets = chunkStarts()
+        _ = try client.prepareSpeechText(crossChunkText)
+        try client.play(targetId: "item", from: 0)
+        for _ in 0..<150 where await renderer.count < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(200))
+        try client.pause()
+        let pausedAt = try XCTUnwrap(client.currentCharOffset())
+        XCTAssertLessThan(pausedAt, offsets[1], "paused in A")
+        try client.play(targetId: "item", from: offsets[2] + 5)   // choose C, still rendering
+        try client.play(targetId: "item", from: pausedAt)          // back to A
+        let reported = try XCTUnwrap(client.currentCharOffset())
+        XCTAssertLessThan(reported, offsets[1], "the position is back in A, not C (\(reported))")
+        try client.stop()
+    }
+
     func testSelectableCatalogExposesOnlyJamesLilyAndSystem() {
         XCTAssertEqual(AppTTSVoiceSelection.allCases, [.james, .lily, .system])
         XCTAssertEqual(AppTTSVoiceSelection.james.rawValue, "supertonic:M2")

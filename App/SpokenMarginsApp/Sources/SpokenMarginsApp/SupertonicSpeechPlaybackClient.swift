@@ -1721,6 +1721,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 // An explicit choice of this chunk: no other chunk may autoplay over it later.
                 pendingAutoplayOffset = nil
                 if abs(currentOffset - spokenOffset) <= (wasPlaying ? Self.livePositionTolerance : 1) {
+                    // The player's own clock is the position now, not an earlier request for
+                    // another chunk (#346 re-audit).
+                    initialRequestedSpokenOffset = nil
                     return .resumePlayer(player)
                 }
                 initialRequestedSpokenOffset = spokenOffset
