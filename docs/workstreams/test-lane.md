@@ -53,6 +53,12 @@ Note for whoever builds the Test Desk: Claude Desktop's iOS Simulator pane curre
 
 Post as a PR comment. Keep it short; the Test Desk needs intent, not narrative.
 
+**A finished PR needs no request comment.** Label it `automerge` when its "Done when" is met. The runner then runs what the diff needs, by the base branch's `scripts/test-scope.py`, and runs again on every push while the label stays:
+- T0 (docs, research, the server): nothing.
+- T1: `--plan fast`.
+- T2 or higher: `--plan fast` and both builds.
+Simulator tests (T3) still need a request. The lane check is green only on PASS.
+
 ```text
 /lane T4
 commit: <sha>
