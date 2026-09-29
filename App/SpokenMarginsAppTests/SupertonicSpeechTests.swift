@@ -125,6 +125,35 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    // #235 (Codex rank 1): a chunk that has rendered and been cached waited to play until the
+    // renderer deleted its temporary original, and that deletion queues behind other inference.
+    func testCachedChunkPlaysWhileItsTemporaryFileDiscardIsQueued() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "rank1-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let template = try makeTestWAV(duration: 1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let gate = AsyncStream<Void>.makeStream()
+        defer { gate.continuation.finish() }
+        let renderer = GatedDiscardSupertonicRenderer(templateURL: template, discardGate: gate.stream)
+        let cache = try RenderedSpeechDiskCache(directory: root.appending(path: "cache"), limitBytes: 50_000_000)
+        let started = expectation(description: "the rendered, cached chunk starts")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            diskCache: cache,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in started.fulfill() },
+            observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient()
+        )
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "rank1")
+        await fulfillment(of: [started], timeout: 3)
+        let discards = await renderer.discards
+        XCTAssertGreaterThanOrEqual(discards, 1, "the temporary file's discard is still queued")
+        try client.stop()
+    }
+
     func testSelectableCatalogExposesOnlyJamesLilyAndSystem() {
         XCTAssertEqual(AppTTSVoiceSelection.allCases, [.james, .lily, .system])
         XCTAssertEqual(AppTTSVoiceSelection.james.rawValue, "supertonic:M2")
@@ -1609,6 +1638,37 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
 
     func discardGeneratedAudio(at url: URL) async {
         discardCount += 1
+        try? FileManager.default.removeItem(at: url)
+    }
+}
+
+/// Its discard of a temporary file waits on a gate, as the real renderer's does on its serial
+/// queue behind another item's inference.
+private actor GatedDiscardSupertonicRenderer: SupertonicRendering {
+    let templateURL: URL
+    let discardGate: AsyncStream<Void>
+    private(set) var discards = 0
+
+    init(templateURL: URL, discardGate: AsyncStream<Void>) {
+        self.templateURL = templateURL
+        self.discardGate = discardGate
+    }
+
+    func render(
+        text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int
+    ) async throws -> SupertonicNarrationResult {
+        let url = FileManager.default.temporaryDirectory.appending(path: "gated-discard-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: templateURL, to: url)
+        let audio = try AVAudioFile(forReading: url)
+        return SupertonicNarrationResult(
+            audioURL: url, duration: Double(audio.length) / audio.processingFormat.sampleRate,
+            sampleRate: Int(audio.processingFormat.sampleRate.rounded()), renderDuration: 0.01, sessionLoadCount: 1
+        )
+    }
+
+    func discardGeneratedAudio(at url: URL) async {
+        discards += 1
+        for await _ in discardGate {}
         try? FileManager.default.removeItem(at: url)
     }
 }

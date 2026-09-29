@@ -1330,7 +1330,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                             speed: 1.0,
                             synthesisSteps: 8
                        ) {
-                        await renderer.discardGeneratedAudio(at: rendered.audioURL)
+                        // The cached copy is what plays. Deleting the temporary original runs on
+                        // the renderer's serial queue, behind any other item's inference, so it
+                        // must not hold back publishing the chunk (#235).
+                        Task { await renderer.discardGeneratedAudio(at: rendered.audioURL) }
                         result = retained
                     } else {
                         result = rendered
@@ -1338,7 +1341,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 }
                 try Task.checkCancellation()
                 guard !performedInference || self?.onDeviceRenderingAllowed() != false else {
-                    await renderer.discardGeneratedAudio(at: result.audioURL)
+                    Task { await renderer.discardGeneratedAudio(at: result.audioURL) }
                     await MainActor.run {
                         self?.renderFailed(
                             request: request,
