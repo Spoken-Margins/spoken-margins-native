@@ -1008,6 +1008,8 @@ final class Gate1AppModel: ObservableObject {
     private(set) var libraryWasEmptyAtLaunch = false
     private let readablePageExtractor = AppOwnedReadablePageExtractor()
     private var sourceSuggestionChecks: Set<String> = []
+    private var followDiscoveries: [String: Task<[SourceCandidateEvidence], Error>] = [:]
+    @Published private var followOffers: [String: FollowOffer] = [:]
     private var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
     private let recordingClientOverride: RecordingClient?
     private let microphonePermissionRequest: (() async -> Bool)?
@@ -5575,6 +5577,7 @@ final class Gate1AppModel: ObservableObject {
             scheduleTextAudioPrewarmIfNeeded(itemId: id)
             listeningMapJSON = ""
             screen = .item
+            discoverFollowOfferIfEligible(itemId: id, store: store)
             offerFollowSuggestionIfEligible(itemId: id, store: store)
             reportSuccess("Opened \(selectedItem.title).")
         } catch {
@@ -15798,32 +15801,80 @@ final class Gate1AppModel: ObservableObject {
         followedSourceCandidates = []
     }
 
+    /// Follow shows only once discovery found a feed for the selected item (#280).
     var canManuallyFollowSelectedSource: Bool {
         guard sourceFollowSuggestionCandidates.isEmpty,
-              let row = libraryItems.first(where: { $0.id == selectedItem.id }),
-              ManualFollowPolicy.offersFollow(
-                mediaType: row.mediaType, sourceURL: row.sourceURL, sourceReference: row.sourceReference
-              ) else {
+              let offer = followOffers[selectedItem.id],
+              !Self.uniqueUnfollowedCandidates(offer.candidates, subscriptions: feedSubscriptions).isEmpty else {
             return false
         }
+        let row = libraryItems.first(where: { $0.id == selectedItem.id })
         return !Self.isSourceAlreadyFollowed(
-            sourceURL: row.sourceURL,
-            sourceTitle: row.sourceTitle,
+            sourceURL: row?.sourceURL,
+            sourceTitle: row?.sourceTitle,
             subscriptions: feedSubscriptions
         )
     }
 
-    /// The selected item's Follow button: an article follows its publication, not a podcast (#243).
+    /// Names what will be followed, and is settled when the button first appears (#243, #280).
     var manualFollowButtonTitle: String {
-        ManualFollowPolicy.buttonTitle(mediaType: selectedItemMediaType, isFollowing: isFollowingSelectedSource)
+        guard let offer = followOffers[selectedItem.id] else { return "" }
+        return isFollowingSelectedSource ? offer.followingTitle : offer.title
     }
 
     var manualFollowButtonSymbol: String {
-        ManualFollowPolicy.buttonSymbol(mediaType: selectedItemMediaType)
+        followOffers[selectedItem.id]?.symbol ?? ManualFollowPolicy.buttonSymbol(mediaType: "podcast")
     }
 
-    private var selectedItemMediaType: String {
-        libraryItems.first(where: { $0.id == selectedItem.id })?.mediaType ?? "podcast"
+    /// Starts feed discovery when an item opens. Follow appears when a feed is found, and never
+    /// for a file, a PDF, a Listening Edition or a site with no feed (#280).
+    func discoverFollowOfferIfEligible(itemId: String, store: SQLiteSessionStore) {
+        guard followOffers[itemId] == nil,
+              let item = try? store.loadItem(id: itemId),
+              ManualFollowPolicy.shouldDiscoverFeed(
+                itemId: item.id, mediaType: item.mediaType, sourceURL: item.sourceURL,
+                sourceReference: item.externalReference, sourceReferenceType: item.externalReferenceType
+              ),
+              let reference = item.sourceURL ?? item.externalReference,
+              let url = URL(string: reference),
+              url.scheme?.lowercased() == "https",
+              !Self.isSourceAlreadyFollowed(
+                sourceURL: item.sourceURL, sourceTitle: item.sourceTitle, subscriptions: feedSubscriptions
+              ) else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
+            self.followedSourceCoordinator = coordinator
+            do {
+                let candidates = try await self.sharedFollowDiscovery(item: item, preferredURL: url, coordinator: coordinator)
+                self.followOffers[itemId] = ManualFollowPolicy.offer(itemId: itemId, mediaType: item.mediaType, candidates: candidates)
+                self.diagnostics["followOffer"] = "found:\(candidates.count)"
+            } catch {
+                self.diagnostics["followOffer"] = "none:\(String(describing: type(of: error)))"
+            }
+        }
+    }
+
+    /// One discovery per item and link, shared by the Follow button, the suggestion card and the
+    /// tap, so all three show the same feeds and the same name. "No feed" is kept for the session;
+    /// other failures (offline, timeouts) are retried on the next open.
+    private func sharedFollowDiscovery(
+        item: Item,
+        preferredURL: URL,
+        coordinator: FollowedSourceCoordinator
+    ) async throws -> [SourceCandidateEvidence] {
+        let key = item.id + "\u{1f}" + preferredURL.absoluteString
+        if let task = followDiscoveries[key] { return try await task.value }
+        let task = Task { try await self.discoverFollowCandidates(item: item, preferredURL: preferredURL, coordinator: coordinator) }
+        followDiscoveries[key] = task
+        do {
+            return try await task.value
+        } catch FollowedSourceError.noFeedCandidates {
+            throw FollowedSourceError.noFeedCandidates
+        } catch {
+            followDiscoveries[key] = nil
+            throw error
+        }
     }
 
     nonisolated static func isSourceAlreadyFollowed(
@@ -15898,7 +15949,7 @@ final class Gate1AppModel: ObservableObject {
                 }
                 let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
                 self.followedSourceCoordinator = coordinator
-                let candidates = try await self.discoverFollowCandidates(
+                let candidates = try await self.sharedFollowDiscovery(
                     item: item,
                     preferredURL: preferredURL,
                     coordinator: coordinator
@@ -15961,7 +16012,7 @@ final class Gate1AppModel: ObservableObject {
                     sourceURL: item.sourceURL, sourceTitle: item.sourceTitle,
                     subscriptions: try store.loadFeedSubscriptions()
                 ) else { return }
-                let candidates = try await self.discoverFollowCandidates(
+                let candidates = try await self.sharedFollowDiscovery(
                     item: item,
                     preferredURL: url,
                     coordinator: coordinator
