@@ -53,6 +53,14 @@ Note for whoever builds the Test Desk: Claude Desktop's iOS Simulator pane curre
 
 Post as a PR comment. Keep it short; the Test Desk needs intent, not narrative.
 
+**A finished PR needs no request comment.** Label it `automerge` when its "Done when" is met. The runner then runs what the diff needs, by the base branch's `scripts/test-scope.py`, and runs again on every push while the label stays:
+- T0 (docs, research, the server): nothing.
+- T1: `--plan fast`.
+- T2 or higher: `--plan fast` and both builds.
+Simulator tests (T3) still need a request. The lane check is green only on PASS.
+
+Before any build, the runner checks the hot-file ratchet (`scripts/hot_file_ratchet.py`). A PR may not grow `Gate1AppModel.swift` or `Gate1RootView.swift` above the smallest size each has had on `next` since the ratchet started. Move lines out, or ask the desk for the `hot-file-ok` label. Run the script yourself to see where a branch stands.
+
 ```text
 /lane T4
 commit: <sha>

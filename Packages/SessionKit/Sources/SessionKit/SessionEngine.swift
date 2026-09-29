@@ -1426,7 +1426,13 @@ public final class SessionEngine {
                 guard durableDurationMs.map({ mediaTimeMs <= $0 }) ?? true else {
                     throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
                 }
-                session = mediaSession(session, movedTo: mediaTimeMs)
+                // The plan is made while another item may still be current and its player
+                // attached, so use this item's own stored duration, never theirs (#293).
+                if let package = currentWatchPackage, package.itemId == item.id {
+                    session = mediaSession(session, movedTo: mediaTimeMs, package: package)
+                } else {
+                    session = mediaSession(session, movedTo: mediaTimeMs, durationMs: durableDurationMs)
+                }
             } else {
                 guard let text = item.text,
                       stored.anchor.startChar >= 0,
@@ -2788,7 +2794,7 @@ public final class SessionEngine {
             ?? currentWatchPackage?.primaryAudioAsset?.durationMs
             ?? currentWatchPackage?.timeline.durationMs
             ?? sourceTranscriptTimeline(for: session)?.durationMs
-            ?? currentItem?.media?.durationMs
+            ?? item(for: session)?.media?.durationMs
     }
 
     private func durableMediaDurationMs(for session: Session) -> Int? {
@@ -4164,8 +4170,18 @@ public final class SessionEngine {
         if let package = currentWatchPackage {
             return mediaSession(session, movedTo: mediaTimeMs, package: package)
         }
-        let duration = mediaDurationMs(for: session) ?? mediaTimeMs
-        let clamped = max(0, min(mediaTimeMs, duration))
+        return mediaSession(session, movedTo: mediaTimeMs, durationMs: mediaDurationMs(for: session))
+    }
+
+    /// With no known duration the position moves but the percent stays as it was. It
+    /// used to fall back to the target itself, so any seek made before a stream
+    /// reported its length read as 100% and persistSession marked the item completed
+    /// (#293).
+    private func mediaSession(_ session: Session, movedTo mediaTimeMs: Int, durationMs duration: Int?) -> Session {
+        let clamped = duration.map { max(0, min(mediaTimeMs, $0)) } ?? max(0, mediaTimeMs)
+        func percent() -> Int {
+            duration == nil ? session.completionPercent : mediaPercent(clamped, durationMs: duration)
+        }
         var updated = session
         if let timeline = sourceTranscriptTimeline(for: session), !timeline.segments.isEmpty {
             let resolved = MediaTimelineAnchorResolver.resolve(
@@ -4184,14 +4200,14 @@ public final class SessionEngine {
             )
             updated.completionPercent = isGeneratedTextMedia(item(for: session)?.media)
                 ? generatedTextSourcePercent(for: session, textStart: textStart)
-                : mediaPercent(clamped, durationMs: duration)
+                : percent()
             lastResolvedMediaAnchor = resolved
             return updated
         }
         updated.position.mediaTimeMs = clamped
         updated.completionPercent = isGeneratedTextMedia(item(for: session)?.media)
             ? generatedTextSourcePercent(for: session, textStart: updated.position.charOffset)
-            : mediaPercent(clamped, durationMs: duration)
+            : percent()
         return updated
     }
 
