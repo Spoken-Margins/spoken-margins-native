@@ -260,6 +260,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     typealias RestoreHandler = @Sendable (_ targetId: String) -> Void
     /// A stall or its end, with the audio session's and player's state then (#288).
     typealias StallHandler = @Sendable (_ kind: String, _ fields: [String: String]) -> Void
+    /// The article text a target speaks, without the engine's spoken preface ("Overview. …").
+    typealias ArticleTextLookup = @Sendable (_ targetId: String) -> String?
     /// Which way a play request went, for diagnostics (#235).
     typealias ResumeDecisionHandler = @Sendable (_ fields: [String: String]) -> Void
     typealias GenerationStateHandler = @Sendable (RenderedSpeechGenerationState) -> Void
@@ -397,6 +399,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var activeRequest: RenderRequest?
     private var stallMonitor: Task<Void, Never>?
     private var lastStallRecovery: ContinuousClock.Instant?
+    private let articleText: ArticleTextLookup?
+    /// Where the article starts after a spoken preface, in spoken and source characters. Prepared
+    /// audio covers the article alone, so the article is planned as its own section (#258).
+    private var articleSpokenStart = 0
+    private var articleSourceStart = 0
     private let onResumeDecision: ResumeDecisionHandler?
     private var preparedAudioAssemblyStarted = false
     private var generationState = RenderedSpeechGenerationState.inactive
@@ -441,6 +448,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onGenerationProgress: GenerationProgressHandler? = nil,
         onPreparationPlan: PreparationPlanHandler? = nil,
         onPreparedChunk: PreparedChunkHandler? = nil,
+        articleText: ArticleTextLookup? = nil,
         preparedChunkLookup: PreparedChunkLookup? = nil,
         onPreparedAudio: PreparedAudioHandler? = nil,
         onFallback: FallbackHandler? = nil,
@@ -489,6 +497,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.onStall = onStall
         self.stallThreshold = stallThreshold
         self.stallSampleInterval = stallSampleInterval
+        self.articleText = articleText
         self.onResumeDecision = onResumeDecision
         self.renderWaitLimit = renderWaitLimit
         super.init()
@@ -1066,10 +1075,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         snapshot.renderControl?.cancel()
         for url in snapshot.urls { discardAudio(url) }
+        let article = articleStart(targetId: targetId)
+        lock.withLock {
+            articleSpokenStart = article.spoken
+            articleSourceStart = article.source
+        }
         let plan = renderPlan(
             targetId: targetId,
             generation: snapshot.generation,
-            source: snapshot.source
+            source: snapshot.source,
+            articleSpokenStart: article.spoken
         )
         guard !plan.isEmpty else { return nil }
         let playbackIndex = plan.lastIndex {
@@ -1093,15 +1108,56 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         return playbackRequest
     }
 
-    private func renderPlan(targetId: String, generation: UUID, source: String) -> [RenderRequest] {
-        RenderedSpeechChunker.sourceSlices(from: source, maxCharacters: maxCharacters).map { planned in
-            RenderRequest(
-                generation: generation,
-                targetId: targetId,
-                startOffset: planned.startOffset,
-                sourceLength: planned.slice.sourceLength,
-                text: planned.slice.text,
-                boundary: planned.slice.boundary
+    private func renderPlan(
+        targetId: String, generation: UUID, source: String, articleSpokenStart: Int = 0
+    ) -> [RenderRequest] {
+        // A spoken preface is planned on its own, so the article's chunks are exactly the ones
+        // background preparation planned for the article alone and can be looked up and saved.
+        var sections: [(offset: Int, text: String)] = [(0, source)]
+        if articleSpokenStart > 0, articleSpokenStart < source.count {
+            let split = source.index(source.startIndex, offsetBy: articleSpokenStart)
+            sections = [(0, String(source[..<split])), (articleSpokenStart, String(source[split...]))]
+        }
+        return sections.flatMap { section in
+            RenderedSpeechChunker.sourceSlices(from: section.text, maxCharacters: maxCharacters).map { planned in
+                RenderRequest(
+                    generation: generation,
+                    targetId: targetId,
+                    startOffset: section.offset + planned.startOffset,
+                    sourceLength: planned.slice.sourceLength,
+                    text: planned.slice.text,
+                    boundary: planned.slice.boundary
+                )
+            }
+        }
+    }
+
+    /// The spoken and source offsets where the article starts, when the text being spoken is a
+    /// preface followed by exactly the article's text. Zero when there's no preface.
+    private func articleStart(targetId: String) -> (spoken: Int, source: Int) {
+        guard let article = articleText?(targetId), !article.isEmpty else { return (0, 0) }
+        return lock.withLock {
+            guard preparedSourceText.count > article.count, preparedSourceText.hasSuffix(article) else { return (0, 0) }
+            let source = preparedSourceText.count - article.count
+            return (preparedSpeechProjection.spokenCharacterOffset(atOrAfterSourceOffset: source), source)
+        }
+    }
+
+    /// The prepared-audio plan entry for a chunk, in the article's own coordinates, and the
+    /// article's text; nil for a preface chunk. Prepared audio never includes the preface (#258).
+    private func articleChunkPlan(for request: RenderRequest) -> (sourceText: String, plan: PreparedChunkPlan)? {
+        lock.withLock {
+            guard request.startOffset >= articleSpokenStart,
+                  let position = generationPlan.firstIndex(where: { $0.startOffset == request.startOffset }) else { return nil }
+            let prefaceChunks = generationPlan.prefix(while: { $0.startOffset < articleSpokenStart }).count
+            return (
+                String(activeSourceText.dropFirst(articleSourceStart)),
+                PreparedChunkPlan(
+                    index: position - prefaceChunks,
+                    startOffset: request.startOffset - articleSpokenStart,
+                    sourceLength: request.sourceLength,
+                    text: request.text
+                )
             )
         }
     }
@@ -1112,6 +1168,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         generation: UUID,
         source: String? = nil
     ) -> RenderRequest? {
+        if let planned = lock.withLock({ generationPlan.first(where: { $0.startOffset == startOffset }) }) {
+            // The plan's own chunk, so a preface section never runs into the article (#258).
+            return RenderRequest(
+                generation: generation, targetId: targetId, startOffset: planned.startOffset,
+                sourceLength: planned.sourceLength, text: planned.text, boundary: planned.boundary
+            )
+        }
         let source = source ?? lock.withLock { preparedSpeechProjection.text }
         guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         let clampedOffset = max(0, min(startOffset, source.count))
@@ -1169,10 +1232,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     guard let self else { return ("", [], false) }
                     let needsPlan = self.onPreparationPlan != nil
                         && request.startOffset == self.generationRenderOrder.first?.startOffset
-                    let plan = needsPlan ? self.generationPlan.enumerated().map { index, part in
-                        PreparedChunkPlan(index: index, startOffset: part.startOffset, sourceLength: part.sourceLength, text: part.text)
+                    let start = self.articleSpokenStart
+                    let plan = needsPlan ? self.generationPlan.filter { $0.startOffset >= start }.enumerated().map { index, part in
+                        PreparedChunkPlan(index: index, startOffset: part.startOffset - start, sourceLength: part.sourceLength, text: part.text)
                     } : []
-                    return (self.activeSourceText, plan, needsPlan)
+                    return (String(self.activeSourceText.dropFirst(self.articleSourceStart)), plan, needsPlan)
                 }
                 if let preparation, preparation.2 {
                     await self?.onPreparationPlan?(request.targetId, preparation.0, preparation.1)
@@ -1180,18 +1244,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 try Task.checkCancellation()
                 let result: SupertonicNarrationResult
                 var performedInference = false
-                let chunkPlan = self?.lock.withLock { () -> PreparedChunkPlan? in
-                    guard let self,
-                          let index = self.generationPlan.firstIndex(where: { $0.startOffset == request.startOffset }) else { return nil }
-                    return PreparedChunkPlan(
-                        index: index,
-                        startOffset: request.startOffset,
-                        sourceLength: request.sourceLength,
-                        text: request.text
-                    )
-                }
-                if let chunkPlan,
-                   let recovered = await self?.preparedChunkLookup?(request.targetId, preparation?.0 ?? "", chunkPlan) {
+                let articleChunk = self?.articleChunkPlan(for: request)
+                if let articleChunk,
+                   let recovered = await self?.preparedChunkLookup?(request.targetId, articleChunk.sourceText, articleChunk.plan) {
                     result = SupertonicNarrationResult(
                         audioURL: recovered.audioURL,
                         duration: recovered.duration,
@@ -1354,20 +1409,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         if let autoplay = action.autoplay {
             playRenderedAudio(autoplay.url, duration: autoplay.duration, request: autoplay.request)
         }
-        let chunkPlan = lock.withLock { () -> PreparedChunkPlan? in
-            guard let index = generationPlan.firstIndex(where: { $0.startOffset == request.startOffset }) else { return nil }
-            return PreparedChunkPlan(
-                index: index,
-                startOffset: request.startOffset,
-                sourceLength: request.sourceLength,
-                text: request.text
-            )
-        }
-        if let chunkPlan {
+        if let articleChunk = articleChunkPlan(for: request) {
             await onPreparedChunk?(
                 request.targetId,
-                lock.withLock { activeSourceText },
-                chunkPlan,
+                articleChunk.sourceText,
+                articleChunk.plan,
                 result.audioURL,
                 Int((result.duration * 1_000).rounded())
             )
