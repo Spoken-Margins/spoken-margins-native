@@ -44,6 +44,10 @@ FIRST_BOOT_TIMEOUT = 900
 LOCK_WAIT = 1800
 MAX_BOOTED = 1  # 16 GB Mac: a second simulator plus builds filled swap (#184)
 RELEASE_WAIT = 130
+# Both boots the watcher stopped on 2026-09-29 happened under memory pressure (#184), so a boot first
+# waits, holding the build slots so no new build adds to it, for pressure to be normal again.
+PRESSURE_WAIT = 600
+PRESSURE_NAMES = {1: 'normal', 2: 'warn', 4: 'critical'}
 CRASH_POLL_SECONDS = 1.0
 
 
@@ -259,6 +263,28 @@ def all_build_slots(label: str, out, max_wait: float):
         yield
 
 
+def memory_pressure_level() -> int | None:
+    """The kernel's memory pressure level: 1 normal, 2 warn, 4 critical (None if unreadable)."""
+    if os.environ.get('SM_LANE_MEMORY_PRESSURE'):  # tests
+        return int(os.environ['SM_LANE_MEMORY_PRESSURE'])
+    try:
+        return int(subprocess.check_output(['sysctl', '-n', 'kern.memorystatus_vm_pressure_level'], text=True))
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return None
+
+
+def wait_for_normal_pressure(max_wait: float, poll: float = 10, level=None, clock=time.monotonic,
+                             sleep=time.sleep) -> tuple:
+    """Wait up to max_wait for normal memory pressure; returns (level name, seconds waited). Never fails."""
+    level = level or memory_pressure_level
+    started = clock()
+    while True:
+        current = level()
+        if current in (1, None) or clock() - started >= max_wait:
+            return PRESSURE_NAMES.get(current, 'unknown'), clock() - started
+        sleep(poll)
+
+
 def wait_for_room(udid: str, max_wait: float, poll: float = 15, booted=booted_udids) -> None:
     started = time.monotonic()
     while True:
@@ -275,11 +301,14 @@ def stop(udid: str, reason: str) -> None:
     mark_unsafe(udid, reason)
 
 
-def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lock_wait: float | None = None) -> float:
+def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lock_wait: float | None = None,
+         info: dict | None = None) -> float:
     """Boot one simulator under the lane's rules and wait until it is ready. Returns seconds taken.
 
     Raises BootError with the reason; a failed boot or a crash during boot also marks the device unsafe.
+    If info is given, it receives the memory pressure at boot and how long the boot waited for it.
     """
+    info = {} if info is None else info
     timeout = FIRST_BOOT_TIMEOUT if timeout is None else timeout
     lock_wait = LOCK_WAIT if lock_wait is None else lock_wait
     reports = crash_reports_dir()
@@ -290,6 +319,10 @@ def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lo
         with simulator_boot_lock(label, out=out, max_wait=lock_wait):
             wait_for_room(udid, lock_wait)
             with all_build_slots(f'{label} (no builds while booting)', out, lock_wait):
+                pressure, waited = wait_for_normal_pressure(PRESSURE_WAIT)
+                info.update(pressure=pressure, pressure_waited=round(waited))
+                print(f'[lane] memory pressure at boot: {pressure} (waited {waited:.0f}s for normal)', file=out,
+                      flush=True)
                 started = time.monotonic()
                 baseline = crash_snapshot(reports)
                 try:
@@ -318,3 +351,7 @@ def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lo
                 return time.monotonic() - started
     except TimeoutError as error:
         raise BootError(f'the lane stayed busy: {error}') from None
+    except BootError as error:
+        if 'pressure' in info:
+            raise BootError(f'{error} Memory pressure at boot: {info["pressure"]}.') from None
+        raise

@@ -162,14 +162,13 @@ class ProcessTests(unittest.TestCase):
             script = ('import signal, sys, time\n'
                       'def stop(*_):\n    print("interrupted, stopping xcodebuild", flush=True); sys.exit(130)\n'
                       'signal.signal(signal.SIGINT, stop)\nprint("ready", flush=True)\ntime.sleep(60)\n')
-            started = time.monotonic()
-            self.assertIsNone(lane.run_bounded([sys.executable, '-S', '-c', script], log, timeout=self.STARTUP, grace=30))
-            elapsed = time.monotonic() - started
+            self.assertIsNone(lane.run_bounded([sys.executable, '-S', '-c', script], log, timeout=self.STARTUP, grace=60))
             log.seek(0)
             text = log.read()
             self.ready_or_skip(text)
+            # The handler's line proves the SIGINT path (a SIGKILL leaves no line). No time bound: on a Mac
+            # with swap nearly full, the child can take many seconds to run its handler (#184).
             self.assertIn('interrupted, stopping xcodebuild', text)
-            self.assertLess(elapsed, self.STARTUP + 20)  # the SIGINT path, not the SIGKILL after 30 s
 
     def test_the_interrupt_works_even_if_the_runner_was_started_ignoring_it(self):
         # Background jobs start with SIGINT ignored, and children inherit that. A child relying on
@@ -178,17 +177,14 @@ class ProcessTests(unittest.TestCase):
             script = 'import time\nprint("ready", flush=True)\ntime.sleep(60)\n'
             previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
             try:
-                started = time.monotonic()
                 self.assertIsNone(lane.run_bounded([sys.executable, '-S', '-c', script], log, timeout=self.STARTUP,
-                                                   grace=30))
-                elapsed = time.monotonic() - started
+                                                   grace=60))
             finally:
                 signal.signal(signal.SIGINT, previous)
             log.seek(0)
             text = log.read()
             self.ready_or_skip(text)
-            self.assertIn('KeyboardInterrupt', text)
-            self.assertLess(elapsed, self.STARTUP + 20)
+            self.assertIn('KeyboardInterrupt', text)  # default handling reached the child; a SIGKILL leaves no trace
 
     def test_a_group_that_ignores_the_interrupt_is_killed_with_its_children(self):
         with tempfile.TemporaryDirectory() as temporary, open(Path(temporary) / 'log', 'w+') as log:
@@ -261,7 +257,7 @@ class T3Tests(unittest.TestCase):
 
         def boot(*_):
             now[0] += 65
-            return None
+            return None, {'pressure': 'warn', 'pressure_waited': 600}
 
         def tests(*_):
             now[0] += 900
@@ -277,7 +273,8 @@ class T3Tests(unittest.TestCase):
                 tempfile.TemporaryDirectory() as temporary:
             verdict, _, _, details, _, _ = lane._t3_on_fresh_device({'app': ['T/A']}, 'r', Path(temporary),
                                                                      'com.apple.CoreSimulator.SimRuntime.iOS-26-5')
-        self.assertEqual((verdict, details[0]), ('PASS', 'first boot of the fresh simulator took 1m05s'))
+        self.assertEqual((verdict, details[0]), ('PASS', 'first boot of the fresh simulator took 1m05s (memory pressure '
+                                                         'at boot: warn, after waiting 600s)'))
 
     def test_a_flood_stops_the_remaining_plans(self):
         calls = []

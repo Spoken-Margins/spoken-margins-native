@@ -83,7 +83,8 @@ class LaneSimTests(unittest.TestCase):
         (folder / 'reports').mkdir()
         self.record = folder / 'record.jsonl'
         self.env = {'SM_LANE_STATE_DIR': str(folder / 'state'), 'SM_LANE_SIMCTL': str(fake),
-                    'SM_LANE_CRASH_REPORTS': str(folder / 'reports'), 'FAKE_RECORD': str(self.record)}
+                    'SM_LANE_CRASH_REPORTS': str(folder / 'reports'), 'FAKE_RECORD': str(self.record),
+                    'SM_LANE_MEMORY_PRESSURE': '1'}
         patches = [mock.patch.dict(os.environ, self.env), mock.patch.object(lane_sim, 'CRASH_POLL_SECONDS', 0.05),
                    mock.patch.object(lane_slots, 'POLL_SECONDS', 0.05)]
         for patch in patches:
@@ -197,6 +198,27 @@ class LaneSimTests(unittest.TestCase):
                 booting.join(60)
         with lane_slots.build_slot('after the boot', out=self.quiet, max_wait=5):
             pass
+
+    def test_a_boot_waits_for_normal_memory_pressure_but_never_fails_on_it(self):
+        now = [0.0]
+        levels = iter([4, 2, 1])
+        name, waited = lane_sim.wait_for_normal_pressure(600, poll=10, level=lambda: next(levels),
+                                                         clock=lambda: now[0], sleep=lambda s: now.__setitem__(0, now[0] + s))
+        self.assertEqual((name, waited), ('normal', 20))
+        now[0] = 0.0
+        name, waited = lane_sim.wait_for_normal_pressure(600, poll=10, level=lambda: 2, clock=lambda: now[0],
+                                                         sleep=lambda s: now.__setitem__(0, now[0] + s))
+        self.assertEqual((name, waited), ('warn', 600))  # gives up waiting, boots anyway
+
+    def test_the_boot_records_memory_pressure_and_failures_name_it(self):
+        info = {}
+        lane_sim.boot(UDID, 'test', out=self.quiet, info=info)
+        self.assertEqual(info, {'pressure': 'normal', 'pressure_waited': 0})
+        other = '22222222-0000-0000-0000-000000000000'
+        with mock.patch.dict(os.environ, {'FAKE_BOOT': 'invalid', 'SM_LANE_MEMORY_PRESSURE': '4'}), \
+                mock.patch.object(lane_sim, 'PRESSURE_WAIT', 0):
+            with self.assertRaisesRegex(lane_sim.BootError, 'Invalid argument.*Memory pressure at boot: critical'):
+                lane_sim.boot(other, 'test', out=self.quiet)
 
     def test_it_waits_while_another_simulator_is_booted(self):
         with mock.patch.dict(os.environ, {'FAKE_BOOTED': 'X'}):
@@ -337,7 +359,7 @@ class LaneSimTests(unittest.TestCase):
         spec.loader.exec_module(runner)
         with mock.patch.object(lane_sim, 'LOCK_WAIT', 0.2), \
                 lane_slots.simulator_boot_lock('the Test Desk', out=self.quiet):
-            problem = runner.first_boot(UDID, self.quiet)
+            problem, _ = runner.first_boot(UDID, self.quiet)
         self.assertIn('the lane stayed busy', problem)
         self.assertEqual(self.records(), [])
 
