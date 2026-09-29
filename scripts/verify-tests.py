@@ -18,7 +18,7 @@ import time
 
 from check_posterboard_repair import new_crash
 import lane_sim
-from lane_slots import build_slot
+from lane_slots import acquire_simulator_slot, build_slot, release_handle
 
 from test_inventory import ROOT, plan_tests, swift_tests, validate
 
@@ -319,6 +319,11 @@ class Run:
         self.command('bundle-contracts', [sys.executable, 'scripts/verify-bundle.py',
                      str(derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')])
         booted_here = chosen['state'] != 'Booted'
+        # A run that boots its own simulator holds the Mac's one simulator slot until it shuts it down
+        # (16 GB Mac: two simulator jobs plus builds filled swap, #184). A device someone else booted
+        # is theirs, and so is the slot.
+        slot = acquire_simulator_slot(f'verify-tests {plan}', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS) \
+            if booted_here else None
         try:
             if booted_here:
                 # Lane boot rules (scripts/lane_sim.py): one boot at a time, no builds meanwhile, no retry
@@ -352,6 +357,8 @@ class Run:
                 # Don't leave an idle simulator holding memory after the run.
                 subprocess.run(['xcrun', 'simctl', 'shutdown', chosen['udid']],
                                cwd=ROOT, capture_output=True, timeout=60)
+            if slot:
+                release_handle(slot)
         if input_identity() != identity:
             raise RuntimeError('Inputs changed during testing; rerun on a stable source state')
 

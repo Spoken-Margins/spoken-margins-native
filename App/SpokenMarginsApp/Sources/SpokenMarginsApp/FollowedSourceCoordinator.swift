@@ -18,7 +18,19 @@ enum FollowedSourceError: Error, LocalizedError {
         case .responseTooLarge: "The feed exceeds the 16 MB safety limit."
         case .htmlResponseTooLarge: "The source website exceeds the 1 MB discovery limit. Try its RSS feed URL directly."
         case .invalidResponse: "The source did not return a supported feed."
-        case .noFeedCandidates: "No RSS, Atom, or JSON Feed was found for this website."
+        case .noFeedCandidates: "This website doesn't offer a feed Spoken Margins can follow."
+        }
+    }
+
+    /// For diagnostics (#244): the case, not just the type name.
+    var diagnosticCode: String {
+        switch self {
+        case .invalidURL: "invalid_url"
+        case .insecureURL: "insecure_url"
+        case .responseTooLarge: "response_too_large"
+        case .htmlResponseTooLarge: "html_response_too_large"
+        case .invalidResponse: "invalid_response"
+        case .noFeedCandidates: "no_feed_candidates"
         }
     }
 }
@@ -30,6 +42,10 @@ actor FollowedSourceCoordinator {
     private let session: URLSession
     private let parser = FeedParser()
     private(set) var contactedHosts: Set<String> = []
+    /// What each discovery step saw on the last `discover`, for diagnostics (#244). Hosts and
+    /// error codes only, never a full link.
+    private(set) var lastDiscoveryTrace: [String] = []
+    private var lastDiscoveryHost = "unknown"
 
     init(repository: any SessionRepository, session: URLSession? = nil) {
         self.repository = repository
@@ -53,16 +69,46 @@ actor FollowedSourceCoordinator {
 
     func discover(urlString: String, requiringItemMembership: Bool = false) async throws -> [SourceCandidateEvidence] {
         let link = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        lastDiscoveryTrace = []
         guard let url = URL(string: link) else { throw FollowedSourceError.invalidURL }
+        lastDiscoveryHost = url.host?.lowercased() ?? "unknown"
         contactedHosts = []
-        if url.scheme?.lowercased() == "https", let parsed = try? await fetch(url: url, subscription: nil) {
-            return [candidate(url: url, parsed: parsed, relation: "direct", confidence: 1)]
+        if url.scheme?.lowercased() == "https" {
+            do {
+                let parsed = try await fetch(url: url, subscription: nil)
+                return [candidate(url: url, parsed: parsed, relation: "direct", confidence: 1)]
+            } catch {
+                lastDiscoveryTrace.append("direct: not a feed (\(Self.diagnosticCode(for: error)))")
+            }
         }
         // B2: a Substack post, home page, share link or profile names its publication by origin,
         // so old and tracked links need no feed membership. Other sites return nil here.
         if let substack = await substackCandidate(for: link) {
             return [substack]
         }
+        do {
+            return try await genericDiscover(url: url, requiringItemMembership: requiringItemMembership)
+        } catch {
+            lastDiscoveryTrace.append("generic: \(Self.diagnosticCode(for: error))")
+            throw error
+        }
+    }
+
+    /// One line for diagnostics after a failed Follow (#244): the error case, the host, and what
+    /// each discovery step saw.
+    func failureDiagnostic(for error: Error) -> String {
+        let steps = lastDiscoveryTrace.isEmpty ? "none" : lastDiscoveryTrace.joined(separator: " | ")
+        return "\(Self.diagnosticCode(for: error)) host=\(lastDiscoveryHost) steps=\(steps)"
+    }
+
+    static func diagnosticCode(for error: Error) -> String {
+        if let followError = error as? FollowedSourceError { return followError.diagnosticCode }
+        if let parserError = error as? FeedParserError { return "feed_\(parserError)" }
+        let nsError = error as NSError
+        return "\(nsError.domain) \(nsError.code)"
+    }
+
+    private func genericDiscover(url: URL, requiringItemMembership: Bool) async throws -> [SourceCandidateEvidence] {
         guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased() else { throw FollowedSourceError.insecureURL }
         contactedHosts.insert(host)
         let html = try await fetchHTML(url: url)
@@ -262,7 +308,9 @@ actor FollowedSourceCoordinator {
         let resolver = SubstackPublicationResolver { url, kind in
             try await self.substackFetch(url: url, kind: kind)
         }
-        guard let publication = await resolver.resolve(link),
+        let resolution = await resolver.resolveExplained(link)
+        lastDiscoveryTrace.append(contentsOf: resolution.trace.map { "substack: \($0)" })
+        guard let publication = resolution.publication,
               let feedURL = URL(string: publication.feedURL) else { return nil }
         return candidate(
             url: feedURL,
