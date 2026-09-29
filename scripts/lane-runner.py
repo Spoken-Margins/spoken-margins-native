@@ -22,7 +22,9 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
 - The automerge label asks for the checks a finished PR needs, with no request comment (the
   ready-queue plan, decision 3). The base branch's scripts/test-scope.py classifies the PR's
   committed diff: T0 (docs, research, the server) runs nothing, T1 runs --plan fast, and T2 or
-  higher runs --plan fast and both builds. An explicit request on the PR goes first.
+  higher runs --plan fast and both builds. An explicit request on the PR goes first. Before any of
+  that, next's scripts/hot_file_ratchet.py fails a PR that grows Gate1AppModel.swift or
+  Gate1RootView.swift above its ceiling, unless the PR has the hot-file-ok label.
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
 default ~/Library/Caches/SpokenMarginsLane/evidence), SM_LANE_TOOLS (a checkout whose .venv and
@@ -246,16 +248,31 @@ def committed_changes(tree: Path, base: str) -> tuple[list[str], dict[str, str]]
     return sorted(set(paths)), diffs
 
 
+def base_policy(tree: Path, base: str, path: str):
+    """A script from the base branch, loaded as a module, so a PR can't change the rules that judge it.
+    None if the base doesn't have it yet."""
+    import types
+    shown = subprocess.run(['git', '-C', str(tree), 'show', f'origin/{base}:{path}'], capture_output=True, text=True)
+    if shown.returncode != 0:
+        return None
+    module = types.ModuleType('lane_policy_' + Path(path).stem.replace('-', '_'))
+    module.__file__ = str(tree / path)
+    exec(compile(shown.stdout, f'origin/{base}:{path}', 'exec'), module.__dict__)
+    return module
+
+
 def diff_scope(tree: Path, base: str) -> dict:
     """test-scope.py's answer for the PR, from the base branch's copy of the policy, so a PR can't
     reclassify itself to skip its builds."""
-    import types
-    source = subprocess.check_output(['git', '-C', str(tree), 'show', f'origin/{base}:scripts/test-scope.py'], text=True)
-    policy = types.ModuleType('lane_test_scope')
-    policy.__file__ = str(tree / 'scripts/test-scope.py')
-    exec(compile(source, f'origin/{base}:scripts/test-scope.py', 'exec'), policy.__dict__)
+    policy = base_policy(tree, base, 'scripts/test-scope.py')
     paths, diffs = committed_changes(tree, base)
     return policy.classify(paths, diffs, root=tree)
+
+
+def hot_file_violations(tree: Path, base: str, labels) -> list[str]:
+    """next's hot-file ratchet on the tree's HEAD (none until the ratchet is on next)."""
+    ratchet = base_policy(tree, base, 'scripts/hot_file_ratchet.py')
+    return ratchet.violations(tree, f'origin/{base}', 'HEAD', labels) if ratchet else []
 
 
 def run_fast(evidence: Path, runner=run_bounded) -> tuple[str, list[str]]:
@@ -275,10 +292,15 @@ def run_fast(evidence: Path, runner=run_bounded) -> tuple[str, list[str]]:
                     *[f'  {line}' for line in first_errors(log_path)]]
 
 
-def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2) -> tuple[str, str, str, list[str]]:
+def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2,
+                  ratchet=lambda: []) -> tuple[str, str, str, list[str]]:
     """Returns verdict, where, ran, details for the checks the PR's diff needs."""
     tier = int(scope['tier'][1:])
     details = [f'test-scope: {scope["tier"]} ({"; ".join(scope["why"]) or "no changes"})']
+    too_big = ratchet()
+    if too_big:
+        return 'FAIL', 'no build', 'hot-file ratchet: failed', details + [f'hot-file ratchet — {line}'
+                                                                          for line in too_big]
     if tier == 0:
         return 'PASS', 'no build', 'nothing to build or test', details + [
             'nothing here reaches the host tests or the app (docs, research or server only)']
@@ -596,7 +618,8 @@ def main(argv=None) -> int:
     sweep_runner_simulators()
     pull = github.pull()
     head = pull['head']['sha']
-    automerge = AUTOMERGE in {label['name'] for label in pull.get('labels', [])}
+    labels = {label['name'] for label in pull.get('labels', [])}
+    automerge = AUTOMERGE in labels
     if head != args.event_head:
         print(f'The PR moved on to {head[:7]} since this run was queued; the newer run tests it.')
         return 0
@@ -647,7 +670,8 @@ def main(argv=None) -> int:
         elif request['tier'] == 'auto':
             scope = diff_scope(ROOT, args.base)
             (evidence / 'scope.json').write_text(json.dumps(scope, indent=2))
-            verdict, where, ran, details = run_automerge(scope, evidence)
+            verdict, where, ran, details = run_automerge(
+                scope, evidence, ratchet=lambda: hot_file_violations(ROOT, args.base, labels))
             crashes = 'none'
         elif request['tier'] == 'T2':
             verdict, ran, details = run_t2(evidence)
