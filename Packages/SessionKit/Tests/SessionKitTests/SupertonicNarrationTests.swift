@@ -94,4 +94,30 @@ final class SupertonicNarrationTests: XCTestCase {
             XCTAssertEqual(error as? SupertonicNarrationError, .invalidSynthesisSteps(4))
         }
     }
+
+    // #258: the player hands the renderer files it didn't make (an article's durable prepared
+    // chunks, disk-cache entries) to discard. Only the renderer's own output may be deleted.
+    func testDiscardDeletesOnlyAudioTheRendererGenerated() async throws {
+        let repoAssets = SupertonicAssetLocation(rootURL: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "App/SpokenMarginsApp/Resources/Supertonic", directoryHint: .isDirectory))
+        guard (try? repoAssets.validate()) != nil else { throw XCTSkip("Supertonic assets not in this checkout") }
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "supertonic-discard-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let durable = root.appending(path: "PreparedAudio/item/chunk-0001.wav")
+        try FileManager.default.createDirectory(at: durable.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("durable prepared chunk".utf8).write(to: durable)
+        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root.appending(path: "Playback"))
+
+        await renderer.discardGeneratedAudio(at: durable)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: durable.path), "a prepared chunk the renderer didn't make survives")
+
+        let generated = try await renderer.render(text: "A short sentence.", voice: .m2, speed: 1, synthesisSteps: 5)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: generated.audioURL.path))
+        await renderer.discardGeneratedAudio(at: generated.audioURL)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: generated.audioURL.path), "its own output is still discarded")
+        await renderer.unload()
+    }
 }
