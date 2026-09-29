@@ -155,13 +155,24 @@ actor OfflineStorageLedger {
         let references = PreparedNarrationFallback.FileReferences(items: try repository.listItems(includeDeleted: true))
         for asset in try repository.loadOwnedOfflineAssets()
         where asset.itemId == itemId && (asset.category == .preparedAudio || asset.category == .preparedChunk) {
-            let url = rootDirectory.appending(path: asset.relativePath)
-            guard references.release(url) == .unreferenced else { continue }
-            if fileManager.fileExists(atPath: url.path) { try fileManager.removeItem(at: url) }
+            guard try removeFileNoItemPlays(rootDirectory.appending(path: asset.relativePath), references: references) else { continue }
             try repository.deleteOwnedOfflineAsset(id: asset.id)
             removed += asset.byteCount
         }
         return removed
+    }
+
+    /// Deletes a prepared file nothing was committed for, such as narration assembled
+    /// for text its item no longer has, unless an item plays it (#344).
+    @discardableResult
+    func discardUncommittedFile(_ url: URL) throws -> Bool {
+        try removeFileNoItemPlays(url, references: PreparedNarrationFallback.FileReferences(items: try repository.listItems(includeDeleted: true)))
+    }
+
+    private func removeFileNoItemPlays(_ url: URL, references: PreparedNarrationFallback.FileReferences) throws -> Bool {
+        guard references.release(url) == .unreferenced else { return false }
+        if fileManager.fileExists(atPath: url.path) { try fileManager.removeItem(at: url) }
+        return true
     }
 
     func inventoryBytes() throws -> Int64 {
