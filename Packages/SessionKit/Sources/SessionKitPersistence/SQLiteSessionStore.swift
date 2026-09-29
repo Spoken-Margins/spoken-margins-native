@@ -1048,6 +1048,8 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
             }
             for interjection in upgrade.interjections { try saveInterjection(interjection) }
             for session in upgrade.sessions { try saveSession(session) }
+            for id in upgrade.retiredManifestIds { try deletePreparedAudioManifest(id: id) }
+            for id in upgrade.retiredJobIds { try deleteAudioPreparationJob(id: id) }
             try saveStructuredDocument(upgrade.document, itemId: itemId)
         }
     }

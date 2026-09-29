@@ -639,6 +639,69 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(audio.preparedTexts.last).contains("[12]"), "the new document's I14 projection is used")
     }
 
+    func testReimportUpgradesAV1PDFThatHasPreparedAudio() throws {
+        // #322: the upgrade refused any item with a prepared-audio manifest, and background
+        // preparation gives most PDFs one, so re-importing made a duplicate item instead.
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let store = try SQLiteSessionStore(path: path)
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "pdf", displayName: "PDF", capabilities: ["sync": ["canonical_persistence"]]), repository: store)
+        let url = "shared-file://share-sheet/Paper.pdf"
+        let v1 = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: "Paper"),
+            text: "# Paper\n\n## Methods\n\nWe measured sleep in adults.\nThe effect held across cohorts.",
+            contentFormat: .markdown
+        ))
+        let text = try XCTUnwrap(v1.text)
+        // Its narration was rendered and attached, and the session is playing it.
+        var narrated = v1
+        narrated.media = ItemMedia(sourceType: .generatedTTSPrerendered, url: "file:///tmp/narration-322.caf", durationMs: 60_000)
+        try store.saveItem(narrated)
+        let effect = text.distance(from: text.startIndex, to: try XCTUnwrap(text.range(of: "The effect")).lowerBound)
+        let session = Session(id: "session-322", itemId: v1.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .transcriptBackedMedia, currentTargetId: "file:///tmp/narration-322.caf", position: Position(charOffset: effect, mediaTimeMs: 30_000), completionPercent: 20, playbackRate: 1)
+        try store.saveSession(session)
+        let start = text.distance(from: text.startIndex, to: try XCTUnwrap(text.range(of: "measured sleep")).lowerBound)
+        try store.saveInterjection(Interjection(
+            id: "ij-001", itemId: v1.id, sessionId: session.id, targetType: .item, targetId: v1.id,
+            createdAt: Date(timeIntervalSince1970: 1), roughPercent: 20,
+            anchor: Anchor(anchorType: .text, startChar: start, endChar: start + 14, anchorBefore: "", anchorAfter: ""),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
+            displayText: "Margin", status: "active"
+        ))
+        try store.savePreparedAudioManifest(PreparedAudioManifest(
+            id: "manifest-322", itemId: v1.id, sourcePackageId: v1.id,
+            signature: TTSRenderSignature(engine: "supertonic", modelRevision: "3", assetManifestHash: "a", voiceStyleHash: "v", synthesisParametersHash: "p", normalizationVersion: "n", chunkingVersion: "c", digest: "d"),
+            state: .readyOffline, plannedChunkCount: 0, chunks: []
+        ))
+
+        let document = StructuredDocumentBuilder.build(lines: [
+            StructuredDocumentLine(text: "Paper", role: .title, pageIndex: 0),
+            StructuredDocumentLine(text: "J Biol 12 (2020) 1-9", role: .pageHeader, pageIndex: 0),
+            StructuredDocumentLine(text: "Methods", role: .heading, pageIndex: 0, level: 2),
+            StructuredDocumentLine(text: "We measured sleep in adults.", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "The effect held across cohorts.", role: .body, pageIndex: 0),
+        ], engine: "pdfkit_baseline", version: 2, pageCount: 1)
+        let reimported = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: "Paper"),
+            text: document.text,
+            contentFormat: .plainText
+        ), structuredDocument: document)
+
+        XCTAssertEqual(reimported.id, v1.id, "one item, upgraded in place")
+        XCTAssertEqual(try store.listItems().count, 1)
+        let upgradedText = try XCTUnwrap(try store.loadItem(id: v1.id).text)
+        let margin = try XCTUnwrap(try store.loadInterjections(sessionId: session.id).first)
+        XCTAssertEqual(String(Array(upgradedText)[margin.anchor.startChar..<margin.anchor.endChar]), "measured sleep")
+        // The rendered narration no longer matches the text: retired, and the session reads live.
+        XCTAssertTrue(try store.loadPreparedAudioManifests(itemId: v1.id).isEmpty)
+        XCTAssertNil(try store.loadItem(id: v1.id).media)
+        let moved = try XCTUnwrap(try store.loadSession(id: session.id))
+        XCTAssertEqual(moved.currentTargetType, .itemTextTTS)
+        XCTAssertEqual(String(Array(upgradedText)[moved.position.charOffset...].prefix(10)), "The effect")
+    }
+
     func testReimportLeavesAV1PDFAloneWhenAMarginsWordsChange() throws {
         // v1 removed a running head from the middle of a sentence that crossed a page;
         // v2 keeps the head there, so "effect held across" is no longer one run of text.

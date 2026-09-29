@@ -11,6 +11,10 @@ public struct StructuredDocumentUpgrade: Sendable {
     public var interjections: [Interjection]
     /// Sessions with their positions moved to the same place in the new text.
     public var sessions: [Session]
+    /// The item's prepared audio, rendered from the old text: retired with the move
+    /// (#322). The app deletes the files and their ledger rows afterwards.
+    public var retiredManifestIds: [String] = []
+    public var retiredJobIds: [String] = []
 }
 
 /// Step 5 of C1 M3: when a PDF imported under an older extraction is imported
@@ -21,8 +25,6 @@ public enum StructuredDocumentUpgrader {
         case noText
         /// Margins imported from someone else's packet anchor into this text too.
         case importedCommentary
-        /// Prepared audio was rendered from the old text.
-        case preparedAudio
         case nonTextAnchor(marginIds: [String])
         case marginNotPlaced(marginIds: [String])
         case positionNotPlaced(sessionIds: [String])
@@ -38,10 +40,18 @@ public enum StructuredDocumentUpgrader {
         if try !repository.loadImportedCommentaryLayers(itemId: existing.id).isEmpty {
             return .failure(.importedCommentary)
         }
-        if try !repository.loadPreparedAudioManifests(itemId: existing.id).isEmpty {
-            return .failure(.preparedAudio)
+        // Prepared audio was rendered from the old text, so it no longer matches: it is
+        // retired with the move rather than blocking it (#322; most PDFs have some).
+        let manifests = try repository.loadPreparedAudioManifests(itemId: existing.id)
+        let jobs = try repository.loadAudioPreparationJobs().filter { $0.itemId == existing.id }
+        let timeline = try repository.loadTranscriptTimeline(itemId: existing.id)?.timeline
+        let sessions = try repository.loadSessions(itemId: existing.id).map { session in
+            // A session playing the rendered narration goes back to reading the text, at
+            // the place its media time had reached; then it moves like any other.
+            PreparedNarrationFallback.canReadText(instead: session, item: existing)
+                ? PreparedNarrationFallback.liveSpeechSession(from: session, item: existing, timeline: timeline)
+                : session
         }
-        let sessions = try repository.loadSessions(itemId: existing.id)
         let margins = try sessions.flatMap { try repository.loadInterjections(sessionId: $0.id) }
             .filter { $0.itemId == existing.id }
         let nonText = margins.filter { $0.anchor.anchorType != .text }.map(\.id)
@@ -64,6 +74,8 @@ public enum StructuredDocumentUpgrader {
 
         var movedSessions: [Session] = []
         var unplacedSessions: [String] = []
+        let oldCharacters = Array(oldText)
+        let newCharacters = Array(document.text)
         for var session in sessions {
             // Only an item-text position counts in the PDF's text. A session paused in a
             // summary or AI reply counts in that turn's text, so it stays as it is.
@@ -71,7 +83,7 @@ public enum StructuredDocumentUpgrader {
                 movedSessions.append(session)
                 continue
             }
-            guard let offset = StructuredDocumentMigration.placePosition(session.position.charOffset, from: oldText, into: document.text) else {
+            guard let offset = StructuredDocumentMigration.placePosition(session.position.charOffset, old: oldCharacters, new: newCharacters) else {
                 unplacedSessions.append(session.id)
                 continue
             }
@@ -98,10 +110,14 @@ public enum StructuredDocumentUpgrader {
         var item = existing
         item.text = document.text
         item.deletedAt = nil
+        if item.media?.sourceType == .generatedTTSPrerendered {
+            item.media = nil
+        }
         if listeningMap != nil { item.status = "ready" }
         return .success(StructuredDocumentUpgrade(
             item: item, listeningMap: listeningMap, document: document,
-            interjections: movedMargins, sessions: movedSessions
+            interjections: movedMargins, sessions: movedSessions,
+            retiredManifestIds: manifests.map(\.id), retiredJobIds: jobs.map(\.id)
         ))
     }
 }

@@ -47,11 +47,15 @@ public enum StructuredDocumentMigration {
     /// Where a listening position (a single offset) lands: the text that followed
     /// it, found once in the new text. The start and the end map to themselves.
     public static func placePosition(_ offset: Int, from oldText: String, into newText: String) -> Int? {
-        let old = Array(oldText)
+        placePosition(offset, old: Array(oldText), new: Array(newText))
+    }
+
+    /// For many positions in one pair of texts: the caller splits them once.
+    static func placePosition(_ offset: Int, old: [Character], new: [Character]) -> Int? {
         if offset <= 0 { return 0 }
-        if offset >= old.count { return newText.count }
+        if offset >= old.count { return new.count }
         let anchor = TextAnchor(id: "position", start: offset, end: min(old.count, offset + 60))
-        return place(anchor, old: old, new: Array(newText))?.lowerBound
+        return place(anchor, old: old, new: new)?.lowerBound
     }
 
     static func place(_ anchor: TextAnchor, old: [Character], new: [Character]) -> Range<Int>? {

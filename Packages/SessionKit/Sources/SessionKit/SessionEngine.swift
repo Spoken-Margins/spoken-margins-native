@@ -3486,7 +3486,8 @@ public final class SessionEngine {
                 // its own edition as before.
                 if let document, existing.deletedAt == nil, currentSession?.itemId != existing.id,
                    let store = repository as? any (SessionRepository & StructuredDocumentRepository),
-                   case .success(let upgrade) = try StructuredDocumentUpgrader.plan(
+                   // A planning error falls back to the plain import below (#322).
+                   case .success(let upgrade)? = try? StructuredDocumentUpgrader.plan(
                        existing: existing,
                        document: document,
                        listeningMap: StructuredDocumentImport.listeningMap(for: document, title: existing.title, itemId: existing.id),
