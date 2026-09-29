@@ -3581,7 +3581,7 @@ struct SourceFollowSuggestionCard: View {
                         model.acceptSourceFollowSuggestion(candidate)
                     } label: {
                         VStack(alignment: .leading) {
-                            Text("Follow \(candidate.source.title ?? candidate.source.host)")
+                            Text("Follow \(candidate.displayName)")
                             if model.sourceFollowSuggestionCandidates.filter({ $0.source.title == candidate.source.title }).count > 1 {
                                 Text(candidate.source.canonicalURL).font(.caption).lineLimit(2)
                             }

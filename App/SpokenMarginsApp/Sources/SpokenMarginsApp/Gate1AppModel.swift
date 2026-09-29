@@ -774,6 +774,10 @@ final class Gate1AppModel: ObservableObject {
                 storedSourceFollowSuggestionCandidates = []
                 sourceFollowSuggestionItemId = nil
             }
+            // Every way to an item (Library, Safari import, Continue listening) looks for its feed (#280).
+            if oldValue.id != selectedItem.id, let store {
+                discoverFollowOfferIfEligible(itemId: selectedItem.id, store: store)
+            }
         }
     }
     @Published private(set) var marginRows: [MarginRow] = []
@@ -15803,11 +15807,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Follow shows only once discovery found a feed for the selected item (#280).
     var canManuallyFollowSelectedSource: Bool {
-        guard sourceFollowSuggestionCandidates.isEmpty,
-              let offer = followOffers[selectedItem.id],
-              !Self.uniqueUnfollowedCandidates(offer.candidates, subscriptions: feedSubscriptions).isEmpty else {
-            return false
-        }
+        guard sourceFollowSuggestionCandidates.isEmpty, selectedFollowOffer != nil else { return false }
         let row = libraryItems.first(where: { $0.id == selectedItem.id })
         return !Self.isSourceAlreadyFollowed(
             sourceURL: row?.sourceURL,
@@ -15818,12 +15818,22 @@ final class Gate1AppModel: ObservableObject {
 
     /// Names what will be followed, and is settled when the button first appears (#243, #280).
     var manualFollowButtonTitle: String {
-        guard let offer = followOffers[selectedItem.id] else { return "" }
+        guard let offer = selectedFollowOffer else { return "" }
         return isFollowingSelectedSource ? offer.followingTitle : offer.title
     }
 
     var manualFollowButtonSymbol: String {
-        followOffers[selectedItem.id]?.symbol ?? ManualFollowPolicy.buttonSymbol(mediaType: "podcast")
+        selectedFollowOffer?.symbol ?? ManualFollowPolicy.buttonSymbol(mediaType: "podcast")
+    }
+
+    /// Built from the same de-duplicated, unfollowed feeds the suggestion card lists, so the
+    /// button and the card name the feed the same way.
+    private var selectedFollowOffer: FollowOffer? {
+        guard let found = followOffers[selectedItem.id] else { return nil }
+        return ManualFollowPolicy.offer(
+            itemId: found.itemId, mediaType: found.mediaType,
+            candidates: Self.uniqueUnfollowedCandidates(found.candidates, subscriptions: feedSubscriptions)
+        )
     }
 
     /// Starts feed discovery when an item opens. Follow appears when a feed is found, and never
@@ -15847,8 +15857,7 @@ final class Gate1AppModel: ObservableObject {
             self.followedSourceCoordinator = coordinator
             do {
                 let candidates = try await self.sharedFollowDiscovery(item: item, preferredURL: url, coordinator: coordinator)
-                self.followOffers[itemId] = ManualFollowPolicy.offer(itemId: itemId, mediaType: item.mediaType, candidates: candidates)
-                self.diagnostics["followOffer"] = "found:\(candidates.count)"
+                self.diagnostics["followOffer"] = candidates.isEmpty ? "none:empty" : "found:\(candidates.count)"
             } catch {
                 self.diagnostics["followOffer"] = "none:\(String(describing: type(of: error)))"
             }
@@ -15868,7 +15877,12 @@ final class Gate1AppModel: ObservableObject {
         let task = Task { try await self.discoverFollowCandidates(item: item, preferredURL: preferredURL, coordinator: coordinator) }
         followDiscoveries[key] = task
         do {
-            return try await task.value
+            let candidates = try await task.value
+            // Whichever path ran discovery, the Follow button can use what it found.
+            if followOffers[item.id] == nil {
+                followOffers[item.id] = ManualFollowPolicy.offer(itemId: item.id, mediaType: item.mediaType, candidates: candidates)
+            }
+            return candidates
         } catch FollowedSourceError.noFeedCandidates {
             throw FollowedSourceError.noFeedCandidates
         } catch {
@@ -15989,6 +16003,11 @@ final class Gate1AppModel: ObservableObject {
         guard !sourceSuggestionChecks.contains(itemId),
               sourceFollowSuggestionCandidates.isEmpty,
               let item = try? store.loadItem(id: itemId),
+              // Files, PDFs and Listening Editions get no suggestion card either (#280).
+              ManualFollowPolicy.shouldDiscoverFeed(
+                itemId: item.id, mediaType: item.mediaType, sourceURL: item.sourceURL,
+                sourceReference: item.externalReference, sourceReferenceType: item.externalReferenceType
+              ),
               let reference = item.sourceURL ?? item.externalReference,
               let url = URL(string: reference),
               url.scheme?.lowercased() == "https" else { return }

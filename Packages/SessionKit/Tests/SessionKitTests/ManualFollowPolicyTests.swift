@@ -80,21 +80,30 @@ final class ManualFollowPolicyTests: XCTestCase {
         XCTAssertEqual(offer.itemId, "article")
     }
 
-    /// #243: an article's Follow read "Follow Podcast". Without a feed title (or with several feeds,
-    /// which open a chooser) the label names the kind: an article follows its publication.
-    func testArticlesFollowTheirPublicationNotAPodcast() throws {
+    /// The suggestion card names a feed by title, else host; the button uses the same rule.
+    func testAnUntitledFeedIsNamedByItsHostLikeTheCard() throws {
         let untitled = try XCTUnwrap(ManualFollowPolicy.offer(itemId: "a", mediaType: "text", candidates: [candidate(nil)]))
-        XCTAssertEqual(untitled.title, "Follow Publication")
-        XCTAssertEqual(untitled.followingTitle, "Following Publication…")
+        XCTAssertEqual(untitled.title, "Follow source.example")
+        XCTAssertEqual(untitled.title, "Follow \(candidate(nil).displayName)")
+        XCTAssertEqual(candidate("  ").displayName, "source.example")
+    }
+
+    /// #243: an article's Follow read "Follow Podcast". Several feeds open a chooser, so the
+    /// label names the kind: an article follows its publication, a podcast episode its podcast.
+    func testArticlesFollowTheirPublicationNotAPodcast() throws {
         // A Substack feed with audio posts is a podcast feed, but the article still follows a publication.
-        let several = try XCTUnwrap(ManualFollowPolicy.offer(
+        let article = try XCTUnwrap(ManualFollowPolicy.offer(
             itemId: "a", mediaType: "text",
             candidates: [candidate("Main", kind: .podcastFeed, id: "one"), candidate("Section", id: "two")]
         ))
-        XCTAssertEqual(several.title, "Follow Publication")
-        XCTAssertEqual(several.candidates.count, 2)
+        XCTAssertEqual(article.title, "Follow Publication")
+        XCTAssertEqual(article.followingTitle, "Following Publication…")
+        XCTAssertEqual(article.candidates.count, 2)
 
-        let podcast = try XCTUnwrap(ManualFollowPolicy.offer(itemId: "e", mediaType: "podcast", candidates: [candidate("  ", kind: .podcastFeed)]))
+        let podcast = try XCTUnwrap(ManualFollowPolicy.offer(
+            itemId: "e", mediaType: "podcast",
+            candidates: [candidate("One", kind: .podcastFeed, id: "one"), candidate("Two", kind: .podcastFeed, id: "two")]
+        ))
         XCTAssertEqual(podcast.title, "Follow Podcast")
         XCTAssertEqual(podcast.symbol, "dot.radiowaves.left.and.right")
     }

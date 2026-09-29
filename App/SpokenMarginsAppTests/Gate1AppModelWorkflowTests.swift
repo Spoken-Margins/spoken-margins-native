@@ -4003,6 +4003,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try store.saveItem(Item(id: "article", title: "The Specter of Neuralese", mediaType: "text", text: "Source text.", externalReference: "https://www.astralcodexten.com/p/the-specter-of-neuralese?utm_source=substack", status: "ready", externalReferenceType: "url"))
         try store.saveItem(Item(id: "no-feed", title: "A page", mediaType: "text", text: "Source text.", externalReference: "https://openai.com/index/a-page", status: "ready", externalReferenceType: "url"))
         try store.saveItem(Item(id: "phone-file", title: "Clipped", mediaType: "text", text: "Source text.", externalReference: "https://www.astralcodexten.com/p/clipped", status: "ready", externalReferenceType: "file"))
+        // Past a quarter heard, so the suggestion card would be due too.
+        try store.saveSession(Session(id: "session-phone-file", itemId: "phone-file", status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: "phone-file", position: Position(charOffset: 4), completionPercent: 40, playbackRate: 1))
         model.openHome()
 
         model.openItem(id: "article")
@@ -4017,12 +4019,20 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         model.openItem(id: "phone-file")
         XCTAssertFalse(model.canManuallyFollowSelectedSource)
-        XCTAssertFalse(discovered.contains("phone-file"), "a file from the phone is never looked up")
+        await Task.yield()
+        XCTAssertTrue(model.sourceFollowSuggestionCandidates.isEmpty)
+        XCTAssertFalse(discovered.contains("phone-file"), "a file from the phone is never looked up, by the button or the card")
 
         // Reopening reuses the result: the label is the same and nothing is fetched again.
         model.openItem(id: "article")
         XCTAssertTrue(model.canManuallyFollowSelectedSource)
         XCTAssertEqual(discovered.filter { $0 == "article" }.count, 1)
+
+        // A Safari import or Continue listening selects the item without openItem; Follow still comes.
+        try store.saveItem(Item(id: "imported", title: "Imported", mediaType: "text", text: "Source text.", externalReference: "https://www.astralcodexten.com/p/imported?r=abc", status: "ready", externalReferenceType: "url"))
+        model.selectedItem = ItemDetailState(id: "imported", title: "Imported", isNativeAudio: false)
+        try await waitFor("feed found without openItem") { model.canManuallyFollowSelectedSource }
+        XCTAssertEqual(model.manualFollowButtonTitle, "Follow Astral Codex Ten")
     }
 
     func testFollowedSourceIdentityUsesCanonicalURLInsteadOfDisplayTitle() {

@@ -180,15 +180,13 @@ public enum ManualFollowPolicy {
     /// The Follow action for an item once discovery has run. Nil, so no Follow, when no feed was found.
     public static func offer(itemId: String, mediaType: String, candidates: [SourceCandidateEvidence]) -> FollowOffer? {
         guard !candidates.isEmpty else { return nil }
-        // One feed: name it, as the suggestion card does, so the label never changes under the
-        // listener (#280). Several feeds open a chooser, so name the kind instead.
-        let name = candidates.count == 1
-            ? candidates[0].source.title?.trimmingCharacters(in: .whitespacesAndNewlines)
-            : nil
+        // One feed: name it exactly as the suggestion card does, so the label never changes under
+        // the listener (#280). Several feeds open a chooser, so name the kind instead.
         let noun = mediaType.lowercased() == "text" ? "Publication" : "Podcast"
-        let label = name.flatMap { $0.isEmpty ? nil : $0 } ?? noun
+        let label = candidates.count == 1 ? candidates[0].displayName : noun
         return FollowOffer(
             itemId: itemId,
+            mediaType: mediaType,
             candidates: candidates,
             title: "Follow \(label)",
             followingTitle: "Following \(label)…",
@@ -204,6 +202,7 @@ public enum ManualFollowPolicy {
 /// A Follow action backed by at least one discovered feed.
 public struct FollowOffer: Equatable, Sendable {
     public let itemId: String
+    public let mediaType: String
     public let candidates: [SourceCandidateEvidence]
     public let title: String
     public let followingTitle: String
@@ -214,6 +213,12 @@ public extension SourceCandidateEvidence {
     /// A Substack profile's primary publication. A writer can run several, so it is an
     /// "Is this it?" candidate (I1) that the listener confirms even when it is the only one.
     static let substackProfileRelation = "substack_profile_primary"
+
+    /// How Follow names this feed: its title, or its host when the feed has no usable title.
+    var displayName: String {
+        let title = source.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return title.isEmpty ? source.host : title
+    }
 
     /// Confirm before following, even as the only candidate.
     var needsConfirmation: Bool { relation == Self.substackProfileRelation }
