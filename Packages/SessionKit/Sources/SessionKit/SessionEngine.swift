@@ -4963,6 +4963,7 @@ public final class SessionEngine {
         }
         try repository.saveSession(stamped)
         if stamped.completionPercent > 98,
+           completionPercentIsMeasured(stamped),
            var item = try? repository.loadItem(id: stamped.itemId),
            item.sourceCompletedAt == nil {
             item.sourceCompletedAt = timestamp
@@ -4972,6 +4973,25 @@ public final class SessionEngine {
         if currentSession?.id == stamped.id {
             currentSession = stamped
         }
+    }
+
+    /// A media percent is only as good as the length it was divided by. It completes the
+    /// item only when this item's own length is known, or when the player reported
+    /// reaching the end (phase .finished). An unknown length once made any seek read as
+    /// 100%, and Build 29 episodes were marked completed on upgrade (#293, #352).
+    private func completionPercentIsMeasured(_ session: Session) -> Bool {
+        guard session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia,
+              session.phase != .finished,
+              !isGeneratedTextMedia(item(for: session)?.media) else {
+            return true
+        }
+        let playerDurationMs = audio.currentPlaybackPosition().flatMap {
+            $0.targetId == session.currentTargetId ? $0.durationMs : nil
+        }
+        let packageDurationMs = currentWatchPackage.flatMap {
+            $0.itemId == session.itemId ? $0.primaryAudioAsset?.durationMs ?? $0.timeline.durationMs : nil
+        }
+        return [durableMediaDurationMs(for: session), packageDurationMs, playerDurationMs].contains { ($0 ?? 0) > 0 }
     }
 
     private func sentenceUnits(in text: String, includeTrailingFragment: Bool) -> [String] {

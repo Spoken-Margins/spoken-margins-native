@@ -52,6 +52,60 @@ final class Build29UpgradeProgressTests: XCTestCase {
         XCTAssertEqual(try store.quarantinedRecordCount(), 0)
     }
 
+    /// The guard in persistSession, on its own: a stored 99% on an episode whose length
+    /// is unknown (the #293 bug left such percents) doesn't complete it. Playing a Margin
+    /// keeps the percent as it was, so without the guard the save stamps completion.
+    func testAHighPercentWithNoKnownLengthDoesNotCompleteTheEpisode() throws {
+        let (item, session, margin) = podcastInProgress(percent: 99, durationMs: nil)
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], interjections: [margin.id: margin])
+        let engine = SessionEngine(profile: phoneProfile(), repository: repo, audio: StreamNotYetMeasuredAudioClient())
+
+        _ = try engine.playInterjectionAnchor(margin)
+
+        XCTAssertNil(try repo.loadItem(id: item.id).sourceCompletedAt)
+    }
+
+    func testAHighPercentOfTheEpisodesOwnPlayerLengthStillCompletesIt() throws {
+        // Must not break: a stream whose length only its player knows still completes
+        // once the listener reaches the end of it.
+        let (item, _, _) = podcastInProgress(percent: 0, durationMs: nil)
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let audio = StreamNotYetMeasuredAudioClient()
+        let engine = SessionEngine(profile: phoneProfile(), repository: repo, audio: audio)
+        _ = try engine.startSession(itemId: item.id)
+        audio.durationMs = 3_600_000
+
+        _ = try engine.seekMedia(toMediaTimeMs: 3_590_000)
+
+        XCTAssertNotNil(try repo.loadItem(id: item.id).sourceCompletedAt)
+    }
+
+    func testThePlayerReachingTheEndCompletesAnEpisodeWithNoKnownLength() throws {
+        // Must not break: with no length anywhere, the player's own end still counts.
+        let (item, _, _) = podcastInProgress(percent: 0, durationMs: nil)
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let audio = StreamNotYetMeasuredAudioClient()
+        let engine = SessionEngine(profile: phoneProfile(), repository: repo, audio: audio)
+        _ = try engine.startSession(itemId: item.id)
+        audio.completedTargetId = item.media?.url
+
+        _ = try engine.endSession()
+
+        XCTAssertNotNil(try repo.loadItem(id: item.id).sourceCompletedAt)
+    }
+
+    private func phoneProfile() -> RuntimeCapabilityProfile {
+        RuntimeCapabilityProfile(id: "phone", displayName: "Phone", capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]])
+    }
+
+    private func podcastInProgress(percent: Int, durationMs: Int?) -> (Item, Session, Interjection) {
+        let url = "https://cdn.example.com/352.mp3"
+        let item = Item(id: "item-podcast-352", title: "Episode", mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil, externalReference: nil, status: "ready", media: ItemMedia(sourceType: .remoteStream, url: url, durationMs: durationMs))
+        let session = Session(id: "session-podcast-352", itemId: item.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .transcriptBackedMedia, currentTargetId: url, position: Position(mediaTimeMs: 3_560_000), completionPercent: percent, playbackRate: 1)
+        let margin = Interjection(id: "ij-352", itemId: item.id, sessionId: session.id, targetType: .item, targetId: item.id, createdAt: Date(), roughPercent: percent, anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 3_570_000), audioPath: "ij-352.m4a", audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "Note", cleanedTranscript: nil, displayText: "Note", status: "active")
+        return (item, session, margin)
+    }
+
     private func copyOfBuild29Library() throws -> String {
         var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         while !FileManager.default.fileExists(atPath: root.appendingPathComponent("Contracts").path) {
