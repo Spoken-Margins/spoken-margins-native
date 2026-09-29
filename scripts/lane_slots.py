@@ -6,6 +6,12 @@ filled swap (2026-09-29, #184), so:
   the whole job, not just the boot; a second job may join only while memory pressure is normal and
   the second slot hasn't been switched off (after the owner freed memory, 2026-09-29, #184).
 - Build slots: at most two xcodebuild runs at once, and only one while a simulator job runs.
+- Host-test slots: at most two heavy host test runs at once (a --plan fast run, a full `swift test`
+  through scripts/host-test-lane), and only one while a simulator job runs. Ungated, five sessions'
+  runs pushed the load to 150-420 and timing tests flaked (#350). They are separate from the build
+  slots, so a simulator test run holding the one build slot doesn't stall every merge check. A
+  host-slot holder never takes a build slot, so the two can't deadlock, and the slot passes to
+  the holder's children (SM_LANE_HOST_SLOT), so a run's own `swift test` doesn't queue again.
 - Simulator boot: one simulator boots at a time (two boots at once crash-flooded SpringBoard, #184).
 
 Each lock is an flock on a file in one per-user directory. The kernel releases a lock when its
@@ -22,6 +28,8 @@ import sys
 import time
 
 SLOTS = 2
+HOST_SLOTS = 2
+HOST_SLOT_ENV = 'SM_LANE_HOST_SLOT'
 POLL_SECONDS = 2.0
 NOTE_EVERY_SECONDS = 60.0
 SIMULATOR_SLOT = 'simulator-slot.lock'
@@ -196,6 +204,30 @@ def build_slot(label, out=sys.stderr, max_wait=None):
     """
     return _hold(build_slot_names(), 'build slot', label, out, max_wait,
                  allowed=lambda: 1 if simulator_job_running() else SLOTS)
+
+
+def host_slot_names():
+    return [f'host-test-slot-{index}.lock' for index in range(HOST_SLOTS)]
+
+
+@contextlib.contextmanager
+def host_test_slot(label, out=sys.stderr, max_wait=None):
+    """Hold a host-test slot for the with-block: one of two, or the first only while a simulator job runs.
+
+    Inside a process that already holds one (SM_LANE_HOST_SLOT is set), it yields at once.
+    Yields {'slot': index or None, 'waited_seconds': seconds}.
+    """
+    if os.environ.get(HOST_SLOT_ENV):
+        yield {'slot': None, 'waited_seconds': 0, 'held_by': os.environ[HOST_SLOT_ENV]}
+        return
+    handle, index, waited = acquire(host_slot_names(), 'host-test slot', label, out, max_wait,
+                                    allowed=lambda: 1 if simulator_job_running() else HOST_SLOTS)
+    os.environ[HOST_SLOT_ENV] = label
+    try:
+        yield {'slot': index, 'waited_seconds': waited}
+    finally:
+        os.environ.pop(HOST_SLOT_ENV, None)
+        release_handle(handle)
 
 
 def build_slot_file(index, label, out=sys.stderr, max_wait=None):
