@@ -400,6 +400,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var activeRequest: RenderRequest?
     private var stallMonitor: Task<Void, Never>?
     private var lastStallRecovery: ContinuousClock.Instant?
+    #if DEBUG
+    /// Runs as the stall monitor is about to stop, so a test can resume playback exactly then.
+    var debugStallMonitorWillExit: (@Sendable () -> Void)?
+    var debugHasStallMonitor: Bool { lock.withLock { stallMonitor != nil } }
+    #endif
     private let articleText: ArticleTextLookup?
     /// Where the article starts after a spoken preface, in spoken and source characters. Prepared
     /// audio covers the article alone, so the article is planned as its own section (#258).
@@ -1664,8 +1669,19 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         await MainActor.run { self.retryStallRecoveryIfDue() }
                     }
                     if !sample.active {
-                        self.lock.withLock { self.stallMonitor = nil }
-                        return
+                        #if DEBUG
+                        self.debugStallMonitorWillExit?()
+                        #endif
+                        // A play can land between the sample and here; it saw this monitor and
+                        // started none, so keep watching if playback is intended again (#301).
+                        let stops = self.lock.withLock { () -> Bool in
+                            guard self.transportIntent != .playing else { return false }
+                            self.stallMonitor = nil
+                            return true
+                        }
+                        if stops { return }
+                        detector.reset()
+                        stallOngoing = false
                     }
                 }
             }

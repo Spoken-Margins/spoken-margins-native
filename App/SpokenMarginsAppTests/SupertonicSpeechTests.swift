@@ -371,6 +371,26 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    // Re-audit of #301: a pause and resume between the monitor's last sample and its exit left no
+    // stall monitor, because the resume saw the exiting one and started nothing.
+    func testResumingAsTheStallMonitorExitsKeepsAMonitor() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: true)
+        let resume = MonitorExitResume()
+        resume.client = client
+        client.debugStallMonitorWillExit = { resume.run() }
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "exit", from: 0)
+        for _ in 0..<100 where log.startCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(300))
+        try client.pause()
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertTrue(client.debugHasStallMonitor, "playback resumed, so a stall monitor is running")
+        try client.stop()
+    }
+
     func testAPlayerThatIsPlayingIsNotAStall() async throws {
         let template = try makeTestWAV(duration: 3)
         defer { try? FileManager.default.removeItem(at: template) }
@@ -2159,6 +2179,17 @@ private final class StallEventLog: @unchecked Sendable {
     var lastFields: [String: String] { lock.withLock { last } }
     func stall(_ kind: String, _ fields: [String: String]) { lock.withLock { kinds.append(kind); last = fields } }
     func started() { lock.withLock { starts += 1 } }
+}
+
+private final class MonitorExitResume: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    var client: SupertonicSpeechPlaybackClient?
+    func run() {
+        let first = lock.withLock { () -> Bool in defer { done = true }; return !done }
+        guard first, let client, let offset = client.currentCharOffset() else { return }
+        try? client.play(targetId: "exit", from: offset)
+    }
 }
 
 private actor CancellationAwareSupertonicRenderer: SupertonicRendering {
