@@ -41,7 +41,7 @@ final class FeedbackBannerTests: XCTestCase {
     }
 
     func testAConfirmationDoesNotCoverAnErrorThatOffersRetry() {
-        let retryable = UserFeedbackEvent(kind: .error, message: "The request timed out.", retry: {})
+        let retryable = UserFeedbackEvent(kind: .error, message: "The request timed out.", retry: .init(key: "test") {})
         let plain = UserFeedbackEvent(kind: .error, message: "Clipboard does not contain text.")
         let confirmation = UserFeedbackEvent(kind: .success, message: "Copied.")
 

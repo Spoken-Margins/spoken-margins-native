@@ -2508,6 +2508,12 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.feedbackEvent?.kind, .error)
         XCTAssertTrue(model.lastError?.contains("No cleaned-transcript fallback was saved") == true)
         XCTAssertTrue(model.lastError?.contains("Tap Retry Summary") == true)
+
+        // #310: the banner offers Retry, and trying again another way withdraws the stale offer.
+        let failure = model.feedbackEvent
+        XCTAssertEqual(failure?.retry?.key, "summary")
+        model.summarize()
+        XCTAssertNotEqual(model.feedbackEvent?.id, failure?.id)
     }
 
     func testCompletedSummaryPlaybackDoesNotBlockSummarizingANewInterjection() async throws {

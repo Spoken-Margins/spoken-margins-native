@@ -10,8 +10,14 @@ struct UserFeedbackEvent: Identifiable, Equatable {
     let id = UUID()
     let kind: Kind
     let message: String
-    /// Repeats the failed action. Only an error offers it, and the banner then shows Retry.
-    var retry: (@MainActor () -> Void)? = nil
+    /// Repeats the failed action. Only an error offers it, and the banner then shows Retry. The key names
+    /// the action, so trying it again another way can withdraw a stale offer.
+    struct Retry {
+        let key: String
+        let action: @MainActor () -> Void
+    }
+
+    var retry: Retry? = nil
 
     /// Each event is new, so its id decides equality; the retry action can't be compared.
     static func == (lhs: UserFeedbackEvent, rhs: UserFeedbackEvent) -> Bool {
@@ -20,6 +26,27 @@ struct UserFeedbackEvent: Identifiable, Equatable {
 
     func mayBeReplaced(by newer: UserFeedbackEvent) -> Bool {
         FeedbackBannerPolicy.mayReplace(currentKind: kind, currentOffersRetry: retry != nil, with: newer.kind)
+    }
+}
+
+extension Gate1AppModel {
+    /// URLError's default description is a raw domain/code string, which is not useful to a listener.
+    nonisolated static func userFacingMessage(for urlError: URLError) -> String {
+        switch urlError.code {
+        case .timedOut:
+            return "The request timed out. Please try again."
+        case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed, .internationalRoamingOff:
+            return "You appear to be offline. Check your connection and try again."
+        case .badServerResponse, .fileDoesNotExist, .resourceUnavailable, .zeroByteResource:
+            return "The server couldn’t provide anything at that address. Check the link and try again."
+        case .badURL, .unsupportedURL, .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost:
+            return "That address couldn’t be reached. Check the link and try again."
+        case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate,
+             .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .clientCertificateRejected:
+            return "A secure connection to that site couldn’t be made."
+        default:
+            return "The network request failed. Please try again."
+        }
     }
 }
 
@@ -46,7 +73,7 @@ struct UserFeedbackBanner: View {
                 if let retry = feedback.retry {
                     Button("Retry") {
                         model.dismissFeedback(id: feedback.id)
-                        retry()
+                        retry.action()
                     }
                     .buttonStyle(.bordered)
                     .tint(AppColors.evergreen)
