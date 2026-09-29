@@ -14,7 +14,8 @@ final class PodcastLateAnchorPlacementTests: XCTestCase {
             .appending(path: "late-anchor-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let episode = try Self.writeLongEpisode(to: directory.appending(path: "episode.m4a"), minutes: 40)
+        let episode = directory.appending(path: "episode.m4a")
+        try SeededNoiseAudio.write(to: episode, seconds: 40 * 60)
 
         var queries: [PodcastPortableAnchorQuery] = []
         for (index, anchorMs) in [300_000, 2_160_000].enumerated() {
@@ -41,33 +42,6 @@ final class PodcastLateAnchorPlacementTests: XCTestCase {
                 "\(query.packageScopedId) at \(query.senderMediaTimeMs ?? -1) ms: \(String(describing: resolution?.evidenceClass))")
             XCTAssertLessThanOrEqual(abs(placed - (query.senderMediaTimeMs ?? 0)), 1_500)
         }
-    }
-
-    /// Low-rate mono AAC keeps generation quick; the noise is seeded so every run is identical.
-    private static func writeLongEpisode(to url: URL, minutes: Int) throws -> URL {
-        let sampleRate = 16_000.0
-        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
-        let file = try AVAudioFile(forWriting: url, settings: [
-            AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: sampleRate,
-            AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 32_000
-        ])
-        var state: UInt64 = 0x9E3779B97F4A7C15
-        let frames = AVAudioFrameCount(sampleRate)
-        for second in 0..<(minutes * 60) {
-            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
-            buffer.frameLength = frames
-            let samples = try XCTUnwrap(buffer.floatChannelData?[0])
-            for frame in 0..<Int(frames) {
-                state = state &* 6364136223846793005 &+ 1442695040888963407
-                let noise = Double(Int64(bitPattern: state >> 11)) / Double(1 << 52) - 1
-                let time = Double(second) + Double(frame) / sampleRate
-                let envelope = max(0, sin(time * 5.3) * sin(time * 1.7 + 0.4))
-                let tone = sin(2 * .pi * (220 + 180 * sin(time * 0.37 + sin(time * 0.013))) * time)
-                samples[frame] = Float(envelope * (0.5 * tone + 0.3 * noise))
-            }
-            try file.write(from: buffer)
-        }
-        return url
     }
 }
 #endif

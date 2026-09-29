@@ -10828,6 +10828,7 @@ final class Gate1AppModel: ObservableObject {
                           let item = try? store.loadItem(id: itemId), item.text == sourceText else { return }
                     try? await coordinator.commit(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText, audioURL: audioURL, durationMs: durationMs)
                 },
+                articleText: { itemId in try? store.loadItem(id: itemId).text },
                 preparedChunkLookup: { itemId, sourceText, plan in
                     guard let signature = try? await signatureTask.value,
                           let item = try? store.loadItem(id: itemId), item.text == sourceText else { return nil }
