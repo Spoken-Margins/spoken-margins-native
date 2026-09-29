@@ -82,9 +82,13 @@ class LaneSimTests(unittest.TestCase):
         fake.chmod(0o755)
         (folder / 'reports').mkdir()
         self.record = folder / 'record.jsonl'
+        self.comments = folder / 'gh-comments.txt'  # never the real #184
+        gh = folder / 'gh'
+        gh.write_text(f'#!/bin/sh\nprintf "%s\\n---\\n" "$*" >> "{self.comments}"\n')
+        gh.chmod(0o755)
         self.env = {'SM_LANE_STATE_DIR': str(folder / 'state'), 'SM_LANE_SIMCTL': str(fake),
                     'SM_LANE_CRASH_REPORTS': str(folder / 'reports'), 'FAKE_RECORD': str(self.record),
-                    'SM_LANE_MEMORY_PRESSURE': '1'}
+                    'SM_LANE_MEMORY_PRESSURE': '1', 'SM_LANE_GH': str(gh)}
         patches = [mock.patch.dict(os.environ, self.env), mock.patch.object(lane_sim, 'CRASH_POLL_SECONDS', 0.05),
                    mock.patch.object(lane_slots, 'POLL_SECONDS', 0.05)]
         for patch in patches:
@@ -279,11 +283,13 @@ class LaneSimTests(unittest.TestCase):
             with self.assertRaisesRegex(lane_sim.BootError, 'Invalid argument.*Memory pressure at boot: critical'):
                 lane_sim.boot(other, 'test', out=self.quiet)
 
-    def test_it_waits_while_another_simulator_is_booted(self):
-        with mock.patch.dict(os.environ, {'FAKE_BOOTED': 'X'}):
+    def test_it_never_boots_a_third_simulator(self):
+        with mock.patch.dict(os.environ, {'FAKE_BOOTED': 'X,Y'}):
             with self.assertRaisesRegex(lane_sim.BootError, 'another simulator stayed booted'):
                 lane_sim.wait_for_room(UDID, max_wait=0.1, poll=0.02)
-        seen = iter([{'X'}, set()])
+        with mock.patch.dict(os.environ, {'FAKE_BOOTED': 'X'}):
+            lane_sim.wait_for_room(UDID, max_wait=0.1, poll=0.02)  # the slots decide about a second one
+        seen = iter([{'X', 'Y'}, {'X'}])
         lane_sim.wait_for_room(UDID, max_wait=5, poll=0.01, booted=lambda: next(seen))
 
     def test_builds_get_one_slot_while_a_simulator_job_runs(self):
@@ -303,14 +309,92 @@ class LaneSimTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         with mock.patch.object(runner, 'RUNNER_SLOT_WAIT', 0.2), \
+                mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '2'}), \
                 mock.patch.object(lane_sim, 'create_temporary', side_effect=AssertionError('made a simulator')), \
                 lane_slots.simulator_slot('the Test Desk', out=self.quiet), mock.patch('sys.stdout', self.quiet):
             verdict, _, _, details, _, _ = runner.run_t3(['AppNavigationStateTests'], 'r1', Path(self.temporary.name))
         self.assertEqual(verdict, 'INCONCLUSIVE')
-        self.assertIn('one simulator slot stayed busy', details[0])
+        self.assertIn('simulator slots stayed busy', details[0])
+        self.assertIn('memory pressure is warn', details[0])
 
-    def test_a_second_simulator_job_waits_until_the_first_is_done(self):
+    # The second slot (#184): a job may always start alone; joining a running one needs normal memory
+    # pressure and the second slot switched on.
+    def test_a_second_job_joins_only_while_pressure_is_normal_and_the_slot_is_on(self):
+        with lane_slots.simulator_slot('first', out=self.quiet):
+            with lane_slots.simulator_slot('second', out=self.quiet, max_wait=1):
+                self.assertEqual(lane_slots.simulator_jobs_running(), 2)
+                with self.assertRaises(TimeoutError):  # never a third
+                    with lane_slots.simulator_slot('third', out=self.quiet, max_wait=0.3):
+                        pass
+            with mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '2'}):
+                with self.assertRaisesRegex(TimeoutError, 'memory pressure is warn'):
+                    with lane_slots.simulator_slot('second', out=self.quiet, max_wait=0.3):
+                        pass
+            lane_slots.disable_second_slot('test')
+            with self.assertRaisesRegex(TimeoutError, 'switched off'):
+                with lane_slots.simulator_slot('second', out=self.quiet, max_wait=0.3):
+                    pass
+            lane_slots.enable_second_slot()
+            with lane_slots.simulator_slot('second', out=self.quiet, max_wait=1):
+                pass
+
+    def test_a_lone_job_starts_whatever_the_pressure(self):
+        with mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '4'}):
+            with lane_slots.simulator_slot('alone', out=self.quiet, max_wait=1):
+                self.assertEqual(lane_slots.simulator_jobs_running(), 1)
+
+    def test_a_free_first_slot_is_not_a_way_around_the_brake(self):
+        # First job ended, second still running: a new job would be the second one again.
+        handle = lane_slots.acquire([lane_slots.SIMULATOR_SLOTS[1]], 'simulator slot', 'running second', self.quiet)[0]
+        try:
+            with mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '2'}):
+                with self.assertRaises(TimeoutError):
+                    with lane_slots.simulator_slot('new', out=self.quiet, max_wait=0.3):
+                        pass
+        finally:
+            lane_slots.release_handle(handle)
+
+    def test_the_boot_reports_one_or_two_simulator_periods(self):
+        info = {}
+        with lane_slots.simulator_slot('this job', out=self.quiet):
+            lane_sim.boot(UDID, 'test', out=self.quiet, info=info)
+        self.assertEqual(info['period'], 'one-simulator')
+        with lane_slots.simulator_slot('other job', out=self.quiet), lane_slots.simulator_slot('this job', out=self.quiet):
+            lane_sim.boot('33333333-0000-0000-0000-000000000000', 'test', out=self.quiet, info=info)
+        self.assertEqual(info['period'], 'two-simulator')
+        self.assertIn('two-simulator period', (Path(self.env['SM_LANE_STATE_DIR']) / 'boot-events.log').read_text())
+
+    def test_the_watcher_goes_back_to_one_after_ten_minutes_of_warn_with_two_up(self):
+        clock = iter(range(0, 100000, 100))  # each look at the clock is 100 s later
+        announced = []
+        with lane_slots.simulator_slot('first', out=self.quiet), lane_slots.simulator_slot('second', out=self.quiet), \
+                mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '2'}), \
+                mock.patch.object(lane_sim, 'announce', side_effect=announced.append):
+            states = [(10, 20)] * 12 + [(None, None)]
+            monitor = lane_sim.SpringBoardMonitor(UDID, lambda udid: states.pop(0) if len(states) > 1 else states[0])
+            lane_sim.watch(UDID, poll=0.001, monitor=monitor, now=lambda: next(clock))
+        self.assertFalse(lane_slots.second_slot_status()[0])
+        self.assertIn('switched off', lane_slots.second_slot_status()[1])
+        self.assertEqual(len(announced), 1)
+        self.assertIn('back to one simulator', announced[0])
+
+    def test_the_switch_on_the_command_line(self):
+        helper = [sys.executable, str(SCRIPTS / 'lane-sim-boot'), '--second-slot']
+        env = dict(os.environ)
+        off = subprocess.run(helper + ['off', 'journeys', 'too', 'slow'], env=env, capture_output=True, text=True, timeout=60)
+        self.assertIn('not available (the second slot is switched off', off.stdout)
+        comment = self.comments.read_text()
+        self.assertIn('issue comment 184', comment)
+        self.assertIn('back to one simulator.** journeys too slow (switched off by hand)', comment)
+        subprocess.run(helper + ['off', 'again'], env=env, capture_output=True, timeout=60)
+        self.assertEqual(self.comments.read_text(), comment)  # said once, not again while it stays off
+        on = subprocess.run(helper + ['on'], env=env, capture_output=True, text=True, timeout=60)
+        self.assertIn('second simulator slot: available', on.stdout)
+        self.assertNotEqual(subprocess.run(helper + ['off'], env=env, capture_output=True, text=True).returncode, 0)
+
+    def test_a_second_simulator_job_waits_until_the_first_is_done_while_the_second_slot_is_off(self):
         helper = [sys.executable, str(SCRIPTS / 'lane-sim-boot')]
+        lane_slots.disable_second_slot('test')
         first = subprocess.run(helper + ['A-1'], env=dict(os.environ), capture_output=True, text=True, timeout=60)
         self.assertEqual(first.returncode, 0, first.stderr)
         self.assertTrue(lane_slots.simulator_job_running())  # the watcher holds it after the helper exited

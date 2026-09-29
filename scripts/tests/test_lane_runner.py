@@ -274,7 +274,7 @@ class T3Tests(unittest.TestCase):
             verdict, _, _, details, _, _ = lane._t3_on_fresh_device({'app': ['T/A']}, 'r', Path(temporary),
                                                                      'com.apple.CoreSimulator.SimRuntime.iOS-26-5')
         self.assertEqual((verdict, details[0]), ('PASS', 'first boot of the fresh simulator took 1m05s (memory pressure '
-                                                         'at boot: warn, after waiting 600s)'))
+                                                         'at boot: warn, after waiting 600s; one-simulator period)'))
 
     def test_a_tolerated_change_and_a_late_crash_report_are_reported_without_changing_the_verdict(self):
         import lane_sim
@@ -294,6 +294,45 @@ class T3Tests(unittest.TestCase):
         self.assertIn("tolerated one SpringBoard change in the first 30 s of the first boot (owner's rule, #184)", details[1])
         self.assertTrue(any('marked unsafe and deleted' in line for line in details))
         self.assertEqual(crashes, 'none')
+
+    def _t3_with(self, boot, plans, back_to_one):
+        import lane_sim
+        with mock.patch.object(lane_sim, 'create_temporary', return_value='U'), \
+                mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release'), \
+                mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
+                mock.patch.object(lane_sim, 'back_to_one_simulator', back_to_one), \
+                mock.patch.object(lane, 'first_boot', return_value=boot), \
+                mock.patch.object(lane, 'run_plans', return_value=plans), \
+                tempfile.TemporaryDirectory() as temporary:
+            return lane._t3_on_fresh_device({'app': ['T/A']}, 'r7', Path(temporary),
+                                            'com.apple.CoreSimulator.SimRuntime.iOS-26-5')
+
+    def test_a_two_simulator_run_that_times_out_puts_the_lane_back_to_one_simulator(self):
+        # The lead's brake (#184): any two-simulator run INCONCLUSIVE from a timeout means back to one.
+        out_of_time = lane.summarize_manifest({'steps': [{'name': 'xcode-tests', 'seconds': 600.1,
+                                                          'timeout_seconds': 600, 'interrupted': True}]})
+        for period, expected in (('two-simulator', 1), ('one-simulator', 0)):
+            with self.subTest(period=period):
+                back_to_one = mock.Mock(return_value=True)
+                plans = ([out_of_time], ['failed_or_incomplete'], ['A (0 passed)'], [])
+                verdict, _, _, details, _, _ = self._t3_with((None, {'pressure': 'normal', 'period': period}), plans,
+                                                             back_to_one)
+                self.assertEqual(verdict, 'INCONCLUSIVE')
+                self.assertEqual(back_to_one.call_count, expected)
+                self.assertIn(f'{period} period', details[0])
+                self.assertEqual(any('back to one simulator' in line for line in details), bool(expected))
+        passing = ([lane.summarize_manifest({'steps': []})], ['verified'], ['A (1 passed)'], [])
+        back_to_one = mock.Mock(return_value=True)
+        self.assertEqual(self._t3_with((None, {'period': 'two-simulator'}), passing, back_to_one)[0], 'PASS')
+        back_to_one.assert_not_called()
+
+    def test_a_two_simulator_boot_that_times_out_puts_the_lane_back_to_one_simulator(self):
+        for problem, expected in (('not ready after 900s; shut down (not marked unsafe).', 1),
+                                  ('SpringBoard restarted twice during boot', 0)):
+            with self.subTest(problem=problem):
+                back_to_one = mock.Mock(return_value=True)
+                verdict = self._t3_with((problem, {'period': 'two-simulator'}), None, back_to_one)[0]
+                self.assertEqual((verdict, back_to_one.call_count), ('INCONCLUSIVE', expected))
 
     def test_a_flood_stops_the_remaining_plans(self):
         calls = []

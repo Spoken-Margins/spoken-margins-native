@@ -6,16 +6,18 @@ Both followed a `simctl boot` that failed with "Invalid argument" and then a ret
 So each boot:
 - refuses a device marked unsafe (a failed boot or a crash during boot marks it);
 - holds the Mac-wide simulator-boot lock, so one simulator boots at a time;
-- waits while another simulator is booted (one at a time on this 16 GB Mac);
+- never boots a third simulator (the slots in lane_slots.py decide whether a second may run);
 - holds both build slots, so no build runs while a simulator boots;
 - never retries a failed `simctl boot`: it shuts the device down and marks it unsafe;
 - watches the device's SpringBoard process until it is ready, and stops at the first restart or
   disappearance (crash reports reach DiagnosticReports about 80 s late, after a flood is under way),
   with crash reports as a second signal.
-The whole simulator job holds the Mac-wide simulator slot (lane_slots.py), so the runner's T3 and
-the Test Desk's T4 never run simulators at the same time. After the boot, a background watcher
+The whole simulator job holds a Mac-wide simulator slot (lane_slots.py). A second job (say the
+runner's T3 beside the Test Desk's T4) may start only while memory pressure is normal; the watcher
+goes back to one simulator if pressure sits at warn for 10 minutes with two up, and the runner does
+when a two-simulator run times out (the lead's brake, #184). After the boot, a background watcher
 (`lane-sim-boot --watch`) keeps watching SpringBoard, shuts the device down and marks it unsafe at
-the first crash, and holds the Test Desk's simulator slot until the device is gone.
+the first crash, and holds the job's simulator slot until the device is gone.
 `lane-sim-boot --done <udid>` tells the watcher a shutdown is coming, so it isn't counted as a
 crash, then shuts the device down and deletes it; the slot frees when the watcher exits.
 A fresh device's first boot migrates data for several minutes, hence the long readiness wait.
@@ -37,18 +39,22 @@ import subprocess
 import sys
 import time
 
-from lane_slots import build_slot_file, simulator_boot_lock, state_dir, SLOTS
+from lane_slots import (build_slot_file, disable_second_slot, memory_pressure_level, simulator_boot_lock,
+                        simulator_jobs_running, state_dir, PRESSURE_NAMES, SLOTS)
 
 IOS_MAJOR = 26  # iOS 27's Apple Intelligence services crash-flood on this Mac (#184)
 DEVICE_TYPE = 'com.apple.CoreSimulator.SimDeviceType.iPhone-17'
 FIRST_BOOT_TIMEOUT = 900
 LOCK_WAIT = 1800
-MAX_BOOTED = 1  # 16 GB Mac: a second simulator plus builds filled swap (#184)
+MAX_BOOTED = 2  # hard cap; lane_slots decides when a second simulator job may start (#184)
+# Back to one simulator if pressure sits at warn this long while two are up (the lead's brake, #184).
+TWO_SIMULATOR_WARN_LIMIT = 600
+LANE_REPO = 'uncomposed/spoken-margins-native'
+LANE_ISSUE = 184
 RELEASE_WAIT = 130
 # Both boots the watcher stopped on 2026-09-29 happened under memory pressure (#184), so a boot first
 # waits, holding the build slots so no new build adds to it, for pressure to be normal again.
 PRESSURE_WAIT = 600
-PRESSURE_NAMES = {1: 'normal', 2: 'warn', 4: 'critical'}
 # Three first boots on 2026-09-29 stopped on a SpringBoard change in their first 8-12 s with no crash
 # report. The owner accepted "one simulator failure or crash" (#184), so during the first 30 s of a
 # first boot one change is tolerated; a second, or any crash report, still stops the boot, and the
@@ -240,7 +246,17 @@ def watch(udid: str, poll: float = 1.0, monitor: SpringBoardMonitor | None = Non
     stop_flag, _, _ = watch_files(udid)
     monitor = monitor or SpringBoardMonitor(udid)
     recheck = crash_window
+    warn_since = None
     while True:
+        # The brake: with two simulators up, pressure at warn for too long means back to one.
+        if simulator_jobs_running() >= 2 and memory_pressure_level() not in (1, None):
+            warn_since = warn_since or now()
+            if now() - warn_since > TWO_SIMULATOR_WARN_LIMIT and back_to_one_simulator(
+                    f'memory pressure stayed above normal for over {TWO_SIMULATOR_WARN_LIMIT // 60} min with two '
+                    f'simulators up (seen by the watcher for {udid}).'):
+                print('[lane] second simulator slot switched off: pressure stayed above normal', flush=True)
+        else:
+            warn_since = None
         if recheck and now() > recheck[1] + LATE_REPORT_WAIT:
             print(f'[lane] no crash report for the boot of {udid}', flush=True)
             recheck = None
@@ -365,16 +381,6 @@ def all_build_slots(label: str, out, max_wait: float):
         yield
 
 
-def memory_pressure_level() -> int | None:
-    """The kernel's memory pressure level: 1 normal, 2 warn, 4 critical (None if unreadable)."""
-    if os.environ.get('SM_LANE_MEMORY_PRESSURE'):  # tests
-        return int(os.environ['SM_LANE_MEMORY_PRESSURE'])
-    try:
-        return int(subprocess.check_output(['sysctl', '-n', 'kern.memorystatus_vm_pressure_level'], text=True))
-    except (OSError, subprocess.CalledProcessError, ValueError):
-        return None
-
-
 def wait_for_normal_pressure(max_wait: float, poll: float = 10, level=None, clock=time.monotonic,
                              sleep=time.sleep) -> tuple:
     """Wait up to max_wait for normal memory pressure; returns (level name, seconds waited). Never fails."""
@@ -396,6 +402,25 @@ def wait_for_room(udid: str, max_wait: float, poll: float = 15, booted=booted_ud
         if time.monotonic() - started >= max_wait:
             raise BootError(f'another simulator stayed booted for {max_wait:.0f}s, so this one was not booted.')
         time.sleep(poll)
+
+
+def announce(text: str) -> None:
+    """Best effort: say it on the lane's tracking issue (needs gh with a token; silent otherwise)."""
+    try:
+        subprocess.run([os.environ.get('SM_LANE_GH', 'gh'), 'issue', 'comment', str(LANE_ISSUE),  # SM_LANE_GH: tests
+                        '--repo', os.environ.get('GH_REPO', LANE_REPO), '--body', text], capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def back_to_one_simulator(reason: str) -> bool:
+    """Switch the second simulator slot off, and say so on the tracking issue the first time."""
+    if not disable_second_slot(reason):
+        return False
+    record_event('lane', f'second simulator slot switched off: {reason}')
+    announce(f'**Lane: back to one simulator.** {reason}\n\nThe second slot stays off until someone runs '
+             '`scripts/lane-sim-boot --second-slot on` after looking at why.')
+    return True
 
 
 def stop(udid: str, reason: str) -> None:
@@ -424,13 +449,14 @@ def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lo
             wait_for_room(udid, lock_wait)
             with all_build_slots(f'{label} (no builds while booting)', out, lock_wait):
                 pressure, waited = wait_for_normal_pressure(PRESSURE_WAIT)
-                info.update(pressure=pressure, pressure_waited=round(waited))
-                print(f'[lane] memory pressure at boot: {pressure} (waited {waited:.0f}s for normal)', file=out,
-                      flush=True)
+                period = 'two-simulator' if simulator_jobs_running() >= 2 else 'one-simulator'
+                info.update(pressure=pressure, pressure_waited=round(waited), period=period)
+                print(f'[lane] memory pressure at boot: {pressure} (waited {waited:.0f}s for normal); {period} period',
+                      file=out, flush=True)
                 started = time.monotonic()
                 wall_start = time.time()
                 record_event(udid, f'boot started ({"first boot" if first_boot else "existing device"}, '
-                                   f'memory pressure {pressure})')
+                                   f'memory pressure {pressure}, {period} period)')
                 baseline = crash_snapshot(reports)
                 try:
                     booted = subprocess.run(simctl() + ['boot', udid], capture_output=True, text=True, timeout=120)
