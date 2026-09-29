@@ -135,6 +135,7 @@
 		AADF2C33CD9AC8865663E66D /* LocalSourceImporters.swift in Sources */ = {isa = PBXBuildFile; fileRef = A21A8C105F7D320136F9DBC5 /* LocalSourceImporters.swift */; };
 		AB149D16A2A0482B581B0847 /* SessionKitSharing in Frameworks */ = {isa = PBXBuildFile; productRef = 03B12E07A60683D31E17A8FC /* SessionKitSharing */; };
 		B3715F09AB0080AF916931F3 /* Gate1RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 479B709AF5D74954043B0852 /* Gate1RootView.swift */; };
+		DEC5C8A22FC4A8E2357E1A48 /* HelpScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1582DA21F4713FEF3CE759ED /* HelpScreen.swift */; };
 		B401E3D73FFFC3B4CCD67491 /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 34C621C37AF71E6ED22B1045 /* SessionKitAudio */; };
 		BB2EB8B4A269BF2F25903797 /* Gate1FlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB4DFB911729FD28E4C7545B /* Gate1FlowUITests.swift */; };
 		BDA408F88A3E21BDA648C61C /* ExperienceAudioPreparationQueueScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B8F9D72E9240D0529F9793 /* ExperienceAudioPreparationQueueScreen.swift */; };
@@ -280,6 +281,7 @@
 		45EC821C0D75C8F9A0D870AC /* DeveloperDiagnosticRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeveloperDiagnosticRecording.swift; sourceTree = "<group>"; };
 		465089CBB611D338A74CAE8A /* Gate1AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1AppModel.swift; sourceTree = "<group>"; };
 		479B709AF5D74954043B0852 /* Gate1RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1RootView.swift; sourceTree = "<group>"; };
+		1582DA21F4713FEF3CE759ED /* HelpScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpScreen.swift; sourceTree = "<group>"; };
 		4A72C4BF10DCCD88A4B819BA /* PlaybackPositionSlider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackPositionSlider.swift; sourceTree = "<group>"; };
 		4C1B2FF8159DFFEC7FFC245C /* Gate2LiveActivityIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate2LiveActivityIntents.swift; sourceTree = "<group>"; };
 		4EB6FEA8D71597BB5238F537 /* InterjectionPositionPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterjectionPositionPresentation.swift; sourceTree = "<group>"; };
@@ -676,6 +678,7 @@
 				DA90E6688F6CDFA1AA5BBA78 /* Gate5BrowserTextHandoffStore.swift */,
 				35550BC3E5F1FF166ED033B5 /* Gate5BrowserTextHandoffURL.swift */,
 				B48EE4978BF8CB989D9DBD09 /* GuidedOnboardingCoordinator.swift */,
+				1582DA21F4713FEF3CE759ED /* HelpScreen.swift */,
 				D36C3D45454D9F9EF65A318B /* ImportedMarginRemoteControls.swift */,
 				4EB6FEA8D71597BB5238F537 /* InterjectionPositionPresentation.swift */,
 				2B6354164E2747B55EE51BCE /* ListeningEditionStore.swift */,
@@ -1083,6 +1086,7 @@
 				1AECEF8BC97857E45970DFC3 /* Gate5BrowserTextHandoffStore.swift in Sources */,
 				77D7913EE73FD5527AE5BE61 /* Gate5BrowserTextHandoffURL.swift in Sources */,
 				E518167793556D9F011B3819 /* GuidedOnboardingCoordinator.swift in Sources */,
+				DEC5C8A22FC4A8E2357E1A48 /* HelpScreen.swift in Sources */,
 				03565DF3CF332819BDF16E75 /* ImportedMarginRemoteControls.swift in Sources */,
 				3EDD020FC44E0880B597A58E /* InterjectionPositionPresentation.swift in Sources */,
 				42EC866FE8CDA0314CB70CDC /* ListeningEditionStore.swift in Sources */,
