@@ -23,6 +23,14 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   ready-queue plan, decision 3). The base branch's scripts/test-scope.py classifies the PR's
   committed diff: T0 (docs, research, the server) runs nothing, T1 runs --plan fast, and T2 or
   higher runs --plan fast and both builds. An explicit request on the PR goes first.
+- The runner merges what it passes (decision 3). An automerge run tests the exact merge commit, with
+  next as its first parent. On PASS it posts a "Merge check (lane runner)" comment and pushes that
+  commit to next with a plain push; if next moved meanwhile, the push is refused and it tests again
+  on the newest next (up to MERGE_ATTEMPTS). It won't merge a PR that changes .github/ or
+  scripts/lane* (a PR can change the workflow that tests it), or an audio, persistence or packet
+  change without a "## Codex audit" comment: those pass or fail as usual and go to the desk.
+- PR code (builds and tests) runs without the GitHub token in its environment, and the checkout
+  keeps no credentials, so only this script's own fetch and push can use the token.
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
 default ~/Library/Caches/SpokenMarginsLane/evidence), SM_LANE_TOOLS (a checkout whose .venv and
@@ -32,6 +40,7 @@ Stdlib only, Python 3.9-compatible: it runs under /usr/bin/python3.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 from pathlib import Path
@@ -48,6 +57,12 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 QUEUED, RUNNING, DONE = 'lane:queued', 'lane:running', 'lane:done'
 AUTOMERGE = 'automerge'
 FAST_TIMEOUT = 2400
+MERGE_ATTEMPTS = 3
+MERGE_CHECK = '**Merge check (lane runner)'
+AUDIT = '## Codex audit'
+DESK_ONLY = ('.github/', 'scripts/lane')
+AUDITED = {'audio': 'the audio session', 'persistence': 'persistence', 'packet': 'packets'}
+BOT = ('github-actions[bot]', '41898282+github-actions[bot]@users.noreply.github.com')
 RUNNER_TIERS = ('T2', 'T3')
 APP_TEST_TARGET = 'SpokenMarginsAppTests'
 PLANS = {'app': 'AppBehavior', 'adapters': 'AudioAdapters'}
@@ -167,6 +182,22 @@ def report(request_id: str, verdict: str, head: str, base: str, tier: str, where
 
 # ---- Processes ----------------------------------------------------------------------------------
 
+def pr_code_env() -> dict:
+    """The environment for the PR's own code (builds, tests): without the GitHub token, so nothing the
+    PR changes can use the lane's write access."""
+    return {name: value for name, value in os.environ.items() if name not in ('GH_TOKEN', 'GITHUB_TOKEN')}
+
+
+def git_with_token(tree: Path) -> list[str]:
+    """git for this script's own fetch and push: the token goes in a header for that one command, since
+    the checkout keeps no credentials."""
+    token = os.environ.get('GH_TOKEN')
+    if not token:
+        return ['git', '-C', str(tree)]
+    basic = base64.b64encode(f'x-access-token:{token}'.encode()).decode()
+    return ['git', '-C', str(tree), '-c', f'http.https://github.com/.extraheader=AUTHORIZATION: basic {basic}']
+
+
 def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUPT_GRACE) -> int | None:
     """Run in a new process group and return its exit code, or None if it timed out.
 
@@ -176,7 +207,7 @@ def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUP
     # The child gets default SIGINT handling even if this process was started with it ignored (as
     # background jobs are), or the interrupt below would be silently ignored all the way down.
     process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
-                               preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+                               env=pr_code_env(), preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
     try:
         return process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -291,6 +322,93 @@ def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2) -> tupl
             'no app build: nothing in the diff reaches the app (T1)']
     verdict, builds, more = t2(evidence)
     return verdict, 'no simulator (compile only)', f'host tests (--plan fast): passed; {builds}', details + more
+
+
+def merge_blockers(scope: dict, comments: list[dict]) -> list[str]:
+    """Why the runner won't merge this PR itself even on PASS; the desk merges those."""
+    reasons = []
+    desk = [f['path'] for f in scope['files'] if f['path'].startswith(DESK_ONLY)]
+    if desk:
+        reasons.append(f'it changes the lane or its workflows ({", ".join(desk[:5])}), and a PR can change '
+                       'what tests it')
+    risky = sorted({AUDITED[f['category']] for f in scope['files'] if f['category'] in AUDITED})
+    if risky and not any((c.get('body') or '').lstrip().startswith(AUDIT) for c in comments):
+        reasons.append(f'it touches {" and ".join(risky)} and has no "{AUDIT}" comment')
+    return reasons
+
+
+def build_merge_commit(tree: Path, base: str, head: str, pr: int, title: str) -> tuple[str | None, list[str]]:
+    """The exact commit that would land: origin/<base> as first parent, the PR head as second.
+
+    Returns (its SHA, []) or (None, the conflicting files); a conflict leaves the tree clean.
+    """
+    git = ['git', '-C', str(tree)]
+    subprocess.run(git + ['checkout', '--quiet', '--detach', f'origin/{base}'], check=True, capture_output=True)
+    name, email = BOT
+    merged = subprocess.run(git + ['-c', f'user.name={name}', '-c', f'user.email={email}', 'merge', '--no-ff',
+                                   '--quiet', '-m', f'Merge pull request #{pr}: {title}',
+                                   '-m', 'Tested as this exact commit and merged by the lane runner.', head],
+                            capture_output=True, text=True)
+    if merged.returncode == 0:
+        return subprocess.check_output(git + ['rev-parse', 'HEAD'], text=True).strip(), []
+    conflicts = subprocess.run(git + ['diff', '--name-only', '--diff-filter=U'], capture_output=True,
+                               text=True).stdout.split()
+    subprocess.run(git + ['merge', '--abort'], capture_output=True)
+    return None, conflicts or ['the merge failed']
+
+
+def push_merge(tree: Path, sha: str, base: str) -> tuple[bool, str]:
+    """A plain push of the tested merge commit to <base>: refused unless <base> is still its first parent."""
+    pushed = subprocess.run(git_with_token(tree) + ['push', '--quiet', 'origin', f'{sha}:refs/heads/{base}'],
+                            capture_output=True, text=True)
+    lines = [line.strip() for line in (pushed.stderr + pushed.stdout).splitlines()
+             if line.strip() and not line.startswith('hint:')]
+    telling = [line for line in lines if 'rejected' in line or line.startswith(('error:', 'fatal:'))]
+    return pushed.returncode == 0, (telling or lines or [f'exit {pushed.returncode}'])[0]
+
+
+def merge_check(head: str, merge_sha: str, base: str, base_sha: str, ran: str) -> str:
+    return (f'{MERGE_CHECK} on `{head[:7]}`: PASS.**\n'
+            f'- Tested the merge commit `{merge_sha[:7]}`: {base} at `{base_sha[:7]}` first, then this PR.\n'
+            f'- Ran: {ran}.\n'
+            f'- Pushing `{merge_sha[:7]}` to {base} now. If {base} moved meanwhile, the push is refused and the '
+            'runner tests again on the newest one.')
+
+
+def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, evidence: Path,
+             comments: list[dict], attempts: int = MERGE_ATTEMPTS) -> tuple[str, str, str, list[str]]:
+    """The automerge run: test the merge commit, and push it to <base> on PASS unless something blocks it."""
+    notes: list[str] = []
+    for attempt in range(1, attempts + 1):
+        merge_sha, conflicts = build_merge_commit(ROOT, base, head, pr, pull.get('title', ''))
+        if conflicts:
+            return 'INCONCLUSIVE', 'no simulator', 'nothing', notes + [
+                f'The PR does not merge cleanly into {base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
+                f'Merge {base} into your branch and push; the automerge label runs it again.']
+        scope = diff_scope(ROOT, base)
+        (evidence / 'scope.json').write_text(json.dumps(scope, indent=2))
+        verdict, where, ran, details = run_automerge(scope, evidence)
+        details = [f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR)'] \
+            + notes + details
+        if verdict != 'PASS':
+            return verdict, where, ran, details
+        blockers = merge_blockers(scope, comments)
+        if blockers:
+            return verdict, where, ran, details + [f'not merged by the runner: {b}. The desk merges it.'
+                                                   for b in blockers]
+        now = github.pull()
+        if now['head']['sha'] != head or AUTOMERGE not in {label['name'] for label in now.get('labels', [])}:
+            return verdict, where, ran, details + ['not merged: the PR moved on or lost the automerge label while '
+                                                   'it was tested']
+        github.comment(merge_check(head, merge_sha, base, base_sha, ran))
+        pushed, message = push_merge(ROOT, merge_sha, base)
+        if pushed:
+            return verdict, where, ran, details + [f'merged into {base} as {merge_sha[:7]}']
+        notes.append(f'attempt {attempt}: the push to {base} was refused ({message}), so {base} moved; '
+                     'tested again on the newest one')
+        base_sha = fetch_base(ROOT, base)
+    return 'PASS', where, ran, details + notes[-1:] + [
+        f'not merged: {base} kept moving ({attempts} attempts). Remove and re-add automerge to try again.']
 
 
 # ---- T3 -----------------------------------------------------------------------------------------
@@ -541,7 +659,7 @@ def cleanup(github: GitHub, run_url: str) -> int:
 
 def fetch_base(tree: Path, base: str) -> str:
     """Fetch the newest base branch into the tree and return its commit."""
-    subprocess.run(['git', '-C', str(tree), 'fetch', '--no-tags', '--quiet', 'origin', base], check=True)
+    subprocess.run(git_with_token(tree) + ['fetch', '--no-tags', '--quiet', 'origin', base], check=True)
     return subprocess.check_output(['git', '-C', str(tree), 'rev-parse', f'origin/{base}'], text=True).strip()
 
 
@@ -596,7 +714,8 @@ def main(argv=None) -> int:
     sweep_runner_simulators()
     pull = github.pull()
     head = pull['head']['sha']
-    automerge = AUTOMERGE in {label['name'] for label in pull.get('labels', [])}
+    labels = {label['name'] for label in pull.get('labels', [])}
+    automerge = AUTOMERGE in labels
     if head != args.event_head:
         print(f'The PR moved on to {head[:7]} since this run was queued; the newer run tests it.')
         return 0
@@ -606,7 +725,7 @@ def main(argv=None) -> int:
         request = {'tier': 'auto', 'tests': [], 'commit': ''}  # the automerge label is the request
     explicit = request is not None and request['tier'] != 'auto'  # automerge runs leave lane:* labels alone
     if request is None:
-        if not desk_waiting:
+        if not desk_waiting and QUEUED in labels:
             github.comment('Lane: lane:queued is set, but there is no `/lane T2` or `/lane T3` request comment newer '
                            'than the last lane report, so nothing ran. Comment the request (format in '
                            f'docs/workstreams/test-lane.md), then add lane:queued.\n{NOTE}')
@@ -615,7 +734,9 @@ def main(argv=None) -> int:
         return 0
     base_sha = fetch_base(ROOT, args.base)
     wanted = identity(request['tier'], head, base_sha, request['tests'])
-    done_before = earlier_report(comments, wanted)
+    # An automerge run always runs: after an earlier PASS that didn't merge (no audit yet, next moved),
+    # re-adding the label is how to try again.
+    done_before = earlier_report(comments, wanted) if explicit else None
     if done_before:
         url, earlier_verdict = done_before
         github.comment(f'Lane: identical {request["tier"]} request for {head[:7]} already reported '
@@ -639,16 +760,15 @@ def main(argv=None) -> int:
         if requested and not head.startswith(requested) else []
     cc = ''
     try:
-        conflicts = merge_base_branch(ROOT, args.base)
-        if conflicts:
+        conflicts = [] if request['tier'] == 'auto' else merge_base_branch(ROOT, args.base)
+        if request['tier'] == 'auto':
+            verdict, where, ran, details = run_auto(github, pull, args.pr, args.base, head, base_sha, evidence,
+                                                    comments)
+            crashes = 'none'
+        elif conflicts:
             verdict, where, ran, crashes = 'INCONCLUSIVE', 'no simulator', 'nothing', 'none'
             details = [f'The PR does not merge cleanly into {args.base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
                        f'Merge {args.base} into your branch, push, and ask again.']
-        elif request['tier'] == 'auto':
-            scope = diff_scope(ROOT, args.base)
-            (evidence / 'scope.json').write_text(json.dumps(scope, indent=2))
-            verdict, where, ran, details = run_automerge(scope, evidence)
-            crashes = 'none'
         elif request['tier'] == 'T2':
             verdict, ran, details = run_t2(evidence)
             where, crashes = 'no simulator (compile only)', 'none'
