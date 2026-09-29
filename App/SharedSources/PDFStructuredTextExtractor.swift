@@ -35,6 +35,8 @@ enum PDFStructuredTextExtractor {
         var pointSize: CGFloat
         var isBold: Bool
         var bounds: CGRect?
+        /// Character ranges of `text` set as superscripts (v2 only).
+        var superscripts: [Range<Int>] = []
     }
 
     static func markdown(from url: URL) throws -> String {
@@ -230,7 +232,7 @@ enum PDFStructuredTextExtractor {
         let outline = outlineHeadings(in: document)
         var pages: [[TextLine]] = []
         for pageIndex in 0..<document.pageCount {
-            pages.append(document.page(at: pageIndex).map { lines(from: $0) } ?? [])
+            pages.append(document.page(at: pageIndex).map { lines(from: $0, detectSuperscripts: true) } ?? [])
         }
         let allLines = pages.flatMap { $0 }
         guard allLines.contains(where: { !$0.text.isEmpty }) else {
@@ -329,7 +331,7 @@ enum PDFStructuredTextExtractor {
                     && isVisualHeading(line, bodySize: bodySize) {
                     result.append(StructuredDocumentLine(text: line.text, role: .heading, pageIndex: pageIndex, level: visualHeadingLevel(line, bodySize: bodySize)))
                 } else {
-                    result.append(StructuredDocumentLine(text: line.text, role: .body, pageIndex: pageIndex))
+                    result.append(StructuredDocumentLine(text: line.text, role: .body, pageIndex: pageIndex, superscripts: line.superscripts))
                 }
             }
         }
@@ -402,7 +404,8 @@ enum PDFStructuredTextExtractor {
             guard lines[index].role == .heading || lines[index].role == .body,
                   lines[index].text.range(of: referencesHeading, options: .regularExpression) != nil else { continue }
             let tail = lines[(index + 1)...].filter { $0.role == .body }.prefix(40)
-            guard tail.filter({ looksLikeBibliographyEntry($0.text) }).count >= 4 else { continue }
+            // Three entries, as v1 required (#220 audit 4): a short list is still a list.
+            guard tail.filter({ looksLikeBibliographyEntry($0.text) }).count >= 3 else { continue }
             // The heading is part of the list: "References skipped." says it once,
             // instead of "References", then "References skipped."
             lines[index].role = .reference
@@ -708,7 +711,7 @@ enum PDFStructuredTextExtractor {
             || text.range(of: #"\((?:19|20)[0-9]{2}[a-z]?\)|\bdoi[:.]|\b10\.[0-9]{4,}/"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
-    private static func lines(from page: PDFPage) -> [TextLine] {
+    private static func lines(from page: PDFPage, detectSuperscripts: Bool = false) -> [TextLine] {
         guard let attributed = page.attributedString, attributed.length > 0 else {
             return page.string?
                 .components(separatedBy: .newlines)
@@ -726,16 +729,96 @@ enum PDFStructuredTextExtractor {
                 let visibleLocation = firstVisibleLocation(in: source, range: range)
                 let font = attributed.attribute(.font, at: visibleLocation, effectiveRange: nil) as? UIFont
                 let selection = page.selection(for: range)
+                let bounds = selection?.bounds(for: page)
                 result.append(TextLine(
                     text: text,
                     pointSize: font?.pointSize ?? 0,
                     isBold: font?.fontDescriptor.symbolicTraits.contains(.traitBold) == true,
-                    bounds: selection?.bounds(for: page)
+                    bounds: bounds,
+                    superscripts: detectSuperscripts
+                        ? superscriptRanges(in: attributed, lineRange: range, page: page, lineBounds: bounds, cleanedText: text)
+                        : []
                 ))
             }
             location = NSMaxRange(range)
         }
         return result
+    }
+
+    /// Citation and footnote markers set as superscripts ("aptitude,¹", "effects¹²,¹⁴"):
+    /// short runs in smaller type, attached to the text before them and not lowered
+    /// (a subscript, as in "CO2", isn't one). Ordinals ("20th") and
+    /// exponents after a digit ("10⁵") are left alone. PDFKit gives no superscript
+    /// attribute, only the size and position. Returns ranges of the cleaned line.
+    private static func superscriptRanges(
+        in attributed: NSAttributedString,
+        lineRange: NSRange,
+        page: PDFPage,
+        lineBounds: CGRect?,
+        cleanedText: String
+    ) -> [Range<Int>] {
+        guard lineBounds != nil else { return [] }
+        var lengthBySize: [CGFloat: Int] = [:]
+        var runs: [(range: NSRange, size: CGFloat)] = []
+        attributed.enumerateAttribute(.font, in: lineRange) { value, range, _ in
+            let size = (value as? UIFont)?.pointSize ?? 0
+            lengthBySize[size, default: 0] += range.length
+            runs.append((range, size))
+        }
+        guard runs.count > 1, let main = lengthBySize.max(by: { $0.value < $1.value })?.key, main > 0 else { return [] }
+        let source = attributed.string as NSString
+        var raised: [NSRange] = []
+        for run in runs where run.size > 0 && run.size <= main * 0.8 && run.range.location > lineRange.location {
+            var range = run.range
+            while range.length > 0, let scalar = UnicodeScalar(source.character(at: NSMaxRange(range) - 1)),
+                  CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                range.length -= 1
+            }
+            guard range.length > 0, range.length <= 12 else { continue }
+            let text = source.substring(with: range)
+            guard text.range(of: #"^[0-9,–\-*†‡§¶a-z]+$"#, options: .regularExpression) != nil,
+                  !["st", "nd", "rd", "th"].contains(text),
+                  let before = UnicodeScalar(source.character(at: range.location - 1)),
+                  !CharacterSet.whitespacesAndNewlines.contains(before),
+                  !(CharacterSet.decimalDigits.contains(before) && text.allSatisfy(\.isNumber)) else { continue }
+            // Level with or above the letters before it; a subscript ("CO2") sits lower.
+            // (Some PDFs set citation numbers small but on the baseline.)
+            var reference = range.location - 1
+            while reference > lineRange.location, let scalar = UnicodeScalar(source.character(at: reference)),
+                  !CharacterSet.alphanumerics.contains(scalar) {
+                reference -= 1
+            }
+            let markerBottom = page.characterBounds(at: range.location).minY
+            let letterBottom = page.characterBounds(at: reference).minY
+            guard markerBottom >= letterBottom - main * 0.15 else { continue }
+            raised.append(range)
+        }
+        guard !raised.isEmpty else { return [] }
+        // Map raw UTF-16 offsets to Characters of the cleaned line, cleaning the way
+        // `cleaned` does: drop control characters, collapse whitespace, trim.
+        let raw = source.substring(with: lineRange)
+        var output: [Character] = []
+        var rawOffsets: [Int] = []
+        var utf16 = lineRange.location
+        for character in raw {
+            let width = character.utf16.count
+            defer { utf16 += width }
+            if character.unicodeScalars.allSatisfy({ $0.value < 0x20 && $0 != "\t" && $0 != "\n" && $0 != "\r" || $0.value == 0x7F }) { continue }
+            if character.isWhitespace {
+                if output.last != " " { output.append(" "); rawOffsets.append(utf16) }
+                continue
+            }
+            output.append(character)
+            rawOffsets.append(utf16)
+        }
+        while output.first == " " { output.removeFirst(); rawOffsets.removeFirst() }
+        while output.last == " " { output.removeLast(); rawOffsets.removeLast() }
+        guard String(output) == cleanedText else { return [] }
+        return raised.compactMap { range in
+            let kept = rawOffsets.indices.filter { rawOffsets[$0] >= range.location && rawOffsets[$0] < NSMaxRange(range) }
+            guard let first = kept.first, let last = kept.last else { return nil }
+            return first..<(last + 1)
+        }
     }
 
     private static func lineBelongsToTable(_ line: TextLine, region: CGRect) -> Bool {

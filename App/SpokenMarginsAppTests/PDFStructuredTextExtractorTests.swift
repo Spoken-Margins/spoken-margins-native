@@ -117,6 +117,25 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertEqual(PDFStructuredTextExtractor.dictionaryWords(["agreement", "openended"]), ["agreement"])
     }
 
+    func testV2SilencesSuperscriptCitationsButKeepsSubscripts() throws {
+        // #220 audit 3: real imports never marked superscript citations, so "aptitude,1"
+        // was spoken with its number. A lowered subscript ("CO2") must stay.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 11)]
+        let small: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 7)]
+        let text = NSMutableAttributedString(string: "Reasoning and the aptitude,", attributes: body)
+        text.append(NSAttributedString(string: "1", attributes: small))
+        text.append(NSAttributedString(string: " is revised, and CO", attributes: body))
+        text.append(NSAttributedString(string: "2", attributes: small.merging([.baselineOffset: -3]) { $1 }))
+        text.append(NSAttributedString(string: " levels rose in every cohort we studied.", attributes: body))
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            text.draw(at: CGPoint(x: 60, y: 80))
+        }
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: data)))
+        XCTAssertEqual(StructuredDocumentSpeech.spokenLines(document), ["Reasoning and the aptitude, is revised, and CO2 levels rose in every cohort we studied."])
+    }
+
     func testV2TakesTheArXivSideStampForPageFurniture() {
         // #220 T4 and #162: "arXiv:2607.28282v1 [cs.CL] 30 Jul 2026", printed rotated
         // in the left margin of every arXiv paper, was read as the first sentence.
@@ -125,6 +144,18 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertTrue(PDFStructuredTextExtractor.isSideStamp("Downloaded from journals.example.org", bounds: CGRect(x: 580, y: 200, width: 12, height: 300), pageBox: box))
         XCTAssertFalse(PDFStructuredTextExtractor.isSideStamp("We cite arXiv:2607.28282 in the text.", bounds: CGRect(x: 72, y: 400, width: 468, height: 12), pageBox: box))
         XCTAssertFalse(PDFStructuredTextExtractor.isSideStamp("Short", bounds: CGRect(x: 300, y: 400, width: 10, height: 12), pageBox: box))
+    }
+
+    func testV2SkipsAThreeEntryReferenceListAsV1Did() {
+        // #220 audit 4: v1 cut a list of three dated entries; v2 needed four and read them.
+        var lines = [
+            StructuredDocumentLine(text: "References", role: .heading, level: 2),
+            StructuredDocumentLine(text: "[1] A. Writer. Reading and listening. J Examples, 2020.", role: .body),
+            StructuredDocumentLine(text: "[2] B. Reader. Commutes and attention. J Examples, 2021.", role: .body),
+            StructuredDocumentLine(text: "[3] C. Listener. Audio papers. J Examples, 2022.", role: .body),
+        ]
+        PDFStructuredTextExtractor.labelReferenceLists(&lines)
+        XCTAssertEqual(lines.map(\.role), [.reference, .reference, .reference, .reference])
     }
 
     func testV2DoesNotTakeAProseMentionOfReferencesForAList() {
