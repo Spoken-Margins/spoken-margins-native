@@ -677,6 +677,81 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    // #235: the owner's pause (or Margin) then Play fails with 4b599361 (playback_start_timeout)
+    // while Supertonic is behind the listener, and a second Play minutes later starts at once.
+    // Real engine and real client; the chunk the listener resumes into is still rendering.
+    // Today the engine's 10 s start watchdog fails a resume that is only waiting for that chunk.
+    func testResumeWaitingOnASlowChunkIsNotFailedByTheStartWatchdog() async throws {
+        let template = try makeTestWAV(duration: 0.1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let thirdRender = AsyncStream<Void>.makeStream()
+        defer { thirdRender.continuation.finish() }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template, renderGates: [3: thirdRender.stream])
+        let firstChunkStarted = expectation(description: "first chunk started")
+        let secondChunkStarted = expectation(description: "second chunk started")
+        let decisions = ResumeDecisionCapture()
+        let starts = PlaybackStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in
+                let count = starts.increment()
+                if count == 1 { firstChunkStarted.fulfill() }
+                if count == 2 { secondChunkStarted.fulfill() }
+            },
+            observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient(),
+            onResumeDecision: { decisions.append($0) }
+        )
+        let text = (1...12).map { index in
+            "Sentence \(index) contains enough ordinary words to keep the narration moving through several chunks."
+        }.joined(separator: " ")
+        let item = Item(id: "item-235", title: "Slow chunk", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        var clock = Date(timeIntervalSince1970: 1_000)
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(
+                id: "phone", displayName: "Phone",
+                capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
+            ),
+            repository: InMemorySessionRepository(items: [item.id: item]),
+            audio: client,
+            playbackStartTimeout: 10,
+            now: { clock }
+        )
+
+        _ = try engine.startSession(itemId: item.id)
+        await fulfillment(of: [firstChunkStarted], timeout: 3)
+        _ = try engine.syncPlaybackProgress()
+        client.debugFinishActiveChunk()
+        await fulfillment(of: [secondChunkStarted], timeout: 3)
+        client.debugFinishActiveChunk()
+        // Supertonic is now behind: the third chunk is still rendering.
+        _ = try engine.syncPlaybackProgress()
+        _ = try engine.pause()
+        let resumed = try engine.resumePlayback()
+        let startsBeforeRender = starts.value
+        clock = clock.addingTimeInterval(11)
+        let afterWatchdog = try engine.syncPlaybackProgress()
+        print("#235 resume decision: \(decisions.values.last ?? [:]); status before: \(resumed.status), after 11 s: \(afterWatchdog.status), failure: \(afterWatchdog.lastFailure ?? "none")")
+
+        XCTExpectFailure("#235: the engine's start watchdog fails a resume that is only waiting for a Supertonic chunk") {
+            XCTAssertNotEqual(afterWatchdog.status, .failed)
+        }
+
+        // The chunk arrives after the watchdog. Record whether audio starts under a "failed" state.
+        thirdRender.continuation.finish()
+        for _ in 0..<100 where starts.value == startsBeforeRender {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        let late = try engine.syncPlaybackProgress()
+        print("#235 after the slow chunk rendered: audio starts \(startsBeforeRender) -> \(starts.value), engine status \(late.status)")
+        try client.stop()
+    }
+
     func testRenderGapTimeoutContinuesAfterFinishedPassage() async throws {
         let template = try makeTestWAV(duration: 1)
         defer { try? FileManager.default.removeItem(at: template) }
@@ -1428,6 +1503,20 @@ final class SupertonicSpeechTests: XCTestCase {
 }
 
 private struct Failure: Error {}
+
+private final class ResumeDecisionCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [[String: String]] = []
+    var values: [[String: String]] { lock.withLock { stored } }
+    func append(_ value: [String: String]) { lock.withLock { stored.append(value) } }
+}
+
+private final class PlaybackStartCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.withLock { count } }
+    func increment() -> Int { lock.withLock { count += 1; return count } }
+}
 
 private final class PlaybackStartCapture: @unchecked Sendable {
     private let lock = NSLock()
