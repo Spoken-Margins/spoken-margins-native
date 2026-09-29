@@ -219,9 +219,12 @@ enum PDFStructuredTextExtractor {
         if let title = document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String, !cleaned(title).isEmpty {
             return cleaned(title)
         }
+        // v1 made each line of a printed title a heading; v2 reads the title as one
+        // segment (#272) but keeps v1's level on it, so its first line is v1's title.
         let characters = Array(structured.text)
-        return structured.segments.first { $0.role == .heading && $0.level == 1 }.map {
+        return structured.segments.first { ($0.role == .heading || $0.role == .title) && $0.level == 1 }.map {
             String(characters[$0.range.start..<min($0.range.end, characters.count)])
+                .split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
         }
     }
 
@@ -314,7 +317,13 @@ enum PDFStructuredTextExtractor {
                 } else if tableOfContentsLines.contains(lineIndex) {
                     result.append(StructuredDocumentLine(text: line.text, role: .frontMatter, pageIndex: pageIndex))
                 } else if let role = titlePage[lineIndex] {
-                    result.append(StructuredDocumentLine(text: line.text, role: role, pageIndex: pageIndex))
+                    // A printed title keeps the heading level v1 gave it, so `itemTitle`
+                    // still finds v1's title and a re-imported PDF stays the same item.
+                    let v1Level: Int? = role == .title && outline.isEmpty
+                        && (firstContentsPage.map({ pageIndex > $0 }) ?? true)
+                        && isVisualHeading(line, bodySize: bodySize)
+                        ? visualHeadingLevel(line, bodySize: bodySize) : nil
+                    result.append(StructuredDocumentLine(text: line.text, role: role, pageIndex: pageIndex, level: v1Level))
                 } else if tableLines.contains(lineIndex) {
                     result.append(StructuredDocumentLine(text: line.text, role: .table, pageIndex: pageIndex))
                 } else if figureLines.contains(lineIndex) {
@@ -645,9 +654,36 @@ enum PDFStructuredTextExtractor {
               let abstract = lines.firstIndex(where: {
                   $0.text.range(of: #"^(?:abstract|summary|a b s t r a c t)\b"#, options: [.regularExpression, .caseInsensitive]) != nil
               }), abstract > 0 else { return roles }
+        // Display type before the abstract is the title page, not section headings
+        // (#272): the largest run of real lines is the title, read once as one segment;
+        // display-size author lines are authors; affiliations and short badges ("v1",
+        // a journal logo such as "sensors") are front matter; any other display line
+        // (a subtitle) is read as title.
+        let display = (0..<abstract).filter {
+            roles[$0] == nil && lines[$0].pointSize >= bodySize + 1.5 && !looksLikeSectionHeading(lines[$0].text)
+        }
+        func wordCount(_ index: Int) -> Int { lines[index].text.split(separator: " ").count }
+        let titleCandidates = display.contains(where: { wordCount($0) >= 4 }) ? display.filter { wordCount($0) >= 4 } : display
+        if let titleSize = titleCandidates.map({ lines[$0].pointSize }).max(),
+           let first = titleCandidates.first(where: { abs(lines[$0].pointSize - titleSize) < 0.3 }) {
+            var index = first
+            while index < abstract, roles[index] == nil, abs(lines[index].pointSize - titleSize) < 0.3 {
+                roles[index] = .title
+                index += 1
+            }
+        }
+        for index in display where roles[index] == nil {
+            let text = lines[index].text
+            if looksLikeAuthorList(text) {
+                roles[index] = .authors
+            } else if wordCount(index) <= 3 || looksLikeAffiliation(text) {
+                roles[index] = .frontMatter
+            } else {
+                roles[index] = .title
+            }
+        }
         for index in 0..<abstract where roles[index] == nil {
-            // The title and any other display type are read.
-            if lines[index].pointSize >= bodySize + 1.5 { continue }
+            if lines[index].pointSize >= bodySize + 1.5 { continue }  // a section heading, kept above
             let text = lines[index].text
             if looksLikeAuthorList(text) {
                 roles[index] = .authors
@@ -656,6 +692,19 @@ enum PDFStructuredTextExtractor {
             }
         }
         return roles
+    }
+
+    /// "1 Introduction", "2.1 Methods", "Background": a section heading that can sit
+    /// on page 1 above an abstract read out of order, and stays a chapter.
+    static func looksLikeSectionHeading(_ text: String) -> Bool {
+        text.range(of: #"^(?:[0-9]+(?:\.[0-9]+)*\.?\s+\p{Lu}|(?:introduction|background|methods?|results|discussion|conclusions?)\s*$)"#,
+                   options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    /// "1BioFrontiers Institute, University of Colorado": an institution or address.
+    static func looksLikeAffiliation(_ text: String) -> Bool {
+        text.range(of: #"(?i)univ|department|dept\.|institut|laborator|hospital|college|school of|faculty of|academy|research cent"#,
+                   options: .regularExpression) != nil
     }
 
     /// A sentence, not an affiliation: eight or more words, mostly lower case.
