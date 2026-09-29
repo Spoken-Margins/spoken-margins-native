@@ -30,6 +30,8 @@ final class LibraryRowWordingTests: XCTestCase {
         XCTAssertEqual(kind("pdf", newReader: true), "PDF, new reader")
         XCTAssertEqual(kind("pdf", newReader: false), "PDF")
         XCTAssertEqual(kind("text", newReader: true), "Text", "only PDFs have the new reader")
+        XCTAssertEqual(kind("text", reference: "paper.pdf", referenceType: "file", newReader: true), "PDF",
+                       "an item stored as text is spoken as text, whatever its file")
     }
 
     func testKindMatchesTheLibraryFilter() {
