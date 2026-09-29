@@ -787,7 +787,7 @@ final class SupertonicSpeechTests: XCTestCase {
             },
             observesPlayerLifecycle: true,
             fallbackClient: fallback,
-            renderWaitLimit: .milliseconds(300)
+            renderWaitLimit: .seconds(1)
         )
         let text = (1...12).map { index in
             "Sentence \(index) contains enough ordinary words to keep the narration moving through several chunks."
@@ -807,13 +807,19 @@ final class SupertonicSpeechTests: XCTestCase {
 
         _ = try engine.startSession(itemId: item.id)
         try await waitForEngine(engine, status: .playing, "the first chunk plays")
+        // Let the second chunk finish rendering first, so only the chunk that never renders can
+        // reach the render deadline, however loaded the machine is.
+        for _ in 0..<250 where client.debugRenderedCacheOffsets().isEmpty {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(client.debugRenderedCacheOffsets().isEmpty, "the second chunk rendered")
         client.debugFinishActiveChunk()
         for _ in 0..<150 where starts.value < 2 { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(starts.value, 2, "the second chunk plays")
         client.debugFinishActiveChunk()
         _ = try engine.pause()
         _ = try engine.resumePlayback()
-        for _ in 0..<100 where fallback.playedOffsets.isEmpty {
+        for _ in 0..<200 where fallback.playedOffsets.isEmpty {
             try? await Task.sleep(for: .milliseconds(20))
         }
         XCTAssertFalse(fallback.playedOffsets.isEmpty, "the render deadline fell back to the iOS voice")
