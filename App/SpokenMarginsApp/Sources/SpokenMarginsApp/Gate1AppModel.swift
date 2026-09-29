@@ -15730,6 +15730,19 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
+    /// The selected item's Follow button: an article follows its publication, not a podcast (#243).
+    var manualFollowButtonTitle: String {
+        ManualFollowPolicy.buttonTitle(mediaType: selectedItemMediaType, isFollowing: isFollowingSelectedSource)
+    }
+
+    var manualFollowButtonSymbol: String {
+        ManualFollowPolicy.buttonSymbol(mediaType: selectedItemMediaType)
+    }
+
+    private var selectedItemMediaType: String {
+        libraryItems.first(where: { $0.id == selectedItem.id })?.mediaType ?? "podcast"
+    }
+
     nonisolated static func isSourceAlreadyFollowed(
         sourceURL: String?,
         sourceTitle: String?,
