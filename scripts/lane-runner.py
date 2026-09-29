@@ -304,7 +304,7 @@ def first_boot(udid: str, log) -> tuple:
     import lane_sim
     info = {}
     try:
-        lane_sim.boot(udid, f'runner boot {udid}', out=log, info=info)
+        lane_sim.boot(udid, f'runner boot {udid}', out=log, info=info, first_boot=True)
     except lane_sim.BootError as error:
         return str(error), info
     return None, info
@@ -365,13 +365,22 @@ def _t3_on_fresh_device(grouped, request_id, evidence, runtime):
         if problem:
             return ('INCONCLUSIVE', where, 'nothing', [f'The fresh simulator did not boot: {problem} '
                     f'evidence: {evidence}/first-boot.log'], 'watched during boot', '')
-        lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot')  # stops the device at a SpringBoard crash
+        lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot',  # stops the device at a SpringBoard crash
+                               crash_window=boot_info.get('boot_window'))
         summaries, statuses, ran, details = run_plans(grouped, run_plan, evidence)
         details.insert(0, f'first boot of the fresh simulator took {duration(boot_seconds)} (memory pressure at boot: '
                           f'{boot_info.get("pressure", "unknown")}, after waiting {boot_info.get("pressure_waited", 0)}s)')
+        if boot_info.get('tolerated'):
+            details.insert(1, f'tolerated one SpringBoard change in the first 30 s of the first boot (owner\'s rule, '
+                              f'#184): {boot_info["tolerated"]}')
     finally:
         lane_sim.release(udid)
     watched = lane_sim.unsafe_devices().get(udid)
+    if watched and watched['reason'].startswith('late crash report'):
+        # A crash during the boot, reported after it: the device is marked unsafe, but the run itself went on.
+        details.append(f'after the run started, a crash report arrived for a crash during the boot ({watched["reason"]}); '
+                       'the device was marked unsafe and deleted')
+        watched = None
     crash_names = [c for s in summaries for c in s['crashes']]
     flood = any(s['flood'] for s in summaries) or bool(watched)
     crashes = ('crash flood: ' if flood else '') + (', '.join(crash_names) if crash_names else 'none')
