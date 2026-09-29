@@ -10855,6 +10855,9 @@ final class Gate1AppModel: ObservableObject {
                         self.allowAudioPreparation(itemId: itemId)
                         self.diagnostics["supertonicFallbackRestored"] = itemId
                     }
+                },
+                onResumeDecision: { [weak self] fields in
+                    Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) }
                 }
             )
         }
