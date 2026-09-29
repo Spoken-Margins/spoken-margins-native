@@ -430,7 +430,7 @@ enum PDFStructuredTextExtractor {
               looksLikeBibliographyEntry(lines[first].text) else { return start }
         var end = first
         var entryStart = first
-        while end < lines.count, lines[end].role == .body {
+        while end < lines.count, lines[end].role == .body, !startsAppendix(lines[end].text) {
             let text = lines[end].text
             if looksLikeBibliographyEntry(text) {
                 entryStart = end
@@ -439,7 +439,11 @@ enum PDFStructuredTextExtractor {
                 // "Names. 2024." is followed by the title, which may read like prose.
                 let titleLine = end == entryStart + 1
                     && lines[entryStart].text.range(of: #"(?:19|20)[0-9]{2}[a-z]?\.\s*$"#, options: .regularExpression) != nil
-                if !titleLine, looksLikeProse(text), lines[end - 1].text.trimmingCharacters(in: .whitespaces).hasSuffix(".") { break }
+                // A sentence ends the references: after a finished entry, or whenever it
+                // opens like one ("The following LLMs were integrated ...", #220 T4).
+                let opensSentence = text.range(of: #"^(?:The|This|These|We|Our|In|To|For|As|Here|It|Each|All)\s"#, options: .regularExpression) != nil
+                if !titleLine, looksLikeProse(text),
+                   opensSentence || lines[end - 1].text.trimmingCharacters(in: .whitespaces).hasSuffix(".") { break }
             }
             end += 1
         }
@@ -681,8 +685,9 @@ enum PDFStructuredTextExtractor {
         text.range(of: #"^(?:Appendix|APPENDIX|Supplementary|SUPPLEMENTARY|Table|TABLE|Fig\.|Figure|FIGURE|Section|Chapter)\b"#, options: .regularExpression) != nil
     }
 
+    /// "Appendix", "Appendix B", and with a section label in front, "A Appendix".
     static func startsAppendix(_ text: String) -> Bool {
-        text.range(of: #"^(?:Appendix|APPENDIX)(?:\s+[A-Z0-9]|\s*$|:)"#, options: .regularExpression) != nil
+        text.range(of: #"^(?:[A-Z](?:\.[0-9]+)*\.?\s+)?(?:Appendix|APPENDIX)(?:\s+[A-Z0-9]|\s*$|:)"#, options: .regularExpression) != nil
     }
 
     /// Text printed sideways in a page's outer margin, like arXiv's

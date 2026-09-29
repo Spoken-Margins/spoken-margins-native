@@ -76,6 +76,41 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertEqual(lines.map(\.role), [.heading, .body, .reference, .reference, .reference, .reference, .reference, .heading, .body])
     }
 
+    func testV2ReadsTheAppendixSentenceThatFollowsTheReferences() {
+        // #220 T4 on aa22dc4: the appendix's first sentence was taken as a reference,
+        // so "References skipped." played twice and then "uation pipeline".
+        let entries = [
+            StructuredDocumentLine(text: "References", role: .heading, level: 2),
+            StructuredDocumentLine(text: "Tianyi Zhang, Varsha Kishore, Felix Wu, et al. 2020.", role: .body),
+            StructuredDocumentLine(text: "BERTScore: Evaluating Text Generation with BERT.", role: .body),
+            StructuredDocumentLine(text: "Tony Z. Zhao, Eric Wallace, Shi Feng, et al. 2021. Cali-", role: .body),
+            StructuredDocumentLine(text: "brate Before Use. arXiv preprint.", role: .body),
+            StructuredDocumentLine(text: "Wayne Xin Zhao, Kun Zhou, Junyi Li, et al. 2025. A", role: .body),
+            StructuredDocumentLine(text: "Survey of Large Language Models. arXiv preprint.", role: .body),
+        ]
+        // Order 1 (host): the appendix headings come out as body lines, "A Appendix".
+        var hostOrder = entries + [
+            StructuredDocumentLine(text: "A Appendix", role: .body),
+            StructuredDocumentLine(text: "A.1 Large Language Models Used", role: .body),
+            StructuredDocumentLine(text: "The following LLMs were integrated into the eval-", role: .body),
+            StructuredDocumentLine(text: "uation pipeline:", role: .body),
+        ]
+        PDFStructuredTextExtractor.labelReferenceLists(&hostOrder)
+        XCTAssertEqual(Array(hostOrder.map(\.role).suffix(4)), [.body, .body, .body, .body])
+        // Order 2 (simulator): headings, then more entries, then the appendix sentence.
+        var deskOrder = entries + [
+            StructuredDocumentLine(text: "Appendix", role: .heading, level: 1),
+            StructuredDocumentLine(text: "Large Language Models Used", role: .heading, level: 2),
+            StructuredDocumentLine(text: "Max Schäfer, Sarah Nadi, Aryaz Eghbali, et al. 2024.", role: .body),
+            StructuredDocumentLine(text: "An Empirical Evaluation. IEEE Transactions on Software", role: .body),
+            StructuredDocumentLine(text: "Engineering, 50(1):85-", role: .body),
+            StructuredDocumentLine(text: "The following LLMs were integrated into the eval-", role: .body),
+            StructuredDocumentLine(text: "uation pipeline:", role: .body),
+        ]
+        PDFStructuredTextExtractor.labelReferenceLists(&deskOrder)
+        XCTAssertEqual(Array(deskOrder.map(\.role).suffix(7)), [.heading, .heading, .reference, .reference, .reference, .body, .body])
+    }
+
     func testV2KeepsSkippingReferenceEntriesPrintedAfterTheAppendixHeading() {
         // #220 T4: on a two-column reference page PDFKit reads "Appendix" between the
         // columns, and the second column's entries were read aloud as body text.
