@@ -14,7 +14,7 @@ unless the session is the Test Desk: opened on the <repo>-test-desk worktree nex
 repository, or started with SM_LANE_ROLE=test-desk. In every guarded session, including the Test Desk, it also sends raw
 `xcodebuild` builds to scripts/xcodebuild-lane (when that branch has it), the Mac-wide build semaphore, and it blocks what
 no lane session needs: changes on a physical device (`devicectl`) and `simctl erase|delete|shutdown
-all`. Shell commands are read from any tool's `command` input (Bash, Monitor, the terminal tool).
+all`, and any use of a simulator the lane marked unsafe (except deleting or shutting it down). Shell commands are read from any tool's `command` input (Bash, Monitor, the terminal tool).
 Guarded calls are logged to ~/Library/Caches/SpokenMarginsLane/guard.log.
 
 Stdlib only and Python 3.9-compatible: it runs under /usr/bin/python3, outside any checkout.
@@ -336,6 +336,16 @@ def log_decision(event: dict, found, decision: str, desk: str | None, environ) -
         pass
 
 
+def unsafe_devices(environ) -> dict:
+    """Simulators the lane marked unsafe (scripts/lane_sim.py): a failed boot or a crash while booting."""
+    directory = environ.get('SM_LANE_STATE_DIR') or os.path.expanduser('~/Library/Caches/SpokenMarginsLane')
+    try:
+        with open(os.path.join(directory, 'unsafe-simulators.json')) as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return {}
+
+
 def decide(event: dict, repos: list[str], environ=None) -> str | None:
     """Return the reason to block this tool call, or None to let it through."""
     environ = os.environ if environ is None else environ
@@ -345,8 +355,17 @@ def decide(event: dict, repos: list[str], environ=None) -> str | None:
     desk = test_desk(event, repos, environ)
     sim = sorted({what for kind, what in found if kind == SIM})
     protected = sorted({what for kind, what in found if kind == PROTECTED})
+    command = (event.get('tool_input') or {}).get('command') or ''
+    unsafe = {udid: info for udid, info in unsafe_devices(environ).items() if udid in str(command)}
+    only_removal = all(what in ('simctl delete', 'simctl shutdown') for _, what in found)
     reason = None
-    if protected:
+    if unsafe and not only_removal:
+        udid, info = next(iter(unsafe.items()))
+        reason = (f'Spoken Margins lane guard: blocked, {udid} is marked unsafe ({info.get("reason")}), in every '
+                  'session. Booting it again after a failed boot is how both SpringBoard crash floods started (#184). '
+                  f'Delete it (`xcrun simctl delete {udid}`) and boot a fresh device with '
+                  '`scripts/lane-sim-boot --fresh "SM Lane Desk <request>"`.')
+    elif protected:
         reason = (f'Spoken Margins lane guard: blocked {", ".join(protected)} in every session, the Test Desk '
                   'included. It acts on the owner\'s phone or on every simulator, including the owner\'s journey '
                   'simulator. Target one simulator by its UDID, or ask the owner to run it in their own terminal.')
