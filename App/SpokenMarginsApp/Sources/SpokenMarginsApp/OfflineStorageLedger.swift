@@ -147,11 +147,16 @@ actor OfflineStorageLedger {
     /// Deletes one item's prepared audio (assembled narration and chunks) and their ledger
     /// rows, and nothing else: no recordings, Margins or other items' files. Used after the
     /// item moved to a new PDF extraction, so its audio no longer matches its text (#322).
+    ///
+    /// A file any item still plays stays, with its row (#344). Unlike eviction, nothing is
+    /// detached: another item's narration still matches its own text.
     func removePreparedAudio(itemId: String) throws -> Int64 {
         var removed: Int64 = 0
+        let references = PreparedNarrationFallback.FileReferences(items: try repository.listItems(includeDeleted: true))
         for asset in try repository.loadOwnedOfflineAssets()
         where asset.itemId == itemId && (asset.category == .preparedAudio || asset.category == .preparedChunk) {
             let url = rootDirectory.appending(path: asset.relativePath)
+            guard references.release(url) == .unreferenced else { continue }
             if fileManager.fileExists(atPath: url.path) { try fileManager.removeItem(at: url) }
             try repository.deleteOwnedOfflineAsset(id: asset.id)
             removed += asset.byteCount

@@ -370,6 +370,31 @@ final class OfflineStorageLedgerTests: XCTestCase {
         }
     }
 
+    func testRemovingAnItemsPreparedAudioKeepsAFileAnotherItemPlays() async throws {
+        // #344 audit 2: the upgraded paper's ledger row named a file another item still
+        // played, and removal deleted it without asking who used it.
+        let fixture = try makeFixture(limit: 1_000)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let shared = try writeAsset(fixture, relativePath: "PreparedSupertonicAudio/shared.m4a", category: .preparedAudio)
+        let own = try writeAsset(fixture, relativePath: "PreparedAudio/paper/0.wav", category: .preparedChunk)
+        let rows = try fixture.repository.loadOwnedOfflineAssets()
+        for var row in rows {
+            row.itemId = "paper"
+            try fixture.repository.saveOwnedOfflineAsset(row)
+        }
+        let article = narratedArticle(shared)
+        try fixture.repository.saveItem(article)
+        try fixture.repository.saveItem(Item(id: "paper", title: "Paper", mediaType: "pdf", text: "Upgraded text.", externalReference: nil, status: "ready"))
+
+        _ = try await fixture.ledger.removePreparedAudio(itemId: "paper")
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: shared.path), "the article still plays it")
+        XCTAssertEqual(try fixture.repository.loadItem(id: "item-article"), article, "and keeps its narration")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: own.path), "the paper's own chunk goes")
+        XCTAssertEqual(try fixture.repository.loadOwnedOfflineAssets().map(\.relativePath), ["PreparedSupertonicAudio/shared.m4a"],
+                       "the kept file stays in the ledger")
+    }
+
     private func makeFixture(limit: Int64) throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "offline-ledger-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
