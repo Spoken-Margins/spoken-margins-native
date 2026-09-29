@@ -16,8 +16,15 @@ public final class SystemVoiceChunkRenderer: @unchecked Sendable {
 
     private let lock = NSLock()
     private var synthesizer: AVSpeechSynthesizer?
+    private let usesApplicationAudioSession: Bool
 
-    public init() {}
+    /// Rendering to a file needs no audio output. By default a speech synthesizer shares the app's
+    /// audio session, and rendering while Supertonic plays can disturb that session: the player
+    /// went silent while reporting "playing" until the output route changed (#288). So this
+    /// renderer keeps the synthesizer off the app's session.
+    public init(usesApplicationAudioSession: Bool = false) {
+        self.usesApplicationAudioSession = usesApplicationAudioSession
+    }
 
     /// Writes `text` to `outputURL` in `reference`'s file format and returns its duration in seconds.
     public func render(
@@ -44,6 +51,9 @@ public final class SystemVoiceChunkRenderer: @unchecked Sendable {
         }
         let writer = ConvertingWriter(output: output, format: format)
         let synthesizer = AVSpeechSynthesizer()
+        #if os(iOS)
+        synthesizer.usesApplicationAudioSession = usesApplicationAudioSession
+        #endif
         lock.withLock { self.synthesizer = synthesizer }
         defer { lock.withLock { self.synthesizer = nil } }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
