@@ -305,6 +305,45 @@ final class SupertonicSpeechTests: XCTestCase {
         try XCTUnwrap(value, file: file, line: line)
     }
 
+    // #303: a play, or a rate change, on narration that's already playing threw away the live
+    // audio and rendered from scratch (the owner's restart_rendering with intent playing, #288).
+    func testPlayAndRateChangeWhilePlayingKeepTheLiveAudio() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = TextRecordingSupertonicRenderer(template: template)
+        let starts = ResumeStartCounter()
+        let progress = GenerationProgressLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in starts.bump(); player.volume = 0; player.playImmediately(atRate: rate) },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            onGenerationProgress: { progress.append($0.completedChunks) }
+        )
+        let text = (1...10).map { "Sentence \($0) contains enough ordinary words to keep the narration moving through several chunks." }
+            .joined(separator: " ")
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "item", from: 0)
+        for _ in 0..<150 where starts.value < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(400))
+        let progressBefore = progress.completed.count
+        let rendersBefore = await renderer.renders
+
+        try client.play(targetId: "item", from: try XCTUnwrap(client.currentCharOffset()))
+        try client.play(targetId: "item", from: try XCTUnwrap(client.currentCharOffset()))
+        try client.setPlaybackRate(1.5)
+        try client.play(targetId: "item", from: max(0, try XCTUnwrap(client.currentCharOffset()) + 20))
+        try await Task.sleep(for: .milliseconds(400))
+
+        XCTAssertFalse(progress.completed.dropFirst(progressBefore).contains(0),
+                       "no new generation: progress never went back to 0 (\(progress.completed))")
+        let renders = await renderer.renders
+        XCTAssertEqual(Set(renders).count, renders.count, "no chunk rendered twice")
+        XCTAssertTrue(renders.starts(with: rendersBefore))
+        XCTAssertEqual(starts.value, 1, "the live player kept playing; no new player started")
+        try client.stop()
+    }
+
     func testSelectableCatalogExposesOnlyJamesLilyAndSystem() {
         XCTAssertEqual(AppTTSVoiceSelection.allCases, [.james, .lily, .system])
         XCTAssertEqual(AppTTSVoiceSelection.james.rawValue, "supertonic:M2")

@@ -1650,7 +1650,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     private func resumeAction(targetId: String, fromSpokenOffset spokenOffset: Int) -> ResumeAction {
         lock.withLock {
-            guard transportIntent == .paused,
+            // A play on narration that's already playing (a rate change restarts from the synced
+            // position; a second Lock Screen play) reuses the live audio like a resume does,
+            // rather than throwing it away and rendering again (#303).
+            let wasPlaying = transportIntent == .playing
+            guard transportIntent == .paused || wasPlaying,
                   currentTargetId == targetId,
                   activeSourceText == preparedSourceText else { return .none }
             let chunkEnd = currentStartOffset + max(0, currentChunkLength)
@@ -1661,12 +1665,20 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 let currentOffset = currentStartOffset + Int(
                     (Double(currentChunkLength) * max(0, min(1, playerTime(player) / max(activeAudioDuration, 0.001)))).rounded(.down)
                 )
-                if abs(currentOffset - spokenOffset) <= 1 {
+                // While playing, the requested position was sampled a moment ago and lags the live
+                // one by a few characters; that's the same place, not a seek.
+                if abs(currentOffset - spokenOffset) <= (wasPlaying ? Self.livePositionTolerance : 1) {
                     return .resumePlayer(player)
                 }
                 initialRequestedSpokenOffset = spokenOffset
                 let fraction = Double(spokenOffset - currentStartOffset) / Double(max(1, currentChunkLength))
                 return .seekPlayer(player, max(0, min(activeAudioDuration, activeAudioDuration * fraction)))
+            }
+            if wasPlaying, let player {
+                // Moving to another chunk: stop the live one first so two never play at once.
+                player.pause()
+                player.replaceCurrentItem(with: nil)
+                self.player = nil
             }
             if let cachedEntry = renderedCache.first(where: { entry in
                 spokenOffset >= entry.value.request.startOffset
@@ -1774,6 +1786,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         onResumeDecision(fields)
     }
+
+    /// About two seconds of speech: how far a sampled position can trail the live one.
+    static let livePositionTolerance = 30
 
     private func playerTime(_ player: AVPlayer?) -> TimeInterval {
         guard let seconds = player?.currentTime().seconds, seconds.isFinite else { return 0 }
