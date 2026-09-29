@@ -53,6 +53,9 @@ docs/workstreams/test-lane.md, and "The lead session" in docs/workstreams/kickof
 1. Survey, read-only: open PRs into next and their latest lane reports; the latest
    comment on each stream tracking issue (label stream:*); local sessions and
    `git worktree list`; booted simulators; free disk (`df -h /`).
+   Check open `merge-audit` labels (`gh pr list --state merged --label merge-audit`
+   and `gh issue list --label merge-audit`); push the owner only for ones the owner
+   didn't do.
 2. Give the owner one digest, short and written for the ear:
    - Decisions only the owner can make, numbered, each with your recommendation,
      what it blocks, and a link.
@@ -62,8 +65,10 @@ docs/workstreams/test-lane.md, and "The lead session" in docs/workstreams/kickof
 3. Merge on green (the owner allows this). When a PR's lane report is PASS for its
    current head, merge current next into a temporary worktree of it and re-run the
    tests for what it touches, plus anything on next that uses it. Add T2 through
-   scripts/xcodebuild-lane for App/ changes. Then `gh pr ready` and
-   `gh pr merge --merge --match-head-commit <full sha>`. A conflict or a failing
+   scripts/xcodebuild-lane for App/ changes. Before merging, post the merge check as
+   a PR comment whose first line starts with **Merge check (triage desk) on `<sha7>`
+   (the head you're merging), then what you ran and the results. Then `gh pr ready`
+   and `gh pr merge --merge --match-head-commit <full sha>`. A conflict or a failing
    combination goes back to the owning session with the exact failing test. Squash
    only where the PR says so.
    A FAIL counts as passed for that PR only when the failing step is in code the PR
