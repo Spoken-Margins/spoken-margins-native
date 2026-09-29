@@ -70,7 +70,8 @@ in docs/workstreams/kickoff.md. Then read the latest hand-off comment on #184.
      the gate is stale, tell the stream to go ahead and note it on its tracking
      issue.
    - Cloud sessions can't message back, so read their PRs and tracking issues.
-     They can write app code: the Mac's lane runner builds every PR.
+     They can write app code: the Mac's lane runner builds a PR when it has a
+     `/lane T2` request and the `lane:queued` label. It doesn't build unasked.
    - You can't start new sessions yourself. When you're under the line and every
      session is busy, ask the owner to start more, with the exact kickoff for
      each so he only pastes it.
