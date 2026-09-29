@@ -199,6 +199,78 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertTrue(spoken.contains("A bulleted point in body text stays"))
     }
 
+    func testV2KeepsBodyLinesThatEndInNumbersOffAContentsPage() throws {
+        // #354 on arXiv 2608.09666: a page with several lines ending in a number was
+        // taken for a table of contents, and "clear: it attains at least 80% Within-1
+        // accuracy on 13 of the 15" was skipped as front matter.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10)]
+        let heading: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 16)]
+        let numbered = [
+            "The advantage is clear: it attains at least 80% accuracy on 13 of the 15",
+            "tasks we tested, and it matches the raters on 9 of the 10",
+            "settings in the second group, falling short by a margin of 2",
+            "points on average across the remaining settings, of which there are 4",
+            "in total, each run with three different random seeds.",
+        ]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("1 Introduction" as NSString).draw(at: CGPoint(x: 60, y: 80), withAttributes: heading)
+            ("We asked twelve researchers to listen to papers during their daily commute." as NSString).draw(at: CGPoint(x: 60, y: 110), withAttributes: body)
+            context.beginPage()
+            for (offset, line) in numbered.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 80 + CGFloat(offset) * 14), withAttributes: body)
+            }
+        }
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: data)))
+        let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ")
+        for line in numbered {
+            XCTAssertTrue(spoken.contains(line), line)
+        }
+    }
+
+    func testV2KeepsTwoSubsectionsWithTheSameName() throws {
+        // #354 on arXiv 2608.09666: "4.1.1 Experimental Setup" (page 5) shares its name
+        // with the outline's "4.3.2 Experimental Setup" (page 8), so it counted as a
+        // contents entry pointing elsewhere and was skipped.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10)]
+        let heading: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 12)]
+        let sections = [
+            ["4.1.1 Experimental Setup", "4.1.2 Results", "4.1.3 Discussion"],
+            ["4.3.1 Experimental Setup", "4.3.2 Results", "4.3.3 Discussion"],
+        ]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            for headings in sections {
+                context.beginPage()
+                var y: CGFloat = 80
+                for title in headings {
+                    (title as NSString).draw(at: CGPoint(x: 60, y: y), withAttributes: heading)
+                    ("Each participant listened for four weeks and kept a short diary of sessions." as NSString).draw(at: CGPoint(x: 60, y: y + 20), withAttributes: body)
+                    y += 60
+                }
+            }
+        }
+        let pdf = try XCTUnwrap(PDFDocument(data: data))
+        let root = PDFOutline()
+        for (pageIndex, headings) in sections.enumerated() {
+            let page = try XCTUnwrap(pdf.page(at: pageIndex))
+            for title in headings {
+                let entry = PDFOutline()
+                entry.label = title
+                entry.destination = PDFDestination(page: page, at: CGPoint(x: 0, y: 792))
+                root.insertChild(entry, at: root.numberOfChildren)
+            }
+        }
+        pdf.outlineRoot = root
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        let characters = Array(document.text)
+        let headings = document.segments.filter { $0.role == .heading }.map {
+            String(characters[$0.range.start..<$0.range.end])
+        }
+        XCTAssertEqual(headings, sections.flatMap { $0 })
+    }
+
     func testV2TakesTheArXivSideStampForPageFurniture() {
         // #220 T4 and #162: "arXiv:2607.28282v1 [cs.CL] 30 Jul 2026", printed rotated
         // in the left margin of every arXiv paper, was read as the first sentence.
