@@ -38,6 +38,16 @@ public enum PreparedNarrationFallback {
         }
     }
 
+    /// True when `media` names the file `targetId` plays. A session can outlive the render it was
+    /// playing: after the article is prepared again, the item names a newer render (#277).
+    public static func media(_ media: ItemMedia?, isTarget targetId: String) -> Bool {
+        guard let target = fileURL(forTargetId: targetId) else { return false }
+        return [media?.url, media?.nativeMediaId].contains { value in
+            guard let value, let url = URL(string: value), url.isFileURL else { return false }
+            return url.standardizedFileURL.path == target.standardizedFileURL.path
+        }
+    }
+
     /// `session` moved to live speech of the item's text at the place its saved media time reached.
     /// The caller sets the chapter, which depends on the listening map.
     public static func liveSpeechSession(

@@ -3707,6 +3707,49 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertFalse(manifest.isCompleteButUnassembled)
     }
 
+    // #277: the article was prepared again, so it now plays narration B (present), while the saved
+    // session still targets the older narration A (gone). Opening it must not clear B, and must
+    // resume B at the character the listener had reached.
+    func testOpeningASessionOnAnOlderMissingRenderKeepsTheItemsCurrentRender() throws {
+        let missingA = FileManager.default.temporaryDirectory.appending(path: "narration-a-\(UUID().uuidString).m4a")
+        let presentB = FileManager.default.temporaryDirectory.appending(path: "narration-b-\(UUID().uuidString).m4a")
+        try Data("audio".utf8).write(to: presentB)
+        defer { try? FileManager.default.removeItem(at: presentB) }
+        let text = "First sentence. Second sentence."
+        let mediaB = ItemMedia(sourceType: .generatedTTSPrerendered, url: presentB.absoluteString,
+                               durationMs: 4_600, nativeMediaId: presentB.absoluteString)
+        let item = Item(id: "item-rerendered", title: "Re-rendered article", mediaType: "text", text: text,
+                        externalReference: nil, status: "ready", media: mediaB,
+                        transcriptId: "generated-transcript-item-rerendered")
+        // Saved while playing A: A's 1,650 ms was character 24.
+        let session = Session(
+            id: "session-on-a", itemId: item.id, status: "in_progress", phase: .itemPlayback,
+            currentTargetType: .transcriptBackedMedia, currentTargetId: missingA.absoluteString,
+            position: Position(charOffset: 24, mediaTimeMs: 1_650, chapterId: nil),
+            completionPercent: 75, playbackRate: 1
+        )
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session])
+        // B is a slower voice: twice A's timings.
+        try repo.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: "generated-transcript-item-rerendered", itemId: item.id, createdAt: Date(),
+            timeline: TranscriptTimeline(segments: [
+                MediaTimelineSegment(id: "b-1", startMs: 0, endMs: 2_000, startChar: 0, endChar: 15, text: "First sentence."),
+                MediaTimelineSegment(id: "b-2", startMs: 2_000, endMs: 4_600, startChar: 16, endChar: text.count, text: "Second sentence.")
+            ], chapters: [], durationMs: 4_600)
+        ))
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: preparedArticleProfile, repository: repo, audio: audio)
+
+        let opened = try engine.inspectSession(sessionId: session.id)
+
+        XCTAssertEqual(try repo.loadItem(id: item.id).media, mediaB, "the healthy current render is kept")
+        XCTAssertEqual(opened.targetType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(opened.targetId, presentB.absoluteString, "the session moves to B")
+        XCTAssertEqual(engine.currentSession?.position.charOffset, 24, "at the character the listener reached")
+        XCTAssertEqual(opened.currentMediaTimeMs, 3_300, "B's time for character 24")
+        XCTAssertFalse(audio.playedTargets.contains(missingA.absoluteString))
+    }
+
     func testMediaChapterJumpKeepsRequestedPositionWhileTransportReportsOldPosition() throws {
         let audioFile = FileManager.default.temporaryDirectory
             .appending(path: "delayed-media-seek-\(UUID().uuidString).caf")
