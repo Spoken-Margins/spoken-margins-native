@@ -241,6 +241,44 @@ class T3Tests(unittest.TestCase):
         self.assertTrue(flood['flood'])
         self.assertEqual(lane.t3_verdict([flood], ['failed_or_incomplete']), 'INCONCLUSIVE')
 
+    def test_a_report_names_the_budget_that_ran_out(self):
+        manifest = {'status': 'failed_or_incomplete', 'steps': [
+            {'name': 'simulator-ready', 'seconds': 0.2, 'timeout_seconds': 180},
+            {'name': 'xcode-tests', 'seconds': 600.1, 'timeout_seconds': 600, 'interrupted': True,
+             'tests': {f'T/A/test{n}': {'status': 'passed'} for n in range(7)}}]}
+        summaries, statuses, _, details = lane.run_plans({'app': ['T/A']}, lambda *_: manifest, Path('/e'))
+        self.assertEqual(summaries[0]['out_of_time'], ('xcode-tests', 600))
+        self.assertIn('the test run ran out of its own 10m00s budget (verify-tests.py `xcode-tests`) after 7 passing '
+                      'tests', details[0])
+        self.assertIn("boot has a separate budget", details[0])
+        self.assertEqual(lane.t3_verdict(summaries, statuses), 'INCONCLUSIVE')
+
+    def test_the_reported_boot_time_is_the_boot_alone(self):
+        # #248's reports said "first boot took 17m57s" while the boot took about 4.5 min: the clock was read
+        # after the tests. Here the boot takes 65 s of fake time and the tests another 900.
+        now = [0.0]
+        fake_time = mock.Mock(monotonic=lambda: now[0])
+
+        def boot(*_):
+            now[0] += 65
+            return None
+
+        def tests(*_):
+            now[0] += 900
+            return [lane.summarize_manifest({'steps': []})], ['verified'], ['A (1 passed)'], []
+
+        import lane_sim
+        with mock.patch.object(lane, 'time', fake_time), \
+                mock.patch.object(lane_sim, 'create_temporary', return_value='U'), \
+                mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release'), \
+                mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
+                mock.patch.object(lane, 'first_boot', side_effect=boot), \
+                mock.patch.object(lane, 'run_plans', side_effect=tests), \
+                tempfile.TemporaryDirectory() as temporary:
+            verdict, _, _, details, _, _ = lane._t3_on_fresh_device({'app': ['T/A']}, 'r', Path(temporary),
+                                                                     'com.apple.CoreSimulator.SimRuntime.iOS-26-5')
+        self.assertEqual((verdict, details[0]), ('PASS', 'first boot of the fresh simulator took 1m05s'))
+
     def test_a_flood_stops_the_remaining_plans(self):
         calls = []
 
