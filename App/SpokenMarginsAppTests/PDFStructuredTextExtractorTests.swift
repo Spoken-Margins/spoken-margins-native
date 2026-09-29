@@ -199,6 +199,39 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertTrue(spoken.contains("A bulleted point in body text stays"))
     }
 
+    func testV2SkipsFootnoteTextAtTheFootOfAPage() throws {
+        // #250: v2 never gave a line the footnote role, so a page's footnote was read
+        // where PDFKit placed it, often between the halves of a body sentence.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10)]
+        let marker: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 7)]
+        let note: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 8)]
+        let legend: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 7)]
+        let cited = NSMutableAttributedString(string: "Participants kept a short diary of every session,", attributes: body)
+        cited.append(NSAttributedString(string: "1", attributes: marker))
+        cited.append(NSAttributedString(string: " and read it back to us weekly.", attributes: body))
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("We asked twelve researchers to listen to papers during their commute." as NSString).draw(at: CGPoint(x: 60, y: 80), withAttributes: body)
+            context.beginPage()
+            cited.draw(at: CGPoint(x: 60, y: 80))
+            ("Most sessions happened before nine in the morning on weekdays." as NSString).draw(at: CGPoint(x: 60, y: 96), withAttributes: body)
+            ("Participants said the figures were the hardest part to follow by ear." as NSString).draw(at: CGPoint(x: 60, y: 112), withAttributes: body)
+            ("1 The diaries were kept on paper and transcribed later by two of the authors," as NSString).draw(at: CGPoint(x: 60, y: 650), withAttributes: note)
+            ("who checked each entry against the recorded session logs." as NSString).draw(at: CGPoint(x: 60, y: 660), withAttributes: note)
+            ("3 Samples were collected at three sites in the spring of that year." as NSString).draw(at: CGPoint(x: 60, y: 700), withAttributes: legend)
+        }
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: data)))
+        let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ")
+        XCTAssertFalse(spoken.contains("diaries were kept"))
+        XCTAssertFalse(spoken.contains("checked each entry"))
+        XCTAssertTrue(document.segments.contains { $0.role == .footnote })
+        XCTAssertTrue(spoken.contains("and read it back to us weekly"))
+        XCTAssertTrue(spoken.contains("Most sessions happened before nine"))
+        // Small print starting with a number that no body superscript points to stays.
+        XCTAssertTrue(spoken.contains("Samples were collected at three sites"))
+    }
+
     func testV2TakesTheArXivSideStampForPageFurniture() {
         // #220 T4 and #162: "arXiv:2607.28282v1 [cs.CL] 30 Jul 2026", printed rotated
         // in the left margin of every arXiv paper, was read as the first sentence.
