@@ -17,7 +17,8 @@ import sys
 import time
 
 from check_posterboard_repair import new_crash
-from lane_slots import build_slot, simulator_boot_lock
+import lane_sim
+from lane_slots import build_slot
 
 from test_inventory import ROOT, plan_tests, swift_tests, validate
 
@@ -319,12 +320,21 @@ class Run:
                      str(derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')])
         booted_here = chosen['state'] != 'Booted'
         try:
-            # One simulator boots at a time Mac-wide: concurrent boots crash-flooded SpringBoard (#184).
-            with simulator_boot_lock(f'verify-tests {plan} boot', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS) \
-                    if booted_here else contextlib.nullcontext():
-                if booted_here:
-                    self.command('simulator-boot', ['xcrun', 'simctl', 'boot', chosen['udid']], timeout=60)
-                self.command('simulator-ready', ['xcrun', 'simctl', 'bootstatus', chosen['udid'], '-b'], timeout=180)
+            if booted_here:
+                # Lane boot rules (scripts/lane_sim.py): one boot at a time, no builds meanwhile, no retry
+                # after a failed boot, stop at the first crash. Two crash floods followed boots (#184).
+                entry = {'name': 'simulator-boot', 'command': ['lane_sim.boot', chosen['udid']]}
+                self.manifest['steps'].append(entry)
+                self.save()
+                try:
+                    entry.update(seconds=round(lane_sim.boot(chosen['udid'], f'verify-tests {plan} boot', out=sys.stdout), 3),
+                                 exit_code=0, errors=[])
+                except lane_sim.BootError as error:
+                    entry.update(exit_code=1, errors=[str(error)])
+                    raise RuntimeError(f'simulator-boot: {error}')
+                finally:
+                    self.save()
+            self.command('simulator-ready', ['xcrun', 'simctl', 'bootstatus', chosen['udid'], '-b'], timeout=180)
             if chosen.get('name') == TEST_RUNNER_NAME:
                 # Start from an empty app container so earlier runs' data can't leak into this one.
                 app = derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app'
