@@ -359,7 +359,7 @@ class T3Tests(unittest.TestCase):
 class AutomergeTests(unittest.TestCase):
     """The automerge label runs what the PR's diff needs (test-scope.py's tier)."""
 
-    def run_checks(self, tier, fast='PASS', t2='PASS'):
+    def run_checks(self, tier, fast='PASS', t2='PASS', too_big=()):
         calls = []
 
         def fake_fast(evidence):
@@ -370,8 +370,14 @@ class AutomergeTests(unittest.TestCase):
             calls.append('t2')
             return t2, f'simulator build ({t2.lower()})', []
 
-        result = lane.run_automerge({'tier': tier, 'why': ['x']}, Path('/e'), fast=fake_fast, t2=fake_t2)
+        result = lane.run_automerge({'tier': tier, 'why': ['x']}, Path('/e'), fast=fake_fast, t2=fake_t2,
+                                    ratchet=lambda: list(too_big))
         return result, calls
+
+    def test_a_hot_file_above_its_ceiling_fails_before_any_build(self):
+        (verdict, where, ran, details), calls = self.run_checks('T2', too_big=['Gate1AppModel.swift would be 9 lines'])
+        self.assertEqual((verdict, where, calls), ('FAIL', 'no build', []))
+        self.assertIn('hot-file ratchet — Gate1AppModel.swift would be 9 lines', details[-1])
 
     def test_docs_research_and_server_only_diffs_build_nothing(self):
         (verdict, where, ran, details), calls = self.run_checks('T0')
@@ -612,6 +618,25 @@ class MergeTests(unittest.TestCase):
         (self.tree / 'App/SpokenMarginsApp').mkdir(parents=True)
         self.commit(self.tree, 'App/SpokenMarginsApp/View.swift', 'struct V {}\n')
         self.assertEqual(lane.diff_scope(self.tree, 'next')['tier'], 'T2')
+
+    def test_the_hot_file_ratchet_is_next_s_copy_and_absent_until_it_is_on_next(self):
+        model = 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift'
+        (self.origin / model).parent.mkdir(parents=True)
+        self.commit(self.origin, model, 'one\ntwo\n')
+        subprocess.run(self.git + ['-C', str(self.tree), 'pull', '-q', 'origin', 'next'], check=True)
+        self.commit(self.tree, model, 'one\ntwo\nthree\n')
+        lane.fetch_base(self.tree, 'next')
+        self.assertEqual(lane.hot_file_violations(self.tree, 'next', set()), [])  # not on next yet
+        (self.origin / 'scripts').mkdir(exist_ok=True)
+        self.commit(self.origin, 'scripts/hot_file_ratchet.py', (SCRIPTS / 'hot_file_ratchet.py').read_text())
+        lane.fetch_base(self.tree, 'next')
+        self.assertEqual(lane.merge_base_branch(self.tree, 'next'), [])
+        # The PR swaps in a ratchet that always passes; next's copy still judges it.
+        self.commit(self.tree, 'scripts/hot_file_ratchet.py', 'def violations(*args):\n    return []\n')
+        found = lane.hot_file_violations(self.tree, 'next', set())
+        self.assertEqual(len(found), 1, found)
+        self.assertIn('Gate1AppModel.swift would be 3 lines, above its ceiling of 2', found[0])
+        self.assertEqual(lane.hot_file_violations(self.tree, 'next', {'hot-file-ok'}), [])
 
     def test_a_conflict_names_the_files_and_leaves_the_tree_clean(self):
         self.commit(self.tree, 'shared.txt', 'pr side\n')

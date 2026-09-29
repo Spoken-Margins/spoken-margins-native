@@ -59,6 +59,8 @@ Post as a PR comment. Keep it short; the Test Desk needs intent, not narrative.
 - T2 or higher: `--plan fast` and both builds.
 Simulator tests (T3) still need a request. The lane check is green only on PASS.
 
+Before any build, the runner checks the hot-file ratchet (`scripts/hot_file_ratchet.py`). A PR may not grow `Gate1AppModel.swift` or `Gate1RootView.swift` above the smallest size each has had on `next` since the ratchet started. Move lines out, or ask the desk for the `hot-file-ok` label. Run the script yourself to see where a branch stands.
+
 ```text
 /lane T4
 commit: <sha>
