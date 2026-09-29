@@ -28,6 +28,7 @@ public struct PostResumeAudioSampleRequest: Equatable, Sendable {
 public protocol ItemRepository {
     func loadItem(id: String) throws -> Item
     func saveItem(_ item: Item) throws
+    func listItems(includeDeleted: Bool) throws -> [Item]
     func loadListeningMap(itemId: String) throws -> ListeningMap?
     func saveListeningMap(_ map: ListeningMap) throws
 }

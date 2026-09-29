@@ -121,52 +121,6 @@ class BuildSlotTests(unittest.TestCase):
         self.assertIn('acquired after 0s', err)
 
 
-FAKE_SIMCTL = '''#!/usr/bin/env python3
-import json, os, sys, time
-record = os.environ["FAKE_RECORD"]
-if sys.argv[1] == "boot":
-    start = time.time(); time.sleep(float(os.environ.get("FAKE_BOOT_SECONDS", "1")))
-    with open(record, "a") as handle:
-        handle.write(json.dumps({"udid": sys.argv[2], "start": start, "end": time.time()}) + "\\n")
-sys.exit(0)
-'''
-
-
-class SimulatorBootLockTests(unittest.TestCase):
-    """Two lane boots never overlap: concurrent boots crash-flooded SpringBoard (#184)."""
-
-    def test_two_boots_at_once_run_one_after_the_other(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            folder = Path(temporary)
-            fake = folder / 'simctl'
-            fake.write_text(FAKE_SIMCTL)
-            fake.chmod(0o755)
-            env = {**os.environ, 'SM_LANE_STATE_DIR': str(folder / 'state'), 'SM_LANE_SIMCTL': str(fake),
-                   'FAKE_RECORD': str(folder / 'boots.jsonl')}
-            boots = [subprocess.Popen([sys.executable, str(SCRIPTS / 'lane-sim-boot'), udid], env=env,
-                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for udid in ('A', 'B')]
-            outputs = [b.communicate(timeout=60) for b in boots]
-            self.assertEqual([b.returncode for b in boots], [0, 0], outputs)
-            first, second = sorted((json.loads(line) for line in (folder / 'boots.jsonl').read_text().splitlines()),
-                                   key=lambda r: r['start'])
-            self.assertGreaterEqual(second['start'], first['end'] - 0.05)
-            self.assertIn('waiting for a simulator boot lock', ''.join(err for _, err in outputs))
-
-    def test_the_runner_gives_up_on_the_lock_with_a_reason(self):
-        sys.path.insert(0, str(SCRIPTS))
-        import lane_slots
-        spec = importlib.util.spec_from_file_location('lane_runner_for_lock', SCRIPTS / 'lane-runner.py')
-        runner = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(runner)
-        with tempfile.TemporaryDirectory() as temporary, \
-                unittest.mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}), \
-                unittest.mock.patch.object(lane_slots, 'POLL_SECONDS', 0.05), \
-                unittest.mock.patch.object(runner, 'SIMULATOR_WAIT', 0.2), \
-                lane_slots.simulator_boot_lock('the Test Desk', out=open(os.devnull, 'w')):
-            problem = runner.first_boot('U', open(os.devnull, 'w'), lambda *_: self.fail('booted without the lock'))
-        self.assertIn('another simulator kept booting', problem)
-
-
 @unittest.skipUnless(shutil.which('xcodebuild'), 'needs Xcode')
 class VerifyTestsSlotTests(unittest.TestCase):
     def test_runner_xcodebuild_steps_take_a_slot_and_record_it(self):

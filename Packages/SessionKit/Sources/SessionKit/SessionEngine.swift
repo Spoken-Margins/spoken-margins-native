@@ -257,9 +257,10 @@ public final class SessionEngine {
     public func resumePlayback() throws -> SessionSnapshot {
         try requireNavigationAllowed("resumePlayback")
         try requirePlayback("resumePlayback")
-        guard let session = currentSession else {
+        guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("resumePlayback")
         }
+        session = try readingTextIfNarrationFileIsMissing(session)
         try playCurrentTarget(session)
         publishPlaybackStart(for: session, phase: session.phase)
         return snapshot
@@ -377,7 +378,13 @@ public final class SessionEngine {
         let transportState = audio.playbackTransportState(targetId: session.currentTargetId)
         var updated = try syncCurrentPositionFromAudio(session)
         if snapshot.status == .starting {
-            switch playbackStartStatus(for: session.currentTargetId, attemptId: activePlaybackStartAttemptId ?? playbackStartAttemptId) {
+            let startStatus = playbackStartStatus(for: session.currentTargetId, attemptId: activePlaybackStartAttemptId ?? playbackStartAttemptId)
+            if let recovered = currentSession, recovered.currentTargetId != session.currentTargetId {
+                // Start recovery moved playback to another target (#237); don't persist the old one.
+                session = recovered
+                updated = recovered
+            }
+            switch startStatus {
             case .confirmed:
                 // A confirmed start is the first point at which the newly
                 // requested transport position is authoritative.
@@ -1165,6 +1172,7 @@ public final class SessionEngine {
         item = try discardUnavailableGeneratedTextAudio(from: item)
         currentItem = item
         currentMap = try repository.loadListeningMap(itemId: session.itemId)
+        session = try readingTextIfNarrationFileIsMissing(session)
         if session.currentTargetType == .itemTextTTS,
            isGeneratedTextMedia(item.media),
            let timeline = sourceTranscriptTimeline(itemId: item.id),
@@ -2668,16 +2676,7 @@ public final class SessionEngine {
     /// remains playable through live speech and can be rendered again in the
     /// background instead of handing AVPlayer a permanently missing file URL.
     private func discardUnavailableGeneratedTextAudio(from item: Item) throws -> Item {
-        guard let media = item.media,
-              media.sourceType == .generatedTTSPrerendered else {
-            return item
-        }
-        let identifier = [media.url, media.nativeMediaId]
-            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .first(where: { !$0.isEmpty }) ?? ""
-        guard let url = URL(string: identifier),
-              url.isFileURL,
-              !FileManager.default.fileExists(atPath: url.path) else {
+        guard PreparedNarrationFallback.isMissing(item.media) else {
             return item
         }
         var repaired = item
@@ -2817,22 +2816,7 @@ public final class SessionEngine {
     }
 
     private func generatedTextOffset(mediaTimeMs: Int, timeline: TranscriptTimeline) -> Int {
-        let sortedSegments = timeline.segments.sorted { $0.startMs < $1.startMs }
-        guard !sortedSegments.isEmpty else { return 0 }
-        let clamped = max(0, mediaTimeMs)
-        let segment = sortedSegments.first { $0.startMs <= clamped && clamped < $0.endMs }
-            ?? sortedSegments.last(where: { $0.startMs <= clamped })
-            ?? sortedSegments.first
-        guard let segment,
-              let startChar = segment.startChar,
-              let endChar = segment.endChar,
-              segment.endMs > segment.startMs,
-              endChar > startChar else {
-            return segment?.startChar ?? 0
-        }
-        let fraction = Double(clamped - segment.startMs) / Double(segment.endMs - segment.startMs)
-        let offset = startChar + Int((Double(endChar - startChar) * max(0, min(1, fraction))).rounded())
-        return max(startChar, min(offset, endChar))
+        PreparedNarrationFallback.textOffset(mediaTimeMs: mediaTimeMs, timeline: timeline)
     }
 
     private func mediaPercent(_ mediaTimeMs: Int, durationMs: Int?) -> Int {
@@ -3035,7 +3019,7 @@ public final class SessionEngine {
             }
             return .confirmed
         case .failed(let message):
-            return recoverRemotePlaybackStart(targetId: targetId, attemptId: attemptId, failure: message)
+            return recoverPlaybackStart(targetId: targetId, attemptId: attemptId, failure: message)
         case .pending:
             if playbackStartPendingTargetId != targetId || playbackStartPendingAttemptId != attemptId {
                 playbackStartPendingTargetId = targetId
@@ -3044,12 +3028,80 @@ public final class SessionEngine {
                 return .pending
             }
             if let playbackStartDeadline, now() >= playbackStartDeadline {
-                return recoverRemotePlaybackStart(
+                return recoverPlaybackStart(
                     targetId: targetId, attemptId: attemptId, failure: "playback_start_timeout"
                 )
             }
             return .pending
         }
+    }
+
+    private func recoverPlaybackStart(targetId: String, attemptId: Int, failure: String) -> PlaybackStartStatus {
+        readTextInsteadOfFailedNarration(targetId: targetId, attemptId: attemptId, failure: failure)
+            ?? recoverRemotePlaybackStart(targetId: targetId, attemptId: attemptId, failure: failure)
+    }
+
+    /// An article's rendered narration failed to start or never started (#237). Read its text with
+    /// live speech from the same place instead, once per start attempt, and report the new target's
+    /// own start status. Nil when the target isn't generated narration.
+    private func readTextInsteadOfFailedNarration(
+        targetId: String, attemptId: Int, failure: String
+    ) -> PlaybackStartStatus? {
+        guard playbackStartRecoveryAttemptId != attemptId,
+              let session = currentSession,
+              session.currentTargetId == targetId,
+              session.phase == .itemPlayback,
+              let item = item(for: session),
+              PreparedNarrationFallback.canReadText(instead: session, item: item) else {
+            return nil
+        }
+        playbackStartRecoveryAttemptId = attemptId
+        do {
+            try audio.stop()
+            let reading = try readText(instead: session, item: item)
+            snapshot.lastFailure = "prepared_audio_unavailable:\(failure)"
+            try playCurrentTarget(reading)
+        } catch {
+            clearPlaybackStartPending()
+            return .failed("\(failure); text_fallback_failed:\(error.localizedDescription)")
+        }
+        playbackStartPendingTargetId = nil
+        playbackStartPendingAttemptId = nil
+        playbackStartDeadline = nil
+        return playbackStartStatus(for: item.id, attemptId: attemptId)
+    }
+
+    /// A saved session can still point at narration whose file has since been deleted. Move it to
+    /// live speech before anything hands the player a missing file.
+    private func readingTextIfNarrationFileIsMissing(_ session: Session) throws -> Session {
+        guard let url = PreparedNarrationFallback.fileURL(forTargetId: session.currentTargetId),
+              !FileManager.default.fileExists(atPath: url.path),
+              let item = item(for: session),
+              PreparedNarrationFallback.canReadText(instead: session, item: item) else {
+            return session
+        }
+        snapshot.lastFailure = "prepared_audio_unavailable:file_missing"
+        return try readText(instead: session, item: item)
+    }
+
+    /// Detaches the unusable narration from the item (so it can be rendered again) and persists the
+    /// session on live speech of the text at the matching position.
+    private func readText(instead session: Session, item: Item) throws -> Session {
+        // The cached item can be older than storage; don't write stale fields back.
+        var detached = (try? repository.loadItem(id: item.id)) ?? item
+        if detached.media?.sourceType == .generatedTTSPrerendered {
+            detached.media = nil
+            try repository.saveItem(detached)
+        }
+        currentItem = detached
+        var reading = PreparedNarrationFallback.liveSpeechSession(
+            from: session, item: detached, timeline: sourceTranscriptTimeline(for: session)
+        )
+        reading.position.chapterId = chapterId(for: reading.position.charOffset)
+        currentSession = reading
+        protectPlaybackPosition(for: reading)
+        try persistSession(reading)
+        return reading
     }
 
     /// Recreate a stalled remote transport once, just as closing and reopening

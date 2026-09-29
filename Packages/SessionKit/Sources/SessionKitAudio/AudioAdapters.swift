@@ -2116,7 +2116,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         #if canImport(AVFoundation)
         if let error = player?.currentItem?.error {
             releaseBackgroundAudio()
-            return .failed(error.localizedDescription)
+            return .failed(PlaybackFailureDetail.describe(error))
         }
         switch player?.timeControlStatus {
         case .playing:
