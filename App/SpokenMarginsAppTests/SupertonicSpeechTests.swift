@@ -1,6 +1,7 @@
 import AVFoundation
 import SessionKit
 import SessionKitAudio
+import SessionKitPersistence
 import SessionKitSupertonic
 import XCTest
 @testable import SpokenMarginsApp
@@ -123,6 +124,62 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(count, 0)
         XCTAssertTrue(fallback.playedOffsets.isEmpty)
         try client.stop()
+    }
+
+    // #258: playing an article's durable prepared chunk and then stopping deleted that chunk,
+    // because cleanup handed it to the renderer, which removed any file it was given.
+    // Real player, real prepared-audio coordinator and SQLite, real renderer deletion.
+    func testStoppingPlaybackKeepsAnArticlesDurablePreparedChunk() async throws {
+        let resources = try XCTUnwrap(Bundle.main.resourceURL).appending(path: "Supertonic", directoryHint: .isDirectory)
+        let root = FileManager.default.temporaryDirectory.appending(path: "prepared-survives-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
+        let coordinator = PreparedAudioCoordinator(repository: store, rootDirectory: root.appending(path: "PreparedAudio", directoryHint: .isDirectory))
+        let text = "Prepared audio must survive stopping playback."
+        let plan = PreparedChunkPlan(index: 0, startOffset: 0, sourceLength: text.count, text: text)
+        let signature = TTSRenderSignature(
+            engine: "supertonic", modelRevision: "3", assetManifestHash: "assets", voiceStyleHash: "voice",
+            synthesisParametersHash: "parameters", normalizationVersion: "normalization", chunkingVersion: "chunking",
+            digest: "digest-258-prepared-survives"
+        )
+        _ = try await coordinator.begin(itemId: "item-258", sourceText: text, signature: signature, plan: [plan])
+        let wav = try makeTestWAV(duration: 1)
+        defer { try? FileManager.default.removeItem(at: wav) }
+        try await coordinator.commit(itemId: "item-258", signature: signature, plan: plan, sourceText: text, audioURL: wav, durationMs: 1_000)
+        let durable = try await XCTUnwrapAsync(await coordinator.committedChunk(itemId: "item-258", signature: signature, plan: plan))
+
+        let renderer = try SupertonicNarrationRenderer(
+            assets: SupertonicAssetLocation(rootURL: resources),
+            outputDirectory: root.appending(path: "Playback", directoryHint: .isDirectory)
+        )
+        let started = expectation(description: "prepared chunk started")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in started.fulfill() },
+            observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient(),
+            preparedChunkLookup: { _, _, requested in
+                requested.startOffset == 0 ? try? await coordinator.committedChunk(itemId: "item-258", signature: signature, plan: plan) : nil
+            }
+        )
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "item-258")
+        await fulfillment(of: [started], timeout: 3)
+        try client.stop()
+        // Cleanup runs on the renderer's serial queue; let it drain.
+        try? await Task.sleep(for: .milliseconds(300))
+        _ = await renderer.diagnostics()
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: durable.audioURL.path), "the durable prepared chunk survives stop")
+        let again = try await coordinator.committedChunk(itemId: "item-258", signature: signature, plan: plan)
+        XCTAssertEqual(again?.audioURL, durable.audioURL, "and is still retrievable")
+        await renderer.unload()
+    }
+
+    private func XCTUnwrapAsync<T>(_ value: T?, file: StaticString = #filePath, line: UInt = #line) async throws -> T {
+        try XCTUnwrap(value, file: file, line: line)
     }
 
     func testSelectableCatalogExposesOnlyJamesLilyAndSystem() {
