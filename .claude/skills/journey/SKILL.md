@@ -30,9 +30,10 @@ The Test Desk takes **T4 and T5** requests. T2 and T3 go to the self-hosted runn
    ```
 
    This creates an iPhone 17 on iOS 26.5 and boots it under the lane's boot rules. It returns once the device is ready; a first boot migrates data for 3–6 minutes. There is no standing lane device. Two SpringBoard crash floods came from re-booting one (#184), and iOS 27's Apple Intelligence services crash-flood on this Mac.
-   - The boot rules (`scripts/lane_sim.py`) are shared with the runner and `verify-tests.py`: one boot at a time Mac-wide, no builds while a simulator boots, and at most two simulators running.
+   - **One simulator job at a time on this Mac.** The helper first takes the Mac-wide simulator slot, waiting while the runner's T3 or another job has a simulator. The device's watcher then holds the slot until `--done`. Two simulators plus builds pushed this 16 GB Mac's load to about 690 and filled swap (#184). While the slot is held, builds get one slot instead of two, so **always finish with `--done`**.
+   - The boot rules (`scripts/lane_sim.py`) are shared with the runner and `verify-tests.py`: one boot at a time, no builds while a simulator boots, no retry, and a crash watch.
    - **If the helper prints `STOP`, stop.** A failed boot or a crash during boot shuts the device down and marks it unsafe. Don't retry it, and don't boot it any other way; the guard blocks every command that names it except delete and shutdown. Delete it, and report on #184 before trying a fresh one if it happens twice.
-   - J5's second device is another `--fresh` device.
+   - J5 needs two devices, which this Mac can't run at once. A second `--fresh` would wait for your own slot. Run the sender, keep its packet, `--done` it, then boot the recipient; or mark J5 for the owner's device pass.
    - Only run `xcodebuild` or `verify-tests.py --device` against a device the helper booted. The guard sends a raw `simctl boot` to the helper.
    - After the boot, a background watcher checks the device's SpringBoard process every second. At the first SpringBoard crash it shuts the device down and marks it unsafe. Crash report files arrive about 80 s late, so they can't catch a flood in time. **If the device shuts down on its own, stop and report**; its reason is in `~/Library/Caches/SpokenMarginsLane/watch-<udid>.log`.
    - When the request is done: `scripts/lane-sim-boot --done "$UDID"`. It stops the watcher first, so the shutdown isn't counted as a crash, then shuts the device down and deletes it.

@@ -1062,6 +1062,43 @@
   "resolver_ok": true
  },
  {
+  "id": "post-custom-rameznaam-244",
+  "category": "post (owner's #244 link)",
+  "url": "https://www.rameznaam.com/p/ai-rsi-isnt-leading-to-super-intelligence",
+  "expect_feed": "https://www.rameznaam.com/feed",
+  "following_tab": {
+   "ok": true,
+   "feeds": [
+    "https://www.rameznaam.com/feed"
+   ]
+  },
+  "refs": {
+   "safari": "https://www.rameznaam.com/p/ai-rsi-isnt-leading-to-super-intelligence",
+   "share": "https://www.rameznaam.com/p/ai-rsi-isnt-leading-to-super-intelligence"
+  },
+  "suggest_safari": {
+   "ok": true,
+   "feeds": [
+    "https://www.rameznaam.com/feed"
+   ]
+  },
+  "suggest_share": {
+   "ok": true,
+   "feeds": [
+    "https://www.rameznaam.com/feed"
+   ]
+  },
+  "resolver": {
+   "feed": "https://www.rameznaam.com/feed",
+   "title": "Ramez Naam",
+   "confidence": 0.95,
+   "kind": "substack",
+   "audio_items": 0,
+   "reason": "input https://www.rameznaam.com/p/ai-rsi-isnt-leading-to-super-intelligence; feed https://www.rameznaam.com/feed parsed (20 items)"
+  },
+  "resolver_ok": true
+ },
+ {
   "id": "control-ghost-site",
   "category": "not Substack (control)",
   "url": "https://www.platformer.news/",

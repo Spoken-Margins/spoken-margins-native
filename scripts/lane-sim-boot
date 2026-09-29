@@ -5,11 +5,15 @@
   scripts/lane-sim-boot <udid>                          boot an existing device
   scripts/lane-sim-boot --done <udid>                   stop its watcher, shut it down, delete it
 
+It first takes the Mac's one simulator slot (waiting while the runner or another job has a
+simulator), and the device's background watcher keeps that slot until --done: on this 16 GB Mac
+two simulator jobs plus builds filled swap (#184). While the slot is held, builds get one slot.
 One boot at a time Mac-wide, no builds while it boots, never a retry after a failed boot, and a stop
-at the first SpringBoard crash. After the boot, a background watcher keeps watching SpringBoard and
-shuts the device down (and marks it unsafe) at the first crash; its log is next to the lane's state
+at the first SpringBoard crash. After the boot, the watcher keeps watching SpringBoard and shuts the
+device down (and marks it unsafe) at the first crash; its log is next to the lane's state
 (~/Library/Caches/SpokenMarginsLane/watch-<udid>.log). A device that failed is marked unsafe: remove
 it with --done and start again with --fresh. Journeys use a fresh device per request.
+Always finish with --done: until then the device keeps the simulator slot.
 Exit 0 when ready; the UDID is the only thing printed on stdout.
 """
 import argparse
@@ -18,6 +22,9 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lane_sim  # noqa: E402
+from lane_slots import acquire_simulator_slot, release_handle  # noqa: E402
+
+SLOT_WAIT = 7200
 
 
 def main(argv):
@@ -29,7 +36,6 @@ def main(argv):
     target.add_argument('--watch', metavar='UDID', help=argparse.SUPPRESS)  # the background watcher itself
     parser.add_argument('--timeout', type=float, default=lane_sim.FIRST_BOOT_TIMEOUT,
                         help='seconds to wait for readiness (default %(default).0f)')
-    parser.add_argument('--no-watch', action='store_true', help='skip the background SpringBoard watcher')
     args = parser.parse_args(argv)
     if args.watch:
         print(f'[lane] watching {args.watch}', flush=True)
@@ -39,17 +45,28 @@ def main(argv):
         lane_sim.release(args.done)
         print(f'[lane] {args.done} released: watcher stopped, shut down, deleted', file=sys.stderr)
         return 0
+    name = args.fresh or args.udid
+    try:
+        slot = acquire_simulator_slot(f'lane-sim-boot {name} (its watcher holds it until --done)',
+                                      max_wait=SLOT_WAIT)
+    except TimeoutError as error:
+        print(f'[lane] STOP: the simulator slot stayed busy: {error}', file=sys.stderr)
+        return 4
     try:
         udid = lane_sim.create_temporary(args.fresh) if args.fresh else args.udid
         if args.fresh:
             print(f'[lane] created {args.fresh}: {udid}', file=sys.stderr)
         seconds = lane_sim.boot(udid, f'lane-sim-boot {udid}', timeout=args.timeout)
+        lane_sim.start_watcher(udid, Path(__file__).resolve(), slot=slot)
     except lane_sim.BootError as error:
+        release_handle(slot)
         print(f'[lane] STOP: {error}', file=sys.stderr)
         return 3
-    if not args.no_watch:
-        lane_sim.start_watcher(udid, Path(__file__).resolve())
-    print(f'[lane] {udid} is ready after {seconds:.0f}s' + ('' if args.no_watch else '; watcher running'),
+    except BaseException:
+        release_handle(slot)
+        raise
+    slot.close()  # the watcher inherited the slot and holds it, holder note included, until --done
+    print(f'[lane] {udid} is ready after {seconds:.0f}s; its watcher holds the simulator slot until --done',
           file=sys.stderr)
     print(udid)
     return 0
