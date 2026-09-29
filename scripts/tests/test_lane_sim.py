@@ -44,9 +44,9 @@ elif args[0] == "bootstatus":
         time.sleep(60)
     time.sleep(float(os.environ.get("FAKE_READY_SECONDS", "0.1")))
 elif args[0] == "shutdown":
-    log({"shutdown": args[1]})
+    log({"shutdown": args[1], "at": time.time()})
 elif args[0] == "delete":
-    log({"delete": args[1]})
+    log({"delete": args[1], "at": time.time()})
 '''
 
 PS_OUTPUT = """41094     1 launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/7E6701FC-0783-4C87-90D8-180CCDAC5280/data/var/run/launchd_bootstrap.plist
@@ -87,6 +87,10 @@ class LaneSimTests(unittest.TestCase):
         self.addCleanup(self.quiet.close)
 
     def records(self):
+        """What the fake simctl did, without timestamps (see timed() for those)."""
+        return [{k: v for k, v in r.items() if k != 'at'} for r in self.timed()]
+
+    def timed(self):
         return [json.loads(line) for line in self.record.read_text().splitlines()] if self.record.exists() else []
 
     def test_a_healthy_boot_returns_when_ready_and_marks_nothing(self):
@@ -177,22 +181,56 @@ class LaneSimTests(unittest.TestCase):
         with lane_slots.build_slot('after the boot', out=self.quiet, max_wait=1):
             pass
 
-    def test_it_waits_while_two_other_simulators_are_booted(self):
-        with mock.patch.dict(os.environ, {'FAKE_BOOTED': 'X,Y'}):
-            with self.assertRaisesRegex(lane_sim.BootError, 'stayed booted'):
+    def test_it_waits_while_another_simulator_is_booted(self):
+        with mock.patch.dict(os.environ, {'FAKE_BOOTED': 'X'}):
+            with self.assertRaisesRegex(lane_sim.BootError, 'another simulator stayed booted'):
                 lane_sim.wait_for_room(UDID, max_wait=0.1, poll=0.02)
-        seen = iter([{'X', 'Y'}, {'X'}])
+        seen = iter([{'X'}, set()])
         lane_sim.wait_for_room(UDID, max_wait=5, poll=0.01, booted=lambda: next(seen))
 
-    def test_two_boots_at_once_run_one_after_the_other(self):
-        env = {**os.environ, 'FAKE_BOOT_SECONDS': '1'}
-        boots = [subprocess.Popen([sys.executable, str(SCRIPTS / 'lane-sim-boot'), udid, '--no-watch'], env=env,
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for udid in ('A-1', 'B-2')]
-        outputs = [b.communicate(timeout=60) for b in boots]
-        self.assertEqual([b.returncode for b in boots], [0, 0], outputs)
-        first, second = sorted((r for r in self.records() if 'boot' in r), key=lambda r: r['start'])
-        self.assertGreaterEqual(second['start'], first['end'] - 0.05)
-        self.assertIn('waiting for a simulator boot lock', ''.join(err for _, err in outputs))
+    def test_builds_get_one_slot_while_a_simulator_job_runs(self):
+        with lane_slots.build_slot('first', out=self.quiet), lane_slots.build_slot('second', out=self.quiet, max_wait=1):
+            pass  # two at once without a simulator job
+        with lane_slots.simulator_slot('a T4 job', out=self.quiet):
+            self.assertTrue(lane_slots.simulator_job_running())
+            with lane_slots.build_slot('first', out=self.quiet):
+                with self.assertRaisesRegex(TimeoutError, 'only 1 of 2 while a simulator job runs'):
+                    with lane_slots.build_slot('second', out=self.quiet, max_wait=0.3):
+                        pass
+        self.assertFalse(lane_slots.simulator_job_running())
+
+    def test_the_runner_does_not_start_a_simulator_while_another_job_holds_the_slot(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('lane_runner_for_slot', SCRIPTS / 'lane-runner.py')
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        with mock.patch.object(runner, 'RUNNER_SLOT_WAIT', 0.2), \
+                mock.patch.object(lane_sim, 'create_temporary', side_effect=AssertionError('made a simulator')), \
+                lane_slots.simulator_slot('the Test Desk', out=self.quiet), mock.patch('sys.stdout', self.quiet):
+            verdict, _, _, details, _, _ = runner.run_t3(['AppNavigationStateTests'], 'r1', Path(self.temporary.name))
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertIn('one simulator slot stayed busy', details[0])
+
+    def test_a_second_simulator_job_waits_until_the_first_is_done(self):
+        helper = [sys.executable, str(SCRIPTS / 'lane-sim-boot')]
+        first = subprocess.run(helper + ['A-1'], env=dict(os.environ), capture_output=True, text=True, timeout=60)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertTrue(lane_slots.simulator_job_running())  # the watcher holds it after the helper exited
+        second = subprocess.Popen(helper + ['B-2'], env=dict(os.environ), stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True)
+        time.sleep(1.5)
+        self.assertIsNone(second.poll())
+        self.assertNotIn('B-2', [r.get('boot') for r in self.records()])
+        subprocess.run(helper + ['--done', 'A-1'], env=dict(os.environ), capture_output=True, timeout=60)
+        out, err = second.communicate(timeout=60)
+        self.assertEqual((second.returncode, out), (0, 'B-2\n'), err)
+        self.assertIn('waiting for a simulator slot', err)
+        timed = self.timed()
+        released = next(r['at'] for r in timed if r.get('delete') == 'A-1')
+        booted = next(r['start'] for r in timed if r.get('boot') == 'B-2')
+        self.assertGreaterEqual(booted, released)
+        subprocess.run(helper + ['--done', 'B-2'], env=dict(os.environ), capture_output=True, timeout=60)
+        self.assertFalse(lane_slots.simulator_job_running())
 
     def test_fresh_boots_with_a_watcher_and_done_removes_both(self):
         helper = [sys.executable, str(SCRIPTS / 'lane-sim-boot')]
@@ -255,8 +293,16 @@ class LaneSimTests(unittest.TestCase):
         stop_flag, _, _ = lane_sim.watch_files(other)
         stop_flag.parent.mkdir(parents=True, exist_ok=True)
         stop_flag.write_text('released')
-        self.assertEqual(lane_sim.watch(other, poll=0.01, monitor=lane_sim.SpringBoardMonitor(other, sequence((10, 20)))),
+        checks = []
+        states = [(10, 20), (10, None), (None, None)]  # released: SpringBoard ends, then the device goes
+
+        def processes(udid):
+            checks.append(udid)
+            return states.pop(0) if len(states) > 1 else states[0]
+
+        self.assertEqual(lane_sim.watch(other, poll=0.01, monitor=lane_sim.SpringBoardMonitor(other, processes)),
                          'released')
+        self.assertEqual(len(checks), 3)  # it held on (and held any slot) until the device was gone
         self.assertNotIn(other, lane_sim.unsafe_devices())
 
     def test_the_helper_refuses_an_unsafe_device_with_a_stop_message(self):

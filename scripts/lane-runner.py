@@ -16,7 +16,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
 - T3 runs the named app-hosted tests through verify-tests.py on a fresh iOS 26 simulator, created
   for the job and deleted afterwards. It is booted under the lane's boot rules (scripts/lane_sim.py):
   one boot at a time, no builds meanwhile, no retry after a failed boot, a stop at the first crash
-  during boot, and a long wait for the first boot's data migration. A crash flood stops the run.
+  during boot, and a long wait for the first boot's data migration. The job holds the Mac's one
+  simulator slot throughout, so it never runs alongside a Test Desk job. A crash flood stops the run.
 - A timeout interrupts the whole process group, so no xcodebuild keeps running outside the slots.
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
@@ -52,6 +53,9 @@ BUILD_TIMEOUT = 1800
 T3_TIMEOUT = 3600
 INTERRUPT_GRACE = 120
 RUNNER_SIMULATOR_PREFIX = 'SM Lane Runner '
+# How long a T3 waits for the Mac's one simulator slot (a Test Desk job may hold it); keeps the job
+# inside lane.yml's 150-minute limit together with the boot and the test run.
+RUNNER_SLOT_WAIT = 3600
 MARKER = re.compile(r'<!-- lane-request: (\{.*?\}) -->')
 NOTE = '<!-- lane-note -->'
 REQUEST = re.compile(r'^\s*/lane\s+(T\d)\b', re.M)
@@ -160,7 +164,10 @@ def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUP
     On timeout the whole group gets SIGINT first, so verify-tests.py and xcodebuild-lane stop their
     own xcodebuild and record the interruption, then SIGKILL if it's still there after the grace.
     """
-    process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    # The child gets default SIGINT handling even if this process was started with it ignored (as
+    # background jobs are), or the interrupt below would be silently ignored all the way down.
+    process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                               preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
     try:
         return process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -306,6 +313,21 @@ def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str,
     if not runtime:
         return ('INCONCLUSIVE', 'no simulator', 'nothing', [f'No iOS {lane_sim.IOS_MAJOR} simulator runtime is installed.'],
                 'none', '')
+    from lane_slots import acquire_simulator_slot, release_handle
+    try:
+        slot = acquire_simulator_slot(f'runner T3 {request_id}', out=sys.stdout, max_wait=RUNNER_SLOT_WAIT)
+    except TimeoutError as error:
+        return ('INCONCLUSIVE', 'no simulator', 'nothing', ['The Mac\'s one simulator slot stayed busy (a Test Desk '
+                f'job or another run), so this run did not start a second simulator: {error}'], 'none', '')
+    try:
+        return _t3_on_fresh_device(grouped, request_id, evidence, runtime)
+    finally:
+        release_handle(slot)
+
+
+def _t3_on_fresh_device(grouped, request_id, evidence, runtime):
+    """The T3 job proper; the caller holds the simulator slot throughout."""
+    import lane_sim
     udid = lane_sim.create_temporary(RUNNER_SIMULATOR_PREFIX + request_id)
     where = f'fresh iPhone 17, {runtime.rsplit(".", 1)[-1].replace("iOS-", "iOS ").replace("-", ".")}'
     python = ROOT / '.venv/bin/python'

@@ -6,15 +6,18 @@ Both followed a `simctl boot` that failed with "Invalid argument" and then a ret
 So each boot:
 - refuses a device marked unsafe (a failed boot or a crash during boot marks it);
 - holds the Mac-wide simulator-boot lock, so one simulator boots at a time;
-- waits while two simulators are already booted (the Mac's limit);
+- waits while another simulator is booted (one at a time on this 16 GB Mac);
 - holds both build slots, so no build runs while a simulator boots;
 - never retries a failed `simctl boot`: it shuts the device down and marks it unsafe;
 - watches the device's SpringBoard process until it is ready, and stops at the first restart or
   disappearance (crash reports reach DiagnosticReports about 80 s late, after a flood is under way),
   with crash reports as a second signal.
-After the boot, a background watcher (`lane-sim-boot --watch`) keeps watching SpringBoard and shuts
-the device down and marks it unsafe at the first crash. `lane-sim-boot --done <udid>` stops the
-watcher first, so an intentional shutdown isn't counted, then shuts the device down and deletes it.
+The whole simulator job holds the Mac-wide simulator slot (lane_slots.py), so the runner's T3 and
+the Test Desk's T4 never run simulators at the same time. After the boot, a background watcher
+(`lane-sim-boot --watch`) keeps watching SpringBoard, shuts the device down and marks it unsafe at
+the first crash, and holds the Test Desk's simulator slot until the device is gone.
+`lane-sim-boot --done <udid>` tells the watcher a shutdown is coming, so it isn't counted as a
+crash, then shuts the device down and deletes it; the slot frees when the watcher exits.
 A fresh device's first boot migrates data for several minutes, hence the long readiness wait.
 
 The unsafe list is ~/Library/Caches/SpokenMarginsLane/unsafe-simulators.json. The lane guard blocks
@@ -33,13 +36,14 @@ import subprocess
 import sys
 import time
 
-from lane_slots import build_slot, simulator_boot_lock, state_dir, SLOTS
+from lane_slots import build_slot_file, simulator_boot_lock, state_dir, SLOTS
 
 IOS_MAJOR = 26  # iOS 27's Apple Intelligence services crash-flood on this Mac (#184)
 DEVICE_TYPE = 'com.apple.CoreSimulator.SimDeviceType.iPhone-17'
 FIRST_BOOT_TIMEOUT = 900
 LOCK_WAIT = 1800
-MAX_BOOTED = 2
+MAX_BOOTED = 1  # 16 GB Mac: a second simulator plus builds filled swap (#184)
+RELEASE_WAIT = 130
 CRASH_POLL_SECONDS = 1.0
 
 
@@ -171,6 +175,10 @@ def watch(udid: str, poll: float = 1.0, monitor: SpringBoardMonitor | None = Non
     monitor = monitor or SpringBoardMonitor(udid)
     while True:
         if stop_flag.exists():
+            # Released: keep any simulator slot this process holds until the device is really gone.
+            deadline = time.monotonic() + RELEASE_WAIT
+            while monitor.processes(udid)[0] is not None and time.monotonic() < deadline:
+                time.sleep(poll)
             return 'released'
         seen = monitor.check()
         if seen == 'shut down':
@@ -181,22 +189,28 @@ def watch(udid: str, poll: float = 1.0, monitor: SpringBoardMonitor | None = Non
         time.sleep(poll)
 
 
-def start_watcher(udid: str, helper: Path) -> None:
-    """Run `lane-sim-boot --watch <udid>` in the background, logging next to the lane's other state."""
+def start_watcher(udid: str, helper: Path, slot=None) -> None:
+    """Run `lane-sim-boot --watch <udid>` in the background, logging next to the lane's other state.
+
+    With slot (an open simulator-slot handle), the watcher inherits it and holds the slot until it exits.
+    """
     stop_flag, log, pid_file = watch_files(udid)
     stop_flag.unlink(missing_ok=True)
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open('a') as handle:
         watcher = subprocess.Popen([sys.executable, str(helper), '--watch', udid], stdout=handle,
-                                   stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+                                   stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True,
+                                   pass_fds=(slot.fileno(),) if slot else ())
     pid_file.write_text(f'{watcher.pid}\n')
 
 
-def release(udid: str, wait: float = 5.0) -> None:
-    """Stop the device's watcher, then shut the device down and delete it."""
+def release(udid: str, wait: float = RELEASE_WAIT) -> None:
+    """Tell the watcher a shutdown is coming, shut the device down, delete it, and wait for the watcher."""
     stop_flag, _, pid_file = watch_files(udid)
     stop_flag.parent.mkdir(parents=True, exist_ok=True)
     stop_flag.write_text('released\n')
+    subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
+    subprocess.run(simctl() + ['delete', udid], capture_output=True, timeout=120)
     try:
         pid = int(pid_file.read_text())
     except (OSError, ValueError):
@@ -208,8 +222,6 @@ def release(udid: str, wait: float = 5.0) -> None:
         except ProcessLookupError:
             break
         time.sleep(0.1)
-    subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
-    subprocess.run(simctl() + ['delete', udid], capture_output=True, timeout=120)
     stop_flag.unlink(missing_ok=True)
     pid_file.unlink(missing_ok=True)
 
@@ -242,8 +254,8 @@ def wait_until_ready(udid: str, is_ready, monitor, find_crash, timeout: float, c
 @contextlib.contextmanager
 def all_build_slots(label: str, out, max_wait: float):
     with contextlib.ExitStack() as stack:
-        for _ in range(SLOTS):
-            stack.enter_context(build_slot(label, out=out, max_wait=max_wait))
+        for index in range(SLOTS):  # by name: the one-slot rule during a simulator job mustn't apply here
+            stack.enter_context(build_slot_file(index, label, out=out, max_wait=max_wait))
         yield
 
 
@@ -254,7 +266,7 @@ def wait_for_room(udid: str, max_wait: float, poll: float = 15, booted=booted_ud
         if len(running) < MAX_BOOTED:
             return
         if time.monotonic() - started >= max_wait:
-            raise BootError(f'{MAX_BOOTED} simulators stayed booted for {max_wait:.0f}s, so no other one was booted.')
+            raise BootError(f'another simulator stayed booted for {max_wait:.0f}s, so this one was not booted.')
         time.sleep(poll)
 
 
