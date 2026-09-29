@@ -15581,9 +15581,11 @@ final class Gate1AppModel: ObservableObject {
             ))
             try? await ledger.adoptExistingAssets()
             let residualOverage = try? await ledger.enforceBudget()
+            let reconciled = await ledger.lastReconciliation?.summary ?? "failed"
             let ledgerBytes = try? await ledger.inventoryBytes()
             let filesystemBytes = await ledger.directFilesystemBytes()
             await MainActor.run { [weak self] in
+                self?.diagnostics["offlineLedgerReconciled"] = reconciled
                 self?.diagnostics["offlineLedgerBytes"] = "\(ledgerBytes ?? 0)"
                 self?.diagnostics["offlineFilesystemBytes"] = "\(filesystemBytes)"
                 self?.diagnostics["offlineResidualOverageBytes"] = "\(residualOverage ?? 0)"
