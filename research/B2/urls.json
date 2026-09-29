@@ -286,6 +286,13 @@
    "expect_feed": "https://www.lennysnewsletter.com/feed"
   },
   {
+   "id": "post-custom-rameznaam-244",
+   "category": "post (owner's #244 link)",
+   "item": true,
+   "url": "https://www.rameznaam.com/p/ai-rsi-isnt-leading-to-super-intelligence",
+   "expect_feed": "https://www.rameznaam.com/feed"
+  },
+  {
    "id": "control-ghost-site",
    "category": "not Substack (control)",
    "item": false,

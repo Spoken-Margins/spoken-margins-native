@@ -99,11 +99,9 @@ class BuildSlotTests(unittest.TestCase):
         failing = self.wrapper('build', env={**self.env, 'FAKE_EXIT': '65', 'FAKE_SECONDS': '0.1'})
         failing.communicate(timeout=30)
         self.assertEqual(failing.returncode, 65)
-        start = time.monotonic()
         for process in [self.wrapper('build', env={**self.env, 'FAKE_SECONDS': '0.1'}) for _ in range(2)]:
             _, err = process.communicate(timeout=30)
-            self.assertNotIn('waiting', err)
-        self.assertLess(time.monotonic() - start, 10)
+            self.assertNotIn('waiting', err)  # both slots free again: no queue, however busy the Mac is
 
     def test_a_killed_holder_frees_its_slot(self):
         holders = [self.wrapper('build', env={**self.env, 'FAKE_SECONDS': '30'}) for _ in range(2)]
@@ -118,7 +116,8 @@ class BuildSlotTests(unittest.TestCase):
         quick = self.wrapper('build', env={**self.env, 'FAKE_SECONDS': '0.1'})
         _, err = quick.communicate(timeout=30)
         self.assertEqual(quick.returncode, 0)
-        self.assertIn('acquired after 0s', err)
+        self.assertIn('build slot 1/2 acquired', err)
+        self.assertNotIn('waiting', err)  # the killed holders' slots were free at once
 
 
 @unittest.skipUnless(shutil.which('xcodebuild'), 'needs Xcode')

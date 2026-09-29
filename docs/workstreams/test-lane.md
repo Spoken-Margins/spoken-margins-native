@@ -29,7 +29,7 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 
 ## The lane
 
-**Endpoint A1 must reach.** Any stream, cloud or Mac, can request T2–T5 against a pushed commit without the owner doing anything, and gets a report on its PR. The Mac never runs more than **two** simulators at once. It never runs more than **two** `xcodebuild` invocations at once *in total*: one Mac-wide semaphore shared by the lane and every stream session. A crash flood stops the lane and notifies the owner.
+**Endpoint A1 must reach.** Any stream, cloud or Mac, can request T2–T5 against a pushed commit without the owner doing anything, and gets a report on its PR. The Mac never runs more than **one** simulator job at a time (it has 16 GB; two simulators plus builds filled swap, #184). It never runs more than **two** `xcodebuild` invocations at once *in total*, and only one while a simulator job runs: one Mac-wide semaphore shared by the lane and every stream session. A crash flood stops the lane and notifies the owner.
 
 **Recommended shape** (A1 may change it if the endpoint holds):
 
@@ -104,8 +104,9 @@ Simulators:
   device another way; the guard blocks devices marked unsafe.
 - On 26.5, unlocking after a lock sometimes freezes the display. Mark lock-and-unlock
   steps "not verified" and leave them for the owner's phone pass.
-- A journey that needs a second device (J5) gets another --fresh device. At most two
-  simulators run at once; the helper waits if two are booted.
+- One simulator at a time on this 16 GB Mac (two plus builds filled swap). The helper holds the
+  Mac-wide simulator slot from boot to --done, and the runner's T3 waits for it. A journey that
+  needs two devices (J5) runs them one after the other, or goes to the owner's device pass.
 - Never touch any other simulator, other projects' simulators, the owner's iPhone,
   their Library, or main.
 

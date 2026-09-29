@@ -47,9 +47,10 @@ Suggestion columns assume the item already passed the 25%-listened-or-Margin gat
 | `profile-handle` (profile) | ❌ FollowedSourceCoordinator.swift:93 no alternate link or /feed heuristic on this host parsed | – | – | ✅ www.noahpinion.blog/feed |
 | `profile-subdomain-redirect` (profile) | ❌ FollowedSourceCoordinator.swift:93 no alternate link or /feed heuristic on this host parsed | – | – | ✅ na12.substack.com/feed |
 | `subdomain-to-custom-lenny` (home page) | ✅ www.lennysnewsletter.com/feed | – | – | ✅ www.lennysnewsletter.com/feed |
+| `post-custom-rameznaam-244` (post (owner's #244 link)) | ✅ www.rameznaam.com/feed | ✅ www.rameznaam.com/feed | ✅ www.rameznaam.com/feed | ✅ www.rameznaam.com/feed |
 | `control-ghost-site` (not Substack (control)) | ✅ www.platformer.news/rss/ | – | – | ✅ none |
 | `control-substack-notes` (not a publication (control)) | ❌ FollowedSourceCoordinator.swift:93 no alternate link or /feed heuristic on this host parsed | – | – | ✅ none |
 
-Resolver: 42/42 cases give the expected feed (controls expect none).
-Following tab today: 29/42 give exactly the expected feed.
-Suggestion today (Safari/Link import), article items: 8/17 find a feed.
+Resolver: 43/43 cases give the expected feed (controls expect none).
+Following tab today: 30/43 give exactly the expected feed.
+Suggestion today (Safari/Link import), article items: 9/18 find a feed.

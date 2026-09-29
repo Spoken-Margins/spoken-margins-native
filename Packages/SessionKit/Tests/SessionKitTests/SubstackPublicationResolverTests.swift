@@ -126,6 +126,31 @@ final class SubstackPublicationResolverTests: XCTestCase {
         XCTAssertFalse(paid.first?.reason.contains("test-not-a-token") ?? true)
     }
 
+    /// #244: the owner's link. From recorded responses the resolver finds the feed; the trace says how.
+    func testOwnersLinkFrom244ResolvesAndExplainsHow() async throws {
+        let resolver = SubstackPublicationResolver(fetch: ReplayFetcher(fixtures: Self.research.appending(path: "fixtures")).fetch)
+        let result = await resolver.resolveExplained("https://www.rameznaam.com/p/ai-rsi-isnt-leading-to-super-intelligence")
+        XCTAssertEqual(result.publication?.feedURL, "https://www.rameznaam.com/feed")
+        XCTAssertEqual(result.trace, ["www.rameznaam.com/feed: Substack feed, 20 items"])
+    }
+
+    /// #244: when a step fails, the trace names it, with the host and the error code, so a device
+    /// report can say why Follow failed. It never carries the article's full link.
+    func testTraceNamesTheFailedStepWhenTheFeedCannotBeFetched() async throws {
+        let fetcher = ReplayFetcher(
+            fixtures: Self.research.appending(path: "fixtures"),
+            failures: ["feed https://www.rameznaam.com/feed": URLError(.timedOut)]
+        )
+        let result = await SubstackPublicationResolver(fetch: fetcher.fetch)
+            .resolveExplained("https://www.rameznaam.com/p/ai-rsi-isnt-leading-to-super-intelligence")
+        XCTAssertNil(result.publication)
+        XCTAssertEqual(result.trace, [
+            "www.rameznaam.com/feed: fetch failed (NSURLErrorDomain -1001)",
+            "page on www.rameznaam.com: no redirect to a publication"
+        ])
+        XCTAssertFalse(result.trace.joined().contains("ai-rsi"), "no article path in diagnostics")
+    }
+
     func testStripTrackingKeepsMeaningfulQuery() {
         XCTAssertEqual(
             SubstackPublicationResolver.stripTracking("https://x.com/p/a?utm_source=s&r=1&page=2#f"),
@@ -140,13 +165,15 @@ final class SubstackPublicationResolverTests: XCTestCase {
 private final class ReplayFetcher: @unchecked Sendable {
     private let fixtures: URL
     private let aliases: [String: String]
+    private let failures: [String: Error]
     private let lock = NSLock()
     private var recordedRequests: [String] = []
     private var recordedMisses: [String] = []
 
-    init(fixtures: URL, aliases: [String: String] = [:]) {
+    init(fixtures: URL, aliases: [String: String] = [:], failures: [String: Error] = [:]) {
         self.fixtures = fixtures
         self.aliases = aliases
+        self.failures = failures
     }
 
     var requests: [String] { lock.withLock { recordedRequests } }
@@ -168,6 +195,7 @@ private final class ReplayFetcher: @unchecked Sendable {
 
     private func get(_ url: URL, _ kind: SubstackFetchKind) throws -> SubstackFetchResponse {
         lock.withLock { recordedRequests.append("\(kind.rawValue) \(url.absoluteString)") }
+        if let failure = failures["\(kind.rawValue) \(url.absoluteString)"] { throw failure }
         var current = url.absoluteString
         for _ in 0...5 {
             let hop = try self.hop(current, kind)
