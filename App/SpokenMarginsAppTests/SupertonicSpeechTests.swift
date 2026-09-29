@@ -340,6 +340,37 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    // Audit of #301: the detector reports a continuous stall once. If that one event lands inside
+    // the cooldown, nothing retried when it ended. Re-seat, brief progress, stall again within
+    // the cooldown, then a retry once it has passed.
+    func testAStallInsideTheCooldownIsRetriedWhenTheCooldownEnds() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: CountingAudioSupertonicRenderer(templateURL: template), voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                log.started()
+                if log.startCount == 2 {
+                    player.volume = 0
+                    player.playImmediately(atRate: rate)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { player.pause() }
+                }
+            },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            onStall: { kind, fields in log.stall(kind, fields) },
+            stallThreshold: .milliseconds(300), stallSampleInterval: .milliseconds(100),
+            stallRecoveryCooldown: .seconds(1)
+        )
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "retry", from: 0)
+        for _ in 0..<200 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThanOrEqual(log.startCount, 3, "re-seated again after the cooldown: \(log.values)")
+        try client.stop()
+    }
+
     func testAPlayerThatIsPlayingIsNotAStall() async throws {
         let template = try makeTestWAV(duration: 3)
         defer { try? FileManager.default.removeItem(at: template) }

@@ -395,6 +395,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let onStall: StallHandler?
     private let stallThreshold: Duration
     private let stallSampleInterval: Duration
+    private let stallRecoveryCooldown: Duration
     /// The chunk the player is playing, so a stalled player can be re-seated at the same point.
     private var activeRequest: RenderRequest?
     private var stallMonitor: Task<Void, Never>?
@@ -456,6 +457,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onStall: StallHandler? = nil,
         stallThreshold: Duration = .seconds(5),
         stallSampleInterval: Duration = .seconds(1),
+        stallRecoveryCooldown: Duration = .seconds(30),
         onResumeDecision: ResumeDecisionHandler? = nil,
         renderWaitLimit: Duration = .seconds(15)
     ) {
@@ -497,6 +499,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.onStall = onStall
         self.stallThreshold = stallThreshold
         self.stallSampleInterval = stallSampleInterval
+        self.stallRecoveryCooldown = stallRecoveryCooldown
         self.articleText = articleText
         self.onResumeDecision = onResumeDecision
         self.renderWaitLimit = renderWaitLimit
@@ -1639,6 +1642,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             guard stallMonitor == nil else { return }
             stallMonitor = Task { [weak self] in
                 var detector = PlaybackStallDetector(thresholdMs: thresholdMs, minimumProgressMs: 100)
+                // The detector reports a continuous stall once; while it lasts, recovery is retried
+                // whenever the cooldown allows, so one skipped attempt can't leave it silent.
+                var stallOngoing = false
                 let start = ContinuousClock.now
                 while !Task.isCancelled {
                     try? await Task.sleep(for: interval)
@@ -1652,7 +1658,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     let uptimeMs = Int(elapsed.components.seconds * 1_000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
                     if let event = detector.observe(uptimeMs: uptimeMs, mediaTimeMs: sample.intends ? sample.clock : nil,
                                                     intendsToPlay: sample.intends) {
+                        if case .stalled = event { stallOngoing = true } else { stallOngoing = false }
                         await MainActor.run { self.handleStallEvent(event) }
+                    } else if stallOngoing, sample.intends {
+                        await MainActor.run { self.retryStallRecoveryIfDue() }
                     }
                     if !sample.active {
                         self.lock.withLock { self.stallMonitor = nil }
@@ -1670,18 +1679,34 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         switch event {
         case .stalled(_, let forMs):
             fields["stalledMs"] = String(forMs)
-            let recovering = lock.withLock { () -> Bool in
-                if let last = lastStallRecovery, ContinuousClock.now - last < .seconds(30) { return false }
-                lastStallRecovery = .now
-                return true
-            }
-            fields["recovery"] = recovering ? "reseat_player" : "skipped_recent_recovery"
+            let recovering = claimStallRecovery()
+            fields["recovery"] = recovering ? "reseat_player" : "waiting_for_cooldown"
             onStall?("supertonic.stall", fields)
             if recovering { reseatStalledPlayer() }
         case .ended(_, _, let stalledForMs):
             fields["stalledMs"] = String(stalledForMs)
             onStall?("supertonic.stall_ended", fields)
         }
+    }
+
+    /// True, and the cooldown restarts, when a recovery may run now.
+    private func claimStallRecovery() -> Bool {
+        lock.withLock {
+            if let last = lastStallRecovery, ContinuousClock.now - last < stallRecoveryCooldown { return false }
+            lastStallRecovery = .now
+            return true
+        }
+    }
+
+    /// A stall that's still going: re-seat again once the cooldown has passed.
+    @MainActor
+    private func retryStallRecoveryIfDue() {
+        guard claimStallRecovery() else { return }
+        let player = lock.withLock { self.player }
+        var fields = AudioSessionDiagnostics.fields().merging(AudioSessionDiagnostics.fields(for: player)) { first, _ in first }
+        fields["recovery"] = "reseat_player_retry"
+        onStall?("supertonic.stall", fields)
+        reseatStalledPlayer()
     }
 
     /// Re-activates the session and plays the same chunk from the same point in a new player.
