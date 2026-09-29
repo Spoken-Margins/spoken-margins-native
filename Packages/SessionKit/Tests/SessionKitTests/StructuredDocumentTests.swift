@@ -77,6 +77,32 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(listenable.sourceOffset(atSpokenCharacterOffset: spokenStart), doc.text.distance(from: doc.text.startIndex, to: doc.text.range(of: "agree-")!.lowerBound))
     }
 
+    func testAReferenceListInterruptedOnlyByHeadingsIsAnnouncedOnce() {
+        // #220 T4 on 96cbef0: PDFKit read the Appendix headings between the two columns of
+        // a reference page, and "References skipped." played again after them.
+        let doc = document([
+            StructuredDocumentLine(text: "The paper ends here.", role: .body, pageIndex: 9),
+            StructuredDocumentLine(text: "References", role: .reference, pageIndex: 9),
+            StructuredDocumentLine(text: "Tianyi Zhang, et al. 2020. BERTScore.", role: .reference, pageIndex: 9),
+            StructuredDocumentLine(text: "Appendix", role: .heading, pageIndex: 10, level: 1),
+            StructuredDocumentLine(text: "Large Language Models Used", role: .heading, pageIndex: 10, level: 2),
+            StructuredDocumentLine(text: "Max Schäfer, et al. 2024. Unit tests.", role: .reference, pageIndex: 10),
+            StructuredDocumentLine(text: "The following LLMs were used.", role: .body, pageIndex: 10),
+            StructuredDocumentLine(text: "Supplementary references", role: .heading, pageIndex: 11, level: 1),
+            StructuredDocumentLine(text: "[S1] A. Writer. 2021.", role: .reference, pageIndex: 11),
+        ])
+        XCTAssertEqual(StructuredDocumentSpeech.spokenLines(doc), [
+            "The paper ends here.",
+            "References skipped.",
+            "Appendix",
+            "Large Language Models Used",
+            "The following LLMs were used.",
+            "Supplementary references",
+            // A separate list after body text is announced again: nothing disappears unannounced.
+            "References skipped.",
+        ])
+    }
+
     func testATableSplitByAPageBreakIsAnnouncedOnce() {
         let doc = document([
             StructuredDocumentLine(text: "Before.", role: .body, pageIndex: 0),

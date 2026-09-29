@@ -181,6 +181,20 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertFalse(PDFStructuredTextExtractor.isSideStamp("Short", bounds: CGRect(x: 300, y: 400, width: 10, height: 12), pageBox: box))
     }
 
+    func testV2KeepsFormulaLikeLinesInsideAReferenceList() {
+        // #220 corpus check: math-looking titles in a reference list were labelled
+        // equations, and "Equation not read. References skipped." alternated 15 times.
+        var lines = [
+            StructuredDocumentLine(text: "References", role: .heading, level: 2),
+            StructuredDocumentLine(text: "[1] A. Writer. Groups of order p^3. J Algebra, 2020.", role: .body),
+            StructuredDocumentLine(text: "Γ = ⟨a, b | a² = b³⟩", role: .equation),
+            StructuredDocumentLine(text: "[2] B. Reader. Presentations. J Algebra, 2021.", role: .body),
+            StructuredDocumentLine(text: "[3] C. Listener. Relators. J Algebra, 2022.", role: .body),
+        ]
+        PDFStructuredTextExtractor.labelReferenceLists(&lines)
+        XCTAssertEqual(lines.map(\.role), [.reference, .reference, .reference, .reference, .reference])
+    }
+
     func testV2SkipsAThreeEntryReferenceListAsV1Did() {
         // #220 audit 4: v1 cut a list of three dated entries; v2 needed four and read them.
         var lines = [

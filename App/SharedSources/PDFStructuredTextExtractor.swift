@@ -411,7 +411,9 @@ enum PDFStructuredTextExtractor {
             lines[index].role = .reference
             var cursor = index + 1
             while cursor < lines.count, lines[cursor].role != .heading, !startsAppendix(lines[cursor].text) {
-                if lines[cursor].role == .body { lines[cursor].role = .reference }
+                // A title with formula-like text inside the list is still a reference, not
+                // an equation that would split the list into repeated notices.
+                if lines[cursor].role == .body || lines[cursor].role == .equation { lines[cursor].role = .reference }
                 cursor += 1
             }
             index = labelReferencesResumedAfterHeadings(&lines, from: cursor) - 1

@@ -355,7 +355,11 @@ public enum StructuredDocumentSpeech {
                 }
                 lastNotice = notice
             case .read:
-                lastNotice = nil
+                // Headings between two runs of skipped text don't end the run: PDFKit can
+                // read an Appendix heading between the columns of a reference page, and
+                // "References skipped." shouldn't play again after it (#220 T4). Body text
+                // does, so a separate list is still announced.
+                if segment.role != .heading { lastNotice = nil }
                 var unit = Unit(characters: [], offsets: [])
                 var index = range.lowerBound
                 while markerIndex < silent.count, silent[markerIndex].range.end <= range.lowerBound { markerIndex += 1 }
