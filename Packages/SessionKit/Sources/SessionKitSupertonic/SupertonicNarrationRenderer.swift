@@ -248,11 +248,14 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
         }
     }
 
+    /// Deletes `url` only if this renderer generated it. Callers also pass files they own, such as
+    /// an article's durable prepared chunks or disk-cache entries, which must survive (#258).
     public func discardGeneratedAudio(at url: URL) async {
         await withCheckedContinuation { continuation in
             renderQueue.async { [self] in
-                try? fileManager.removeItem(at: url)
-                generatedAudioURLs.remove(url)
+                if generatedAudioURLs.remove(url) != nil {
+                    try? fileManager.removeItem(at: url)
+                }
                 continuation.resume()
             }
         }

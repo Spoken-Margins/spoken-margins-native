@@ -162,6 +162,19 @@ public enum ManualFollowPolicy {
             return false
         }
     }
+
+    /// The Follow button's title and symbol. An article follows its publication's feed, not a
+    /// podcast (#243: articles read "Follow Podcast").
+    public static func buttonTitle(mediaType: String, isFollowing: Bool) -> String {
+        if mediaType.lowercased() == "text" {
+            return isFollowing ? "Following Publication…" : "Follow Publication"
+        }
+        return isFollowing ? "Following Podcast…" : "Follow Podcast"
+    }
+
+    public static func buttonSymbol(mediaType: String) -> String {
+        mediaType.lowercased() == "text" ? "newspaper" : "dot.radiowaves.left.and.right"
+    }
 }
 
 public extension SourceCandidateEvidence {

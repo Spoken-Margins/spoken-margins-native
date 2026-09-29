@@ -296,14 +296,18 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[
     return summaries, statuses, ran, details
 
 
-def first_boot(udid: str, log) -> str | None:
-    """Boot the fresh simulator under the lane's boot rules (scripts/lane_sim.py). None when ready, else why not."""
+def first_boot(udid: str, log) -> tuple:
+    """Boot the fresh simulator under the lane's boot rules (scripts/lane_sim.py).
+
+    Returns (None when ready or the reason it isn't, details such as the memory pressure at boot).
+    """
     import lane_sim
+    info = {}
     try:
-        lane_sim.boot(udid, f'runner boot {udid}', out=log)
+        lane_sim.boot(udid, f'runner boot {udid}', out=log, info=info, first_boot=True)
     except lane_sim.BootError as error:
-        return str(error)
-    return None
+        return str(error), info
+    return None, info
 
 
 def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str, str, list[str], str, str]:
@@ -326,8 +330,8 @@ def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str,
     try:
         slot = acquire_simulator_slot(f'runner T3 {request_id}', out=sys.stdout, max_wait=RUNNER_SLOT_WAIT)
     except TimeoutError as error:
-        return ('INCONCLUSIVE', 'no simulator', 'nothing', ['The Mac\'s one simulator slot stayed busy (a Test Desk '
-                f'job or another run), so this run did not start a second simulator: {error}'], 'none', '')
+        return ('INCONCLUSIVE', 'no simulator', 'nothing', ['The Mac\'s simulator slots stayed busy (a Test Desk job or '
+                f'another run, and no room for a second simulator), so this run did not start one: {error}'], 'none', '')
     try:
         return _t3_on_fresh_device(grouped, request_id, evidence, runtime)
     finally:
@@ -356,17 +360,32 @@ def _t3_on_fresh_device(grouped, request_id, evidence, runtime):
     try:
         boot_started = time.monotonic()
         with (evidence / 'first-boot.log').open('w') as log:
-            problem = first_boot(udid, log)
+            problem, boot_info = first_boot(udid, log)
         boot_seconds = time.monotonic() - boot_started  # the boot alone, before any build or test
         if problem:
-            return ('INCONCLUSIVE', where, 'nothing', [f'The fresh simulator did not boot: {problem} '
-                    f'evidence: {evidence}/first-boot.log'], 'watched during boot', '')
-        lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot')  # stops the device at a SpringBoard crash
+            details = [f'The fresh simulator did not boot: {problem} evidence: {evidence}/first-boot.log']
+            if boot_info.get('period') == 'two-simulator' and 'not ready after' in problem \
+                    and lane_sim.back_to_one_simulator(f'a two-simulator T3 boot ({request_id}) timed out: {problem}'):
+                details.append('This boot ran while two simulators were up, so the lane is back to one simulator '
+                               '(noted on #184).')
+            return 'INCONCLUSIVE', where, 'nothing', details, 'watched during boot', ''
+        lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot',  # stops the device at a SpringBoard crash
+                               crash_window=boot_info.get('boot_window'))
         summaries, statuses, ran, details = run_plans(grouped, run_plan, evidence)
-        details.insert(0, f'first boot of the fresh simulator took {duration(boot_seconds)}')
+        details.insert(0, f'first boot of the fresh simulator took {duration(boot_seconds)} (memory pressure at boot: '
+                          f'{boot_info.get("pressure", "unknown")}, after waiting {boot_info.get("pressure_waited", 0)}s; '
+                          f'{boot_info.get("period", "one-simulator")} period)')
+        if boot_info.get('tolerated'):
+            details.insert(1, f'tolerated one SpringBoard change in the first 30 s of the first boot (owner\'s rule, '
+                              f'#184): {boot_info["tolerated"]}')
     finally:
         lane_sim.release(udid)
     watched = lane_sim.unsafe_devices().get(udid)
+    if watched and watched['reason'].startswith('late crash report'):
+        # A crash during the boot, reported after it: the device is marked unsafe, but the run itself went on.
+        details.append(f'after the run started, a crash report arrived for a crash during the boot ({watched["reason"]}); '
+                       'the device was marked unsafe and deleted')
+        watched = None
     crash_names = [c for s in summaries for c in s['crashes']]
     flood = any(s['flood'] for s in summaries) or bool(watched)
     crashes = ('crash flood: ' if flood else '') + (', '.join(crash_names) if crash_names else 'none')
@@ -377,6 +396,11 @@ def _t3_on_fresh_device(grouped, request_id, evidence, runtime):
         crashes += ' (simulator shut down, run stopped)'
     cc = '@uncomposed: SpringBoard crashed on the lane runner\'s simulator.' if flood else ''
     verdict = 'INCONCLUSIVE' if watched else t3_verdict(summaries, statuses)  # a simulator crash, not the app
+    timed_out = any(s['out_of_time'] for s in summaries) or 'timed out' in statuses
+    if verdict == 'INCONCLUSIVE' and timed_out and boot_info.get('period') == 'two-simulator' \
+            and lane_sim.back_to_one_simulator(f'a two-simulator T3 run ({request_id}) ended INCONCLUSIVE on a timeout.'):
+        details.append('This ran while two simulators were up and timed out, so the lane is back to one simulator '
+                       '(noted on #184).')
     return verdict, where, '; '.join(ran), details, crashes, cc
 
 
