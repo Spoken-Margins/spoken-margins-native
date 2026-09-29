@@ -110,6 +110,10 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
         items[item.id] = item
     }
 
+    public func listItems(includeDeleted: Bool = false) throws -> [Item] {
+        items.values.filter { includeDeleted || $0.deletedAt == nil }.sorted { $0.id < $1.id }
+    }
+
     public func loadListeningMap(itemId: String) throws -> ListeningMap? {
         mapsByItemId[itemId]
     }

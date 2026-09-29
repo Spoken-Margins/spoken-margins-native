@@ -3795,6 +3795,160 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.last, 1_000)
     }
 
+    // #237: an article that had been pre-rendered and half-read. Its saved session points at the
+    // rendered file. If that file is gone or won't play, resume must read the text with on-device
+    // speech from the same place, not fail twice and stay failed.
+    private func halfReadPreparedArticle(fileExists: Bool) throws -> (
+        repo: InMemorySessionRepository, item: Item, session: Session, fileURL: URL
+    ) {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appending(path: "prepared-\(UUID().uuidString).m4a")
+        if fileExists {
+            // Not audio: an unreadable file, as a truncated or corrupt render would be.
+            try Data("not audio".utf8).write(to: fileURL)
+            addTeardownBlock { try? FileManager.default.removeItem(at: fileURL) }
+        }
+        let text = "First sentence. Second sentence."
+        let item = Item(
+            id: "item-half-read-prepared",
+            title: "Half-read article",
+            mediaType: "text",
+            text: text,
+            externalReference: nil,
+            status: "ready",
+            media: ItemMedia(
+                sourceType: .generatedTTSPrerendered,
+                url: fileURL.absoluteString,
+                durationMs: 2_300,
+                nativeMediaId: fileURL.absoluteString
+            ),
+            transcriptId: "generated-transcript-item-half-read-prepared"
+        )
+        // 1,650 ms is halfway through the second sentence's audio: character 24 of the text.
+        let session = Session(
+            id: "session-half-read-prepared",
+            itemId: item.id,
+            status: "in_progress",
+            phase: .itemPlayback,
+            currentTargetType: .transcriptBackedMedia,
+            currentTargetId: fileURL.absoluteString,
+            position: Position(charOffset: 24, mediaTimeMs: 1_650, chapterId: nil),
+            completionPercent: 75,
+            playbackRate: 1.25
+        )
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session])
+        try repo.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: "generated-transcript-item-half-read-prepared",
+            itemId: item.id,
+            createdAt: Date(),
+            timeline: TranscriptTimeline(
+                segments: [
+                    MediaTimelineSegment(id: "tts-1", startMs: 0, endMs: 1_000, startChar: 0, endChar: 15, text: "First sentence."),
+                    MediaTimelineSegment(id: "tts-2", startMs: 1_000, endMs: 2_300, startChar: 16, endChar: text.count, text: "Second sentence.")
+                ],
+                chapters: [],
+                durationMs: 2_300
+            )
+        ))
+        return (repo, item, session, fileURL)
+    }
+
+    private var preparedArticleProfile: RuntimeCapabilityProfile {
+        RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts", "prerendered_audio", "native_media"],
+                "timeline": ["transcript_segments", "media_time", "chapter_timing"]
+            ]
+        )
+    }
+
+    private func assertResumedWithLiveSpeech(
+        _ snapshot: SessionSnapshot,
+        engine: SessionEngine,
+        audio: RecordingAudioClient,
+        repo: InMemorySessionRepository,
+        fixture: (repo: InMemorySessionRepository, item: Item, session: Session, fileURL: URL),
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        XCTAssertEqual(snapshot.status, .playing, file: file, line: line)
+        XCTAssertEqual(snapshot.targetType, TargetType.itemTextTTS.rawValue, file: file, line: line)
+        XCTAssertEqual(audio.playedTargets.last, fixture.item.id, "reads the article text", file: file, line: line)
+        XCTAssertEqual(audio.preparedTexts.last, fixture.item.text, file: file, line: line)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, 24, "from the saved position", file: file, line: line)
+        XCTAssertEqual(snapshot.playbackRate, 1.25, file: file, line: line)
+        let saved = try XCTUnwrap(try repo.loadSession(id: fixture.session.id), file: file, line: line)
+        XCTAssertEqual(saved.currentTargetType, .itemTextTTS, file: file, line: line)
+        XCTAssertEqual(saved.currentTargetId, fixture.item.id, file: file, line: line)
+        XCTAssertNil(try repo.loadItem(id: fixture.item.id).media, "the unusable file is detached so it can be rendered again", file: file, line: line)
+        XCTAssertEqual(snapshot.preparedTextAudioStatus, "live_fallback", file: file, line: line)
+    }
+
+    func testResumingHalfReadArticleWhosePreparedAudioIsMissingReadsTextFromSavedPosition() throws {
+        let fixture = try halfReadPreparedArticle(fileExists: false)
+        let audio = RecordingAudioClient()
+        audio.startStatusByTarget[fixture.fileURL.absoluteString] = .failed("The operation could not be completed")
+        let engine = SessionEngine(profile: preparedArticleProfile, repository: fixture.repo, audio: audio)
+
+        // The app's resume path: open the saved session, then play.
+        _ = try engine.inspectSession(sessionId: fixture.session.id)
+        let resumed = try engine.resumePlayback()
+
+        XCTAssertFalse(audio.playedTargets.contains(fixture.fileURL.absoluteString), "never hands the player a missing file")
+        try assertResumedWithLiveSpeech(resumed, engine: engine, audio: audio, repo: fixture.repo, fixture: fixture)
+    }
+
+    func testResumingHalfReadArticleWhosePreparedAudioWontPlayReadsTextFromSavedPosition() throws {
+        let fixture = try halfReadPreparedArticle(fileExists: true)
+        let audio = RecordingAudioClient()
+        audio.startStatusByTarget[fixture.fileURL.absoluteString] = .failed("The operation could not be completed")
+        let engine = SessionEngine(profile: preparedArticleProfile, repository: fixture.repo, audio: audio)
+
+        _ = try engine.inspectSession(sessionId: fixture.session.id)
+        let resumed = try engine.resumePlayback()
+
+        XCTAssertEqual(audio.playedTargets.first, fixture.fileURL.absoluteString, "the file exists, so it is tried first")
+        try assertResumedWithLiveSpeech(resumed, engine: engine, audio: audio, repo: fixture.repo, fixture: fixture)
+        XCTAssertEqual(resumed.lastFailure, "prepared_audio_unavailable:The operation could not be completed")
+    }
+
+    func testResumingHalfReadArticleWhosePreparedAudioNeverStartsReadsTextAfterTheStartTimeout() throws {
+        let fixture = try halfReadPreparedArticle(fileExists: true)
+        let audio = RecordingAudioClient()
+        audio.startStatusByTarget[fixture.fileURL.absoluteString] = .pending
+        var clock = Date(timeIntervalSince1970: 1_000)
+        let engine = SessionEngine(
+            profile: preparedArticleProfile, repository: fixture.repo, audio: audio,
+            playbackStartTimeout: 10, now: { clock }
+        )
+
+        _ = try engine.inspectSession(sessionId: fixture.session.id)
+        XCTAssertEqual(try engine.resumePlayback().status, .starting)
+        clock = clock.addingTimeInterval(11)
+        let resumed = try engine.syncPlaybackProgress()
+
+        try assertResumedWithLiveSpeech(resumed, engine: engine, audio: audio, repo: fixture.repo, fixture: fixture)
+        XCTAssertEqual(resumed.lastFailure, "prepared_audio_unavailable:playback_start_timeout")
+    }
+
+    func testLiveSpeechThatAlsoFailsAfterPreparedAudioFallbackStaysFailedWithoutLooping() throws {
+        let fixture = try halfReadPreparedArticle(fileExists: true)
+        let audio = RecordingAudioClient()
+        audio.startStatus = .failed("speech_unavailable")
+        let engine = SessionEngine(profile: preparedArticleProfile, repository: fixture.repo, audio: audio)
+
+        _ = try engine.inspectSession(sessionId: fixture.session.id)
+        let resumed = try engine.resumePlayback()
+        _ = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(resumed.status, .failed)
+        XCTAssertEqual(resumed.lastFailure, "playback_start_failed:speech_unavailable")
+        XCTAssertEqual(audio.playedTargets, [fixture.fileURL.absoluteString, fixture.item.id], "one fallback, then stop")
+    }
+
     func testMediaChapterJumpKeepsRequestedPositionWhileTransportReportsOldPosition() throws {
         let audioFile = FileManager.default.temporaryDirectory
             .appending(path: "delayed-media-seek-\(UUID().uuidString).caf")
@@ -6884,6 +7038,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var playbackRate = 1.0
     var mediaContexts: [PlaybackMediaContext?] = []
     var startStatus: PlaybackStartStatus = .confirmed
+    var startStatusByTarget: [String: PlaybackStartStatus] = [:]
     var transportState: PlaybackTransportState?
     var configuredSpeechSettings: [(String?, Float)] = []
     var remoteCommandHandlingStates: [Bool] = []
@@ -7016,7 +7171,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     }
 
     func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
-        startStatus
+        startStatusByTarget[targetId] ?? startStatus
     }
 
     func playbackTransportState(targetId: String) -> PlaybackTransportState? {
