@@ -37,6 +37,7 @@
 		22B7CF767296E63BF57E0E00 /* SystemVoiceRateOnIOSTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB12CF9DE136FFE889CE4D37 /* SystemVoiceRateOnIOSTests.swift */; };
 		2822AE6642EE5669F2F33F4C /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 8C1BFB86196C5C1BE2E52BEF /* Defuddle-LICENSE.txt */; };
 		296D3E3B2A4A4E4370DB534A /* SourceLinkPreprocessor.js in Resources */ = {isa = PBXBuildFile; fileRef = C52D1CADC5773F67C398A2B2 /* SourceLinkPreprocessor.js */; };
+		298B0634ED9C28B5C7992D3A /* BatchExportScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0A5246524F336BC25AD1AE7 /* BatchExportScreen.swift */; };
 		2CC4C71380C03979B515B0C2 /* ExperienceWrittenMarginScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F11A1A39F8E3DF23C474F1 /* ExperienceWrittenMarginScreen.swift */; };
 		2D1CA28C629CB25D869FF2DA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7C356783B108E75F03704686 /* Assets.xcassets */; };
 		30B562994D489ED9F57C24FE /* SessionMarkdownFileWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 591489743D16AAB9840121FA /* SessionMarkdownFileWriter.swift */; };
@@ -374,6 +375,7 @@
 		DA64F144F04CC7A9F436B28E /* traces */ = {isa = PBXFileReference; lastKnownFileType = folder; name = traces; path = Contracts/traces; sourceTree = SOURCE_ROOT; };
 		DA90E6688F6CDFA1AA5BBA78 /* Gate5BrowserTextHandoffStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate5BrowserTextHandoffStore.swift; sourceTree = "<group>"; };
 		DAE4EB95460D2295144703DA /* OfflineStorageLedger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineStorageLedger.swift; sourceTree = "<group>"; };
+		E0A5246524F336BC25AD1AE7 /* BatchExportScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatchExportScreen.swift; sourceTree = "<group>"; };
 		E18CC326927F93FEE4D0814F /* AutomaticMarginWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomaticMarginWriter.swift; sourceTree = "<group>"; };
 		E253416A15B5108380F819E8 /* Legal */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Legal; path = App/SpokenMarginsApp/Resources/Legal; sourceTree = SOURCE_ROOT; };
 		E3D5265FADF5995640D6FB31 /* SpokenMarginsGate2Widget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SpokenMarginsGate2Widget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -641,6 +643,7 @@
 				BE38AF27DEEC6E2D5A8CB016 /* AudioPreparationBackgroundController.swift */,
 				CF6820B67E925DC99B6C4852 /* AutomaticMarginNoteGatherer.swift */,
 				E18CC326927F93FEE4D0814F /* AutomaticMarginWriter.swift */,
+				E0A5246524F336BC25AD1AE7 /* BatchExportScreen.swift */,
 				8F7F8E49CA642502095FF5EF /* Build23ImportedMarginPresentation.swift */,
 				F2EBC219D105BE3BDBE3C2C0 /* Build23RecipientSharingExperience.swift */,
 				137D2C8257D9606A12D88550 /* Build23SenderSharingComponents.swift */,
@@ -1044,6 +1047,7 @@
 				91B26A9B44DFF82C0D55FE43 /* AudioPreparationBackgroundController.swift in Sources */,
 				C2B23C155D7EB6C0CFAB3DA6 /* AutomaticMarginNoteGatherer.swift in Sources */,
 				7BCEF786DE4861818F5302A1 /* AutomaticMarginWriter.swift in Sources */,
+				298B0634ED9C28B5C7992D3A /* BatchExportScreen.swift in Sources */,
 				5100737C3FF12315CC9E0A84 /* Build23ImportedMarginPresentation.swift in Sources */,
 				453F4D5F9BFB2EB1707DDBB5 /* Build23RecipientSharingExperience.swift in Sources */,
 				083C143007DA0F1994E4A129 /* Build23SenderSharingComponents.swift in Sources */,
