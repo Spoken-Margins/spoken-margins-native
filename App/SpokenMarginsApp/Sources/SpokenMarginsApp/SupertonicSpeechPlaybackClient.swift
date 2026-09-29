@@ -22,21 +22,6 @@ protocol SupertonicRendering: Sendable {
 
 extension SupertonicNarrationRenderer: SupertonicRendering {}
 
-enum RenderedSpeechChunkBoundary: String, Sendable {
-    case sentence
-    case comma
-    case whitespace
-    case hard
-
-    var transitionDelay: TimeInterval {
-        switch self {
-        case .sentence: 0.12
-        case .comma: 0.05
-        case .whitespace, .hard: 0
-        }
-    }
-}
-
 enum RenderedSpeechGenerationState: String, Equatable, Sendable {
     case inactive
     case rendering
@@ -59,124 +44,6 @@ struct RenderedSpeechGenerationProgress: Equatable, Sendable {
 struct PreparedChunkLookupResult: Sendable {
     var audioURL: URL
     var duration: TimeInterval
-}
-
-struct RenderedSpeechSourceSlice: Equatable, Sendable {
-    var text: String
-    var sourceLength: Int
-    var boundary: RenderedSpeechChunkBoundary
-}
-
-struct RenderedSpeechPlannedSlice: Equatable, Sendable {
-    var startOffset: Int
-    var slice: RenderedSpeechSourceSlice
-}
-
-enum RenderedSpeechChunker {
-    /// Plans a complete source in one forward pass. Repeatedly calling
-    /// `sourceSlice(from:startOffset:)` for increasing offsets restarts String
-    /// indexing at the beginning and becomes quadratic for book-length text.
-    static func sourceSlices(
-        from source: String,
-        maxCharacters: Int = 240
-    ) -> [RenderedSpeechPlannedSlice] {
-        let maximum = max(1, maxCharacters)
-        var remaining = source[...]
-        var startOffset = 0
-        var result: [RenderedSpeechPlannedSlice] = []
-        result.reserveCapacity(max(1, source.utf8.count / maximum))
-
-        while !remaining.isEmpty {
-            let prefix = String(remaining.prefix(maximum))
-            let slice = selectChunkPrefix(prefix, maxCharacters: maximum)
-            guard !slice.text.isEmpty, slice.sourceLength > 0 else { break }
-            result.append(RenderedSpeechPlannedSlice(startOffset: startOffset, slice: slice))
-            guard let next = remaining.index(
-                remaining.startIndex,
-                offsetBy: slice.sourceLength,
-                limitedBy: remaining.endIndex
-            ) else { break }
-            remaining = remaining[next...]
-            startOffset += slice.sourceLength
-        }
-        return result
-    }
-
-    static func sourceSlice(
-        from source: String,
-        startOffset: Int,
-        maxCharacters: Int = 240
-    ) -> RenderedSpeechSourceSlice {
-        let clampedOffset = max(0, min(startOffset, source.count))
-        let start = source.index(source.startIndex, offsetBy: clampedOffset)
-        let remainingLength = source.distance(from: start, to: source.endIndex)
-        let length = min(maxCharacters, remainingLength)
-        let hardEnd = source.index(start, offsetBy: length)
-        return selectChunkPrefix(String(source[start..<hardEnd]), maxCharacters: maxCharacters)
-    }
-
-    static func selectChunkPrefix(
-        _ prefix: String,
-        maxCharacters: Int = 240
-    ) -> RenderedSpeechSourceSlice {
-        let minimumUsefulLength = min(80, max(24, maxCharacters / 3))
-        let sentenceCharacters = CharacterSet(charactersIn: ".!?\n;:")
-        if let sentence = boundary(
-            in: prefix,
-            characters: sentenceCharacters,
-            includeBoundary: true,
-            minimumUsefulLength: minimumUsefulLength
-        ) {
-            return sentence.withBoundary(.sentence)
-        }
-        if let comma = boundary(
-            in: prefix,
-            characters: CharacterSet(charactersIn: ","),
-            includeBoundary: true,
-            minimumUsefulLength: minimumUsefulLength
-        ) {
-            return comma.withBoundary(.comma)
-        }
-        if let whitespace = boundary(
-            in: prefix,
-            characters: .whitespacesAndNewlines,
-            includeBoundary: false,
-            minimumUsefulLength: minimumUsefulLength
-        ) {
-            return whitespace.withBoundary(.whitespace)
-        }
-        let normalized = SpeechTextNormalizer.normalize(prefix)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return RenderedSpeechSourceSlice(
-            text: normalized,
-            sourceLength: prefix.count,
-            boundary: .hard
-        )
-    }
-
-    private static func boundary(
-        in prefix: String,
-        characters: CharacterSet,
-        includeBoundary: Bool,
-        minimumUsefulLength: Int
-    ) -> RenderedSpeechSourceSlice? {
-        guard let range = prefix.rangeOfCharacter(from: characters, options: .backwards) else {
-            return nil
-        }
-        let end = includeBoundary ? range.upperBound : range.lowerBound
-        guard prefix.distance(from: prefix.startIndex, to: end) >= minimumUsefulLength else {
-            return nil
-        }
-        let selected = String(prefix[..<end])
-        let normalized = SpeechTextNormalizer.normalize(selected)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return nil }
-        return RenderedSpeechSourceSlice(
-            text: normalized,
-            sourceLength: prefix.distance(from: prefix.startIndex, to: range.upperBound),
-            boundary: .hard
-        )
-    }
 }
 
 final class RenderedSpeechDiskCache: @unchecked Sendable {
@@ -323,12 +190,6 @@ final class RenderedSpeechDiskCache: @unchecked Sendable {
     }
 }
 
-private extension RenderedSpeechSourceSlice {
-    func withBoundary(_ boundary: RenderedSpeechChunkBoundary) -> Self {
-        .init(text: text, sourceLength: sourceLength, boundary: boundary)
-    }
-}
-
 /// A warning backs off new inference across playback and Library workers.
 /// Use monotonic time so clock changes cannot prematurely end the backoff.
 final class SupertonicMemoryBackoff: @unchecked Sendable {
@@ -459,6 +320,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         case seekPlayer(AVPlayer, TimeInterval)
         case playCached(CachedAudio)
         case awaitPendingRender
+        case renderPlanned(RenderRequest)
     }
 
     private let renderer: any SupertonicRendering
@@ -555,7 +417,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         speed: Float,
         fallbackVoiceIdentifier: String?,
         fallbackRate: Float,
-        maxCharacters: Int = 240,
+        maxCharacters: Int = RenderedSpeechChunker.spokenCostBudget,
         startupBufferChunkCount: Int = 1,
         diskCache: RenderedSpeechDiskCache? = nil,
         preparedAudioDirectory: URL? = nil,
@@ -666,7 +528,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             reportGenerationState(.stopped)
             return
         }
-        let spokenOffset = spokenOffset(forSourceOffset: charOffset)
+        let spokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
         let before = resumeDiagnostics(targetId: targetId, spokenOffset: spokenOffset)
         let action = resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset)
         reportResumeDecision(action, before: before)
@@ -689,6 +551,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             playRenderedAudio(cached.url, duration: cached.duration, request: cached.request)
             return
         case .awaitPendingRender:
+            return
+        case .renderPlanned(let request):
+            enqueueRender(request, shouldPlayWhenReady: false)
             return
         case .none:
             break
@@ -1350,7 +1215,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                             speed: 1.0,
                             synthesisSteps: 8
                        ) {
-                        await renderer.discardGeneratedAudio(at: rendered.audioURL)
+                        // The cached copy is what plays. Deleting the temporary original runs on
+                        // the renderer's serial queue, behind any other item's inference, so it
+                        // must not hold back publishing the chunk (#235).
+                        Task { await renderer.discardGeneratedAudio(at: rendered.audioURL) }
                         result = retained
                     } else {
                         result = rendered
@@ -1358,7 +1226,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 }
                 try Task.checkCancellation()
                 guard !performedInference || self?.onDeviceRenderingAllowed() != false else {
-                    await renderer.discardGeneratedAudio(at: result.audioURL)
+                    Task { await renderer.discardGeneratedAudio(at: result.audioURL) }
                     await MainActor.run {
                         self?.renderFailed(
                             request: request,
@@ -1823,7 +1691,39 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 pendingAutoplayOffset = inFlight.startOffset
                 return .awaitPendingRender
             }
+            // Waiting at a boundary for a chunk that is planned but not yet rendering (for example
+            // while the previous chunk is still being saved): render it rather than restart the
+            // whole generation, and let the boundary marker play it (#235, Codex rank 3).
+            if let waitingOffset = pendingAutoplayOffset,
+               let planned = generationPlan.first(where: {
+                   $0.startOffset == waitingOffset
+                       && spokenOffset >= $0.startOffset
+                       && spokenOffset < $0.startOffset + max(1, $0.sourceLength)
+               }),
+               failedRenderReasons[planned.startOffset] == nil {
+                transportIntent = .playing
+                pendingStartTargetId = targetId
+                initialPlaybackOffset = planned.startOffset
+                initialRequestedSpokenOffset = spokenOffset
+                return .renderPlanned(planned)
+            }
             return .none
+        }
+    }
+
+    /// The spoken offset to resume at. An expansion such as " citation 1 " maps every spoken
+    /// character to one source offset, so a position saved in its later part maps back to its
+    /// first part. When a chunk boundary splits the expansion, that lands in the chunk already
+    /// played, and the resume restarted rendering. Resume at the current chunk instead (#235,
+    /// Codex rank 2).
+    private func resumeSpokenOffset(targetId: String, sourceOffset: Int) -> Int {
+        lock.withLock {
+            let first = preparedSpeechProjection.spokenCharacterOffset(atOrAfterSourceOffset: sourceOffset)
+            guard currentTargetId == targetId, first < currentStartOffset,
+                  preparedSpeechProjection.sourceOffset(atSpokenCharacterOffset: currentStartOffset) == sourceOffset else {
+                return first
+            }
+            return currentStartOffset
         }
     }
 
@@ -1869,6 +1769,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         case .seekPlayer: fields["path"] = "seek_player"
         case .playCached: fields["path"] = "play_cached"
         case .awaitPendingRender: fields["path"] = "await_render"
+        case .renderPlanned: fields["path"] = "render_planned"
         case .none: fields["path"] = "restart_rendering"
         }
         onResumeDecision(fields)

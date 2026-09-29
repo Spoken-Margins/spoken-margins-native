@@ -2700,6 +2700,7 @@ public final class SessionEngine {
         var repaired = item
         repaired.media = nil
         try repository.saveItem(repaired)
+        try PreparedNarrationFallback.markPreparedAudioForRepreparation(itemId: item.id, repository: repository)
         return repaired
     }
 
@@ -3115,13 +3116,20 @@ public final class SessionEngine {
     private func readText(instead session: Session, item: Item) throws -> Session {
         // The cached item can be older than storage; don't write stale fields back.
         var detached = (try? repository.loadItem(id: item.id)) ?? item
-        if detached.media?.sourceType == .generatedTTSPrerendered {
+        // Only the render this session was playing is unusable. If the article has since been
+        // prepared again, its newer render and timeline stay, and the saved character offset is the
+        // position: the stored timeline now describes the newer render, not the missing one (#277).
+        let targetIsCurrentRender = PreparedNarrationFallback.media(detached.media, isTarget: session.currentTargetId)
+        if targetIsCurrentRender, detached.media?.sourceType == .generatedTTSPrerendered {
             detached.media = nil
             try repository.saveItem(detached)
+            try PreparedNarrationFallback.markPreparedAudioForRepreparation(itemId: detached.id, repository: repository)
         }
         currentItem = detached
+        let timelineDescribesTarget = targetIsCurrentRender || detached.media == nil
         var reading = PreparedNarrationFallback.liveSpeechSession(
-            from: session, item: detached, timeline: sourceTranscriptTimeline(for: session)
+            from: session, item: detached,
+            timeline: timelineDescribesTarget ? sourceTranscriptTimeline(for: session) : nil
         )
         reading.position.chapterId = chapterId(for: reading.position.charOffset)
         currentSession = reading

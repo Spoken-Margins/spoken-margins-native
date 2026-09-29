@@ -10789,7 +10789,7 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["renderedSpeechCacheLimitMB"] = "\(renderedSpeechCacheLimitMB)"
             diagnostics["renderedSpeechCacheBytes"] = "\(diskCache.sizeBytes)"
             return SupertonicSpeechPlaybackClient(
-                renderer: renderer,
+                renderer: supertonicOutputGuard(wrapping: renderer, systemVoice: selectedVoice),
                 voice: voice,
                 speed: Float(speechRate / 0.5),
                 fallbackVoiceIdentifier: selectedVoice.isEmpty ? nil : selectedVoice,
@@ -10988,6 +10988,14 @@ final class Gate1AppModel: ObservableObject {
         )
         supertonicRenderer = renderer
         return renderer
+    }
+
+    /// #240: chunks that fail the output check are read by the iOS voice; diagnostics say so.
+    private func supertonicOutputGuard(wrapping renderer: SupertonicRendering, systemVoice: String) -> SupertonicOutputGuard {
+        let voice = systemVoice.trimmingCharacters(in: .whitespacesAndNewlines)
+        return SupertonicOutputGuard(wrapping: renderer, systemVoiceIdentifier: voice.isEmpty ? nil : voice) { [weak self] summary in
+            Task { @MainActor [weak self] in self?.diagnostics["supertonicOutputCheck"] = summary }
+        }
     }
 
     private func makeMediaPlaybackClient() -> AudioPlaybackClient {
@@ -15354,10 +15362,6 @@ final class Gate1AppModel: ObservableObject {
                 maximumChunkCount: job.maximumChunkCount
             )
             let completedIndexes = Set(manifest.chunks.map(\.index))
-            guard let next = eligiblePlan.first(where: { !completedIndexes.contains($0.index) }) else {
-                try store.deleteAudioPreparationJob(id: job.id)
-                return try hasMoreMatchingJobs()
-            }
             let ledger = offlineStorageLedger ?? OfflineStorageLedger(repository: store, rootDirectory: support)
             offlineStorageLedger = ledger
             let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
@@ -15365,6 +15369,19 @@ final class Gate1AppModel: ObservableObject {
                 rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
             )
             preparedAudioCoordinator = coordinator
+            guard let next = eligiblePlan.first(where: { !completedIndexes.contains($0.index) }) else {
+                // All chunks are intact but nothing is assembled (#278): assemble now, because it
+                // otherwise happens only right after the last chunk is committed.
+                if manifest.isCompleteButUnassembled, manifest.plannedChunkCount == plan.count {
+                    try await finishBackgroundPreparedAudio(
+                        item: item, sourceText: sourceText, voice: voice, signature: signature,
+                        manifest: manifest, plan: plan, store: store, ledger: ledger,
+                        coordinator: coordinator, support: support
+                    )
+                }
+                try store.deleteAudioPreparationJob(id: job.id)
+                return try hasMoreMatchingJobs()
+            }
             let reservation = try await ledger.reserve(
                 ownerId: "prepared-chunk-\(manifest.id)-\(next.index)",
                 byteCount: 64 * 1_024 * 1_024
@@ -15376,7 +15393,7 @@ final class Gate1AppModel: ObservableObject {
             do {
                 try Task.checkCancellation()
                 recordDeveloperDiagnostic("preparation.render.begin", ["item": DeveloperDiagnosticRecording.token(item.id), "chunk": String(next.index)])
-                rendered = try await renderer.render(
+                rendered = try await supertonicOutputGuard(wrapping: renderer, systemVoice: speechVoiceIdentifier).render(
                     text: next.text,
                     voice: voice,
                     language: "en",
@@ -15540,7 +15557,7 @@ final class Gate1AppModel: ObservableObject {
             let slice = RenderedSpeechChunker.sourceSlice(
                 from: SpeechTextNormalizer.normalize(sourceText),
                 startOffset: entry.startOffset,
-                maxCharacters: 240
+                maxCharacters: RenderedSpeechChunker.spokenCostBudget
             )
             return SupertonicPreparedChunk(
                 startOffset: entry.startOffset,
@@ -15598,7 +15615,7 @@ final class Gate1AppModel: ObservableObject {
     private nonisolated static func preparedChunkPlan(for sourceText: String) -> [PreparedChunkPlan] {
         preparationPlanCache.value(for: sourceText) {
             let normalized = SpeechTextNormalizer.normalize(sourceText)
-            return RenderedSpeechChunker.sourceSlices(from: normalized, maxCharacters: 240)
+            return RenderedSpeechChunker.sourceSlices(from: normalized, maxCharacters: RenderedSpeechChunker.spokenCostBudget)
                 .enumerated()
                 .map { index, planned in
                     PreparedChunkPlan(index: index, startOffset: planned.startOffset,

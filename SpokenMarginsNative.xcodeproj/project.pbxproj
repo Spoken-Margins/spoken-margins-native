@@ -56,10 +56,12 @@
 		4830F0D7B33D919055E89D82 /* EmojiArticlePlaybackUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A453BD7286850A9FB78ECA4A /* EmojiArticlePlaybackUITests.swift */; };
 		49A04D0A04AC84A174581507 /* PKMWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC30748A9FB277CC05F51B2C /* PKMWorkflowTests.swift */; };
 		4A154B7078113866A8416F4D /* SupertonicLegalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5E071274013CEC4CC92BA4E /* SupertonicLegalView.swift */; };
+		4AA23343BBD4AF37C822A914 /* SystemVoiceSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F62AF182C4851DB0A5E85E /* SystemVoiceSessionTests.swift */; };
 		4B776EF9BE4ECC482BE2B6FF /* ExperienceMarginDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9FFEE73193161F428559893 /* ExperienceMarginDetailView.swift */; };
 		4CF539FBC54D635647751674 /* emoji-article-crash-regression.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */; };
 		4D3FF8A43019053BD3454A2B /* ExperienceSourcesScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FCCBE1821C609CB049229E0 /* ExperienceSourcesScreen.swift */; };
 		4EB9C4988DDEA400406B44F5 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 9AC0CEE299A474FCA1DE58BE /* popup.js */; };
+		4EFF5E2EC1016CB8D11C11B8 /* SupertonicOutputGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F793A74D3F80D9019804935 /* SupertonicOutputGuard.swift */; };
 		5100737C3FF12315CC9E0A84 /* Build23ImportedMarginPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F7F8E49CA642502095FF5EF /* Build23ImportedMarginPresentation.swift */; };
 		53B2B7122FB63029D3F970FA /* omny-episode-page.html in Resources */ = {isa = PBXBuildFile; fileRef = 97EBC691BBA97D01C8A53DB4 /* omny-episode-page.html */; };
 		541E1FB141EC8A331312980A /* PodcastDownloadCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD16E224F3B90976DC86B3EF /* PodcastDownloadCoordinator.swift */; };
@@ -255,6 +257,7 @@
 		1E25AC74A37BFC74DC071AF2 /* SharingRightsPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingRightsPresentation.swift; sourceTree = "<group>"; };
 		1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "emoji-article-crash-regression.txt"; sourceTree = "<group>"; };
 		1F04BCB2671DE0E5E8AEAD58 /* ExperienceAddSourceFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExperienceAddSourceFlow.swift; sourceTree = "<group>"; };
+		1F793A74D3F80D9019804935 /* SupertonicOutputGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupertonicOutputGuard.swift; sourceTree = "<group>"; };
 		208887C2A5F9291DC2B15A07 /* ListeningReadyNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListeningReadyNotifications.swift; sourceTree = "<group>"; };
 		282F12E56B1FBA513CF76483 /* CatalogDrawerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogDrawerTests.swift; sourceTree = "<group>"; };
 		2A1D315905D0C2CA14001952 /* OfflineStorageLedgerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineStorageLedgerTests.swift; sourceTree = "<group>"; };
@@ -325,6 +328,7 @@
 		9FEFBCF337DFC7DB102DAD5B /* SpokenMarginsApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SpokenMarginsApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A057DD9C49BAC064EDC8CD6C /* ExperienceCanonicalNavigationTree.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExperienceCanonicalNavigationTree.swift; sourceTree = "<group>"; };
 		A12CA39E2FF10DDA3392AF6B /* Gate1SummaryEligibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1SummaryEligibility.swift; sourceTree = "<group>"; };
+		A1F62AF182C4851DB0A5E85E /* SystemVoiceSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemVoiceSessionTests.swift; sourceTree = "<group>"; };
 		A21A8C105F7D320136F9DBC5 /* LocalSourceImporters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSourceImporters.swift; sourceTree = "<group>"; };
 		A3466DCC99E6E887F6A0C536 /* SpokenMarginsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpokenMarginsApp.swift; sourceTree = "<group>"; };
 		A3CB7F6850A2AD331ACAB8CE /* Gate2CompactCommandQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate2CompactCommandQueue.swift; sourceTree = "<group>"; };
@@ -611,6 +615,7 @@
 				993C4712CB9FB906A7799DBE /* StreamingSpeechQueueTests.swift */,
 				1D6C701BA62F6D79A4C8A178 /* SupertonicSpeechTests.swift */,
 				CB12CF9DE136FFE889CE4D37 /* SystemVoiceRateOnIOSTests.swift */,
+				A1F62AF182C4851DB0A5E85E /* SystemVoiceSessionTests.swift */,
 			);
 			name = SpokenMarginsAppTests;
 			path = App/SpokenMarginsAppTests;
@@ -698,6 +703,7 @@
 				AA18A80986464844DBC4C095 /* SpokenMarginsTermsView.swift */,
 				8EFFA356312CB5D37089484A /* StreamingSpeechQueue.swift */,
 				B5E071274013CEC4CC92BA4E /* SupertonicLegalView.swift */,
+				1F793A74D3F80D9019804935 /* SupertonicOutputGuard.swift */,
 				C90FD1B2793835178CD00BB7 /* SupertonicPreparedAudioAssembler.swift */,
 				BBBCF88CB3BBA3E1465E524F /* SupertonicSpeechPlaybackClient.swift */,
 			);
@@ -1107,6 +1113,7 @@
 				7470A25713E0F8722A24EE2B /* SpokenMarginsTermsView.swift in Sources */,
 				6C2E2AE467E044A0E63C7899 /* StreamingSpeechQueue.swift in Sources */,
 				4A154B7078113866A8416F4D /* SupertonicLegalView.swift in Sources */,
+				4EFF5E2EC1016CB8D11C11B8 /* SupertonicOutputGuard.swift in Sources */,
 				753422BE0617A8122A91813E /* SupertonicPreparedAudioAssembler.swift in Sources */,
 				724D32B090D395D1F580422B /* SupertonicSpeechPlaybackClient.swift in Sources */,
 			);
@@ -1174,6 +1181,7 @@
 				1449DAE504C4645E3B43C84C /* StreamingSpeechQueueTests.swift in Sources */,
 				C952235E078B051615069C2E /* SupertonicSpeechTests.swift in Sources */,
 				22B7CF767296E63BF57E0E00 /* SystemVoiceRateOnIOSTests.swift in Sources */,
+				4AA23343BBD4AF37C822A914 /* SystemVoiceSessionTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

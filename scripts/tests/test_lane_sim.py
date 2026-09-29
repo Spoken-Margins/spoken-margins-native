@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -96,6 +97,28 @@ class LaneSimTests(unittest.TestCase):
             self.addCleanup(patch.stop)
         self.quiet = open(os.devnull, 'w')
         self.addCleanup(self.quiet.close)
+        self.addCleanup(self.end_watchers)  # runs before the patches and the folder go (cleanups run last-in first)
+
+    def end_watchers(self):
+        """Stop every watcher this test started, even when the test failed before --done.
+
+        Two watchers from a test that timed out kept running for 1.5 h, holding slot locks in a deleted
+        temporary folder (#184). The stop flag is the watcher's own way out; a kill is the fallback.
+        """
+        for pid_file in Path(self.env['SM_LANE_STATE_DIR']).glob('watch-*.pid'):
+            udid = pid_file.name[len('watch-'):-len('.pid')]
+            lane_sim.watch_files(udid)[0].write_text('test ended\n')
+            try:
+                pid = int(pid_file.read_text())
+            except (OSError, ValueError):
+                continue
+            for _ in range(100):
+                command = subprocess.run(['ps', '-o', 'command=', '-p', str(pid)], capture_output=True, text=True).stdout
+                if f'--watch {udid}' not in command:  # gone (or the pid now belongs to something else)
+                    break
+                time.sleep(0.1)
+            else:
+                os.kill(pid, signal.SIGKILL)
 
     def records(self):
         """What the fake simctl did, without timestamps (see timed() for those)."""

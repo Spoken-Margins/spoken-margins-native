@@ -67,7 +67,7 @@ enum SupertonicRenderIdentity {
     private static let bundledHashes = BundledModelHashCache()
     static let modelRevision = "supertonic-3-int8"
     static let normalizationVersion = "speech-normalizer.v3"
-    static let chunkingVersion = "rendered-speech-chunker.v1"
+    static let chunkingVersion = "rendered-speech-chunker.v2"
 
     static func make(
         assets: SupertonicAssetLocation,
@@ -181,6 +181,15 @@ actor PreparedAudioCoordinator {
             // Eligibility/Stop is separate from artifact identity. Resume a
             // compatible partial representation without discarding its chunks.
             if existing.state == .notPrepared || existing.state == .stopped {
+                existing.state = .preparing
+                existing.failureCode = nil
+                existing.updatedAt = Date()
+                try repository.savePreparedAudioManifest(existing)
+            } else if existing.state == .needsRepreparation {
+                // Its narration was detached or a chunk failed its checksum (#278). Keep only the
+                // chunks whose files are still intact, render the rest, and assemble again.
+                existing.chunks = existing.chunks.filter(isIntact)
+                existing.artifact = nil
                 existing.state = .preparing
                 existing.failureCode = nil
                 existing.updatedAt = Date()
@@ -313,6 +322,12 @@ actor PreparedAudioCoordinator {
         job.lastFailureCode = nil
         job.nextChunkIndex = manifest.chunks.count
         try repository.saveAudioPreparationJob(job)
+    }
+
+    private func isIntact(_ chunk: PreparedAudioChunk) -> Bool {
+        let url = rootDirectory.appending(path: chunk.relativePath)
+        guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { return false }
+        return Int64(data.count) == chunk.byteCount && SupertonicRenderIdentity.sha256(data) == chunk.checksumSHA256
     }
 
     func committedChunk(itemId: String, signature: TTSRenderSignature, plan: PreparedChunkPlan) throws -> PreparedChunkLookupResult? {

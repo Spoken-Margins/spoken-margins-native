@@ -208,6 +208,35 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         )
     }
 
+    // #278: Prepare on an article whose narration the fallback detached answered "already
+    // available offline". A needs-repreparation manifest now restarts, keeping only intact chunks.
+    func testBeginRestartsAManifestThatNeedsRepreparationKeepingIntactChunks() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let source = "First chunk. Second chunk."
+        _ = try await coordinator.begin(itemId: "item", sourceText: source, signature: signature("one"), plan: plans())
+        for plan in plans() {
+            let wav = fixture.root.appending(path: "chunk-\(plan.index).wav")
+            try Data(repeating: UInt8(plan.index + 1), count: 64).write(to: wav)
+            try await coordinator.commit(itemId: "item", signature: signature("one"), plan: plan,
+                                         sourceText: source, audioURL: wav, durationMs: 1_000)
+        }
+        var manifest = try XCTUnwrap(try fixture.store.loadPreparedAudioManifests(itemId: "item").first)
+        XCTAssertEqual(manifest.chunks.count, 2)
+        manifest.state = .readyOffline
+        try fixture.store.savePreparedAudioManifest(manifest)
+        try PreparedNarrationFallback.markPreparedAudioForRepreparation(itemId: "item", repository: fixture.store)
+        let lost = try XCTUnwrap(manifest.chunks.first { $0.index == 1 })
+        try FileManager.default.removeItem(at: fixture.prepared.appending(path: lost.relativePath))
+
+        let restarted = try await coordinator.begin(itemId: "item", sourceText: source, signature: signature("one"), plan: plans())
+
+        XCTAssertEqual(restarted.state, .preparing, "prepared again, not reported as available offline")
+        XCTAssertEqual(restarted.chunks.map(\.index), [0], "the intact chunk is kept, the lost one rendered again")
+        XCTAssertNil(restarted.artifact)
+    }
+
     private func plans() -> [PreparedChunkPlan] {
         [
             PreparedChunkPlan(index: 0, startOffset: 0, sourceLength: 12, text: "First chunk."),

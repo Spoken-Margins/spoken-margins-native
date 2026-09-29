@@ -38,6 +38,16 @@ public enum PreparedNarrationFallback {
         }
     }
 
+    /// True when `media` names the file `targetId` plays. A session can outlive the render it was
+    /// playing: after the article is prepared again, the item names a newer render (#277).
+    public static func media(_ media: ItemMedia?, isTarget targetId: String) -> Bool {
+        guard let target = fileURL(forTargetId: targetId) else { return false }
+        return [media?.url, media?.nativeMediaId].contains { value in
+            guard let value, let url = URL(string: value), url.isFileURL else { return false }
+            return url.standardizedFileURL.path == target.standardizedFileURL.path
+        }
+    }
+
     /// `session` moved to live speech of the item's text at the place its saved media time reached.
     /// The caller sets the chapter, which depends on the listening map.
     public static func liveSpeechSession(
@@ -79,6 +89,19 @@ public enum PreparedNarrationFallback {
         let fraction = Double(clamped - segment.startMs) / Double(segment.endMs - segment.startMs)
         let offset = startChar + Int((Double(endChar - startChar) * max(0, min(1, fraction))).rounded())
         return max(startChar, min(offset, endChar))
+    }
+
+    /// Once an item's narration is detached, its "ready offline" prepared audio must be prepared
+    /// again, or Prepare answers "already available offline" while the item plays live speech (#278).
+    public static func markPreparedAudioForRepreparation(
+        itemId: String, repository: any PreparedAudioRepository, now: Date = Date()
+    ) throws {
+        for var manifest in try repository.loadPreparedAudioManifests(itemId: itemId) where manifest.state == .readyOffline {
+            manifest.state = .needsRepreparation
+            manifest.failureCode = "narration_detached"
+            manifest.updatedAt = now
+            try repository.savePreparedAudioManifest(manifest)
+        }
     }
 
     /// What deleting a stored file does to the items that play it.

@@ -255,3 +255,13 @@ public struct AudioPreparationJob: Codable, Equatable, Sendable, Identifiable {
         self.lastFailureCode = lastFailureCode
     }
 }
+
+extension PreparedAudioManifest {
+    /// Every planned chunk is committed but nothing is assembled into playable narration, for
+    /// example after the fallback detached the narration it had (#278). Preparation must assemble
+    /// it, because assembly otherwise runs only right after the last chunk is committed.
+    public var isCompleteButUnassembled: Bool {
+        state != .readyOffline && plannedChunkCount > 0
+            && Set(chunks.map(\.index)).count >= plannedChunkCount
+    }
+}

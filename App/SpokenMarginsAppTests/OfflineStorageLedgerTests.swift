@@ -164,12 +164,20 @@ final class OfflineStorageLedgerTests: XCTestCase {
         let other = Item(id: "item-other", title: "Other", mediaType: "text", text: "Other.", externalReference: nil, status: "ready")
         try fixture.repository.saveItem(narratedArticle(file))
         try fixture.repository.saveItem(other)
+        try fixture.repository.savePreparedAudioManifest(PreparedAudioManifest(
+            id: "prepared-item-article", itemId: "item-article", sourcePackageId: "source",
+            signature: TTSRenderSignature(engine: "supertonic", modelRevision: "3", assetManifestHash: "a", voiceStyleHash: "v",
+                                          synthesisParametersHash: "p", normalizationVersion: "n", chunkingVersion: "c", digest: "d"),
+            state: .readyOffline, plannedChunkCount: 1
+        ))
 
         let residual = try await fixture.ledger.enforceBudget()
 
         XCTAssertEqual(residual, 0)
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
         XCTAssertNil(try fixture.repository.loadItem(id: "item-article").media, "no item points at the deleted file")
+        XCTAssertEqual(try fixture.repository.loadPreparedAudioManifests(itemId: "item-article").first?.state,
+                       .needsRepreparation, "Prepare renders it again (#278)")
         XCTAssertEqual(try fixture.repository.loadItem(id: "item-other"), other)
     }
 

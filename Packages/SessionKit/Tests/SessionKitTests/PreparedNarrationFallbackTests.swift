@@ -100,6 +100,17 @@ final class PreparedNarrationFallbackTests: XCTestCase {
         XCTAssertEqual(PlaybackFailureDetail.privacySafe(nil), "none")
     }
 
+    // #279: a path with a space ("Application Support") kept its tail after the redaction.
+    func testPrivacySafeFailureDetailRedactsPathsWithSpaces() {
+        let failure = "transcription_failed:Error NSFilePath=/var/mobile/Containers/Data/Application/EXAMPLE/Library/Application Support/PreparedSupertonicAudio/item-EXAMPLE.m4a [NSCocoaErrorDomain 4]"
+        let safe = PlaybackFailureDetail.privacySafe(failure)
+        XCTAssertFalse(safe.contains("EXAMPLE"), safe)
+        XCTAssertFalse(safe.contains("Support/"), safe)
+        XCTAssertFalse(safe.contains("PreparedSupertonicAudio"), safe)
+        XCTAssertTrue(safe.contains("[NSCocoaErrorDomain 4]"), "the error code survives: \(safe)")
+        XCTAssertTrue(safe.hasPrefix("transcription_failed:Error NSFilePath="), safe)
+    }
+
     #if os(macOS) && canImport(AVFoundation)
     /// The real player boundary: an unreadable or missing narration file must surface as a start
     /// failure carrying the error's domain and code, so the engine falls back and diagnostics name it.
