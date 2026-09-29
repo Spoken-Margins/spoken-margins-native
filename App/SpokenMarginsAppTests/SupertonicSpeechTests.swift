@@ -126,6 +126,129 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    // #235 (Codex rank 1): a chunk that has rendered and been cached waited to play until the
+    // renderer deleted its temporary original, and that deletion queues behind other inference.
+    func testCachedChunkPlaysWhileItsTemporaryFileDiscardIsQueued() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "rank1-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let template = try makeTestWAV(duration: 1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let gate = AsyncStream<Void>.makeStream()
+        defer { gate.continuation.finish() }
+        let renderer = GatedDiscardSupertonicRenderer(templateURL: template, discardGate: gate.stream)
+        let cache = try RenderedSpeechDiskCache(directory: root.appending(path: "cache"), limitBytes: 50_000_000)
+        let started = expectation(description: "the rendered, cached chunk starts")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            diskCache: cache,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in started.fulfill() },
+            observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient()
+        )
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "rank1")
+        await fulfillment(of: [started], timeout: 3)
+        let discards = await renderer.discards
+        XCTAssertGreaterThanOrEqual(discards, 1, "the temporary file's discard is still queued")
+        try client.stop()
+    }
+
+    private func silentTemplate(_ root: URL) throws -> URL {
+        let url = root.appending(path: "template.wav")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44_100))
+        buffer.frameLength = 44_100
+        try file.write(from: buffer)
+        return url
+    }
+
+    private func waitUntil(_ condition: () async -> Bool) async {
+        for _ in 0..<150 { if await condition() { return }; try? await Task.sleep(for: .milliseconds(20)) }
+    }
+
+    // #235, Codex rank 2: " [1] " is spoken " citation 1 ", every character mapped to the "[" offset. When a
+    // chunk boundary splits it, a pause in the second chunk maps back into the first, already played.
+    func testPauseInsideASplitCitationResumesTheCurrentChunk() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "rank2-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let renderer = TextRecordingSupertonicRenderer(template: try silentTemplate(root))
+        let starts = ResumeStartCounter()
+        let progress = GenerationProgressLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in starts.bump() },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            onGenerationProgress: { progress.append($0.completedChunks) }
+        )
+        // Sized so the chunk boundary falls between " citation" and "1": the first chunk ends after
+        // "citation", and the second starts at "1", which maps back to "[".
+        let text = String(repeating: "a", count: RenderedSpeechChunker.spokenCostBudget - 11) + " [1] " + String(repeating: "b", count: 300)
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "rank2", from: 0)
+        await waitUntil { starts.value >= 1 }
+        client.debugFinishActiveChunk()
+        await waitUntil { starts.value >= 2 }
+        XCTAssertEqual(starts.value, 2, "the second chunk plays")
+        let progressBefore = progress.completed.count
+        let paused = try XCTUnwrap(client.currentCharOffset())
+        try client.pause()
+        try client.play(targetId: "rank2", from: paused)
+        try? await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(progress.completed.dropFirst(progressBefore).contains(0),
+                       "no restart: progress never went back to 0 (\(progress.completed))")
+        let renders = await renderer.renders
+        XCTAssertEqual(Set(renders).count, renders.count, "no chunk rendered twice")
+        XCTAssertEqual(client.playbackStartStatus(targetId: "rank2"), .confirmed)
+        try client.stop()
+    }
+
+    // #235, Codex rank 3: while the previous chunk's commit is awaited, the next chunk is planned but not
+    // yet rendering. A pause and resume while waiting for it restarted rendering from scratch.
+    func testResumeWhileWaitingForAChunkNotYetRenderingKeepsTheGeneration() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "rank3-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let renderer = TextRecordingSupertonicRenderer(template: try silentTemplate(root))
+        let starts = ResumeStartCounter()
+        let gate = PreparedChunkCommitGate()
+        defer { gate.continuation.finish() }
+        let progress = GenerationProgressLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in starts.bump() },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            onGenerationProgress: { progress.append($0.completedChunks) },
+            onPreparedChunk: { _, _, _, _, _ in await gate.commit() }
+        )
+        let text = (1...12).map { "Sentence \($0) contains enough ordinary words to keep the narration moving through several chunks." }
+            .joined(separator: " ")
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "rank3", from: 0)
+        await waitUntil { starts.value >= 1 }
+        await waitUntil { await renderer.renders.count >= 2 }
+        client.debugFinishActiveChunk()
+        await waitUntil { starts.value >= 2 }
+        client.debugFinishActiveChunk()
+        // Waiting at the boundary for chunk 3, which isn't rendering: chunk 2's commit is held.
+        let rendersBefore = await renderer.renders.count
+        XCTAssertEqual(rendersBefore, 2)
+        let progressBefore = progress.completed.count
+        let paused = try XCTUnwrap(client.currentCharOffset())
+        try client.pause()
+        try client.play(targetId: "rank3", from: paused)
+        await waitUntil { starts.value >= 3 }
+        XCTAssertEqual(starts.value, 3, "the third chunk plays")
+        XCTAssertFalse(progress.completed.dropFirst(progressBefore).contains(0),
+                       "no restart: progress never went back to 0 (\(progress.completed))")
+        let renders = await renderer.renders
+        XCTAssertEqual(Set(renders).count, renders.count, "no chunk rendered twice")
+        try client.stop()
+    }
+
     // #258: playing an article's durable prepared chunk and then stopping deleted that chunk,
     // because cleanup handed it to the renderer, which removed any file it was given.
     // Real player, real prepared-audio coordinator and SQLite, real renderer deletion.
@@ -1878,6 +2001,73 @@ private final class PreparedLookupLog: @unchecked Sendable {
     private var entries: [(String, PreparedChunkPlan)] = []
     var values: [(String, PreparedChunkPlan)] { lock.withLock { entries } }
     func add(_ source: String, _ plan: PreparedChunkPlan) { lock.withLock { entries.append((source, plan)) } }
+}
+
+/// Its discard of a temporary file waits on a gate, as the real renderer's does on its serial
+/// queue behind another item's inference.
+private actor GatedDiscardSupertonicRenderer: SupertonicRendering {
+    let templateURL: URL
+    let discardGate: AsyncStream<Void>
+    private(set) var discards = 0
+
+    init(templateURL: URL, discardGate: AsyncStream<Void>) {
+        self.templateURL = templateURL
+        self.discardGate = discardGate
+    }
+
+    func render(
+        text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int
+    ) async throws -> SupertonicNarrationResult {
+        let url = FileManager.default.temporaryDirectory.appending(path: "gated-discard-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: templateURL, to: url)
+        let audio = try AVAudioFile(forReading: url)
+        return SupertonicNarrationResult(
+            audioURL: url, duration: Double(audio.length) / audio.processingFormat.sampleRate,
+            sampleRate: Int(audio.processingFormat.sampleRate.rounded()), renderDuration: 0.01, sessionLoadCount: 1
+        )
+    }
+
+    func discardGeneratedAudio(at url: URL) async {
+        discards += 1
+        for await _ in discardGate {}
+        try? FileManager.default.removeItem(at: url)
+    }
+}
+
+private actor TextRecordingSupertonicRenderer: SupertonicRendering {
+    let template: URL
+    private(set) var renders: [String] = []
+    init(template: URL) { self.template = template }
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        renders.append(text)
+        let url = FileManager.default.temporaryDirectory.appending(path: "count-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: template, to: url)
+        return SupertonicNarrationResult(audioURL: url, duration: 1, sampleRate: 44_100, renderDuration: 0.01, sessionLoadCount: 1)
+    }
+    func discardGeneratedAudio(at url: URL) async { try? FileManager.default.removeItem(at: url) }
+}
+
+private final class ResumeStartCounter: @unchecked Sendable {
+    private let lock = NSLock(); private var n = 0
+    var value: Int { lock.withLock { n } }
+    func bump() { lock.withLock { n += 1 } }
+}
+
+private final class GenerationProgressLog: @unchecked Sendable {
+    private let lock = NSLock(); private var values: [Int] = []
+    var completed: [Int] { lock.withLock { values } }
+    func append(_ value: Int) { lock.withLock { values.append(value) } }
+}
+
+private final class PreparedChunkCommitGate: @unchecked Sendable {
+    let stream: AsyncStream<Void>; let continuation: AsyncStream<Void>.Continuation
+    private let lock = NSLock(); private var commits = 0
+    init() { (stream, continuation) = AsyncStream<Void>.makeStream() }
+    /// Holds the second chunk's commit, as a slow copy/hash/persist would.
+    func commit() async {
+        let index = lock.withLock { commits += 1; return commits }
+        if index == 2 { for await _ in stream {} }
+    }
 }
 
 private actor CancellationAwareSupertonicRenderer: SupertonicRendering {
