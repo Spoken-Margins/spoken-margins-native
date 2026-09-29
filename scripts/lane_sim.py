@@ -154,7 +154,7 @@ class SpringBoardMonitor:
     def __init__(self, udid: str, processes=None, grace: float = 3.0, clock=time.monotonic, on_event=None):
         self.udid, self.grace, self.clock = udid, grace, clock
         self.processes = processes if processes is not None else device_processes
-        self.seen, self.vanished_at, self.latest = None, None, None
+        self.seen, self.vanished_at, self.latest, self.shutdown_noted = None, None, None, False
         self.on_event = on_event  # records each SpringBoard change, to find out why some first boots see one
 
     def accept(self) -> None:
@@ -169,8 +169,9 @@ class SpringBoardMonitor:
         launchd, springboard = self.processes(self.udid)
         self.latest = springboard
         if launchd is None:
-            if self.seen is not None:
+            if self.seen is not None and not self.shutdown_noted:
                 self.note('device shut down')
+                self.shutdown_noted = True
             return 'shut down' if self.seen is not None else None
         if springboard is not None:
             if self.seen is not None and springboard != self.seen:

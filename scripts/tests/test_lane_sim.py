@@ -207,6 +207,13 @@ class LaneSimTests(unittest.TestCase):
             '[lane] +1.0s SpringBoard pid 20 up (launchd_sim 10)',
             '[lane] +3.0s SpringBoard pid 20 gone, launchd_sim 10 still running'])
 
+    def test_a_shutdown_is_logged_once(self):
+        events = []
+        monitor = lane_sim.SpringBoardMonitor(UDID, sequence((10, 20), (None, None)), on_event=events.append)
+        for _ in range(5):
+            monitor.check()
+        self.assertEqual(events, ['SpringBoard pid 20 up (launchd_sim 10)', 'device shut down'])
+
     def test_a_device_that_gets_ready_returns(self):
         self.assertEqual(self.poll_loop(ready=[False, False, True]), ('ready', 3, []))
 
