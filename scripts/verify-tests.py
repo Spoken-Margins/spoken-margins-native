@@ -319,9 +319,9 @@ class Run:
         self.command('bundle-contracts', [sys.executable, 'scripts/verify-bundle.py',
                      str(derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')])
         booted_here = chosen['state'] != 'Booted'
-        # A run that boots its own simulator holds the Mac's one simulator slot until it shuts it down
-        # (16 GB Mac: two simulator jobs plus builds filled swap, #184). A device someone else booted
-        # is theirs, and so is the slot.
+        # A run that boots its own simulator holds a Mac-wide simulator slot until it shuts it down
+        # (16 GB Mac: a second simulator job only while memory pressure is normal, #184). A device
+        # someone else booted is theirs, and so is the slot.
         slot = acquire_simulator_slot(f'verify-tests {plan}', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS) \
             if booted_here else None
         try:

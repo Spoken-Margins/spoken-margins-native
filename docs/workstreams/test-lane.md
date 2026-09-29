@@ -104,9 +104,11 @@ Simulators:
   device another way; the guard blocks devices marked unsafe.
 - On 26.5, unlocking after a lock sometimes freezes the display. Mark lock-and-unlock
   steps "not verified" and leave them for the owner's phone pass.
-- One simulator at a time on this 16 GB Mac (two plus builds filled swap). The helper holds the
-  Mac-wide simulator slot from boot to --done, and the runner's T3 waits for it. A journey that
-  needs two devices (J5) runs them one after the other, or goes to the owner's device pass.
+- At most two simulator jobs on this 16 GB Mac, and the second only while memory pressure is
+  normal (two plus builds filled swap before the owner freed memory, #184). The helper holds a
+  Mac-wide simulator slot from boot to --done. The runner's T3 takes the other slot or waits.
+  `scripts/lane-sim-boot --second-slot status` says whether a second job may start. A journey
+  that needs two devices (J5) still runs them one after the other, so the runner keeps its slot.
 - Never touch any other simulator, other projects' simulators, the owner's iPhone,
   their Library, or main.
 

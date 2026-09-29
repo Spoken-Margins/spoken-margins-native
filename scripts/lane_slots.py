@@ -2,8 +2,9 @@
 
 This Mac has 16 GB. A simulator job next to two builds pushed the load average to about 690 and
 filled swap (2026-09-29, #184), so:
-- Simulator slot: one simulator job at a time (the runner's T3 or the Test Desk's T4), held for
-  the whole job, not just the boot.
+- Simulator slots: one simulator job at a time (the runner's T3 or the Test Desk's T4), held for
+  the whole job, not just the boot; a second job may join only while memory pressure is normal and
+  the second slot hasn't been switched off (after the owner freed memory, 2026-09-29, #184).
 - Build slots: at most two xcodebuild runs at once, and only one while a simulator job runs.
 - Simulator boot: one simulator boots at a time (two boots at once crash-flooded SpringBoard, #184).
 
@@ -24,6 +25,20 @@ SLOTS = 2
 POLL_SECONDS = 2.0
 NOTE_EVERY_SECONDS = 60.0
 SIMULATOR_SLOT = 'simulator-slot.lock'
+SIMULATOR_SLOTS = [SIMULATOR_SLOT, 'simulator-slot-2.lock']
+SECOND_SLOT_OFF = 'second-simulator-slot.off'
+PRESSURE_NAMES = {1: 'normal', 2: 'warn', 4: 'critical'}
+
+
+def memory_pressure_level():
+    """The kernel's memory pressure level: 1 normal, 2 warn, 4 critical (None if unreadable)."""
+    if os.environ.get('SM_LANE_MEMORY_PRESSURE'):  # tests
+        return int(os.environ['SM_LANE_MEMORY_PRESSURE'])
+    try:
+        import subprocess
+        return int(subprocess.check_output(['sysctl', '-n', 'kern.memorystatus_vm_pressure_level'], text=True))
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        return None
 
 
 def state_dir():
@@ -53,9 +68,8 @@ def _describe(holder):
     return f"pid {holder.get('pid')} in {holder.get('cwd')} ({holder.get('label')}, since {holder.get('started')})"
 
 
-def simulator_job_running():
-    """Whether some process (possibly this one) holds the simulator slot."""
-    path = state_dir() / SIMULATOR_SLOT
+def _held(name):
+    path = state_dir() / name
     if not path.exists():
         return False
     with open(path, 'a+') as handle:
@@ -67,18 +81,61 @@ def simulator_job_running():
     return False
 
 
-def acquire(names, what, label, out=sys.stderr, max_wait=None, allowed=None):
+def simulator_jobs_running():
+    """How many simulator slots some process (possibly this one) holds: 0, 1 or 2."""
+    return sum(_held(name) for name in SIMULATOR_SLOTS)
+
+
+def simulator_job_running():
+    """Whether some process (possibly this one) holds a simulator slot."""
+    return simulator_jobs_running() > 0
+
+
+def second_slot_status():
+    """(allowed, why): may a second simulator job start now?"""
+    off = state_dir() / SECOND_SLOT_OFF
+    if off.exists():
+        return False, f'the second slot is switched off ({off.read_text().strip()})'
+    level = memory_pressure_level()
+    if level not in (1, None):
+        return False, f'memory pressure is {PRESSURE_NAMES.get(level, level)}, and a second simulator needs normal'
+    return True, 'memory pressure is normal'
+
+
+def disable_second_slot(reason):
+    """Switch the second slot off (back to one simulator). Returns True if this call switched it off."""
+    state_dir().mkdir(parents=True, exist_ok=True)
+    try:
+        with open(state_dir() / SECOND_SLOT_OFF, 'x') as handle:
+            handle.write(f'{datetime.datetime.now().isoformat(timespec="seconds")}: {reason}\n')
+        return True
+    except FileExistsError:
+        return False
+
+
+def enable_second_slot():
+    (state_dir() / SECOND_SLOT_OFF).unlink(missing_ok=True)
+
+
+def acquire(names, what, label, out=sys.stderr, max_wait=None, allowed=None, why=None, decide=None):
     """Wait for one of the named lock files and return (open handle, index, seconds waited).
 
     The lock lasts as long as the handle stays open, here or in a child that inherited it.
-    allowed(), if given, returns how many of the names may be used right now.
+    allowed(), if given, returns how many of the names may be used right now; why() says why not all.
+    decide, if given, is a lock file held while allowed() is checked and a slot taken, so two
+    processes can't both act on the same check.
     """
     directory = state_dir()
     directory.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     last_note = None
     while True:
+        decision = None
+        if decide:
+            decision = open(directory / decide, 'a+')
+            fcntl.flock(decision, fcntl.LOCK_EX)
         usable = names[:allowed()] if allowed else names
+        taken = None
         for index, name in enumerate(usable):
             handle = open(directory / name, 'a+')
             try:
@@ -91,14 +148,20 @@ def acquire(names, what, label, out=sys.stderr, max_wait=None, allowed=None):
             handle.write(json.dumps({'pid': os.getpid(), 'cwd': os.getcwd(), 'label': label,
                                      'started': datetime.datetime.now().isoformat(timespec='seconds')}))
             handle.flush()
+            taken = (handle, index)
+            break
+        if decision:
+            decision.close()
+        if taken:
+            handle, index = taken
             waited = round(time.monotonic() - started, 1)
             slot = f' {index + 1}/{len(names)}' if len(names) > 1 else ''
             print(f'[lane] {what}{slot} acquired after {waited:.0f}s: {label}', file=out, flush=True)
             return handle, index, waited
         now = time.monotonic()
-        busy = '; '.join(_describe(h) for h in _read_holders(names, directory)) or 'holders unknown'
+        busy = '; '.join(_describe(h) for h in _read_holders(names, directory)) or 'nothing holds them'
         if len(usable) < len(names):
-            busy += f' (only {len(usable)} of {len(names)} while a simulator job runs)'
+            busy += f' ({why() if why else f"only {len(usable)} of {len(names)} while a simulator job runs"})'
         if max_wait is not None and now - started >= max_wait:
             raise TimeoutError(f'no {what} free within {max_wait:.0f}s: {busy}')
         if last_note is None or now - last_note >= NOTE_EVERY_SECONDS:
@@ -145,11 +208,28 @@ def simulator_boot_lock(label, out=sys.stderr, max_wait=None):
     return _hold(['simulator-boot.lock'], 'simulator boot lock', label, out, max_wait)
 
 
+def _simulator_slots_usable():
+    """Any free slot when no simulator job runs; joining a running one needs second_slot_status()."""
+    if simulator_jobs_running() == 0 or second_slot_status()[0]:
+        return len(SIMULATOR_SLOTS)
+    return 0
+
+
+def _simulator_slot_args(label, out, max_wait):
+    return (SIMULATOR_SLOTS, 'simulator slot', label, out, max_wait, _simulator_slots_usable,
+            lambda: second_slot_status()[1], 'simulator-slot-decision.lock')
+
+
+@contextlib.contextmanager
 def simulator_slot(label, out=sys.stderr, max_wait=None):
-    """Hold the one simulator slot for a whole simulator job (the with-block)."""
-    return _hold([SIMULATOR_SLOT], 'simulator slot', label, out, max_wait)
+    """Hold a simulator slot for a whole simulator job (the with-block)."""
+    handle, index, waited = acquire(*_simulator_slot_args(label, out, max_wait))
+    try:
+        yield {'slot': index, 'waited_seconds': waited}
+    finally:
+        release_handle(handle)
 
 
 def acquire_simulator_slot(label, out=sys.stderr, max_wait=None):
-    """Take the simulator slot and return its open handle, to hand to a longer-lived child process."""
-    return acquire([SIMULATOR_SLOT], 'simulator slot', label, out, max_wait)[0]
+    """Take a simulator slot and return its open handle, to hand to a longer-lived child process."""
+    return acquire(*_simulator_slot_args(label, out, max_wait))[0]
