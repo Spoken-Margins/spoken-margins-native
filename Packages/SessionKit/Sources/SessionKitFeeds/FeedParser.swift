@@ -109,11 +109,11 @@ public final class FeedParser: @unchecked Sendable {
         guard decoded.version.contains("jsonfeed.org/version") else { throw FeedParserError.unsupported }
         let formatter = ISO8601DateFormatter()
         let items = decoded.items.prefix(limits.maximumEntries).compactMap { item -> ParsedFeedItem? in
-            let url = item.url ?? item.external_url ?? ""
-            guard !url.isEmpty else { return nil }
+            let audio = item.attachments?.first { ($0.mime_type ?? "").lowercased().hasPrefix("audio/") }?.url.nilIfEmpty
+            // An episode with audio but no link is still an episode (#179); its audio stands in for the link.
+            guard let url = item.url?.nilIfEmpty ?? item.external_url?.nilIfEmpty ?? audio else { return nil }
             let rawSummary = item.summary ?? item.content_text ?? item.content_html
             let author = item.authors?.compactMap(\.name).joined(separator: ", ").nilIfEmpty ?? item.author?.name
-            let audio = item.attachments?.first { ($0.mime_type ?? "").lowercased().hasPrefix("audio/") }?.url
             return ParsedFeedItem(
                 id: item.id ?? url,
                 title: sanitize(item.title ?? "Untitled"),
@@ -209,7 +209,11 @@ private struct ItemBuilder {
     var published: String?
     var audioURL: String?
     func build() -> ParsedFeedItem? {
-        guard let url = url?.nilIfEmpty else { return nil }
+        // Podcast feeds, paid ones especially, often give episodes audio and a GUID but no
+        // <link> (#179). The enclosure then stands in for the link, so identity falls back to
+        // the GUID, then the enclosure URL. Items with neither a link nor audio are skipped.
+        // Linked items are unchanged, so entries of feeds already followed keep their IDs.
+        guard let url = url?.nilIfEmpty ?? audioURL?.nilIfEmpty else { return nil }
         let formatter = ISO8601DateFormatter()
         let rssFormatter = DateFormatter()
         rssFormatter.locale = Locale(identifier: "en_US_POSIX")
