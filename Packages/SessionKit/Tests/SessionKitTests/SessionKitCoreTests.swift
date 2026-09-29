@@ -702,6 +702,49 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(String(Array(upgradedText)[moved.position.charOffset...].prefix(10)), "The effect")
     }
 
+    func testNarrationRenderedFromTheOldTextIsRefusedAfterAnUpgrade() throws {
+        // #344 audit 1: a background render that started before the re-import finished
+        // after it, and attaching it wrote the v1 text back over the upgraded item.
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let store = try SQLiteSessionStore(path: path)
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "pdf", displayName: "PDF", capabilities: [
+            "sync": ["canonical_persistence"],
+            "playback": ["prerendered_audio"],
+        ]), repository: store)
+        let url = "shared-file://share-sheet/Paper.pdf"
+        let v1 = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: "Paper"),
+            text: "# Paper\n\nJ Biol 12 (2020) 1-9\n\nWe measured sleep in adults.",
+            contentFormat: .markdown
+        ))
+        let oldText = try XCTUnwrap(v1.text)
+        let rendered = PreparedTextAudio(
+            normalizedText: oldText,
+            media: ItemMedia(sourceType: .generatedTTSPrerendered, url: "file:///tmp/narration-344.caf", durationMs: 4_000),
+            timeline: TranscriptTimeline(segments: [], chapters: [], durationMs: 4_000)
+        )
+
+        let document = StructuredDocumentBuilder.build(lines: [
+            StructuredDocumentLine(text: "Paper", role: .title, pageIndex: 0),
+            StructuredDocumentLine(text: "We measured sleep in adults.", role: .body, pageIndex: 0),
+        ], engine: "pdfkit_baseline", version: 2, pageCount: 1)
+        let upgraded = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: "Paper"),
+            text: document.text,
+            contentFormat: .plainText
+        ), structuredDocument: document)
+        XCTAssertEqual(upgraded.id, v1.id)
+        XCTAssertNotEqual(upgraded.text, oldText)
+
+        XCTAssertThrowsError(try engine.attachPreparedTextAudio(itemId: v1.id, prepared: rendered))
+        let item = try store.loadItem(id: v1.id)
+        XCTAssertEqual(item.text, document.text, "the upgraded text stays")
+        XCTAssertNil(item.media, "the stale narration isn't attached")
+    }
+
     func testReimportLeavesAV1PDFAloneWhenAMarginsWordsChange() throws {
         // v1 removed a running head from the middle of a sentence that crossed a page;
         // v2 keeps the head there, so "effect held across" is no longer one run of text.

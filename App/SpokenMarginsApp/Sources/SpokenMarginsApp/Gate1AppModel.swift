@@ -15562,6 +15562,13 @@ final class Gate1AppModel: ObservableObject {
         coordinator: PreparedAudioCoordinator,
         support: URL
     ) async throws {
+        // A re-import can upgrade the item and retire this manifest while chunks render
+        // or assemble; its narration then speaks the old text, so it's dropped (#344).
+        func stillCurrent() -> Bool {
+            (try? store.loadPreparedAudioManifest(id: manifest.id)) != nil
+                && (try? store.loadItem(id: item.id))?.text == sourceText
+        }
+        guard stillCurrent() else { return }
         let byIndex = Dictionary(uniqueKeysWithValues: manifest.chunks.map { ($0.index, $0) })
         let chunks = try plan.map { entry -> SupertonicPreparedChunk in
             guard let committed = byIndex[entry.index] else {
@@ -15593,9 +15600,14 @@ final class Gate1AppModel: ObservableObject {
                 chunks: chunks,
                 outputDirectory: support.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory)
             )
+            let assembledURL = prepared.media.url.flatMap(URL.init(string:))
+            guard stillCurrent() else {
+                if let assembledURL, assembledURL.isFileURL { try? FileManager.default.removeItem(at: assembledURL) }
+                try? await ledger.release(reservationId: assemblyReservation.id)
+                return
+            }
             guard attachPreparedTextAudio(prepared, itemId: item.id, replaceActivePlayback: false),
-                  let rawURL = prepared.media.url,
-                  let url = URL(string: rawURL) else {
+                  let url = assembledURL else {
                 throw SessionKitError.persistenceFailed("prepared_audio_attach_failed")
             }
             try await coordinator.complete(itemId: item.id, signature: signature, prepared: prepared)

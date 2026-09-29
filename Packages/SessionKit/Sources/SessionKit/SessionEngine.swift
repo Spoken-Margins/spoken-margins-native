@@ -520,6 +520,11 @@ public final class SessionEngine {
         guard shouldPrepareGeneratedTextAudio(for: item) else {
             return snapshot
         }
+        // A render that started before a re-import upgraded the item was made from
+        // the old text; attaching it would write that text back (#344).
+        guard preparedAudio(prepared, matches: item) else {
+            throw SessionKitError.invalidCommandForState("attachPreparedTextAudio:source_text_changed")
+        }
         let updated = try applyPreparedTextAudio(prepared, to: item)
         if currentItem?.id == updated.id || currentSession?.itemId == updated.id {
             currentItem = updated
@@ -2724,6 +2729,21 @@ public final class SessionEngine {
         }
         try repository.saveItem(updated)
         return updated
+    }
+
+    /// The narration was rendered from this item's current words: its text as
+    /// stored, or the system-speech projection of it. An item with a structured
+    /// document is spoken through I14, which a text render doesn't follow (#336).
+    private func preparedAudio(_ prepared: PreparedTextAudio, matches item: Item) -> Bool {
+        if let store = repository as? StructuredDocumentRepository,
+           (try? store.loadStructuredDocument(itemId: item.id)) != nil {
+            return false
+        }
+        let text = item.text ?? ""
+        if prepared.normalizedText == text { return true }
+        let projected = SpeechTextNormalizer.projectForSystemSpeech(text).text
+        return prepared.normalizedText == projected
+            || SpeechTextNormalizer.projectForSystemSpeech(prepared.normalizedText).text == projected
     }
 
     private func shouldPrepareGeneratedTextAudio(for item: Item) -> Bool {
