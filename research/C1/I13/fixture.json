@@ -1,0 +1,233 @@
+{
+  "schemaVersion": "structured-document.v1",
+  "extraction": {
+    "engine": "pdfkit_vision",
+    "version": 1,
+    "sourceSHA256": null,
+    "pageCount": 2,
+    "textSHA256": "c2f4edb08580958b96372d206f4a4f15f924c5cac5fe437307d43ab4a0265619"
+  },
+  "text": "Listening to Papers: A Field Study\n\nAda Example¹, Ben Sample²\n\n¹ Example University ² Sample Institute\n\nAbstract\n\nWe asked twelve researchers to listen to papers on their commute.\n\n1 Introduction\n\nListening is slower than reading [3], but it fits into time that reading cannot use.¹ Figure 1 shows when participants listened.\n\n¹ Commutes, walks and chores.\n\nProc. Example Conf. 2026 · 1\n\nListening to Papers\n\nFigure 1: Listening sessions by hour of day.\n\nTable 1: Sessions per participant.\n\nParticipant Sessions P1 14 P2 9\n\nMost sessions happened before 9 a.m. The energy E = mc² of a morning commute is, of course, a metaphor.\n\nReferences\n\n[3] C. Writer. Reading and listening. J. Examples, 2020.",
+  "segments": [
+    {
+      "id": "s0",
+      "role": "title",
+      "range": {
+        "start": 0,
+        "length": 34
+      },
+      "pageIndex": 0
+    },
+    {
+      "id": "s1",
+      "role": "authors",
+      "range": {
+        "start": 36,
+        "length": 25
+      },
+      "pageIndex": 0
+    },
+    {
+      "id": "s1a",
+      "role": "front_matter",
+      "range": {
+        "start": 63,
+        "length": 39
+      },
+      "pageIndex": 0
+    },
+    {
+      "id": "s2",
+      "role": "heading",
+      "range": {
+        "start": 104,
+        "length": 8
+      },
+      "pageIndex": 0,
+      "level": 2
+    },
+    {
+      "id": "s3",
+      "role": "abstract",
+      "range": {
+        "start": 114,
+        "length": 65
+      },
+      "pageIndex": 0
+    },
+    {
+      "id": "s4",
+      "role": "heading",
+      "range": {
+        "start": 181,
+        "length": 14
+      },
+      "pageIndex": 0,
+      "level": 2
+    },
+    {
+      "id": "s5",
+      "role": "body",
+      "range": {
+        "start": 197,
+        "length": 128
+      },
+      "pageIndex": 0
+    },
+    {
+      "id": "s6",
+      "role": "footnote",
+      "range": {
+        "start": 327,
+        "length": 29
+      },
+      "pageIndex": 0
+    },
+    {
+      "id": "s7",
+      "role": "page_footer",
+      "range": {
+        "start": 358,
+        "length": 28
+      },
+      "pageIndex": 0
+    },
+    {
+      "id": "s8",
+      "role": "page_header",
+      "range": {
+        "start": 388,
+        "length": 19
+      },
+      "pageIndex": 1
+    },
+    {
+      "id": "s9",
+      "role": "caption",
+      "range": {
+        "start": 409,
+        "length": 44
+      },
+      "pageIndex": 1,
+      "floatId": "f1"
+    },
+    {
+      "id": "s10",
+      "role": "caption",
+      "range": {
+        "start": 455,
+        "length": 34
+      },
+      "pageIndex": 1,
+      "floatId": "t1"
+    },
+    {
+      "id": "s11",
+      "role": "table",
+      "range": {
+        "start": 491,
+        "length": 31
+      },
+      "pageIndex": 1,
+      "floatId": "t1"
+    },
+    {
+      "id": "s12",
+      "role": "body",
+      "range": {
+        "start": 524,
+        "length": 103
+      },
+      "pageIndex": 1
+    },
+    {
+      "id": "s13",
+      "role": "heading",
+      "range": {
+        "start": 629,
+        "length": 10
+      },
+      "pageIndex": 1,
+      "level": 2
+    },
+    {
+      "id": "s14",
+      "role": "reference",
+      "range": {
+        "start": 641,
+        "length": 56
+      },
+      "pageIndex": 1
+    }
+  ],
+  "markers": [
+    {
+      "kind": "citation",
+      "range": {
+        "start": 230,
+        "length": 3
+      },
+      "label": "3",
+      "targetSegmentId": "s14"
+    },
+    {
+      "kind": "footnote",
+      "range": {
+        "start": 281,
+        "length": 1
+      },
+      "label": "1",
+      "targetSegmentId": "s6"
+    },
+    {
+      "kind": "figure_reference",
+      "range": {
+        "start": 283,
+        "length": 8
+      },
+      "label": "Figure 1",
+      "targetSegmentId": "s9"
+    },
+    {
+      "kind": "math",
+      "range": {
+        "start": 572,
+        "length": 7
+      },
+      "label": null,
+      "targetSegmentId": null
+    }
+  ],
+  "floats": [
+    {
+      "id": "f1",
+      "kind": "figure",
+      "label": "Figure 1",
+      "pageIndex": 1,
+      "bounds": {
+        "x": 0.08,
+        "y": 0.55,
+        "width": 0.84,
+        "height": 0.33
+      },
+      "captionSegmentId": "s9"
+    },
+    {
+      "id": "t1",
+      "kind": "table",
+      "label": "Table 1",
+      "pageIndex": 1,
+      "bounds": {
+        "x": 0.08,
+        "y": 0.3,
+        "width": 0.4,
+        "height": 0.15
+      },
+      "captionSegmentId": "s10"
+    }
+  ],
+  "quality": {
+    "level": "good",
+    "reasons": []
+  }
+}

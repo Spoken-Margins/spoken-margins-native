@@ -65,6 +65,9 @@ public final class SessionEngine {
         var audioOffset: Int
     }
 
+    /// The I14 projection of the current item's I13 document, cached by item.
+    private var listenableCache: (itemId: String, textLength: Int, projection: NormalizedSpeechText?)?
+
     private struct PlaybackProgress {
         var sourcePercent: Int
         var currentPercent: Int
@@ -713,14 +716,18 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// `structuredDocument` is a PDF's extraction v2 (C1 M3, I13): its text becomes
+    /// `Item.text`, its headings the chapters, and it is stored beside the item so
+    /// the speech path can apply I14.
     @discardableResult
-    public func importBrowserText(_ handoff: BrowserTextHandoff) throws -> SessionSnapshot {
+    public func importBrowserText(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> SessionSnapshot {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
-        let (item, deterministicMap) = try browserTextImportRecords(handoff)
+        let (item, deterministicMap, document) = try browserTextImportRecords(handoff, structuredDocument: structuredDocument)
         try repository.saveItem(item)
         if let deterministicMap {
             try repository.saveListeningMap(deterministicMap)
         }
+        try saveStructuredDocument(document, itemId: item.id)
         currentItem = item
         currentMap = deterministicMap
         snapshot.itemId = item.id
@@ -741,14 +748,22 @@ public final class SessionEngine {
 
     /// Persists a browser or file share without disturbing active playback state.
     @discardableResult
-    public func importBrowserTextInBackground(_ handoff: BrowserTextHandoff) throws -> Item {
+    public func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> Item {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
-        let (item, deterministicMap) = try browserTextImportRecords(handoff)
+        let (item, deterministicMap, document) = try browserTextImportRecords(handoff, structuredDocument: structuredDocument)
         try repository.saveItem(item)
         if let deterministicMap {
             try repository.saveListeningMap(deterministicMap)
         }
+        try saveStructuredDocument(document, itemId: item.id)
         return item
+    }
+
+    private func saveStructuredDocument(_ document: StructuredDocument?, itemId: String) throws {
+        guard let document, let store = repository as? StructuredDocumentRepository else { return }
+        try store.saveStructuredDocument(document, itemId: itemId)
+        // The cache may hold "no document" for this item's text (#220 audit 5).
+        if listenableCache?.itemId == itemId { listenableCache = nil }
     }
 
     @discardableResult
@@ -3431,50 +3446,76 @@ public final class SessionEngine {
         }
     }
 
-    private func browserTextImportRecords(_ handoff: BrowserTextHandoff) throws -> (Item, ListeningMap?) {
+    private func browserTextImportRecords(
+        _ handoff: BrowserTextHandoff,
+        structuredDocument: StructuredDocument? = nil
+    ) throws -> (Item, ListeningMap?, StructuredDocument?) {
         let fallbackTitle = cleanedBrowserTextTitle(handoff.source.title, url: handoff.source.url)
-        let rawText = handoff.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceExtension = URL(string: handoff.source.url)?.pathExtension.lowercased()
+        // A v2 document only comes from a PDF, whatever its URL looks like
+        // (https://arxiv.org/pdf/2607.28282v1 has no ".pdf").
+        let isPDF = handoff.captureMode == .markdownFile && (sourceExtension == "pdf" || structuredDocument != nil)
+        // A v2 PDF's canonical text is the document's; it isn't parsed as Markdown,
+        // so every I13 range indexes Item.text exactly.
+        let document = isPDF ? structuredDocument.flatMap { $0.text.isEmpty ? nil : $0 } : nil
+        let rawText = (document?.text ?? handoff.text).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawText.isEmpty else {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
 
         let parsedMarkdown: ParsedObsidianMarkdown?
-        if handoff.contentFormat == .markdown {
+        if document == nil, handoff.contentFormat == .markdown {
             parsedMarkdown = try? ObsidianMarkdownParser.parse(fileName: fallbackTitle, contents: rawText)
         } else {
             parsedMarkdown = nil
         }
         let title = parsedMarkdown?.title ?? fallbackTitle
-        let text = (parsedMarkdown?.text ?? rawText).trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = document?.text ?? (parsedMarkdown?.text ?? rawText).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
         var itemId = handoff.itemId ?? browserTextItemId(title: title, url: handoff.source.url)
-        if handoff.itemId == nil, handoff.captureMode == .readablePage {
-            // A corrected extraction must not move existing Margin anchors.
-            // Retain the original edition and give changed text its own identity.
+        if handoff.itemId == nil, handoff.captureMode == .readablePage || isPDF {
+            // A corrected extraction (or a new PDF extractor) must not move existing
+            // Margin anchors. Retain the original edition and give changed text its
+            // own identity.
             if let existing = try existingItem(id: itemId), existing.text != text {
+                // C1 M3 step 5: a PDF re-imported with a newer extraction moves the
+                // existing item to it when every Margin and position lands on the same
+                // words (I13 rule 1d). Otherwise it stays, and the new text becomes
+                // its own edition as before.
+                if let document, existing.deletedAt == nil, currentSession?.itemId != existing.id,
+                   let store = repository as? any (SessionRepository & StructuredDocumentRepository),
+                   case .success(let upgrade) = try StructuredDocumentUpgrader.plan(
+                       existing: existing,
+                       document: document,
+                       listeningMap: StructuredDocumentImport.listeningMap(for: document, title: existing.title, itemId: existing.id),
+                       repository: store
+                   ) {
+                    try store.applyStructuredDocumentUpgrade(upgrade)
+                    return (upgrade.item, upgrade.listeningMap, document)
+                }
                 let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
                 itemId += "-edition-\(digest)"
             }
             if var existing = try existingItem(id: itemId) {
                 existing.deletedAt = nil
-                return (existing, try repository.loadListeningMap(itemId: itemId))
+                return (existing, try repository.loadListeningMap(itemId: itemId), document)
             }
         }
-        let sourceExtension = URL(string: handoff.source.url)?.pathExtension.lowercased()
-        let mapPolicy: DeterministicListeningMapPolicy = handoff.captureMode == .markdownFile && sourceExtension == "pdf"
+        let mapPolicy: DeterministicListeningMapPolicy = isPDF
             ? .canonicalHeadings
             : .adaptiveListeningSections
-        let deterministicMap = parsedMarkdown?.deterministicListeningMap(
-            itemId: itemId,
-            policy: mapPolicy
-        )
+        let deterministicMap = document.map { StructuredDocumentImport.listeningMap(for: $0, title: title, itemId: itemId) }
+            ?? parsedMarkdown?.deterministicListeningMap(
+                itemId: itemId,
+                policy: mapPolicy
+            )
         let source = parsedMarkdown?.source ?? handoff.source.url
         let item = Item(
             id: itemId,
             title: title,
-            mediaType: sourceExtension == "pdf" ? "pdf" : "text",
+            mediaType: isPDF || sourceExtension == "pdf" ? "pdf" : "text",
             text: text,
             externalReference: source,
             status: deterministicMap == nil ? "needs_listening_map" : "ready",
@@ -3482,7 +3523,7 @@ public final class SessionEngine {
             createdAt: Date(),
             documentStructure: handoff.documentStructure
         )
-        return (item, deterministicMap)
+        return (item, deterministicMap, document)
     }
 
     private func existingItem(id: String) throws -> Item? {
@@ -4472,7 +4513,9 @@ public final class SessionEngine {
         }
         let prefixLength = itemPlaybackPreface().count
         let startsAtPreface = session.position.charOffset == 0 && session.position.chapterId == nil
-        let audioOffset = startsAtPreface ? 0 : prefixLength + session.position.charOffset
+        let spokenOffset = listenableProjection()?.spokenCharacterOffset(atOrAfterSourceOffset: session.position.charOffset)
+            ?? session.position.charOffset
+        let audioOffset = startsAtPreface ? 0 : prefixLength + spokenOffset
         return PlaybackPlan(text: text, audioOffset: audioOffset)
     }
 
@@ -4500,7 +4543,7 @@ public final class SessionEngine {
             guard session.currentTargetType == .itemTextTTS else {
                 return itemText
             }
-            return itemPlaybackPreface() + itemText
+            return itemPlaybackPreface() + (listenableProjection()?.text ?? itemText)
         case .summaryTurnTTS, .assistantTurnTTS:
             guard let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }) else {
                 throw SessionKitError.invalidCommandForState("playTurn")
@@ -4557,11 +4600,31 @@ public final class SessionEngine {
 
     private func itemSourceOffset(forAudioOffset audioOffset: Int) -> Int {
         let prefixLength = itemPlaybackPreface().count
-        guard prefixLength > 0 else { return audioOffset }
-        if audioOffset <= prefixLength {
+        if prefixLength > 0, audioOffset <= prefixLength {
             return 0
         }
-        return audioOffset - prefixLength
+        let spokenOffset = audioOffset - prefixLength
+        return listenableProjection()?.sourceOffset(atSpokenCharacterOffset: spokenOffset) ?? spokenOffset
+    }
+
+    /// For a PDF imported with extraction v2 (C1 M3): what the speech engines are
+    /// given instead of Item.text, with every character's offset in Item.text, so
+    /// positions and written Margins stay in Item.text (I14: skipping never moves an
+    /// anchor). Nil for every other item, and for a document whose text isn't
+    /// exactly Item.text.
+    private func listenableProjection() -> NormalizedSpeechText? {
+        guard let item = currentItem, item.mediaType == "pdf", let text = item.text else { return nil }
+        if let cache = listenableCache, cache.itemId == item.id, cache.textLength == text.count {
+            return cache.projection
+        }
+        var projection: NormalizedSpeechText?
+        if let store = repository as? StructuredDocumentRepository,
+           let document = try? store.loadStructuredDocument(itemId: item.id),
+           document.text == text {
+            projection = StructuredDocumentSpeech.listenableText(document)
+        }
+        listenableCache = (item.id, text.count, projection)
+        return projection
     }
 
     private func generatedListeningMap(for item: Item) -> ListeningMap {

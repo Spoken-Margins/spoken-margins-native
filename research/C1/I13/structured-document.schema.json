@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spokenmargins.local/schemas/structured-document.schema.json",
+  "title": "StructuredDocument (I13 draft)",
+  "description": "Extracted text of a PDF or long text as role-labelled segments, with figures and tables located on the page. DRAFT: lives in research/C1/I13 until C1 publishes it to Contracts/schemas/. See README.md beside this file for the rules.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "extraction", "text", "segments", "markers", "floats"],
+  "properties": {
+    "schemaVersion": { "const": "structured-document.v1" },
+    "extraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine", "version", "pageCount"],
+      "properties": {
+        "engine": {
+          "description": "Which extractor produced this. Ground-truth engines exist only in research.",
+          "enum": ["pdfkit_baseline", "pdfkit_vision", "plain_text", "ground_truth_jats", "ground_truth_latexml"]
+        },
+        "version": {
+          "description": "Monotonic per engine. Bumped by any change that can change `text` for some input (see the extraction version rule).",
+          "type": "integer",
+          "minimum": 1
+        },
+        "sourceSHA256": {
+          "description": "SHA-256 of the source file's bytes, so a later re-extraction can tell it is looking at the same PDF.",
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "pageCount": { "type": "integer", "minimum": 0 },
+        "textSHA256": {
+          "description": "SHA-256 of `text` as UTF-8. Lets a consumer check it holds the text these ranges point into.",
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "text": {
+      "description": "The canonical text. Every range in this document indexes into it, and it is the text written Margins anchor into for this extraction version.",
+      "type": "string"
+    },
+    "segments": {
+      "description": "Contiguous, non-overlapping ranges of `text` in reading order, each with one role. Text between segments is whitespace only.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/segment" }
+    },
+    "markers": {
+      "description": "Inline marks inside a segment: citation and footnote markers, inline math. Their characters are part of the segment's text; the speech path decides how they sound (I14).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/marker" }
+    },
+    "floats": {
+      "description": "Figures and tables that can be shown on screen while their caption is read.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/float" }
+    },
+    "quality": {
+      "description": "Optional pre-check result (C1 M2): whether the app expects this document to sound bad, and why.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["level", "reasons"],
+      "properties": {
+        "level": { "enum": ["good", "fair", "hard"] },
+        "reasons": {
+          "type": "array",
+          "items": { "enum": ["no_text_layer", "ocr_text_layer", "multi_column", "math_heavy", "tables_heavy", "encrypted", "other"] }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "range": {
+      "description": "A span of `text` counted in Swift Characters (extended grapheme clusters), start inclusive: the unit of Anchor.startChar/endChar and SpeechTextNormalizer source offsets, so a Margin anchor and a segment range compare directly.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "length"],
+      "properties": {
+        "start": { "type": "integer", "minimum": 0 },
+        "length": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "role": {
+      "description": "What the text is. Advisory to the speech path, which owns how each role sounds (I14).",
+      "enum": [
+        "title", "heading", "abstract", "body",
+        "caption", "table", "footnote", "equation", "reference",
+        "authors", "front_matter", "back_matter",
+        "page_header", "page_footer", "figure_text",
+        "unknown"
+      ]
+    },
+    "segment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "role", "range"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "role": { "$ref": "#/$defs/role" },
+        "range": { "$ref": "#/$defs/range" },
+        "level": { "description": "Heading depth, 1 = top.", "type": "integer", "minimum": 1, "maximum": 6 },
+        "pageIndex": { "description": "Page where the segment starts, zero-based.", "type": ["integer", "null"], "minimum": 0 },
+        "floatId": { "description": "For a caption or table segment: the float it belongs to.", "type": ["string", "null"] }
+      }
+    },
+    "marker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "range"],
+      "properties": {
+        "kind": { "enum": ["citation", "footnote", "math", "figure_reference", "table_reference", "soft_hyphen"] },
+        "range": { "$ref": "#/$defs/range" },
+        "label": { "description": "The marker as printed: \"12\", \"3–5\", \"Smith et al., 2020\", \"*\".", "type": ["string", "null"] },
+        "targetSegmentId": { "description": "The reference, footnote or caption segment it points to, when known.", "type": ["string", "null"] }
+      }
+    },
+    "float": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "pageIndex", "bounds"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["figure", "table"] },
+        "label": { "description": "\"Figure 2\", \"Table 1\", \"Fig. S3\".", "type": ["string", "null"] },
+        "pageIndex": { "type": "integer", "minimum": 0 },
+        "bounds": { "$ref": "#/$defs/normalizedRect" },
+        "captionSegmentId": { "type": ["string", "null"] }
+      }
+    },
+    "normalizedRect": {
+      "description": "Same convention as pdf-document-structure.v1: fractions of the page's crop box, lower-left origin, as PDFKit and Vision use.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "width": { "type": "number", "minimum": 0, "maximum": 1 },
+        "height": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}

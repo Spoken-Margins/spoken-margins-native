@@ -389,11 +389,15 @@ private struct ObsidianImportRequest: Sendable {
 private struct PreparedObsidianImport: Sendable {
     let item: Item
     let listeningMap: ListeningMap?
+    var structuredDocument: StructuredDocument? = nil
 }
 
 private struct ImportedSourceText: Sendable {
     let text: String
     let documentStructure: PDFDocumentStructure?
+    /// A PDF's extraction v2 (C1 M3) and the title v1 would have given it.
+    var structuredDocument: StructuredDocument? = nil
+    var title: String? = nil
 }
 
 private struct ObsidianImportBatch: Sendable {
@@ -2904,6 +2908,23 @@ final class Gate1AppModel: ObservableObject {
         for request in requests {
             do {
                 let imported = try await importableText(from: request.url)
+                if let document = imported.structuredDocument {
+                    let title = imported.title ?? request.url.deletingPathExtension().lastPathComponent
+                    let map = StructuredDocumentImport.listeningMap(for: document, title: title, itemId: request.itemId)
+                    let item = Item(
+                        id: request.itemId,
+                        title: title,
+                        mediaType: "pdf",
+                        text: document.text,
+                        externalReference: request.url.lastPathComponent,
+                        status: map == nil ? "needs_listening_map" : "ready",
+                        externalReferenceType: "file",
+                        createdAt: Date(),
+                        documentStructure: imported.documentStructure
+                    )
+                    prepared.append(PreparedObsidianImport(item: item, listeningMap: map, structuredDocument: document))
+                    continue
+                }
                 let parsed = try ObsidianMarkdownParser.parse(fileName: request.url.lastPathComponent, contents: imported.text)
                 let mapPolicy: DeterministicListeningMapPolicy = request.url.pathExtension.lowercased() == "pdf"
                     ? .canonicalHeadings
@@ -2940,10 +2961,12 @@ final class Gate1AppModel: ObservableObject {
         }
         #if canImport(PDFKit)
         do {
-            let extracted = try NativePDFDocumentExtractor.extractBaseline(from: url)
+            let extracted = try NativePDFDocumentExtractor.extractStructured(from: url)
             return ImportedSourceText(
-                text: extracted.markdown,
-                documentStructure: extracted.documentStructure
+                text: extracted.document.text,
+                documentStructure: extracted.documentStructure,
+                structuredDocument: extracted.document,
+                title: extracted.title
             )
         } catch PDFStructuredTextExtractor.ExtractionError.noExtractableText {
             throw SourceFileImportError.pdfHasNoExtractableText
@@ -2978,6 +3001,9 @@ final class Gate1AppModel: ObservableObject {
                     try store.saveItem(prepared.item)
                     if let listeningMap = prepared.listeningMap {
                         try store.saveListeningMap(listeningMap)
+                    }
+                    if let document = prepared.structuredDocument {
+                        try store.saveStructuredDocument(document, itemId: prepared.item.id)
                     }
                     imported.append(prepared.item)
                 } catch {
@@ -3504,21 +3530,22 @@ final class Gate1AppModel: ObservableObject {
     private func importLocalSharedPDFInBackground(url: URL) async throws {
         #if canImport(PDFKit)
         let extracted = try await Task.detached(priority: .userInitiated) {
-            try NativePDFDocumentExtractor.extractBaseline(from: url)
+            try NativePDFDocumentExtractor.extractStructured(from: url)
         }.value
-        let title = url.deletingPathExtension().lastPathComponent
+        let fileTitle = url.deletingPathExtension().lastPathComponent
+        let title = extracted.title ?? (fileTitle.isEmpty ? "Shared PDF" : fileTitle)
         let encodedName = url.lastPathComponent.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "shared.pdf"
         let handoff = BrowserTextHandoff(
             captureMode: .markdownFile,
             source: BrowserTextSource(
                 url: "shared-file://share-sheet/\(encodedName)",
-                title: title.isEmpty ? "Shared PDF" : title
+                title: title
             ),
-            text: extracted.markdown,
-            contentFormat: .markdown,
+            text: extracted.document.text,
+            contentFormat: .plainText,
             documentStructure: extracted.documentStructure
         )
-        try importBrowserTextInBackground(handoff)
+        try importBrowserTextInBackground(handoff, structuredDocument: extracted.document)
         diagnostics["lastSharedPDFImport"] = url.lastPathComponent
         markOnboardingSteps([.addedOwnSource, .addedFromSafari])
         #else
@@ -3541,22 +3568,22 @@ final class Gate1AppModel: ObservableObject {
             throw SourceFileImportError.remotePDFTooLarge
         }
         let extracted = try await Task.detached(priority: .userInitiated) {
-            try NativePDFDocumentExtractor.extractBaseline(from: data)
+            try NativePDFDocumentExtractor.extractStructured(from: data)
         }.value
         let decodedName = url.deletingPathExtension().lastPathComponent.removingPercentEncoding
             ?? url.deletingPathExtension().lastPathComponent
-        let title = decodedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fileTitle = decodedName.trimmingCharacters(in: .whitespacesAndNewlines)
         let handoff = BrowserTextHandoff(
             captureMode: .markdownFile,
             source: BrowserTextSource(
                 url: url.absoluteString,
-                title: title.isEmpty ? "Shared PDF" : title
+                title: extracted.title ?? (fileTitle.isEmpty ? "Shared PDF" : fileTitle)
             ),
-            text: extracted.markdown,
-            contentFormat: .markdown,
+            text: extracted.document.text,
+            contentFormat: .plainText,
             documentStructure: extracted.documentStructure
         )
-        try importBrowserTextInBackground(handoff)
+        try importBrowserTextInBackground(handoff, structuredDocument: extracted.document)
         diagnostics["lastRemotePDFImport"] = url.absoluteString
         markOnboardingSteps([.addedOwnSource, .addedFromSafari])
         #else
@@ -3564,7 +3591,7 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    private func importBrowserTextInBackground(_ handoff: BrowserTextHandoff) throws {
+    private func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws {
         let store = try requireStore()
         if engine == nil {
             installEngine(try makeEngine(store: store))
@@ -3572,7 +3599,7 @@ final class Gate1AppModel: ObservableObject {
         guard let engine else {
             throw SessionKitError.persistenceFailed("Browser text importer is unavailable.")
         }
-        let item = try engine.importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff))
+        let item = try engine.importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument)
         libraryItems = try loadLibraryRows(store: store)
         scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
         diagnostics["lastBackgroundBrowserTextImport"] = item.id
@@ -10519,8 +10546,17 @@ final class Gate1AppModel: ObservableObject {
         return endChar >= prepared.normalizedText.count
     }
 
+    /// A PDF imported with extraction v2 (C1 M3) is spoken through SessionEngine's
+    /// I14 projection. Prepared (pre-rendered) text audio is rendered from Item.text,
+    /// which would read its references and tables aloud, so it isn't prepared for
+    /// these items yet; they play with live speech.
+    private func usesStructuredSpeech(_ item: Item) -> Bool {
+        item.mediaType == "pdf" && (try? store?.loadStructuredDocument(itemId: item.id)) != nil
+    }
+
     private func shouldPrewarmTextAudio(for item: Item) -> Bool {
         guard item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return false }
+        guard !usesStructuredSpeech(item) else { return false }
         if item.mediaType == TargetType.browserOwnedMedia.rawValue {
             return false
         }
@@ -15100,6 +15136,11 @@ final class Gate1AppModel: ObservableObject {
         guard let sourceText = item.text,
               !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let voice = ttsVoiceSelection.supertonicVoice else { return }
+        guard !usesStructuredSpeech(item) else {
+            diagnostics["explicitAudioPreparation:\(item.id)"] = "skipped_structured_pdf"
+            statusMessage = "This PDF plays with live speech; preparing its audio ahead isn't available yet."
+            return
+        }
         do {
             allowAudioPreparation(itemId: item.id)
             failedStartupAudioPreparationItemIds.remove(item.id)
@@ -15201,7 +15242,8 @@ final class Gate1AppModel: ObservableObject {
                 guard let item = try? store.loadItem(id: row.id),
                       let text = item.text,
                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else { continue }
+                      !suppressedAutomaticAudioPreparationItemIds.contains(item.id),
+                      !usesStructuredSpeech(item) else { continue }
                 guard item.sourceCompletedAt == nil, !Self.shouldSkipTextAudioPreparation(sessionsByItemId[item.id] ?? []) else {
                     diagnostics["automaticAudioPreparation:\(item.id)"] = "skipped_existing_progress"
                     continue

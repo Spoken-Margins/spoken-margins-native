@@ -3360,6 +3360,47 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.selectedItem.text.contains("A readable PDF paragraph for Spoken Margins."))
     }
 
+    func testFilesPDFImportUsesExtractionV2AndKeepsTheAppendix() async throws {
+        // v1 cut everything after the references heading, appendix included (#215).
+        // Extraction v2 keeps it all in Item.text and labels the references instead.
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "spoken-margins-pdf-v2-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "Paper.pdf")
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 12)]
+        let heading: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 20)]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        try renderer.writePDF(to: file) { context in
+            context.beginPage()
+            var y: CGFloat = 60
+            func draw(_ text: String, _ attributes: [NSAttributedString.Key: Any], gap: CGFloat = 18) {
+                (text as NSString).draw(at: CGPoint(x: 60, y: y), withAttributes: attributes)
+                y += gap
+            }
+            draw("The main finding held across every cohort we studied in detail.", body)
+            draw("It also held when the analysis was repeated a second time.", body, gap: 30)
+            draw("References", heading, gap: 30)
+            // Numbered, so v1's reference rule recognises the list and cuts from here.
+            draw("[1] A. Agarwal. Pituitary peptides. J Neurosci, 2005.", body)
+            draw("[2] B. Brown. Sleep and memory. Nature, 2011.", body)
+            draw("[3] D. Dunn. Circadian timing. Cell, 2018.", body)
+            draw("[4] F. Fox. Light and mood. Science, 2020.", body, gap: 30)
+            draw("Appendix", heading, gap: 30)
+            draw("Supplementary methods are described in this appendix section.", body)
+        }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+
+        model.importObsidianMarkdownFiles(urls: [file])
+        try await waitFor("PDF import to finish") {
+            !model.isImportingSources
+        }
+
+        XCTAssertTrue(model.selectedItem.text.contains("Supplementary methods are described in this appendix section."))
+        XCTAssertTrue(model.selectedItem.text.contains("Pituitary peptides"), "references stay in Item.text; I14 skips them when spoken")
+    }
+
     func testPDFVisualHeadingsPrebuildDeterministicListeningMap() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "spoken-margins-structured-pdf-\(UUID().uuidString)", directoryHint: .isDirectory)

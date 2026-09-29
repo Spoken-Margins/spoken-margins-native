@@ -72,8 +72,14 @@ public enum SpeechTextNormalizer {
     }
 
     public static func normalizeImportedText(_ source: String) -> String {
+        normalizeImportedTextWithSourceOffsets(source).text
+    }
+
+    /// `normalizeImportedText` with each kept character's offset in `source`, so
+    /// ranges found before cleaning (a PDF's superscript markers) can follow it.
+    static func normalizeImportedTextWithSourceOffsets(_ source: String) -> NormalizedSpeechText {
         let mapped = source.enumerated().map { MappedCharacter(character: $0.element, sourceOffset: $0.offset) }
-        return finish(projectAudibleContent(mapped, speakIdentifiers: false), sourceLength: source.count).text
+        return finish(projectAudibleContent(mapped, speakIdentifiers: false), sourceLength: source.count)
     }
 
     private static func projectAudibleContent(_ input: [MappedCharacter], speakIdentifiers: Bool = true) -> [MappedCharacter] {

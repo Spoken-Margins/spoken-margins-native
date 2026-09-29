@@ -32,6 +32,8 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     public var feedEntries: [String: FeedEntry]
     public var feedRefreshStates: [String: FeedRefreshState]
     public var sourceSuggestionDecisions: [String: SourceSuggestionDecision]
+    /// I13 documents by item id, then extraction version.
+    public var structuredDocuments: [String: [Int: StructuredDocument]] = [:]
 
     public init(
         items: [String: Item] = [:],
@@ -378,4 +380,26 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     public func loadFeedRefreshState(subscriptionId: String) throws -> FeedRefreshState? { feedRefreshStates[subscriptionId] }
     public func saveSourceSuggestionDecision(_ decision: SourceSuggestionDecision) throws { sourceSuggestionDecisions[decision.sourceId] = decision }
     public func loadSourceSuggestionDecision(sourceId: String) throws -> SourceSuggestionDecision? { sourceSuggestionDecisions[sourceId] }
+}
+
+extension InMemorySessionRepository: StructuredDocumentRepository {
+    public func saveStructuredDocument(_ document: StructuredDocument, itemId: String) throws {
+        structuredDocuments[itemId, default: [:]][document.extraction.version] = document
+    }
+
+    public func loadStructuredDocument(itemId: String) throws -> StructuredDocument? {
+        structuredDocuments[itemId]?.max { $0.key < $1.key }?.value
+    }
+
+    public func loadSessions(itemId: String) throws -> [Session] {
+        sessions.values.filter { $0.itemId == itemId }.sorted { $0.id < $1.id }
+    }
+
+    public func applyStructuredDocumentUpgrade(_ upgrade: StructuredDocumentUpgrade) throws {
+        items[upgrade.item.id] = upgrade.item
+        mapsByItemId[upgrade.item.id] = upgrade.listeningMap
+        upgrade.interjections.forEach { interjections[$0.id] = $0 }
+        upgrade.sessions.forEach { sessions[$0.id] = $0 }
+        try saveStructuredDocument(upgrade.document, itemId: upgrade.item.id)
+    }
 }
