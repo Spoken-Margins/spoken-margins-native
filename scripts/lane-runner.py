@@ -122,8 +122,11 @@ def identity(tier: str, commit: str, base: str, tests: list[str]) -> dict:
     return {'tier': tier, 'commit': commit, 'next': base, 'tests': sorted(tests)}
 
 
-def earlier_report(comments: list[dict], wanted: dict) -> str | None:
-    """URL of a PASS or FAIL lane report already posted for this exact request. INCONCLUSIVE doesn't count."""
+def earlier_report(comments: list[dict], wanted: dict) -> tuple[str, str] | None:
+    """(URL, verdict) of a PASS or FAIL lane report already posted for this exact request.
+
+    INCONCLUSIVE doesn't count: that request runs again.
+    """
     for comment in comments:
         body = comment.get('body') or ''
         match, verdict = MARKER.search(body), REPORT.search(body)
@@ -131,7 +134,7 @@ def earlier_report(comments: list[dict], wanted: dict) -> str | None:
             continue
         try:
             if json.loads(match.group(1)) == wanted:
-                return comment.get('html_url') or 'an earlier comment'
+                return comment.get('html_url') or 'an earlier comment', verdict.group(1)
         except ValueError:
             continue
     return None
@@ -483,6 +486,18 @@ def merge_base_branch(tree: Path, base: str) -> list[str]:
     return conflicts or [merged.stderr.strip().splitlines()[-1] if merged.stderr.strip() else 'the merge failed']
 
 
+def record_outcome(verdict: str) -> None:
+    """Hand the verdict to the workflow, whose last step makes the check red unless it is PASS (#184).
+
+    The script itself exits 0 once it has reported, so a lane.yml from before this change (on a PR that
+    hasn't merged next) stays green on FAIL, as before, instead of posting "stopped before reporting".
+    """
+    outputs = os.environ.get('GITHUB_OUTPUT')
+    if outputs:
+        with open(outputs, 'a') as handle:
+            handle.write(f'reported=true\nverdict={verdict}\n')
+
+
 def link_tools(source: Path) -> None:
     for name in ('.venv', 'node_modules'):
         if not (ROOT / name).exists() and (source / name).exists():
@@ -525,9 +540,12 @@ def main(argv=None) -> int:
     wanted = identity(request['tier'], head, base_sha, request['tests'])
     done_before = earlier_report(comments, wanted)
     if done_before:
-        github.comment(f'Lane: identical {request["tier"]} request for {head[:7]} already reported: {done_before}\n{NOTE}')
+        url, earlier_verdict = done_before
+        github.comment(f'Lane: identical {request["tier"]} request for {head[:7]} already reported '
+                       f'({earlier_verdict}): {url}\n{NOTE}')
         if not desk_waiting:
             github.relabel(QUEUED, DONE)
+        record_outcome(earlier_verdict)  # a repeated FAIL stays red
         return 0
     request_id = f'pr{args.pr}-r{args.run_id}'
     evidence = Path(os.environ.get('SM_LANE_EVIDENCE_DIR') or
@@ -563,6 +581,7 @@ def main(argv=None) -> int:
     (evidence / 'report.md').write_text(body)
     print(body)
     github.comment(body)  # if this fails, the job fails and the tidy step says so on the PR
+    record_outcome(verdict)
     _, desk_waiting = pending_requests(github.comments())
     github.relabel(RUNNING, QUEUED if desk_waiting else DONE)
     shutil.rmtree(ROOT / '.build/dd', ignore_errors=True)

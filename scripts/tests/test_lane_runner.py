@@ -101,8 +101,8 @@ class RequestTests(unittest.TestCase):
     def test_only_pass_or_fail_reports_make_a_request_identical(self):
         wanted = lane.identity('T3', HEAD, MERGE, ['B', 'A'])
         same = lane.identity('T3', HEAD, MERGE, ['A', 'B'])
-        self.assertEqual(lane.earlier_report([runner_report('PASS', wanted, url='u1')], same), 'u1')
-        self.assertEqual(lane.earlier_report([runner_report('FAIL', wanted, url='u2')], same), 'u2')
+        self.assertEqual(lane.earlier_report([runner_report('PASS', wanted, url='u1')], same), ('u1', 'PASS'))
+        self.assertEqual(lane.earlier_report([runner_report('FAIL', wanted, url='u2')], same), ('u2', 'FAIL'))
         self.assertIsNone(lane.earlier_report([runner_report('INCONCLUSIVE', wanted)], same))
         self.assertIsNone(lane.earlier_report([runner_report('PASS', wanted)], lane.identity('T3', NEWER, MERGE, ['A', 'B'])))
         # Same head, but next moved: it runs again.
@@ -400,6 +400,41 @@ class MainFlowTests(unittest.TestCase):
         retry._comments.append(comment('/lane T2'))
         self.run_main(retry)
         self.assertTrue(retry.posted[1].startswith('Lane report pr5-r42 — PASS'))
+
+    def outcome(self, github, verdict='PASS'):
+        """What the runner handed the workflow (GITHUB_OUTPUT) for one run."""
+        with tempfile.TemporaryDirectory() as folder:
+            outputs = Path(folder) / 'outputs'
+            outputs.write_text('')
+            with mock.patch.dict('os.environ', {'GITHUB_OUTPUT': str(outputs)}):
+                self.run_main(github, HEAD, verdict)
+            return dict(line.split('=', 1) for line in outputs.read_text().splitlines())
+
+    def test_the_workflow_gets_the_verdict_so_the_check_is_green_only_on_pass(self):
+        # lane.yml's Verdict step fails unless verdict=PASS; reported=true keeps the tidy step quiet.
+        for verdict in ('PASS', 'FAIL', 'INCONCLUSIVE'):
+            with self.subTest(verdict=verdict):
+                github = FakeGitHub(comments=[comment('/lane T2')])
+                self.assertEqual(self.outcome(github, verdict), {'reported': 'true', 'verdict': verdict})
+                self.assertTrue(github.posted[0].startswith(f'Lane report pr5-r42 — {verdict}'))
+
+    def test_a_repeated_request_carries_the_earlier_verdict_so_a_fail_stays_red(self):
+        github = FakeGitHub(comments=[comment('/lane T2')])
+        self.run_main(github, HEAD, 'FAIL')
+        github.labels.add('lane:queued')
+        github._comments.append(comment('/lane T2'))
+        self.assertEqual(self.outcome(github, 'PASS'), {'reported': 'true', 'verdict': 'FAIL'})
+        self.assertIn('already reported (FAIL)', github.posted[-1])
+
+    def test_nothing_is_handed_over_when_nothing_ran(self):
+        self.assertEqual(self.outcome(FakeGitHub(comments=[])), {})
+        self.assertEqual(self.outcome(FakeGitHub(head=NEWER, comments=[comment('/lane T2')])), {})
+
+    def test_the_workflow_fails_its_verdict_step_and_tidies_only_when_nothing_was_reported(self):
+        workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/lane.yml').read_text()
+        self.assertIn("if: steps.run.outputs.reported == 'true'", workflow)
+        self.assertIn('if [ "$VERDICT" != PASS ]; then', workflow)
+        self.assertIn("if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'", workflow)
 
     def test_requeueing_without_a_new_request_says_so_and_clears_the_label(self):
         github = FakeGitHub(comments=[comment('/lane T2')])
