@@ -955,7 +955,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             // at the next chunk, not repeat the passage that just finished.
             currentStartOffset = nextOffset
             currentChunkLength = 0
-            let cached = renderedCache.removeValue(forKey: nextOffset)
+            let cached = cachedOrSavedChunk(containing: nextOffset)
             let finishedURL = activeAudioURL
             player?.replaceCurrentItem(with: nil)
             player = nil
@@ -1004,11 +1004,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             )
         } else {
             try? releaseBackgroundAudio()
-            lock.withLock { pendingAutoplayOffset = snapshot.0 }
+            let rendering = lock.withLock { () -> Bool in
+                pendingAutoplayOffset = snapshot.0
+                return inFlightOffsets.contains(snapshot.0)
+            }
             // A normal render gap is a wait for the selected Supertonic voice,
             // never a reason to change voices. The serial full-item generation
-            // pump will start this chunk as soon as it becomes available.
-            _ = request
+            // pump will start this chunk as soon as it becomes available. If it
+            // isn't rendering (a seek skipped past it, #346), render it now
+            // rather than wait for a render that will never come.
+            if !rendering { enqueueRender(request, shouldPlayWhenReady: false) }
         }
     }
 
@@ -1713,6 +1718,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 )
                 // While playing, the requested position was sampled a moment ago and lags the live
                 // one by a few characters; that's the same place, not a seek.
+                // An explicit choice of this chunk: no other chunk may autoplay over it later.
+                pendingAutoplayOffset = nil
                 if abs(currentOffset - spokenOffset) <= (wasPlaying ? Self.livePositionTolerance : 1) {
                     return .resumePlayer(player)
                 }
@@ -1726,12 +1733,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 player.replaceCurrentItem(with: nil)
                 self.player = nil
             }
-            if let cachedEntry = renderedCache.first(where: { entry in
-                spokenOffset >= entry.value.request.startOffset
-                    && spokenOffset < entry.value.request.startOffset + max(1, entry.value.request.sourceLength)
-            }), let cached = renderedCache.removeValue(forKey: cachedEntry.key) {
+            if let cached = cachedOrSavedChunk(containing: spokenOffset) {
                 transportIntent = .playing
                 pendingStartTargetId = targetId
+                // The listener chose this chunk; a marker left for another must not play over it.
+                pendingAutoplayOffset = nil
                 initialPlaybackOffset = cached.request.startOffset
                 initialRequestedSpokenOffset = spokenOffset
                 return .playCached(cached)
@@ -1831,6 +1837,26 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         case .none: fields["path"] = "restart_rendering"
         }
         onResumeDecision(fields)
+    }
+
+    /// The chunk covering `spokenOffset`: from the rendered cache (taking it out, as before), or
+    /// else this generation's saved result for it. Playing a cached chunk removes it from the
+    /// cache, so after a seek ahead and back, a chunk already played is found here (#346).
+    /// Call with the lock held.
+    private func cachedOrSavedChunk(containing spokenOffset: Int) -> CachedAudio? {
+        if let entry = renderedCache.first(where: { entry in
+            spokenOffset >= entry.value.request.startOffset
+                && spokenOffset < entry.value.request.startOffset + max(1, entry.value.request.sourceLength)
+        }), let cached = renderedCache.removeValue(forKey: entry.key) {
+            return cached
+        }
+        guard let planned = generationPlan.first(where: {
+            spokenOffset >= $0.startOffset && spokenOffset < $0.startOffset + max(1, $0.sourceLength)
+        }), let saved = generationResults[planned.startOffset],
+              FileManager.default.fileExists(atPath: saved.audioURL.path) else { return nil }
+        let file = try? AVAudioFile(forReading: saved.audioURL)
+        let duration = file.map { Double($0.length) / $0.processingFormat.sampleRate } ?? 0
+        return CachedAudio(url: saved.audioURL, duration: duration, request: planned)
     }
 
     /// About two seconds of speech: how far a sampled position can trail the live one.

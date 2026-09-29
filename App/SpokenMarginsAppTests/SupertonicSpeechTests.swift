@@ -381,6 +381,87 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    private func crossChunkTemplate(_ root: URL) throws -> URL {
+        let url = root.appending(path: "t.wav")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 132_300)); buffer.frameLength = 132_300
+        try file.write(from: buffer)
+        return url
+    }
+
+    private let crossChunkText = (1...12).map { "Sentence \($0) contains enough ordinary words to keep the narration moving through several chunks." }
+        .joined(separator: " ")
+
+    private func chunkStarts() -> [Int] {
+        RenderedSpeechChunker.sourceSlices(from: SpeechTextNormalizer.normalize(crossChunkText)).map(\.startOffset)
+    }
+
+    // Audit of #346 (1): playing a cached chunk removes it from the cache. Seek ahead into C, then
+    // back into B; when B ends, C must still play rather than leave silence.
+    func testSeekingAheadThenBackStillPlaysTheLaterChunk() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "xc1-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let renderer = OrderGatedSupertonicRenderer(template: try crossChunkTemplate(root), gates: [:])
+        let starts = ResumeStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { player, rate in starts.bump(); player.volume = 0; player.playImmediately(atRate: rate) },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient()
+        )
+        let offsets = chunkStarts()
+        XCTAssertGreaterThanOrEqual(offsets.count, 4)
+        _ = try client.prepareSpeechText(crossChunkText)
+        try client.play(targetId: "item", from: 0)
+        for _ in 0..<150 where await renderer.count < offsets.count { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(200))
+        try client.play(targetId: "item", from: offsets[2] + 5)   // ahead into C
+        try await Task.sleep(for: .milliseconds(200))
+        try client.play(targetId: "item", from: offsets[1] + 5)   // back into B
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(client.debugActiveAudioState().startOffset, offsets[1], "B plays")
+        let before = starts.value
+        client.debugFinishActiveChunk()                            // B ends
+        for _ in 0..<50 where starts.value == before { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(starts.value, before + 1, "the next chunk started after B")
+        XCTAssertEqual(client.debugActiveAudioState().startOffset, offsets[2], "C plays after B")
+        try client.stop()
+    }
+
+    // Audit of #346 (2): a seek into cached B left an autoplay marker for still-rendering C, so
+    // when C finished it played over B.
+    func testALaterRenderDoesNotPlayOverTheChunkTheListenerChose() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "xc2-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gateC = AsyncStream<Void>.makeStream()
+        defer { gateC.continuation.finish() }
+        let renderer = OrderGatedSupertonicRenderer(template: try crossChunkTemplate(root), gates: [3: gateC.stream])
+        let starts = ResumeStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { player, rate in starts.bump(); player.volume = 0; player.playImmediately(atRate: rate) },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient()
+        )
+        let offsets = chunkStarts()
+        _ = try client.prepareSpeechText(crossChunkText)
+        try client.play(targetId: "item", from: 0)                 // A plays; B renders; C is held
+        for _ in 0..<150 where await renderer.count < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(200))
+        try client.play(targetId: "item", from: offsets[2] + 5)    // ahead into C, still rendering
+        try await Task.sleep(for: .milliseconds(100))
+        try client.play(targetId: "item", from: offsets[1] + 5)    // back into cached B
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(client.debugActiveAudioState().startOffset, offsets[1], "B plays")
+        let before = starts.value
+        gateC.continuation.finish()                                 // C finishes rendering
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(starts.value, before, "C didn't start over B")
+        XCTAssertEqual(client.debugActiveAudioState().startOffset, offsets[1], "B is still playing")
+        try client.stop()
+    }
+
     func testSelectableCatalogExposesOnlyJamesLilyAndSystem() {
         XCTAssertEqual(AppTTSVoiceSelection.allCases, [.james, .lily, .system])
         XCTAssertEqual(AppTTSVoiceSelection.james.rawValue, "supertonic:M2")
@@ -2107,6 +2188,21 @@ private final class PreparedChunkCommitGate: @unchecked Sendable {
         let index = lock.withLock { commits += 1; return commits }
         if index == 2 { for await _ in stream {} }
     }
+}
+
+private actor OrderGatedSupertonicRenderer: SupertonicRendering {
+    let template: URL
+    let gates: [Int: AsyncStream<Void>]
+    private(set) var count = 0
+    init(template: URL, gates: [Int: AsyncStream<Void>]) { self.template = template; self.gates = gates }
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        count += 1
+        if let gate = gates[count] { for await _ in gate {} }
+        let url = FileManager.default.temporaryDirectory.appending(path: "order-gated-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: template, to: url)
+        return SupertonicNarrationResult(audioURL: url, duration: 3, sampleRate: 44_100, renderDuration: 0.01, sessionLoadCount: 1)
+    }
+    func discardGeneratedAudio(at url: URL) async { try? FileManager.default.removeItem(at: url) }
 }
 
 private actor CancellationAwareSupertonicRenderer: SupertonicRendering {
