@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 
 /// A user-owned interchange document. Block numbers address the unchanged text,
 /// not synthesized timestamps or a model's reproduction of the source.
