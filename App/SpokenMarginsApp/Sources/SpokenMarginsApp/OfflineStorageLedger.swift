@@ -294,7 +294,10 @@ actor OfflineStorageLedger {
             case .keep:
                 return false
             case .detach(let detached):
-                for item in detached { try repository.saveItem(item) }
+                for item in detached {
+                    try repository.saveItem(item)
+                    try PreparedNarrationFallback.markPreparedAudioForRepreparation(itemId: item.id, repository: repository)
+                }
             }
         }
         references.forget(url)

@@ -2685,6 +2685,7 @@ public final class SessionEngine {
         var repaired = item
         repaired.media = nil
         try repository.saveItem(repaired)
+        try PreparedNarrationFallback.markPreparedAudioForRepreparation(itemId: item.id, repository: repository)
         return repaired
     }
 
@@ -3103,6 +3104,7 @@ public final class SessionEngine {
         if detached.media?.sourceType == .generatedTTSPrerendered {
             detached.media = nil
             try repository.saveItem(detached)
+            try PreparedNarrationFallback.markPreparedAudioForRepreparation(itemId: detached.id, repository: repository)
         }
         currentItem = detached
         var reading = PreparedNarrationFallback.liveSpeechSession(

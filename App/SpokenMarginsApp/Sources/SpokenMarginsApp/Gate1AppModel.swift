@@ -15320,10 +15320,6 @@ final class Gate1AppModel: ObservableObject {
                 maximumChunkCount: job.maximumChunkCount
             )
             let completedIndexes = Set(manifest.chunks.map(\.index))
-            guard let next = eligiblePlan.first(where: { !completedIndexes.contains($0.index) }) else {
-                try store.deleteAudioPreparationJob(id: job.id)
-                return try hasMoreMatchingJobs()
-            }
             let ledger = offlineStorageLedger ?? OfflineStorageLedger(repository: store, rootDirectory: support)
             offlineStorageLedger = ledger
             let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
@@ -15331,6 +15327,19 @@ final class Gate1AppModel: ObservableObject {
                 rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
             )
             preparedAudioCoordinator = coordinator
+            guard let next = eligiblePlan.first(where: { !completedIndexes.contains($0.index) }) else {
+                // All chunks are intact but nothing is assembled (#278): assemble now, because it
+                // otherwise happens only right after the last chunk is committed.
+                if manifest.isCompleteButUnassembled, manifest.plannedChunkCount == plan.count {
+                    try await finishBackgroundPreparedAudio(
+                        item: item, sourceText: sourceText, voice: voice, signature: signature,
+                        manifest: manifest, plan: plan, store: store, ledger: ledger,
+                        coordinator: coordinator, support: support
+                    )
+                }
+                try store.deleteAudioPreparationJob(id: job.id)
+                return try hasMoreMatchingJobs()
+            }
             let reservation = try await ledger.reserve(
                 ownerId: "prepared-chunk-\(manifest.id)-\(next.index)",
                 byteCount: 64 * 1_024 * 1_024
