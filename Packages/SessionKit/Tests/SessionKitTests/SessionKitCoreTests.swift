@@ -5775,6 +5775,40 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.last, "Overview. Map\n\n".count + 5)
     }
 
+    /// #356: the first spoken unit of a fresh start is the item's title, including for a map an
+    /// older build stored with the "Structured into … listening chapters" sentence.
+    func testFreshStartSpeaksTheTitleFirstEvenForAStoredLegacyOverview() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let item = Item(id: "item-agents", title: "Evaluation Agents", mediaType: "text", text: "One. Two. Three.", externalReference: nil, status: "ready")
+        let chapters = [
+            Chapter(id: "ch-1", title: "One", startChar: 0, endChar: 5, percent: 0),
+            Chapter(id: "ch-2", title: "Two", startChar: 5, endChar: 16, percent: 31)
+        ]
+        for overview in [
+            "Structured into 2 listening chapters from canonical document headings in Evaluation Agents.",
+            ListeningMapOverviewText.appGenerated(title: item.title, chapterCount: chapters.count)
+        ] {
+            let map = ListeningMap(id: "map-agents", itemId: item.id, overview: overview, chapters: chapters)
+            let audio = RecordingAudioClient()
+            let repo = InMemorySessionRepository(items: [item.id: item], mapsByItemId: [item.id: map])
+            let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+            _ = try engine.startSession(itemId: item.id)
+
+            let spoken = try XCTUnwrap(audio.preparedTexts.last, overview)
+            XCTAssertEqual(spoken, "Evaluation Agents. 2 chapters.\n\nOne. Two. Three.", overview)
+            XCTAssertEqual(spoken.components(separatedBy: ". ").first, "Evaluation Agents", "the first spoken unit is the title")
+        }
+    }
+
     func testInspectSessionDoesNotStartPlayback() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
