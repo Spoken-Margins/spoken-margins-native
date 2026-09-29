@@ -275,7 +275,6 @@ enum PDFStructuredTextExtractor {
         let firstContentsPage = pages.firstIndex { $0.contains { isTableOfContentsTitle($0.text) } }
         let bodySize = inferredBodyPointSize(from: allLines)
         let layout = BodyLayout(lines: allLines, bodySize: bodySize)
-        var insertedOutlineHeadingIDs = Set<Int>()
         var result: [StructuredDocumentLine] = []
 
         // The metadata title, unless the first page already prints it (v1 read it twice).
@@ -305,11 +304,24 @@ enum PDFStructuredTextExtractor {
             let titlePage = pageIndex < 2 ? titlePageRoles(in: pageLines, isFirstPage: pageIndex == 0, bodySize: bodySize, pageBox: page.bounds(for: .mediaBox)) : [:]
             for heading in pageOutline where !pageLines.contains(where: { headingKey($0.text) == headingKey(heading.title) }) {
                 result.append(StructuredDocumentLine(text: heading.title, role: .heading, pageIndex: pageIndex, level: heading.level))
-                insertedOutlineHeadingIDs.insert(heading.id)
+            }
+            // The line each outline entry names on its page is a heading, even where a
+            // running head would sit (#347). A running head that repeats the title
+            // takes it only when no other line on the page does.
+            var outlineLines: [Int: OutlineHeading] = [:]
+            for heading in pageOutline {
+                let matches = pageLines.indices.filter {
+                    !tableOfContentsLines.contains($0) && outlineLines[$0] == nil
+                        && headingKey(pageLines[$0].text) == headingKey(heading.title)
+                }
+                if let chosen = matches.first(where: { furnitureRole(pageLines[$0], page: page) == nil }) ?? matches.first {
+                    outlineLines[chosen] = heading
+                }
             }
             for (lineIndex, line) in pageLines.enumerated() {
-                let key = headingKey(line.text)
-                if let role = furnitureRole(line, page: page) {
+                if let heading = outlineLines[lineIndex] {
+                    result.append(StructuredDocumentLine(text: line.text, role: .heading, pageIndex: pageIndex, level: heading.level))
+                } else if let role = furnitureRole(line, page: page) {
                     result.append(StructuredDocumentLine(text: line.text, role: role, pageIndex: pageIndex))
                 } else if tableOfContentsLines.contains(lineIndex) {
                     result.append(StructuredDocumentLine(text: line.text, role: .frontMatter, pageIndex: pageIndex))
@@ -321,11 +333,6 @@ enum PDFStructuredTextExtractor {
                     result.append(StructuredDocumentLine(text: line.text, role: .figureText, pageIndex: pageIndex))
                 } else if layout.looksLikeDisplayMath(line) {
                     result.append(StructuredDocumentLine(text: line.text, role: .equation, pageIndex: pageIndex))
-                } else if let heading = pageOutline.first(where: {
-                    !insertedOutlineHeadingIDs.contains($0.id) && headingKey($0.title) == key
-                }) {
-                    insertedOutlineHeadingIDs.insert(heading.id)
-                    result.append(StructuredDocumentLine(text: line.text, role: .heading, pageIndex: pageIndex, level: heading.level))
                 } else if outline.isEmpty
                     && (firstContentsPage.map({ pageIndex > $0 }) ?? true)
                     && isVisualHeading(line, bodySize: bodySize) {
