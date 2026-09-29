@@ -184,7 +184,9 @@ final class SupertonicSpeechTests: XCTestCase {
             observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
             onGenerationProgress: { progress.append($0.completedChunks) }
         )
-        let text = String(repeating: "a", count: 229) + " [1] " + String(repeating: "b", count: 300)
+        // Sized so the chunk boundary falls between " citation" and "1": the first chunk ends after
+        // "citation", and the second starts at "1", which maps back to "[".
+        let text = String(repeating: "a", count: RenderedSpeechChunker.spokenCostBudget - 11) + " [1] " + String(repeating: "b", count: 300)
         _ = try client.prepareSpeechText(text)
         try client.play(targetId: "rank2", from: 0)
         await waitUntil { starts.value >= 1 }
