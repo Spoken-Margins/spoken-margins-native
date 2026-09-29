@@ -37,7 +37,7 @@ Why it's shaped this way:
 - **`/goal` holds the agent to the endpoint.** It's a command the person who started the session types, not something the agent can run. After the agent posts its approach, send `/goal <the milestone's "Done when", minus (owner) and (Mac) items>` as the next message. After each turn, a separate evaluator checks the condition against what the agent has shown in the transcript, and the agent keeps working until it's met ([docs](https://code.claude.com/docs/en/goal)). Without it, the agent still works toward the same list; `/goal` just stops it from declaring victory early. That's why every "Done when" in the briefs is written as something the agent can *demonstrate* (a test output, a measured number, a tap count, a lane report), not something it can merely assert.
 - **Items marked (owner) stay out of the goal.** Listening by ear, measurements on the owner's phone, and data only the owner has can't be demonstrated by an agent. The agent prepares them (a build, exact steps, what to look for) and the milestone waits on the owner.
 - **Stating the approach first** gives the owner a moment to redirect from the phone before hours go into the wrong idea. It isn't a request for approval; the agent continues unless redirected.
-- **Defaults instead of waits.** On 2026-09-28 about 15 owner decisions reached the owner one at a time, and several were reversible: which simulator the lane uses, C3's pause behavior, whether author names are read aloud. Streams now take a default for those and keep going. The lead session collects each "Default taken" so the owner can veto in one batch.
+- **Defaults instead of waits.** On 2026-09-28 about 15 owner decisions reached the owner one at a time, and several were reversible: which simulator the lane uses, C3's pause behavior, whether author names are read aloud. Streams now take a default for those, post it on their tracking issue as "Default taken", and keep going. The lead session does not relay them to the owner. On 2026-09-29 the owner asked of one "how is that a decision for me?"
 - **A turn cap** stops a stuck stream from burning a day. Blocked is a legitimate outcome if it's reported.
 - **A fresh-context review** before a milestone catches the "looks done" failure without an auditor agent chain ([best practices](https://code.claude.com/docs/en/best-practices#add-an-adversarial-review-step)). Tell the reviewer to flag only gaps against the brief's "Done when" and "Must not break", or it will invent work.
 
@@ -57,10 +57,12 @@ docs/workstreams/test-lane.md, and "The lead session" in docs/workstreams/kickof
    and `gh issue list --label merge-audit`); push the owner only for ones the owner
    didn't do.
 2. Give the owner one digest, short and written for the ear:
-   - Decisions only the owner can make, numbered, each with your recommendation,
-     what it blocks, and a link.
-   - Every "Default taken" since the last digest, numbered, so the owner can veto
-     by number.
+   - Decisions only the owner can make, numbered, each with your recommendation
+     and what it blocks. Describe every item in plain words: the owner listens to
+     replies and won't leave the chat to open a link, so an issue number alone
+     means nothing. Put numbers and links in a list at the end.
+   - Leave "Default taken" items out. They are the streams' own calls and stay on
+     the tracking issues.
    - What merged, what's waiting on the lane, and what's stuck and why.
 3. Merge on green (the owner allows this). When a PR's lane report is PASS for its
    current head, merge current next into a temporary worktree of it and re-run the
