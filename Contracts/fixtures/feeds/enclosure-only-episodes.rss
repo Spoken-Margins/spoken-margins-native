@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- #179: podcast episodes with audio and a GUID but no <link>, as paid and private feeds often publish. -->
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>Spoken Margins Test Show</title>
+    <link>https://example.com/show</link>
+    <item>
+      <title>Episode 3: No link, GUID and audio</title>
+      <guid isPermaLink="false">sm-test-show-ep3</guid>
+      <pubDate>Fri, 26 Sep 2026 10:00:00 +0000</pubDate>
+      <enclosure url="https://media.example.com/show/ep3.mp3" length="1234567" type="audio/mpeg"/>
+      <itunes:duration>00:21:04</itunes:duration>
+    </item>
+    <item>
+      <title>Episode 2: No link, no GUID, audio only</title>
+      <pubDate>Thu, 25 Sep 2026 10:00:00 +0000</pubDate>
+      <enclosure url="https://media.example.com/show/ep2.mp3?token=Zx81kq0P2mNw7rT4yB6vC9dF3hJ5lA1s" length="1234567" type="audio/mpeg"/>
+    </item>
+    <item>
+      <title>Episode 1: Has a link</title>
+      <link>https://example.com/show/episode-1</link>
+      <guid isPermaLink="false">sm-test-show-ep1</guid>
+      <pubDate>Wed, 24 Sep 2026 10:00:00 +0000</pubDate>
+      <enclosure url="https://media.example.com/show/ep1.mp3" length="1234567" type="audio/mpeg"/>
+    </item>
+    <item>
+      <title>Show note: no link, no audio</title>
+      <guid isPermaLink="false">sm-test-show-note</guid>
+      <description>Nothing to play or open.</description>
+    </item>
+    <item>
+      <title>Trailer: video enclosure, no link</title>
+      <guid isPermaLink="false">sm-test-show-trailer</guid>
+      <enclosure url="https://media.example.com/show/trailer.mp4" length="1234567" type="video/mp4"/>
+    </item>
+  </channel>
+</rss>
