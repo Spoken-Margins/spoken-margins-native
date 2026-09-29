@@ -146,27 +146,62 @@ class ReportTests(unittest.TestCase):
 class ProcessTests(unittest.TestCase):
     """Timeouts stop the whole group, so no xcodebuild keeps running outside the build slots."""
 
+    # The child needs time to start Python and install its signal handling before the timeout fires.
+    # At a load average near 400 (two simulators, full swap) that took more than the 0.5 s these tests
+    # once allowed, so the interrupt arrived first and the child died without a trace (#249). Children
+    # start with -S (no site import) and report when they're ready; a child that still isn't ready
+    # when the timeout fires means the Mac was too overloaded to test this, and the test says so.
+    STARTUP = 5.0
+
+    def ready_or_skip(self, text):
+        if 'ready' not in text:
+            self.skipTest(f'the child did not start within {self.STARTUP:.0f} s; the Mac is too overloaded to test this')
+
     def test_a_timeout_interrupts_the_group_so_the_child_can_record_it(self):
         with tempfile.TemporaryDirectory() as temporary, open(Path(temporary) / 'log', 'w+') as log:
             script = ('import signal, sys, time\n'
                       'def stop(*_):\n    print("interrupted, stopping xcodebuild", flush=True); sys.exit(130)\n'
-                      'signal.signal(signal.SIGINT, stop)\ntime.sleep(30)\n')
+                      'signal.signal(signal.SIGINT, stop)\nprint("ready", flush=True)\ntime.sleep(60)\n')
             started = time.monotonic()
-            self.assertIsNone(lane.run_bounded([sys.executable, '-c', script], log, timeout=0.5, grace=20))
-            self.assertLess(time.monotonic() - started, 15)  # the SIGINT path, not the SIGKILL after 20 s
+            self.assertIsNone(lane.run_bounded([sys.executable, '-S', '-c', script], log, timeout=self.STARTUP, grace=30))
+            elapsed = time.monotonic() - started
             log.seek(0)
-            self.assertIn('interrupted, stopping xcodebuild', log.read())
+            text = log.read()
+            self.ready_or_skip(text)
+            self.assertIn('interrupted, stopping xcodebuild', text)
+            self.assertLess(elapsed, self.STARTUP + 20)  # the SIGINT path, not the SIGKILL after 30 s
+
+    def test_the_interrupt_works_even_if_the_runner_was_started_ignoring_it(self):
+        # Background jobs start with SIGINT ignored, and children inherit that. A child relying on
+        # Python's default handling must still be interrupted, not survive until SIGKILL.
+        with tempfile.TemporaryDirectory() as temporary, open(Path(temporary) / 'log', 'w+') as log:
+            script = 'import time\nprint("ready", flush=True)\ntime.sleep(60)\n'
+            previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+            try:
+                started = time.monotonic()
+                self.assertIsNone(lane.run_bounded([sys.executable, '-S', '-c', script], log, timeout=self.STARTUP,
+                                                   grace=30))
+                elapsed = time.monotonic() - started
+            finally:
+                signal.signal(signal.SIGINT, previous)
+            log.seek(0)
+            text = log.read()
+            self.ready_or_skip(text)
+            self.assertIn('KeyboardInterrupt', text)
+            self.assertLess(elapsed, self.STARTUP + 20)
 
     def test_a_group_that_ignores_the_interrupt_is_killed_with_its_children(self):
-        with tempfile.TemporaryDirectory() as temporary, open(Path(temporary) / 'log', 'w') as log:
+        with tempfile.TemporaryDirectory() as temporary, open(Path(temporary) / 'log', 'w+') as log:
             pid_file = Path(temporary) / 'child.pid'
             script = ('import signal, subprocess, sys, time\nsignal.signal(signal.SIGINT, signal.SIG_IGN)\n'
-                      'child = subprocess.Popen([sys.executable, "-c", "import signal, time; '
-                      'signal.signal(signal.SIGINT, signal.SIG_IGN); time.sleep(60)"])\n'
-                      f'open({str(pid_file)!r}, "w").write(str(child.pid))\ntime.sleep(60)\n')
-            self.assertIsNone(lane.run_bounded([sys.executable, '-c', script], log, timeout=1, grace=0.5))
+                      'child = subprocess.Popen([sys.executable, "-S", "-c", "import signal, time; '
+                      'signal.signal(signal.SIGINT, signal.SIG_IGN); time.sleep(120)"])\n'
+                      f'open({str(pid_file)!r}, "w").write(str(child.pid))\nprint("ready", flush=True)\ntime.sleep(120)\n')
+            self.assertIsNone(lane.run_bounded([sys.executable, '-S', '-c', script], log, timeout=self.STARTUP, grace=0.5))
+            log.seek(0)
+            self.ready_or_skip(log.read())
             child = int(pid_file.read_text())
-            for _ in range(50):
+            for _ in range(100):
                 try:
                     os.kill(child, 0)
                 except ProcessLookupError:

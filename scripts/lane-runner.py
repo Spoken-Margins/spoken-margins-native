@@ -164,7 +164,10 @@ def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUP
     On timeout the whole group gets SIGINT first, so verify-tests.py and xcodebuild-lane stop their
     own xcodebuild and record the interruption, then SIGKILL if it's still there after the grace.
     """
-    process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    # The child gets default SIGINT handling even if this process was started with it ignored (as
+    # background jobs are), or the interrupt below would be silently ignored all the way down.
+    process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                               preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
     try:
         return process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
