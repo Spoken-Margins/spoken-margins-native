@@ -19,6 +19,10 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   during boot, and a long wait for the first boot's data migration. The job holds the Mac's one
   simulator slot throughout, so it never runs alongside a Test Desk job. A crash flood stops the run.
 - A timeout interrupts the whole process group, so no xcodebuild keeps running outside the slots.
+- The automerge label asks for the checks a finished PR needs, with no request comment (the
+  ready-queue plan, decision 3). The base branch's scripts/test-scope.py classifies the PR's
+  committed diff: T0 (docs, research, the server) runs nothing, T1 runs --plan fast, and T2 or
+  higher runs --plan fast and both builds. An explicit request on the PR goes first.
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
 default ~/Library/Caches/SpokenMarginsLane/evidence), SM_LANE_TOOLS (a checkout whose .venv and
@@ -42,6 +46,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 
 QUEUED, RUNNING, DONE = 'lane:queued', 'lane:running', 'lane:done'
+AUTOMERGE = 'automerge'
+FAST_TIMEOUT = 2400
 RUNNER_TIERS = ('T2', 'T3')
 APP_TEST_TARGET = 'SpokenMarginsAppTests'
 PLANS = {'app': 'AppBehavior', 'adapters': 'AudioAdapters'}
@@ -219,6 +225,72 @@ def run_t2(evidence: Path, runner=run_bounded) -> tuple[str, str, list[str]]:
     failed = [r for r in results if not r.endswith('(pass)')]
     verdict = 'PASS' if not failed else ('INCONCLUSIVE' if all('timed out' in r for r in failed) else 'FAIL')
     return verdict, ', '.join(results), details
+
+
+# ---- Automerge ----------------------------------------------------------------------------------
+
+def committed_changes(tree: Path, base: str) -> tuple[list[str], dict[str, str]]:
+    """The PR's committed changes against origin/<base>: paths, and SessionKit source diffs (for the
+    public-API check). Nothing untracked in the runner's workspace counts."""
+    git = ['git', '-C', str(tree)]
+    merge_base = subprocess.check_output(git + ['merge-base', 'HEAD', f'origin/{base}'], text=True).strip()
+    paths = subprocess.check_output(git + ['diff', '--name-only', merge_base, 'HEAD'], text=True).splitlines()
+    diffs, current = {}, None
+    for line in subprocess.check_output(git + ['diff', '-U0', merge_base, 'HEAD', '--', 'Packages/SessionKit/Sources'],
+                                        text=True).splitlines():
+        if line.startswith('diff --git '):
+            current = line.split(' b/', 1)[1]
+            diffs[current] = ''
+        elif current:
+            diffs[current] += line + '\n'
+    return sorted(set(paths)), diffs
+
+
+def diff_scope(tree: Path, base: str) -> dict:
+    """test-scope.py's answer for the PR, from the base branch's copy of the policy, so a PR can't
+    reclassify itself to skip its builds."""
+    import types
+    source = subprocess.check_output(['git', '-C', str(tree), 'show', f'origin/{base}:scripts/test-scope.py'], text=True)
+    policy = types.ModuleType('lane_test_scope')
+    policy.__file__ = str(tree / 'scripts/test-scope.py')
+    exec(compile(source, f'origin/{base}:scripts/test-scope.py', 'exec'), policy.__dict__)
+    paths, diffs = committed_changes(tree, base)
+    return policy.classify(paths, diffs, root=tree)
+
+
+def run_fast(evidence: Path, runner=run_bounded) -> tuple[str, list[str]]:
+    """--plan fast (host tests): returns (PASS, FAIL or INCONCLUSIVE, details)."""
+    python = ROOT / '.venv/bin/python'
+    output, log_path = evidence / 'fast', evidence / 'verify-fast.log'
+    command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', 'fast',
+               '--output', str(output)]
+    with log_path.open('w') as log:
+        code = runner(command, log, FAST_TIMEOUT)
+    if code is None:
+        return 'INCONCLUSIVE', [f'host tests (--plan fast) — no result after {duration(FAST_TIMEOUT)}; interrupted. '
+                                f'evidence: {log_path}']
+    if code == 0 and _read_manifest(output).get('status') == 'verified':
+        return 'PASS', []
+    return 'FAIL', [f'host tests (--plan fast) — expected: verified. observed: exit {code}. evidence: {log_path}',
+                    *[f'  {line}' for line in first_errors(log_path)]]
+
+
+def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2) -> tuple[str, str, str, list[str]]:
+    """Returns verdict, where, ran, details for the checks the PR's diff needs."""
+    tier = int(scope['tier'][1:])
+    details = [f'test-scope: {scope["tier"]} ({"; ".join(scope["why"]) or "no changes"})']
+    if tier == 0:
+        return 'PASS', 'no build', 'nothing to build or test', details + [
+            'nothing here reaches the host tests or the app (docs, research or server only)']
+    verdict, more = fast(evidence)
+    details += more
+    if verdict != 'PASS':
+        return verdict, 'host only', 'host tests (--plan fast): ' + verdict.lower(), details
+    if tier == 1:
+        return 'PASS', 'host only', 'host tests (--plan fast): passed', details + [
+            'no app build: nothing in the diff reaches the app (T1)']
+    verdict, builds, more = t2(evidence)
+    return verdict, 'no simulator (compile only)', f'host tests (--plan fast): passed; {builds}', details + more
 
 
 # ---- T3 -----------------------------------------------------------------------------------------
@@ -522,12 +594,17 @@ def main(argv=None) -> int:
     if args.cleanup:
         return cleanup(github, run_url)
     sweep_runner_simulators()
-    head = github.pull()['head']['sha']
+    pull = github.pull()
+    head = pull['head']['sha']
+    automerge = AUTOMERGE in {label['name'] for label in pull.get('labels', [])}
     if head != args.event_head:
         print(f'The PR moved on to {head[:7]} since this run was queued; the newer run tests it.')
         return 0
     comments = github.comments()
     request, desk_waiting = pending_requests(comments)
+    if request is None and automerge:
+        request = {'tier': 'auto', 'tests': [], 'commit': ''}  # the automerge label is the request
+    explicit = request is not None and request['tier'] != 'auto'  # automerge runs leave lane:* labels alone
     if request is None:
         if not desk_waiting:
             github.comment('Lane: lane:queued is set, but there is no `/lane T2` or `/lane T3` request comment newer '
@@ -543,7 +620,7 @@ def main(argv=None) -> int:
         url, earlier_verdict = done_before
         github.comment(f'Lane: identical {request["tier"]} request for {head[:7]} already reported '
                        f'({earlier_verdict}): {url}\n{NOTE}')
-        if not desk_waiting:
+        if explicit and not desk_waiting:
             github.relabel(QUEUED, DONE)
         record_outcome(earlier_verdict)  # a repeated FAIL stays red
         return 0
@@ -553,7 +630,7 @@ def main(argv=None) -> int:
     evidence.mkdir(parents=True, exist_ok=True)
     (evidence / 'request.json').write_text(json.dumps(dict(request, head=head, base=args.base, base_sha=base_sha),
                                                       indent=2))
-    if not desk_waiting:  # a waiting T4/T5 keeps lane:queued so the Test Desk still sees it
+    if explicit and not desk_waiting:  # a waiting T4/T5 keeps lane:queued so the Test Desk still sees it
         github.relabel(QUEUED, RUNNING)
     link_tools(Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Documents/GitHub/spoken-margins-native'))
     started = time.monotonic()
@@ -567,6 +644,11 @@ def main(argv=None) -> int:
             verdict, where, ran, crashes = 'INCONCLUSIVE', 'no simulator', 'nothing', 'none'
             details = [f'The PR does not merge cleanly into {args.base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
                        f'Merge {args.base} into your branch, push, and ask again.']
+        elif request['tier'] == 'auto':
+            scope = diff_scope(ROOT, args.base)
+            (evidence / 'scope.json').write_text(json.dumps(scope, indent=2))
+            verdict, where, ran, details = run_automerge(scope, evidence)
+            crashes = 'none'
         elif request['tier'] == 'T2':
             verdict, ran, details = run_t2(evidence)
             where, crashes = 'no simulator (compile only)', 'none'
@@ -583,7 +665,8 @@ def main(argv=None) -> int:
     github.comment(body)  # if this fails, the job fails and the tidy step says so on the PR
     record_outcome(verdict)
     _, desk_waiting = pending_requests(github.comments())
-    github.relabel(RUNNING, QUEUED if desk_waiting else DONE)
+    if explicit:
+        github.relabel(RUNNING, QUEUED if desk_waiting else DONE)
     shutil.rmtree(ROOT / '.build/dd', ignore_errors=True)
     shutil.rmtree(ROOT / '.build/verification', ignore_errors=True)
     return 0
