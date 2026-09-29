@@ -33,9 +33,7 @@ struct Build23SenderSharingExperience: View {
                     topPrimaryAction(snapshot)
                 }
                 if let error = shareError(snapshot) {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(AppColors.coral)
-                        .fixedSize(horizontal: false, vertical: true)
+                    FailureMessageLabel(error)
                         .accessibilityIdentifier("build23.sender.share.error")
                 }
                 stageContent(snapshot)

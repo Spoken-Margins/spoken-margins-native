@@ -184,3 +184,19 @@ struct SMExperienceEmptyState: View {
         .frame(maxWidth: .infinity, minHeight: 260)
     }
 }
+
+/// A listener-facing failure: an icon as well as a colour, because colour alone
+/// cannot tell failure from status for a red-green colour-blind listener (#308).
+struct FailureMessageLabel: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Label(text, systemImage: "exclamationmark.triangle")
+            .foregroundStyle(AppColors.dangerText)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}

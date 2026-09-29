@@ -302,7 +302,9 @@ struct UserFeedbackBanner: View {
         switch feedback.kind {
         case .success: .green
         case .warning: .orange
-        case .error: .red
+        // Keeps its octagon: warnings already use the triangle, and the two must
+        // differ by shape, not only colour (#308).
+        case .error: AppColors.dangerText
         }
     }
 }
@@ -1213,9 +1215,15 @@ private struct HomeScreen: View {
                 if model.sourceLinkImportState == "resolving" {
                     ProgressView()
                 }
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(model.sourceLinkImportState == "failure" ? .red : AppColors.secondaryText)
+                Group {
+                    if model.sourceLinkImportState == "failure" {
+                        FailureMessageLabel(message)
+                    } else {
+                        Text(message)
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                }
+                .font(.caption)
             }
             .accessibilityIdentifier("sourceLink.import.status")
         }
@@ -1917,9 +1925,15 @@ private struct ItemScreen: View {
                                 Text("\(model.selectedItem.importedCommentaryInterjections[layer.id]?.count ?? 0)")
                                     .font(.title3.bold())
                             }
-                            Text(importedLayerStatus(layer))
-                                .font(.caption)
-                                .foregroundStyle(layer.sourceResolutionStatus == .ambiguous ? AppColors.dangerText : AppColors.secondaryText)
+                            Group {
+                                if layer.sourceResolutionStatus == .ambiguous {
+                                    FailureMessageLabel(importedLayerStatus(layer))
+                                } else {
+                                    Text(importedLayerStatus(layer))
+                                        .foregroundStyle(AppColors.secondaryText)
+                                }
+                            }
+                            .font(.caption)
 
                             Toggle("Enabled during listening", isOn: Binding(
                                 get: { layer.isEnabled },
@@ -4055,9 +4069,8 @@ private struct SettingsScreen: View {
                                     .font(.caption)
                                     .foregroundStyle(AppColors.secondaryText)
                                     .lineLimit(2)
-                                Text(entry.reason)
+                                FailureMessageLabel(entry.reason)
                                     .font(.caption)
-                                    .foregroundStyle(.red)
                                 HStack {
                                     Button("Retry") {
                                         model.retryImportInboxEntry(entry)
@@ -4461,9 +4474,8 @@ private struct BatchExportScreen: View {
                         .foregroundStyle(AppColors.secondaryText)
                 }
                 ForEach(Array(result.failures.enumerated()), id: \.offset) { _, failure in
-                    Label(failure, systemImage: "exclamationmark.triangle")
+                    FailureMessageLabel(failure)
                         .font(.caption)
-                        .foregroundStyle(.red)
                 }
             }
         }

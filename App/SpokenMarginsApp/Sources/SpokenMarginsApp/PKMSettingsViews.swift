@@ -33,6 +33,7 @@ struct ListeningEditionImportScreen: View {
     @State private var json = ""
     @State private var edition: ListeningEdition?
     @State private var message = ""
+    @State private var messageIsFailure = false
     @State private var choosingFile = false
     @State private var replaceMap = false
     @State private var notifications = ""
@@ -55,7 +56,7 @@ struct ListeningEditionImportScreen: View {
                 Button("Preview") {
                     editingJSON = false
                     do { edition = try ListeningEdition.decode(Data(json.utf8)); message = "" }
-                    catch { message = error.localizedDescription }
+                    catch { message = error.localizedDescription; messageIsFailure = true }
                 }
             } footer: {
                 Text("Use Make Listening Map Prompt, your chosen model, then Assemble Listening Edition in Shortcuts. Import the result here or with Import Listening Edition. No model request is made during import.")
@@ -76,7 +77,9 @@ struct ListeningEditionImportScreen: View {
                     }
                 }
             }
-            if !message.isEmpty { Text(message).foregroundStyle(.red) }
+            if !message.isEmpty {
+                if messageIsFailure { FailureMessageLabel(message) } else { Text(message) }
+            }
         }
         .navigationTitle("Listening Edition")
         .fileImporter(isPresented: $choosingFile, allowedContentTypes: [.json]) { result in
@@ -90,7 +93,8 @@ struct ListeningEditionImportScreen: View {
                 json = String(data: data, encoding: .utf8) ?? ""
                 // Preview is explicit after changing the editor, so old content cannot import.
                 message = "Loaded \(parsed.title). Tap Preview to review it."
-            } catch { message = error.localizedDescription }
+                messageIsFailure = false
+            } catch { message = error.localizedDescription; messageIsFailure = true }
         }
     }
 }

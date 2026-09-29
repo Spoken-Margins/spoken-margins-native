@@ -275,10 +275,16 @@ struct ExperienceAddSourceFlow: View {
                     .accessibilityIdentifier("sourceLink.import.button")
                 }
                 if let message = model.sourceLinkImportMessage {
-                    Text(message)
-                        .font(.subheadline)
-                        .foregroundStyle(model.sourceLinkImportState == "failure" ? AppColors.coral : AppColors.secondaryText)
-                        .accessibilityIdentifier("sourceLink.import.status")
+                    Group {
+                        if model.sourceLinkImportState == "failure" {
+                            FailureMessageLabel(message)
+                        } else {
+                            Text(message)
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                    }
+                    .font(.subheadline)
+                    .accessibilityIdentifier("sourceLink.import.status")
                 }
                 Text("Adding a source never replaces the item already in Now Playing.")
                     .font(.caption)
@@ -325,10 +331,8 @@ struct ExperienceAddSourceFlow: View {
                 .accessibilityLabel("Source text")
                 .accessibilityIdentifier("create.text.editor")
             if let textImportError {
-                Label(textImportError, systemImage: "exclamationmark.triangle")
+                FailureMessageLabel(textImportError)
                     .font(.subheadline)
-                    .foregroundStyle(AppColors.dangerText)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .tint(AppColors.evergreen)
