@@ -319,6 +319,50 @@ final class OfflineStorageLedgerTests: XCTestCase {
         XCTAssertEqual(reservation.byteCount, 1, "today this throws insufficientSpace")
     }
 
+    // #313: the rendered speech cache deletes files by its own LRU without telling the ledger, so
+    // rows adopted for it named deleted files until the next reconciliation. It manages its own
+    // size, so the ledger leaves it alone: rows an earlier build adopted are dropped at launch
+    // (the files stay), adoption skips it, and an LRU pass leaves the ledger matching the disk.
+    func testARenderedSpeechCacheLRUPassLeavesTheLedgerMatchingTheDisk() async throws {
+        let fixture = try makeFixture(limit: 1_000_000)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let episode = try writeAsset(fixture, relativePath: "PodcastAudio/episode.m4a", category: .podcast)
+        let rendered = fixture.root.appending(path: "rendered.wav")
+        try Data(repeating: 2, count: 100).write(to: rendered)
+        let result = SupertonicNarrationResult(
+            audioURL: rendered, duration: 1, sampleRate: 44_100, renderDuration: 0, sessionLoadCount: 0
+        )
+        let cache = try RenderedSpeechDiskCache(
+            directory: fixture.root.appending(path: "RenderedSpeechCache", directoryHint: .isDirectory),
+            limitBytes: 1_000
+        )
+        let first = try cache.store(result, text: "one", voice: .m2, language: "en", speed: 1, synthesisSteps: 8)
+        _ = try cache.store(result, text: "two", voice: .m2, language: "en", speed: 1, synthesisSteps: 8)
+        // Build 29 adopted a cache file at its last launch.
+        try fixture.repository.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: "adopted-build-29", category: .preparedChunk,
+            relativePath: "RenderedSpeechCache/\(first.audioURL.lastPathComponent)", byteCount: 100, isReproducible: true
+        ))
+
+        // The startup sequence: adopt, then enforce.
+        try await fixture.ledger.adoptExistingAssets()
+        _ = try await fixture.ledger.enforceBudget()
+        // An LRU pass: the cache now fits one file, so the next store evicts the other two.
+        cache.setLimitBytes(100)
+        let third = try cache.store(result, text: "three", voice: .m2, language: "en", speed: 1, synthesisSteps: 8)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.audioURL.path), "the LRU pass ran")
+
+        let assets = try fixture.repository.loadOwnedOfflineAssets()
+        let missing = assets.filter { !FileManager.default.fileExists(atPath: fixture.root.appending(path: $0.relativePath).path) }
+        XCTAssertEqual(missing.map(\.relativePath), [], "no row names a missing file")
+        let inventory = try await fixture.ledger.inventoryBytes()
+        let tracked = try await fixture.ledger.trackedFilesystemBytes()
+        XCTAssertEqual(inventory, tracked, "the ledger total matches the disk")
+        XCTAssertEqual(assets.map(\.relativePath), ["PodcastAudio/episode.m4a"], "the ledger doesn't track the rendered cache")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: episode.path), "a real download is never deleted")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: third.audioURL.path), "the ledger leaves the cache's files alone")
+    }
+
     private func writeAsset(_ fixture: Fixture, relativePath: String, category: OfflineAssetCategory) throws -> URL {
         let file = fixture.root.appending(path: relativePath)
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
