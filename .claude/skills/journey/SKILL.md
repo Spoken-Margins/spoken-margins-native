@@ -23,12 +23,20 @@ The Test Desk takes **T4 and T5** requests. T2 and T3 go to the self-hosted runn
 2. **Build** there with the wrapper, which queues for a Mac-wide build slot and uses `.build/dd` in that worktree:
    `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS Simulator' build`
    The app is then at `.build/dd/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app`.
-3. **Simulator.** Journeys run on the lane's standing simulator, on **iOS 26.5**. That is the same device the Test Desk uses for its own T3 runs. Don't use iOS 27: its Apple Intelligence services crash-flood on this Mac (#184).
-   - A second device, when a journey needs one (J5), is a temporary simulator created for the job and deleted afterwards. Never create another long-lived simulator; that's the owner's disk rule.
-   - The lane runner's T3 jobs use their own temporary simulator (named `SM Lane Runner …`), so at most two lane simulators run at once. Before booting a second device, run `xcrun simctl list devices booted`, and wait if two are already booted.
-   - **Boot only with `scripts/lane-sim-boot <udid>`.** It waits for the Mac-wide simulator-boot lock, which the runner and `verify-tests.py` also hold while they boot. Two simulators booting at once crash-flooded SpringBoard onto the owner's screen (#184). It then waits until the device is ready; a first boot migrates data for several minutes.
-   - Never let `xcodebuild` or `verify-tests.py --device` start from a shut-down device you haven't booted this way: boot it first. The guard sends a raw `simctl boot` to the helper.
-4. **Install the build.** `--plan app` wipes the app's data on the standing device, so a lane journey starts from an empty Library and builds the history it needs within the job (J2, J3 and J5 do this). J4 installs the previous shipped build first. Journeys over real long-lived history belong to the owner's device pass.
+3. **Simulator: a fresh device for every request.**
+
+   ```bash
+   UDID=$(scripts/lane-sim-boot --fresh "SM Lane Desk <id>")
+   ```
+
+   This creates an iPhone 17 on iOS 26.5 and boots it under the lane's boot rules. It returns once the device is ready; a first boot migrates data for 3–6 minutes. There is no standing lane device. Two SpringBoard crash floods came from re-booting one (#184), and iOS 27's Apple Intelligence services crash-flood on this Mac.
+   - The boot rules (`scripts/lane_sim.py`) are shared with the runner and `verify-tests.py`: one boot at a time Mac-wide, no builds while a simulator boots, and at most two simulators running.
+   - **If the helper prints `STOP`, stop.** A failed boot or a crash during boot shuts the device down and marks it unsafe. Don't retry it, and don't boot it any other way; the guard blocks every command that names it except delete and shutdown. Delete it, and report on #184 before trying a fresh one if it happens twice.
+   - J5's second device is another `--fresh` device.
+   - Only run `xcodebuild` or `verify-tests.py --device` against a device the helper booted. The guard sends a raw `simctl boot` to the helper.
+   - After the boot, a background watcher checks the device's SpringBoard process every second. At the first SpringBoard crash it shuts the device down and marks it unsafe. Crash report files arrive about 80 s late, so they can't catch a flood in time. **If the device shuts down on its own, stop and report**; its reason is in `~/Library/Caches/SpokenMarginsLane/watch-<udid>.log`.
+   - When the request is done: `scripts/lane-sim-boot --done "$UDID"`. It stops the watcher first, so the shutdown isn't counted as a crash, then shuts the device down and deletes it.
+4. **Install the build.** A fresh device starts with an empty Library, so a lane journey builds the history it needs within the job (J2, J3 and J5 do this). J4 installs the previous shipped build first. Journeys over real long-lived history belong to the owner's device pass.
 5. Evidence goes in `artifacts/lane/<id>/` in the main checkout. It is git-ignored, so the PR gets paths, not images.
 
 ## Driving
@@ -59,5 +67,5 @@ Don't reboot in a loop or switch devices. A single crash is noted in the report 
 ## Report and clean up
 
 1. Post the report on the PR in the test-lane.md format (PASS / FAIL / INCONCLUSIVE, per-step observations, evidence paths, crashes, what's not verified), then change the label from `lane:queued` to `lane:done`.
-2. Shut down any simulator you booted.
+2. Remove the fresh device or devices with `scripts/lane-sim-boot --done <udid>`.
 3. Remove the worktree with `git worktree remove .claude/worktrees/lane-<id>`, which also deletes its DerivedData. Disk space on this Mac is tight.

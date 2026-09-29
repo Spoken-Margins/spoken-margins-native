@@ -1,5 +1,5 @@
 import Foundation
-import SessionKit
+@testable import SessionKit
 import XCTest
 @testable import SpokenMarginsApp
 
@@ -155,6 +155,93 @@ final class OfflineStorageLedgerTests: XCTestCase {
         XCTAssertEqual(inventory, 0)
     }
 
+    // #237: eviction deleted an article's rendered narration while the article still pointed at it,
+    // and resuming the article then failed twice and stayed failed.
+    func testEvictingRenderedNarrationDetachesTheArticleFirst() async throws {
+        let fixture = try makeFixture(limit: 5)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let file = try writeAsset(fixture, relativePath: "PreparedSupertonicAudio/item-article-abc.m4a", category: .preparedAudio)
+        let other = Item(id: "item-other", title: "Other", mediaType: "text", text: "Other.", externalReference: nil, status: "ready")
+        try fixture.repository.saveItem(narratedArticle(file))
+        try fixture.repository.saveItem(other)
+
+        let residual = try await fixture.ledger.enforceBudget()
+
+        XCTAssertEqual(residual, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertNil(try fixture.repository.loadItem(id: "item-article").media, "no item points at the deleted file")
+        XCTAssertEqual(try fixture.repository.loadItem(id: "item-other"), other)
+    }
+
+    func testClearingReproducibleAudioDetachesTheArticleFirst() async throws {
+        let fixture = try makeFixture(limit: 100)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let file = try writeAsset(fixture, relativePath: "PreparedSupertonicAudio/item-article-abc.m4a", category: .preparedAudio)
+        try fixture.repository.saveItem(narratedArticle(file))
+
+        _ = try await fixture.ledger.clearReproducibleAssets(in: [.preparedAudio])
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertNil(try fixture.repository.loadItem(id: "item-article").media)
+    }
+
+    func testEvictionKeepsAFileAnItemPlaysAsItsOnlyAudio() async throws {
+        let fixture = try makeFixture(limit: 5)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let file = try writeAsset(fixture, relativePath: "PodcastAudio/episode.m4a", category: .podcast)
+        let episode = Item(
+            id: "item-episode", title: "Episode", mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil,
+            externalReference: nil, status: "ready",
+            media: ItemMedia(sourceType: .nativeMediaFile, url: file.absoluteString)
+        )
+        try fixture.repository.saveItem(episode)
+
+        let residual = try await fixture.ledger.enforceBudget()
+
+        XCTAssertEqual(residual, 2, "the budget stays over rather than breaking the episode")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertEqual(try fixture.repository.loadItem(id: "item-episode"), episode)
+    }
+
+    // Audit of #242: eviction saved item copies from a snapshot taken before it began deleting,
+    // so an edit saved in between (marking the item complete) was overwritten.
+    func testEvictionKeepsAnItemEditSavedAfterItsSnapshot() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "offline-ledger-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let completedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let repository = ItemEditedAfterSnapshotRepository(editedItemId: "item-article", completedAt: completedAt)
+        try repository.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 5))
+        let fixture = Fixture(root: root, repository: repository, ledger: OfflineStorageLedger(repository: repository, rootDirectory: root))
+        let file = try writeAsset(fixture, relativePath: "PreparedSupertonicAudio/item-article-abc.m4a", category: .preparedAudio)
+        try repository.saveItem(narratedArticle(file))
+
+        _ = try await fixture.ledger.enforceBudget()
+
+        let saved = try repository.loadItem(id: "item-article")
+        XCTAssertNil(saved.media)
+        XCTAssertEqual(saved.sourceCompletedAt, completedAt, "the edit saved after the snapshot survives")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    private func writeAsset(_ fixture: Fixture, relativePath: String, category: OfflineAssetCategory) throws -> URL {
+        let file = fixture.root.appending(path: relativePath)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 7).write(to: file)
+        try fixture.repository.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: relativePath, category: category, relativePath: relativePath, byteCount: 7, isReproducible: true
+        ))
+        return file
+    }
+
+    private func narratedArticle(_ file: URL) -> Item {
+        Item(
+            id: "item-article", title: "Article", mediaType: "text", text: "Article text.", externalReference: nil,
+            status: "ready",
+            media: ItemMedia(sourceType: .generatedTTSPrerendered, url: file.absoluteString, durationMs: 1_000, nativeMediaId: file.absoluteString)
+        )
+    }
+
     private struct Fixture {
         let root: URL
         let repository: InMemorySessionRepository
@@ -172,5 +259,26 @@ final class OfflineStorageLedgerTests: XCTestCase {
             ledger: OfflineStorageLedger(repository: repository, rootDirectory: root)
         )
     }
+}
 
+/// Saves an edit to one item right after eviction takes its snapshot of the items, as the app's
+/// main actor can while the ledger actor is evicting.
+private final class ItemEditedAfterSnapshotRepository: InMemorySessionRepository, @unchecked Sendable {
+    private let editedItemId: String
+    private let completedAt: Date
+
+    init(editedItemId: String, completedAt: Date) {
+        self.editedItemId = editedItemId
+        self.completedAt = completedAt
+        super.init()
+    }
+
+    override func listItems(includeDeleted: Bool = false) throws -> [Item] {
+        let snapshot = try super.listItems(includeDeleted: includeDeleted)
+        if var item = items[editedItemId] {
+            item.sourceCompletedAt = completedAt
+            items[editedItemId] = item
+        }
+        return snapshot
+    }
 }

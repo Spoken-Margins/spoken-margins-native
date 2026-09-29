@@ -220,27 +220,10 @@ class T3Tests(unittest.TestCase):
         self.assertTrue(any('not run: adapters' in line for line in details))
         self.assertEqual(lane.t3_verdict(summaries, statuses), 'INCONCLUSIVE')
 
-    def test_first_boot_waits_for_the_migration_and_names_what_failed(self):
-        calls = []
-
-        def runner(command, log, timeout):
-            calls.append((command[2], timeout))
-            return 0
-
-        self.assertIsNone(lane.first_boot('U', None, runner))
-        self.assertEqual(calls, [('boot', 120), ('bootstatus', lane.FIRST_BOOT_TIMEOUT)])
-        self.assertGreater(lane.FIRST_BOOT_TIMEOUT, 180)  # verify-tests.py's readiness wait was too short
-        self.assertEqual(lane.first_boot('U', None, lambda c, *_: None if c[2] == 'bootstatus' else 0),
-                         'not ready after 15m00s')
-        self.assertEqual(lane.first_boot('U', None, lambda c, *_: 149), 'simctl boot exited 149')
-
-    def test_the_runner_waits_while_two_simulators_are_booted(self):
-        counts = iter([2, 2, 1])
-        self.assertTrue(lane.wait_for_simulator_room(lambda: next(counts), max_wait=5, poll=0.01))
-        self.assertFalse(lane.wait_for_simulator_room(lambda: 2, max_wait=0.05, poll=0.01))
-
     def test_a_t3_request_without_tests_or_with_unknown_tests_does_not_boot_anything(self):
-        with mock.patch.object(lane, 'newest_runtime', side_effect=AssertionError('no simulator should be made')):
+        import lane_sim
+        with mock.patch.object(lane_sim, 'newest_runtime', side_effect=AssertionError('no simulator should be made')), \
+                mock.patch.object(lane_sim, 'create_temporary', side_effect=AssertionError('no simulator should be made')):
             self.assertEqual(lane.run_t3([], 'r', Path('/tmp'))[0], 'INCONCLUSIVE')
             self.assertEqual(lane.run_t3(['NoSuchTestClassAnywhere'], 'r', Path('/tmp'))[0], 'FAIL')
 

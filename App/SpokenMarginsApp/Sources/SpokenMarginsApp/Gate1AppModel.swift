@@ -659,7 +659,8 @@ final class Gate1AppModel: ObservableObject {
             "status": snapshot.status.rawValue,
             "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
             "durationMs": String(snapshot.currentPlaybackDurationMs ?? -1),
-            "failure": DeveloperDiagnosticRecording.token(snapshot.lastFailure)
+            "failure": DeveloperDiagnosticRecording.token(snapshot.lastFailure),
+            "failureDetail": PlaybackFailureDetail.privacySafe(snapshot.lastFailure)
         ])
     }
 

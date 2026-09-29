@@ -105,6 +105,21 @@ class LaneGuardTests(unittest.TestCase):
         main, _ = self.repository_with_test_desk()
         self.assertIsNone(self.decide(bash('xcrun simctl boot X', cwd=main), self.desk, repos=(main,)))
 
+    def test_a_device_marked_unsafe_can_only_be_deleted_or_shut_down(self):
+        unsafe = '942055FF-57EF-48BC-BE5F-D3E014763E2B'
+        with open(os.path.join(self.temporary.name, 'unsafe-simulators.json'), 'w') as handle:
+            json.dump({unsafe: {'reason': 'simctl boot failed: Invalid argument'}}, handle)
+        for command in (f'xcrun simctl boot {unsafe}', f'scripts/lane-sim-boot {unsafe}',
+                        f'scripts/xcodebuild-lane -scheme S -destination id={unsafe} test',
+                        f'.venv/bin/python scripts/verify-tests.py --plan app --device {unsafe}',
+                        f'xcrun simctl install {unsafe} App.app'):
+            with self.subTest(command=command):
+                self.assertIn('is marked unsafe', self.decide(bash(command), self.desk))
+        for command in (f'xcrun simctl delete {unsafe}', f'xcrun simctl shutdown {unsafe}'):
+            with self.subTest(command=command):
+                self.assertIsNone(self.decide(bash(command), self.desk))
+        self.assertIsNone(self.decide(bash('xcrun simctl install booted App.app'), self.desk))
+
     def test_raw_xcodebuild_builds_go_through_the_wrapper_even_for_the_desk(self):
         for environ in (self.stream, self.desk):
             for command in ('xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp build',

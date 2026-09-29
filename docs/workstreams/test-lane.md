@@ -96,12 +96,16 @@ Order: gate streams first, then oldest first. Run every T3 before any T4, and ru
 only where the listener's flow changed. Build through scripts/xcodebuild-lane.
 
 Simulators:
-- The standing device is the iOS 26.5 "SpokenMargins Test Runner". iOS 27's Apple
-  Intelligence services crash-flood on this Mac (#184).
+- Every request gets a fresh iOS 26.5 device: UDID=$(scripts/lane-sim-boot --fresh
+  "SM Lane Desk <request>"). A watcher stops it at the first SpringBoard crash. Remove it when
+  the job ends with scripts/lane-sim-boot --done "$UDID". There is no standing lane device;
+  942055FF is retired. iOS 27's Apple Intelligence services crash-flood on this Mac (#184).
+- If scripts/lane-sim-boot prints STOP, stop and report. Never retry a failed boot or boot a
+  device another way; the guard blocks devices marked unsafe.
 - On 26.5, unlocking after a lock sometimes freezes the display. Mark lock-and-unlock
   steps "not verified" and leave them for the owner's phone pass.
-- A journey that needs a second device (J5) gets a temporary simulator, deleted when
-  the job ends. At most two simulators run at once.
+- A journey that needs a second device (J5) gets another --fresh device. At most two
+  simulators run at once; the helper waits if two are booted.
 - Never touch any other simulator, other projects' simulators, the owner's iPhone,
   their Library, or main.
 
