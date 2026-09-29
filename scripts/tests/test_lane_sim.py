@@ -155,6 +155,27 @@ class LaneSimTests(unittest.TestCase):
         self.assertEqual(stops, [])
         self.assertIn({'shutdown': UDID}, self.records())
 
+    def test_every_springboard_change_during_boot_is_logged_with_its_time(self):
+        # Three first boots stopped on an early SpringBoard exit with no crash report (#184); the log is
+        # how the next ones get explained rather than inferred.
+        import io
+        out = io.StringIO()
+        now = [0.0]
+        states = [(10, None), (10, 20), (10, 20), (10, None)]
+        monitor = lane_sim.SpringBoardMonitor(UDID, lambda udid: states.pop(0) if len(states) > 1 else states[0],
+                                              grace=3, clock=lambda: now[0])
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        with mock.patch.object(lane_sim, 'stop'):
+            with self.assertRaises(lane_sim.BootError):
+                lane_sim.wait_until_ready(UDID, lambda: False, monitor, lambda: None, 900, clock=lambda: now[0],
+                                          sleep=sleep, poll=1.0, out=out)
+        self.assertEqual(out.getvalue().splitlines(), [
+            '[lane] +1.0s SpringBoard pid 20 up (launchd_sim 10)',
+            '[lane] +3.0s SpringBoard pid 20 gone, launchd_sim 10 still running'])
+
     def test_a_device_that_gets_ready_returns(self):
         self.assertEqual(self.poll_loop(ready=[False, False, True]), ('ready', 3, []))
 

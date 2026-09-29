@@ -144,23 +144,34 @@ class SpringBoardMonitor:
     an intentional shutdown also ends SpringBoard a moment before launchd_sim.
     """
 
-    def __init__(self, udid: str, processes=None, grace: float = 3.0, clock=time.monotonic):
+    def __init__(self, udid: str, processes=None, grace: float = 3.0, clock=time.monotonic, on_event=None):
         self.udid, self.grace, self.clock = udid, grace, clock
         self.processes = processes if processes is not None else device_processes
         self.seen, self.vanished_at = None, None
+        self.on_event = on_event  # records each SpringBoard change, to find out why some first boots see one
+
+    def note(self, text: str) -> None:
+        if self.on_event:
+            self.on_event(text)
 
     def check(self) -> str | None:
         launchd, springboard = self.processes(self.udid)
         if launchd is None:
+            if self.seen is not None:
+                self.note('device shut down')
             return 'shut down' if self.seen is not None else None
         if springboard is not None:
             if self.seen is not None and springboard != self.seen:
+                self.note(f'SpringBoard pid {springboard} replaced pid {self.seen}')
                 return f'SpringBoard restarted (pid {self.seen} -> {springboard})'
+            if self.seen is None:
+                self.note(f'SpringBoard pid {springboard} up (launchd_sim {launchd})')
             self.seen, self.vanished_at = springboard, None
             return None
         if self.seen is None:
             return None  # still booting
         if self.vanished_at is None:
+            self.note(f'SpringBoard pid {self.seen} gone, launchd_sim {launchd} still running')
             self.vanished_at = self.clock()
             return None
         if self.clock() - self.vanished_at >= self.grace:
@@ -231,13 +242,15 @@ def release(udid: str, wait: float = RELEASE_WAIT) -> None:
 
 
 def wait_until_ready(udid: str, is_ready, monitor, find_crash, timeout: float, clock=time.monotonic,
-                     sleep=time.sleep, poll: float | None = None) -> None:
+                     sleep=time.sleep, poll: float | None = None, out=None) -> None:
     """Poll until is_ready(); at the first SpringBoard sign or crash report, stop the device and raise.
 
     The clock, sleep, monitor and crash source are injectable so the rules can be tested without
     real timing or the real DiagnosticReports folder.
     """
     started = clock()
+    if out is not None:
+        monitor.on_event = lambda text: print(f'[lane] +{clock() - started:.1f}s {text}', file=out, flush=True)
     while not is_ready():
         seen = monitor.check()
         if seen and seen != 'shut down':
@@ -340,7 +353,7 @@ def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lo
                                          stderr=subprocess.DEVNULL)
                 try:
                     wait_until_ready(udid, lambda: ready.poll() is not None, SpringBoardMonitor(udid),
-                                     lambda: new_crash(reports, baseline, udid), timeout)
+                                     lambda: new_crash(reports, baseline, udid), timeout, out=out)
                 finally:
                     if ready.poll() is None:
                         ready.kill()
