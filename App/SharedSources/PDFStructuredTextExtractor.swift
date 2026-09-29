@@ -302,7 +302,7 @@ enum PDFStructuredTextExtractor {
                     pages[neighbour].contains { isFigureCaption($0.text) }
                 }
             )
-            let titlePage = pageIndex < 2 ? titlePageRoles(in: pageLines, isFirstPage: pageIndex == 0, bodySize: bodySize) : [:]
+            let titlePage = pageIndex < 2 ? titlePageRoles(in: pageLines, isFirstPage: pageIndex == 0, bodySize: bodySize, pageBox: page.bounds(for: .mediaBox)) : [:]
             for heading in pageOutline where !pageLines.contains(where: { headingKey($0.text) == headingKey(heading.title) }) {
                 result.append(StructuredDocumentLine(text: heading.title, role: .heading, pageIndex: pageIndex, level: heading.level))
                 insertedOutlineHeadingIDs.insert(heading.id)
@@ -595,8 +595,33 @@ enum PDFStructuredTextExtractor {
     /// - On the first page, the block between the title and an explicit
     ///   "Abstract" or "Summary" line is authors and affiliations. Without that
     ///   line nothing is guessed, so an unlabelled abstract is never skipped.
-    private static func titlePageRoles(in lines: [TextLine], isFirstPage: Bool, bodySize: CGFloat) -> [Int: StructuredDocument.Role] {
+    private static func titlePageRoles(in lines: [TextLine], isFirstPage: Bool, bodySize: CGFloat, pageBox: CGRect) -> [Int: StructuredDocument.Role] {
         var roles: [Int: StructuredDocument.Role] = [:]
+        if isFirstPage {
+            // Author notes set as a footnote block at the bottom of page 1 ("• Corresponding
+            // author.", "• Email: …", "• The authors are with …"): small print starting with
+            // a note marker, with its wrapped lines. PDFKit can read it in the middle of a
+            // sentence (#250, arXiv 2608.09666).
+            let bottom = pageBox.minY + pageBox.height * 0.3
+            func inBottomSmallPrint(_ line: TextLine, size: CGFloat) -> Bool {
+                guard let bounds = line.bounds else { return false }
+                return line.pointSize > 0 && line.pointSize < bodySize - 0.5
+                    && abs(line.pointSize - size) < 0.3 && bounds.midY < bottom
+            }
+            var index = 0
+            while index < lines.count {
+                let size = lines[index].pointSize
+                guard inBottomSmallPrint(lines[index], size: size),
+                      lines[index].text.range(of: #"^[•∗*†‡§¶✉]\s?\S"#, options: .regularExpression) != nil else {
+                    index += 1
+                    continue
+                }
+                while index < lines.count, inBottomSmallPrint(lines[index], size: size) {
+                    roles[index] = .frontMatter
+                    index += 1
+                }
+            }
+        }
         let boilerplate = #"(?i)^(?:\*?\s*correspond|e-?mail\b|(?:received|accepted|revised|published|available online)\b.*\b(?:19|20)[0-9]{2}\b|article history|citation:|copyright|©|\(c\) \d{4}|open access\b|this (?:is an open access )?article is (?:licensed|distributed|an open access)|licensed under|creative commons|keywords?\b|key words\b|edited by\b|reviewed by\b|academic editor|handling editor|orcid\b|https?://(?:dx\.)?doi\.org|doi:|typeset using|preprint\b.*\bsubmitted|submitted to\b|\S+@\S+\.\S+)"#
         var index = 0
         while index < lines.count {
