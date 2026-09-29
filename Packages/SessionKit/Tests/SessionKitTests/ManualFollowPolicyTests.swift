@@ -17,6 +17,16 @@ final class ManualFollowPolicyTests: XCTestCase {
         XCTAssertFalse(ManualFollowPolicy.offersFollow(mediaType: "text", sourceURL: nil, sourceReference: "http://example.com/post"))
     }
 
+    /// #243: the Follow button on an article read "Follow Podcast".
+    func testArticlesFollowTheirPublicationNotAPodcast() {
+        XCTAssertEqual(ManualFollowPolicy.buttonTitle(mediaType: "text", isFollowing: false), "Follow Publication")
+        XCTAssertEqual(ManualFollowPolicy.buttonTitle(mediaType: "text", isFollowing: true), "Following Publication…")
+        XCTAssertEqual(ManualFollowPolicy.buttonSymbol(mediaType: "text"), "newspaper")
+        XCTAssertEqual(ManualFollowPolicy.buttonTitle(mediaType: "podcast", isFollowing: false), "Follow Podcast")
+        XCTAssertEqual(ManualFollowPolicy.buttonTitle(mediaType: "transcript_backed_media", isFollowing: true), "Following Podcast…")
+        XCTAssertEqual(ManualFollowPolicy.buttonSymbol(mediaType: "podcast"), "dot.radiowaves.left.and.right")
+    }
+
     func testPodcastsKeepTheirButtonAndDocumentsStayWithout() {
         XCTAssertTrue(ManualFollowPolicy.offersFollow(mediaType: "podcast", sourceURL: nil, sourceReference: nil))
         XCTAssertTrue(ManualFollowPolicy.offersFollow(mediaType: "transcript_backed_media", sourceURL: nil, sourceReference: nil))
