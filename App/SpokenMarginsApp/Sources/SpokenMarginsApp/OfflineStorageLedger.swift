@@ -42,14 +42,14 @@ actor OfflineStorageLedger {
         let requested = max(0, byteCount)
         let deficit = max(0, used + requested - budget.limitBytes)
         if deficit > 0 {
-            let plan = OfflineStoragePlanner.evictionPlan(requiredBytes: deficit, assets: assets)
+            var (plan, references) = try evictionPlan(requiredBytes: deficit, assets: assets)
             guard plan.reclaimableBytes >= deficit else {
                 throw OfflineStorageLedgerError.insufficientSpace(
                     requiredBytes: requested,
                     availableBytes: max(0, budget.limitBytes - used + plan.reclaimableBytes)
                 )
             }
-            try execute(plan: plan, assets: assets)
+            try execute(plan: plan, assets: assets, references: &references)
         }
         if let physicalAvailable = try? rootDirectory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage,
            physicalAvailable >= 0,
@@ -122,8 +122,10 @@ actor OfflineStorageLedger {
     func clearReproducibleAssets(in categories: Set<OfflineAssetCategory>) throws -> Int64 {
         let assets = try repository.loadOwnedOfflineAssets()
         var removed: Int64 = 0
+        var references = PreparedNarrationFallback.FileReferences(items: try repository.listItems(includeDeleted: true))
         for asset in assets where categories.contains(asset.category) && asset.isAutomaticallyEvictable {
             let url = rootDirectory.appending(path: asset.relativePath)
+            guard try releaseReferences(to: url, references: &references) else { continue }
             if fileManager.fileExists(atPath: url.path) { try fileManager.removeItem(at: url) }
             try repository.deleteOwnedOfflineAsset(id: asset.id)
             removed += asset.byteCount
@@ -145,8 +147,8 @@ actor OfflineStorageLedger {
         let used = OfflineStoragePlanner.usageBytes(assets: assets, reservations: reservations, now: now)
         let deficit = max(0, used - budget.limitBytes)
         guard deficit > 0 else { return 0 }
-        let plan = OfflineStoragePlanner.evictionPlan(requiredBytes: deficit, assets: assets)
-        try execute(plan: plan, assets: assets)
+        var (plan, references) = try evictionPlan(requiredBytes: deficit, assets: assets)
+        try execute(plan: plan, assets: assets, references: &references)
         return max(0, deficit - plan.reclaimableBytes)
     }
 
@@ -215,13 +217,48 @@ actor OfflineStorageLedger {
         }
     }
 
-    private func execute(plan: OfflineEvictionPlan, assets: [OwnedOfflineAsset]) throws {
+    /// Eviction never leaves an item pointing at a deleted file (#237), so a file an item plays as
+    /// its only audio isn't a candidate.
+    private func evictionPlan(
+        requiredBytes: Int64, assets: [OwnedOfflineAsset]
+    ) throws -> (OfflineEvictionPlan, PreparedNarrationFallback.FileReferences) {
+        let references = PreparedNarrationFallback.FileReferences(items: try repository.listItems(includeDeleted: true))
+        let candidates = assets.filter { asset in
+            !asset.isAutomaticallyEvictable
+                || references.release(rootDirectory.appending(path: asset.relativePath)) != .keep
+        }
+        return (OfflineStoragePlanner.evictionPlan(requiredBytes: requiredBytes, assets: candidates), references)
+    }
+
+    private func execute(
+        plan: OfflineEvictionPlan,
+        assets: [OwnedOfflineAsset],
+        references: inout PreparedNarrationFallback.FileReferences
+    ) throws {
         let byId = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
         for id in plan.selectedAssetIds {
             guard let asset = byId[id], asset.isAutomaticallyEvictable else { continue }
             let url = rootDirectory.appending(path: asset.relativePath)
+            guard try releaseReferences(to: url, references: &references) else { continue }
             if fileManager.fileExists(atPath: url.path) { try fileManager.removeItem(at: url) }
             try repository.deleteOwnedOfflineAsset(id: id)
+        }
+    }
+
+    /// Items that play `url` as generated narration are detached before it's deleted, and read
+    /// their text live until it's rendered again. False when another item plays it.
+    private func releaseReferences(
+        to url: URL, references: inout PreparedNarrationFallback.FileReferences
+    ) throws -> Bool {
+        switch references.release(url) {
+        case .unreferenced:
+            return true
+        case .keep:
+            return false
+        case .detach(let detached):
+            for item in detached { try repository.saveItem(item) }
+            references.forget(url)
+            return true
         }
     }
 
