@@ -115,7 +115,7 @@ class LaneSimTests(unittest.TestCase):
             lane_sim.boot(UDID, 'retry', out=self.quiet)
         self.assertEqual(sum('boot' in r for r in self.records()), 1)  # the retry never reached simctl
 
-    def poll_loop(self, *, ready=(), springboard=((None, None),), reports=(), timeout=900):
+    def poll_loop(self, *, ready=(), springboard=((None, None),), reports=(), timeout=900, tolerate_until=None):
         """Run wait_until_ready with scripted signals and a fake clock; returns (outcome, polls, stops)."""
         ready, reports = list(ready), list(reports)
         now, stops, polls = [0.0], [], [0]
@@ -130,12 +130,43 @@ class LaneSimTests(unittest.TestCase):
         monitor = lane_sim.SpringBoardMonitor(UDID, sequence(*springboard), clock=lambda: now[0])
         with mock.patch.object(lane_sim, 'stop', side_effect=lambda udid, reason: stops.append(reason)):
             try:
-                lane_sim.wait_until_ready(UDID, is_ready, monitor, lambda: reports.pop(0) if reports else None,
-                                          timeout, clock=lambda: now[0], sleep=sleep, poll=1.0)
+                self.tolerated = lane_sim.wait_until_ready(
+                    UDID, is_ready, monitor, lambda: reports.pop(0) if reports else None, timeout,
+                    clock=lambda: now[0], sleep=sleep, poll=1.0, tolerate_until=tolerate_until)
                 outcome = 'ready'
             except lane_sim.BootError as error:
                 outcome = str(error)
         return outcome, polls[0], stops
+
+    # The owner's rule (#184, "fine with one simulator failure or crash"): one SpringBoard change in the
+    # first 30 s of a first boot is tolerated; a second one, or any crash report, still stops the boot.
+    def test_a_first_boot_tolerates_one_early_springboard_change(self):
+        outcome, polls, stops = self.poll_loop(ready=[False] * 4 + [True], tolerate_until=30,
+                                               springboard=[(10, 20), (10, 20), (10, 21), (10, 21)])
+        self.assertEqual((outcome, stops), ('ready', []))
+        self.assertEqual(self.tolerated, 'SpringBoard restarted (pid 20 -> 21)')
+        outcome, _, stops = self.poll_loop(ready=[False] * 6 + [True], tolerate_until=30,
+                                           springboard=[(10, 20), (10, None), (10, None), (10, None), (10, None), (10, 22)])
+        self.assertEqual((outcome, stops), ('ready', []))  # a vanish, then a new SpringBoard: one change
+
+    def test_a_second_change_in_a_first_boot_still_stops(self):
+        outcome, _, stops = self.poll_loop(tolerate_until=30, springboard=[(10, 20), (10, 21), (10, 22)])
+        self.assertIn('SpringBoard restarted (pid 21 -> 22) while booting', outcome)
+        self.assertEqual(stops, ['SpringBoard restarted (pid 21 -> 22) during boot'])
+
+    def test_a_change_after_the_first_30_s_still_stops(self):
+        states = [(10, 20)] * 35 + [(10, 21)]
+        outcome, _, stops = self.poll_loop(tolerate_until=30, springboard=states)
+        self.assertIn('SpringBoard restarted (pid 20 -> 21) while booting', outcome)
+
+    def test_a_crash_report_stops_a_first_boot_even_after_a_tolerated_change(self):
+        outcome, _, stops = self.poll_loop(tolerate_until=30, springboard=[(10, 20), (10, 21), (10, 21)],
+                                           reports=[None, None, Path('SpringBoard-x.ips')])
+        self.assertIn('SpringBoard-x.ips while booting', outcome)
+
+    def test_a_device_that_is_not_booting_for_the_first_time_gets_no_tolerance(self):
+        outcome, _, _ = self.poll_loop(springboard=[(10, 20), (10, 21)])
+        self.assertIn('SpringBoard restarted', outcome)
 
     def test_a_crash_while_booting_stops_at_the_first_report(self):
         report = Path('SpringBoard-2026-09-29-095801.ips')
@@ -175,6 +206,13 @@ class LaneSimTests(unittest.TestCase):
         self.assertEqual(out.getvalue().splitlines(), [
             '[lane] +1.0s SpringBoard pid 20 up (launchd_sim 10)',
             '[lane] +3.0s SpringBoard pid 20 gone, launchd_sim 10 still running'])
+
+    def test_a_shutdown_is_logged_once(self):
+        events = []
+        monitor = lane_sim.SpringBoardMonitor(UDID, sequence((10, 20), (None, None)), on_event=events.append)
+        for _ in range(5):
+            monitor.check()
+        self.assertEqual(events, ['SpringBoard pid 20 up (launchd_sim 10)', 'device shut down'])
 
     def test_a_device_that_gets_ready_returns(self):
         self.assertEqual(self.poll_loop(ready=[False, False, True]), ('ready', 3, []))
@@ -234,7 +272,7 @@ class LaneSimTests(unittest.TestCase):
     def test_the_boot_records_memory_pressure_and_failures_name_it(self):
         info = {}
         lane_sim.boot(UDID, 'test', out=self.quiet, info=info)
-        self.assertEqual(info, {'pressure': 'normal', 'pressure_waited': 0})
+        self.assertEqual((info['pressure'], info['pressure_waited'], info['tolerated']), ('normal', 0, None))
         other = '22222222-0000-0000-0000-000000000000'
         with mock.patch.dict(os.environ, {'FAKE_BOOT': 'invalid', 'SM_LANE_MEMORY_PRESSURE': '4'}), \
                 mock.patch.object(lane_sim, 'PRESSURE_WAIT', 0):
@@ -335,6 +373,54 @@ class LaneSimTests(unittest.TestCase):
         self.assertEqual(vanished.check(), 'SpringBoard (pid 20) vanished while the device kept running')
         shutdown = lane_sim.SpringBoardMonitor(UDID, sequence((10, 20), (10, None), (None, None)), grace=3, clock=clock)
         self.assertEqual([shutdown.check() for _ in range(3)], [None, None, 'shut down'])
+
+    def test_a_first_boot_with_one_change_boots_and_is_logged(self):
+        info = {}
+        with mock.patch.dict(os.environ, {'FAKE_READY_SECONDS': '1'}), \
+                mock.patch.object(lane_sim, 'CRASH_POLL_SECONDS', 0.05), \
+                mock.patch.object(lane_sim, 'device_processes', sequence((10, 20), (10, 20), (10, 21))):
+            lane_sim.boot(UDID, 'test', out=self.quiet, info=info, first_boot=True)
+        self.assertEqual(info['tolerated'], 'SpringBoard restarted (pid 20 -> 21)')
+        self.assertEqual(len(info['boot_window']), 2)
+        log = (Path(self.env['SM_LANE_STATE_DIR']) / 'boot-events.log').read_text()
+        self.assertIn('boot started (first boot', log)
+        self.assertIn('tolerated: SpringBoard restarted (pid 20 -> 21)', log)
+        self.assertIn('one change tolerated', log)
+        self.assertNotIn(UDID, lane_sim.unsafe_devices())
+
+    def test_a_good_boot_is_logged_too(self):
+        lane_sim.boot(UDID, 'test', out=self.quiet, first_boot=True)
+        log = (Path(self.env['SM_LANE_STATE_DIR']) / 'boot-events.log').read_text()
+        self.assertRegex(log, r'ready after \d+s, no SpringBoard change')
+
+    def test_the_crash_time_comes_from_the_report_body_not_its_write_time(self):
+        header = '{"app_name":"SpringBoard","timestamp":"2026-09-29 09:59:24.00 -0400"}\n'
+        body = '{"captureTime" : "2026-09-29 09:58:01.9897 -0400"}'
+        self.assertEqual(lane_sim.report_time(header + body), lane_sim.report_time(
+            '{"timestamp":"2026-09-29 09:58:01.9897 -0400"}\n{}'))
+        self.assertIsNotNone(lane_sim.report_time(header))  # the header is the fallback
+        self.assertIsNone(lane_sim.report_time('not a report'))
+
+    def test_the_watcher_marks_a_late_crash_report_from_the_boot_and_ignores_later_crashes(self):
+        import datetime
+        folder = Path(self.env['SM_LANE_CRASH_REPORTS'])
+        start = time.time() - 100
+        window = (start, start + 20)
+
+        def report(name, crash_at):
+            stamp = datetime.datetime.fromtimestamp(crash_at).astimezone().strftime('%Y-%m-%d %H:%M:%S.%f %z')
+            (folder / name).write_text('{"app_name":"x","timestamp":"2000-01-01 00:00:00.00 +0000"}\n'
+                                       f'{{"captureTime" : "{stamp}", "path": "com.apple.CoreSimulator.SimDevice.{UDID}"}}')
+
+        report('SpokenMarginsApp-later.ips', start + 60)  # an app crash during a later test: not the boot
+        self.assertIsNone(lane_sim.late_report(folder, UDID, window))
+        report('SpringBoard-late.ips', start + 10)
+        self.assertEqual(lane_sim.late_report(folder, UDID, window).name, 'SpringBoard-late.ips')
+        monitor = lane_sim.SpringBoardMonitor(UDID, sequence((10, 20), (10, 20), (None, None)))
+        self.assertEqual(lane_sim.watch(UDID, poll=0.01, monitor=monitor, crash_window=window), 'shut down')
+        self.assertIn('late crash report for a crash during boot: SpringBoard-late.ips',
+                      lane_sim.unsafe_devices()[UDID]['reason'])
+        self.assertNotIn({'shutdown': UDID}, self.records())  # marked after the fact; the device wasn't stopped
 
     def test_boot_wires_the_springboard_monitor_into_the_watch(self):
         # End to end with the fake simctl: bootstatus waits 60 s, so only the monitor can end the boot.

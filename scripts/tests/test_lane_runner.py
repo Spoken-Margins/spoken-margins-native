@@ -276,6 +276,25 @@ class T3Tests(unittest.TestCase):
         self.assertEqual((verdict, details[0]), ('PASS', 'first boot of the fresh simulator took 1m05s (memory pressure '
                                                          'at boot: warn, after waiting 600s)'))
 
+    def test_a_tolerated_change_and_a_late_crash_report_are_reported_without_changing_the_verdict(self):
+        import lane_sim
+        with mock.patch.object(lane_sim, 'create_temporary', return_value='U'), \
+                mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release'), \
+                mock.patch.object(lane_sim, 'unsafe_devices', return_value={'U': {
+                    'reason': 'late crash report for a crash during boot: SpringBoard-x.ips'}}), \
+                mock.patch.object(lane, 'first_boot', return_value=(None, {
+                    'pressure': 'normal', 'pressure_waited': 0, 'tolerated': 'SpringBoard restarted (pid 1 -> 2)',
+                    'boot_window': (0.0, 1.0)})), \
+                mock.patch.object(lane, 'run_plans', return_value=([lane.summarize_manifest({'steps': []})], ['verified'],
+                                                                   ['A (1 passed)'], [])), \
+                tempfile.TemporaryDirectory() as temporary:
+            verdict, _, _, details, crashes, cc = lane._t3_on_fresh_device(
+                {'app': ['T/A']}, 'r', Path(temporary), 'com.apple.CoreSimulator.SimRuntime.iOS-26-5')
+        self.assertEqual((verdict, cc), ('PASS', ''))
+        self.assertIn("tolerated one SpringBoard change in the first 30 s of the first boot (owner's rule, #184)", details[1])
+        self.assertTrue(any('marked unsafe and deleted' in line for line in details))
+        self.assertEqual(crashes, 'none')
+
     def test_a_flood_stops_the_remaining_plans(self):
         calls = []
 
