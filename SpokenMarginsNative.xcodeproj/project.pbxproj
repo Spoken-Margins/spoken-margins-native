@@ -134,6 +134,7 @@
 		AAB68653F4DD558C2D9EC643 /* traces in Resources */ = {isa = PBXBuildFile; fileRef = DA64F144F04CC7A9F436B28E /* traces */; };
 		AADF2C33CD9AC8865663E66D /* LocalSourceImporters.swift in Sources */ = {isa = PBXBuildFile; fileRef = A21A8C105F7D320136F9DBC5 /* LocalSourceImporters.swift */; };
 		AB149D16A2A0482B581B0847 /* SessionKitSharing in Frameworks */ = {isa = PBXBuildFile; productRef = 03B12E07A60683D31E17A8FC /* SessionKitSharing */; };
+		AFE74CD4EFB57FF0D66F72DC /* SettingsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D045262437397324BCC3D3C /* SettingsScreen.swift */; };
 		B3715F09AB0080AF916931F3 /* Gate1RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 479B709AF5D74954043B0852 /* Gate1RootView.swift */; };
 		B401E3D73FFFC3B4CCD67491 /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 34C621C37AF71E6ED22B1045 /* SessionKitAudio */; };
 		BB2EB8B4A269BF2F25903797 /* Gate1FlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB4DFB911729FD28E4C7545B /* Gate1FlowUITests.swift */; };
@@ -273,6 +274,7 @@
 		394BBCC831AE7CEDA7703F61 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		39B769830FC9CEAAF89CF8EC /* Gate1ProviderRequestFactoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1ProviderRequestFactoryTests.swift; sourceTree = "<group>"; };
 		3B8DDB409E3390A07A7DC3C2 /* Gate1ProviderRequestFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1ProviderRequestFactory.swift; sourceTree = "<group>"; };
+		3D045262437397324BCC3D3C /* SettingsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsScreen.swift; sourceTree = "<group>"; };
 		3D2052181FEAFB56EB0856FA /* Defuddle-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Defuddle-LICENSE.txt"; sourceTree = "<group>"; };
 		3FAD165CE1DA1C12E166B2E7 /* Gate2LiveActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate2LiveActivityAttributes.swift; sourceTree = "<group>"; };
 		4306F9BA3A5512A9F518ECAD /* Gate2CompactControlTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate2CompactControlTests.swift; sourceTree = "<group>"; };
@@ -695,6 +697,7 @@
 				C7F47D3EE2D41AC856AA9C6D /* PublisherPodcastChapters.swift */,
 				E65308DDEDF2B0C78EFD6AD5 /* ReadLaterModel.swift */,
 				591489743D16AAB9840121FA /* SessionMarkdownFileWriter.swift */,
+				3D045262437397324BCC3D3C /* SettingsScreen.swift */,
 				59F18E1B70C381A67B0EE4DE /* SharedMarginsImportMessage.swift */,
 				51F8F5E8BBAB7612D98E6BA1 /* SharingExperience.swift */,
 				1E25AC74A37BFC74DC071AF2 /* SharingRightsPresentation.swift */,
@@ -1103,6 +1106,7 @@
 				DD3B228B6E2C46345CF9A2A7 /* PublisherPodcastChapters.swift in Sources */,
 				17CD187FBC0F9BF351353892 /* ReadLaterModel.swift in Sources */,
 				30B562994D489ED9F57C24FE /* SessionMarkdownFileWriter.swift in Sources */,
+				AFE74CD4EFB57FF0D66F72DC /* SettingsScreen.swift in Sources */,
 				7DA75395F81717F04AA377D8 /* SharedMarginsImportMessage.swift in Sources */,
 				380BCC8BFE48DC69AFD79B7D /* SharingExperience.swift in Sources */,
 				D85FC7D0864B18F8CD0978AA /* SharingRightsPresentation.swift in Sources */,
