@@ -6378,21 +6378,29 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    /// #217: waits as long as the system prompt is up; a slow Allow is still a yes.
     private func requestMicrophonePermission(timeoutSeconds: TimeInterval = 10) async -> Bool {
         if let microphonePermissionRequest { return await microphonePermissionRequest() }
-        return await withTaskGroup(of: Bool.self) { group in
-            group.addTask {
-                await SystemRecordingClient.requestRecordPermission()
-            }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
-                return false
-            }
-            let granted = await group.next() ?? false
-            group.cancelAll()
-            diagnostics["lastMicrophonePermissionResult"] = granted ? "granted" : "denied_or_timeout"
-            return granted
+        let granted = await PermissionPromptWait.awaitAnswer(
+            request: { await SystemRecordingClient.requestRecordPermission() },
+            currentStatus: { Self.microphonePermissionStatus() },
+            timeout: .seconds(timeoutSeconds)
+        )
+        diagnostics["lastMicrophonePermissionResult"] = granted ? "granted" : "denied"
+        return granted
+    }
+
+    private nonisolated static func microphonePermissionStatus() -> PermissionPromptStatus {
+        #if canImport(AVFoundation) && os(iOS)
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted: return .granted
+        case .denied: return .denied
+        case .undetermined: return .undetermined
+        @unknown default: return .undetermined
         }
+        #else
+        return .granted
+        #endif
     }
 
     /// Publish acknowledgement before synchronous recorder/store finalization.
