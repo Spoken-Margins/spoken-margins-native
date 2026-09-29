@@ -296,14 +296,18 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[
     return summaries, statuses, ran, details
 
 
-def first_boot(udid: str, log) -> str | None:
-    """Boot the fresh simulator under the lane's boot rules (scripts/lane_sim.py). None when ready, else why not."""
+def first_boot(udid: str, log) -> tuple:
+    """Boot the fresh simulator under the lane's boot rules (scripts/lane_sim.py).
+
+    Returns (None when ready or the reason it isn't, details such as the memory pressure at boot).
+    """
     import lane_sim
+    info = {}
     try:
-        lane_sim.boot(udid, f'runner boot {udid}', out=log)
+        lane_sim.boot(udid, f'runner boot {udid}', out=log, info=info)
     except lane_sim.BootError as error:
-        return str(error)
-    return None
+        return str(error), info
+    return None, info
 
 
 def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str, str, list[str], str, str]:
@@ -356,14 +360,15 @@ def _t3_on_fresh_device(grouped, request_id, evidence, runtime):
     try:
         boot_started = time.monotonic()
         with (evidence / 'first-boot.log').open('w') as log:
-            problem = first_boot(udid, log)
+            problem, boot_info = first_boot(udid, log)
         boot_seconds = time.monotonic() - boot_started  # the boot alone, before any build or test
         if problem:
             return ('INCONCLUSIVE', where, 'nothing', [f'The fresh simulator did not boot: {problem} '
                     f'evidence: {evidence}/first-boot.log'], 'watched during boot', '')
         lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot')  # stops the device at a SpringBoard crash
         summaries, statuses, ran, details = run_plans(grouped, run_plan, evidence)
-        details.insert(0, f'first boot of the fresh simulator took {duration(boot_seconds)}')
+        details.insert(0, f'first boot of the fresh simulator took {duration(boot_seconds)} (memory pressure at boot: '
+                          f'{boot_info.get("pressure", "unknown")}, after waiting {boot_info.get("pressure_waited", 0)}s)')
     finally:
         lane_sim.release(udid)
     watched = lane_sim.unsafe_devices().get(udid)

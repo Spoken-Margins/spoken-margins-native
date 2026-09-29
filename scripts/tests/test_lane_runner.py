@@ -261,7 +261,7 @@ class T3Tests(unittest.TestCase):
 
         def boot(*_):
             now[0] += 65
-            return None
+            return None, {'pressure': 'warn', 'pressure_waited': 600}
 
         def tests(*_):
             now[0] += 900
@@ -277,7 +277,8 @@ class T3Tests(unittest.TestCase):
                 tempfile.TemporaryDirectory() as temporary:
             verdict, _, _, details, _, _ = lane._t3_on_fresh_device({'app': ['T/A']}, 'r', Path(temporary),
                                                                      'com.apple.CoreSimulator.SimRuntime.iOS-26-5')
-        self.assertEqual((verdict, details[0]), ('PASS', 'first boot of the fresh simulator took 1m05s'))
+        self.assertEqual((verdict, details[0]), ('PASS', 'first boot of the fresh simulator took 1m05s (memory pressure '
+                                                         'at boot: warn, after waiting 600s)'))
 
     def test_a_flood_stops_the_remaining_plans(self):
         calls = []
