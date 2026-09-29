@@ -6,6 +6,7 @@ import SessionKitAudio
 import SessionKitSharing
 import SessionKitSupertonic
 import SessionKitPersistence
+import SessionKitFeeds
 #if canImport(UIKit)
 import UIKit
 #endif
