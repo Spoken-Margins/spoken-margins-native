@@ -247,19 +247,28 @@ actor OfflineStorageLedger {
 
     /// Items that play `url` as generated narration are detached before it's deleted, and read
     /// their text live until it's rendered again. False when another item plays it.
+    ///
+    /// The index is a snapshot, and the app saves items from the main actor while this actor
+    /// evicts. So each item is re-read just before it's saved: only its media changes, and only
+    /// if it still plays `url`, so an edit made since the snapshot isn't overwritten.
     private func releaseReferences(
         to url: URL, references: inout PreparedNarrationFallback.FileReferences
     ) throws -> Bool {
-        switch references.release(url) {
-        case .unreferenced:
-            return true
-        case .keep:
-            return false
-        case .detach(let detached):
-            for item in detached { try repository.saveItem(item) }
-            references.forget(url)
-            return true
+        let decision = references.release(url)
+        guard case .detach(let candidates) = decision else { return decision == .unreferenced }
+        for candidate in candidates {
+            let current = try repository.loadItem(id: candidate.id)
+            switch PreparedNarrationFallback.release(url, from: [current]) {
+            case .unreferenced:
+                continue
+            case .keep:
+                return false
+            case .detach(let detached):
+                for item in detached { try repository.saveItem(item) }
+            }
         }
+        references.forget(url)
+        return true
     }
 
     private func relativePath(_ url: URL) -> String {

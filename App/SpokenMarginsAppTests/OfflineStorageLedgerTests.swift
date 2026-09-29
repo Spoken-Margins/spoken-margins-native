@@ -1,5 +1,5 @@
 import Foundation
-import SessionKit
+@testable import SessionKit
 import XCTest
 @testable import SpokenMarginsApp
 
@@ -203,6 +203,27 @@ final class OfflineStorageLedgerTests: XCTestCase {
         XCTAssertEqual(try fixture.repository.loadItem(id: "item-episode"), episode)
     }
 
+    // Audit of #242: eviction saved item copies from a snapshot taken before it began deleting,
+    // so an edit saved in between (marking the item complete) was overwritten.
+    func testEvictionKeepsAnItemEditSavedAfterItsSnapshot() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "offline-ledger-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let completedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let repository = ItemEditedAfterSnapshotRepository(editedItemId: "item-article", completedAt: completedAt)
+        try repository.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 5))
+        let fixture = Fixture(root: root, repository: repository, ledger: OfflineStorageLedger(repository: repository, rootDirectory: root))
+        let file = try writeAsset(fixture, relativePath: "PreparedSupertonicAudio/item-article-abc.m4a", category: .preparedAudio)
+        try repository.saveItem(narratedArticle(file))
+
+        _ = try await fixture.ledger.enforceBudget()
+
+        let saved = try repository.loadItem(id: "item-article")
+        XCTAssertNil(saved.media)
+        XCTAssertEqual(saved.sourceCompletedAt, completedAt, "the edit saved after the snapshot survives")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
     private func writeAsset(_ fixture: Fixture, relativePath: String, category: OfflineAssetCategory) throws -> URL {
         let file = fixture.root.appending(path: relativePath)
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -238,5 +259,26 @@ final class OfflineStorageLedgerTests: XCTestCase {
             ledger: OfflineStorageLedger(repository: repository, rootDirectory: root)
         )
     }
+}
 
+/// Saves an edit to one item right after eviction takes its snapshot of the items, as the app's
+/// main actor can while the ledger actor is evicting.
+private final class ItemEditedAfterSnapshotRepository: InMemorySessionRepository, @unchecked Sendable {
+    private let editedItemId: String
+    private let completedAt: Date
+
+    init(editedItemId: String, completedAt: Date) {
+        self.editedItemId = editedItemId
+        self.completedAt = completedAt
+        super.init()
+    }
+
+    override func listItems(includeDeleted: Bool = false) throws -> [Item] {
+        let snapshot = try super.listItems(includeDeleted: includeDeleted)
+        if var item = items[editedItemId] {
+            item.sourceCompletedAt = completedAt
+            items[editedItemId] = item
+        }
+        return snapshot
+    }
 }
