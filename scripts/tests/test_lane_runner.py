@@ -101,8 +101,8 @@ class RequestTests(unittest.TestCase):
     def test_only_pass_or_fail_reports_make_a_request_identical(self):
         wanted = lane.identity('T3', HEAD, MERGE, ['B', 'A'])
         same = lane.identity('T3', HEAD, MERGE, ['A', 'B'])
-        self.assertEqual(lane.earlier_report([runner_report('PASS', wanted, url='u1')], same), 'u1')
-        self.assertEqual(lane.earlier_report([runner_report('FAIL', wanted, url='u2')], same), 'u2')
+        self.assertEqual(lane.earlier_report([runner_report('PASS', wanted, url='u1')], same), ('u1', 'PASS'))
+        self.assertEqual(lane.earlier_report([runner_report('FAIL', wanted, url='u2')], same), ('u2', 'FAIL'))
         self.assertIsNone(lane.earlier_report([runner_report('INCONCLUSIVE', wanted)], same))
         self.assertIsNone(lane.earlier_report([runner_report('PASS', wanted)], lane.identity('T3', NEWER, MERGE, ['A', 'B'])))
         # Same head, but next moved: it runs again.
@@ -356,6 +356,69 @@ class T3Tests(unittest.TestCase):
             self.assertEqual(lane.run_t3(['NoSuchTestClassAnywhere'], 'r', Path('/tmp'))[0], 'FAIL')
 
 
+class AutomergeTests(unittest.TestCase):
+    """The automerge label runs what the PR's diff needs (test-scope.py's tier)."""
+
+    def run_checks(self, tier, fast='PASS', t2='PASS', too_big=()):
+        calls = []
+
+        def fake_fast(evidence):
+            calls.append('fast')
+            return fast, [] if fast == 'PASS' else [f'host tests {fast}']
+
+        def fake_t2(evidence):
+            calls.append('t2')
+            return t2, f'simulator build ({t2.lower()})', []
+
+        result = lane.run_automerge({'tier': tier, 'why': ['x']}, Path('/e'), fast=fake_fast, t2=fake_t2,
+                                    ratchet=lambda: list(too_big))
+        return result, calls
+
+    def test_a_hot_file_above_its_ceiling_fails_before_any_build(self):
+        (verdict, where, ran, details), calls = self.run_checks('T2', too_big=['Gate1AppModel.swift would be 9 lines'])
+        self.assertEqual((verdict, where, calls), ('FAIL', 'no build', []))
+        self.assertIn('hot-file ratchet — Gate1AppModel.swift would be 9 lines', details[-1])
+
+    def test_docs_research_and_server_only_diffs_build_nothing(self):
+        (verdict, where, ran, details), calls = self.run_checks('T0')
+        self.assertEqual((verdict, where, calls), ('PASS', 'no build', []))
+        self.assertIn('test-scope: T0', details[0])
+
+    def test_a_host_only_diff_runs_the_host_tests_and_no_app_build(self):
+        (verdict, _, ran, details), calls = self.run_checks('T1')
+        self.assertEqual((verdict, calls), ('PASS', ['fast']))
+        self.assertIn('no app build', details[-1])
+
+    def test_a_diff_that_reaches_the_app_runs_the_host_tests_then_both_builds(self):
+        for tier in ('T2', 'T3'):
+            with self.subTest(tier=tier):
+                (verdict, _, ran, _), calls = self.run_checks(tier, t2='FAIL')
+                self.assertEqual((verdict, calls), ('FAIL', ['fast', 't2']))
+                self.assertIn('host tests (--plan fast): passed; simulator build (fail)', ran)
+
+    def test_failing_host_tests_stop_before_the_builds(self):
+        for fast in ('FAIL', 'INCONCLUSIVE'):
+            with self.subTest(fast=fast):
+                (verdict, _, _, _), calls = self.run_checks('T2', fast=fast)
+                self.assertEqual((verdict, calls), (fast, ['fast']))
+
+    def test_the_host_tests_pass_only_when_verify_tests_says_verified(self):
+        def runner_writing(status, code):
+            def run(command, log, timeout):
+                output = Path(command[command.index('--output') + 1])
+                output.mkdir(parents=True, exist_ok=True)
+                (output / 'manifest.json').write_text(f'{{"status": "{status}"}}')
+                log.write('failed: SharingTests\n')
+                return code
+            return run
+
+        for status, code, expected in (('verified', 0, 'PASS'), ('failed_or_incomplete', 1, 'FAIL'),
+                                       ('failed_or_incomplete', 0, 'FAIL'), ('verified', None, 'INCONCLUSIVE')):
+            with self.subTest(status=status, code=code), tempfile.TemporaryDirectory() as folder:
+                verdict, details = lane.run_fast(Path(folder), runner=runner_writing(status, code))
+                self.assertEqual(verdict, expected)
+
+
 class MainFlowTests(unittest.TestCase):
     def run_main(self, github, event_head=HEAD, verdict='PASS', *extra):
         with tempfile.TemporaryDirectory() as temporary, \
@@ -400,6 +463,69 @@ class MainFlowTests(unittest.TestCase):
         retry._comments.append(comment('/lane T2'))
         self.run_main(retry)
         self.assertTrue(retry.posted[1].startswith('Lane report pr5-r42 — PASS'))
+
+    def outcome(self, github, verdict='PASS'):
+        """What the runner handed the workflow (GITHUB_OUTPUT) for one run."""
+        with tempfile.TemporaryDirectory() as folder:
+            outputs = Path(folder) / 'outputs'
+            outputs.write_text('')
+            with mock.patch.dict('os.environ', {'GITHUB_OUTPUT': str(outputs)}):
+                self.run_main(github, HEAD, verdict)
+            return dict(line.split('=', 1) for line in outputs.read_text().splitlines())
+
+    def test_the_workflow_gets_the_verdict_so_the_check_is_green_only_on_pass(self):
+        # lane.yml's Verdict step fails unless verdict=PASS; reported=true keeps the tidy step quiet.
+        for verdict in ('PASS', 'FAIL', 'INCONCLUSIVE'):
+            with self.subTest(verdict=verdict):
+                github = FakeGitHub(comments=[comment('/lane T2')])
+                self.assertEqual(self.outcome(github, verdict), {'reported': 'true', 'verdict': verdict})
+                self.assertTrue(github.posted[0].startswith(f'Lane report pr5-r42 — {verdict}'))
+
+    def test_a_repeated_request_carries_the_earlier_verdict_so_a_fail_stays_red(self):
+        github = FakeGitHub(comments=[comment('/lane T2')])
+        self.run_main(github, HEAD, 'FAIL')
+        github.labels.add('lane:queued')
+        github._comments.append(comment('/lane T2'))
+        self.assertEqual(self.outcome(github, 'PASS'), {'reported': 'true', 'verdict': 'FAIL'})
+        self.assertIn('already reported (FAIL)', github.posted[-1])
+
+    def test_nothing_is_handed_over_when_nothing_ran(self):
+        self.assertEqual(self.outcome(FakeGitHub(comments=[])), {})
+        self.assertEqual(self.outcome(FakeGitHub(head=NEWER, comments=[comment('/lane T2')])), {})
+
+    def test_the_workflow_fails_its_verdict_step_and_tidies_only_when_nothing_was_reported(self):
+        workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/lane.yml').read_text()
+        self.assertIn("if: steps.run.outputs.reported == 'true'", workflow)
+        self.assertIn('if [ "$VERDICT" != PASS ]; then', workflow)
+        self.assertIn("if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'", workflow)
+
+    def run_automerge_main(self, github, verdict='PASS'):
+        with mock.patch.object(lane, 'diff_scope', return_value={'tier': 'T2', 'why': ['app UI']}) as scope, \
+                mock.patch.object(lane, 'run_automerge', return_value=(verdict, 'x', 'host tests; builds', [])) as run:
+            self.run_main(github)
+        return scope, run
+
+    def test_the_automerge_label_is_a_request_by_itself(self):
+        github = FakeGitHub(labels=('automerge',))
+        _, run = self.run_automerge_main(github)
+        run.assert_called_once()
+        self.assertTrue(github.posted[0].startswith('Lane report pr5-r42 — PASS'), github.posted)
+        self.assertIn('tier auto', github.posted[0])
+        self.assertEqual(github.label_changes, [])  # the lane:* labels belong to explicit requests
+
+    def test_an_explicit_request_goes_before_the_automerge_checks(self):
+        github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[comment('/lane T2')])
+        _, run = self.run_automerge_main(github)
+        run.assert_not_called()
+        self.assertIn('tier T2', github.posted[0])
+
+    def test_an_automerge_run_already_reported_for_this_head_and_next_is_not_repeated(self):
+        github = FakeGitHub(labels=('automerge',))
+        self.run_automerge_main(github, 'FAIL')
+        _, run = self.run_automerge_main(github)
+        run.assert_not_called()
+        self.assertIn('already reported (FAIL)', github.posted[-1])
+        self.assertEqual(github.label_changes, [])
 
     def test_requeueing_without_a_new_request_says_so_and_clears_the_label(self):
         github = FakeGitHub(comments=[comment('/lane T2')])
@@ -473,6 +599,44 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(base, subprocess.check_output(['git', '-C', str(self.origin), 'rev-parse', 'HEAD'], text=True).strip())
         self.assertEqual(lane.merge_base_branch(self.tree, 'next'), [])
         self.assertTrue((self.tree / 'lane.yml').exists())
+
+    def test_the_base_branch_policy_classifies_only_the_committed_diff(self):
+        (self.origin / 'scripts').mkdir()
+        (self.origin / 'scripts/test-scope.py').write_text((SCRIPTS / 'test-scope.py').read_text())
+        self.commit(self.origin, 'scripts/test-scope.py', (SCRIPTS / 'test-scope.py').read_text())
+        subprocess.run(self.git + ['-C', str(self.tree), 'pull', '-q', 'origin', 'next'], check=True)
+        (self.tree / 'docs').mkdir()
+        self.commit(self.tree, 'docs/note.md', 'words\n')
+        (self.tree / 'App').mkdir()
+        (self.tree / 'App/Untracked.swift').write_text('// not committed, so not part of the PR\n')
+        lane.fetch_base(self.tree, 'next')
+        scope = lane.diff_scope(self.tree, 'next')
+        self.assertEqual((scope['tier'], [f['path'] for f in scope['files']]), ('T0', ['docs/note.md']))
+        # A PR that rewrites the policy to call everything docs is still judged by next's policy.
+        self.commit(self.tree, 'scripts/test-scope.py', 'def classify(paths, diffs=None, root=None):\n'
+                    '    return {"tier": "T0", "why": [], "files": []}\n')
+        (self.tree / 'App/SpokenMarginsApp').mkdir(parents=True)
+        self.commit(self.tree, 'App/SpokenMarginsApp/View.swift', 'struct V {}\n')
+        self.assertEqual(lane.diff_scope(self.tree, 'next')['tier'], 'T2')
+
+    def test_the_hot_file_ratchet_is_next_s_copy_and_absent_until_it_is_on_next(self):
+        model = 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift'
+        (self.origin / model).parent.mkdir(parents=True)
+        self.commit(self.origin, model, 'one\ntwo\n')
+        subprocess.run(self.git + ['-C', str(self.tree), 'pull', '-q', 'origin', 'next'], check=True)
+        self.commit(self.tree, model, 'one\ntwo\nthree\n')
+        lane.fetch_base(self.tree, 'next')
+        self.assertEqual(lane.hot_file_violations(self.tree, 'next', set()), [])  # not on next yet
+        (self.origin / 'scripts').mkdir(exist_ok=True)
+        self.commit(self.origin, 'scripts/hot_file_ratchet.py', (SCRIPTS / 'hot_file_ratchet.py').read_text())
+        lane.fetch_base(self.tree, 'next')
+        self.assertEqual(lane.merge_base_branch(self.tree, 'next'), [])
+        # The PR swaps in a ratchet that always passes; next's copy still judges it.
+        self.commit(self.tree, 'scripts/hot_file_ratchet.py', 'def violations(*args):\n    return []\n')
+        found = lane.hot_file_violations(self.tree, 'next', set())
+        self.assertEqual(len(found), 1, found)
+        self.assertIn('Gate1AppModel.swift would be 3 lines, above its ceiling of 2', found[0])
+        self.assertEqual(lane.hot_file_violations(self.tree, 'next', {'hot-file-ok'}), [])
 
     def test_a_conflict_names_the_files_and_leaves_the_tree_clean(self):
         self.commit(self.tree, 'shared.txt', 'pr side\n')
