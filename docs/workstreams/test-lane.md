@@ -146,6 +146,36 @@ Decisions: for reversible lane choices, post them on #184 under "Default taken" 
 going. Stop only for owner data, the phone, money, anything public, main or releases.
 ```
 
+## The Mac's runners
+
+Two self-hosted GitHub Actions runners on the owner's Mac run `.github/workflows/lane.yml`. Each is a LaunchAgent in its own folder.
+
+| | Main runner | Build runner |
+|---|---|---|
+| Name | `sm-lane-mac` | `sm-lane-mac-2` |
+| Folder | `~/actions-runner-spoken-margins` | `~/actions-runner-spoken-margins-2` |
+| LaunchAgent | `actions.runner.uncomposed-spoken-margins-native.sm-lane-mac` | `actions.runner.uncomposed-spoken-margins-native.sm-lane-mac-2` |
+| Labels | `self-hosted, macOS, ARM64, sm-lane, sm-lane-build` | `self-hosted, macOS, ARM64, sm-lane-build` |
+| Jobs | `lane` (/lane T2, T3, simulators) and `automerge` | `automerge` only (host tests and builds) |
+| `.env` | `SM_LANE_EVIDENCE_DIR`, `SM_LANE_TOOLS` | the same, plus `SM_LANE_RUNNER_ROLE=build` |
+
+- **Build runner gate.** With `SM_LANE_RUNNER_ROLE=build`, an automerge job waits up to 90 minutes for three things: no simulator job running, normal memory pressure, and 20 GB of free disk. Otherwise it reports INCONCLUSIVE and says why.
+- **Check both:** `gh api repos/uncomposed/spoken-margins-native/actions/runners --jq '.runners[] | "\(.name) \(.status) busy=\(.busy)"'`. On the Mac, `./svc.sh status` in a runner's folder.
+- **Restart one:** `./svc.sh stop`, then `./svc.sh start`, in its folder. Its logs are in `_diag/`, and the job workspace is `_work/spoken-margins-native/spoken-margins-native`.
+- **Remove one:** `./svc.sh uninstall`, then `./config.sh remove --token <token>`. Get the token from `gh api -X POST repos/uncomposed/spoken-margins-native/actions/runners/remove-token --jq .token`.
+- **Evidence:** each job writes to `SM_LANE_EVIDENCE_DIR`, which is `artifacts/lane/<request-id>/` in the owner's main checkout.
+- **Git LFS:** both jobs check out with `lfs: true`, because the Supertonic models are LFS files and the contracts check reads them. The LFS cache is in the workspace's `.git`, so each runner downloads the models once.
+- **Warm build folders.** A job links the tree's `.build` and `Packages/SessionKit/.build` to `~/Library/Caches/SpokenMarginsLane/warm-build/sk-<SessionKit tree hash>/`.
+  - A SessionKit change starts a new cache, because stale SessionKit modules give false "does not conform" errors.
+  - At most two caches are kept. Below 15 GB of free disk the job builds cold, and its report says so.
+  - If a build error disappears on a cold rebuild, delete `warm-build/` while no job runs.
+- **Merging.** An `automerge` PASS is merged by the runner itself (`scripts/lane-runner.py`, `run_auto`):
+  - It tests the exact merge commit (next first), posts "**Merge check (triage desk)", then does a plain push. A push refused because next moved leads to a re-test, up to 3 times.
+  - It never merges `.github/` or `scripts/lane*` changes, or audio, persistence and packet diffs without a comment starting "**Codex audit (Astra)"; those need a person.
+  - After each merge it runs `merge_audit.py --sweep-hours 2`, because pushes made with the workflow token start no workflow. `merge-audit.yml`'s hourly schedule runs only once that file is on the default branch (`main`).
+- **Stale merge refs.** GitHub builds a PR's run from its merge ref, and a label event doesn't refresh it. A PR opened before a `lane.yml` change keeps the old jobs until it merges next and pushes (#221).
+- **Mac-wide state** is in `~/Library/Caches/SpokenMarginsLane/`: the slot locks, `boot-events.log`, `unsafe-simulators.json`, and the lane guard's `guard.log`. The guard hook is `~/.claude/hooks/spoken-margins-lane-guard.py`; reinstall it with `scripts/install-lane-guard.py`, and use `--check` to see drift.
+
 ## What the owner sees
 
 - Each stream's PR shows its requests and reports in order, so the phone view of GitHub is the dashboard.
