@@ -1,4 +1,6 @@
+import contextlib
 import importlib.util
+import io
 import json
 import shutil
 import subprocess
@@ -192,6 +194,90 @@ class VerificationTests(unittest.TestCase):
         self.assertTrue(verification.reconcile({name}, skipped))
         self.assertEqual(verification.reconcile({name}, skipped, {name}), [])
 
+    def xctest_log(self, *results):
+        return '; '.join(f"print(\"Test Case '-[SpokenMarginsAppUITests.{c} {m}]' {status} (1.0 seconds)\")"
+                         for c, m, status in results)
+
+    def test_a_failing_probation_script_is_reported_but_does_not_fail_the_run(self):
+        # #522: scripts on probation run in the integration run but can't turn it red; gating ones can.
+        tour, share = 'SpokenMarginsAppUITests/TourUITests/testTour', 'SpokenMarginsAppUITests/ShareUITests/testShare'
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'journeys')
+            script = self.xctest_log(('TourUITests', 'testTour', 'passed'), ('ShareUITests', 'testShare', 'failed'))
+            run.command('xcode-tests', [sys.executable, '-c', script + '; raise SystemExit(65)'],
+                        expected={tour, share}, tests=True, probation={share})
+            step = run.manifest['steps'][-1]
+            self.assertEqual((step['errors'], step['gating'], step['probation']), ([], {tour: 'passed'}, {share: 'failed'}))
+            run.command('xcode-tests-missing', [sys.executable, '-c', self.xctest_log(('TourUITests', 'testTour', 'passed'))],
+                        expected={tour, share}, tests=True, probation={share})
+            self.assertEqual(run.manifest['steps'][-1]['probation'], {share: 'missing'})
+            run.command('xcode-tests-skip', [sys.executable, '-c', self.xctest_log(
+                ('TourUITests', 'testTour', 'passed'), ('ShareUITests', 'testShare', 'skipped'))],
+                expected={tour, share}, tests=True, probation={share})
+            self.assertEqual(run.manifest['steps'][-1]['probation'], {share: 'skipped'})
+            # With only probation scripts listed, a run where nothing ran is still a failure, not a pass.
+            with self.assertRaisesRegex(RuntimeError, 'Process exit 65; No completed tests recorded'):
+                run.command('xcode-tests-nothing', [sys.executable, '-c', 'raise SystemExit(65)'],
+                            expected={share}, tests=True, probation={share})
+            with self.assertRaisesRegex(RuntimeError, f'Process exit 65; Failed: {tour}'):
+                run.command('xcode-tests-gating', [sys.executable, '-c', self.xctest_log(
+                    ('TourUITests', 'testTour', 'failed'), ('ShareUITests', 'testShare', 'passed')) + '; raise SystemExit(65)'],
+                    expected={tour, share}, tests=True, probation={share})
+
+    def test_journeys_plan_passes_ui_test_selectors_and_names_the_probation_ones(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            for target, source in (('SpokenMarginsAppTests', 'final class SpeechTests: XCTestCase { func testSpeak() {} }'),
+                                   ('SpokenMarginsAppUITests', 'final class TourUITests: XCTestCase { func testTour() {} }\n'
+                                    'final class ShareUITests: XCTestCase { func testShare() {} func testOpen() {} }')):
+                (root / 'App' / target).mkdir(parents=True)
+                (root / 'App' / target / 'Tests.swift').write_text(source)
+            (root / 'App/SpokenMarginsAppTests/Gate4WatchPackageRenderTests.swift').write_text(
+                'final class Gate4WatchPackageRenderTests: XCTestCase { func testRender() {} }')
+            (root / 'TestPlans').mkdir()
+            (root / 'TestPlans/Release.xctestplan').write_text(json.dumps({'testTargets': [
+                {'target': {'name': 'SpokenMarginsAppTests'}}, {'target': {'name': 'SpokenMarginsAppUITests'}}]}))
+            (root / '.build/verification/SpokenMarginsReleaseTests').mkdir(parents=True)
+            run = verification.Run(Path(temporary) / 'run', 'journeys')
+            run.manifest['input_sha256'] = 'inputs'
+            commands = {}
+
+            def command(name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=()):
+                commands[name] = (args, expected, probation)
+                return ''
+
+            capture = lambda args: '{"devices": {}}' if args[:3] == ['xcrun', 'simctl', 'list'] else 'stub'
+            device = {'udid': 'synthetic-device', 'state': 'Booted', 'runtime': 'iOS-26', 'name': 'Other'}
+            with patch.object(verification, 'ROOT', root), \
+                    patch.object(verification, 'input_identity', return_value='inputs'), \
+                    patch.object(verification, 'capture', side_effect=capture), \
+                    patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
+                    patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                    patch.object(verification.subprocess, 'run'), \
+                    patch.object(run, 'command', side_effect=command):
+                run.xcode('journeys', None, rebuild=True, only=['SpokenMarginsAppUITests/TourUITests/testTour',
+                                                                'SpokenMarginsAppUITests/ShareUITests'],
+                          probation=['SpokenMarginsAppUITests/ShareUITests'])
+            args, expected, probation = commands['xcode-tests']
+            self.assertIn('SpokenMarginsReleaseTests', args)
+            self.assertEqual([a for a in args if a.startswith('-only-testing:')],
+                             ['-only-testing:SpokenMarginsAppUITests/TourUITests/testTour',
+                              '-only-testing:SpokenMarginsAppUITests/ShareUITests'])
+            share = {'SpokenMarginsAppUITests/ShareUITests/testShare', 'SpokenMarginsAppUITests/ShareUITests/testOpen'}
+            self.assertEqual(expected, share | {'SpokenMarginsAppUITests/TourUITests/testTour'})
+            self.assertEqual(probation, share)
+
+    def test_journeys_plan_with_nothing_listed_boots_nothing(self):
+        out = io.StringIO()
+        with patch.object(sys, 'argv', ['verify-tests.py', '--plan', 'journeys']), \
+                patch.object(verification, 'validate', return_value=[]), \
+                patch.object(inventory, 'scripted_journeys', return_value={'gating': [], 'probation': []}), \
+                patch.object(verification, 'Run') as run, contextlib.redirect_stdout(out):
+            self.assertEqual(verification.main(), 0)
+        run.assert_not_called()
+        self.assertIn('nothing to run', out.getvalue())
+
     def test_log_parser_preserves_failure_and_duration(self):
         log = "Test Case '-[App.ExportTests testIsolation]' failed (0.125 seconds)."
         self.assertEqual(verification.test_records(log), {
@@ -320,6 +406,41 @@ class VerificationTests(unittest.TestCase):
             step = json.loads((run.output / 'manifest.json').read_text())['steps'][0]
             self.assertTrue(step['interrupted'])
             self.assertLess(step['seconds'], 5)
+
+    def test_scripted_journey_list_names_real_ui_tests_once_each(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'TestPlans').mkdir()
+            (root / 'App/SpokenMarginsAppUITests').mkdir(parents=True)
+            (root / 'App/SpokenMarginsAppUITests/Tour.swift').write_text(
+                'final class ScreenTourUITests: XCTestCase { func testTour() {} func testShare() {} }')
+            listing = root / 'TestPlans/scripted-journeys.json'
+            write = lambda **lists: listing.write_text(json.dumps({'version': 1, 'gating': [], 'probation': [], **lists}))
+            write(gating=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests/testTour', 'journey': 'screen tour'}],
+                  probation=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests/testShare()', 'journey': 'J5'}])
+            self.assertEqual(inventory.scripted_journey_errors(root), [])
+            write(probation=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests/testRenamed', 'journey': 'J1'},
+                             {'test': 'ScreenTourUITests', 'journey': 'J1'},
+                             {'test': 'SpokenMarginsAppUITests/ScreenTourUITests'}])
+            errors = inventory.scripted_journey_errors(root)
+            self.assertEqual(len(errors), 3, errors)
+            self.assertIn('testRenamed', errors[0])
+            self.assertIn("'ScreenTourUITests'", errors[1])
+            self.assertIn('names no journey', errors[2])
+            write(gating=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests', 'journey': 'tour'}],
+                  probation=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests', 'journey': 'tour'}])
+            self.assertIn('also listed', inventory.scripted_journey_errors(root)[0])
+            write(gating=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests', 'journey': 'tour'}],
+                  probation=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests/testShare()', 'journey': 'J5'}])
+            self.assertIn('also listed', inventory.scripted_journey_errors(root)[0])
+            for malformed in ([], {'version': 1, 'gating': None, 'probation': []},
+                              {'version': 1, 'gating': [{'test': 7, 'journey': 'J1'}, 'x'], 'probation': []}):
+                listing.write_text(json.dumps(malformed))
+                self.assertTrue(inventory.scripted_journey_errors(root), malformed)
+            listing.write_text(json.dumps({'version': 1, 'gating': [], 'probation': [], 'passes': {}}))
+            self.assertTrue(inventory.scripted_journey_errors(root))
+            listing.unlink()
+            self.assertTrue(inventory.scripted_journey_errors(root))
 
 
 if __name__ == '__main__':

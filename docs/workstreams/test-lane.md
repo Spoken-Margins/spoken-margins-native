@@ -21,7 +21,7 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 **Three test levels** (owner's decision, 2026-09-29). These replace per-milestone T3 and T4 and "T5 once per candidate":
 
 1. **Per PR:** host tests plus both builds (`--plan fast` and T2), before merge. T3 only for audio session, storage and packet changes.
-2. **Per batch:** the integration run on `next`'s merged tip: `--plan app`, every journey on a library shaped like the owner's and upgraded from Build 29, and a screen tour for the critics. It runs when the runner's queue is empty after several merges, and always overnight. A failure becomes the top `ready` issue.
+2. **Per batch:** the integration run on `next`'s merged tip: `--plan app`, a screen tour for the critics, the scripted journeys (below), and every journey on a library shaped like the owner's and upgraded from Build 29. The standing Test Desk runs it on each new tip (Starting the Test Desk). A real failure is reverted first: the desk opens a "Revert #N" PR for the culprit merge and files a `ready` + `regression` issue to re-land the change. Persistence, migration, packet-format and lane changes aren't reverted; the desk reports those to the owner on #184.
 3. **Per candidate:** the owner's phone. The latest green integration run is the candidate.
 
 **Rules of thumb**
@@ -33,6 +33,18 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 - A new regression test must be run once **without** the fix and seen to fail (`AGENTS.md`). That run counts as T1, not an extra tier.
 - When unsure, ask the lane for the tier (A1 ships `scripts/test-scope.py`, which maps a diff to its minimum tier and suggested test filters). If the tool and your judgment disagree, take the higher tier and say why in the request.
 
+## Scripted journeys
+
+Scripted journeys are UI tests in `App/SpokenMarginsAppUITests/` that each follow one journey from `docs/journeys.md` (owner's decision, 2026-09-30, #445). Threads draft them, the Test Desk proves them, and they count only after probation.
+
+- **Where they run.** Only in the integration run on `next`'s merged tip, never as a per-PR gate. Per PR, a script only has to compile: `scripts/test-scope.py` puts `App/SpokenMarginsAppUITests/` at T2 and never adds its classes to a T3 request.
+- **Who writes them.** A thread that changes a listener's flow may add or update the script for the journey it affects, and names that journey in the PR.
+- **Probation.** `TestPlans/scripted-journeys.json` is the one list the integration run reads. A new or changed script goes under `probation` in the same PR. It runs and is reported, but can't turn the integration run red. The Test Desk moves it to `gating` after seeing it pass twice on the simulator, and moves a gating script that flakes twice back to `probation`. `scripts/test_inventory.py` rejects an entry that names no real UI test or no journey.
+- **What they don't cover.** Audible content, the Lock Screen, Bluetooth, and anything that only looks wrong. Agent-driven journeys and the owner's phone keep those.
+- **How this differs from the retired plans.** `--plan ui`, `speech-canary` and `release` ran a broad route suite as a gate and stay retired (`AGENTS.md`). Scripted journeys are one short script per journey, each earning its place on probation.
+
+A week after the first script gates, the desk's daily hand-off on #184 counts two things: regressions a script caught that the owner would otherwise have found on the phone, and simulator crashes or flakes the scripts caused. If the scripts caught nothing, or cost more desk time than they saved, that is the sign this was a mistake.
+
 ## The lane
 
 **Endpoint A1 must reach.** Any stream, cloud or Mac, can request T2–T5 against a pushed commit without the owner doing anything, and gets a report on its PR. The Mac never runs more than **one** simulator job at a time (it has 16 GB; two simulators plus builds filled swap, #184). It never runs more than **two** `xcodebuild` invocations at once *in total*, and only one while a simulator job runs: one Mac-wide semaphore shared by the lane and every stream session. A crash flood stops the lane and notifies the owner.
@@ -41,7 +53,7 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 
 - **Intake is the PR.** A stream opens a draft PR into `next` and comments a request (format below) with the label `lane:queued`. Mac streams may also message the Test Desk session directly as a doorbell, but the request itself always lives on the PR so the owner can see it from the phone.
 - **Deterministic tiers run without an agent.** A self-hosted GitHub Actions runner on the Mac, with a single concurrency group, runs T2 and T3 (and T1 for Swift) and posts the result. Cheap, repeatable, no tokens.
-- **Journeys run with an agent.** A long-lived Claude Code session on the Mac named `test-desk` picks up T4/T5 requests (polling the label with `/loop`, or woken by a message), works in its own worktree and DerivedData, drives the simulator, and posts the report.
+- **Journeys run with an agent.** The standing Test Desk session on the Mac runs in a loop on `next`'s tip, works in its own worktrees and DerivedData, drives the simulator, and posts its reports on #184. It runs a one-off scenario for a PR only when the owner or the coordinator asks it directly.
 - **Coalesce.** If a newer commit lands on the same PR while a request is queued, test the newest only. Identical requests against the same commit run once.
 - **Order.** Gate streams (A2 `seams`, anything blocking others) first, then oldest request first.
 - **Evidence stays local.** Screenshots and logs go under `artifacts/lane/<request-id>/` (git-ignored). The request id is `pr<PR>-r<run id>`, plus `-a<N>` when a job is re-run, so a re-run never reuses a folder. The PR comment carries the observations and file paths, not images.
@@ -123,7 +135,13 @@ When next's tip has no integration report on #184, run one job on that tip, in t
    scripts/verify-tests.py --plan app --device <udid>. Post "Lane report
    integration-<sha7> — PASS | FAIL | INCONCLUSIVE" on #184, with the line
    "run by: Test Desk".
-2. Only after a PASS: the screen tour, if the repo has one.
+2. Only after a PASS: the screen tour, if the repo has one, then the scripted journeys in
+   TestPlans/scripted-journeys.json (gating, then probation). They launch with --ui-testing,
+   which resets the app's library, so they run before step 3 builds the journey library. A
+   probation failure goes in the report but doesn't make it FAIL. Move a script to gating
+   after two passes, and back to probation after two flakes, in a PR into next. Run them
+   with scripts/verify-tests.py --plan journeys --device <udid>; its manifest's gating and
+   probation maps give each script's result.
 3. Then the journeys in docs/journeys.md. Erase the standing device again first, because the
    app tests wrote to its app data, and build a library shaped like the owner's and upgraded
    from Build 29 (lane-build29) before installing the candidate over it. Post
@@ -211,6 +229,7 @@ Two self-hosted GitHub Actions runners on the owner's Mac run `.github/workflows
 - **Check both:** `gh api repos/uncomposed/spoken-margins-native/actions/runners --jq '.runners[] | "\(.name) \(.status) busy=\(.busy)"'`. On the Mac, `./svc.sh status` in a runner's folder.
 - **Restart one:** `./svc.sh stop`, then `./svc.sh start`, in its folder. Its logs are in `_diag/`, and the job workspace is `_work/spoken-margins-native/spoken-margins-native`.
 - **Remove one:** `./svc.sh uninstall`, then `./config.sh remove --token <token>`. Get the token from `gh api -X POST repos/uncomposed/spoken-margins-native/actions/runners/remove-token --jq .token`.
+- **Runner simulators.** A T3 job creates its own `SM Lane Runner <run>` device and locks that name in the lane state folder until it deletes the device. Every job first sweeps leftover runner devices but skips a locked one, so one runner's sweep can't delete the other's live T3 device (#440, #411). A crashed job's lock ends with its process, so its leftover is swept. If a plan's device disappears or its readiness step fails, the run stops there and reports INCONCLUSIVE as a lane fault, not FAIL.
 - **Evidence:** each job writes to `SM_LANE_EVIDENCE_DIR`, which is `artifacts/lane/<request-id>/` in the owner's main checkout.
 - **Git LFS:** both jobs check out with `lfs: true`, because the Supertonic models are LFS files and the contracts check reads them. The LFS cache is in the workspace's `.git`, so each runner downloads the models once.
 - **Warm build folders.** A job links the tree's `.build` and `Packages/SessionKit/.build` to `~/Library/Caches/SpokenMarginsLane/warm-build/checkout-<checkout path hash>/sk-<SessionKit tree hash>-<project file hash>/`.

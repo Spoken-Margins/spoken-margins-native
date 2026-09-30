@@ -964,7 +964,7 @@ public final class SessionEngine {
         let map = ListeningMap(
             id: "map-\(itemId)-publisher-\(collection.source.rawValue)",
             itemId: itemId,
-            overview: "Publisher-provided chapters for \(item.title).",
+            overview: ListeningMapOverviewText.appGenerated(title: item.title, chapterCount: chapters.count),
             chapters: chapters
         )
         try repository.saveListeningMap(map)
@@ -4615,11 +4615,12 @@ public final class SessionEngine {
     }
 
     private func itemPlaybackPreface() -> String {
-        guard let overview = currentMap?.overview.trimmingCharacters(in: .whitespacesAndNewlines),
-              !overview.isEmpty else {
-            return ""
-        }
-        return "Overview. \(overview)\n\n"
+        guard let map = currentMap else { return "" }
+        return ListeningMapOverviewText.spokenPreface(
+            overview: map.overview,
+            title: currentItem?.title ?? "",
+            chapterCount: map.chapters.count
+        )
     }
 
     private func turnTitle(for turn: ConversationTurn) -> String {
@@ -4813,10 +4814,7 @@ public final class SessionEngine {
     }
 
     private func generatedOverview(for item: Item, chapters: [Chapter]) -> String {
-        if chapters.isEmpty {
-            return "Generated Listening Map for \(item.title)."
-        }
-        return "Generated Listening Map with \(chapters.count) chapter\(chapters.count == 1 ? "" : "s") for \(item.title)."
+        ListeningMapOverviewText.appGenerated(title: item.title, chapterCount: chapters.count)
     }
 
     private func percent(for charOffset: Int, text: String) -> Int {

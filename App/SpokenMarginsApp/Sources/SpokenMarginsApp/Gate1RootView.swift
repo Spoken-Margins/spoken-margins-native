@@ -592,7 +592,7 @@ struct InterjectionDetailView: View {
                         )
                     )
                     if current.transcriptionStatus != "complete" {
-                        LabeledContent("Transcript status", value: humanizedTurnStatus(current.transcriptionStatus))
+                        LabeledContent("Transcript status", value: TranscriptionFailureWording.marginStatus(transcriptionStatus: current.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff) ?? humanizedTurnStatus(current.transcriptionStatus))
                     }
                 }
                 Section("Transcript") {
