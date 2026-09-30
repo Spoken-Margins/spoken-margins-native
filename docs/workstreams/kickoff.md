@@ -41,7 +41,7 @@ Why it's shaped this way:
 - **`/goal` holds the agent to the endpoint.** It's a command the person who started the session types, not something the agent can run. After the agent posts its approach, send `/goal <the milestone's "Done when", minus (owner) and (Mac) items, with lane items read as "the PR is armed">` as the next message. After each turn, a separate evaluator checks the condition against what the agent has shown in the transcript, and the agent keeps working until it's met ([docs](https://code.claude.com/docs/en/goal)). Without it, the agent still works toward the same list; `/goal` just stops it from declaring victory early. That's why every "Done when" in the briefs is written as something the agent can *demonstrate* (a test output, a measured number, a tap count, an armed PR), not something it can merely assert.
 - **Items marked (owner) stay out of the goal.** Listening by ear, measurements on the owner's phone, and data only the owner has can't be demonstrated by an agent. The agent prepares them (a build, exact steps, what to look for) and the milestone waits on the owner.
 - **Stating the approach first** gives the owner a moment to redirect from the phone before hours go into the wrong idea. It isn't a request for approval; the agent continues unless redirected.
-- **Defaults instead of waits.** On 2026-09-28 about 15 owner decisions reached the owner one at a time, and several were reversible: which simulator the lane uses, C3's pause behavior, whether author names are read aloud. Streams now take a default for those and keep going. The project's morning digest lists each "Default taken" so the owner can veto in one batch.
+- **Defaults instead of waits.** On 2026-09-28 about 15 owner decisions reached the owner one at a time, and several were reversible: which simulator the lane uses, C3's pause behavior, whether author names are read aloud. Streams now take a default for those and keep going. The project's daily routine lists the last day's "Default taken" posts so the owner can veto in one batch.
 - **A turn cap** stops a stuck stream from burning a day. Blocked is a legitimate outcome if it's reported.
 - **A fresh-context review** before a milestone catches the "looks done" failure without an auditor agent chain ([best practices](https://code.claude.com/docs/en/best-practices#add-an-adversarial-review-step)). Tell the reviewer to flag only gaps against the brief's "Done when" and "Must not break", or it will invent work.
 
@@ -52,14 +52,14 @@ Retired on 2026-09-29. A long-lived triage desk re-read a large context on every
 | Job | Who does it now |
 | --- | --- |
 | Hand out work: one thread per `ready` issue, in the order the project's instructions give | The owner's Claude Code project |
-| Triage new and `critic:*` issues daily: `ready`, `needs-owner`, `deferred`, or closed as a duplicate | The project, in a morning routine |
+| Triage new and `critic:*` issues daily: `ready`, `needs-owner`, `deferred`, or closed as a duplicate | The project, in its daily routine (21:30 Eastern) |
 | Decisions, defaults the streams took, and phone candidates, for the owner | The project conversation |
-| Pace, runner queue, disk, memory, the main checkout, and the daily scorecard | The hourly `SM Mac tick` scheduled task, posting on #337 |
-| Merge finished work | The lane runner merges `automerge` PRs it passes; the Mac tick is the fallback. PRs that change `.github/` or `scripts/lane*` wait for the owner. |
-| Lane FAILs on armed PRs | The project's hourly dispatcher. A FAIL on the PR's own code goes to whoever is free; a runner fault becomes an issue labelled `ready` and `regression`. The thread that armed the PR has already moved on. |
-| Codex audits of sharing, persistence and audio changes | The hourly `SM Codex audit` scheduled task |
-| Test next's tip | The hourly `SM integration run` (XCTest only, because scheduled sessions can't drive the simulator), then the journeys it lists in an attended Test Desk session |
-| Check that the scheduled tasks ran | The project's morning routine reads #337. The owner starts an ops desk session only when something is wrong. |
+| Pace, runner queue, disk, memory, the main checkout, and the daily scorecard | The `SM Mac tick` scheduled task, every two hours, posting on #337. It doesn't merge. |
+| Merge finished work | The lane runner merges `automerge` PRs it passes. After a T3 PASS on a PR held for T3, it re-runs the automerge checks on a fresh merge commit and merges on PASS (#421). It never merges `.github/` or `scripts/lane*` changes (those wait for the owner), or an audio, persistence or packet diff without a clean Codex audit of its head commit. |
+| Lane FAILs on armed PRs | The project's hourly dispatcher. A FAIL on the PR's own code goes to whoever is free. A lane fault gets one more run (a new `/lane T3` comment with the same `tests:` line plus `lane:queued` for an INCONCLUSIVE T3, or `automerge` removed and re-added for a host-test or build fault), and becomes an issue labelled `ready` and `regression` only if it fails the same way again. After a clean Codex audit on a held PR, it removes and re-adds `automerge`, because a comment starts no run. The thread that armed the PR has already moved on. |
+| Codex audits of sharing, persistence and audio changes | A scheduled script on the Mac (launchd, no Claude session), posting **Codex audit (Astra) on `<sha7>`** on the PR |
+| Test next's tip | The standing Test Desk, in a loop: on each new tip, the app tests, then the screen tour and the journeys, reported on #184. On a real FAIL it reverts the culprit merge and files the re-land issue. The scheduled `SM integration run` is its understudy and runs only when the desk has posted nothing on #184 for three hours ([test-lane.md](test-lane.md), Starting the Test Desk). |
+| Check that the scheduled tasks ran | The project's daily routine reads #337 for a missing or stalled tick. The owner starts an ops desk session only when something is wrong. |
 
 The merge-check comment keeps its old first line, **Merge check (triage desk) on `<sha7>`**. The lane runner writes it and `scripts/merge_audit.py` looks for that exact text, so don't reword it.
 
@@ -67,12 +67,12 @@ The merge-check comment keeps its old first line, **Merge check (triage desk) on
 
 - **Default:** Opus 5.5 at high effort for every stream.
 - **Go higher (xhigh or max)** for A2 `seams` (both milestones), the first milestone of F1 `coop`, and B4 `bridge` M1 and E3 `maps` M2, which set the server and privacy shape. Mistakes there are expensive for everyone downstream.
-- **Research streams** (A3, D1, G2, and the research milestones of B3, C1, C2 and E1) can use the `deep-research` skill for literature and market scans.
+- **Research streams** (A3, G2, and the research milestones of B3, C1, C2 and E1) can use the `deep-research` skill for literature and market scans.
 - **Codex (OpenAI plan)** works from the same briefs, since it reads `AGENTS.md` too. Good uses: a second implementation attempt on a research question (for example the C1 scorer or B3 matcher), or an independent review of a gate stream's PR. Don't put two agents on the same milestone at once.
 
 ## Where each kind of stream runs
 
-**Cloud streams** (A3, D1, G2, and the research and server milestones of B3, B4, C1, C2, E1 and E3):
+**Cloud streams** (A3, G2, and the research and server milestones of B3, B4, C1, C2, E1 and E3):
 
 - Start from the Claude app → Code → new session on `uncomposed/spoken-margins-native` (add `uncomposed/digest` for D3). Paste the kickoff.
 - Cloud sessions can't reach the Mac's simulators, and can't build the iOS app. A brief marks any step that needs a Mac with **(Mac)**. That step runs in a Mac session, or through the lane as a request on the PR. The cloud agent finishes everything else and says what's waiting.
