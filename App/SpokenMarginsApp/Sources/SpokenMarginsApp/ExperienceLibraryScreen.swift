@@ -404,6 +404,7 @@ private struct ExperienceLibraryCompactRow: View {
                 .foregroundStyle(AppColors.evergreen)
                 .frame(width: 38, height: 44)
                 .background(AppColors.softGreen.opacity(isCurrentItem ? 0.85 : 0.55))
+                .accessibilityLabel(mediaLabel)
             Button(action: onOpen) {
                 VStack(alignment: .leading, spacing: 3) {
                     if isCurrentItem {
@@ -515,14 +516,7 @@ private struct ExperienceLibraryCompactRow: View {
     }
 
     private var sourceByline: String? {
-        for candidate in [row.sourceTitle, row.author] {
-            guard var value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { continue }
-            if value.hasPrefix("[["), value.hasSuffix("]]") {
-                value = String(value.dropFirst(2).dropLast(2))
-            }
-            if value.caseInsensitiveCompare(row.title) != .orderedSame { return value }
-        }
-        return nil
+        LibraryRowWording.byline(sourceTitle: row.sourceTitle, author: row.author, title: row.title)
     }
 
     private var playActionTitle: String {
@@ -548,7 +542,12 @@ private struct ExperienceLibraryCompactRow: View {
     }
 
     private var mediaLabel: String {
-        row.mediaType.replacingOccurrences(of: "_", with: " ").capitalized
+        LibraryRowWording.kindLabel(
+            mediaType: row.mediaType,
+            sourceReference: row.sourceReference,
+            sourceReferenceType: row.sourceReferenceType,
+            usesNewReader: row.usesNewReader
+        )
     }
 
     private var offlineDetailLabel: String? {

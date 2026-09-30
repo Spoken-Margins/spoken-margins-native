@@ -1,5 +1,12 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 // Seam I2, remote half: the app polls a small manifest on the owner's site and
 // downloads the catalog only when it is newer, verifying size and SHA-256 as the

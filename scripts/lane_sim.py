@@ -99,6 +99,15 @@ def booted_udids() -> set:
     return {d['udid'] for group in listing.get('devices', {}).values() for d in group}
 
 
+def is_available(udid: str) -> bool:
+    """Whether simctl still lists the device as available; True when simctl can't say."""
+    try:
+        listing = json.loads(subprocess.check_output(simctl() + ['list', 'devices', 'available', '--json'], text=True))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return True
+    return any(d.get('udid') == udid for group in listing.get('devices', {}).values() for d in group)
+
+
 def newest_runtime(major: int = IOS_MAJOR) -> str | None:
     runtimes = json.loads(subprocess.check_output(simctl() + ['list', 'runtimes', '--json'], text=True))
     usable = [r for r in runtimes.get('runtimes', [])
