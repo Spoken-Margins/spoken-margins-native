@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 
 /// A user-owned interchange document. Block numbers address the unchanged text,
 /// not synthesized timestamps or a model's reproduction of the source.
@@ -36,7 +40,8 @@ public struct ListeningEdition: Codable, Equatable, Sendable {
         self.text = text; self.generator = generator; self.overview = overview; self.scenes = scenes
     }
     public var sourceDigest: String { Self.digest(text) }
-    public var itemID: String { "edition-" + Self.digest((sourceURL ?? "") + "\n" + text) }
+    public static let itemIDPrefix = "edition-"
+    public var itemID: String { Self.itemIDPrefix + Self.digest((sourceURL ?? "") + "\n" + text) }
     public var revision: String { Self.digest((try? String(data: encoded(), encoding: .utf8)) ?? "") }
     public static func digest(_ text: String) -> String {
         SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()

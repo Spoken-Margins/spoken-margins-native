@@ -8,7 +8,8 @@ import Foundation
 /// Reconciliation brings the rows back in line with the disk, whatever deleted the file:
 /// - a row whose file is gone is dropped (only the row: this never deletes a file);
 /// - a row whose file changed size takes the size on disk;
-/// - rows naming the same file become one, keeping every protection.
+/// - rows naming the same file become one, keeping every protection;
+/// - rows in a directory that manages its own size are dropped (#313, `OfflineLedgerScope`).
 public struct OfflineLedgerReconciliation: Equatable, Sendable {
     /// What's at a row's path now.
     public enum PathState: Equatable, Sendable {
@@ -23,6 +24,7 @@ public struct OfflineLedgerReconciliation: Equatable, Sendable {
     public private(set) var missingRowCount = 0
     public private(set) var resizedRowCount = 0
     public private(set) var mergedRowCount = 0
+    public private(set) var selfManagedRowCount = 0
     /// Recorded bytes minus reconciled bytes: what the ledger stops charging.
     public private(set) var bytesNoLongerCharged: Int64 = 0
 
@@ -32,7 +34,7 @@ public struct OfflineLedgerReconciliation: Equatable, Sendable {
 
     /// One line for diagnostics.
     public var summary: String {
-        "missing=\(missingRowCount) resized=\(resizedRowCount) merged=\(mergedRowCount) bytes=\(bytesNoLongerCharged)"
+        "missing=\(missingRowCount) resized=\(resizedRowCount) merged=\(mergedRowCount) selfManaged=\(selfManagedRowCount) bytes=\(bytesNoLongerCharged)"
     }
 
     public static func plan(assets: [OwnedOfflineAsset], pathState: (String) -> PathState) -> OfflineLedgerReconciliation {
@@ -41,6 +43,12 @@ public struct OfflineLedgerReconciliation: Equatable, Sendable {
         for path in byPath.keys.sorted() {
             guard let rows = byPath[path] else { continue }
             let recorded = rows.reduce(Int64(0)) { $0 + $1.byteCount }
+            if OfflineLedgerScope.isSelfManaged(path) {
+                result.removedAssetIds += rows.map(\.id)
+                result.selfManagedRowCount += rows.count
+                result.bytesNoLongerCharged += recorded
+                continue
+            }
             switch pathState(path) {
             case .other:
                 continue
@@ -86,5 +94,21 @@ public struct OfflineLedgerReconciliation: Equatable, Sendable {
         if (lhs.itemId != nil) != (rhs.itemId != nil) { return lhs.itemId != nil }
         if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
         return lhs.id < rhs.id
+    }
+}
+
+/// What the offline storage ledger tracks under Application Support.
+///
+/// #313: the rendered speech cache keeps its own size limit and evicts its own files by LRU, without
+/// telling the ledger. Tracking it too meant rows for files the cache had already deleted, so the
+/// ledger total drifted from the disk between reconciliations. The ledger leaves it alone: adoption
+/// skips it, and reconciliation drops rows an earlier build adopted there (only the rows).
+public enum OfflineLedgerScope {
+    public static let renderedSpeechCacheDirectory = "RenderedSpeechCache"
+    public static let selfManagedDirectories: Set<String> = [renderedSpeechCacheDirectory]
+
+    /// True for a ledger-relative path inside a directory that manages its own size.
+    public static func isSelfManaged(_ relativePath: String) -> Bool {
+        selfManagedDirectories.contains { relativePath.hasPrefix($0 + "/") }
     }
 }

@@ -63,7 +63,7 @@ final class PrivateFeedLinkTests: XCTestCase {
             defer { try? FileManager.default.removeItem(at: root) }
             let packageURL = root.appendingPathComponent("private.spokenmargins")
 
-            _ = try SpokenMarginsPackageArchive.write(try prepare(feed), to: packageURL)
+            _ = try exportPacket(try prepare(feed), to: packageURL)
 
             let archive = try Archive(url: packageURL, accessMode: .read)
             for entry in archive {
@@ -82,7 +82,7 @@ final class PrivateFeedLinkTests: XCTestCase {
             let root = try temporaryDirectory()
             defer { try? FileManager.default.removeItem(at: root) }
             let packageURL = root.appendingPathComponent("private.spokenmargins")
-            _ = try SpokenMarginsPackageArchive.write(try prepare(feed), to: packageURL)
+            _ = try exportPacket(try prepare(feed), to: packageURL)
 
             let verified = try SpokenMarginsPackageArchive.read(
                 from: packageURL,

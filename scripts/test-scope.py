@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 APP_SOURCES = 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/'
 APP_TESTS = 'App/SpokenMarginsAppTests/'
+UI_TESTS = 'App/SpokenMarginsAppUITests/'
 SESSIONKIT = 'Packages/SessionKit/'
 SESSIONKIT_TESTS = SESSIONKIT + 'Tests/'
 
@@ -67,6 +68,7 @@ REASONS = {
     'app-ui': 'app UI',
     'app-orchestration': 'app orchestration',
     'app-tests': 'app-hosted tests',
+    'ui-tests': 'UI test scripts (compile only)',
     'app-other': 'app target files',
     'unknown': 'unclassified path, defaulting to a compile',
 }
@@ -80,6 +82,9 @@ NOTES = {
     'audio': 'Audio: host and app tests fake the audio session. Audible behavior is the owner\'s T6 check.',
     'app-ui': 'If a listener would notice this change, the milestone needs a T4 journey.',
     'guard': 'After changing the guard, run scripts/install-lane-guard.py so new sessions use it.',
+    'ui-tests': 'Scripted journeys run only in the integration run on next\'s tip, never per PR. Name the '
+                'journey the script covers in the PR, and add a new script to TestPlans/scripted-journeys.json '
+                'under probation (docs/journeys.md, Scripted journeys).',
 }
 
 T2_COMMANDS = [
@@ -151,7 +156,7 @@ def classify_path(root, path, diff_text='', build_script_paths=frozenset()):
     if path.startswith(BROWSER_PREFIXES) or path in BROWSER_FILES:
         return Finding(path, 1, 'browser', commands=['npm run test:browser-extraction'])
     if path.startswith(PERSISTENCE_FIXTURES):
-        return Finding(path, 2, 'persistence', swift_filters=['PriorBuildPersistenceTests'],
+        return Finding(path, 2, 'persistence', swift_filters=['PriorBuildPersistenceTests', 'Build29UpgradeProgressTests'],
                        commands=['.venv/bin/python scripts/validate-contracts.py'] + T2_COMMANDS)
     if path.startswith(PACKET_FIXTURES) or (path.startswith('Contracts/schemas/') and name in PACKET_SCHEMAS):
         return Finding(path, 2, 'packet', swift_filters=['SharingTests'],
@@ -177,6 +182,10 @@ def classify_path(root, path, diff_text='', build_script_paths=frozenset()):
         return Finding(path, 1, 'sessionkit', swift_filters=filters)
     if path.startswith(BUILD_FILES):
         return Finding(path, 2, 'build', commands=T2_COMMANDS)
+    if path.startswith(UI_TESTS):
+        # Scripted journeys compile in the PR's build and run only in the integration run (#445), so a UI test
+        # file never escalates to T3, whatever its name, and adds no classes to a T3 request.
+        return Finding(path, 2, 'ui-tests', commands=T2_COMMANDS)
     if path.startswith(APP_TESTS):
         return Finding(path, 3, 'app-tests', app_tests=test_classes([root / path]), commands=T2_COMMANDS)
     if path.startswith('App/'):
@@ -226,8 +235,10 @@ def classify(paths, diffs=None, root=ROOT):
         tests = ', '.join(f'SpokenMarginsAppTests/{t}' for t in app_tests) or '<the app test classes that cover it>'
         lane = f'/lane T3\ntests: {tests}'
     top = [f for f in findings if f.tier == tier]
+    # app_tests: the classes the lane runner adds to every T3 request for this diff (#351).
     return {'tier': f'T{tier}', 'why': sorted({REASONS[f.category] for f in top}),
-            'files': [f.as_dict() for f in findings], 'run': commands, 'lane_request': lane, 'notes': notes}
+            'files': [f.as_dict() for f in findings], 'run': commands, 'lane_request': lane, 'notes': notes,
+            'app_tests': app_tests}
 
 
 def git(*args):

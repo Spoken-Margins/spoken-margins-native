@@ -172,6 +172,9 @@ public protocol AudioPlaybackClient {
     func prepareSpeechText(_ text: String) throws -> String
     func play(targetId: String) throws
     func play(targetId: String, from charOffset: Int) throws
+    /// A listener's explicit move to `charOffset` while speaking: unlike a repeated play or a
+    /// restart, it must move even when it's close to the live position (#303).
+    func play(targetId: String, seekingTo charOffset: Int) throws
     func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws
     func seek(toMediaTimeMs mediaTimeMs: Int) throws
     func requestMediaSeek(toMediaTimeMs mediaTimeMs: Int) throws -> MediaSeekRequest
@@ -296,6 +299,10 @@ public extension AudioPlaybackClient {
 
     func play(targetId: String, from charOffset: Int) throws {
         try play(targetId: targetId)
+    }
+
+    func play(targetId: String, seekingTo charOffset: Int) throws {
+        try play(targetId: targetId, from: charOffset)
     }
 
     func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {

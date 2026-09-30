@@ -549,6 +549,25 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         try save(kind: "feed_subscription", id: subscription.id, sessionId: nil, itemId: nil, value: subscription)
     }
 
+    /// Collections are their own record kind with no item_id, so Build 29 (which reads every
+    /// record by an explicit kind) never sees them, and deleting an item never deletes one (#489).
+    public func saveItemCollection(_ collection: ItemCollection) throws {
+        try save(kind: "item_collection", id: collection.id, sessionId: nil, itemId: nil, value: collection)
+    }
+
+    /// Oldest first, so the listener's collections keep a stable order.
+    public func loadItemCollections() throws -> [ItemCollection] {
+        let collections: [ItemCollection] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;",
+            ["item_collection"]
+        )
+        return collections.sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
+    }
+
+    public func deleteItemCollection(id: String) throws {
+        try deleteRecord(kind: "item_collection", id: id)
+    }
+
     public func loadFeedSubscriptions() throws -> [FeedSubscription] {
         try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at DESC, id;", ["feed_subscription"])
     }
@@ -1036,6 +1055,31 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
     public func loadStructuredDocument(itemId: String) throws -> StructuredDocument? {
         let documents: [StructuredDocument] = try loadByItem(kind: Self.structuredDocumentKind, itemId: itemId)
         return documents.max { $0.extraction.version < $1.extraction.version }
+    }
+
+    /// The items that have a structured document, read without decoding the
+    /// documents, so the Library can mark new-reader PDFs cheaply (#359).
+    public func loadStructuredDocumentItemIds() throws -> Set<String> {
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(
+                db,
+                "SELECT DISTINCT item_id FROM records WHERE kind = ? AND item_id IS NOT NULL;",
+                -1,
+                &statement,
+                nil
+            ) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_structured_document_item_ids")
+            }
+            defer { sqlite3_finalize(statement) }
+            bind(statement, index: 1, value: Self.structuredDocumentKind)
+            var itemIds: Set<String> = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let raw = sqlite3_column_text(statement, 0) else { continue }
+                itemIds.insert(String(cString: raw))
+            }
+            return itemIds
+        }
     }
 
     public func applyStructuredDocumentUpgrade(_ upgrade: StructuredDocumentUpgrade) throws {

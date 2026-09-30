@@ -1,0 +1,198 @@
+# App Store submission answers (DRAFT)
+
+**Status: DRAFT for Cole's review. Nothing here has been entered in App Store Connect, posted or published.** This page drafts the answers #175 needs and checks them against the code on `next` at `70f043f` (2026-09-30). Paths are shortened:
+
+- `A/` is `App/SpokenMarginsApp/Sources/SpokenMarginsApp/`.
+- `M` is `A/Gate1AppModel.swift`.
+- `SK/` is `Packages/SessionKit/Sources/`.
+
+Re-check the citations if the network code changes before submission.
+
+## 1. App Privacy ("nutrition label")
+
+### Short answer
+
+- **Does the app collect data?** Draft answer: **No, "Data Not Collected"**, on one condition (question Q1): the owner's server must keep no logs that tie an IP address to a request beyond serving it.
+- **Tracking:** No. The app has no ad or analytics SDK and never calls App Tracking Transparency, AdServices, `ASIdentifierManager` or `identifierForVendor`. The only packages are onnxruntime 1.24.2 and ZIPFoundation 0.9.20.
+
+### What leaves the device
+
+Apple counts data as "collected" when it leaves the device and the developer or the developer's partners can keep it longer than it takes to answer the request. The app has no account, backend database, analytics or crash SDK. Everything that does leave the device:
+
+| # | When | Where it goes | What goes out | Code |
+|---|---|---|---|---|
+| 1 | **Every launch, automatically** | `spokenmargins.proximitytoprogress.com/onboarding/v1/manifest.json`, then its tour audio (the owner's server) | Nothing beyond the request itself (IP address) | `M:15623`, `A/GuidedOnboardingCoordinator.swift:29`, `:52`, `:74`, `:83` |
+| 2 | First run: the podcast drawer opens by itself | `spokenmargins.proximitytoprogress.com/onboarding/catalog/v1/` (owner's server), then podcast artwork from `is1-ssl.mzstatic.com` | Nothing beyond the request | `SK/SessionKit/SourceCatalogStore.swift:32`, `:168-174`; `A/CatalogDrawer.swift:59`, `:232` |
+| 3 | Following a show or site (user), then an **automatic refresh** at launch, at most every 6 hours | The feed or site the user followed; `substack.com` for Substack links | The feed URL (a private feed URL can carry a token), plus ETag and If-Modified-Since | `A/FollowedSourceCoordinator.swift:197`, `:292`, `:334`, `:349`; `SK/SessionKitFeeds/SubstackPublicationResolver.swift:119`; `M:15622` |
+| 4 | User pastes or shares a podcast link; also when **importing someone else's packet** | `itunes.apple.com/lookup` and `/search`, `open.spotify.com/oembed` and `/embed`, publisher pages and feeds | The pasted link. For a Spotify link, the episode title as a search term | `A/PublicPodcastLinkResolver.swift:402-421`, `:1284`, `:1388`, `:1410`; packet import `M:8208` |
+| 5 | After a podcast import that lists transcripts, **automatically** | The publisher's transcript URL | Nothing beyond the request | `M:12196` (scheduled at `M:3277`) |
+| 6 | Playback (user), offline download (**automatic on Wi-Fi**, user-only on cellular), and transcribing a short window of a streamed episode's audio after a Margin is recorded (**automatic**) | The episode's audio host | The enclosure URL | `SK/SessionKitAudio/AudioAdapters.swift:1855`, `:3615-3626`; `A/PodcastDownloadCoordinator.swift:453`, `:472`; `SK/SessionKit/PodcastDownloads.swift:153-158` |
+| 7 | User adds an article (share, paste, Safari extension handoff, followed article, Read Later) | The article's site, in a hidden non-persistent web view with page scripts and images blocked | The article URL | `A/AppOwnedReadablePageExtractor.swift:53-69` |
+| 8 | User shares a PDF link | The PDF's host | The PDF URL | `M:3557` |
+| 9 | User connects Readwise Reader or Raindrop.io, and taps Refresh | `readwise.io/api/v3/list/`, `api.raindrop.io/rest/v1/raindrops/0` | The user's own access token. It is kept in the Keychain as `WhenUnlockedThisDeviceOnly` (`A/ReadLaterModel.swift:21`, `M:16835`) | `SK/SessionKit/ReadLaterClient.swift:29-36`; `A/ReadLaterModel.swift:52` |
+| 10 | **Off in this build.** The OpenAI features would send an API key, source text, Margin transcripts and questions to `api.openai.com` | — | — | `A/OpenAIResponsesClient.swift:30`; turned off by `SMRemoteProviderExperienceEnabled: false` (`project.yml:117`, read at `A/LocalFoundationModels.swift:7-18`) |
+| 11 | First on-device transcription | Apple's speech-model download (`AssetInventory`) | The locale | `SK/SessionKitAudio/AudioAdapters.swift:226-229` |
+
+Also checked, and nothing leaves the device:
+
+- **Speech recognition** runs on the device. Every request sets `requiresOnDeviceRecognition = true` (`SK/SessionKitAudio/AudioAdapters.swift:297`).
+- **Microphone recordings** (Margins) stay in local files. They leave only when the user exports a packet through the share sheet (`A/SharingExperience.swift:868`, `A/ExportScreen.swift:116`, `:204`).
+- **Packets** hold the Margins' audio and text, the source URLs, fingerprints, and an optional sender label the user types (`A/SharingExperience.swift:79`, `:287`). The app never uploads a packet: no share-link server is wired up, and the entitlements hold only the app group.
+- **ShazamKit** matches against a catalog built on the device (`SK/SessionKitAudio/PodcastAnchorEvidence.swift:285`, `:354`), never Shazam's servers.
+- **Share, Safari and widget extensions** make no network calls. The Live Activity has no push (`pushType: nil`).
+- **Not present anywhere:** analytics, crash reporting SDKs, MetricKit upload, remote push, CloudKit or iCloud, Sign in with Apple, location, contacts, photos, health, StoreKit.
+- **Never called today:** a server-config fetch (`SK/SessionKit/BridgeManifestStore.swift:11-12`) and a podcast name search (`SK/SessionKit/ITunesSearchSourceResolver.swift`) exist, but nothing creates them. Re-check this page if either gets wired up.
+
+### Answer per data type
+
+Every answer below is **Not collected**, which makes "Linked to identity" and "Used for tracking" moot. The reason column says why.
+
+| Apple data type | Answer | Why |
+|---|---|---|
+| Contact info: name, email, phone, address, other | Not collected | No account or sign-in. The packet sender label is typed by the user and goes only where they send the file (row "Packets" above) |
+| Health, fitness | Not collected | No HealthKit |
+| Financial: payment, credit, other | Not collected | No StoreKit, no purchases |
+| Location: precise, coarse | Not collected | No Core Location. The owner's server sees IP addresses at launch (row 1); see Q1 |
+| Sensitive info | Not collected | — |
+| Contacts | Not collected | — |
+| User content: audio | Not collected | Recordings stay on the device and are shared only as a file the user sends |
+| User content: other (Margin text, notes) | Not collected | Same. It would change to "Collected, shared with OpenAI, not linked, not tracking" if `SMRemoteProviderExperienceEnabled` is turned on (row 10) |
+| User content: emails or texts, photos or videos, gameplay, customer support | Not collected | Support is by email from the user's own mail app |
+| Browsing history | Not collected | Article and feed URLs go only to the site itself (rows 3, 7) |
+| Search history | Not collected | Episode titles go to Apple's iTunes Search to answer the request (row 4). The app keeps no search history of its own |
+| Identifiers: user ID, device ID | Not collected | None created or sent |
+| Purchases | Not collected | — |
+| Usage data: product interaction, advertising, other | Not collected | Playback events are logged on the device only (`M:628`). Diagnostics go out only when the user copies them into an email (`A/SettingsScreen.swift:351`) |
+| Diagnostics: crash, performance, other | Not collected | No crash SDK. Crash logs reach the developer only through Apple's own opt-in sharing (Xcode Organizer). Check Apple's current guidance on declaring that at submission (#175, "Crash reporting through Xcode Organizer") |
+| Surroundings, body | Not collected | — |
+| Other data | Not collected | Readwise and Raindrop tokens go only to the user's own account at that service (row 9) |
+
+### Mismatches with the privacy manifests
+
+The data answers agree with `App/SpokenMarginsApp/Sources/PrivacyInfo.xcprivacy`, which declares `NSPrivacyTracking` false and no collected data types. The required-reason API declarations don't agree with the code:
+
+1. **Disk space, main app.** `A/OfflineStorageLedger.swift:65` reads `volumeAvailableCapacityForImportantUsageKey` before writing offline audio. The manifest doesn't declare `NSPrivacyAccessedAPICategoryDiskSpace` (reason `E174.1`). Issue: #514.
+2. **System boot time, main app.** `ProcessInfo.processInfo.systemUptime` measures elapsed time, for example at `M:646`, `A/SupertonicSpeechPlaybackClient.swift:259` and `A/AutomaticMarginNoteGatherer.swift:19`. The manifest doesn't declare `NSPrivacyAccessedAPICategorySystemBootTime` (reason `35F9.1`). Issue: #515.
+3. **File timestamps, widget.** The widget compiles all of `App/Gate2Shared/Sources` (`project.yml:142-146`), including `SourceLinkHandoff.swift:130-137` and `SpokenMarginsPackageHandoff.swift:96-103`, which read `.contentModificationDateKey`. Its manifest (`App/SpokenMarginsGate2Widget/Sources/PrivacyInfo.xcprivacy`) declares only `UserDefaults`. Fixed: it now declares `NSPrivacyAccessedAPICategoryFileTimestamp` with reason `C617.1`, as the Share extension does. Issue: #516. The Share extension and Safari extension manifests match their code.
+
+### The privacy policy doesn't match either
+
+The draft label above describes the app. The public privacy policy (`Site/privacy/index.html`) says the app "connects to outside services only when needed to retrieve a source you select or when you deliberately share". That misses several things the table shows:
+
+- the launch-time fetches from the developer's own server (rows 1 and 2);
+- automatic feed refresh, transcript fetches and Wi-Fi downloads (rows 3, 5, 6);
+- a recipient's device fetching the source URLs in a packet someone sent them (row 4);
+- Readwise and Raindrop (row 9).
+
+It also says there is "no developer-operated … backend", but rows 1 and 2 use one. Updating the policy is #455's job; this list is its input.
+
+### Questions for Cole
+
+- **Q1. Server logs.** Does the VPS web server keep access logs (IP address, time, path) for `/onboarding/`? If they're kept only briefly for security, "Data Not Collected" holds. If they're kept longer, or used for anything else, answer "Coarse location" or "Other data" as collected, not linked, not tracking. My pick: keep logs short-lived and say so in the privacy policy.
+
+## 2. App Review notes (DRAFT)
+
+> DRAFT. Spoken Margins needs no account and has no purchases. Everything below works on a fresh install.
+>
+> **Podcasts:**
+> 1. On first launch the "Popular podcasts" drawer opens. Follow any show and open an episode.
+> 2. Tap Play.
+> 3. While it plays, tap the record button to speak a Margin, or type one. The Margin is anchored to that moment in the episode.
+>
+> **Articles and PDFs:**
+> 1. In Safari, open any article and share it to Spoken Margins, or paste its link into Add.
+> 2. The app reads the article aloud.
+> 3. Text PDFs work the same way.
+>
+> **Guided tour:** the library starts with a "Welcome to Spoken Margins" item and a Guided Tour.
+>
+> **Sharing:**
+> 1. Open a Margin and choose Share.
+> 2. This exports a `.spokenmargins` file through the iOS share sheet.
+> 3. Opening that file on another device imports the Margins, placed in that listener's own copy of the source.
+> 4. The attached demo file [DEMO PACKET — TO PREPARE] shows this on a public podcast episode.
+>
+> **Voices:** the James and Lily voices run on the device. They require accepting the in-app Terms of Use, which supplement Apple's standard EULA. The system voice works without it.
+>
+> **Permissions:** the microphone is used only to record the Margins you speak. Speech recognition runs on the device.
+>
+> **Background audio** keeps narration and podcasts playing with the screen locked.
+>
+> Contact: [SUPPORT CONTACT — TO FILL].
+
+Facts behind the draft:
+
+- First-run content: `M:1836-1848` and `M:2569` (welcome item), `M:1850` and `M:1961` (Guided Tour), `A/CatalogDrawer.swift:45` (the 192-show bundled catalog).
+- Content types: `A/ExperienceAddSourceFlow.swift:441-449`.
+- Package type: `project.yml:92-114`.
+- Terms gate: `docs/legal/spoken-margins-terms.md`.
+- Purpose strings: `project.yml:119-120`.
+- Background modes: `project.yml:122-124`.
+- There's no free-text podcast search in this build (#471 would add one), so the notes point the reviewer at the drawer or a pasted link.
+- **Demo packet:** the repo has none. `Contracts/fixtures/interjection-packages` holds JSON descriptions, not packets. Before submitting, export one from a TestFlight build on a public episode and attach it.
+
+## 3. Listing (DRAFT)
+
+**Name:** Spoken Margins (`project.yml:67`). **Subtitle, DRAFT:** "Talk back to what you listen to".
+
+**Description, DRAFT:**
+
+> DRAFT. Spoken Margins turns articles, PDFs and podcasts into something you can listen to and answer back.
+>
+> Listen to a podcast episode, or have an article or PDF read aloud by an on-device voice. When something strikes you, speak or type a Margin. It's pinned to that exact moment in the source.
+>
+> Share your Margins as a small file. A friend opens it and hears your thoughts at the right place in their own copy of the same episode or article.
+>
+> - Podcasts from Apple Podcasts, Spotify or RSS links, plus a starter list of popular shows.
+> - Articles from Safari, the share sheet or a pasted link, and text PDFs.
+> - Natural on-device voices; nothing you record is uploaded.
+> - No account, no ads, no tracking.
+
+**Keywords, DRAFT** (100 characters max; this is 96): `podcast,notes,annotate,read aloud,text to speech,listening,margins,articles,pdf,voice memo,share`
+
+**Category:** Productivity (`project.yml:68`, `LSApplicationCategoryType`). **Secondary, DRAFT:** Education.
+
+**Age rating questionnaire, DRAFT:**
+
+| Question | Draft answer | Why |
+|---|---|---|
+| Unrestricted web access | No | No in-app browser. The only web view is hidden and pulls text from a link the user adds (`A/AppOwnedReadablePageExtractor.swift:30-60`) |
+| User-generated content, messaging or chat | No | Margins are shared only as files the user sends. There's no public feed, profile or comment |
+| Violence, sexual content, drugs, gambling, horror, medical | None | The app ships no such content |
+| Profanity or crude humor; mature themes | **Cole's call, Q2** | See below |
+| Contests, loot boxes, in-app purchases | None | No StoreKit |
+| Parental controls, age assurance | None | — |
+
+**Q2. Explicit shows in the starter list.** 48 of the 192 bundled podcasts are marked explicit (`Site/onboarding/catalog/v1/catalog.json`, bundled via `project.yml:33`). The model carries the flag (`SK/SessionKit/SourceCatalog.swift:112`), but the drawer neither shows nor filters it. The options:
+
+1. Hide explicit shows from the starter list. The low rating stays honest, at the cost of fewer starter shows.
+2. Keep them and answer "infrequent/mild" for profanity and mature themes. That gives a higher age rating.
+
+My pick is option 1, as a small follow-up. Users can still add any feed they like, as in any podcast app.
+
+**Support URL, DRAFT:** `https://spokenmargins.proximitytoprogress.com/support/` (`Site/support/index.html`; the app links it at `A/SettingsScreen.swift:340`). **Privacy policy URL, DRAFT:** `https://spokenmargins.proximitytoprogress.com/privacy/`. **Support contact:** [SUPPORT CONTACT — TO FILL]. Check both URLs are live before submitting.
+
+**Export compliance:** `ITSAppUsesNonExemptEncryption: false` (`project.yml:116`). The app uses only HTTPS and Apple's own encryption.
+
+## 4. Developer-only UI in a Release build
+
+**None is reachable by a user.**
+
+- **Settings → Developer** (reset library, sample content, runtime profile, the listening-map editor) is inside `#if DEBUG` (`A/SettingsScreen.swift:368-414`).
+- **"Create Recipient Test Session"** (#150) shows only in Debug (`A/Gate1RootView.swift:138-148`).
+- **The OpenAI settings** are hidden by the Info.plist switch (row 10 above).
+- **The `spokenmargins://` URL handler** (`M:8386-8454`) has no reset or seed routes.
+- **The extensions** have no developer UI.
+
+Test hooks are still compiled into Release, though. None has a button; they can only be reached with a launch argument or environment variable, which Xcode and XCTest can pass and a user or App Review can't. One of them deletes the library, so they should still be compiled out: issue #517.
+
+- `--ui-testing` calls `resetAndSeed()`, which deletes the library and loads a fixture (`M:1830`, `M:2479`). Other `--ui-testing` hooks install fake resolvers and seed data (`M:1041`, `:1288`, `:1304`, `:1341`, `:1349`, `:14877`, `:14900`).
+- `SPOKEN_MARGINS_UI_TEST_RECORDING=1` swaps the microphone for a no-op (`M:564`).
+- A second "Create Recipient Test Session" button with no guard sits in a view nothing opens (`A/SharingExperience.swift:932`).
+- `project.yml:34-37` bundles the test fixtures (about 2 MB) into the app for `resetAndSeed`.
+
+Copy that reads as internal, for the listing pass rather than an issue: `A/SettingsScreen.swift:264` ("disabled in this release") and `A/HelpScreen.swift:85-86` ("future server-hosted option").
+
+## 5. Download size input for #175
+
+The bundled Supertonic 3 INT8 voice is **148,064,378 bytes (148.1 MB, 141.2 MiB)** across 22 files. The four ONNX models are 144,508,203 bytes of that. Source: the sum of `bytes` in `App/SpokenMarginsApp/Resources/Supertonic/asset-manifest.json`. The onnxruntime framework comes on top of that. The real download and install sizes come from App Store Connect's size report for a TestFlight build.

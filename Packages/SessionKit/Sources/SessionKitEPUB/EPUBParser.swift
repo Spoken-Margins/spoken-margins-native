@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationXML)
+import FoundationXML
+#endif
 import SessionKit
 import ZIPFoundation
 
@@ -222,15 +225,22 @@ private class DepthDelegate: NSObject, DepthLimitedXMLDelegate {
         if depth > maximumDepth { depthError = .archiveLimitExceeded("xml_depth"); parser.abortParsing() }
     }
     func leave() { depth = max(0, depth - 1) }
+    // Declared here so subclasses override them. Without the Objective-C runtime (Linux),
+    // conformance is fixed on this class, and methods only declared in a subclass would
+    // never be called: the protocol's default no-ops would run instead.
+    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {}
+    func parser(_ parser: XMLParser, foundCharacters string: String) {}
+    func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {}
+    func parserDidEndDocument(_ parser: XMLParser) {}
 }
 
 private final class ContainerXMLDelegate: DepthDelegate {
     var rootfilePath: String?
-    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
+    override func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
         enter(parser)
         if elementName.lowercased().hasSuffix("rootfile") { rootfilePath = attributeDict["full-path"] }
     }
-    func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) { leave() }
+    override func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) { leave() }
 }
 
 private struct OPFManifestItem { var href: String; var mediaType: String; var properties: String }
@@ -244,7 +254,7 @@ private final class OPFXMLDelegate: DepthDelegate {
     var language: String?
     private var capture: String?
     private var text = ""
-    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
+    override func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
         enter(parser)
         let name = elementName.lowercased().split(separator: ":").last.map(String.init) ?? elementName.lowercased()
         if name == "item", let id = attributeDict["id"], let href = attributeDict["href"] {
@@ -253,8 +263,8 @@ private final class OPFXMLDelegate: DepthDelegate {
         else if name == "spine" { spineTOC = attributeDict["toc"] }
         else if name == "title" || name == "creator" || name == "language" { capture = name; text = "" }
     }
-    func parser(_ parser: XMLParser, foundCharacters string: String) { if capture != nil { text += string } }
-    func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
+    override func parser(_ parser: XMLParser, foundCharacters string: String) { if capture != nil { text += string } }
+    override func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
         let name = elementName.lowercased().split(separator: ":").last.map(String.init) ?? elementName.lowercased()
         if name == capture { if name == "title" { title = text }; if name == "creator" { author = text }; if name == "language" { language = text }; capture = nil }
         leave()
@@ -266,19 +276,19 @@ private final class XHTMLTextDelegate: DepthDelegate {
     private var current = ""
     private let blockElements: Set<String> = ["p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote"]
     private var ignoredDepth = 0
-    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
+    override func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
         enter(parser)
         let name = elementName.lowercased().split(separator: ":").last.map(String.init) ?? elementName.lowercased()
         if ignoredDepth > 0 || ["script", "style", "svg", "math", "iframe"].contains(name) { ignoredDepth += 1; return }
         if blockElements.contains(name), !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { flush() }
     }
-    func parser(_ parser: XMLParser, foundCharacters string: String) { if ignoredDepth == 0 { current += string } }
-    func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
+    override func parser(_ parser: XMLParser, foundCharacters string: String) { if ignoredDepth == 0 { current += string } }
+    override func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
         let name = elementName.lowercased().split(separator: ":").last.map(String.init) ?? elementName.lowercased()
         if ignoredDepth > 0 { ignoredDepth -= 1 } else if blockElements.contains(name) { flush() }
         leave()
     }
-    func parserDidEndDocument(_ parser: XMLParser) { flush() }
+    override func parserDidEndDocument(_ parser: XMLParser) { flush() }
     private func flush() {
         let clean = current.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
         if !clean.isEmpty { blocks.append(clean) }
@@ -305,7 +315,7 @@ private final class NavigationXMLDelegate: DepthDelegate {
     private var stack: [RawNavigationBuilder] = []
     private var capturesTitle = false
     private var text = ""
-    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
+    override func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
         enter(parser)
         let name = elementName.lowercased().split(separator: ":").last.map(String.init) ?? elementName.lowercased()
         if name == "li" || name == "navpoint" { stack.append(RawNavigationBuilder()) }
@@ -316,8 +326,8 @@ private final class NavigationXMLDelegate: DepthDelegate {
         }
         if name == "text" { capturesTitle = true; text = "" }
     }
-    func parser(_ parser: XMLParser, foundCharacters string: String) { if capturesTitle { text += string } }
-    func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
+    override func parser(_ parser: XMLParser, foundCharacters string: String) { if capturesTitle { text += string } }
+    override func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
         let name = elementName.lowercased().split(separator: ":").last.map(String.init) ?? elementName.lowercased()
         if name == "a" || name == "text" {
             if stack.last?.title.isEmpty == true { stack.last?.title = text }
