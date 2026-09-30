@@ -228,19 +228,26 @@ struct ExperienceSourcesScreen: View {
         let candidates = filteredCandidates
         guard order == .top else { return candidates.map { OrderedCandidate(candidate: $0) } }
         let byID = Dictionary(candidates.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let sourceIDs = rankingSourceIDs
         let inputs = candidates.map { candidate -> FollowingRankInput in
             switch candidate {
             case .localFile(let file): FollowingRankInput(id: candidate.id, sourceID: nil, publishedAt: file.modifiedAt)
-            case .followedSource(let entry): FollowingRankInput(id: candidate.id, sourceID: entry.subscriptionId, publishedAt: entry.publishedAt)
+            case .followedSource(let entry): FollowingRankInput(id: candidate.id, sourceID: sourceIDs[entry.subscriptionId], publishedAt: entry.publishedAt)
             }
         }
         return FollowingRanker.rank(inputs, asOf: Date(), signals: ranking.signals, preferences: ranking.preferences)
             .compactMap { ranked in byID[ranked.id].map { OrderedCandidate(candidate: $0, reason: ranked.reason) } }
     }
 
+    /// Subscription id → the followed source's SourceIdentity id, which the I4 log (#483) and
+    /// Pin / Less key on. One lookup per followed feed, not per inbox entry.
+    private var rankingSourceIDs: [String: String] {
+        Dictionary(model.feedSubscriptions.map { ($0.id, $0.source.id) }, uniquingKeysWith: { first, _ in first })
+    }
+
     private func sourceID(of candidate: QuickAddCandidate) -> String? {
-        if case .followedSource(let entry) = candidate { return entry.subscriptionId }
-        return nil
+        guard case .followedSource(let entry) = candidate else { return nil }
+        return model.feedSubscriptions.first { $0.id == entry.subscriptionId }?.source.id
     }
 
     private func mark(of candidate: QuickAddCandidate) -> FollowingPreferences.Mark? {
@@ -470,17 +477,22 @@ final class FollowingRankingModel: ObservableObject {
     @Published private(set) var preferences = FollowingRankingModel.preferencesURL.map(FollowingPreferences.load(from:)) ?? FollowingPreferences()
     @Published private(set) var signals: [String: FollowingSourceSignals] = [:]
 
-    /// Application Support, where the I4 log (#483) is written too.
+    /// The I4 log's directory: `ListeningSignalRecorder.defaultFileURL` (#483, PR #567) puts it
+    /// in Application Support/SpokenMargins/ListeningSignals. Pin and Less sit next to it.
     nonisolated static var directory: URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appending(path: "SpokenMargins/ListeningSignals", directoryHint: .isDirectory)
     }
 
     nonisolated static var preferencesURL: URL? {
         directory?.appending(path: FollowingPreferences.fileName, directoryHint: .notDirectory)
     }
 
-    /// The I4 engagement log. nil until #483's recorder lands; Top is then newest-first plus Pin and Less.
-    nonisolated static var signalLogURL: URL? { nil }
+    /// The I4 engagement log. Until #483's recorder writes it, there is no file, and Top is
+    /// newest-first plus Pin and Less.
+    nonisolated static var signalLogURL: URL? {
+        directory?.appending(path: "i4-engagement.jsonl", directoryHint: .notDirectory)
+    }
 
     /// Each time Following appears, since the log keeps growing.
     func load() async {

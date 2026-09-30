@@ -43,7 +43,8 @@ public struct FollowingSourceSignals: Equatable, Sendable {
     }
 }
 
-/// Reads per-source signals from an I4 JSON Lines log. Tolerant, unlike the research
+/// Reads per-source signals from an I4 JSON Lines log, keyed by the log's `source.id` (the
+/// followed source's SourceIdentity id, not its FeedSubscription id). Tolerant, unlike the research
 /// evaluator: a line that isn't a JSON object, an unknown event, or a row without a source
 /// is skipped, so a newer or damaged log still ranks with whatever it can read.
 public enum FollowingSignalLog {
@@ -72,9 +73,9 @@ public enum FollowingSignalLog {
                   let itemID = item["id"] as? String else { continue }
             var tally = tallies[sourceID] ?? Tally()
             tally.seen.insert(itemID)
-            if durations[itemID] == nil {
-                durations[itemID] = (item["duration_seconds"] as? NSNumber)?.doubleValue ?? 0
-            }
+            // Often null when an item is published and known once it plays, so keep the largest seen.
+            let duration = (item["duration_seconds"] as? NSNumber)?.doubleValue ?? 0
+            durations[itemID] = max(durations[itemID] ?? 0, duration)
             switch event {
             case "listened":
                 if let seconds = (row["seconds"] as? NSNumber)?.doubleValue, seconds > 0 { tally.listened += seconds }
@@ -212,8 +213,8 @@ public enum FollowingRankReason: Equatable, Sendable {
     }
 }
 
-/// One new item to rank. `sourceID` is its followed source (a FeedSubscription id), or nil
-/// for an item with no source, such as a Quick Folder file.
+/// One new item to rank. `sourceID` is its followed source's SourceIdentity id (the I4 log's
+/// `source.id`), or nil for an item with no source, such as a Quick Folder file.
 public struct FollowingRankInput: Equatable, Sendable {
     public var id: String
     public var sourceID: String?

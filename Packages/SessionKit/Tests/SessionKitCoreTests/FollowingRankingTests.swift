@@ -121,12 +121,15 @@ final class FollowingRankingTests: XCTestCase {
         let log = """
         {"schema_version":"i4-engagement.draft-1","event":"item_published","at":"2026-09-01T08:00:00Z","source":{"id":"s1","title":"Systems Weekly"},"item":{"id":"i1","title":"Queues","published_at":"2026-09-01T08:00:00Z","duration_seconds":900}}
         {"schema_version":"i4-engagement.draft-1","event":"listened","at":"2026-09-02T08:00:00Z","source":{"id":"s1"},"item":{"id":"i1","duration_seconds":900},"seconds":300}
+        {"schema_version":"i4-engagement.1","event":"item_published","at":"2026-09-02T08:30:00Z","source":{"id":"s3"},"item":{"id":"i5","duration_seconds":null}}
+        {"schema_version":"i4-engagement.1","event":"listened","at":"2026-09-02T08:40:00Z","source":{"id":"s3"},"item":{"id":"i5","duration_seconds":1200},"seconds":600}
         {"schema_version":"i4-engagement.draft-1","event":"listened","at":"2026-09-02T09:00:00Z","source":{"id":"s1"},"item":{"id":"i1","duration_seconds":900},"seconds":150.5}
         {"schema_version":"i4-engagement.draft-1","event":"margin","at":"2026-09-02T09:10:00Z","source":{"id":"s1"},"item":{"id":"i1"},"margin_kind":"spoken","length":12,"length_unit":"seconds"}
         {"schema_version":"i4-engagement.draft-1","event":"margin","at":"2026-09-02T09:11:00Z","source":{"id":"s1"},"item":{"id":"i1"},"margin_kind":"written","length":40,"length_unit":"characters"}
         {"schema_version":"i4-engagement.draft-1","event":"finish","at":"2026-09-02T09:20:00Z","source":{"id":"s1"},"item":{"id":"i1"}}
         {"schema_version":"i4-engagement.draft-1","event":"finish","at":"2026-09-02T09:21:00Z","source":{"id":"s1"},"item":{"id":"i1"}}
-        {"schema_version":"i4-engagement.draft-1","event":"share","at":"2026-09-03T09:00:00Z","source":{"id":"s1"},"item":{"id":"i2","duration_seconds":null}}
+        {"schema_version":"i4-engagement.1","event":"item_published","at":"2026-09-03T08:00:00Z","source":{"id":"s1"},"item":{"id":"i2","duration_seconds":null}}
+        {"schema_version":"i4-engagement.1","event":"share","at":"2026-09-03T09:00:00Z","source":{"id":"s1"},"item":{"id":"i2","duration_seconds":null}}
         {"schema_version":"i4-engagement.draft-1","event":"dismiss","at":"2026-09-03T09:00:00Z","source":{"id":"s2"},"item":{"id":"i3","duration_seconds":600}}
         {"schema_version":"i4-engagement.draft-1","event":"packet_import","at":"2026-09-03T10:00:00Z","source":{"id":"s2"},"item":null,"packet_id":"p","from_other":true,"margin_count":1}
         {"schema_version":"i4-engagement.draft-2","event":"a_future_event","at":"2026-09-03T11:00:00Z","source":{"id":"s2"},"item":{"id":"i4"}}
@@ -147,6 +150,8 @@ final class FollowingRankingTests: XCTestCase {
         XCTAssertEqual(s2.itemsDismissed, 1)
         XCTAssertEqual(s2.itemsSeen, 2, "an unknown event's item still counts as seen, as rank.py would")
         XCTAssertEqual(s2.dismissRate, 0.5, accuracy: 1e-9)
+        // Unknown when published, known once it played: the largest duration seen counts.
+        XCTAssertEqual(signals["s3"]?.listenedShare ?? 0, 0.5, accuracy: 1e-9)
     }
 
     func testAMissingLogOrPreferencesFileMeansNothingRecorded() throws {
