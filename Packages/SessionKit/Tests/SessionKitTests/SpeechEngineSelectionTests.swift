@@ -81,6 +81,13 @@ final class SpeechEngineSelectionTests: XCTestCase {
             SpeechGenerationStopReason.listenerExplanation(stopReason: "supertonic_render_timeout", fallbackReason: nil)
                 .contains("couldn't keep up")
         )
+        // Play on an item whose generation is already stopped goes straight to the iOS voice.
+        XCTAssertEqual(
+            SpeechGenerationStopReason.listenerExplanation(
+                stopReason: SpeechGenerationStopReason.generationDisabledCode, fallbackReason: nil
+            ),
+            "Generation stopped · using the iOS system voice"
+        )
         XCTAssertEqual(
             SpeechGenerationStopReason.listenerExplanation(stopReason: "memory_warning", fallbackReason: nil),
             SpeechFallbackReason.memoryWarning.listenerExplanation

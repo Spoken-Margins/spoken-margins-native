@@ -9130,7 +9130,7 @@ final class Gate1AppModel: ObservableObject {
         if onDeviceSpeechGenerationStopReason != stopReason { onDeviceSpeechGenerationStopReason = stopReason }
         if canPrepareLibraryAudio { startForegroundAudioPreparationIfNeeded() }
         diagnostics["onDeviceSpeechGeneration"] = state.rawValue
-        if let stopReason { diagnostics["onDeviceSpeechGenerationStopReason"] = stopReason }
+        diagnostics["onDeviceSpeechGenerationStopReason"] = stopReason
         guard state != .rendering else { return }
         onDeviceSpeechGenerationDelayTask?.cancel()
         onDeviceSpeechGenerationDelayTask = nil

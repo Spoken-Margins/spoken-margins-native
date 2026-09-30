@@ -627,7 +627,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             }
             reportGenerationState(
                 .stopped,
-                stopReason: lock.withLock { generationStopReason } ?? "supertonic_generation_disabled"
+                stopReason: lock.withLock { generationStopReason } ?? SpeechGenerationStopReason.generationDisabledCode
             )
             return
         }

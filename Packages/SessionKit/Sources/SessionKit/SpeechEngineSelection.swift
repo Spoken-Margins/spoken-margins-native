@@ -93,6 +93,8 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
 public enum SpeechGenerationStopReason {
     /// Every chunk rendered, but joining them into one saved file failed.
     public static let assemblyFailedCode = "prepared_audio_assembly_failed"
+    /// Play found generation already stopped for this item and went straight to the iOS voice.
+    public static let generationDisabledCode = "supertonic_generation_disabled"
     static let noReasonExplanation = "Generation stopped · using the iOS system voice"
 
     /// The code plus the error, so a device report shows what went wrong.
@@ -103,14 +105,28 @@ public enum SpeechGenerationStopReason {
     /// One line for the player. An assembly failure is the newest event when it is the stop
     /// reason, so it wins over an older fallback; otherwise the fallback reason keeps its
     /// richer wording (it knows which resource refused rendering).
+    ///
+    /// `fallbackReason` is set exactly when the iOS voice took over. Without it, a render
+    /// failure stopped preparing while the on-device voice stayed in charge, so the line says
+    /// why preparing stopped and never that the iOS voice is playing.
     public static func listenerExplanation(stopReason: String?, fallbackReason: SpeechFallbackReason?) -> String {
         if let stopReason, stopReason.hasPrefix(assemblyFailedCode) {
             return "Couldn't save the finished audio on this iPhone. Tap Retry to try again."
         }
         if let fallbackReason { return fallbackReason.listenerExplanation }
-        guard let stopReason, !stopReason.isEmpty else { return noReasonExplanation }
+        guard let stopReason, !stopReason.isEmpty, stopReason != generationDisabledCode else {
+            return noReasonExplanation
+        }
+        // The client sends these only when it has switched to the iOS voice.
         if let known = SpeechFallbackReason(rawValue: stopReason) { return known.listenerExplanation }
-        return SpeechFallbackReason(supertonicCode: stopReason, resourceBlock: nil).listenerExplanation
+        switch SpeechFallbackReason(supertonicCode: stopReason, resourceBlock: nil) {
+        case .renderTooSlow:
+            return "The on-device voice stopped preparing because it couldn't keep up. Tap Retry to try again."
+        case .deviceTooWarm, .memoryWarning:
+            return "The on-device voice stopped preparing while this iPhone was too warm or low on memory. Tap Retry to try again."
+        case .playbackFailed, .listenerStoppedGeneration:
+            return "The on-device voice stopped preparing after a rendering problem. Tap Retry to try again."
+        }
     }
 }
 
