@@ -84,6 +84,18 @@ final class ArticleNotesChapterTests: XCTestCase {
         XCTAssertEqual(map.chapters.map(\.title), ["Main argument", "Main argument — part 2"])
     }
 
+    /// A closing "Notes" section is often prose (an Obsidian literature note), so it still splits.
+    func testClosingNotesSectionOfProseStillSplits() throws {
+        let markdown = "# Book\n\n## Summary\n\n" + words(100, "summary") + "\n\n## Notes\n\n"
+            + Array(repeating: words(300, "thought"), count: 10).joined(separator: "\n\n")
+
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "book.md", contents: markdown)
+        XCTAssertNil(parsed.notesStartChar)
+        let titles = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-book")).chapters.map(\.title)
+        XCTAssertFalse(titles.contains("Notes and references"), "\(titles)")
+        XCTAssertTrue(titles.contains("Notes — part 2"), "\(titles)")
+    }
+
     /// PDFs and other canonical maps keep their authored headings, References included.
     func testCanonicalHeadingsKeepTheirReferencesHeading() throws {
         let entries = (1...60).map { "\($0). " + words(30, "reference") }

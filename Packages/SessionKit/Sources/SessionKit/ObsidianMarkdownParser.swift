@@ -443,9 +443,12 @@ public enum ObsidianMarkdownParser {
         return start
     }
 
+    /// Titles that only ever head a list of notes or sources. A plain "Notes" section is often the
+    /// author's (or the listener's own Obsidian) prose, so it isn't one; its footnote definitions
+    /// are still found by `closingFootnotesStart`.
     private static let notesTitles: Set<String> = [
-        "notes", "references", "bibliography", "footnotes", "endnotes", "workscited", "literaturecited",
-        "citations", "notesandreferences", "referencesandnotes", "notesandsources", "sourcesandnotes"
+        "references", "bibliography", "footnotes", "endnotes", "workscited", "literaturecited",
+        "notesandreferences", "referencesandnotes"
     ]
 
     private static func isNotesTitle(_ title: String) -> Bool {
