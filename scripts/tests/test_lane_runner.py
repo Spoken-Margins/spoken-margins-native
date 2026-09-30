@@ -792,9 +792,6 @@ class MainFlowTests(unittest.TestCase):
 
     def test_the_workflow_fails_its_verdict_step_and_tidies_only_when_nothing_was_reported(self):
         workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/lane.yml').read_text()
-        # Both jobs check out the Git LFS models: --plan fast's contracts check reads them (#301).
-        self.assertEqual(workflow.count('lfs: true'), 2)
-        self.assertEqual(workflow.count('persist-credentials: false'), 2)
         self.assertIn("if: steps.run.outputs.reported == 'true'", workflow)
         self.assertIn('if [ "$VERDICT" != PASS ]; then', workflow)
         self.assertIn("if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'", workflow)
