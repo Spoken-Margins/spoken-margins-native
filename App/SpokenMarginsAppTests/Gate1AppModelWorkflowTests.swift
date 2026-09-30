@@ -3678,7 +3678,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertEqual(model.selectedItem.chapters.count, 21)
         XCTAssertEqual(model.selectedItem.chapters.map(\.title), ["Front Matter"] + storyTitles)
-        XCTAssertGreaterThan(model.selectedItem.chapters[1].startChar, 0)
+        // Read safely: with too few chapters (#347) the index crashed the test host.
+        XCTAssertGreaterThan(model.selectedItem.chapters.dropFirst().first?.startChar ?? 0, 0)
         XCTAssertFalse(model.selectedItem.chapters.contains(where: { $0.title == "Contents" }))
         XCTAssertTrue(zip(model.selectedItem.chapters, model.selectedItem.chapters.dropFirst()).allSatisfy {
             $0.endChar == $1.startChar
