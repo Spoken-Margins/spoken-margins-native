@@ -137,8 +137,8 @@ that run's .xcresult bundles and raw build logs. Keep only the screenshots and s
 logs the report names, under artifacts/lane/<id>/. Shut the simulator down whenever
 the queue is empty.
 
-Reports: post in the report format above, on the PR. After each PASS, message the day's
-lead session "PASS #<pr> <head sha> <tiers>", if it has told you its name.
+Reports: post in the report format above, on the PR. There is no lead session to message;
+the project reads reports on GitHub.
 
 Decisions: for reversible lane choices, post them on #184 under "Default taken" and keep
 going. Stop only for owner data, the phone, money, anything public, main or releases.

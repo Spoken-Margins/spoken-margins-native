@@ -305,6 +305,218 @@ final class SupertonicSpeechTests: XCTestCase {
         try XCTUnwrap(value, file: file, line: line)
     }
 
+    // #303: a play, or a rate change, on narration that's already playing threw away the live
+    // audio and rendered from scratch (the owner's restart_rendering with intent playing, #288).
+    func testPlayAndRateChangeWhilePlayingKeepTheLiveAudio() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = TextRecordingSupertonicRenderer(template: template)
+        let starts = ResumeStartCounter()
+        let progress = GenerationProgressLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in starts.bump(); player.volume = 0; player.playImmediately(atRate: rate) },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            onGenerationProgress: { progress.append($0.completedChunks) }
+        )
+        let text = (1...10).map { "Sentence \($0) contains enough ordinary words to keep the narration moving through several chunks." }
+            .joined(separator: " ")
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "item", from: 0)
+        for _ in 0..<150 where starts.value < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(400))
+        let progressBefore = progress.completed.count
+        let rendersBefore = await renderer.renders
+
+        try client.play(targetId: "item", from: try XCTUnwrap(client.currentCharOffset()))
+        try client.play(targetId: "item", from: try XCTUnwrap(client.currentCharOffset()))
+        try client.setPlaybackRate(1.5)
+        try client.play(targetId: "item", from: max(0, try XCTUnwrap(client.currentCharOffset()) + 20))
+        try await Task.sleep(for: .milliseconds(400))
+
+        XCTAssertFalse(progress.completed.dropFirst(progressBefore).contains(0),
+                       "no new generation: progress never went back to 0 (\(progress.completed))")
+        let renders = await renderer.renders
+        XCTAssertEqual(Set(renders).count, renders.count, "no chunk rendered twice")
+        XCTAssertTrue(renders.starts(with: rendersBefore))
+        XCTAssertEqual(starts.value, 1, "the live player kept playing; no new player started")
+        try client.stop()
+    }
+
+    // #346 audit: a seek while playing reached the client as a plain play, and anything within
+    // livePositionTolerance (about two seconds) of the live position was treated as "keep going".
+    // A seek now says so and moves; a repeated play near the live position still doesn't.
+    func testASmallSeekWhilePlayingMovesButARepeatedPlayDoesNot() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let starts = ResumeStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: TextRecordingSupertonicRenderer(template: template), voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in starts.bump(); player.volume = 0; player.playImmediately(atRate: rate) },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient()
+        )
+        let text = (1...10).map { "Sentence \($0) contains enough ordinary words to keep the narration moving through several chunks." }
+            .joined(separator: " ")
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "item", from: 0)
+        for _ in 0..<150 where starts.value < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(300))
+
+        let live = try XCTUnwrap(client.currentCharOffset())
+        try client.play(targetId: "item", from: live + 20)
+        XCTAssertLessThan(try XCTUnwrap(client.currentCharOffset()), live + 15, "a repeated play near the live position keeps going")
+        let before = try XCTUnwrap(client.currentCharOffset())
+        try client.play(targetId: "item", seekingTo: before + 20)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(client.currentCharOffset()), before + 20, "a seek moves, even this close")
+        XCTAssertEqual(starts.value, 1, "in the same player")
+        try client.stop()
+    }
+
+    private func stallClient(
+        _ log: StallEventLog, template: URL, plays: Bool,
+        playsFromStart: Int? = nil, onStart: (@Sendable (AVPlayer) -> Void)? = nil
+    ) -> SupertonicSpeechPlaybackClient {
+        SupertonicSpeechPlaybackClient(
+            renderer: CountingAudioSupertonicRenderer(templateURL: template), voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                log.started()
+                onStart?(player)
+                if plays || playsFromStart.map({ log.startCount >= $0 }) == true {
+                    player.volume = 0; player.playImmediately(atRate: rate)
+                }
+            },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            interruptionHandler: { event in log.stall("interruption.\(event)", [:]) },
+            onStall: { kind, fields in log.stall(kind, fields) },
+            stallThreshold: .milliseconds(400), stallSampleInterval: .milliseconds(100)
+        )
+    }
+
+    // #288: the player says it's playing but its clock doesn't move. It must be noticed, logged
+    // with the session's and player's state, and re-seated, at most once per 30 s.
+    func testAPlayerWhoseClockStopsIsLoggedAndReseated() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: false)
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "stall", from: 0)
+        for _ in 0..<150 where log.startCount < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.values.first, "supertonic.stall")
+        XCTAssertEqual(log.lastFields["recovery"], "reseat_player")
+        XCTAssertNotNil(log.lastFields["playerRate"])
+        XCTAssertNotNil(log.lastFields["sessionCategory"], "the session's state is recorded")
+        XCTAssertGreaterThanOrEqual(log.startCount, 2, "the player was re-seated")
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertEqual(log.values.filter { $0 == "supertonic.stall" }.count, 1, "at most one re-seat per 30 s")
+        try client.stop()
+    }
+
+    // #302 Done when 3 and 5: a re-seat that doesn't bring the clock back used to leave the app
+    // showing "playing" (and retry only after 30 s). It now pauses at the listener's place, so the
+    // control shows Play, and one tap plays again in a new player whose clock advances.
+    func testAStallTheReseatDoesNotFixPausesAndOneTapPlaysAgain() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: false, playsFromStart: 3)
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "tap", from: 0)
+        for _ in 0..<150 where !log.values.contains("supertonic.stall_paused") { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.values.prefix(2), ["supertonic.stall", "supertonic.stall_paused"], "\(log.values)")
+        XCTAssertTrue(log.values.contains("interruption.began"), "the app is told playback paused")
+        XCTAssertEqual(client.playbackTransportState(targetId: "tap"), .paused, "the control shows Play, not Pause")
+        XCTAssertEqual(log.startCount, 2, "one re-seat, then a pause")
+        XCTAssertEqual(client.debugBackgroundAudioReleaseCount, 1, "other apps' audio is no longer lowered")
+
+        try client.play(targetId: "tap", from: 0)
+        for _ in 0..<100 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.startCount, 3, "one tap starts a new player")
+        let before = client.currentCharOffset() ?? 0
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertEqual(client.playbackTransportState(targetId: "tap"), .playing)
+        XCTAssertGreaterThan(client.currentCharOffset() ?? 0, before, "and its clock advances")
+        XCTAssertEqual(log.values.filter { $0.hasPrefix("supertonic.stall") }.count, 2, "no new stall: \(log.values)")
+        try client.stop()
+    }
+
+    // #301 audit: the listener switches items between a stall sample and its handling. The stale
+    // stall must not re-seat or pause the new item's player.
+    func testAStallSampledBeforeAnItemSwitchLeavesTheNewItemAlone() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: false, playsFromStart: 2)
+        let switcher = ItemSwitch()
+        switcher.client = client
+        client.debugStallWillBeHandled = { switcher.run() }
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "first", from: 0)
+        for _ in 0..<150 where log.startCount < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(log.startCount, 2, "the new item started once and was never re-seated: \(log.values)")
+        XCTAssertFalse(log.values.contains { $0.hasPrefix("supertonic.stall") }, "\(log.values)")
+        XCTAssertEqual(client.playbackTransportState(targetId: "second"), .playing)
+        try client.stop()
+    }
+
+    // #301 audit: a stall right after resuming mid-chunk, before the initial seek lands, reads the
+    // player's clock as zero. The re-seat must keep the place asked for, not replay from the start.
+    func testAReseatBeforeTheInitialSeekLandsKeepsTheRequestedPlace() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: false) { player in
+            player.currentItem?.cancelPendingSeeks()
+            player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "mid", from: 24)
+        for _ in 0..<150 where log.startCount < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThanOrEqual(log.startCount, 2, "re-seated: \(log.values)")
+        XCTAssertGreaterThanOrEqual(client.currentRecoveryCharOffset() ?? 0, 24, "the place asked for is kept")
+        try client.stop()
+    }
+
+    // Re-audit of #301: a pause and resume between the monitor's last sample and its exit left no
+    // stall monitor, because the resume saw the exiting one and started nothing.
+    func testResumingAsTheStallMonitorExitsKeepsAMonitor() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: true)
+        let resume = MonitorExitResume()
+        resume.client = client
+        client.debugStallMonitorWillExit = { resume.run() }
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "exit", from: 0)
+        for _ in 0..<100 where log.startCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(300))
+        try client.pause()
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertTrue(client.debugHasStallMonitor, "playback resumed, so a stall monitor is running")
+        try client.stop()
+    }
+
+    func testAPlayerThatIsPlayingIsNotAStall() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: true)
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "playing", from: 0)
+        try await Task.sleep(for: .milliseconds(1_500))
+        XCTAssertTrue(log.values.isEmpty, "\(log.values)")
+        XCTAssertEqual(log.startCount, 1)
+        try client.stop()
+    }
+
     // #258: with a Listening Map overview, the engine speaks "Overview. …" before the article.
     // Lookups carried that whole text and chunks planned across it, so no prepared chunk ever
     // matched and a fully prepared article was rendered again. They now ask for the article's own
@@ -339,6 +551,117 @@ final class SupertonicSpeechTests: XCTestCase {
         for chunk in prepared {
             XCTAssertEqual(byIndex[chunk.index], chunk, "chunk \(chunk.index) matches the prepared plan")
         }
+        try client.stop()
+    }
+
+    private func crossChunkTemplate(_ root: URL) throws -> URL {
+        let url = root.appending(path: "t.wav")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 132_300)); buffer.frameLength = 132_300
+        try file.write(from: buffer)
+        return url
+    }
+
+    private let crossChunkText = (1...12).map { "Sentence \($0) contains enough ordinary words to keep the narration moving through several chunks." }
+        .joined(separator: " ")
+
+    private func chunkStarts() -> [Int] {
+        RenderedSpeechChunker.sourceSlices(from: SpeechTextNormalizer.normalize(crossChunkText)).map(\.startOffset)
+    }
+
+    // Audit of #346 (1): playing a cached chunk removes it from the cache. Seek ahead into C, then
+    // back into B; when B ends, C must still play rather than leave silence.
+    func testSeekingAheadThenBackStillPlaysTheLaterChunk() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "xc1-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let renderer = OrderGatedSupertonicRenderer(template: try crossChunkTemplate(root), gates: [:])
+        let starts = ResumeStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { player, rate in starts.bump(); player.volume = 0; player.playImmediately(atRate: rate) },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient()
+        )
+        let offsets = chunkStarts()
+        XCTAssertGreaterThanOrEqual(offsets.count, 4)
+        _ = try client.prepareSpeechText(crossChunkText)
+        try client.play(targetId: "item", from: 0)
+        for _ in 0..<150 where await renderer.count < offsets.count { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(200))
+        try client.play(targetId: "item", from: offsets[2] + 5)   // ahead into C
+        try await Task.sleep(for: .milliseconds(200))
+        try client.play(targetId: "item", from: offsets[1] + 5)   // back into B
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(client.debugActiveAudioState().startOffset, offsets[1], "B plays")
+        let before = starts.value
+        client.debugFinishActiveChunk()                            // B ends
+        for _ in 0..<50 where starts.value == before { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(starts.value, before + 1, "the next chunk started after B")
+        XCTAssertEqual(client.debugActiveAudioState().startOffset, offsets[2], "C plays after B")
+        try client.stop()
+    }
+
+    // Audit of #346 (2): a seek into cached B left an autoplay marker for still-rendering C, so
+    // when C finished it played over B.
+    func testALaterRenderDoesNotPlayOverTheChunkTheListenerChose() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "xc2-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gateC = AsyncStream<Void>.makeStream()
+        defer { gateC.continuation.finish() }
+        let renderer = OrderGatedSupertonicRenderer(template: try crossChunkTemplate(root), gates: [3: gateC.stream])
+        let starts = ResumeStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { player, rate in starts.bump(); player.volume = 0; player.playImmediately(atRate: rate) },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient()
+        )
+        let offsets = chunkStarts()
+        _ = try client.prepareSpeechText(crossChunkText)
+        try client.play(targetId: "item", from: 0)                 // A plays; B renders; C is held
+        for _ in 0..<150 where await renderer.count < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(200))
+        try client.play(targetId: "item", from: offsets[2] + 5)    // ahead into C, still rendering
+        try await Task.sleep(for: .milliseconds(100))
+        try client.play(targetId: "item", from: offsets[1] + 5)    // back into cached B
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(client.debugActiveAudioState().startOffset, offsets[1], "B plays")
+        let before = starts.value
+        gateC.continuation.finish()                                 // C finishes rendering
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(starts.value, before, "C didn't start over B")
+        XCTAssertEqual(client.debugActiveAudioState().startOffset, offsets[1], "B is still playing")
+        try client.stop()
+    }
+
+    // Re-audit of #346: from a paused A, choosing rendering C and then going back to A left C as
+    // the requested position, so the reported position (and the next pause and resume) jumped to C.
+    func testGoingBackToAPausedChunkReportsItsOwnPosition() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "xc3-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let gateC = AsyncStream<Void>.makeStream()
+        defer { gateC.continuation.finish() }
+        let renderer = OrderGatedSupertonicRenderer(template: try crossChunkTemplate(root), gates: [3: gateC.stream])
+        let starts = ResumeStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { player, rate in starts.bump(); player.volume = 0; player.playImmediately(atRate: rate) },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient()
+        )
+        let offsets = chunkStarts()
+        _ = try client.prepareSpeechText(crossChunkText)
+        try client.play(targetId: "item", from: 0)
+        for _ in 0..<150 where await renderer.count < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(200))
+        try client.pause()
+        let pausedAt = try XCTUnwrap(client.currentCharOffset())
+        XCTAssertLessThan(pausedAt, offsets[1], "paused in A")
+        try client.play(targetId: "item", from: offsets[2] + 5)   // choose C, still rendering
+        try client.play(targetId: "item", from: pausedAt)          // back to A
+        let reported = try XCTUnwrap(client.currentCharOffset())
+        XCTAssertLessThan(reported, offsets[1], "the position is back in A, not C (\(reported))")
         try client.stop()
     }
 
@@ -2067,6 +2390,59 @@ private final class PreparedChunkCommitGate: @unchecked Sendable {
     func commit() async {
         let index = lock.withLock { commits += 1; return commits }
         if index == 2 { for await _ in stream {} }
+    }
+}
+
+private actor OrderGatedSupertonicRenderer: SupertonicRendering {
+    let template: URL
+    let gates: [Int: AsyncStream<Void>]
+    private(set) var count = 0
+    init(template: URL, gates: [Int: AsyncStream<Void>]) { self.template = template; self.gates = gates }
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        count += 1
+        if let gate = gates[count] { for await _ in gate {} }
+        let url = FileManager.default.temporaryDirectory.appending(path: "order-gated-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: template, to: url)
+        return SupertonicNarrationResult(audioURL: url, duration: 3, sampleRate: 44_100, renderDuration: 0.01, sessionLoadCount: 1)
+    }
+    func discardGeneratedAudio(at url: URL) async { try? FileManager.default.removeItem(at: url) }
+}
+
+private final class StallEventLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var kinds: [String] = []
+    private var starts = 0
+    private var last: [String: String] = [:]
+    var values: [String] { lock.withLock { kinds } }
+    var startCount: Int { lock.withLock { starts } }
+    var lastFields: [String: String] { lock.withLock { last } }
+    func stall(_ kind: String, _ fields: [String: String]) { lock.withLock { kinds.append(kind); last = fields } }
+    func started() { lock.withLock { starts += 1 } }
+}
+
+/// Switches to another item the first time a stall is about to be handled.
+private final class ItemSwitch: @unchecked Sendable {
+    weak var client: SupertonicSpeechPlaybackClient?
+    private let lock = NSLock()
+    private var done = false
+
+    func run() {
+        let first = lock.withLock { () -> Bool in defer { done = true }; return !done }
+        guard first, let client else { return }
+        try? client.stop()
+        _ = try? client.prepareSpeechText("A different article starts playing here instead.")
+        try? client.play(targetId: "second", from: 0)
+    }
+}
+
+private final class MonitorExitResume: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    var client: SupertonicSpeechPlaybackClient?
+    func run() {
+        let first = lock.withLock { () -> Bool in defer { done = true }; return !done }
+        guard first, let client, let offset = client.currentCharOffset() else { return }
+        try? client.play(targetId: "exit", from: offset)
     }
 }
 

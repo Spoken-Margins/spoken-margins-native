@@ -258,6 +258,8 @@ enum SupertonicResourcePolicy {
 final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unchecked Sendable {
     typealias FallbackHandler = @Sendable (_ reason: String, _ charOffset: Int, _ targetId: String) -> Void
     typealias RestoreHandler = @Sendable (_ targetId: String) -> Void
+    /// A stall or its end, with the audio session's and player's state then (#288).
+    typealias StallHandler = @Sendable (_ kind: String, _ fields: [String: String]) -> Void
     /// The article text a target speaks, without the engine's spoken preface ("Overview. …").
     typealias ArticleTextLookup = @Sendable (_ targetId: String) -> String?
     /// Which way a play request went, for diagnostics (#235).
@@ -390,6 +392,23 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// to Supertonic at the next play once the condition clears).
     private var resourceFallbackTargetIds: Set<String> = []
     private let onRestore: RestoreHandler?
+    private let onStall: StallHandler?
+    private let stallThreshold: Duration
+    private let stallSampleInterval: Duration
+    private let stallRecoveryCooldown: Duration
+    /// The chunk the player is playing, so a stalled player can be re-seated at the same point.
+    private var activeRequest: RenderRequest?
+    private var stallMonitor: Task<Void, Never>?
+    private var lastStallRecovery: ContinuousClock.Instant?
+    #if DEBUG
+    /// Runs as the stall monitor is about to stop, so a test can resume playback exactly then.
+    var debugStallMonitorWillExit: (@Sendable () -> Void)?
+    /// Runs between a stall sample and its handling, so a test can switch items exactly then.
+    var debugStallWillBeHandled: (@Sendable () -> Void)?
+    /// How often the client asked to stop lowering other apps' audio.
+    private(set) var debugBackgroundAudioReleaseCount = 0
+    var debugHasStallMonitor: Bool { lock.withLock { stallMonitor != nil } }
+    #endif
     private let articleText: ArticleTextLookup?
     /// Where the article starts after a spoken preface, in spoken and source characters. Prepared
     /// audio covers the article alone, so the article is planned as its own section (#258).
@@ -444,6 +463,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onPreparedAudio: PreparedAudioHandler? = nil,
         onFallback: FallbackHandler? = nil,
         onRestore: RestoreHandler? = nil,
+        onStall: StallHandler? = nil,
+        stallThreshold: Duration = .seconds(5),
+        stallSampleInterval: Duration = .seconds(1),
+        stallRecoveryCooldown: Duration = .seconds(30),
         onResumeDecision: ResumeDecisionHandler? = nil,
         renderWaitLimit: Duration = .seconds(15)
     ) {
@@ -482,6 +505,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.onPreparedAudio = onPreparedAudio
         self.onFallback = onFallback
         self.onRestore = onRestore
+        self.onStall = onStall
+        self.stallThreshold = stallThreshold
+        self.stallSampleInterval = stallSampleInterval
+        self.stallRecoveryCooldown = stallRecoveryCooldown
         self.articleText = articleText
         self.onResumeDecision = onResumeDecision
         self.renderWaitLimit = renderWaitLimit
@@ -518,6 +545,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     func play(targetId: String, from charOffset: Int) throws {
+        try play(targetId: targetId, from: charOffset, isSeek: false)
+    }
+
+    /// A listener's explicit move: it moves even within `livePositionTolerance` of the live
+    /// position, which only absorbs how far a repeated play or restart trails it (#346 audit).
+    func play(targetId: String, seekingTo charOffset: Int) throws {
+        try play(targetId: targetId, from: charOffset, isSeek: true)
+    }
+
+    private func play(targetId: String, from charOffset: Int, isSeek: Bool) throws {
         try activateAudioSession(forPlayback: false)
         restoreOnDeviceRenderingIfConditionCleared(targetId: targetId)
         let usesStoppedGeneration = lock.withLock {
@@ -539,12 +576,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         let spokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
         let before = resumeDiagnostics(targetId: targetId, spokenOffset: spokenOffset)
-        let action = resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset)
+        let action = resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset, isSeek: isSeek)
         reportResumeDecision(action, before: before)
         switch action {
         case .resumePlayer(let player):
             try activateAudioSession()
             player.playImmediately(atRate: lock.withLock { playbackRate })
+            startStallMonitorIfNeeded()
             return
         case .seekPlayer(let player, let time):
             try activateAudioSession()
@@ -555,6 +593,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 toleranceAfter: .zero
             )
             player.playImmediately(atRate: lock.withLock { playbackRate })
+            startStallMonitorIfNeeded()
             return
         case .playCached(let cached):
             playRenderedAudio(cached.url, duration: cached.duration, request: cached.request)
@@ -955,7 +994,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             // at the next chunk, not repeat the passage that just finished.
             currentStartOffset = nextOffset
             currentChunkLength = 0
-            let cached = renderedCache.removeValue(forKey: nextOffset)
+            let cached = cachedOrSavedChunk(containing: nextOffset)
             let finishedURL = activeAudioURL
             player?.replaceCurrentItem(with: nil)
             player = nil
@@ -1004,11 +1043,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             )
         } else {
             try? releaseBackgroundAudio()
-            lock.withLock { pendingAutoplayOffset = snapshot.0 }
+            let rendering = lock.withLock { () -> Bool in
+                pendingAutoplayOffset = snapshot.0
+                return inFlightOffsets.contains(snapshot.0)
+            }
             // A normal render gap is a wait for the selected Supertonic voice,
             // never a reason to change voices. The serial full-item generation
-            // pump will start this chunk as soon as it becomes available.
-            _ = request
+            // pump will start this chunk as soon as it becomes available. If it
+            // isn't rendering (a seek skipped past it, #346), render it now
+            // rather than wait for a render that will never come.
+            if !rendering { enqueueRender(request, shouldPlayWhenReady: false) }
         }
     }
 
@@ -1557,6 +1601,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             }
             lock.withLock {
                 player = nextPlayer
+                activeRequest = request
                 activeAudioURL = audioURL
                 activeAudioDuration = duration
                 currentTargetId = request.targetId
@@ -1591,6 +1636,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             } else {
                 startPlayer(nextPlayer, item: item, request: request)
             }
+            startStallMonitorIfNeeded()
         } catch {
             diskCache?.invalidate(audioURL)
             discardAudio(audioURL)
@@ -1601,6 +1647,168 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 reason: "supertonic_playback_failed"
             )
         }
+    }
+
+    /// The player's own state for the playback heartbeat (#288).
+    func playerDiagnostics() -> [String: String] {
+        lock.withLock { AudioSessionDiagnostics.fields(for: fallbackIsActive ? nil : player) }
+    }
+
+    /// Watches the player's clock while playback is intended. AVPlayer can report "playing" while
+    /// nothing is heard (#288); a clock that stops moving for `stallThreshold` is logged with the
+    /// session's and player's state, and the player is re-seated at the same point. If that doesn't
+    /// bring the clock back, playback pauses at the listener's place, so the control shows Play and
+    /// one tap resumes (#302). A wait at a chunk boundary (no player) isn't a stall: the render
+    /// deadline covers it.
+    private func startStallMonitorIfNeeded() {
+        let interval = stallSampleInterval
+        let thresholdMs = Int(stallThreshold.components.seconds * 1_000
+            + stallThreshold.components.attoseconds / 1_000_000_000_000_000)
+        lock.withLock {
+            guard stallMonitor == nil else { return }
+            stallMonitor = Task { [weak self] in
+                var detector = PlaybackStallDetector(thresholdMs: thresholdMs, minimumProgressMs: 100)
+                // The detector reports a continuous stall once; while it lasts, recovery is retried
+                // whenever the cooldown allows, so one skipped attempt can't leave it silent.
+                var stallOngoing = false
+                // Each player is watched from scratch: a re-seat or another item must not inherit a
+                // stall (both start at clock zero). A re-seat that doesn't help stalls again anew.
+                var watchedPlayer: ObjectIdentifier?
+                let start = ContinuousClock.now
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: interval)
+                    guard let self else { return }
+                    let sample = self.lock.withLock { () -> (active: Bool, intends: Bool, clock: Int?, player: ObjectIdentifier?) in
+                        let intends = self.transportIntent == .playing && !self.fallbackIsActive && self.player != nil
+                        let time = self.playerTime(self.player)
+                        return (self.transportIntent == .playing, intends, self.currentStartOffset * 1_000_000 + Int(time * 1_000),
+                                self.player.map(ObjectIdentifier.init))
+                    }
+                    if sample.player != watchedPlayer {
+                        watchedPlayer = sample.player
+                        detector.reset()
+                        stallOngoing = false
+                    }
+                    let elapsed = ContinuousClock.now - start
+                    let uptimeMs = Int(elapsed.components.seconds * 1_000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
+                    if let event = detector.observe(uptimeMs: uptimeMs, mediaTimeMs: sample.intends ? sample.clock : nil,
+                                                    intendsToPlay: sample.intends) {
+                        if case .stalled = event { stallOngoing = true } else { stallOngoing = false }
+                        #if DEBUG
+                        self.debugStallWillBeHandled?()
+                        #endif
+                        await MainActor.run { self.handleStallEvent(event, sampledPlayer: sample.player) }
+                    } else if stallOngoing, sample.intends {
+                        #if DEBUG
+                        self.debugStallWillBeHandled?()
+                        #endif
+                        await MainActor.run { self.pauseIfReseatDidNotHelp(sampledPlayer: sample.player) }
+                    }
+                    if !sample.active {
+                        #if DEBUG
+                        self.debugStallMonitorWillExit?()
+                        #endif
+                        // A play can land between the sample and here; it saw this monitor and
+                        // started none, so keep watching if playback is intended again (#301).
+                        let stops = self.lock.withLock { () -> Bool in
+                            guard self.transportIntent != .playing else { return false }
+                            self.stallMonitor = nil
+                            return true
+                        }
+                        if stops { return }
+                        detector.reset()
+                        stallOngoing = false
+                    }
+                }
+            }
+        }
+    }
+
+    /// True while the player a stall sample saw is still the one playing. Between the sample and
+    /// its handling on the main actor, the listener can switch items; the stall is then stale.
+    private func isStillPlaying(_ sampledPlayer: ObjectIdentifier?) -> Bool {
+        lock.withLock { transportIntent == .playing && player.map(ObjectIdentifier.init) == sampledPlayer }
+    }
+
+    @MainActor
+    private func handleStallEvent(_ event: PlaybackStallDetector.Event, sampledPlayer: ObjectIdentifier?) {
+        if case .stalled = event, !isStillPlaying(sampledPlayer) { return }
+        let player = lock.withLock { self.player }
+        var fields = AudioSessionDiagnostics.fields().merging(AudioSessionDiagnostics.fields(for: player)) { first, _ in first }
+        switch event {
+        case .stalled(_, let forMs):
+            fields["stalledMs"] = String(forMs)
+            // A second stall inside the cooldown means the last re-seat didn't hold.
+            guard claimStallRecovery() else { return pauseStalledPlayback(fields) }
+            fields["recovery"] = "reseat_player"
+            onStall?("supertonic.stall", fields)
+            reseatStalledPlayer()
+        case .ended(_, _, let stalledForMs):
+            fields["stalledMs"] = String(stalledForMs)
+            onStall?("supertonic.stall_ended", fields)
+        }
+    }
+
+    /// True, and the cooldown restarts, when a recovery may run now.
+    private func claimStallRecovery() -> Bool {
+        lock.withLock {
+            if let last = lastStallRecovery, ContinuousClock.now - last < stallRecoveryCooldown { return false }
+            lastStallRecovery = .now
+            return true
+        }
+    }
+
+    /// A stall still going `stallThreshold` after its re-seat: the re-seat didn't help.
+    @MainActor
+    private func pauseIfReseatDidNotHelp(sampledPlayer: ObjectIdentifier?) {
+        guard isStillPlaying(sampledPlayer) else { return }
+        let due = lock.withLock { lastStallRecovery.map { ContinuousClock.now - $0 >= stallThreshold } ?? false }
+        guard due else { return }
+        let player = lock.withLock { self.player }
+        pauseStalledPlayback(AudioSessionDiagnostics.fields().merging(AudioSessionDiagnostics.fields(for: player)) { first, _ in first })
+    }
+
+    /// Stops showing "playing" for a player that makes no progress (#302). As after a media-services
+    /// reset, the player is released with the listener's place and chunk kept, and the app is told
+    /// playback paused: the control shows Play, and one tap plays the chunk from that place in a new
+    /// player with the session re-activated.
+    @MainActor
+    private func pauseStalledPlayback(_ fields: [String: String]) {
+        var fields = fields
+        fields["recovery"] = "paused_for_tap"
+        onStall?("supertonic.stall_paused", fields)
+        // The tap may land before this monitor samples the pause; it must start a fresh monitor
+        // rather than inherit this stall and pause the new player too.
+        lock.withLock {
+            stallMonitor?.cancel()
+            stallMonitor = nil
+        }
+        markMediaServicesReset()
+        // A media-services reset has no session to release; a watchdog pause must stop lowering
+        // other apps' audio, as a listener's pause does (#301 audit).
+        try? releaseBackgroundAudio()
+    }
+
+    /// Re-activates the session and plays the same chunk from the same point in a new player.
+    private func reseatStalledPlayer() {
+        let snapshot = lock.withLock { () -> (URL, TimeInterval, RenderRequest, TimeInterval)? in
+            guard transportIntent == .playing, let request = activeRequest, let url = activeAudioURL else { return nil }
+            let time = playerTime(player)
+            player?.pause()
+            player?.replaceCurrentItem(with: nil)
+            player = nil
+            let fraction = activeAudioDuration > 0 ? time / activeAudioDuration : 0
+            // A player that stalls before its initial seek lands still reads zero: keep the place
+            // asked for rather than replay text already heard (#301 audit, #235).
+            let chunk = request.startOffset..<(request.startOffset + max(1, request.sourceLength))
+            let requested = initialRequestedSpokenOffset.flatMap { chunk.contains($0) ? $0 : nil } ?? request.startOffset
+            initialPlaybackOffset = request.startOffset
+            initialRequestedSpokenOffset = max(requested, request.startOffset + Int((Double(request.sourceLength) * fraction).rounded(.down)))
+            return (url, activeAudioDuration, request, time)
+        }
+        guard let (url, duration, request, _) = snapshot else { return }
+        try? activateAudioSession()
+        playRenderedAudio(url, duration: duration, request: request)
     }
 
     private func assemblePreparedAudioIfComplete(generation expectedGeneration: UUID) {
@@ -1694,9 +1902,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    private func resumeAction(targetId: String, fromSpokenOffset spokenOffset: Int) -> ResumeAction {
+    private func resumeAction(targetId: String, fromSpokenOffset spokenOffset: Int, isSeek: Bool) -> ResumeAction {
         lock.withLock {
-            guard transportIntent == .paused,
+            // A play on narration that's already playing (a rate change restarts from the synced
+            // position; a second Lock Screen play) reuses the live audio like a resume does,
+            // rather than throwing it away and rendering again (#303).
+            let wasPlaying = transportIntent == .playing
+            guard transportIntent == .paused || wasPlaying,
                   currentTargetId == targetId,
                   activeSourceText == preparedSourceText else { return .none }
             let chunkEnd = currentStartOffset + max(0, currentChunkLength)
@@ -1707,19 +1919,31 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 let currentOffset = currentStartOffset + Int(
                     (Double(currentChunkLength) * max(0, min(1, playerTime(player) / max(activeAudioDuration, 0.001)))).rounded(.down)
                 )
-                if abs(currentOffset - spokenOffset) <= 1 {
+                // While playing, the requested position was sampled a moment ago and lags the live
+                // one by a few characters; that's the same place, not a seek.
+                // An explicit choice of this chunk: no other chunk may autoplay over it later.
+                pendingAutoplayOffset = nil
+                if abs(currentOffset - spokenOffset) <= (wasPlaying && !isSeek ? Self.livePositionTolerance : 1) {
+                    // The player's own clock is the position now, not an earlier request for
+                    // another chunk (#346 re-audit).
+                    initialRequestedSpokenOffset = nil
                     return .resumePlayer(player)
                 }
                 initialRequestedSpokenOffset = spokenOffset
                 let fraction = Double(spokenOffset - currentStartOffset) / Double(max(1, currentChunkLength))
                 return .seekPlayer(player, max(0, min(activeAudioDuration, activeAudioDuration * fraction)))
             }
-            if let cachedEntry = renderedCache.first(where: { entry in
-                spokenOffset >= entry.value.request.startOffset
-                    && spokenOffset < entry.value.request.startOffset + max(1, entry.value.request.sourceLength)
-            }), let cached = renderedCache.removeValue(forKey: cachedEntry.key) {
+            if wasPlaying, let player {
+                // Moving to another chunk: stop the live one first so two never play at once.
+                player.pause()
+                player.replaceCurrentItem(with: nil)
+                self.player = nil
+            }
+            if let cached = cachedOrSavedChunk(containing: spokenOffset) {
                 transportIntent = .playing
                 pendingStartTargetId = targetId
+                // The listener chose this chunk; a marker left for another must not play over it.
+                pendingAutoplayOffset = nil
                 initialPlaybackOffset = cached.request.startOffset
                 initialRequestedSpokenOffset = spokenOffset
                 return .playCached(cached)
@@ -1821,6 +2045,29 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onResumeDecision(fields)
     }
 
+    /// The chunk covering `spokenOffset`: from the rendered cache (taking it out, as before), or
+    /// else this generation's saved result for it. Playing a cached chunk removes it from the
+    /// cache, so after a seek ahead and back, a chunk already played is found here (#346).
+    /// Call with the lock held.
+    private func cachedOrSavedChunk(containing spokenOffset: Int) -> CachedAudio? {
+        if let entry = renderedCache.first(where: { entry in
+            spokenOffset >= entry.value.request.startOffset
+                && spokenOffset < entry.value.request.startOffset + max(1, entry.value.request.sourceLength)
+        }), let cached = renderedCache.removeValue(forKey: entry.key) {
+            return cached
+        }
+        guard let planned = generationPlan.first(where: {
+            spokenOffset >= $0.startOffset && spokenOffset < $0.startOffset + max(1, $0.sourceLength)
+        }), let saved = generationResults[planned.startOffset],
+              FileManager.default.fileExists(atPath: saved.audioURL.path) else { return nil }
+        let file = try? AVAudioFile(forReading: saved.audioURL)
+        let duration = file.map { Double($0.length) / $0.processingFormat.sampleRate } ?? 0
+        return CachedAudio(url: saved.audioURL, duration: duration, request: planned)
+    }
+
+    /// About two seconds of speech: how far a sampled position can trail the live one.
+    static let livePositionTolerance = 30
+
     private func playerTime(_ player: AVPlayer?) -> TimeInterval {
         guard let seconds = player?.currentTime().seconds, seconds.isFinite else { return 0 }
         return max(0, seconds)
@@ -1903,6 +2150,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func releaseBackgroundAudio() throws {
+        #if DEBUG
+        lock.withLock { debugBackgroundAudioReleaseCount += 1 }
+        #endif
         guard audioSessionActivator == nil,
               lock.withLock({ mixesWithOtherAudio && lowersBackgroundAudio }) else { return }
         #if os(iOS)
