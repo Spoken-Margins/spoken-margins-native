@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Fetches `url`, reading at most `maximumBytes` of body. Returns the HTTP status and body.
 /// The app implements this with URLSession; tests pass recorded responses.

@@ -22,6 +22,30 @@ final class EPUBSafetyTests: XCTestCase {
         XCTAssertEqual(result.package.segments.first?.locator.utf8End, "Café opening".utf8.count)
     }
 
+    func testTextOutsideBlockElementsIsKeptAtTheEndOfTheChapter() throws {
+        // Only the end-of-document flush saves text that no block element closes. That callback
+        // must run on every platform, including Linux where there is no Objective-C dispatch.
+        var entries = validEntries()
+        entries["OPS/chapter.xhtml"] = """
+        <?xml version="1.0"?><html><body><p>First paragraph.</p><div>Closing words in a div.</div></body></html>
+        """
+        let url = try makeEPUB(entries: entries)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let result = try EPUBParser().parse(url: url, itemId: "book", sourceDocumentId: "source")
+        XCTAssertEqual(result.package.segments.map(\.text), ["First paragraph.", "Closing words in a div."])
+    }
+
+    func testChapterWithOnlyDivTextIsNotEmpty() throws {
+        var entries = validEntries()
+        entries["OPS/chapter.xhtml"] = """
+        <?xml version="1.0"?><html><body><div>Chapter text</div></body></html>
+        """
+        let url = try makeEPUB(entries: entries)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let result = try EPUBParser().parse(url: url, itemId: "book", sourceDocumentId: "source")
+        XCTAssertEqual(result.package.segments.map(\.text), ["Chapter text"])
+    }
+
     func testEncryptedPackageIsRejectedBeforePublication() throws {
         var entries = validEntries()
         entries["META-INF/encryption.xml"] = "<encryption><EncryptedData/></encryption>"

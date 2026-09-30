@@ -302,7 +302,7 @@ class Run:
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         self.command('browser', ['npm', 'run', 'test:browser-extraction'])
         expected = set()
-        for target in ('SessionKitTests', 'SessionKitTraceTests'):
+        for target in ('SessionKitCoreTests', 'SessionKitTests', 'SessionKitTraceTests'):
             expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))
         self.command('package', ['bash', 'scripts/run-sessionkit-tests.sh'], timeout=300,
                      expected=expected, tests=True,
