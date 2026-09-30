@@ -453,6 +453,7 @@ class MergeTests_Runner(unittest.TestCase):
                 mock.patch.object(lane, 'push_merge', side_effect=push), \
                 mock.patch.object(lane, 'fetch_base', side_effect=lambda tree, base: NEWER), \
                 mock.patch.object(lane, 'sweep_merge_audit', side_effect=lambda tree, base: events.append('sweep')), \
+                mock.patch.object(lane, 'warm_build_folders', return_value='build folders: warm (SessionKit test)'), \
                 mock.patch.object(lane, 'diff_scope', return_value=scope or self.SCOPE), \
                 mock.patch.object(lane, 'run_automerge',
                                   side_effect=lambda scope, evidence, **_: (verdicts.pop(0), 'x', 'host tests; builds', [])):
@@ -541,6 +542,74 @@ class MergeTests_Runner(unittest.TestCase):
             self.assertNotIn('secret-token', command)
 
 
+class WarmBuildTests(unittest.TestCase):
+    """Build folders kept warm between runner jobs, keyed by the SessionKit tree, with real git."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        root = Path(self.temporary.name)
+        self.tree, self.cache = root / 'tree', root / 'cache'
+        self.git = ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-C', str(self.tree)]
+        (self.tree / 'Packages/SessionKit/Sources').mkdir(parents=True)
+        subprocess.run(['git', 'init', '-q', str(self.tree)], check=True)
+        (self.tree / '.gitignore').write_text((SCRIPTS.parent / '.gitignore').read_text())  # the repo's own rules
+        self.commit('Packages/SessionKit/Sources/A.swift', 'struct A {}\n')
+        self.addCleanup(lane._WARM_LOCKS.clear)
+
+    def commit(self, path, text):
+        (self.tree / path).parent.mkdir(parents=True, exist_ok=True)
+        (self.tree / path).write_text(text)
+        subprocess.run(self.git + ['add', '.'], check=True)
+        subprocess.run(self.git + ['commit', '-q', '-m', path], check=True)
+
+    def warm(self, free=10**12):
+        line = lane.warm_build_folders(self.tree, root=self.cache, free=lambda path: free)
+        for held in lane._WARM_LOCKS.values():
+            held.close()
+        lane._WARM_LOCKS.clear()  # as if the job ended
+        return line
+
+    def test_the_build_folders_link_to_a_cache_that_survives_the_checkout(self):
+        self.assertIn('cold, new cache', self.warm())
+        for link in (self.tree / '.build', self.tree / 'Packages/SessionKit/.build'):
+            self.assertTrue(link.is_symlink(), link)
+        (self.tree / '.build' / 'dd').mkdir()
+        (self.tree / '.build' / 'dd' / 'product').write_text('built')
+        subprocess.run(self.git + ['clean', '-ffdxq'], check=True)  # what actions/checkout does
+        self.assertFalse((self.tree / '.build').exists())
+        self.assertIn('warm', self.warm())
+        self.assertEqual((self.tree / '.build' / 'dd' / 'product').read_text(), 'built')
+
+    def test_an_app_only_change_stays_warm_and_a_sessionkit_change_starts_a_new_cache(self):
+        first = self.warm()
+        self.commit('App/View.swift', 'struct V {}\n')
+        self.assertTrue(self.warm().startswith('build folders: warm'), 'app-only change')
+        self.commit('Packages/SessionKit/Sources/A.swift', 'struct A { var b = 1 }\n')
+        second = self.warm()
+        self.assertIn('cold, new cache', second)
+        self.assertNotEqual(first.split('SessionKit ')[1], second.split('SessionKit ')[1])
+
+    def test_it_keeps_at_most_two_caches_and_never_goes_below_the_disk_floor(self):
+        for n in range(3):
+            self.commit('Packages/SessionKit/Sources/A.swift', f'struct A{n} {{}}\n')
+            self.warm()
+            time.sleep(0.01)
+        self.assertEqual(len([d for d in self.cache.iterdir() if d.name.startswith('sk-')]), lane.WARM_KEEP)
+        self.assertIn('cold (less than 15 GB free)', self.warm(free=10**9))
+        self.assertEqual(len([d for d in self.cache.iterdir() if d.name.startswith('sk-')]), 1)  # this key's
+
+    def test_a_cache_in_use_by_another_runner_job_is_left_alone(self):
+        import fcntl
+        self.warm()
+        cache = next(d for d in self.cache.iterdir() if d.name.startswith('sk-'))
+        with open(cache / '.lock', 'a+') as other:
+            fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            (self.tree / '.build').unlink()
+            self.assertIn('in use by another runner job', self.warm())
+            self.assertFalse((self.tree / '.build').exists())  # the job builds cold in its own tree
+
+
 class PushTests(unittest.TestCase):
     """Building and pushing the merge commit, with real git and a bare origin."""
 
@@ -611,7 +680,8 @@ class MainFlowTests(unittest.TestCase):
                 mock.patch.object(lane, 'sweep_runner_simulators'), \
                 mock.patch.object(lane, 'fetch_base', return_value=MERGE), \
                 mock.patch.object(lane, 'merge_base_branch', return_value=self.conflicts), \
-                mock.patch.object(lane, 'link_tools'), mock.patch('builtins.print'):
+                mock.patch.object(lane, 'link_tools'), mock.patch('builtins.print'), \
+                mock.patch.object(lane, 'warm_build_folders', return_value='build folders: warm (SessionKit test)'):
             return lane.main(['--pr', '5', '--event-head', event_head, '--run-id', '42', *extra])
 
     conflicts = []
