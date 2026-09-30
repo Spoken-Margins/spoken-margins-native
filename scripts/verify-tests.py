@@ -18,7 +18,7 @@ import time
 
 from check_posterboard_repair import new_crash
 import lane_sim
-from lane_slots import acquire_simulator_slot, build_slot, release_handle
+from lane_slots import acquire_simulator_slot, build_slot, host_test_slot, release_handle
 
 from test_inventory import ROOT, plan_tests, swift_tests, validate
 
@@ -267,6 +267,15 @@ class Run:
         return text
 
     def fast(self):
+        # The host steps share two Mac-wide host-test slots with every session and the runner (#350);
+        # the package step's swift test runs inside this run's slot.
+        with host_test_slot(f'verify-tests {self.manifest["plan"]} in {ROOT}', out=sys.stdout,
+                            max_wait=BUILD_SLOT_WAIT_SECONDS) as held:
+            self.manifest['host_test_slot'] = held
+            self.save()
+            self.host_steps()
+
+    def host_steps(self):
         self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'])
         self.command('contracts', [sys.executable, 'scripts/validate-contracts.py'])
         self.command('surfaces', [sys.executable, 'scripts/validate-surface-contracts.py'])
