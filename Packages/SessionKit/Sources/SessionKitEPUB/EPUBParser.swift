@@ -231,6 +231,7 @@ private class DepthDelegate: NSObject, DepthLimitedXMLDelegate {
     func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {}
     func parser(_ parser: XMLParser, foundCharacters string: String) {}
     func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {}
+    func parserDidEndDocument(_ parser: XMLParser) {}
 }
 
 private final class ContainerXMLDelegate: DepthDelegate {
@@ -287,7 +288,7 @@ private final class XHTMLTextDelegate: DepthDelegate {
         if ignoredDepth > 0 { ignoredDepth -= 1 } else if blockElements.contains(name) { flush() }
         leave()
     }
-    func parserDidEndDocument(_ parser: XMLParser) { flush() }
+    override func parserDidEndDocument(_ parser: XMLParser) { flush() }
     private func flush() {
         let clean = current.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
         if !clean.isEmpty { blocks.append(clean) }
