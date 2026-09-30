@@ -910,7 +910,9 @@ def main(argv=None) -> int:
     _, desk_waiting = pending_requests(github.comments())
     if explicit:
         github.relabel(RUNNING, QUEUED if desk_waiting else DONE)
-    # The build folders are links to a warm cache now (warm_build_folders); nothing to delete here.
+    if not (ROOT / '.build').is_symlink():  # a cold job (disk floor, busy cache) built in the workspace
+        shutil.rmtree(ROOT / '.build/dd', ignore_errors=True)
+        shutil.rmtree(ROOT / '.build/verification', ignore_errors=True)
     return 0
 
 
