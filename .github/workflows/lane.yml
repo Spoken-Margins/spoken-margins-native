@@ -47,7 +47,9 @@ jobs:
     concurrency:
       group: lane-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: false
-    timeout-minutes: 150
+    # 150 minutes for the T3 itself (slot wait, boot and tests), plus room for the automerge run a T3
+    # PASS releases in this same job (#421): host tests and both builds, as in the automerge job.
+    timeout-minutes: 240
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}

@@ -597,6 +597,19 @@ class PlanGroupingTests(unittest.TestCase):
         self.assertNotIn('Check: none', plan)
         self.assertNotIn('look for what the title describes', plan)
 
+    def test_a_phone_found_bug_whose_check_says_none_is_not_in_the_ten_minutes(self):
+        # The 5d1e1d5 plan: #283 was found on the phone, but its fix shows only in a diagnostics export,
+        # so the issue says "Owner check: none." The plan still told the owner to repeat what found it.
+        diagnostics = self.pr(494, "Diagnostics: stop reporting the previous item's failure on a new item", [
+            self.issue(283, 'none. Optionally, in a later diagnostics export, a second item shows `failure: none`.',
+                       phone=True)])
+        plan = self.write({494: diagnostics})
+        ten_minutes = plan.split('## Try these')[1].split('## ')[0]
+        self.assertNotIn('Diagnostics', ten_minutes)
+        self.assertNotIn('repeat what you did', plan)
+        unchecked = plan.split('## Also changed (no phone check written)')[1]
+        self.assertIn("- Diagnostics: stop reporting the previous item's failure on a new item ([#494]", unchecked)
+
     def test_with_no_written_checks_the_plan_says_so(self):
         plan = self.write({366: self.pr(366, 'Take the rendered speech cache out of the offline storage ledger')})
         self.assertIn('No phone checks were written for this build', plan)
