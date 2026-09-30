@@ -41,8 +41,11 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   app's DerivedData and verify-tests' output) and Packages/SessionKit/.build (SwiftPM) link to a cache
   outside it, keyed by the SessionKit source tree under test: a DerivedData reused after SessionKit
   changes gives false "does not conform" errors (AGENTS.md), so any SessionKit change starts a new
-  cache. At most WARM_KEEP caches, never below WARM_FREE_FLOOR of free disk; otherwise the job runs
-  cold. A warm rebuild measured 6 to 10 s against 90 s cold, per build.
+  cache. So does an Xcode project change. Each checkout (each runner) has its own caches, because
+  DerivedData and SwiftPM's state record absolute paths, and a cache whose SwiftPM state lists a
+  binary artifact that isn't on disk starts again cold (#405). At most WARM_KEEP caches per checkout,
+  never below WARM_FREE_FLOOR of free disk; otherwise the job runs cold. A warm rebuild measured 6 to
+  10 s against 90 s cold, per build.
 - Two runners (item 5). lane.yml's `lane` job answers /lane requests on the main runner (the only
   one that runs simulators); its `automerge` job runs on any runner labelled sm-lane-build. --mode
   keeps each job to its own work. On the build-only runner (SM_LANE_RUNNER_ROLE=build), an
@@ -57,6 +60,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -78,6 +82,7 @@ WARM_KEEP = 2
 BUILD_RUNNER_WAIT = 90 * 60
 BUILD_RUNNER_FREE_DISK = 20 * 10**9
 WARM_FREE_FLOOR = 15 * 10**9
+PROJECT_FILE = 'SpokenMarginsNative.xcodeproj/project.pbxproj'  # its layout names Xcode's VFS folders (#405)
 MERGE_CHECK = '**Merge check (triage desk)'  # the prefix scripts/merge_audit.py requires
 AUDITS = ('**Codex audit (Astra)', '## Codex audit')  # how an audit comment starts: the hourly task's, or an older manual one
 DESK_ONLY = ('.github/', 'scripts/lane')
@@ -559,25 +564,56 @@ def sessionkit_key(tree: Path) -> str | None:
     return found.stdout.strip()[:12] if found.returncode == 0 and found.stdout.strip() else None
 
 
+def project_key(tree: Path) -> str:
+    """The Xcode project file in the tree under test (its git blob hash), or 'none'."""
+    found = subprocess.run(['git', '-C', str(tree), 'rev-parse', f'HEAD:{PROJECT_FILE}'], capture_output=True, text=True)
+    return found.stdout.strip()[:8] if found.returncode == 0 and found.stdout.strip() else 'none'
+
+
+def checkout_folder(tree: Path) -> str:
+    """One folder of caches per checkout path: DerivedData and SwiftPM state record absolute paths (#405)."""
+    return 'checkout-' + hashlib.sha1(str(tree.resolve()).encode()).hexdigest()[:8]
+
+
+def missing_binary_artifacts(cache: Path) -> list[str]:
+    """Binary artifacts (onnxruntime.xcframework) that a cache's SwiftPM state lists but that aren't on disk."""
+    missing = []
+    for state in (cache / 'sessionkit/workspace-state.json', cache / 'root/dd/SourcePackages/workspace-state.json'):
+        try:
+            artifacts = json.loads(state.read_text()).get('object', {}).get('artifacts', [])
+        except (OSError, ValueError, AttributeError):
+            continue
+        for artifact in artifacts if isinstance(artifacts, list) else []:
+            path = artifact.get('path') if isinstance(artifact, dict) else None
+            if path and not (state.parent / path).exists():  # absolute paths ignore state.parent
+                missing.append(Path(path).name)
+    return missing
+
+
 _WARM_LOCKS: dict = {}
 
 
 def warm_build_folders(tree: Path, root: Path | None = None, free=lambda path: shutil.disk_usage(path).free) -> str:
     """Link the tree's build folders to the cache for its SessionKit tree; returns a line for the report."""
     import fcntl
-    root = root or warm_root()
-    key = sessionkit_key(tree)
-    if not key:
+    shared = root or warm_root()
+    sk = sessionkit_key(tree)
+    if not sk:
         return 'build folders: cold (no SessionKit tree to key a cache on)'
+    key = f'{sk}-{project_key(tree)}'
+    root = shared / checkout_folder(tree)
     root.mkdir(parents=True, exist_ok=True)
     wanted = root / f'sk-{key}'
+    for old in shared.glob('sk-*'):  # caches from before #405, shared by both runners
+        if old.is_dir() and not _cache_busy(old):
+            shutil.rmtree(old, ignore_errors=True)
     others = sorted((d for d in root.iterdir() if d.is_dir() and d.name.startswith('sk-') and d != wanted),
                     key=lambda d: d.stat().st_mtime, reverse=True)
     for old in others[WARM_KEEP - 1:]:
         if not _cache_busy(old):
             shutil.rmtree(old, ignore_errors=True)
     if free(root) < WARM_FREE_FLOOR:
-        for old in others:
+        for old in [d for d in shared.glob('checkout-*/sk-*') if d.is_dir() and d != wanted]:
             if not _cache_busy(old):
                 shutil.rmtree(old, ignore_errors=True)
         if free(root) < WARM_FREE_FLOOR:
@@ -603,6 +639,12 @@ def warm_build_folders(tree: Path, root: Path | None = None, free=lambda path: s
             shutil.rmtree(link)
         link.parent.mkdir(parents=True, exist_ok=True)
         link.symlink_to(target, target_is_directory=True)
+    missing = missing_binary_artifacts(wanted)  # read through the links: the state records the tree's paths
+    if missing:  # SwiftPM won't fetch an artifact its state says it has, so the build fails on it (#405)
+        for name in ('root', 'sessionkit'):
+            shutil.rmtree(wanted / name, ignore_errors=True)
+            (wanted / name).mkdir()
+        return f'build folders: cold, cache reset ({", ".join(sorted(set(missing)))} was missing) (SessionKit {key})'
     return f'build folders: {"warm" if was_warm else "cold, new cache"} (SessionKit {key})'
 
 
