@@ -63,7 +63,8 @@ final class MarginMarkdownShareTests: XCTestCase {
         XCTAssertEqual(MarginMarkdownShare.safeName("/:"), "--")
         XCTAssertEqual(MarginMarkdownShare.safeName(" . "), "Untitled")
         let long = String(repeating: "🎧", count: 100)
-        XCTAssertEqual(MarginMarkdownShare.safeName(long), String(repeating: "🎧", count: 80), "cut by character, not byte")
+        XCTAssertEqual(MarginMarkdownShare.safeName(long), String(repeating: "🎧", count: 37), "150 bytes, never splitting a character")
+        XCTAssertEqual(MarginMarkdownShare.safeName(String(repeating: "a", count: 300)).utf8.count, 150)
 
         func note(_ ms: Int?, _ percent: Int) -> ExportInterjection {
             ExportInterjection(id: "m", sessionId: "s", targetType: "item", targetId: "i", roughPercent: percent,
@@ -94,6 +95,20 @@ final class MarginMarkdownShareTests: XCTestCase {
             XCTAssertFalse(file.markdown.contains("patreon"), file.markdown)
             XCTAssertFalse(file.markdown.contains("SECRET"), file.markdown)
             XCTAssertFalse(file.fileName.contains("SECRET"))
+        }
+    }
+
+    func testLongTitlesInAnyScriptStillMakeAWritableFile() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for title in [String(repeating: "聞", count: 120), String(repeating: "👩‍👩‍👧", count: 80), String(repeating: "x", count: 400)] {
+            let item = Item(id: "item-1", title: title, mediaType: "text", text: "Source text.", externalReference: nil, status: "ready")
+            let margin = margin("m1", item: item, mediaTimeMs: 3_723_000, percent: 50)
+            let file = try XCTUnwrap(try MarginMarkdownShare.file(for: margin, engine: engine(item: item, margins: [margin])))
+            XCTAssertLessThanOrEqual(file.fileName.utf8.count, 255)
+            let url = try MarginMarkdownShare.write(file, under: directory)
+            XCTAssertEqual(url.lastPathComponent, file.fileName)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
         }
     }
 

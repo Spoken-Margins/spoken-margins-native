@@ -7032,7 +7032,10 @@ final class Gate1AppModel: ObservableObject {
             let file = asItem ? try MarginMarkdownShare.file(forItemMargins: margins, engine: engine)
                 : try margins.first.flatMap { try MarginMarkdownShare.file(for: $0, engine: engine) }
             guard let file else { return reportFailure("There's no written or transcribed Margin to share yet.") }
-            url = try MarginMarkdownShare.write(file, under: FileManager.default.temporaryDirectory.appendingPathComponent("MarginMarkdown", isDirectory: true))
+            // One share sheet at a time, so the previous share's file can go.
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MarginMarkdown", isDirectory: true)
+            try? FileManager.default.removeItem(at: directory)
+            url = try MarginMarkdownShare.write(file, under: directory)
         }
         return url
     }

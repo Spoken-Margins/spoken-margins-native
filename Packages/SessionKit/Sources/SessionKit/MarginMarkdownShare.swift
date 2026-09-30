@@ -31,6 +31,9 @@ public enum MarginMarkdownShare {
     /// once notes start with #491's properties.
     public static let separator = "\n* * *\n\n"
 
+    /// A file name may be 255 UTF-8 bytes; the title's share leaves room for `Margin - … - 1h02m03s.md`.
+    static let maximumTitleBytes = 150
+
     /// Whether a Margin gets a note: active, with something written or transcribed, as in the notes folder.
     public static func hasNote(_ margin: Interjection) -> Bool {
         margin.status == "active"
@@ -91,7 +94,8 @@ public enum MarginMarkdownShare {
 
     /// A title that is safe as part of a file name on iOS, macOS and Windows: path and reserved
     /// characters and control characters become `-`, line breaks and runs of spaces become one space, leading dots
-    /// and trailing dots and spaces go, and it is cut to 80 characters without splitting one.
+    /// and trailing dots and spaces go, and it is cut to 150 UTF-8 bytes without splitting a
+    /// character, which leaves room for the rest of the name under the 255-byte limit.
     static func safeName(_ title: String) -> String {
         let reserved = Set("/\\:*?\"<>|")
         var name = ""
@@ -104,7 +108,12 @@ public enum MarginMarkdownShare {
                 name.append(character)
             }
         }
-        name = String(name.prefix(80))
+        var cut = ""
+        for character in name {
+            guard cut.utf8.count + String(character).utf8.count <= maximumTitleBytes else { break }
+            cut.append(character)
+        }
+        name = cut
         while let first = name.first, first == "." || first == " " { name.removeFirst() }
         while let last = name.last, last == "." || last == " " { name.removeLast() }
         return name.isEmpty ? "Untitled" : name
