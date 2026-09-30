@@ -922,6 +922,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var podcastDownloadRecords: [String: PodcastDownloadRecord] = [:]
     @Published var preparedTextAudioStatus = "Not started"
     @Published private(set) var onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.inactive.rawValue
+    @Published private(set) var onDeviceSpeechGenerationStopReason: String?
     /// Why narration is in the iOS voice instead of the chosen one (I14); nil when it isn't.
     @Published private(set) var speechFallbackReason: SpeechFallbackReason?
     @Published private(set) var onDeviceSpeechGenerationProgress = RenderedSpeechGenerationProgress(
@@ -9118,29 +9119,18 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var onDeviceSpeechGenerationStatusDescription: String {
-        switch onDeviceSpeechGenerationStatus {
-        case RenderedSpeechGenerationState.rendering.rawValue:
-            let progress = onDeviceSpeechGenerationProgress
-            guard progress.totalChunks > 0 else {
-                return "Preparing the full Supertonic audio on this iPhone"
-            }
-            if isOnDeviceSpeechGenerationDelayed {
-                return "Still rendering chunk \(min(progress.completedChunks + 1, progress.totalChunks)) of \(progress.totalChunks) · \(progress.percent)% complete"
-            }
-            return "Generating full audio · \(progress.percent)% (\(progress.completedChunks) of \(progress.totalChunks) chunks)"
-        case RenderedSpeechGenerationState.ready.rawValue:
-            return "Prepared audio is ready for playback"
-        case RenderedSpeechGenerationState.stopped.rawValue:
-            return speechFallbackReason?.listenerExplanation ?? "Generation stopped · using the iOS system voice"
-        default:
-            return "On-device voice generation is inactive"
-        }
+        (RenderedSpeechGenerationState(rawValue: onDeviceSpeechGenerationStatus) ?? .inactive).listenerDescription(
+            progress: onDeviceSpeechGenerationProgress, isDelayed: isOnDeviceSpeechGenerationDelayed,
+            stopReason: onDeviceSpeechGenerationStopReason, fallbackReason: speechFallbackReason
+        )
     }
 
-    private func updateOnDeviceSpeechGenerationState(_ state: RenderedSpeechGenerationState) {
+    private func updateOnDeviceSpeechGenerationState(_ state: RenderedSpeechGenerationState, stopReason: String?) {
         if onDeviceSpeechGenerationStatus != state.rawValue { onDeviceSpeechGenerationStatus = state.rawValue }
+        if onDeviceSpeechGenerationStopReason != stopReason { onDeviceSpeechGenerationStopReason = stopReason }
         if canPrepareLibraryAudio { startForegroundAudioPreparationIfNeeded() }
         diagnostics["onDeviceSpeechGeneration"] = state.rawValue
+        if let stopReason { diagnostics["onDeviceSpeechGenerationStopReason"] = stopReason }
         guard state != .rendering else { return }
         onDeviceSpeechGenerationDelayTask?.cancel()
         onDeviceSpeechGenerationDelayTask = nil
@@ -10798,9 +10788,9 @@ final class Gate1AppModel: ObservableObject {
                         self?.handleSpeechPlaybackInterruption(event)
                     }
                 },
-                onGenerationStateChange: { [weak self] state in
+                onGenerationStateChange: { [weak self] state, stopReason in
                     Task { @MainActor [weak self] in
-                        self?.updateOnDeviceSpeechGenerationState(state)
+                        self?.updateOnDeviceSpeechGenerationState(state, stopReason: stopReason)
                     }
                 },
                 onGenerationProgress: { [weak self] progress in
