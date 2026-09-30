@@ -4,7 +4,10 @@
 # A stream asks by commenting `/lane T2` or `/lane T3` on its PR into next and adding the
 # lane:queued label. The automerge label asks for the checks a finished PR needs without a comment:
 # --plan fast, plus both builds when the diff reaches the app (scripts/test-scope.py), again on
-# every push while the label stays.
+# every push while the label stays. On PASS the runner merges the PR itself (decision 3, approved by
+# the owner): it tests the exact merge commit, next first, and pushes it to next, unless the PR
+# changes .github/ or scripts/lane*, or is an audio, persistence or packet change with no Codex
+# audit yet (scripts/lane-runner.py).
 #
 # Trigger: pull_request. GitHub builds these runs from the PR's merge ref, which it doesn't refresh
 # when next moves, so a PR last pushed before this file reached next gets no run (#221) until it
@@ -23,7 +26,10 @@ on:
     types: [labeled, synchronize, reopened]
 
 permissions:
-  contents: read
+  # write: the runner pushes the merge commits it tested to next. The checkout keeps no credentials
+  # and the PR's own builds and tests run without the token, so only lane-runner.py (taken from the
+  # base branch) can use it.
+  contents: write
   pull-requests: write
   issues: write
 
@@ -56,6 +62,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+          persist-credentials: false
       - name: Take the lane runner from the base branch
         run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
       - name: Run the request
