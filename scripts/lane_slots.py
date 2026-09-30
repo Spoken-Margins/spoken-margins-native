@@ -57,13 +57,38 @@ def build_slot_names():
     return [f'xcodebuild-slot-{index}.lock' for index in range(SLOTS)]
 
 
+def _pid_running(pid):
+    """False only when no process has this pid; unreadable or foreign pids count as running."""
+    if not isinstance(pid, int) or pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:  # PermissionError: another user's process
+        return True
+    return True
+
+
 def _read_holders(names, directory=None):
+    """The holder notes of the named locks that are really held, each with 'gone' set when its pid has exited.
+
+    The flock is the truth; a note is only what the last taker wrote. A holder that dies without
+    clearing its note (the simulator watcher that inherited lane-sim-boot's slot, #395) leaves a
+    note on a free lock, so notes on free locks are skipped. A held lock whose recorded pid has
+    exited was handed to a child (lane-sim-boot gives its slot to the watcher), so it is kept and
+    marked gone.
+    """
     found = []
     for name in names:
+        path = Path(directory or state_dir()) / name
         try:
-            found.append(json.loads((Path(directory or state_dir()) / name).read_text()))
+            holder = json.loads(path.read_text())
         except (OSError, ValueError):
             continue
+        if not isinstance(holder, dict) or not _lock_held(path):
+            continue
+        found.append({**holder, 'gone': not _pid_running(holder.get('pid'))})
     return found
 
 
@@ -73,11 +98,15 @@ def holders(directory=None):
 
 
 def _describe(holder):
-    return f"pid {holder.get('pid')} in {holder.get('cwd')} ({holder.get('label')}, since {holder.get('started')})"
+    pid = f"pid {holder.get('pid')}" + (' (gone; a child still holds its lock)' if holder.get('gone') else '')
+    return f"{pid} in {holder.get('cwd')} ({holder.get('label')}, since {holder.get('started')})"
 
 
 def _held(name):
-    path = state_dir() / name
+    return _lock_held(state_dir() / name)
+
+
+def _lock_held(path):
     if not path.exists():
         return False
     with open(path, 'a+') as handle:
@@ -167,12 +196,14 @@ def acquire(names, what, label, out=sys.stderr, max_wait=None, allowed=None, why
             print(f'[lane] {what}{slot} acquired after {waited:.0f}s: {label}', file=out, flush=True)
             return handle, index, waited
         now = time.monotonic()
-        busy = '; '.join(_describe(h) for h in _read_holders(names, directory)) or 'nothing holds them'
-        if len(usable) < len(names):
-            busy += f' ({why() if why else f"only {len(usable)} of {len(names)} while a simulator job runs"})'
-        if max_wait is not None and now - started >= max_wait:
-            raise TimeoutError(f'no {what} free within {max_wait:.0f}s: {busy}')
-        if last_note is None or now - last_note >= NOTE_EVERY_SECONDS:
+        timed_out = max_wait is not None and now - started >= max_wait
+        if timed_out or last_note is None or now - last_note >= NOTE_EVERY_SECONDS:
+            # Only when saying it: reading the holders probes each lock, which shouldn't happen every poll.
+            busy = '; '.join(_describe(h) for h in _read_holders(names, directory)) or 'nothing holds them'
+            if len(usable) < len(names):
+                busy += f' ({why() if why else f"only {len(usable)} of {len(names)} while a simulator job runs"})'
+            if timed_out:
+                raise TimeoutError(f'no {what} free within {max_wait:.0f}s: {busy}')
             print(f'[lane] waiting for a {what} ({now - started:.0f}s so far): {busy}', file=out, flush=True)
             last_note = now
         time.sleep(POLL_SECONDS)

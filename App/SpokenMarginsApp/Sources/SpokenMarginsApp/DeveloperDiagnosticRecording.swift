@@ -7,13 +7,9 @@ import SessionKitAudio
 /// and off-main. Fields at call sites are state/counters, never source content.
 @MainActor
 final class DeveloperDiagnosticRecording {
-    /// The app version and build number, e.g. "0.1 (29)", so an export proves which build produced it.
-    static let buildIdentity: String = {
-        let info = Bundle.main.infoDictionary ?? [:]
-        let version = info["CFBundleShortVersionString"] as? String ?? "unknown"
-        let build = info["CFBundleVersion"] as? String ?? "unknown"
-        return "\(version) (\(build))"
-    }()
+    /// The app version and build number, e.g. "0.1 (29)", plus the commit for a phone build
+    /// ("0.1 (29) · 1a2b3c4"), so an export proves which build produced it.
+    static let buildIdentity = BuildIdentity.describe(info: Bundle.main.infoDictionary ?? [:])
     struct Event: Codable, Sendable {
         let time: String
         let elapsedMs: Int

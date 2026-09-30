@@ -1039,6 +1039,34 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         ))
     }
 
+    /// #314: a stop's reason reaches the model's diagnostics and the on-device voice line, and
+    /// leaves diagnostics once generation runs again, so a device report taken after a
+    /// successful Retry doesn't show the old failure.
+    func testGenerationStopReasonReachesDiagnosticsAndClearsWhenGenerationRunsAgain() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let assembly = "\(SpeechGenerationStopReason.assemblyFailedCode): disk full"
+
+        model.updateOnDeviceSpeechGenerationState(.stopped, stopReason: assembly)
+        XCTAssertEqual(model.diagnostics["onDeviceSpeechGenerationStopReason"], assembly)
+        XCTAssertTrue(
+            model.onDeviceSpeechGenerationStatusDescription.contains("Couldn't save the finished audio"),
+            model.onDeviceSpeechGenerationStatusDescription
+        )
+
+        // A render that failed without the iOS voice taking over (no fallback reason) must not
+        // say the iOS voice is playing.
+        model.updateOnDeviceSpeechGenerationState(.stopped, stopReason: "supertonic_render_timeout")
+        XCTAssertEqual(model.diagnostics["onDeviceSpeechGenerationStopReason"], "supertonic_render_timeout")
+        XCTAssertFalse(
+            model.onDeviceSpeechGenerationStatusDescription.contains("iOS"),
+            model.onDeviceSpeechGenerationStatusDescription
+        )
+
+        model.updateOnDeviceSpeechGenerationState(.rendering, stopReason: nil)
+        XCTAssertNil(model.onDeviceSpeechGenerationStopReason)
+        XCTAssertNil(model.diagnostics["onDeviceSpeechGenerationStopReason"], "A Retry that renders again clears the old reason")
+    }
+
     func testTimelineMarksTheCurrentPreparedAudioChapter() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         let opening = MediaTimelineChapter(
@@ -2508,6 +2536,12 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.feedbackEvent?.kind, .error)
         XCTAssertTrue(model.lastError?.contains("No cleaned-transcript fallback was saved") == true)
         XCTAssertTrue(model.lastError?.contains("Tap Retry Summary") == true)
+
+        // #310: the banner offers Retry, and trying again another way withdraws the stale offer.
+        let failure = model.feedbackEvent
+        XCTAssertEqual(failure?.retry?.key, "summary")
+        model.summarize()
+        XCTAssertNotEqual(model.feedbackEvent?.id, failure?.id)
     }
 
     func testCompletedSummaryPlaybackDoesNotBlockSummarizingANewInterjection() async throws {

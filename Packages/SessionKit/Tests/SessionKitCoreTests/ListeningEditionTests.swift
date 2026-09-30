@@ -1,5 +1,8 @@
 import XCTest
 @testable import SessionKit
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 final class ListeningEditionTests: XCTestCase {
     func testPublishedFixtureDecodesThroughRuntimeContract() throws {

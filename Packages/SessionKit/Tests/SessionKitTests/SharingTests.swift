@@ -4,6 +4,7 @@ import Foundation
 @testable import SessionKitAudio
 import SessionKitPersistence
 import SessionKitSharing
+import ShippedPacketReader
 import XCTest
 import ZIPFoundation
 #if canImport(AVFoundation)
@@ -196,7 +197,7 @@ final class SharingTests: XCTestCase {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("embedded.spokenmargins")
-        let manifest = try SpokenMarginsPackageArchive.write(embedded, to: url)
+        let manifest = try exportPacket(embedded, to: url)
         let verified = try SpokenMarginsPackageArchive.read(
             from: url,
             extractingAssetsTo: root.appendingPathComponent("assets")
@@ -220,7 +221,7 @@ final class SharingTests: XCTestCase {
             )]
         )
         let omittedURL = root.appendingPathComponent("omitted.spokenmargins")
-        let omittedManifest = try SpokenMarginsPackageArchive.write(omitted, to: omittedURL)
+        let omittedManifest = try exportPacket(omitted, to: omittedURL)
         XCTAssertEqual(omittedManifest.itemTransport.kind, .recipientSupplied)
         XCTAssertTrue(omittedManifest.redactions.fullItemOmitted)
 
@@ -333,8 +334,8 @@ final class SharingTests: XCTestCase {
         let prepared = try textPreparedPackage()
         let firstURL = root.appendingPathComponent("first.spokenmargins")
         let secondURL = root.appendingPathComponent("second.spokenmargins")
-        let first = try SpokenMarginsPackageArchive.write(prepared, to: firstURL)
-        let second = try SpokenMarginsPackageArchive.write(prepared, to: secondURL)
+        let first = try exportPacket(prepared, to: firstURL)
+        let second = try exportPacket(prepared, to: secondURL)
         XCTAssertEqual(first, second)
         XCTAssertEqual(try Data(contentsOf: firstURL), try Data(contentsOf: secondURL))
 
@@ -426,7 +427,7 @@ final class SharingTests: XCTestCase {
             )]
         )
         let url = root.appendingPathComponent("map.spokenmargins")
-        _ = try SpokenMarginsPackageArchive.write(prepared, to: url)
+        _ = try exportPacket(prepared, to: url)
         let verified = try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appendingPathComponent("assets"))
         XCTAssertEqual(verified.listeningMapProposals, [proposal])
         XCTAssertEqual(verified.editionFingerprintSpines, [spine])
@@ -1340,7 +1341,7 @@ final class SharingTests: XCTestCase {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let optionalURL = root.appendingPathComponent("optional.spokenmargins")
-        _ = try SpokenMarginsPackageArchive.write(optionalPrepared, to: optionalURL)
+        _ = try exportPacket(optionalPrepared, to: optionalURL)
         XCTAssertNoThrow(try SpokenMarginsPackageArchive.read(from: optionalURL, extractingAssetsTo: root.appendingPathComponent("optional-assets")))
 
         var requiredManifest = base.manifest
@@ -1367,7 +1368,7 @@ final class SharingTests: XCTestCase {
         }
 
         let goodURL = root.appendingPathComponent("good.spokenmargins")
-        _ = try SpokenMarginsPackageArchive.write(textPreparedPackage(), to: goodURL)
+        _ = try exportPacket(textPreparedPackage(), to: goodURL)
         var entries = try readRawArchive(goodURL)
         entries["artifacts/commentary-layer.json"] = Data("{}".utf8)
         let tamperedURL = root.appendingPathComponent("tampered.spokenmargins")
@@ -1458,6 +1459,25 @@ final class SharingTests: XCTestCase {
         )
     }
 
+    /// The shipped build's reader is really in the loop (#317): one manifest key it doesn't know, as a new
+    /// packet field would add, is enough for it to refuse a packet it otherwise imports.
+    func testTheShippedBuildRejectsAManifestKeyItDoesNotKnow() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let goodURL = root.appendingPathComponent("good.spokenmargins")
+        try exportPacket(textPreparedPackage(), to: goodURL)
+        var entries = try readRawArchive(goodURL)
+        var manifest = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: XCTUnwrap(entries["manifest.json"])) as? [String: Any])
+        manifest["addedAfterBuild29"] = true
+        entries["manifest.json"] = try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
+        let changedURL = root.appendingPathComponent("new-field.spokenmargins")
+        try writeRawArchive(entries: entries, to: changedURL)
+        XCTAssertThrowsError(try ShippedPacketReader.importPacket(at: changedURL)) { error in
+            XCTAssertTrue("\(error)".contains("unknown manifest fields: addedAfterBuild29"), "\(error)")
+        }
+    }
+
     private func textPreparedPackage() throws -> PreparedSpokenMarginsPackage {
         try SpokenMarginsPackageBuilder.prepare(
             packageId: "package-article-001", createdAt: fixedDate, item: articleItem, itemTransportSelection: .reference,
@@ -1472,7 +1492,7 @@ final class SharingTests: XCTestCase {
 
     private func verifiedTextPackage(in root: URL) throws -> VerifiedSpokenMarginsPackage {
         let url = root.appendingPathComponent("verified.spokenmargins")
-        _ = try SpokenMarginsPackageArchive.write(textPreparedPackage(), to: url)
+        _ = try exportPacket(textPreparedPackage(), to: url)
         return try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appendingPathComponent("verified-assets"))
     }
 

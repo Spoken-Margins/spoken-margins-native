@@ -144,6 +144,18 @@ actor OfflineStorageLedger {
         return removed
     }
 
+    /// Settings > Storage > Clear Audio. The rendered speech cache is outside the ledger (#313), so it's
+    /// cleared through the app's cache, under its lock, or by directory when this launch hasn't opened it.
+    func clearReproducibleAudio(renderedSpeechCache: RenderedSpeechDiskCache?) throws -> Int64 {
+        let cleared = try clearReproducibleAssets(in: [.preparedAudio, .preparedChunk, .podcast, .guidedTour])
+        let cacheDirectory = rootDirectory.appending(
+            path: OfflineLedgerScope.renderedSpeechCacheDirectory, directoryHint: .isDirectory
+        )
+        let renderedBytes = renderedSpeechCache?.removeAll()
+            ?? RenderedSpeechDiskCache.removeAll(in: cacheDirectory, fileManager: fileManager)
+        return cleared + renderedBytes
+    }
+
     func inventoryBytes() throws -> Int64 {
         try repository.loadOwnedOfflineAssets().reduce(0) { $0 + $1.byteCount }
     }
@@ -206,10 +218,11 @@ actor OfflineStorageLedger {
         }
     }
 
+    /// Enrols files older builds wrote without a row. The rendered speech cache isn't one of these
+    /// directories: it manages its own size (#313, `OfflineLedgerScope`).
     func adoptExistingAssets() throws {
         let directories: [(String, OfflineAssetCategory, Bool, Set<OfflineProtectionReason>)] = [
             ("PodcastAudio", .podcast, true, []),
-            ("RenderedSpeechCache", .preparedChunk, true, []),
             ("PreparedSupertonicAudio", .preparedAudio, true, []),
             ("PreparedAudio", .preparedAudio, true, []),
             ("Interjections", .interjection, false, [.interjection]),

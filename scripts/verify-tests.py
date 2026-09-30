@@ -155,6 +155,22 @@ def reconcile(expected, records, allowed_skips=()):
     return errors
 
 
+def log_errors(text, limit=3, width=300):
+    """The first distinct error lines of a failed step's log, so the lane report can say why.
+
+    The runner's reports quote the manifest's error, and the logs stay on the Mac: T3 reports on
+    #368 and #408 said only "Process exit 70" (#411).
+    """
+    lines = text.splitlines()
+    found = [line.strip() for line in lines if ' error: ' in line or line.startswith('error:')]
+    if 'The following build commands failed:' in lines:
+        for line in lines[lines.index('The following build commands failed:') + 1:]:
+            if not line.strip():
+                break
+            found.append('failed: ' + line.strip())
+    return [line[:width] for line in dict.fromkeys(found)][:limit]
+
+
 class Run:
     def __init__(self, output, plan):
         self.output = output
@@ -258,6 +274,8 @@ class Run:
             if not entry['executed_count']:
                 errors.append('Browser runner executed zero tests')
         if result:
+            if not any(error.startswith('Failed: ') for error in errors):  # failed tests already say why
+                errors[:0] = log_errors(text)
             errors.insert(0, f'Process exit {result}')
         entry['errors'] = errors
         self.save()
@@ -284,7 +302,7 @@ class Run:
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         self.command('browser', ['npm', 'run', 'test:browser-extraction'])
         expected = set()
-        for target in ('SessionKitTests', 'SessionKitTraceTests'):
+        for target in ('SessionKitCoreTests', 'SessionKitTests', 'SessionKitTraceTests'):
             expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))
         self.command('package', ['bash', 'scripts/run-sessionkit-tests.sh'], timeout=300,
                      expected=expected, tests=True,

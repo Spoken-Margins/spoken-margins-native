@@ -54,6 +54,31 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(step['simulator_crash_report'], crashes[-1])
             self.assertEqual(step['exit_code'], 124)
 
+    def test_a_failed_step_names_its_first_errors_not_just_the_exit_code(self):
+        # #411: T3 reports on #368 and #408 said only "Process exit 70"; the log that says why stayed on the Mac.
+        script = ('import sys; print("Command line invocation: xcodebuild build-for-testing"); '
+                  'print("2026-09-30 05:31:10.000 xcodebuild[1:2] Writing error result bundle"); '
+                  'print("xcodebuild: error: Unable to find a destination matching the provided destination '
+                  'specifier:"); print("xcodebuild: error: Unable to find a destination matching the provided '
+                  'destination specifier:"); sys.exit(70)')
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'test')
+            with self.assertRaises(RuntimeError) as raised:
+                run.command('build-for-testing', [sys.executable, '-c', script])
+        self.assertTrue(str(raised.exception).startswith(
+            'Process exit 70; xcodebuild: error: Unable to find a destination matching the provided destination '
+            'specifier: (see '), str(raised.exception))
+        self.assertEqual(run.manifest['steps'][-1]['errors'], [
+            'Process exit 70',
+            'xcodebuild: error: Unable to find a destination matching the provided destination specifier:'])
+
+    def test_build_errors_list_the_failed_commands(self):
+        log = ('/src/A.swift:3:1: error: cannot find \'x\' in scope\n** TEST BUILD FAILED **\n\n'
+               'The following build commands failed:\n\tSwiftCompile normal arm64 /src/A.swift\n(1 failure)\n\n')
+        self.assertEqual(verification.log_errors(log), [
+            "/src/A.swift:3:1: error: cannot find 'x' in scope", 'failed: SwiftCompile normal arm64 /src/A.swift',
+            'failed: (1 failure)'])
+
     def simulator_inventory(self):
         return {
             f'com.apple.CoreSimulator.SimRuntime.iOS-{version}': [{
