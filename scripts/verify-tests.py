@@ -18,7 +18,7 @@ import time
 
 from check_posterboard_repair import new_crash
 import lane_sim
-from lane_slots import acquire_simulator_slot, build_slot, release_handle
+from lane_slots import acquire_simulator_slot, build_slot, host_test_slot, release_handle
 
 from test_inventory import ROOT, plan_tests, swift_tests, validate
 
@@ -155,6 +155,22 @@ def reconcile(expected, records, allowed_skips=()):
     return errors
 
 
+def log_errors(text, limit=3, width=300):
+    """The first distinct error lines of a failed step's log, so the lane report can say why.
+
+    The runner's reports quote the manifest's error, and the logs stay on the Mac: T3 reports on
+    #368 and #408 said only "Process exit 70" (#411).
+    """
+    lines = text.splitlines()
+    found = [line.strip() for line in lines if ' error: ' in line or line.startswith('error:')]
+    if 'The following build commands failed:' in lines:
+        for line in lines[lines.index('The following build commands failed:') + 1:]:
+            if not line.strip():
+                break
+            found.append('failed: ' + line.strip())
+    return [line[:width] for line in dict.fromkeys(found)][:limit]
+
+
 class Run:
     def __init__(self, output, plan):
         self.output = output
@@ -258,6 +274,8 @@ class Run:
             if not entry['executed_count']:
                 errors.append('Browser runner executed zero tests')
         if result:
+            if not any(error.startswith('Failed: ') for error in errors):  # failed tests already say why
+                errors[:0] = log_errors(text)
             errors.insert(0, f'Process exit {result}')
         entry['errors'] = errors
         self.save()
@@ -267,6 +285,15 @@ class Run:
         return text
 
     def fast(self):
+        # The host steps share two Mac-wide host-test slots with every session and the runner (#350);
+        # the package step's swift test runs inside this run's slot.
+        with host_test_slot(f'verify-tests {self.manifest["plan"]} in {ROOT}', out=sys.stdout,
+                            max_wait=BUILD_SLOT_WAIT_SECONDS) as held:
+            self.manifest['host_test_slot'] = held
+            self.save()
+            self.host_steps()
+
+    def host_steps(self):
         self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'])
         self.command('contracts', [sys.executable, 'scripts/validate-contracts.py'])
         self.command('surfaces', [sys.executable, 'scripts/validate-surface-contracts.py'])
@@ -275,7 +302,7 @@ class Run:
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         self.command('browser', ['npm', 'run', 'test:browser-extraction'])
         expected = set()
-        for target in ('SessionKitTests', 'SessionKitTraceTests'):
+        for target in ('SessionKitCoreTests', 'SessionKitTests', 'SessionKitTraceTests'):
             expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))
         self.command('package', ['bash', 'scripts/run-sessionkit-tests.sh'], timeout=300,
                      expected=expected, tests=True,
