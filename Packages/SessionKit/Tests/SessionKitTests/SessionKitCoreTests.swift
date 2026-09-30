@@ -97,6 +97,15 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(lifecycle.abandonIfOverrun(playerMediaTimeMs: 203_000, uptimeMs: 33_000, playbackRate: 1)?.purpose, .navigation)
         XCTAssertNil(lifecycle.pending)
         XCTAssertNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 203_000, uptimeMs: 33_000, playbackRate: 1), "nothing pending")
+
+        // A jump forward 15 s still in flight while the player plays on from where it was.
+        _ = lifecycle.begin(targetId: "episode", mediaTimeMs: 115_000, purpose: .navigation, originMediaTimeMs: 100_000, uptimeMs: 0)
+        XCTAssertNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 117_000, uptimeMs: 17_000, playbackRate: 1))
+        XCTAssertEqual(lifecycle.pending?.mediaTimeMs, 115_000)
+
+        // A skip back 2 s that landed and played on past where it started is still abandoned.
+        _ = lifecycle.begin(targetId: "episode", mediaTimeMs: 100_000, purpose: .navigation, originMediaTimeMs: 102_000, uptimeMs: 0)
+        XCTAssertNotNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 103_500, uptimeMs: 3_500, playbackRate: 1))
     }
 
     func testMediaSeekLifecycleIgnoresSupersededSeekCompletion() {

@@ -1628,7 +1628,8 @@ struct MediaSeekLifecycle: Equatable {
     /// A seek whose completion never arrived kept every clock at its target while the audio played
     /// on (#166). Forgets and returns the pending seek when the player's clock shows it landed: more
     /// than the tolerance past the target, by no more than playback since the seek began explains,
-    /// and not explained by the player still playing on from where it was (a seek still in flight).
+    /// and, for a forward seek, not explained by the player still playing on from where it was (a seek
+    /// still in flight). A backward seek in flight already fails the reach check.
     mutating func abandonIfOverrun(playerMediaTimeMs: Int?, uptimeMs: Int, playbackRate: Double) -> Pending? {
         guard let current = pending, let player = playerMediaTimeMs else { return nil }
         let played = Double(max(0, uptimeMs - current.beganUptimeMs)) * max(playbackRate, 0)
@@ -1636,7 +1637,7 @@ struct MediaSeekLifecycle: Equatable {
         let pastTarget = player - current.mediaTimeMs
         guard pastTarget > Self.overrunToleranceMs, pastTarget <= reach else { return nil }
         if let origin = current.originMediaTimeMs,
-           abs(origin - current.mediaTimeMs) > Self.overrunToleranceMs,
+           current.mediaTimeMs - origin > Self.overrunToleranceMs,
            player >= origin, player - origin <= reach {
             return nil
         }
