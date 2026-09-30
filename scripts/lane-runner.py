@@ -276,6 +276,10 @@ def first_errors(log: Path, limit: int = 5) -> list[str]:
             if not line.strip():
                 break
             found.append('failed: ' + line.strip())
+    if not found:
+        # simctl says why in plain lines ("An error was encountered processing the command (domain=…,
+        # code=…):" then the reason), which match none of the above: #440's report said only "Process exit 148".
+        found = [line.strip()[:300] for line in lines if line.strip()][-2:]
     return list(dict.fromkeys(found))[:limit]
 
 
@@ -401,7 +405,38 @@ def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2,
     return verdict, 'no simulator (compile only)', f'host tests (--plan fast): passed; {builds}', details + more
 
 
-def merge_blockers(scope: dict, comments: list[dict]) -> list[str]:
+AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
+CLEAN_AUDIT = re.compile(r'no (blocking )?findings\b', re.I)  # how the audit task's verdict line opens
+
+
+def audit_blocker(comments: list[dict], head: str) -> str | None:
+    """Why the Codex audits on the PR don't clear its head, or None when the newest audit of the head is clean.
+
+    #441: any audit comment used to clear the PR, whatever commit it covered or what it found. An audit
+    counts only if its heading names the head commit (the hourly task's says "on `<sha7>`"), and it clears
+    only if its verdict, the first line after the heading, opens "No blocking findings". Anything else
+    holds, so a new audit format fails closed.
+    """
+    audits = []
+    for comment in comments:
+        body = (comment.get('body') or '').lstrip()
+        if body.startswith(AUDITS):
+            heading, _, rest = body.partition('\n')
+            verdict = next((line.strip() for line in rest.splitlines() if line.strip()), '')
+            audits.append((AUDIT_SHA.findall(heading), verdict))
+    if not audits:
+        return 'has no "Codex audit (Astra)" comment yet'
+    on_head = [verdict for shas, verdict in audits if any(head.startswith(sha) for sha in shas)]
+    if not on_head:
+        audited = next((shas[0] for shas, _ in reversed(audits) if shas), None)
+        return (f'has no Codex audit of its head: the audit is on `{audited}`, the head is `{head[:7]}`' if audited
+                else f'has no Codex audit naming its head `{head[:7]}`')
+    if not CLEAN_AUDIT.match(on_head[-1]):
+        return f'the Codex audit on the head `{head[:7]}` has blocking findings (it doesn\'t say "No blocking findings")'
+    return None
+
+
+def merge_blockers(scope: dict, comments: list[dict], head: str) -> list[str]:
     """Why the runner won't merge this PR itself even on PASS; the desk merges those."""
     reasons = []
     desk = [f['path'] for f in scope['files'] if f['path'].startswith(DESK_ONLY)]
@@ -409,8 +444,10 @@ def merge_blockers(scope: dict, comments: list[dict]) -> list[str]:
         reasons.append(f'it changes the lane or its workflows ({", ".join(desk[:5])}), and a PR can change '
                        'what tests it')
     risky = sorted({AUDITED[f['category']] for f in scope['files'] if f['category'] in AUDITED})
-    if risky and not any((c.get('body') or '').lstrip().startswith(AUDITS) for c in comments):
-        reasons.append(f'it touches {" and ".join(risky)} and has no "Codex audit (Astra)" comment yet')
+    audit = audit_blocker(comments, head) if risky else None
+    if audit:
+        reasons.append(f'it touches {" and ".join(risky)}, and {audit}' if audit.startswith('the ')
+                       else f'it touches {" and ".join(risky)} and {audit}')
     return reasons
 
 
@@ -528,10 +565,11 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             + notes + details
         if verdict != 'PASS':
             return verdict, where, ran, details
-        held = t3_gate(github.comments())  # read now: a T3 report may have landed while this ran
+        latest = github.comments()  # read now: a T3 report or an audit may have landed while this ran
+        held = t3_gate(latest)
         if held:
             return held[0], where, ran, details + [f'not merged: {held[1]}.']
-        blockers = merge_blockers(scope, comments)
+        blockers = merge_blockers(scope, latest, head)
         if blockers:
             return verdict, where, ran, details + [f'not merged by the runner: {b}. The desk merges it.'
                                                    for b in blockers]
@@ -782,13 +820,22 @@ def failed_step_errors(manifest: dict, output: Path, limit: int = 3) -> list[str
 def t3_verdict(summaries: list[dict], statuses: list[str]) -> str:
     if statuses and all(status == 'verified' for status in statuses):
         return 'PASS'
-    if any(s['failed'] or s['build_failed'] for s in summaries):
+    # A plan that lost its simulator failed for the lane's reasons (#411: exit 70 when the device vanished).
+    if any((s['failed'] or s['build_failed']) and not s.get('device_lost') for s in summaries):
         return 'FAIL'
     return 'INCONCLUSIVE'
 
 
-def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[list, list, list, list]:
-    """Run each plan's selectors; stop at the first crash flood (AGENTS.md: don't reboot in a loop)."""
+READINESS_STEPS = ('simulator-boot', 'simulator-ready')
+
+
+def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
+              device_available=lambda: True) -> tuple[list, list, list, list]:
+    """Run each plan's selectors; stop at the first crash flood (AGENTS.md: don't reboot in a loop).
+
+    Also stop when a plan ends with the simulator not ready or gone: the next plan would only fail to find
+    it (#440: exit 148 at the readiness step, then "No matching supported simulator" for the adapters plan).
+    """
     summaries, statuses, ran, details = [], [], [], []
     plans = list(grouped.items())
     for position, (plan, selectors) in enumerate(plans):
@@ -819,6 +866,20 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[
                 details.append(f'Stopped after the crash flood; not run: {", ".join(skipped)}.')
                 statuses.append('not run')
             break
+        if manifest.get('status') != 'verified':
+            stopped_at = next((step.get('name') for step in manifest.get('steps', []) if step.get('exit_code')),
+                              None)  # a readiness step that ran out of time counts too
+            gone = not device_available()
+            if gone or stopped_at in READINESS_STEPS:
+                summary['device_lost'] = True
+                skipped = [p for p, _ in plans[position + 1:]]
+                why = ('the fresh simulator is gone (no longer listed by `simctl list devices available`)' if gone
+                       else f'the fresh simulator was not ready (verify-tests.py `{stopped_at}`)')
+                details.append(f'{plan}: {why}, so this is the lane\'s fault, not the PR\'s'
+                               + (f'; not run: {", ".join(skipped)}.' if skipped else '.'))
+                if skipped:
+                    statuses.append('not run')
+                break
     return summaries, statuses, ran, details
 
 
@@ -888,6 +949,14 @@ def _run_t3_grouped(grouped, request_id, evidence):
 
 def _t3_on_fresh_device(grouped, request_id, evidence, runtime):
     """The T3 job proper; the caller holds the simulator slot throughout."""
+    claim = claim_runner_device(RUNNER_SIMULATOR_PREFIX + request_id)
+    try:
+        return _t3_on_claimed_device(grouped, request_id, evidence, runtime)
+    finally:
+        release_runner_device(claim)
+
+
+def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
     import lane_sim
     udid = lane_sim.create_temporary(RUNNER_SIMULATOR_PREFIX + request_id)
     where = f'fresh iPhone 17, {runtime.rsplit(".", 1)[-1].replace("iOS-", "iOS ").replace("-", ".")}'
@@ -919,7 +988,8 @@ def _t3_on_fresh_device(grouped, request_id, evidence, runtime):
             return 'INCONCLUSIVE', where, 'nothing', details, 'watched during boot', ''
         lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot',  # stops the device at a SpringBoard crash
                                crash_window=boot_info.get('boot_window'))
-        summaries, statuses, ran, details = run_plans(grouped, run_plan, evidence)
+        summaries, statuses, ran, details = run_plans(grouped, run_plan, evidence,
+                                                      lambda: lane_sim.is_available(udid))
         details.insert(0, f'first boot of the fresh simulator took {duration(boot_seconds)} (memory pressure at boot: '
                           f'{boot_info.get("pressure", "unknown")}, after waiting {boot_info.get("pressure_waited", 0)}s; '
                           f'{boot_info.get("period", "one-simulator")} period)')
@@ -989,12 +1059,55 @@ class GitHub:
 
 # ---- Main ---------------------------------------------------------------------------------------
 
+def runner_device_claim(name: str) -> Path:
+    from lane_slots import state_dir
+    return state_dir() / ('runner-device-' + re.sub(r'[^A-Za-z0-9._-]+', '-', name) + '.lock')
+
+
+def claim_runner_device(name: str):
+    """Lock the name of the device a T3 job is about to create, until the job has deleted it (#440).
+
+    Both runners live on this Mac, and every lane job starts by sweeping leftover runner simulators. Without
+    the claim, a job starting on the other runner deleted a T3's device mid-run: exit 148 at the readiness
+    step (#440), or xcodebuild's "Unable to find a device" (exit 70, #411). The kernel drops the lock when
+    this process exits, however it exits, so a crashed job's device is still swept.
+    """
+    import fcntl
+    path = runner_device_claim(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open('a+')
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    return handle
+
+
+def release_runner_device(handle) -> None:
+    Path(handle.name).unlink(missing_ok=True)
+    handle.close()
+
+
+def runner_device_claimed(name: str) -> bool:
+    import fcntl
+    try:
+        handle = runner_device_claim(name).open()
+    except OSError:
+        return False
+    with handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+    return False
+
+
 def sweep_runner_simulators() -> None:
-    """Delete simulators a previous runner job left behind (only this one runner makes them)."""
+    """Delete simulators earlier runner jobs left behind; a running job's claimed device stays (#440)."""
     devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', '--json'], text=True))
     for group in devices.get('devices', {}).values():
         for device in group:
             if device.get('name', '').startswith(RUNNER_SIMULATOR_PREFIX):
+                if runner_device_claimed(device['name']):
+                    print(f'Left {device["name"]} alone: a running T3 job holds it')
+                    continue
                 subprocess.run(['xcrun', 'simctl', 'shutdown', device['udid']], capture_output=True, timeout=120)
                 subprocess.run(['xcrun', 'simctl', 'delete', device['udid']], capture_output=True, timeout=120)
                 print(f'Deleted leftover simulator {device["name"]}')
