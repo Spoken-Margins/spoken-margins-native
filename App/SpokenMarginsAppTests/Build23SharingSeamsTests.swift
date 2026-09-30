@@ -39,9 +39,17 @@ final class Build23SharingSeamsTests: XCTestCase {
         withExtendedLifetime((subscription, inputWatch)) {}
     }
 
-    // TEMPORARY evidence for #415 "Done when" 3; removed before merge.
-    func testTemporary415TickCheckPassesTwentyTimes() async throws {
-        for _ in 0..<20 { try await testSharingCoordinatorIgnoresPlaybackAndDiagnosticTicks() }
+    // TEMPORARY evidence for #415 "Done when" 3; removed before merge. The
+    // lane can't pass -test-iterations, so this runs every test in the class
+    // 20 times in one session.
+    func testTemporary415ClassPassesTwentyTimes() async throws {
+        for _ in 0..<20 {
+            try await testSharingCoordinatorIgnoresPlaybackAndDiagnosticTicks()
+            try await testTwoMarginsWithLocalSkimReferencesProduceVerifiedShareFile()
+            testSenderStageVocabularyIsFrozenInReleaseOrder()
+            try await testRecipientPreviewComesFromVerifiedFileAndMutationInvalidatesIt()
+            try await testAcousticOptOutOmitsStoredEditionSpineAndRetainsReviewedDisclosures()
+        }
     }
 
     private static let quietWindow: Duration = .milliseconds(300)
