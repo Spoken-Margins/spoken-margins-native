@@ -672,6 +672,17 @@ def summarize_manifest(manifest: dict) -> dict:
     return summary
 
 
+def failed_step_errors(manifest: dict, output: Path, limit: int = 3) -> list[str]:
+    """The first error lines from the log of the step that stopped verify-tests.py.
+
+    Its log stays on the Mac, so without these a report says only "Process exit 70" (#410).
+    """
+    for step in manifest.get('steps', []):
+        if step.get('exit_code') and not step.get('interrupted'):
+            return first_errors(output / f'{step.get("name")}.log', limit)
+    return []
+
+
 def t3_verdict(summaries: list[dict], statuses: list[str]) -> str:
     if statuses and all(status == 'verified' for status in statuses):
         return 'PASS'
@@ -702,6 +713,7 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[
                            'The simulator\'s boot has a separate budget and had finished before it started.')
         if manifest.get('status') != 'verified' and not summary['failed']:
             details.append(f'{plan}: {manifest.get("error") or manifest.get("status")}. evidence: {output}/manifest.json')
+            details += [f'{plan}: {line}' for line in failed_step_errors(manifest, output)]
         if summary['flood']:
             skipped = [p for p, _ in plans[position + 1:]]
             if skipped:

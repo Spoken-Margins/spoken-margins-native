@@ -258,6 +258,22 @@ class T3Tests(unittest.TestCase):
         self.assertIn("boot has a separate budget", details[0])
         self.assertEqual(lane.t3_verdict(summaries, statuses), 'INCONCLUSIVE')
 
+    def test_a_step_that_stops_the_run_puts_its_first_errors_in_the_report(self):
+        # #408 and #368: T3 reports said only "Process exit 70"; the log that says why stayed on the Mac.
+        with tempfile.TemporaryDirectory() as folder:
+            def run_plan(plan, selectors, output):
+                output.mkdir(parents=True)
+                (output / 'build-for-testing.log').write_text(
+                    'Command line invocation: …\nxcodebuild: error: Unable to find a destination matching the '
+                    'provided destination specifier:\n\t\t{ id:ABC }\n')
+                return {'status': 'failed_or_incomplete', 'error': 'Process exit 70 (see build-for-testing.log)',
+                        'steps': [{'name': 'generate', 'exit_code': 0, 'errors': []},
+                                  {'name': 'build-for-testing', 'exit_code': 70, 'errors': ['Process exit 70']}]}
+
+            _, _, _, details = lane.run_plans({'app': ['T/A']}, run_plan, Path(folder))
+        self.assertIn('app: xcodebuild: error: Unable to find a destination matching the provided destination '
+                      'specifier:', details)
+
     def test_the_reported_boot_time_is_the_boot_alone(self):
         # #248's reports said "first boot took 17m57s" while the boot took about 4.5 min: the clock was read
         # after the tests. Here the boot takes 65 s of fake time and the tests another 900.
