@@ -14,7 +14,7 @@ Status never lives in these files. It lives in GitHub: one tracking issue per st
 
 These keep the rules in `AGENTS.md` and add what's needed for parallel work. The September 23–24 co-op attempt failed on the things listed here, so they aren't optional (see `docs/repo-review-2026-09-24.md`).
 
-1. **One agent per stream, one change at a time within it.** Parallelism comes from separate streams, not from manager, implementer and auditor agents on one stream. Sub-agents are fine for read-only research, and for a fresh-context review of a diff before a milestone.
+1. **One agent per stream, one change at a time within it.** Parallelism comes from separate streams, not from manager, implementer and auditor agents on one stream. One owner per change, and one writer per set of files. Sub-agents and workflows are fine for exploration, reviews, critics, and tests in their own worktrees.
 2. **Streams meet only at seams.** If you need something from another stream, build against its published seam or a stub of it. If the seam doesn't exist yet, comment on the owner stream's tracking issue. Don't reach into its files.
 3. **No handoff, audit or status documents.** Commit messages, PR descriptions and lane reports are the record.
 4. **Don't grow `Gate1AppModel` or `Gate1RootView`.** New logic goes in focused types, in SessionKit when it can be host-tested. Keep edits to either file to thin call sites.
@@ -136,9 +136,9 @@ The reach pass (#141, #145–#149, #151) moves into B1, D3, D4 and D5.
 
 ## How many at once
 
-- **Mac:** at most **three** stream sessions writing code, plus the Test Desk.
-  - Builds are the constraint: **one** Mac-wide semaphore allows two `xcodebuild` runs at a time, shared by stream sessions and the lane. Simulators only through the lane.
-  - If builds queue for more than about 15 minutes, drop to two streams.
+- **Mac:** no fixed number of sessions. Memory and disk are the limits: start Mac work only while memory pressure is normal and free disk is at least 10 GB plus 4 GB for each build that's running. The pinned Mac status issue shows both.
+  - Builds are shared: **one** Mac-wide semaphore allows two `xcodebuild` runs at a time (one while a simulator job runs), shared by stream sessions and the lane. Simulators only through the lane.
+  - Most work runs in the cloud; the Mac's lane runner builds it on request.
   - Wave 0 slots, in order:
     1. A1 `lane`. Its M1 lands before the other slots start, so they get the guard hook and build wrapper. Once M3 is done, this slot becomes the Test Desk.
     2. A2 `seams`.
