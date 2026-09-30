@@ -410,6 +410,8 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertTrue(published)
         XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline)
         XCTAssertNotNil(coordinator.validatedLocalURL(for: "episode"))
+        XCTAssertEqual(try fixture.store.loadOwnedOfflineAssets().first?.protections, [],
+                       "nothing is playing, so the committed protection is removed (#541)")
         coordinator.shutdown()
     }
 
