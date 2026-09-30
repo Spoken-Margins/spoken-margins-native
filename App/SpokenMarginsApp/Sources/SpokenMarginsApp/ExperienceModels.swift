@@ -342,12 +342,12 @@ struct MarginRow: Identifiable, Equatable, Sendable {
     }
 
     var attentionDescription: String {
-        if interjection.anchorContextStatus == .unavailable { return "Context needs retry" }
-        if interjection.audioStatus == "missing" { return "Recording is unavailable" }
-        return TranscriptionFailureWording.marginStatus(
+        TranscriptionFailureWording.marginAttention(
             transcriptionStatus: interjection.transcriptionStatus,
-            speechRecognitionOff: SpeechRecognitionAccess.isOff
-        ) ?? "Margin needs attention"
+            speechRecognitionOff: SpeechRecognitionAccess.isOff,
+            contextUnavailable: interjection.anchorContextStatus == .unavailable,
+            recordingMissing: interjection.audioStatus == "missing"
+        )
     }
 
     var targetDescription: String {

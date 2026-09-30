@@ -75,4 +75,34 @@ final class TranscriptionFailureWordingTests: XCTestCase {
         )
         XCTAssertNil(TranscriptionFailureWording.marginStatus(transcriptionStatus: "transcribed", speechRecognitionOff: true))
     }
+
+    /// Codex audit on #439: with Speech Recognition off, the source window can't be transcribed
+    /// either, so the context fails too. "Context needs retry" hid the actual reason.
+    func testSpeechRecognitionOffOutranksTheContextItAlsoBroke() {
+        let status = TranscriptionFailureWording.marginAttention(
+            transcriptionStatus: "failed",
+            speechRecognitionOff: true,
+            contextUnavailable: true,
+            recordingMissing: false
+        )
+
+        XCTAssertTrue(status.contains("Speech Recognition is off"), status)
+    }
+
+    func testMarginAttentionKeepsTheOtherReasonsInOrder() {
+        func attention(_ status: String, off: Bool = false, context: Bool = false, missing: Bool = false) -> String {
+            TranscriptionFailureWording.marginAttention(
+                transcriptionStatus: status, speechRecognitionOff: off,
+                contextUnavailable: context, recordingMissing: missing
+            )
+        }
+
+        XCTAssertEqual(attention("failed", context: true), "Context needs retry")
+        XCTAssertEqual(attention("pending", off: true, context: true), "Context needs retry")
+        XCTAssertEqual(attention("complete", context: true, missing: true), "Context needs retry")
+        XCTAssertEqual(attention("complete", missing: true), "Recording is unavailable")
+        XCTAssertEqual(attention("failed"), "Transcription needs retry")
+        XCTAssertEqual(attention("pending"), "Transcription is pending")
+        XCTAssertEqual(attention("complete"), "Margin needs attention")
+    }
 }

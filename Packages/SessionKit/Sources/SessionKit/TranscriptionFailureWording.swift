@@ -44,6 +44,22 @@ public enum TranscriptionFailureWording {
         )
     }
 
+    /// The one line a voice Margin shows when it needs attention. Speech Recognition being off
+    /// comes first: it also stops the source window being transcribed, so the context fails for
+    /// the same reason, and "Context needs retry" alone would hide how to fix both.
+    public static func marginAttention(
+        transcriptionStatus: String,
+        speechRecognitionOff: Bool,
+        contextUnavailable: Bool,
+        recordingMissing: Bool
+    ) -> String {
+        let transcript = marginStatus(transcriptionStatus: transcriptionStatus, speechRecognitionOff: speechRecognitionOff)
+        if transcriptionStatus == "failed", speechRecognitionOff, let transcript { return transcript }
+        if contextUnavailable { return "Context needs retry" }
+        if recordingMissing { return "Recording is unavailable" }
+        return transcript ?? "Margin needs attention"
+    }
+
     /// The Margin's own status line for a transcript that isn't ready, or nil when it is.
     /// `speechRecognitionOff` is the permission now: a Margin whose transcript failed can
     /// only be transcribed once it's back on.
