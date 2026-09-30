@@ -128,6 +128,11 @@ public protocol OfflineStorageRepository {
     /// inside the store's transaction, which can't be nested.
     @discardableResult
     func updateOwnedOfflineAsset(id: String, _ change: (inout OwnedOfflineAsset) -> Void) throws -> OwnedOfflineAsset?
+    /// Deletes the row only if `shouldDelete` accepts it as it is now, with no other write in between
+    /// (#530): a protection saved after the caller's earlier read keeps the row. Returns whether a row
+    /// was deleted. `shouldDelete` must not call the repository, for the same reason as `change` above.
+    @discardableResult
+    func deleteOwnedOfflineAsset(id: String, if shouldDelete: (OwnedOfflineAsset) -> Bool) throws -> Bool
     func saveOfflineStorageReservation(_ reservation: OfflineStorageReservation) throws
     func loadOfflineStorageReservations() throws -> [OfflineStorageReservation]
     func deleteOfflineStorageReservation(id: String) throws

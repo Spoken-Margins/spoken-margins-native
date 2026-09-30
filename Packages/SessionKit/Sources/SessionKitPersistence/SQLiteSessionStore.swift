@@ -545,6 +545,16 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         }
     }
 
+    @discardableResult
+    public func deleteOwnedOfflineAsset(id: String, if shouldDelete: (OwnedOfflineAsset) -> Bool) throws -> Bool {
+        try withTransaction {
+            guard let asset: OwnedOfflineAsset = try loadOptional(kind: "owned_offline_asset", id: id),
+                  shouldDelete(asset) else { return false }
+            try deleteOwnedOfflineAsset(id: id)
+            return true
+        }
+    }
+
     public func saveOfflineStorageReservation(_ reservation: OfflineStorageReservation) throws {
         try save(kind: "offline_storage_reservation", id: reservation.id, sessionId: nil, itemId: nil, value: reservation)
     }
