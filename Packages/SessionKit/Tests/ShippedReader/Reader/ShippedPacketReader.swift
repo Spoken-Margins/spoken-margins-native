@@ -35,4 +35,14 @@ public enum ShippedPacketReader {
             throw Rejected(description: "\(build) could not import \(packetURL.lastPathComponent): \(error)")
         }
     }
+
+    /// Writes a text-only packet with the shipped build's exporter, from its manifest and artifact files as
+    /// JSON. Tests use it for a packet a Build 29 sender could make that the current exporter refuses (#480).
+    public static func writePacket(manifestJSON: Data, artifacts: [String: Data], to packetURL: URL) throws {
+        let manifest = try SpokenMarginsPackageArchive.decodeManifest(manifestJSON)
+        _ = try SpokenMarginsPackageArchive.write(
+            PreparedSpokenMarginsPackage(manifest: manifest, artifactData: artifacts, assetFiles: [:]),
+            to: packetURL
+        )
+    }
 }

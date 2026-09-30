@@ -212,7 +212,8 @@ public enum SpokenMarginsPackageBuilder {
         )]
         for (index, proposal) in mapProposals.enumerated() {
             let path = String(format: "artifacts/listening-map-proposal-%04d.json", index + 1)
-            artifactData[path] = try encodeArtifact(proposal)
+            // The on-device labeller describes every scene; only eligible scenes may carry a summary (#480).
+            artifactData[path] = try encodeArtifact(PortableListeningMapContract.withoutIneligibleSummaries(proposal))
             artifacts.append(SpokenMarginsArtifactDescriptor(
                 id: proposal.id,
                 kind: SpokenMarginsArtifactKind.listeningMapProposal,
