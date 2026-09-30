@@ -69,5 +69,20 @@ class PushTests(unittest.TestCase):
         self.assertEqual((merged, direct), ({}, True))
 
 
+class SweepTests(unittest.TestCase):
+    """The hourly sweep: the runner's token-made merges start no push run (decision 3)."""
+
+    def test_it_takes_prs_into_next_merged_within_the_window(self):
+        import datetime
+        now = datetime.datetime(2026, 9, 29, 21, 0, 0)
+        recent = [
+            {'number': 1, 'merged_at': '2026-09-29T20:30:00Z', 'base': {'ref': 'next'}},
+            {'number': 2, 'merged_at': '2026-09-29T18:30:00Z', 'base': {'ref': 'next'}},
+            {'number': 3, 'merged_at': '2026-09-29T20:50:00Z', 'base': {'ref': 'main'}},
+            {'number': 4, 'merged_at': None, 'base': {'ref': 'next'}},
+        ]
+        self.assertEqual([p['number'] for p in audit.recently_merged(recent, 2, now)], [1])
+
+
 if __name__ == '__main__':
     unittest.main()

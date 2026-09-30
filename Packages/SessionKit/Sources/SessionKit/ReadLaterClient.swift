@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public struct ReadLaterDocument: Codable, Equatable, Sendable, Identifiable {
     public let id: String

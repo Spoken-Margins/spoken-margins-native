@@ -86,6 +86,19 @@ let package = Package(
             dependencies: ["ShippedSessionKit", "ShippedSessionKitSharing"],
             path: "Tests/ShippedReader/Reader"
         ),
+        // Tests of the Foundation-only modules. Also runs on Linux (see the end of this file).
+        .testTarget(
+            name: "SessionKitCoreTests",
+            dependencies: [
+                "SessionKit",
+                "SessionKitPersistence",
+                "SessionKitAI",
+                "SessionKitEPUB",
+                "SessionKitFeeds",
+                .product(name: "ZIPFoundation", package: "ZIPFoundation")
+            ]
+        ),
+        // Tests that need Apple frameworks (AVFoundation, ShazamKit, onnxruntime). Mac only.
         .testTarget(
             name: "SessionKitTests",
             dependencies: [
@@ -107,3 +120,28 @@ let package = Package(
         )
     ]
 )
+
+#if os(Linux)
+// Linux (cloud sessions and the ubuntu CI job) builds only the Foundation-only modules and
+// their tests. Everything else needs Apple frameworks, so it is left out by allowlist: a new
+// target stays Mac-only until it is added here. SessionKitTraceTests uses XCTExpectFailure,
+// which Linux XCTest lacks. CryptoKit comes from swift-crypto (same API,
+// module `Crypto`), and SQLite3 from a system-library module over libsqlite3.
+let linuxTargets: Set<String> = [
+    "SessionKit", "SessionKitPersistence", "SessionKitAI", "SessionKitEPUB", "SessionKitFeeds",
+    "SessionKitCoreTests",
+]
+package.targets.removeAll { !linuxTargets.contains($0.name) }
+package.products.removeAll { !linuxTargets.contains($0.name) }
+package.dependencies = [
+    .package(url: "https://github.com/weichsel/ZIPFoundation.git", exact: "0.9.20"),
+    .package(url: "https://github.com/apple/swift-crypto.git", exact: "3.15.1"),
+]
+package.targets.append(.systemLibrary(name: "SQLite3", path: "Linux/SQLite3", providers: [.apt(["libsqlite3-dev"])]))
+for target in package.targets where target.name == "SessionKit" || target.name == "SessionKitCoreTests" {
+    target.dependencies.append(.product(name: "Crypto", package: "swift-crypto"))
+}
+for target in package.targets where target.name == "SessionKitPersistence" {
+    target.dependencies.append("SQLite3")
+}
+#endif

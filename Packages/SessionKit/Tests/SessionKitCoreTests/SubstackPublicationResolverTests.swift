@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 import XCTest
 import SessionKit
@@ -8,7 +12,7 @@ import SessionKit
 /// domains or profiles. Replays research/B2's recorded responses; never touches the network.
 final class SubstackPublicationResolverTests: XCTestCase {
     private static let research = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent() // SessionKitTests
+        .deletingLastPathComponent() // SessionKitCoreTests
         .deletingLastPathComponent() // Tests
         .deletingLastPathComponent() // SessionKit
         .deletingLastPathComponent() // Packages

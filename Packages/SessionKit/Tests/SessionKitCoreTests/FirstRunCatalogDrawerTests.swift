@@ -5,7 +5,7 @@ import XCTest
 /// least 8 subjects, and works offline from the bundled snapshot.
 final class FirstRunCatalogDrawerTests: XCTestCase {
     private static let bundledSnapshot = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent() // SessionKitTests
+        .deletingLastPathComponent() // SessionKitCoreTests
         .deletingLastPathComponent() // Tests
         .deletingLastPathComponent() // SessionKit
         .deletingLastPathComponent() // Packages

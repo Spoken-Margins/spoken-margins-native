@@ -4911,6 +4911,47 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(sought.phase, .itemPlayback)
     }
 
+    // #346 audit: a seek while speaking reached the client as a plain play, which a playing client
+    // treats as "keep going" when it's near the live position. It must say it's a seek; a restart
+    // (a rate change) must not.
+    func testASeekWhileSpeakingIsMarkedAsASeekButARestartIsNot() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
+        )
+        let text = "First paragraph. Second paragraph. Third paragraph."
+        let item = Item(id: "item-text-seek-mark", title: "Seekable", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: InMemorySessionRepository(items: [item.id: item]), audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.seekText(toCharOffset: 28)
+        XCTAssertEqual(audio.seekingPlays, [28])
+        audio.currentOffset = 30
+        _ = try engine.restartPlaybackFromCurrentPosition()
+        XCTAssertEqual(audio.seekingPlays, [28], "a restart is a plain play")
+        _ = try engine.resumePlayback()
+        XCTAssertEqual(audio.seekingPlays.count, 1, "so is a second play")
+
+        // #346 re-audit: every explicit move is a seek, not only seekText.
+        audio.currentOffset = 38
+        _ = try engine.skipBack(unit: "sentence")
+        XCTAssertEqual(audio.seekingPlays.count, 2, "skip back: \(audio.seekingPlays)")
+        audio.currentOffset = 5
+        _ = try engine.skipForward(unit: "sentence")
+        XCTAssertEqual(audio.seekingPlays.count, 3, "skip forward: \(audio.seekingPlays)")
+        _ = try engine.playSourceFromBeginning()
+        XCTAssertEqual(audio.seekingPlays.last, 0, "play from the beginning: \(audio.seekingPlays)")
+    }
+
+    func testRoutedClientForwardsASeekToTheSpeechClient() throws {
+        let speech = RecordingAudioClient()
+        let routed = RoutedAudioPlaybackClient(speech: speech, media: RecordingAudioClient())
+        try routed.play(targetId: "item", seekingTo: 12)
+        XCTAssertEqual(speech.seekingPlays, [12])
+    }
+
     func testStartSessionSpeaksListeningMapOverviewBeforeItemText() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -5583,6 +5624,68 @@ final class SessionKitCoreTests: XCTestCase {
         _ = try engine.playInterjectionAnchor(preparedNote)
         XCTAssertEqual(audio.playedTargets.last, preparedItem.media?.url)
         XCTAssertEqual(audio.playedOffsets.last, 6_000)
+    }
+
+    /// A podcast in progress at 5% with a voice Margin at 2:00, as Build 29 left it.
+    private func podcastMarginFixture(durationMs: Int?) -> (item: Item, session: Session, note: Interjection) {
+        let item = Item(id: "item-podcast-293", title: "The Daily", mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil, externalReference: nil, status: "ready", media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/daily.mp3", durationMs: durationMs))
+        let session = Session(id: "session-podcast-293", itemId: item.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .transcriptBackedMedia, currentTargetId: "https://cdn.example.com/daily.mp3", position: Position(mediaTimeMs: 90_000), completionPercent: 5, playbackRate: 1)
+        let note = Interjection(id: "ij-001", itemId: item.id, sessionId: session.id, targetType: .item, targetId: item.id, createdAt: Date(), roughPercent: 5, anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 120_000), audioPath: "ij-001.m4a", audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "Note", cleanedTranscript: nil, displayText: "Note", status: "active")
+        return (item, session, note)
+    }
+
+    func testPlayThisMomentOnAPodcastWithNoKnownDurationDoesNotCompleteIt() throws {
+        // #293: after the Build 29 upgrade no player had a duration yet, and an unknown
+        // duration fell back to the seek target itself, so 2:00 of 2:00 was 100% and
+        // persistSession stamped the episode completed.
+        let (item, session, note) = podcastMarginFixture(durationMs: nil)
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], interjections: [note.id: note])
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "phone", displayName: "Phone", capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]), repository: repo, audio: audio)
+
+        _ = try engine.playInterjectionAnchor(note)
+
+        XCTAssertEqual(audio.playedOffsets.last, 120_000, "the moment still plays")
+        XCTAssertNil(try repo.loadItem(id: item.id).sourceCompletedAt, "the episode is not completed")
+        XCTAssertLessThanOrEqual(try XCTUnwrap(repo.loadSession(id: session.id)).completionPercent, 98)
+    }
+
+    func testAMomentAtTheVeryEndOfAKnownLengthEpisodeStillCompletesIt() throws {
+        // #293 must not break completion: with the length known, 59:30 of 60:00 is 99%.
+        var (item, session, note) = podcastMarginFixture(durationMs: 3_600_000)
+        note.anchor.mediaTimeMs = 3_570_000
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], interjections: [note.id: note])
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "phone", displayName: "Phone", capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]), repository: repo, audio: RecordingAudioClient())
+
+        _ = try engine.playInterjectionAnchor(note)
+
+        XCTAssertEqual(try XCTUnwrap(repo.loadSession(id: session.id)).completionPercent, 99)
+        XCTAssertNotNil(try repo.loadItem(id: item.id).sourceCompletedAt)
+    }
+
+    func testPlayThisMomentUsesThePodcastsOwnDurationNotThePlayingItems() throws {
+        // #293: the anchor was planned before currentItem became the podcast, so the
+        // duration came from whatever was playing: a text item (none, so the fallback
+        // above) or another episode (its shorter length clamped 45:00 to 100%).
+        let (item, session, note) = podcastMarginFixture(durationMs: 3_600_000)
+        let text = Item(id: "item-text-293", title: "Article", mediaType: "text", text: "An article being read aloud.", externalReference: nil, status: "ready")
+        let shortEpisode = Item(id: "item-short-293", title: "Short", mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil, externalReference: nil, status: "ready", media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/short.mp3", durationMs: 1_200_000))
+        var lateNote = note
+        lateNote.id = "ij-002"
+        lateNote.anchor.mediaTimeMs = 2_700_000
+        for (playing, marginAt, noteToPlay) in [(text, 120_000, note), (shortEpisode, 2_700_000, lateNote)] {
+            let audio = RecordingAudioClient()
+            let repo = InMemorySessionRepository(items: [item.id: item, playing.id: playing], sessions: [session.id: session], interjections: [note.id: note, lateNote.id: lateNote])
+            let engine = SessionEngine(profile: phonePlaybackProfile(), repository: repo, audio: audio)
+            _ = try engine.startSession(itemId: playing.id)
+            audio.currentDurationMs = playing.media?.durationMs
+
+            _ = try engine.playInterjectionAnchor(noteToPlay)
+
+            XCTAssertEqual(audio.playedOffsets.last, marginAt, playing.title)
+            XCTAssertNil(try repo.loadItem(id: item.id).sourceCompletedAt, "\(playing.title) was playing: the episode is not completed")
+            XCTAssertEqual(try XCTUnwrap(repo.loadSession(id: session.id)).completionPercent, marginAt * 100 / 3_600_000, playing.title)
+        }
     }
 
     func testPlayInterjectionAnchorStartsGeneratedTurnAtSavedOffset() throws {
@@ -7220,6 +7323,13 @@ private final class RecordingAudioClient: AudioPlaybackClient {
         currentMediaTimeValue = nil
         playedTargets.append(targetId)
         playedOffsets.append(charOffset)
+    }
+
+    var seekingPlays: [Int] = []
+
+    func play(targetId: String, seekingTo charOffset: Int) throws {
+        seekingPlays.append(charOffset)
+        try play(targetId: targetId, from: charOffset)
     }
 
     func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {

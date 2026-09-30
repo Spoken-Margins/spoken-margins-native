@@ -10,11 +10,22 @@ Planned 2026-09-28 from the owner's voice notes. This folder lets several agents
 
 Status never lives in these files. It lives in GitHub: one tracking issue per stream (label `stream:<id>`), plus that stream's PRs. A brief changes only when the goal changes.
 
+## Reading a brief's "Done when"
+
+A milestone's "Done when" is met through PRs, and a PR is done when it's armed: `automerge` on, plus a `/lane T3` request when the diff needs one (`AGENTS.md`, [lane-request skill](../../.claude/skills/lane-request/SKILL.md)). This rule covers every brief, so the briefs themselves don't repeat it.
+
+- **Items the agent can show** (a test that fails without the change, a measured number, a fixture, a tap count, a screenshot) are shown in the PR description before arming.
+- **Lane items** ("T2 green", "T3 green", "Lane T3 is green") are met by arming the PR. The runner merges only on PASS, so the thread doesn't wait for the report.
+- **"Lane T4" items and named journeys** run in the integration run on `next`'s merged tip ([test-lane.md](test-lane.md), Three test levels). The PR names them so that run covers them.
+- **Items marked (owner) or (Mac)** stay out, as before.
+
+The thread that armed the PR moves on to its next issue and doesn't chase the lane. A lane FAIL on the PR's own code goes to whoever is free, through the project's hourly dispatcher, and a runner fault becomes an issue labelled `ready` and `regression`.
+
 ## Ground rules
 
 These keep the rules in `AGENTS.md` and add what's needed for parallel work. The September 23–24 co-op attempt failed on the things listed here, so they aren't optional (see `docs/repo-review-2026-09-24.md`).
 
-1. **One agent per stream, one change at a time within it.** Parallelism comes from separate streams, not from manager, implementer and auditor agents on one stream. Sub-agents are fine for read-only research, and for a fresh-context review of a diff before a milestone.
+1. **One agent per stream, one change at a time within it.** Parallelism comes from separate streams, not from manager, implementer and auditor agents on one stream. One owner per change, and one writer per set of files. Sub-agents and workflows are fine for exploration, reviews, critics, and tests in their own worktrees.
 2. **Streams meet only at seams.** If you need something from another stream, build against its published seam or a stub of it. If the seam doesn't exist yet, comment on the owner stream's tracking issue. Don't reach into its files.
 3. **No handoff, audit or status documents.** Commit messages, PR descriptions and lane reports are the record.
 4. **Don't grow `Gate1AppModel` or `Gate1RootView`.** New logic goes in focused types, in SessionKit when it can be host-tested. Keep edits to either file to thin call sites.
@@ -136,21 +147,21 @@ The reach pass (#141, #145–#149, #151) moves into B1, D3, D4 and D5.
 
 ## How many at once
 
-- **Mac:** at most **three** stream sessions writing code, plus the Test Desk.
-  - Builds are the constraint: **one** Mac-wide semaphore allows two `xcodebuild` runs at a time, shared by stream sessions and the lane. Simulators only through the lane.
-  - If builds queue for more than about 15 minutes, drop to two streams.
+- **Mac:** no fixed number of sessions. Memory and disk are the limits: start Mac work only while memory pressure is normal and free disk is at least 10 GB plus 4 GB for each build that's running. The pinned Mac status issue shows both.
+  - Builds are shared: **one** Mac-wide semaphore allows two `xcodebuild` runs at a time (one while a simulator job runs), shared by stream sessions and the lane. Simulators only through the lane.
+  - Most work runs in the cloud; the Mac's lane runner builds it on request.
   - Wave 0 slots, in order:
     1. A1 `lane`. Its M1 lands before the other slots start, so they get the guard hook and build wrapper. Once M3 is done, this slot becomes the Test Desk.
     2. A2 `seams`.
     3. The Build 30 quick wins, one after another in one session: C3 M1 → C2 M1 → B2 M1 → B1 M1.
   - C4 `anchors` takes the next free slot. If the owner wants anchors to keep priority, it takes slot 3 and the quick wins wait.
 - **Cloud:** no practical limit beyond attention. Six to eight at once is a reasonable start: every Wave 0 cloud stream.
-- **Owner attention** is the real limit. Streams stop for the owner only under the reversible-decision rule in [kickoff.md](kickoff.md) (owner data, packets and databases, money, anything public, `main` and releases, taste), for owner-only checks, and for FAIL reports on gate streams ([test-lane.md](test-lane.md)). A daily lead session ([kickoff.md](kickoff.md#the-lead-session)) batches the rest into one digest.
+- **Owner attention** is the real limit. Streams stop for the owner only under the reversible-decision rule in [kickoff.md](kickoff.md) (owner data, packets and databases, money, anything public, `main` and releases, taste), for owner-only checks, and for FAIL reports on gate streams ([test-lane.md](test-lane.md)). The owner's Claude Code project batches the rest into one morning digest ([kickoff.md](kickoff.md#the-lead-session) says who does what).
 
 ## Branches and merging
 
-- `next` is the integration branch, created from `main`. Every stream branches `ws/<id>` from `next` and opens PRs back into `next`.
-- A PR merges into `next` when its tier's lane report is green. The owner taps merge from the phone. If that becomes the bottleneck, the owner can let T1/T2-only PRs merge themselves.
+- `next` is the integration branch, created from `main`. Every stream branches `ws/<id>-…` from `next`, one branch per PR, and opens PRs back into `next`.
+- A PR merges into `next` when its tier's lane report is green. The lane runner merges armed `automerge` PRs itself. PRs that change `.github/` or `scripts/lane*` wait for the owner, and audio, persistence and packet diffs wait for the Codex audit.
 - Streams merge `next` into their branch at least daily, and before any lane request, so reports test what will actually integrate.
 - Merge order when PRs conflict: gate streams (A2 first), then the older PR.
 - A TestFlight candidate is a commit on `next` that passed T5. Releasing still follows "Releasing a build" in `AGENTS.md`. `main` is fast-forwarded only at release, by the owner's decision.

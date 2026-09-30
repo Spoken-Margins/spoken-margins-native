@@ -11,19 +11,25 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 | Tier | What runs | Where | Typical cost | Use it for |
 | --- | --- | --- | --- | --- |
 | **T0** | Nothing, or a doc/link check | anywhere | 0 | Docs, research notes, charters, server code with its own tests |
-| **T1** | The tests for the touched module only: `swift test --filter <Suite>` for SessionKit, or the stream's own Python/Node/server suite | Mac host, or cloud once A1 enables Linux SessionKit tests | 1–3 min | Pure logic: parsers, ranking, packet merge, text cleanup, resolvers |
+| **T1** | The tests for the touched module only: `swift test --filter <Suite>` for SessionKit, or the stream's own Python/Node/server suite | Mac host; or Linux for `SessionKitCoreTests` (Core, Persistence, AI, EPUB, Feeds): `scripts/run-sessionkit-linux-tests.sh`, also run on every PR into `next` by `linux-t1.yml` | 1–3 min | Pure logic: parsers, ranking, packet merge, text cleanup, resolvers |
 | **T2** | Compile the app for simulator **and** device (the two `xcodebuild` commands in `AGENTS.md`), no simulator boot | Mac, build semaphore | 4–10 min | Any change to `App/`, `project.yml`, or a SessionKit public API |
 | **T3** | Targeted app-hosted XCTest (`-only-testing:` the touched test classes) in the Test Runner simulator | Mac, via the lane | 5–15 min | App orchestration: model/coordinator wiring, persistence through the app |
-| **T4** | Named journeys from `docs/journeys.md`, or a one-off scenario the request spells out, driven with real taps and screenshots | Mac, via the lane (Test Desk) | 10–40 min each | A stream milestone that changes something a listener does |
-| **T5** | Full regression: `--plan fast`, `--plan app`, every journey | Mac, via the lane | 1–3 h | Only for a TestFlight candidate on `next`, once per candidate |
+| **T4** | Named journeys from `docs/journeys.md`, or a one-off scenario the request spells out, driven with real taps and screenshots | Mac, via the lane (Test Desk) | 10–40 min each | A one-off scenario a PR asks for; the named journeys run in the integration run |
+| **T5** | Full regression: `--plan fast`, `--plan app`, every journey | Mac, via the lane | 1–3 h | The integration run on `next`'s merged tip (see Three test levels) |
 | **T6** | Owner on the phone | owner | owner time | Audible content, Bluetooth, Lock Screen, background, thermal. Batched per TestFlight build |
+
+**Three test levels** (owner's decision, 2026-09-29). These replace per-milestone T3 and T4 and "T5 once per candidate":
+
+1. **Per PR:** host tests plus both builds (`--plan fast` and T2), before merge. T3 only for audio session, storage and packet changes.
+2. **Per batch:** the integration run on `next`'s merged tip: `--plan app`, every journey on a library shaped like the owner's and upgraded from Build 29, and a screen tour for the critics. It runs when the runner's queue is empty after several merges, and always overnight. A failure becomes the top `ready` issue.
+3. **Per candidate:** the owner's phone. The latest green integration run is the candidate.
 
 **Rules of thumb**
 
 - A change you could describe in one sentence, in one module, with a test that fails without it, stops at **T1**, or **T2** if it touched the app.
-- Most commits stop at T1 or T2. T3 and T4 happen at **milestones**, not per commit.
+- Most PRs stop at T1 or T2. T3 per PR only for the escalations below; T4 per PR only for a one-off scenario the PR needs. Journeys and full regression run on the merged tip, not per PR or per milestone.
 - **Escalate one tier** for anything touching the audio session, players, playback state, persistence/migrations, or packet import/export. These are where Build 28 → co-op went wrong.
-- **Never escalate to T5 on a stream branch.** Full regression runs once per TestFlight candidate on `next`.
+- **Never escalate to T5 on a stream branch.** Full regression runs on `next`'s merged tip, in the integration run.
 - A new regression test must be run once **without** the fix and seen to fail (`AGENTS.md`). That run counts as T1, not an extra tier.
 - When unsure, ask the lane for the tier (A1 ships `scripts/test-scope.py`, which maps a diff to its minimum tier and suggested test filters). If the tool and your judgment disagree, take the higher tier and say why in the request.
 
@@ -46,12 +52,25 @@ Note for whoever builds the Test Desk: Claude Desktop's iOS Simulator pane curre
 
 - **Only the lane boots simulators.** A1 installs a `PreToolUse` hook in the Mac's **user-level** settings (`~/.claude/settings.json`), so it applies to every session whatever branch it started on. It blocks `xcrun simctl boot|install|launch`, `xcodebuild test`, and `verify-tests.py --plan app|adapters|ui|release` unless the session is the Test Desk. Stream agents then *can't* start a simulator flood by accident. `AGENTS.md` sends `--plan app` through the lane for this reason.
 - **Build semaphore.** Every `xcodebuild` on the Mac, from streams and from the lane, goes through one wrapper that allows two at a time and queues the rest.
+- **Host-test slots.** Every `verify-tests.py --plan fast` run holds one of two Mac-wide host-test slots, or the one slot while a simulator job runs. So does a full `swift test` through `scripts/host-test-lane swift test`, and `run-sessionkit-tests.sh` uses it. They are separate from the build slots. Single-suite `swift test --filter` runs stay ungated: after the first build they are incremental and short. Three ungated runs at once pushed the load to 471 (#350).
 - **Fresh DerivedData per worktree** (`AGENTS.md`: stale SessionKit modules give false "does not conform" errors).
 - **Crash-flood rule** as in `AGENTS.md`: three crashes of one process within a minute stops the lane, shuts that simulator down and notifies the owner. A lone crash is noted in the report and work continues.
 
 ## Request format
 
 Post as a PR comment. Keep it short; the Test Desk needs intent, not narrative.
+
+**A finished PR needs no request comment.** Label it `automerge` when its "Done when" is met. The runner then runs what the diff needs, by the base branch's `scripts/test-scope.py`, and runs again on every push while the label stays:
+- T0 (docs, research, the server): nothing.
+- T1: `--plan fast`.
+- T2 or higher: `--plan fast` and both builds.
+Simulator tests (T3) still need a request. The lane check is green only on PASS.
+
+A PR with a T3 request merges only on a T3 PASS (#410). While its newest T3 report is FAIL or INCONCLUSIVE, or its newest T3 request has no report yet, the automerge run reports FAIL or INCONCLUSIVE and doesn't merge, even when its own checks pass. A FAIL on an earlier commit holds later commits too, until a newer T3 passes. After the T3 PASS, push or remove and re-add `automerge`.
+
+A T3 run covers at least the app test classes the diff calls for. The runner adds every class the base branch's `scripts/test-scope.py` suggests for the PR's diff to the request's `tests:`, and the report lists what it added, with the test count and how long each plan took. A method you name inside an added class runs with its class. A diff touching `Gate1AppModel.swift` therefore runs all of `Gate1AppModelWorkflowTests` (151 tests), about 15 minutes with the boot.
+
+Before any build, the runner checks the hot-file ratchet (`scripts/hot_file_ratchet.py`). A PR may not grow `Gate1AppModel.swift` or `Gate1RootView.swift` above the smallest size each has had on `next` since the ratchet started. Move lines out, or ask the desk for the `hot-file-ok` label. Run the script yourself to see where a branch stands.
 
 ```text
 /lane T4
@@ -122,12 +141,44 @@ that run's .xcresult bundles and raw build logs. Keep only the screenshots and s
 logs the report names, under artifacts/lane/<id>/. Shut the simulator down whenever
 the queue is empty.
 
-Reports: post in the report format above, on the PR. After each PASS, message the day's
-lead session "PASS #<pr> <head sha> <tiers>", if it has told you its name.
+Reports: post in the report format above, on the PR. There is no lead session to message;
+the project reads reports on GitHub.
 
 Decisions: for reversible lane choices, post them on #184 under "Default taken" and keep
 going. Stop only for owner data, the phone, money, anything public, main or releases.
 ```
+
+## The Mac's runners
+
+Two self-hosted GitHub Actions runners on the owner's Mac run `.github/workflows/lane.yml`. Each is a LaunchAgent in its own folder.
+
+| | Main runner | Build runner |
+|---|---|---|
+| Name | `sm-lane-mac` | `sm-lane-mac-2` |
+| Folder | `~/actions-runner-spoken-margins` | `~/actions-runner-spoken-margins-2` |
+| LaunchAgent | `actions.runner.uncomposed-spoken-margins-native.sm-lane-mac` | `actions.runner.uncomposed-spoken-margins-native.sm-lane-mac-2` |
+| Labels | `self-hosted, macOS, ARM64, sm-lane, sm-lane-build` | `self-hosted, macOS, ARM64, sm-lane-build` |
+| Jobs | `lane` (/lane T2, T3, simulators) and `automerge` | `automerge` only (host tests and builds) |
+| `.env` | `SM_LANE_EVIDENCE_DIR`, `SM_LANE_TOOLS` | the same, plus `SM_LANE_RUNNER_ROLE=build` |
+
+- **Build runner gate.** With `SM_LANE_RUNNER_ROLE=build`, an automerge job waits up to 90 minutes for three things: no simulator job running, normal memory pressure, and 20 GB of free disk. Otherwise it reports INCONCLUSIVE and says why.
+- **Check both:** `gh api repos/uncomposed/spoken-margins-native/actions/runners --jq '.runners[] | "\(.name) \(.status) busy=\(.busy)"'`. On the Mac, `./svc.sh status` in a runner's folder.
+- **Restart one:** `./svc.sh stop`, then `./svc.sh start`, in its folder. Its logs are in `_diag/`, and the job workspace is `_work/spoken-margins-native/spoken-margins-native`.
+- **Remove one:** `./svc.sh uninstall`, then `./config.sh remove --token <token>`. Get the token from `gh api -X POST repos/uncomposed/spoken-margins-native/actions/runners/remove-token --jq .token`.
+- **Evidence:** each job writes to `SM_LANE_EVIDENCE_DIR`, which is `artifacts/lane/<request-id>/` in the owner's main checkout.
+- **Git LFS:** both jobs check out with `lfs: true`, because the Supertonic models are LFS files and the contracts check reads them. The LFS cache is in the workspace's `.git`, so each runner downloads the models once.
+- **Warm build folders.** A job links the tree's `.build` and `Packages/SessionKit/.build` to `~/Library/Caches/SpokenMarginsLane/warm-build/checkout-<checkout path hash>/sk-<SessionKit tree hash>-<project file hash>/`.
+  - A SessionKit change starts a new cache, because stale SessionKit modules give false "does not conform" errors. An Xcode project change does too.
+  - Each runner has its own caches. DerivedData and SwiftPM's state record absolute paths, and a cache shared by both runners lost Xcode's VFS overlay and the onnxruntime binary (#405).
+  - A cache whose SwiftPM state lists a binary artifact that isn't on disk is emptied, and the job builds cold. Its report says which artifact was missing.
+  - At most two caches are kept per runner. Below 15 GB of free disk the job builds cold, and its report says so.
+  - If a build error disappears on a cold rebuild, delete `warm-build/` while no job runs.
+- **Merging.** An `automerge` PASS is merged by the runner itself (`scripts/lane-runner.py`, `run_auto`):
+  - It tests the exact merge commit (next first), posts "**Merge check (triage desk)", then does a plain push. A push refused because next moved leads to a re-test, up to 3 times.
+  - It never merges `.github/` or `scripts/lane*` changes, or audio, persistence and packet diffs without a comment starting "**Codex audit (Astra)"; those need a person.
+  - After each merge it runs `merge_audit.py --sweep-hours 2`, because pushes made with the workflow token start no workflow. `merge-audit.yml`'s hourly schedule runs only once that file is on the default branch (`main`).
+- **Stale merge refs.** GitHub builds a PR's run from its merge ref, and a label event doesn't refresh it. A PR opened before a `lane.yml` change keeps the old jobs until it merges next and pushes (#221).
+- **Mac-wide state** is in `~/Library/Caches/SpokenMarginsLane/`: the slot locks, `boot-events.log`, `unsafe-simulators.json`, and the lane guard's `guard.log`. The guard hook is `~/.claude/hooks/spoken-margins-lane-guard.py`; reinstall it with `scripts/install-lane-guard.py`, and use `--check` to see drift.
 
 ## What the owner sees
 
