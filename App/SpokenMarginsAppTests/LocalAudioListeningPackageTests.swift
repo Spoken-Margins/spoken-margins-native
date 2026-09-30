@@ -19,7 +19,9 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let routed = RoutedAudioPlaybackClient(speech: NoopAudioPlaybackClient(), media: sourcePlayer)
         let model = Gate1AppModel(audioPlaybackClient: routed, databaseURLOverride: db)
         model.resetAndSeed()
-        model.ttsVoiceSelection = .system
+        // A fresh simulator parks the improved voice as a pending first-use choice, and startItem
+        // waits for it. Earlier classes used to make that choice for this one (#286).
+        model.declineCurrentTerms()
         // The offline ledger is rooted at Application Support and reconciles
         // rows against disk, so the owned file lives where production puts it.
         let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
