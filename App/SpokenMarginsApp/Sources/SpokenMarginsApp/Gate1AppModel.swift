@@ -69,6 +69,7 @@ enum SummaryBridgeRatePolicy {
 
 enum NativeTextStartupAudioState: String, Hashable {
     case notRequired = "not_required"
+    case waiting // queued behind the one Library item being prepared now (#281)
     case preparing
     case ready
     case paused
@@ -953,7 +954,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var isRenderingSupertonicPreview = false
     #if SPOKEN_MARGINS_WATCH
     @Published var isRenderingWatchPackage = false
-    @Published var watchPackageRenderStatus = "Not rendered"
+    @Published var watchPackageRenderStatus = "Not prepared"
     #endif
     @Published var providerAPIKey = KeychainStore.load(service: "SpokenMargins", account: "OpenAICompatibleAPIKey") ?? ""
     @Published var providerProbeStatus = "Not checked"
@@ -992,7 +993,9 @@ final class Gate1AppModel: ObservableObject {
     private var sessionAudioPlaybackClient: AudioPlaybackClient?
     private var supertonicRenderer: SupertonicNarrationRenderer?
     private var preparedAudioCoordinator: PreparedAudioCoordinator?
-    private var currentSupertonicRenderSignature: TTSRenderSignature?
+    private var currentSupertonicRenderSignature: TTSRenderSignature? { // older prepared chunks go first when space is needed (#281)
+        didSet { if let digest = currentSupertonicRenderSignature?.digest, digest != oldValue?.digest { Task { [ledger = offlineStorageLedger] in _ = try? await ledger?.markSupersededPreparedChunks(currentSignatureDigest: digest) } } }
+    }
     private var renderedSpeechDiskCache: RenderedSpeechDiskCache?
     private let sourceLinkResolver: LinkResolutionClient?
     private let sourceLinkHandoffStore: SourceLinkHandoffStore?
@@ -1050,6 +1053,8 @@ final class Gate1AppModel: ObservableObject {
         && ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_FORCE_FIRST_SHARED_SOURCE_MISS"] == "1"
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
     private var foregroundAudioPreparationTask: Task<Void, Never>?
+    private let libraryAudioRenderGate = SerialWorkGate() // one Library item renders at a time (#281)
+    var libraryAudioPreparingItemId: String? // the item a preparation pass is working on
     private var foregroundAudioPreparationGeneration = 0
     private var episodeMapPreparationTask: Task<Void, Never>?
     private var episodeMapPreparationItemId: String?
@@ -5585,7 +5590,7 @@ final class Gate1AppModel: ObservableObject {
     func startItem(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_item") else { return }
         prepareImportedLocalAudioBridges(itemId: id)
-        if libraryItems.first(where: { $0.id == id })?.startupAudioState == .preparing {
+        if [.waiting, .preparing].contains(libraryItems.first(where: { $0.id == id })?.startupAudioState) {
             scheduleStartupAudioPreparationIfNeeded(itemId: id)
             diagnostics["startupAudioPlayback:\(id)"] = "started_without_waiting_for_opening_buffer"
         }
@@ -6257,7 +6262,7 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(renderedSpeechCacheLimitMB, forKey: "renderedSpeechCacheLimitMB")
         renderedSpeechDiskCache?.setLimitBytes(renderedSpeechCacheLimitMB * 1024 * 1024)
         diagnostics["renderedSpeechCacheLimitMB"] = "\(renderedSpeechCacheLimitMB)"
-        reportSuccess("Rendered speech cache limit set to \(renderedSpeechCacheLimitMB) MB.")
+        reportSuccess("Prepared speech storage limit set to \(renderedSpeechCacheLimitMB) MB.")
     }
 
     func stopStalledPodcastStart(itemID: String) {
@@ -8806,11 +8811,11 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var selectedItemStartupAudioProgressDescription: String {
-        guard let row = libraryItems.first(where: { $0.id == selectedItem.id }),
+        guard let row = libraryItems.first(where: { $0.id == selectedItem.id }), row.startupAudioState != .waiting,
               row.startupAudioTargetChunkCount > 0 else {
-            return "Preparing opening audio"
+            return selectedItemStartupAudioState == .waiting ? "Waiting to prepare audio" : "Preparing audio"
         }
-        return "Preparing opening audio · \(row.startupAudioCompletedChunkCount) of \(row.startupAudioTargetChunkCount) chunks"
+        return "Preparing audio · \(row.startupAudioCompletedChunkCount) of \(row.startupAudioTargetChunkCount)"
     }
 
     var shouldShowMiniPlayer: Bool {
@@ -9131,9 +9136,9 @@ final class Gate1AppModel: ObservableObject {
                 return "Preparing the full Supertonic audio on this iPhone"
             }
             if isOnDeviceSpeechGenerationDelayed {
-                return "Still rendering chunk \(min(progress.completedChunks + 1, progress.totalChunks)) of \(progress.totalChunks) · \(progress.percent)% complete"
+                return "Still preparing part \(min(progress.completedChunks + 1, progress.totalChunks)) of \(progress.totalChunks) · \(progress.percent)% complete"
             }
-            return "Generating full audio · \(progress.percent)% (\(progress.completedChunks) of \(progress.totalChunks) chunks)"
+            return "Generating full audio · \(progress.percent)% (\(progress.completedChunks) of \(progress.totalChunks) parts)"
         case RenderedSpeechGenerationState.ready.rawValue:
             return "Prepared audio is ready for playback"
         case RenderedSpeechGenerationState.stopped.rawValue:
@@ -9187,7 +9192,7 @@ final class Gate1AppModel: ObservableObject {
         case "not_started":
             return "not started"
         case "rendering":
-            return "rendering"
+            return "preparing"
         case "starter_ready":
             return "starter ready"
         case "ready", "complete":
@@ -9444,17 +9449,17 @@ final class Gate1AppModel: ObservableObject {
 
     private func renderWatchPackage(itemId: String, transferAfterRender: Bool) {
         guard !itemId.isEmpty else {
-            reportFailure("Choose an item before rendering Watch audio.")
+            reportFailure("Choose an item before preparing Watch audio.")
             return
         }
         guard !activeWatchPackageRenderItemIds.contains(itemId) else {
-            reportFailure("Watch audio is already rendering for this item.")
+            reportFailure("Watch audio is already being prepared for this item.")
             return
         }
         activeWatchPackageRenderItemIds.insert(itemId)
         failedWatchPackageRenderItemIds.remove(itemId)
         isRenderingWatchPackage = true
-        watchPackageRenderStatus = "Rendering"
+        watchPackageRenderStatus = "Preparing"
         diagnostics["gate4WatchRenderItem"] = itemId
         gate3WatchConnectivity.publishPackageLibrary()
         Task { @MainActor [weak self] in
@@ -9483,7 +9488,7 @@ final class Gate1AppModel: ObservableObject {
                 self.diagnostics["gate4WatchLastRenderedPackage"] = output.package.id
                 self.diagnostics["gate4WatchLastRenderedAudio"] = output.audioURL.lastPathComponent
                 self.watchPackageRenderStatus = "Available"
-                self.reportSuccess("Rendered Watch package \(output.package.item.title).")
+                self.reportSuccess("Prepared the Watch package \(output.package.item.title).")
                 self.gate3WatchConnectivity.publishPackageLibrary()
                 if transferAfterRender {
                     self.gate3WatchConnectivity.transferWatchPackage(packageId: output.package.id)
@@ -9494,7 +9499,7 @@ final class Gate1AppModel: ObservableObject {
                 self.isRenderingWatchPackage = !self.activeWatchPackageRenderItemIds.isEmpty
                 self.watchPackageRenderStatus = "Failed"
                 self.diagnostics["gate4WatchRenderError"] = String(describing: error)
-                self.reportFailure(error, context: "Watch package render failed")
+                self.reportFailure(error, context: "Preparing the Watch package failed")
                 self.gate3WatchConnectivity.publishPackageLibrary()
             }
         }
@@ -10363,7 +10368,7 @@ final class Gate1AppModel: ObservableObject {
             }
             pendingStartupAudioPreparationItemIds.insert(itemId)
             failedStartupAudioPreparationItemIds.remove(itemId)
-            updateLibraryStartupAudioState(itemId: itemId, state: .preparing)
+            updateLibraryStartupAudioState(itemId: itemId, state: .waiting)
             diagnostics["startupAudioPreparation:\(itemId)"] = "queued"
             Task { @MainActor [weak self] in
                 await self?.enqueueStartupAudioPreparation(itemId: itemId)
@@ -10431,7 +10436,7 @@ final class Gate1AppModel: ObservableObject {
                 job.isCancelled = false
                 job.lastFailureCode = nil
                 try store.saveAudioPreparationJob(job)
-                diagnostics["startupAudioPreparation:\(itemId)"] = "preparing_0_of_\(targetChunkCount)"
+                diagnostics["startupAudioPreparation:\(itemId)"] = "queued_0_of_\(targetChunkCount)"
             } else if let job = try store.loadAudioPreparationJobs().first(where: {
                 $0.manifestId == manifest.id && $0.policy == .demandWindow && $0.maximumChunkCount != nil
             }) {
@@ -11193,7 +11198,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func libraryStartupAudioPresentation(
+    func libraryStartupAudioPresentation(
         item: Item,
         manifest: PreparedAudioManifest?,
         job: AudioPreparationJob?
@@ -11211,10 +11216,11 @@ final class Gate1AppModel: ObservableObject {
             return (.ready, Self.startupAudioChunkCount, Self.startupAudioChunkCount)
         }
         guard shouldPrewarmTextAudio(for: item) else { return (.notRequired, 0, 0) }
+        let inTurn: NativeTextStartupAudioState = [libraryAudioPreparingItemId, activePlaybackItemId].contains(item.id) ? .preparing : .waiting
         guard let manifest else {
             return failedStartupAudioPreparationItemIds.contains(item.id)
                 ? (.failed, 0, Self.startupAudioChunkCount)
-                : (.preparing, 0, Self.startupAudioChunkCount)
+                : (inTurn, 0, Self.startupAudioChunkCount)
         }
         let target = min(Self.startupAudioChunkCount, max(1, manifest.plannedChunkCount))
         let completed = min(target, manifest.chunks.filter { $0.index < target }.count)
@@ -11232,7 +11238,7 @@ final class Gate1AppModel: ObservableObject {
             || manifest.state == .pausedForThermal {
             return (.paused, completed, target)
         }
-        return (.preparing, completed, target)
+        return (inTurn, completed, target)
     }
 
     nonisolated static func libraryOfflineState(
@@ -11437,7 +11443,7 @@ final class Gate1AppModel: ObservableObject {
         if newlyCompleted.count == 1 {
             message = "Ready offline: \(newest.title)."
         } else {
-            message = "Ready offline: \(newest.title) and \(newlyCompleted.count - 1) more. Review them in Offline Rendering."
+            message = "Ready offline: \(newest.title) and \(newlyCompleted.count - 1) more. Review them in Preparing Audio."
         }
         reportConfirmation(message)
     }
@@ -11463,9 +11469,9 @@ final class Gate1AppModel: ObservableObject {
             failedStartupAudioPreparationItemIds.remove(selected.itemId)
             try refreshLibraryRows(store: store)
             diagnostics["audioPreparationSuppressed:\(selected.itemId)"] = "user"
-            reportConfirmation("Removed \(itemsTitle(itemId: selected.itemId, store: store)) from offline rendering.")
+            reportConfirmation("Removed \(itemsTitle(itemId: selected.itemId, store: store)) from audio preparation.")
         } catch {
-            reportFailure(error, context: "Removing the item from offline rendering failed")
+            reportFailure(error, context: "Removing the item from audio preparation failed")
         }
     }
 
@@ -11483,9 +11489,9 @@ final class Gate1AppModel: ObservableObject {
             failedStartupAudioPreparationItemIds.subtract(itemIds)
             try refreshLibraryRows(store: store)
             diagnostics["audioPreparationQueueCleared"] = "\(jobs.count)"
-            reportConfirmation("Cleared \(jobs.count) offline rendering job\(jobs.count == 1 ? "" : "s"). Existing audio and Library items were kept.")
+            reportConfirmation("Cleared \(jobs.count) audio preparation job\(jobs.count == 1 ? "" : "s"). Existing audio and Library items were kept.")
         } catch {
-            reportFailure(error, context: "Clearing the offline rendering queue failed")
+            reportFailure(error, context: "Clearing the audio preparation queue failed")
         }
     }
 
@@ -11525,7 +11531,7 @@ final class Gate1AppModel: ObservableObject {
             try refreshAudioPreparationPresentation(store: store)
             startForegroundAudioPreparationIfNeeded()
         } catch {
-            reportFailure(error, context: "Unable to prioritize rendering")
+            reportFailure(error, context: "Unable to prepare this item next")
         }
     }
 
@@ -11555,9 +11561,9 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
             try refreshAudioPreparationPresentation(store: store)
-            reportConfirmation("Updated the offline rendering order.")
+            reportConfirmation("Updated the audio preparation order.")
         } catch {
-            reportFailure(error, context: "Updating the rendering queue failed")
+            reportFailure(error, context: "Updating the audio preparation queue failed")
         }
     }
 
@@ -15191,11 +15197,11 @@ final class Gate1AppModel: ObservableObject {
             try store.saveAudioPreparationJob(job)
             try refreshLibraryRows(store: store)
             diagnostics["explicitAudioPreparation:\(item.id)"] = "queued"
-            reportConfirmation("Prioritized \(item.title) for offline rendering.")
+            reportConfirmation("Prioritized \(item.title) for audio preparation.")
             startForegroundAudioPreparationIfNeeded()
         } catch {
             diagnostics["explicitAudioPreparation:\(item.id)"] = "failed:\(error.localizedDescription)"
-            reportFailure(error, context: "Offline rendering request failed")
+            reportFailure(error, context: "Preparing audio failed to start")
         }
     }
 
@@ -15285,17 +15291,22 @@ final class Gate1AppModel: ObservableObject {
                 || (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.canYieldRendererToLibrary == true)
     }
 
+    /// The foreground loop and the background task take turns, so two Library items never render at once (#281).
     private func performBackgroundAudioPreparationPass(foregroundDemandOnly: Bool = false) async -> Bool {
+        await libraryAudioRenderGate.run { await self.preparationPassInTurn(foregroundDemandOnly: foregroundDemandOnly) }
+    }
+
+    private func preparationPassInTurn(foregroundDemandOnly: Bool) async -> Bool {
         var attemptedJob: AudioPreparationJob?
         // Live speech owns the serial renderer while the listener has active
         // demand. A stale/background job must not queue ahead of its next chunk.
-        guard canPrepareLibraryAudio else { return false }
+        guard canPrepareLibraryAudio else { libraryAudioPreparingItemId = nil; return false }
         guard (foregroundDemandOnly || automaticAudioPreparationPolicy == .whileCharging),
               !ProcessInfo.processInfo.isLowPowerModeEnabled,
               ProcessInfo.processInfo.thermalState != .serious,
               ProcessInfo.processInfo.thermalState != .critical,
               hasAcceptedCurrentTerms,
-              let voice = ttsVoiceSelection.supertonicVoice else { return false }
+              let voice = ttsVoiceSelection.supertonicVoice else { libraryAudioPreparingItemId = nil; return false }
         do {
             try Task.checkCancellation()
             let store = try requireStore()
@@ -15323,7 +15334,11 @@ final class Gate1AppModel: ObservableObject {
                     ? remaining.contains(where: { $0.policy == .explicit || ($0.policy == .demandWindow && $0.maximumChunkCount != nil) })
                     : !remaining.isEmpty
             }
-            guard var job = queuedJobs.first else { return false }
+            guard var job = queuedJobs.first else { libraryAudioPreparingItemId = nil; return false }
+            if let previous = libraryAudioPreparingItemId, previous != job.itemId,
+               libraryItems.first(where: { $0.id == previous })?.startupAudioState == .preparing { updateLibraryStartupAudioState(itemId: previous, state: .waiting) }
+            libraryAudioPreparingItemId = job.itemId
+            if libraryItems.first(where: { $0.id == job.itemId })?.startupAudioState == .waiting { updateLibraryStartupAudioState(itemId: job.itemId, state: .preparing) }
             guard var manifest = try store.loadPreparedAudioManifest(id: job.manifestId),
                   let item = try? store.loadItem(id: job.itemId),
                   let sourceText = item.text else {
@@ -15496,7 +15511,7 @@ final class Gate1AppModel: ObservableObject {
             }
             diagnostics["backgroundAudioPreparation"] = "paused:\(error.localizedDescription)"
             if attemptedJob?.policy == .explicit {
-                reportWarning("Offline rendering paused: \(error.localizedDescription)")
+                reportWarning("Audio preparation paused: \(error.localizedDescription)")
             }
             return false
         }
@@ -15514,28 +15529,7 @@ final class Gate1AppModel: ObservableObject {
         _ rhs: AudioPreparationJob,
         activeItemId: String?
     ) -> Bool {
-        if lhs.userPriority != rhs.userPriority {
-            return (lhs.userPriority ?? .max) < (rhs.userPriority ?? .max)
-        }
-        if let activeItemId, (lhs.itemId == activeItemId) != (rhs.itemId == activeItemId) {
-            return lhs.itemId == activeItemId
-        }
-        let lhsIsOpeningBuffer = lhs.policy == .demandWindow && lhs.maximumChunkCount != nil
-        let rhsIsOpeningBuffer = rhs.policy == .demandWindow && rhs.maximumChunkCount != nil
-        if lhsIsOpeningBuffer != rhsIsOpeningBuffer {
-            return lhsIsOpeningBuffer
-        }
-        if (lhs.policy == .explicit) != (rhs.policy == .explicit) {
-            return lhs.policy == .explicit
-        }
-        if lhs.policy != rhs.policy {
-            if lhs.policy == .demandWindow { return true }
-            if rhs.policy == .demandWindow { return false }
-        }
-        if lhs.requestedAt != rhs.requestedAt {
-            return lhs.requestedAt > rhs.requestedAt
-        }
-        return lhs.id < rhs.id
+        LibraryAudioPreparationQueue.precedes(lhs, rhs, activeItemId: activeItemId)
     }
 
     private func finishBackgroundPreparedAudio(

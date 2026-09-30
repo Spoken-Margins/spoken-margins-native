@@ -2464,7 +2464,7 @@ private struct SettingsScreen: View {
                     Text("Episode maps are private and off by default. While Charging only prepares already-downloaded episodes; full transcripts and temporary audio are deleted after derivative artifacts commit.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    Text("While Charging uses durable jobs and pauses before the next chunk when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
+                    Text("While Charging uses durable jobs and pauses between parts of an item when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                 }
