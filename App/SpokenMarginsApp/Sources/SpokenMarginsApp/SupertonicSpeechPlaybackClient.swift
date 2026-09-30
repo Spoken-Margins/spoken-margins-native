@@ -647,6 +647,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 .stopped,
                 stopReason: lock.withLock { generationDisabledReasons[targetId] } ?? SpeechGenerationStopReason.generationDisabledCode
             )
+            startStallMonitorIfNeeded()
             return
         }
         let spokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
@@ -1043,6 +1044,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             transportIntent = state.1
         }
         reportGenerationState(.stopped, stopReason: stopReason)
+        if state.1 == .playing { startStallMonitorIfNeeded() }
         return true
     }
 
@@ -1640,6 +1642,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 transportIntent = .playing
             }
             reportGenerationState(.stopped, stopReason: stopReason)
+            startStallMonitorIfNeeded()
             onFallback?(reason, sourceOffset, targetId)
         } catch {
             lock.withLock {
@@ -1742,7 +1745,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// session's and player's state, and the player is re-seated at the same point. If that doesn't
     /// bring the clock back, playback pauses at the listener's place, so the control shows Play and
     /// one tap resumes (#302). A wait at a chunk boundary (no player) isn't a stall: the render
-    /// deadline covers it.
+    /// deadline covers it. When the iOS voice reads instead, its place in the text is the clock (#288).
     private func startStallMonitorIfNeeded() {
         let interval = stallSampleInterval
         let thresholdMs = Int(stallThreshold.components.seconds * 1_000
@@ -1761,8 +1764,25 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 while !Task.isCancelled {
                     try? await Task.sleep(for: interval)
                     guard let self else { return }
+                    // The iOS voice has no player clock; its place in the text is its clock (#288). It
+                    // is read on the main actor, where the synthesizer's callbacks move it.
+                    var systemVoice: (offset: Int?, complete: Bool)?
+                    if self.lock.withLock({ self.transportIntent == .playing && self.fallbackIsActive }) {
+                        systemVoice = await MainActor.run { () -> (offset: Int?, complete: Bool) in
+                            let target = self.lock.withLock { self.currentTargetId }
+                            return (self.fallback.currentCharOffset(),
+                                    target.map { self.fallback.isPlaybackComplete(targetId: $0) } ?? true)
+                        }
+                    }
                     let sample = self.lock.withLock { () -> (active: Bool, intends: Bool, clock: Int?, player: ObjectIdentifier?) in
-                        let intends = self.transportIntent == .playing && !self.fallbackIsActive && self.player != nil
+                        if self.fallbackIsActive {
+                            guard let systemVoice, let offset = systemVoice.offset, !systemVoice.complete else {
+                                return (self.transportIntent == .playing, false, nil, nil)
+                            }
+                            // One character counts as progress: the detector's unit is scaled to match.
+                            return (self.transportIntent == .playing, self.transportIntent == .playing, offset * 1_000, nil)
+                        }
+                        let intends = self.transportIntent == .playing && self.player != nil
                         let time = self.playerTime(self.player)
                         return (self.transportIntent == .playing, intends, self.currentStartOffset * 1_000_000 + Int(time * 1_000),
                                 self.player.map(ObjectIdentifier.init))
@@ -1810,22 +1830,30 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// True while the player a stall sample saw is still the one playing. Between the sample and
     /// its handling on the main actor, the listener can switch items; the stall is then stale.
     private func isStillPlaying(_ sampledPlayer: ObjectIdentifier?) -> Bool {
-        lock.withLock { transportIntent == .playing && player.map(ObjectIdentifier.init) == sampledPlayer }
+        lock.withLock {
+            transportIntent == .playing && player.map(ObjectIdentifier.init) == sampledPlayer
+                && (sampledPlayer != nil || fallbackIsActive)
+        }
     }
 
     @MainActor
     private func handleStallEvent(_ event: PlaybackStallDetector.Event, sampledPlayer: ObjectIdentifier?) {
         if case .stalled = event, !isStillPlaying(sampledPlayer) { return }
-        let player = lock.withLock { self.player }
+        let (player, usesSystemVoice) = lock.withLock { (self.player, fallbackIsActive) }
         var fields = AudioSessionDiagnostics.fields().merging(AudioSessionDiagnostics.fields(for: player)) { first, _ in first }
+        if usesSystemVoice { fields["engine"] = "system_voice" }
         switch event {
         case .stalled(_, let forMs):
             fields["stalledMs"] = String(forMs)
             // A second stall inside the cooldown means the last re-seat didn't hold.
             guard claimStallRecovery() else { return pauseStalledPlayback(fields) }
-            fields["recovery"] = "reseat_player"
+            fields["recovery"] = usesSystemVoice ? "restart_system_voice" : "reseat_player"
             onStall?("supertonic.stall", fields)
-            reseatStalledPlayer()
+            if usesSystemVoice {
+                restartStalledSystemVoice()
+            } else {
+                reseatStalledPlayer()
+            }
         case .ended(_, _, let stalledForMs):
             fields["stalledMs"] = String(stalledForMs)
             onStall?("supertonic.stall_ended", fields)
@@ -1847,8 +1875,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         guard isStillPlaying(sampledPlayer) else { return }
         let due = lock.withLock { lastStallRecovery.map { ContinuousClock.now - $0 >= stallThreshold } ?? false }
         guard due else { return }
-        let player = lock.withLock { self.player }
-        pauseStalledPlayback(AudioSessionDiagnostics.fields().merging(AudioSessionDiagnostics.fields(for: player)) { first, _ in first })
+        let (player, usesSystemVoice) = lock.withLock { (self.player, fallbackIsActive) }
+        var fields = AudioSessionDiagnostics.fields().merging(AudioSessionDiagnostics.fields(for: player)) { first, _ in first }
+        if usesSystemVoice { fields["engine"] = "system_voice" }
+        pauseStalledPlayback(fields)
     }
 
     /// Stops showing "playing" for a player that makes no progress (#302). As after a media-services
@@ -1862,14 +1892,40 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onStall?("supertonic.stall_paused", fields)
         // The tap may land before this monitor samples the pause; it must start a fresh monitor
         // rather than inherit this stall and pause the new player too.
-        lock.withLock {
+        let usesSystemVoice = lock.withLock { () -> Bool in
             stallMonitor?.cancel()
             stallMonitor = nil
+            return fallbackIsActive
+        }
+        if usesSystemVoice {
+            // The iOS voice keeps its place; the next play speaks from it with a new synthesizer.
+            let paused = lock.withLock { () -> Bool in
+                guard transportIntent == .playing else { return false }
+                transportIntent = .paused
+                shouldResumeAfterInterruption = false
+                return true
+            }
+            guard paused else { return }
+            try? fallback.pause()
+            try? releaseBackgroundAudio()
+            interruptionHandler?(.began)
+            return
         }
         markMediaServicesReset()
         // A media-services reset has no session to release; a watchdog pause must stop lowering
         // other apps' audio, as a listener's pause does (#301 audit).
         try? releaseBackgroundAudio()
+    }
+
+    /// The iOS voice said "playing" while silent until the listener paused and played again (#288).
+    /// That pause and play is the recovery: a new synthesizer speaks from the same place.
+    @MainActor
+    private func restartStalledSystemVoice() {
+        guard let targetId = lock.withLock({ fallbackIsActive && transportIntent == .playing ? currentTargetId : nil }),
+              let offset = fallback.currentCharOffset() else { return }
+        try? activateAudioSession()
+        try? fallback.pause()
+        try? fallback.play(targetId: targetId, from: offset)
     }
 
     /// Re-activates the session and plays the same chunk from the same point in a new player.

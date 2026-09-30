@@ -518,6 +518,75 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    /// A client whose render times out, so the iOS voice (`fallback`) takes over at offset 17.
+    private func systemVoiceStallClient(_ log: StallEventLog, fallback: RecordingFallbackAudioClient) throws -> SupertonicSpeechPlaybackClient {
+        let template = try makeTestWAV(duration: 0.5)
+        addTeardownBlock { try? FileManager.default.removeItem(at: template) }
+        return SupertonicSpeechPlaybackClient(
+            renderer: CountingAudioSupertonicRenderer(templateURL: template, firstRenderDelay: .seconds(1)),
+            voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in }, observesPlayerLifecycle: false,
+            fallbackClient: fallback,
+            interruptionHandler: { event in log.stall("interruption.\(event)", [:]) },
+            onFallback: { _, _, _ in log.stall("fallback", [:]) },
+            onStall: { kind, fields in log.stall(kind, fields) },
+            stallThreshold: .milliseconds(400), stallSampleInterval: .milliseconds(100),
+            renderWaitLimit: .milliseconds(100)
+        )
+    }
+
+    // #288: after a render timeout handed the article to the iOS voice, that voice went silent while
+    // the app said "playing", and only the listener's pause and play brought it back. The watchdog
+    // didn't look at the iOS voice. Now a place that stops moving is noticed and gets that same
+    // pause and play; if that doesn't help, playback pauses so the control shows Play.
+    func testASilentIOSVoiceIsRestartedAtItsPlaceThenPausedForATap() async throws {
+        let log = StallEventLog()
+        let fallback = RecordingFallbackAudioClient()
+        let client = try systemVoiceStallClient(log, fallback: fallback)
+        _ = try client.prepareSpeechText("A long response that must remain playable when generation does not finish promptly.")
+        try client.play(targetId: "silent", from: 17)
+        for _ in 0..<150 where !log.values.contains("supertonic.stall") { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.values.prefix(2), ["fallback", "supertonic.stall"], "\(log.values)")
+        XCTAssertEqual(log.lastFields["recovery"], "restart_system_voice")
+        XCTAssertEqual(log.lastFields["engine"], "system_voice")
+        XCTAssertEqual(fallback.playedOffsets, [17, 17], "the iOS voice speaks again from the same place")
+        XCTAssertGreaterThanOrEqual(fallback.pauseCount, 1, "after a pause, as the listener's recovery did")
+
+        for _ in 0..<150 where !log.values.contains("supertonic.stall_paused") { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(log.values.contains("supertonic.stall_paused"), "\(log.values)")
+        XCTAssertTrue(log.values.contains("interruption.began"), "the app is told playback paused")
+        XCTAssertEqual(client.playbackTransportState(targetId: "silent"), .paused, "the control shows Play, not Pause")
+
+        fallback.advancesPerRead = 3
+        try client.play(targetId: "silent", from: 17)
+        XCTAssertEqual(fallback.playedOffsets, [17, 17, 17], "one tap speaks from the same place")
+        let stalls = log.values.filter { $0.hasPrefix("supertonic.stall") }.count
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertEqual(client.playbackTransportState(targetId: "silent"), .playing)
+        XCTAssertEqual(log.values.filter { $0.hasPrefix("supertonic.stall") }.count, stalls, "no new stall: \(log.values)")
+        try client.stop()
+    }
+
+    // #288: an iOS voice whose place moves, or that finished the article, isn't a stall.
+    func testASpeakingOrFinishedIOSVoiceIsNotAStall() async throws {
+        let log = StallEventLog()
+        let fallback = RecordingFallbackAudioClient()
+        fallback.advancesPerRead = 2
+        let client = try systemVoiceStallClient(log, fallback: fallback)
+        _ = try client.prepareSpeechText("A long response that must remain playable when generation does not finish promptly.")
+        try client.play(targetId: "speaking", from: 17)
+        for _ in 0..<100 where !log.values.contains("fallback") { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertEqual(log.values, ["fallback"])
+
+        fallback.advancesPerRead = 0
+        fallback.completedTargetId = "speaking"
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertEqual(log.values, ["fallback"], "the end of the article isn't a stall")
+        XCTAssertEqual(fallback.playedOffsets, [17])
+        try client.stop()
+    }
+
     // #258: with a Listening Map overview, the engine speaks "Overview. …" before the article.
     // Lookups carried that whole text and chunks planned across it, so no prepared chunk ever
     // matched and a fully prepared article was rendered again. They now ask for the article's own
@@ -3000,11 +3069,16 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, @unchecke
     var playbackVolumes: [Float] = []
     var pauseCount = 0
     var offset = 0
+    /// How far the place moves each time it is read, as a speaking voice's would.
+    var advancesPerRead = 0
+    var completedTargetId: String?
 
     func prepareSpeechText(_ text: String) throws -> String {
         preparedText = text
         return text
     }
+
+    func isPlaybackComplete(targetId: String) -> Bool { completedTargetId == targetId }
 
     func play(targetId: String) throws {
         try play(targetId: targetId, from: 0)
@@ -3015,7 +3089,10 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, @unchecke
         playedOffsets.append(charOffset)
     }
 
-    func currentCharOffset() -> Int? { offset }
+    func currentCharOffset() -> Int? {
+        defer { offset += advancesPerRead }
+        return offset
+    }
 
     func setPlaybackRate(_ rate: Double) throws {
         playbackRates.append(rate)
