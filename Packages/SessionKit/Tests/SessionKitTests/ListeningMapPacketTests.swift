@@ -82,8 +82,8 @@ final class ListeningMapPacketTests: XCTestCase {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let cases = [
-            ("overlapping", proposal([scene(0, .eligible, from: 0, to: 70_000), scene(1, .eligible, from: 60_000, to: 90_000)]), "overlaps the previous scene"),
-            ("backwards", proposal([scene(0, .eligible, from: 60_000, to: 90_000), scene(1, .eligible, from: 0, to: 60_000)]), "starts before the previous scene"),
+            ("overlapping", proposal([scene(0, .eligible, from: 0, to: 70_000), scene(1, .eligible, from: 60_000, to: 90_000)]), "overlaps an earlier scene"),
+            ("backwards", proposal([scene(0, .eligible, from: 60_000, to: 90_000), scene(1, .eligible, from: 0, to: 60_000)]), "starts before an earlier scene"),
             ("inverted", proposal([scene(0, .eligible, from: 90_000, to: 60_000)]), "ends before it starts"),
         ]
         for (name, bad, message) in cases {

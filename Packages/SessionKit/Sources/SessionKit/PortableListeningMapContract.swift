@@ -23,8 +23,8 @@ public enum PortableListeningMapContract {
             case .eligibleSceneLacksSummary(let id): "eligible scene \(id) lacks a grounded summary"
             case .ineligibleSceneCarriesSummary(let id): "excluded or unknown scene \(id) carries a summary"
             case .sceneEndsBeforeItStarts(let id): "scene \(id) ends before it starts"
-            case .sceneOutOfOrder(let id): "scene \(id) starts before the previous scene"
-            case .sceneOverlapsPrevious(let id): "scene \(id) overlaps the previous scene"
+            case .sceneOutOfOrder(let id): "scene \(id) starts before an earlier scene"
+            case .sceneOverlapsPrevious(let id): "scene \(id) overlaps an earlier scene"
             case .summaryQuotesSource(let id): "scene \(id) summary quotes \(verbatimRunWords) or more words of its source text"
             }
         }
@@ -37,7 +37,10 @@ public enum PortableListeningMapContract {
     ) -> [Violation] {
         let item = itemText.flatMap { $0.isEmpty ? nil : EmbeddedText($0) }
         var result: [Violation] = []
-        var previous: PortableListeningMapScene?
+        // The furthest start and end reached so far, carried across scenes with no comparable position so
+        // a scene placed only by rough percentages can't hide an overlap between its neighbours.
+        var reachedStart = Position(mediaTimeMs: nil, character: nil)
+        var reachedEnd = Position(mediaTimeMs: nil, character: nil)
         for scene in proposal.scenes {
             let hasSummary = scene.summaryText?.isEmpty == false || scene.summaryAssetId != nil
             switch scene.eligibility {
@@ -48,25 +51,23 @@ public enum PortableListeningMapContract {
             case .excluded, .unknown:
                 if hasSummary { result.append(.ineligibleSceneCarriesSummary(sceneId: scene.id)) }
             }
-            if let start = position(scene.startAnchor, isEnd: false),
-               let end = position(scene.endAnchor, isEnd: true),
-               let order = compare(start, end), order > 0 {
+            let start = position(scene.startAnchor, isEnd: false)
+            let end = position(scene.endAnchor, isEnd: true)
+            if let start, let end, let order = compare(start, end), order > 0 {
                 result.append(.sceneEndsBeforeItStarts(sceneId: scene.id))
             }
-            if let previous {
-                let previousStart = position(previous.startAnchor, isEnd: false)
-                let previousEnd = position(previous.endAnchor, isEnd: true)
-                let start = position(scene.startAnchor, isEnd: false)
-                if let previousStart, let start, let order = compare(previousStart, start), order > 0 {
+            if let start {
+                if isPast(reachedStart, start) {
                     result.append(.sceneOutOfOrder(sceneId: scene.id))
-                } else if let previousEnd, let start, let order = compare(previousEnd, start), order > 0 {
+                } else if isPast(reachedEnd, start) {
                     result.append(.sceneOverlapsPrevious(sceneId: scene.id))
                 }
             }
             if let summary = scene.summaryText, !summary.isEmpty, quotesSource(summary, scene: scene, item: item) {
                 result.append(.summaryQuotesSource(sceneId: scene.id))
             }
-            previous = scene
+            reachedStart = furthest(reachedStart, start)
+            reachedEnd = furthest(reachedEnd, end)
         }
         return result
     }
@@ -116,8 +117,9 @@ public enum PortableListeningMapContract {
     private static func quotesSource(_ summary: String, scene: PortableListeningMapScene, item: EmbeddedText?) -> Bool {
         let summaryWords = words(summary)
         guard summaryWords.count >= verbatimRunWords else { return false }
-        let anchorTexts = [scene.startAnchor, scene.endAnchor].flatMap { anchor in
-            [anchor.exactText, anchor.prefix, anchor.suffix].compactMap { $0 }
+        // Prefix, quoted text and suffix are one contiguous stretch of source, so a run may cross them.
+        let anchorTexts = [scene.startAnchor, scene.endAnchor].map { anchor in
+            [anchor.prefix, anchor.exactText, anchor.suffix].compactMap { $0 }.joined(separator: " ")
         }
         if anchorTexts.contains(where: { sharesRun(summaryWords, runs(words($0), length: verbatimRunWords), length: verbatimRunWords) }) {
             return true
@@ -167,6 +169,23 @@ public enum PortableListeningMapContract {
         let character = isEnd ? (anchor.endChar ?? anchor.startChar) : (anchor.startChar ?? anchor.endChar)
         guard anchor.mediaTimeMs != nil || character != nil else { return nil }
         return Position(mediaTimeMs: anchor.mediaTimeMs, character: character)
+    }
+
+    /// True when `reached` lies beyond `start` on any position both carry. A prepared text-and-audio map
+    /// runs forward on media time and on characters alike, so either going backwards is a violation.
+    private static func isPast(_ reached: Position, _ start: Position) -> Bool {
+        if let left = reached.mediaTimeMs, let right = start.mediaTimeMs, left > right { return true }
+        if let left = reached.character, let right = start.character, left > right { return true }
+        return false
+    }
+
+    private static func furthest(_ reached: Position, _ next: Position?) -> Position {
+        guard let next else { return reached }
+        func later(_ lhs: Int?, _ rhs: Int?) -> Int? { [lhs, rhs].compactMap { $0 }.max() }
+        return Position(
+            mediaTimeMs: later(reached.mediaTimeMs, next.mediaTimeMs),
+            character: later(reached.character, next.character)
+        )
     }
 
     private static func compare(_ lhs: Position, _ rhs: Position) -> Int? {

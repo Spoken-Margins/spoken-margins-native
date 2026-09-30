@@ -169,6 +169,45 @@ final class ListeningMapContractTests: XCTestCase {
                 eligibility: .eligible, startAnchor: .init(anchorType: .text, startChar: 40), endAnchor: .init(anchorType: .text, endChar: 90)),
         ])
         XCTAssertEqual(violations(overlappingText), [.sceneOverlapsPrevious(sceneId: "scene-1")])
+
+        // A scene placed only by rough percentages can't hide an overlap between the scenes either side of it.
+        let roughOnly = PortableListeningMapScene(
+            id: "scene-1", order: 1, summaryText: "Two.", summaryProvenance: .senderAuthored, eligibility: .eligible,
+            startAnchor: .init(anchorType: .media, roughPercent: 40), endAnchor: .init(anchorType: .media, roughPercent: 60)
+        )
+        let hiddenOverlap = proposal([
+            scene(0, .eligible, from: 0, to: 70_000), roughOnly, scene(2, .eligible, from: 60_000, to: 90_000),
+        ])
+        XCTAssertEqual(violations(hiddenOverlap), [.sceneOverlapsPrevious(sceneId: "scene-2")])
+        let hiddenBackwards = proposal([
+            scene(0, .eligible, from: 50_000, to: 70_000), roughOnly, scene(2, .eligible, from: 10_000, to: 20_000),
+        ])
+        XCTAssertEqual(violations(hiddenBackwards), [.sceneOutOfOrder(sceneId: "scene-2")])
+        let roughBetweenOrdered = proposal([
+            scene(0, .eligible, from: 0, to: 60_000), roughOnly, scene(2, .eligible, from: 60_000, to: 90_000),
+        ])
+        XCTAssertEqual(violations(roughBetweenOrdered), [])
+
+        // Text and audio both run forward: a character overlap counts even where media time doesn't show one.
+        func textAudio(_ order: Int, ms: (Int, Int)?, chars: (Int, Int)) -> PortableListeningMapScene {
+            PortableListeningMapScene(
+                id: "scene-\(order)", order: order, summaryText: "Scene.", summaryProvenance: .senderAuthored, eligibility: .eligible,
+                startAnchor: .init(anchorType: .text, startChar: chars.0, mediaTimeMs: ms?.0),
+                endAnchor: .init(anchorType: .text, endChar: chars.1, mediaTimeMs: ms?.1)
+            )
+        }
+        let textOverlapBehindMedia = proposal([
+            textAudio(0, ms: (0, 1_000), chars: (0, 100)),
+            textAudio(1, ms: nil, chars: (100, 500)),
+            textAudio(2, ms: (1_000, 2_000), chars: (300, 600)),
+        ])
+        XCTAssertEqual(violations(textOverlapBehindMedia), [.sceneOverlapsPrevious(sceneId: "scene-2")])
+        let textAudioForward = proposal([
+            textAudio(0, ms: (0, 1_000), chars: (0, 100)),
+            textAudio(1, ms: nil, chars: (100, 500)),
+            textAudio(2, ms: (1_000, 2_000), chars: (500, 600)),
+        ])
+        XCTAssertEqual(violations(textAudioForward), [])
     }
 
     func testSummaryMustNotQuoteTenWordsOfItsSourceText() {
@@ -187,6 +226,24 @@ final class ListeningMapContractTests: XCTestCase {
         XCTAssertEqual(violations(withAnchorText(quoting)), [.summaryQuotesSource(sceneId: "scene-0")])
         XCTAssertEqual(violations(withAnchorText(paraphrase)), [])
         XCTAssertEqual(violations(withAnchorText(nineWords)), [], "nine shared words are not a quotation")
+
+        // An anchor's prefix, quoted text and suffix are one stretch of source, so a run across them counts.
+        func withSplitAnchor(_ summary: String) -> PortableListeningMapProposalArtifact {
+            proposal([PortableListeningMapScene(
+                id: "scene-0", order: 0, summaryText: summary, summaryProvenance: .modelGenerated, eligibility: .eligible,
+                startAnchor: .init(
+                    anchorType: .transcript, exactText: "the committee met at dawn",
+                    prefix: "Late in the year", suffix: "and agreed that the old bridge must close", mediaTimeMs: 0
+                ),
+                endAnchor: .init(anchorType: .transcript, mediaTimeMs: 60_000)
+            )])
+        }
+        XCTAssertEqual(violations(withSplitAnchor(quoting)), [.summaryQuotesSource(sceneId: "scene-0")])
+        XCTAssertEqual(
+            violations(withSplitAnchor("Late in the year the committee met at dawn and agreed, officials said.")),
+            [.summaryQuotesSource(sceneId: "scene-0")], "prefix through quoted text into suffix"
+        )
+        XCTAssertEqual(violations(withSplitAnchor(paraphrase)), [])
 
         // Embedded item text: the scene's own span counts, another scene's span doesn't.
         let item = "Unrelated opening words fill this first part of the item before anything happens here. " + source
