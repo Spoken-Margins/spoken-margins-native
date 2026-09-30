@@ -304,6 +304,66 @@ class VerificationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'stale'):
                 inventory.plan_tests(root, 'Broken')
 
+    def app_test_root(self, root):
+        """A repo with one app test class of three methods and plans that select all, some, or none of it."""
+        tests = root / 'App/SpokenMarginsAppTests'
+        tests.mkdir(parents=True)
+        (tests / 'Gate4WatchPackageRenderTests.swift').write_text(
+            'final class Gate4WatchPackageRenderTests: XCTestCase { func testRender() {} }')
+        (tests / 'SpeechTests.swift').write_text(
+            'final class SpeechTests: XCTestCase { func testBundled() {} func testSwitch() {} func testSilence() {} }')
+        (root / 'TestPlans').mkdir()
+        target = {'name': 'SpokenMarginsAppTests'}
+        for name, selection in (('AudioAdapters', {'selectedTests': ['SpeechTests/testBundled()']}),
+                                ('AppBehavior', {'skippedTests': ['SpeechTests/testBundled()']}),
+                                ('Whole', {})):
+            (root / f'TestPlans/{name}.xctestplan').write_text(
+                json.dumps({'testTargets': [dict(target=target, **selection)]}))
+
+    def test_class_selector_is_narrowed_to_the_methods_a_plan_selects(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.app_test_root(root)
+            available = {f'SpokenMarginsAppTests/{t}' for t in inventory.target_tests(root, 'SpokenMarginsAppTests')}
+            speech = 'SpokenMarginsAppTests/SpeechTests'
+            narrow = lambda plan, selectors: verification.narrow_selectors(
+                selectors, inventory.plan_tests(root, plan), available)
+            self.assertEqual(narrow('AudioAdapters', [speech]), [f'{speech}/testBundled'])
+            self.assertEqual(narrow('AppBehavior', [speech]), [f'{speech}/testSilence', f'{speech}/testSwitch'])
+            self.assertEqual(narrow('Whole', [speech]), [speech])
+            self.assertEqual(narrow('AppBehavior', [f'{speech}/testSwitch']), [f'{speech}/testSwitch'])
+
+    def test_t3_class_request_runs_only_the_planned_methods_in_the_adapters_plan(self):
+        # #518: `tests: SpokenMarginsAppTests/SupertonicSpeechTests` passed -only-testing the class, which
+        # overrides AudioAdapters' one selected method; all 74 ran and 73 were reported as unexpected.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            self.app_test_root(root)
+            (root / '.build/verification/SpokenMarginsAppBehavior').mkdir(parents=True)
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            run.manifest['input_sha256'] = 'inputs'
+            commands = {}
+
+            def command(name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=None):
+                commands[name] = (args, expected)
+                return ''
+
+            capture = lambda args: '{"devices": {}}' if args[:3] == ['xcrun', 'simctl', 'list'] else 'stub'
+            device = {'udid': 'synthetic-device', 'state': 'Booted', 'runtime': 'iOS-26', 'name': 'Other'}
+            with patch.object(verification, 'ROOT', root), \
+                    patch.object(verification, 'input_identity', return_value='inputs'), \
+                    patch.object(verification, 'capture', side_effect=capture), \
+                    patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
+                    patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                    patch.object(verification.subprocess, 'run'), \
+                    patch.object(run, 'command', side_effect=command):
+                run.xcode('adapters', None, rebuild=True, only=['SpeechTests'])
+            args, expected = commands['xcode-tests']
+            method = 'SpokenMarginsAppTests/SpeechTests/testBundled'
+            self.assertEqual([a for a in args if a.startswith('-only-testing:')], [f'-only-testing:{method}'])
+            self.assertEqual(expected, {method})
+
     def test_unclassified_trace_and_fixture_and_empty_selection_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
