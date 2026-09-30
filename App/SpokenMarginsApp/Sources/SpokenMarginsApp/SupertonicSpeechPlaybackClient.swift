@@ -429,7 +429,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var inFlightOffsets = Set<Int>()
     private var pendingAutoplayOffset: Int?
     private var transportIntent: TransportIntent = .stopped
-    private var generationDisabledTargetIds = Set<String>()
+    /// Items whose on-device generation is stopped, each with the reason it stopped (#314).
+    private var generationDisabledReasons: [String: String] = [:]
     private var generationPlan: [RenderRequest] = []
     private var generationRenderOrder: [RenderRequest] = []
     private var generationResults: [Int: SupertonicPreparedChunk] = [:]
@@ -613,7 +614,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         restoreOnDeviceRenderingIfConditionCleared(targetId: targetId)
         let usesStoppedGeneration = lock.withLock {
             shouldResumeAfterInterruption = false
-            return generationDisabledTargetIds.contains(targetId)
+            return generationDisabledReasons[targetId] != nil
                 || (fallbackIsActive && currentTargetId == targetId)
         }
         if usesStoppedGeneration {
@@ -627,7 +628,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             }
             reportGenerationState(
                 .stopped,
-                stopReason: lock.withLock { generationStopReason } ?? SpeechGenerationStopReason.generationDisabledCode
+                stopReason: lock.withLock { generationDisabledReasons[targetId] } ?? SpeechGenerationStopReason.generationDisabledCode
             )
             return
         }
@@ -677,7 +678,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         try? fallback.pause()
         lock.withLock {
             resourceFallbackTargetIds.remove(targetId)
-            generationDisabledTargetIds.remove(targetId)
+            generationDisabledReasons.removeValue(forKey: targetId)
             fallbackIsActive = false
         }
         onRestore?(targetId)
@@ -928,7 +929,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             playbackFailure = nil
             transportIntent = .stopped
             shouldResumeAfterInterruption = false
-            generationDisabledTargetIds.removeAll()
+            generationDisabledReasons.removeAll()
             resourceFallbackTargetIds.removeAll()
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
@@ -969,7 +970,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             ? SpeechFallbackReason.memoryWarning.rawValue
             : SpeechFallbackReason.listenerStoppedGeneration.rawValue
         if state.2 {
-            _ = lock.withLock { generationDisabledTargetIds.insert(targetId) }
+            lock.withLock { generationDisabledReasons[targetId] = stopReason }
             reportGenerationState(.stopped, stopReason: stopReason)
             return true
         }
@@ -981,7 +982,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generation = UUID()
             let renderControl = activeRenderControl
             activeRenderControl = nil
-            generationDisabledTargetIds.insert(targetId)
+            generationDisabledReasons[targetId] = stopReason
             player?.pause()
             player?.replaceCurrentItem(with: nil)
             player = nil
@@ -1036,7 +1037,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let wasPaused = lock.withLock { transportIntent == .paused }
         try fallback.stop()
         lock.withLock {
-            generationDisabledTargetIds.remove(target)
+            generationDisabledReasons.removeValue(forKey: target)
             resourceFallbackTargetIds.remove(target)
             fallbackIsActive = false
         }
@@ -1573,7 +1574,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 generation = UUID()
                 let renderControl = activeRenderControl
                 activeRenderControl = nil
-                generationDisabledTargetIds.insert(targetId)
+                generationDisabledReasons[targetId] = reason
                 if reason == "supertonic_resource_pressure" {
                     resourceFallbackTargetIds.insert(targetId)
                 } else {
