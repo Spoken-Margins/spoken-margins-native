@@ -1,0 +1,69 @@
+{
+  "id": "proposal-publisher-chapters",
+  "schemaVersion": "spoken-margins.listening-map-proposal.v2",
+  "languageCode": "en",
+  "createdAt": "2026-09-30T12:00:00Z",
+  "generator": "publisher-chapters",
+  "scenes": [
+    {
+      "id": "scene-001",
+      "order": 0,
+      "title": "Welcome",
+      "summaryText": "Housekeeping and a preview of today's guest.",
+      "summaryProvenance": "publisher_supplied",
+      "eligibility": "eligible",
+      "startAnchor": {
+        "anchorType": "media",
+        "mediaTimeMs": 0,
+        "chapterTitle": "Welcome",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "media",
+        "mediaTimeMs": 180000,
+        "chapterTitle": "Welcome",
+        "machineEvidenceAssetIds": []
+      }
+    },
+    {
+      "id": "scene-002",
+      "order": 1,
+      "title": "Interview",
+      "summaryText": "A conversation about building boats by hand.",
+      "summaryProvenance": "publisher_supplied",
+      "eligibility": "eligible",
+      "startAnchor": {
+        "anchorType": "media",
+        "mediaTimeMs": 180000,
+        "chapterTitle": "Interview",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "media",
+        "mediaTimeMs": 2400000,
+        "chapterTitle": "Interview",
+        "machineEvidenceAssetIds": []
+      }
+    },
+    {
+      "id": "scene-003",
+      "order": 2,
+      "title": "Listener mail",
+      "summaryText": "The hosts answer three questions from listeners.",
+      "summaryProvenance": "publisher_supplied",
+      "eligibility": "eligible",
+      "startAnchor": {
+        "anchorType": "media",
+        "mediaTimeMs": 2400000,
+        "chapterTitle": "Listener mail",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "media",
+        "mediaTimeMs": 2700000,
+        "chapterTitle": "Listener mail",
+        "machineEvidenceAssetIds": []
+      }
+    }
+  ]
+}

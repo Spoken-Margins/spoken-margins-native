@@ -1,0 +1,66 @@
+{
+  "id": "proposal-native-text",
+  "schemaVersion": "spoken-margins.listening-map-proposal.v2",
+  "languageCode": "en",
+  "createdAt": "2026-09-30T12:00:00Z",
+  "generator": "hand-authored-fixture",
+  "scenes": [
+    {
+      "id": "scene-001",
+      "order": 0,
+      "title": "Reasonable distrust",
+      "summaryText": "The author grants that doubting a treatment is a fair place to start.",
+      "summaryProvenance": "sender_authored",
+      "eligibility": "eligible",
+      "startAnchor": {
+        "anchorType": "text",
+        "startChar": 0,
+        "exactText": "Opening distrust is reasonable.",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "text",
+        "endChar": 30,
+        "machineEvidenceAssetIds": []
+      }
+    },
+    {
+      "id": "scene-002",
+      "order": 1,
+      "title": "Anecdotes mislead",
+      "summaryText": "Several everyday changes could explain why someone felt better.",
+      "summaryProvenance": "model_generated",
+      "eligibility": "eligible",
+      "startAnchor": {
+        "anchorType": "text",
+        "startChar": 31,
+        "exactText": "Maybe their diet changed.",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "text",
+        "endChar": 133,
+        "machineEvidenceAssetIds": []
+      }
+    },
+    {
+      "id": "scene-003",
+      "order": 2,
+      "title": "Inspect process",
+      "summaryText": "The piece points readers toward records they can check for themselves.",
+      "summaryProvenance": "deterministic",
+      "eligibility": "eligible",
+      "startAnchor": {
+        "anchorType": "text",
+        "startChar": 134,
+        "exactText": "The paper trail around the medicine",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "text",
+        "endChar": 194,
+        "machineEvidenceAssetIds": []
+      }
+    }
+  ]
+}
