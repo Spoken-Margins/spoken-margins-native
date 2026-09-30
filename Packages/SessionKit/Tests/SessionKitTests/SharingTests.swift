@@ -1701,7 +1701,8 @@ final class SharingTests: XCTestCase {
         for url in parts {
             let asset = AVURLAsset(url: url)
             let duration = try await asset.load(.duration)
-            let track = try XCTUnwrap(try await asset.loadTracks(withMediaType: .audio).first)
+            let tracks = try await asset.loadTracks(withMediaType: .audio)
+            let track = try XCTUnwrap(tracks.first)
             try outputTrack.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: track, at: cursor)
             cursor = CMTimeAdd(cursor, duration)
         }
