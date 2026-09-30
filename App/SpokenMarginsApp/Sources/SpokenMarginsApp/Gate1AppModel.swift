@@ -3164,8 +3164,8 @@ final class Gate1AppModel: ObservableObject {
         )
         do {
             let result = try await PublicPodcastLinkResolver().resolveAsync(request)
-            if result.foundNoAudio, let imported = await importLinkAsReadableArticle(url, startSession: shouldStartSession) {
-                return imported
+            if let article = try? await LinkArticleFallback.article(for: url, after: result, startSession: shouldStartSession, using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }) {
+                return importBrowserText(article)
             }
             return importResolvedSourceLink(request: request, result: result, startSession: shouldStartSession)
         } catch {
@@ -3174,22 +3174,6 @@ final class Gate1AppModel: ObservableObject {
                 _ = self?.beginSourceLinkImportFromForm(startSession: startSession)
             })
             return false
-        }
-    }
-
-    /// The Link field promises web articles too (#144). When a page has no audio, read it with the same
-    /// app-owned extractor that followed article feeds use. Returns nil when that fails, so the caller shows the
-    /// original "no audio" result.
-    private func importLinkAsReadableArticle(_ url: URL, startSession: Bool) async -> Bool? {
-        guard url.scheme?.lowercased() == "https" else { return nil }
-        do {
-            var handoff = try await readablePageExtractor.extract(url: url)
-            handoff.requestedContinuation.startSession = startSession
-            diagnostics["lastSourceLinkArticleFallback"] = readablePageExtractor.lastExtractor ?? "extracted"
-            return importBrowserText(handoff)
-        } catch {
-            diagnostics["lastSourceLinkArticleFallback"] = "failed:\(error.localizedDescription)"
-            return nil
         }
     }
 
@@ -3461,6 +3445,9 @@ final class Gate1AppModel: ObservableObject {
             result = try await PublicPodcastLinkResolver().resolveAsync(request)
         }
         guard result.status == .playable else {
+            if feedEntry == nil, let article = try await LinkArticleFallback.article(for: url, after: result, startSession: false, using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }) {
+                try importBrowserTextInBackground(article); return nil
+            }
             let provider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
             diagnostics["lastSourceLinkFailureCategory"] = result.failureReason
                 ?? result.status.rawValue
