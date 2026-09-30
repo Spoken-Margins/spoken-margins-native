@@ -51,4 +51,38 @@ final class ListeningMapOverviewTextTests: XCTestCase {
         )
         XCTAssertEqual(ListeningMapOverviewText.spokenPreface(overview: "  ", title: "T", chapterCount: 2), "")
     }
+
+    /// Codex audit on #362: a real summary that happens to open like an old app sentence must
+    /// keep its text. Only the full shape of each old sentence is replaced.
+    func testASummaryThatOpensLikeAnOldSentenceKeepsItsText() {
+        let summaries = [
+            "Structured into three experiments, the study finds that judges disagree.",
+            "Structured into 3 parts: setup, results and limits.",
+            "Generated Listening Map outputs are compared with human judges.",
+            "Publisher-provided chapters for podcasts are often wrong, the author argues.",
+            "Authored navigation from editors helps readers.",
+        ]
+        for summary in summaries {
+            XCTAssertEqual(
+                ListeningMapOverviewText.spokenPreface(overview: summary, title: "Evaluation Agents", chapterCount: 2),
+                "Overview. \(summary)\n\n",
+                summary
+            )
+        }
+    }
+
+    func testOldSentencesWithTheCountSpelledOutAreStillReplaced() {
+        XCTAssertEqual(
+            ListeningMapOverviewText.spokenPreface(
+                overview: "Structured into eight listening chapters from canonical document headings in Evaluation Agents.",
+                title: "Evaluation Agents",
+                chapterCount: 8
+            ),
+            "Evaluation Agents. 8 chapters.\n\n"
+        )
+        XCTAssertEqual(
+            ListeningMapOverviewText.spokenPreface(overview: "Generated Listening Map for Evaluation Agents.", title: "Evaluation Agents", chapterCount: 0),
+            "Evaluation Agents.\n\n"
+        )
+    }
 }

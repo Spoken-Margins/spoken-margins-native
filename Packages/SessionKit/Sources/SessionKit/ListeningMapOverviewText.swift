@@ -21,23 +21,35 @@ public enum ListeningMapOverviewText {
         if trimmed == appGenerated(title: title, chapterCount: chapterCount) {
             return "\(trimmed)\n\n"
         }
-        if isLegacyAppGenerated(trimmed) {
+        if isLegacyAppGenerated(trimmed, title: title) {
             let replacement = appGenerated(title: title, chapterCount: chapterCount)
             return replacement.isEmpty ? "" : "\(replacement)\n\n"
         }
         return "Overview. \(trimmed)\n\n"
     }
 
-    /// Sentences earlier builds stored as the overview of maps they derived themselves.
-    static func isLegacyAppGenerated(_ overview: String) -> Bool {
-        legacyPrefixes.contains { overview.hasPrefix($0) }
+    /// Sentences earlier builds stored as the overview of maps they derived themselves. The
+    /// whole sentence must match, not just its opening words, so a real summary that happens to
+    /// start "Structured into three experiments, …" keeps its text. The two sentences that are
+    /// only a phrase plus the title match only with the item's own title.
+    static func isLegacyAppGenerated(_ overview: String, title: String) -> Bool {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if overview == "Publisher-provided chapters for \(trimmedTitle)."
+            || overview == "Authored navigation from \(trimmedTitle)." {
+            return true
+        }
+        let range = NSRange(overview.startIndex..., in: overview)
+        return legacySentencePatterns.contains { pattern in
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else { return false }
+            return regex.firstMatch(in: overview, range: range) != nil
+        }
     }
 
-    private static let legacyPrefixes = [
-        "Structured into ",              // Markdown and canonical headings
-        "Generated Listening Map ",      // "…with N chapters for <title>." / "…for <title>."
-        "Publisher-provided chapters for ",
-        "Authored navigation from ",
+    private static let legacySentencePatterns: [String] = [
+        // Markdown and canonical headings: "Structured into 8 listening chapters from … in <title>."
+        #"^Structured into \S+ listening chapters? from (canonical document headings|the Markdown hierarchy) in .+\.$"#,
+        // "Generated Listening Map with N chapters for <title>." / "Generated Listening Map for <title>."
+        #"^Generated Listening Map (with \S+ chapters? )?for .+\.$"#,
     ]
 
     private static func sentence(_ title: String) -> String {
