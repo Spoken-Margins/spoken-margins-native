@@ -344,7 +344,7 @@ class VerificationTests(unittest.TestCase):
             run.manifest['input_sha256'] = 'inputs'
             commands = {}
 
-            def command(name, args, timeout=180, expected=None, allowed_skips=(), tests=False):
+            def command(name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=None):
                 commands[name] = (args, expected)
                 return ''
 
