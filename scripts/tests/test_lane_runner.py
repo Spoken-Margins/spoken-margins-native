@@ -771,14 +771,65 @@ class MergeTests_Runner(unittest.TestCase):
         (_, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=risky)
         self.assertEqual(events, ['build'])
         self.assertIn('it touches packets and has no "Codex audit (Astra)" comment yet', details[-1])
-        for audit in ('**Codex audit (Astra) on `aaaaaaa`**\n\nNo findings.', '## Codex audit (gpt-6-astra, high)\n\nAudited `abc`.'):
+        for audit in ('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.',
+                      '## Codex audit (gpt-6-astra, high)\n\nAudited `aaaaaaaa`.\n\nNo findings.'):
             with self.subTest(audit=audit[:20]):
-                (_, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=risky,
-                                                           comments=[comment(audit)])
+                (_, _, _, details), events = self.run_auto(
+                    FakeGitHub(labels=('automerge',), comments=[comment(audit)]), scope=risky)
                 self.assertEqual(events, ['build', 'comment', 'push m1', 'sweep'])
         mention = [comment('Waiting on the Codex audit (Astra) for this one.')]  # not an audit: not its first line
-        (_, _, _, _), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=risky, comments=mention)
+        (_, _, _, _), events = self.run_auto(FakeGitHub(labels=('automerge',), comments=mention), scope=risky)
         self.assertEqual(events, ['build'])
+
+    RISKY = {'tier': 'T2', 'why': [], 'files': [{'path': 'Packages/SessionKit/Sources/SessionKitSharing/A.swift',
+                                                   'category': 'packet'}]}
+
+    def audited(self, *audits):
+        return self.run_auto(FakeGitHub(labels=('automerge',), comments=[comment(a) for a in audits]), scope=self.RISKY)
+
+    def test_an_audit_of_an_older_commit_does_not_clear_the_head(self):
+        # #441: a clean audit on commit A cleared a later push of commit B that nobody audited.
+        (verdict, _, _, details), events = self.audited('**Codex audit (Astra) on `1234567`**\n\nNo blocking findings.')
+        self.assertEqual((verdict, events), ('PASS', ['build']))
+        self.assertIn('the audit is on `1234567`, the head is `aaaaaaa`', details[-1])
+
+    def test_an_audit_of_the_head_with_blocking_findings_holds_it(self):
+        # #441: an audit that found problems cleared the PR as soon as automerge was re-added.
+        (_, _, _, details), events = self.audited(
+            '**Codex audit (Astra) on `aaaaaaa`**\n\n### Blocking findings\n1. The packet drops the anchor.')
+        self.assertEqual(events, ['build'])
+        self.assertIn('the Codex audit on the head `aaaaaaa` has blocking findings', details[-1])
+
+    def test_findings_that_only_mention_no_findings_elsewhere_still_hold(self):
+        # The #414 audit's form: numbered findings, then "Nothing else found …" and "No packet or database changes."
+        audit = ('**Codex audit (Astra) on `aaaaaaa`**\n\n1. **Plausible: one stop reason is shared by every item.** '
+                 '`A.swift:626`\n   - Smallest fix: keep it per target; no findings elsewhere.\n\nNothing else found. '
+                 'No packet or database changes.\n\nChecked by the SM Codex audit task; Codex ran read-only.')
+        self.assertEqual(self.audited(audit)[1], ['build'])
+        clean = ('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings on correctness, owner data, or Build 29 '
+                 'compatibility. One plausible gap against "Done when":\n1. **Plausible: …**')
+        self.assertEqual(self.audited(clean)[1], ['build', 'comment', 'push m1', 'sweep'])
+
+    def test_the_newest_audit_of_the_head_decides(self):
+        blocked = '**Codex audit (Astra) on `aaaaaaa`**\n\n### Blocking findings\n1. Wrong.'
+        clean = '**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.'
+        self.assertEqual(self.audited(clean, blocked)[1], ['build'])
+        self.assertEqual(self.audited(blocked, clean)[1], ['build', 'comment', 'push m1', 'sweep'])
+
+    def test_a_manual_audit_counts_only_if_it_names_the_head(self):
+        (_, _, _, details), events = self.audited('## Codex audit (gpt-6-astra, high)\n\nAudited the PR. No findings.')
+        self.assertEqual(events, ['build'])
+        self.assertIn('has no Codex audit naming its head `aaaaaaa`', details[-1])
+
+    def test_an_audit_landing_while_the_run_tested_counts(self):
+        github = FakeGitHub(labels=('automerge',))
+
+        def automerge(scope, evidence, **_):
+            github._comments.append(comment('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.'))
+            return 'PASS', 'x', 'host tests; builds', []
+
+        self.assertEqual(self.run_auto(github, scope=self.RISKY, automerge=automerge)[1],
+                         ['build', 'comment', 'push m1', 'sweep'])
 
     def t3_report(self, verdict, commit=HEAD, url='https://example.test/t3'):
         return runner_report(verdict, lane.identity('T3', commit, MERGE, ['SupertonicSpeechTests']), url=url)
@@ -832,7 +883,7 @@ class MergeTests_Runner(unittest.TestCase):
 
     def test_lane_tests_themselves_are_not_desk_only(self):
         scope = {'tier': 'T1', 'why': [], 'files': [{'path': 'scripts/tests/test_lane_runner.py', 'category': 'scripts'}]}
-        self.assertEqual(lane.merge_blockers(scope, []), [])
+        self.assertEqual(lane.merge_blockers(scope, [], HEAD), [])
 
     def test_a_pr_that_moved_or_lost_its_label_while_tested_is_not_merged(self):
         (_, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), moved=True)

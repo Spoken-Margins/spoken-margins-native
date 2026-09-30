@@ -405,7 +405,37 @@ def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2,
     return verdict, 'no simulator (compile only)', f'host tests (--plan fast): passed; {builds}', details + more
 
 
-def merge_blockers(scope: dict, comments: list[dict]) -> list[str]:
+AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
+CLEAN_AUDIT = re.compile(r'^\s*no (blocking )?findings\b', re.I | re.M)  # a line that opens with it, as the task writes
+
+
+def audit_blocker(comments: list[dict], head: str) -> str | None:
+    """Why the Codex audits on the PR don't clear its head, or None when the newest audit of the head is clean.
+
+    #441: any audit comment used to clear the PR, whatever commit it covered or what it found. An audit
+    counts only if it names the head commit (the hourly task's heading says "on `<sha7>`"), and it clears
+    only if it says it has no blocking findings; anything else holds, so a new audit format fails closed.
+    """
+    audits = []
+    for comment in comments:
+        body = (comment.get('body') or '').lstrip()
+        if body.startswith(AUDITS):
+            first_line = body.split('\n', 1)[0]
+            shas = AUDIT_SHA.findall(first_line if body.startswith(AUDITS[0]) else body)
+            audits.append((shas, body))
+    if not audits:
+        return 'has no "Codex audit (Astra)" comment yet'
+    on_head = [body for shas, body in audits if any(head.startswith(sha) for sha in shas)]
+    if not on_head:
+        audited = next((shas[0] for shas, _ in reversed(audits) if shas), None)
+        return (f'has no Codex audit of its head: the audit is on `{audited}`, the head is `{head[:7]}`' if audited
+                else f'has no Codex audit naming its head `{head[:7]}`')
+    if not CLEAN_AUDIT.search(on_head[-1].split('\n', 1)[-1]):
+        return f'the Codex audit on the head `{head[:7]}` has blocking findings (it doesn\'t say "No blocking findings")'
+    return None
+
+
+def merge_blockers(scope: dict, comments: list[dict], head: str) -> list[str]:
     """Why the runner won't merge this PR itself even on PASS; the desk merges those."""
     reasons = []
     desk = [f['path'] for f in scope['files'] if f['path'].startswith(DESK_ONLY)]
@@ -413,8 +443,10 @@ def merge_blockers(scope: dict, comments: list[dict]) -> list[str]:
         reasons.append(f'it changes the lane or its workflows ({", ".join(desk[:5])}), and a PR can change '
                        'what tests it')
     risky = sorted({AUDITED[f['category']] for f in scope['files'] if f['category'] in AUDITED})
-    if risky and not any((c.get('body') or '').lstrip().startswith(AUDITS) for c in comments):
-        reasons.append(f'it touches {" and ".join(risky)} and has no "Codex audit (Astra)" comment yet')
+    audit = audit_blocker(comments, head) if risky else None
+    if audit:
+        reasons.append(f'it touches {" and ".join(risky)}, and {audit}' if audit.startswith('the ')
+                       else f'it touches {" and ".join(risky)} and {audit}')
     return reasons
 
 
@@ -532,10 +564,11 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             + notes + details
         if verdict != 'PASS':
             return verdict, where, ran, details
-        held = t3_gate(github.comments())  # read now: a T3 report may have landed while this ran
+        latest = github.comments()  # read now: a T3 report or an audit may have landed while this ran
+        held = t3_gate(latest)
         if held:
             return held[0], where, ran, details + [f'not merged: {held[1]}.']
-        blockers = merge_blockers(scope, comments)
+        blockers = merge_blockers(scope, latest, head)
         if blockers:
             return verdict, where, ran, details + [f'not merged by the runner: {b}. The desk merges it.'
                                                    for b in blockers]
