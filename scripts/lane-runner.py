@@ -13,8 +13,9 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
 - A request identical to one that already has a PASS or FAIL report (same head merged into the
   same next, tier and tests) runs once. After an INCONCLUSIVE report, asking again runs again.
 - T2 builds for simulator and device (unsigned) through scripts/xcodebuild-lane.
-- T3 runs the named app-hosted tests through verify-tests.py on a fresh iOS 26 simulator, created
-  for the job and deleted afterwards. It is booted under the lane's boot rules (scripts/lane_sim.py):
+- T3 runs the named app-hosted tests, plus every app test class the base branch's test-scope.py
+  suggests for the PR's diff (#351), through verify-tests.py on a fresh iOS 26 simulator, created
+  for the job and deleted afterwards. The report lists the classes it added and how long each plan took. It is booted under the lane's boot rules (scripts/lane_sim.py):
   one boot at a time, no builds meanwhile, no retry after a failed boot, a stop at the first crash
   during boot, and a long wait for the first boot's data migration. The job holds the Mac's one
   simulator slot throughout, so it never runs alongside a Test Desk job. A crash flood stops the run.
@@ -315,6 +316,19 @@ def diff_scope(tree: Path, base: str) -> dict:
     return policy.classify(paths, diffs, root=tree)
 
 
+def t3_scope(tree: Path, base: str, evidence: Path) -> tuple[list[str], list[str]]:
+    """test-scope.py's app test classes for the PR's diff, and a note if it couldn't say.
+
+    A broken policy doesn't stop the run: the requested tests still run, and the report says so.
+    """
+    try:
+        scope = diff_scope(tree, base)
+    except Exception as error:  # noqa: BLE001 - the report names it
+        return [], [f'test-scope.py could not classify the diff ({error!r}), so only the requested tests ran']
+    (evidence / 'scope.json').write_text(json.dumps(scope, indent=2))
+    return scope_classes(scope), []
+
+
 def hot_file_violations(tree: Path, base: str, labels) -> list[str]:
     """next's hot-file ratchet on the tree's HEAD (none until the ratchet is on next)."""
     ratchet = base_policy(tree, base, 'scripts/hot_file_ratchet.py')
@@ -582,16 +596,49 @@ def wait_for_room_to_build(out=sys.stdout, max_wait: float = BUILD_RUNNER_WAIT, 
 
 # ---- T3 -----------------------------------------------------------------------------------------
 
+def full_selector(selector: str) -> str:
+    return selector if selector.startswith(APP_TEST_TARGET + '/') else f'{APP_TEST_TARGET}/{selector}'
+
+
+def scope_classes(scope: dict) -> list[str]:
+    """The app test classes test-scope.py suggests for the diff."""
+    if 'app_tests' in scope:
+        return list(scope['app_tests'])
+    # A test-scope.py from before #351 names them only in its suggested lane request.
+    return re.findall(rf'{APP_TEST_TARGET}/(\w+)', scope.get('lane_request') or '')
+
+
+def with_scope_classes(requested: list[str], classes: list[str]) -> tuple[list[str], list[str]]:
+    """The requested selectors plus the diff's test classes, and which classes that added.
+
+    #220 merged while a test in the class its diff touched failed on every head: each request named a
+    few methods, and the runner ran only those. A requested method inside an added class is dropped,
+    since the class runs it anyway.
+    """
+    named = {full_selector(s) for s in requested}
+    added = [c for c in dict.fromkeys(classes) if full_selector(c) not in named]
+    covered = tuple(full_selector(c) + '/' for c in added)
+    return [s for s in requested if not full_selector(s).startswith(covered)] + added, added
+
+
+def count_tests(selector: str, plans: dict[str, set]) -> int:
+    full = full_selector(selector)
+    return len({t for tests in plans.values() for t in tests if t == full or t.startswith(full + '/')})
+
+
 def plan_for_tests(selectors: list[str], plans: dict[str, set]) -> tuple[dict[str, list[str]], list[str]]:
-    """Group selectors by the plan holding them; selectors no plan holds are returned separately."""
+    """Group selectors by the plans holding them; selectors no plan holds are returned separately.
+
+    A class split across plans (SupertonicSpeechTests: one method runs only in AudioAdapters) goes to
+    each plan that runs part of it, or the rest of it would silently not run.
+    """
     grouped, unknown = {}, []
     for selector in selectors:
-        full = selector if selector.startswith(APP_TEST_TARGET + '/') else f'{APP_TEST_TARGET}/{selector}'
-        plan = next((p for p, tests in plans.items()
-                     if any(t == full or t.startswith(full + '/') for t in tests)), None)
-        if plan:
+        full = full_selector(selector)
+        holding = [p for p, tests in plans.items() if any(t == full or t.startswith(full + '/') for t in tests)]
+        for plan in holding:
             grouped.setdefault(plan, []).append(full)
-        else:
+        if not holding:
             unknown.append(selector)
     return grouped, unknown
 
@@ -633,12 +680,15 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[
     plans = list(grouped.items())
     for position, (plan, selectors) in enumerate(plans):
         output = evidence / f'verify-{plan}'
+        started = time.monotonic()
         manifest = run_plan(plan, selectors, output)
+        took = time.monotonic() - started
         summary = summarize_manifest(manifest)
         summaries.append(summary)
         statuses.append(manifest.get('status', 'missing'))
         ran.append(f'{", ".join(s.split("/", 1)[1] for s in selectors)} ({summary["passed"]} passed'
-                   f'{", " + str(len(summary["failed"])) + " failed" if summary["failed"] else ""})')
+                   f'{", " + str(len(summary["failed"])) + " failed" if summary["failed"] else ""}'
+                   f'; {plan} plan, build and tests, {duration(took)})')
         for test in summary['failed'][:10]:
             details.append(f'{test} — expected: passes. observed: failed. evidence: {output}/tests.xcresult')
         if summary['out_of_time']:
@@ -672,17 +722,39 @@ def first_boot(udid: str, log) -> tuple:
     return None, info
 
 
-def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str, str, list[str], str, str]:
-    """Returns verdict, where, ran, details, crashes, cc."""
+def run_t3(tests: list[str], request_id: str, evidence: Path,
+           classes: list[str] = ()) -> tuple[str, str, str, list[str], str, str]:
+    """Returns verdict, where, ran, details, crashes, cc.
+
+    Runs the requested selectors plus `classes`, test-scope.py's app test classes for the diff.
+    """
     from test_inventory import plan_tests
-    if not tests:
-        return ('INCONCLUSIVE', 'no simulator', 'nothing', ['The T3 request names no tests. Add `tests: Class/method, …` '
-                '(scripts/test-scope.py suggests them).'], 'none', '')
+    if not tests and not classes:
+        return ('INCONCLUSIVE', 'no simulator', 'nothing', ['The T3 request names no tests, and test-scope.py suggests '
+                'no app test classes for this diff. Add `tests: Class/method, …`.'], 'none', '')
     plans = {plan: plan_tests(ROOT, name) for plan, name in PLANS.items()}
-    grouped, unknown = plan_for_tests(tests, plans)
-    if unknown:
-        return ('FAIL', 'no simulator', 'nothing', [f'Not in any app test plan: {", ".join(unknown)}. A named test '
+    _, missing = plan_for_tests(tests, plans)  # checked before an added class can absorb a misspelled method
+    if missing:
+        return ('FAIL', 'no simulator', 'nothing', [f'Not in any app test plan: {", ".join(missing)}. A named test '
                 'that does not exist is a failure (verify-tests.py rule).'], 'none', '')
+    selectors, added = with_scope_classes(tests, list(classes))
+    grouped, unknown = plan_for_tests(selectors, plans)
+    scope = []
+    running = [c for c in added if c not in unknown]
+    if running:
+        count = sum(count_tests(c, plans) for c in running)
+        scope.append(f'test-scope added for this diff: {", ".join(f"{c} ({count_tests(c, plans)})" for c in running)}; '
+                     f'{count} test{"s" if count != 1 else ""} beyond the request')
+    if len(running) < len(added):
+        scope.append(f'test-scope suggested, but no app test plan runs: {", ".join(c for c in added if c in unknown)}')
+    if not grouped:
+        return 'INCONCLUSIVE', 'no simulator', 'nothing', scope + ['Nothing to run.'], 'none', ''
+    verdict, where, ran, details, crashes, cc = _run_t3_grouped(grouped, request_id, evidence)
+    return verdict, where, ran, scope + details, crashes, cc
+
+
+def _run_t3_grouped(grouped, request_id, evidence):
+    """Take the simulator slot and run the grouped selectors on a fresh device."""
     import lane_sim
     runtime = lane_sim.newest_runtime()
     if not runtime:
@@ -960,8 +1032,9 @@ def main(argv=None) -> int:
             where, crashes, details = 'no simulator (compile only)', 'none', [warm] + details
         else:
             warm = warm_build_folders(ROOT)
-            verdict, where, ran, details, crashes, cc = run_t3(request['tests'], request_id, evidence)
-            details = [warm] + details
+            classes, problem = t3_scope(ROOT, args.base, evidence)
+            verdict, where, ran, details, crashes, cc = run_t3(request['tests'], request_id, evidence, classes)
+            details = [warm] + problem + details
     except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
         verdict, where, ran, crashes = 'INCONCLUSIVE', 'lane error', 'nothing', 'unknown'
         details = [f'The lane itself failed: {error!r}. evidence: {evidence}']
