@@ -12870,7 +12870,7 @@ final class Gate1AppModel: ObservableObject {
                     if wasRetry {
                         diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "retry_failed:\(failure)"
                         diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
-                        reportFailure("Saved audio and current transcript kept. Retranscription failed.")
+                        TranscriptionFailureWording.notice(error: failure, isRetry: true).present(warning: { reportWarning($0) }, failure: { reportFailure($0) })
                     } else {
                         run { engine in
                             snapshot = try engine.transcriptionFailed(interjectionId: interjection.id, sessionId: interjection.sessionId, error: failure)
@@ -12878,7 +12878,7 @@ final class Gate1AppModel: ObservableObject {
                         refreshMarginRows()
                             diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "failed:\(failure)"
                             diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
-                            reportFailure("Audio saved. Transcript failed.")
+                            TranscriptionFailureWording.notice(error: failure, isRetry: false).present(warning: { reportWarning($0) }, failure: { reportFailure($0) })
                         }
                     }
                     retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))
