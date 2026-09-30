@@ -657,22 +657,9 @@ final class Gate1AppModel: ObservableObject {
             || previous.lastFailure != snapshot.lastFailure
         guard changed || (snapshot.status.isPlaybackActive && now - lastPlaybackEventCheckpoint >= 30) else { return }
         lastPlaybackEventCheckpoint = now
-        var fields: [String: String] = [
-            "item": DeveloperDiagnosticRecording.token(snapshot.itemId),
-            "target": DeveloperDiagnosticRecording.token(snapshot.targetId),
-            "status": snapshot.status.rawValue,
-            "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
-            "durationMs": String(snapshot.currentPlaybackDurationMs ?? -1),
-            // For live speech the media clock is -1; the text offset shows whether it advances (#288).
-            "textOffset": String(snapshot.currentTextStart ?? -1),
-            "failure": DeveloperDiagnosticRecording.token(snapshot.lastFailure),
-            "failureDetail": PlaybackFailureDetail.privacySafe(snapshot.lastFailure)
-        ]
-        if snapshot.status.isPlaybackActive {
-            fields.merge(AudioSessionDiagnostics.fields()) { current, _ in current }
-            fields.merge((speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.playerDiagnostics() ?? [:]) { current, _ in current }
-        }
-        playbackEventRecording.record("playback.state", fields)
+        playbackEventRecording.record("playback.state", DeveloperDiagnosticRecording.playbackStateFields(
+            snapshot, player: (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.playerDiagnostics() ?? [:]
+        ))
     }
 
     private func configureDeveloperDiagnosticRecording() {
