@@ -100,6 +100,8 @@ struct LibraryItemRow: Identifiable, Hashable {
     let storageRecencyRank: Int
     /// A PDF read through the structured-document reader (#359).
     var usesNewReader = false
+    /// Marked complete by hand, not finished by listening, so Mark Unfinished can clear it (#273).
+    var canMarkUnfinished = false
 
     var mediaSymbol: String {
         if hasNativeAudio { return "headphones" }
@@ -5687,17 +5689,11 @@ final class Gate1AppModel: ObservableObject {
         guard !rejectNavigationOrSessionMutationWhileRecording("mark_item_completed") else { return }
         do {
             let store = try requireStore()
-            var item = try store.loadItem(id: id)
             // Completion is an item-level fact, not fabricated listening history.
-            guard item.sourceCompletedAt == nil else { return }
-            let markedAt = Date()
-            item.sourceCompletedAt = markedAt
-            try store.saveItem(item)
+            guard let item = try ManualItemCompletion.markComplete(itemId: id, in: store) else { return }
             try refreshLibraryRows(store: store)
-            if selectedItem.id == id {
-                selectedItem = try loadItemDetail(id: id, store: store)
-            }
-            completionUndo = (id, item.title, try store.loadItem(id: id).sourceCompletedAt ?? markedAt)
+            if selectedItem.id == id { selectedItem = try loadItemDetail(id: id, store: store) }
+            completionUndo = (id, item.title, item.sourceCompletedAt ?? Date())
             let completion = completionUndo
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(10))
@@ -5711,23 +5707,24 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func undoMarkedCompletion() {
-        guard let undo = completionUndo,
-              !rejectNavigationOrSessionMutationWhileRecording("undo_mark_item_completed") else { return }
+        guard let undo = completionUndo else { return }
+        clearMarkedCompletion(id: undo.itemID, markedAt: undo.markedAt)
+    }
+
+    /// Any time after the undo banner is gone (#273). Only a completion set by hand.
+    func markItemUnfinished(id: String) { clearMarkedCompletion(id: id, markedAt: nil) }
+
+    private func clearMarkedCompletion(id: String, markedAt: Date?) {
+        guard !rejectNavigationOrSessionMutationWhileRecording("mark_item_unfinished") else { return }
+        completionUndo = nil
         do {
             let store = try requireStore()
-            var item = try store.loadItem(id: undo.itemID)
-            // Do not overwrite a later completion or rewrite natural session completion.
-            guard item.sourceCompletedAt == undo.markedAt else {
-                completionUndo = nil
-                return
-            }
-            item.sourceCompletedAt = nil
-            try store.saveItem(item)
+            // Never a later completion, and never natural session completion.
+            guard let item = try ManualItemCompletion.markUnfinished(itemId: id, markedAt: markedAt, in: store) else { return }
             try refreshLibraryRows(store: store)
-            if selectedItem.id == item.id { selectedItem = try loadItemDetail(id: item.id, store: store) }
-            completionUndo = nil
-            reportConfirmation("Undid Mark Complete for \(item.title).")
-        } catch { reportFailure(error, context: "Undo completion failed") }
+            if selectedItem.id == id { selectedItem = try loadItemDetail(id: id, store: store) }
+            reportConfirmation(markedAt == nil ? "Marked \(item.title) unfinished." : "Undid Mark Complete for \(item.title).")
+        } catch { reportFailure(error, context: "Mark unfinished failed") }
     }
 
     func prioritizeOfflinePreparation(id: String) {
@@ -11177,6 +11174,7 @@ final class Gate1AppModel: ObservableObject {
                 storageRecencyRank: storageRank
             )
             row.usesNewReader = data.structuredDocumentItemIds.contains(item.id)
+            row.canMarkUnfinished = item.sourceCompletedAt != nil && !Self.itemIsCompleted(sessions)
             return row
         }
     }
