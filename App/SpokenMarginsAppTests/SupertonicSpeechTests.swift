@@ -1074,6 +1074,48 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    /// #314 audit on 099b712: the voice line preferred the model's one app-wide fallback reason
+    /// over the stop's own reason, so an item could show another item's reason (A stopped by
+    /// the listener, B hit a memory warning, back on A the line said memory warning). The stop
+    /// reason now decides, so a fallback stop must name why the iOS voice took over.
+    func testAFallbackStopNamesWhyTheIOSVoiceTookOverAndThatReasonDecidesTheLine() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template, firstRenderDelay: .seconds(1))
+        let states = GenerationStateCapture()
+        let timedOut = expectation(description: "bounded fallback")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in }, observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient(),
+            onGenerationStateChange: { state, stopReason in states.record(state, stopReason: stopReason) },
+            onFallback: { _, _, _ in timedOut.fulfill() },
+            renderWaitLimit: .milliseconds(100)
+        )
+        _ = try client.prepareSpeechText("A long response that must remain playable when generation does not finish promptly.")
+        try client.play(targetId: "response-timeout", from: 17)
+        await fulfillment(of: [timedOut], timeout: 2)
+        XCTAssertEqual(
+            states.stopReasons.last, SpeechFallbackReason.renderTooSlow.rawValue,
+            "The stop that hands over to the iOS voice says why it did"
+        )
+
+        func line(_ stopReason: String) -> String {
+            RenderedSpeechGenerationState.stopped.listenerDescription(
+                progress: RenderedSpeechGenerationProgress(completedChunks: 0, totalChunks: 0),
+                isDelayed: false,
+                stopReason: stopReason,
+                fallbackReason: .memoryWarning  // left over from another item
+            )
+        }
+        XCTAssertEqual(line(SpeechFallbackReason.renderTooSlow.rawValue), SpeechFallbackReason.renderTooSlow.listenerExplanation)
+        XCTAssertEqual(
+            line(SpeechFallbackReason.listenerStoppedGeneration.rawValue),
+            SpeechFallbackReason.listenerStoppedGeneration.listenerExplanation
+        )
+        try client.stop()
+    }
+
     func testUnavailableConfiguredSystemVoiceDoesNotSilentlyUseGenericVoice() throws {
         let client = SystemSpeechPlaybackClient(
             voiceIdentifier: "com.spokenmargins.missing-voice",
