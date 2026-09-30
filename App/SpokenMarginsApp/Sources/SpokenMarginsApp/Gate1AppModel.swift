@@ -9128,6 +9128,8 @@ final class Gate1AppModel: ObservableObject {
     func updateOnDeviceSpeechGenerationState(_ state: RenderedSpeechGenerationState, stopReason: String?) {
         if onDeviceSpeechGenerationStatus != state.rawValue { onDeviceSpeechGenerationStatus = state.rawValue }
         if onDeviceSpeechGenerationStopReason != stopReason { onDeviceSpeechGenerationStopReason = stopReason }
+        // Rendering, ready or idle: the iOS voice isn't standing in, so an old reason is stale (#314).
+        if state != .stopped, speechFallbackReason != nil { speechFallbackReason = nil }
         if canPrepareLibraryAudio { startForegroundAudioPreparationIfNeeded() }
         diagnostics["onDeviceSpeechGeneration"] = state.rawValue
         diagnostics["onDeviceSpeechGenerationStopReason"] = stopReason
