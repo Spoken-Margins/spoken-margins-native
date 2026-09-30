@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
@@ -221,6 +222,12 @@ class T3Tests(unittest.TestCase):
     PLANS = {'app': {'SpokenMarginsAppTests/A/test1', 'SpokenMarginsAppTests/A/test2'},
              'adapters': {'SpokenMarginsAppTests/Audio/test1'}}
 
+    def test_a_class_goes_to_every_plan_that_runs_part_of_it(self):
+        plans = {'app': {'SpokenMarginsAppTests/A/test1'}, 'adapters': {'SpokenMarginsAppTests/A/test2'}}
+        self.assertEqual(lane.plan_for_tests(['A', 'A/test2'], plans),
+                         ({'app': ['SpokenMarginsAppTests/A'],
+                           'adapters': ['SpokenMarginsAppTests/A', 'SpokenMarginsAppTests/A/test2']}, []))
+
     def test_tests_are_grouped_by_plan_and_unknown_ones_are_reported(self):
         grouped, unknown = lane.plan_for_tests(['A', 'SpokenMarginsAppTests/Audio/test1', 'Missing', 'A/test9'],
                                                self.PLANS)
@@ -381,6 +388,88 @@ class T3Tests(unittest.TestCase):
             self.assertEqual(lane.run_t3(['NoSuchTestClassAnywhere'], 'r', Path('/tmp'))[0], 'FAIL')
 
 
+class ScopeClassTests(unittest.TestCase):
+    """#351: a T3 request runs at least the app test classes test-scope.py names for the diff."""
+
+    def test_the_diff_s_classes_join_the_request_and_absorb_its_methods(self):
+        selectors, added = lane.with_scope_classes(
+            ['Gate1AppModelWorkflowTests/testPDFOne', 'SourceLinkImportTests/testSubstack', 'PKMWorkflowTests'],
+            ['Gate1AppModelWorkflowTests', 'SpokenMarginsAppTests/PKMWorkflowTests'])
+        self.assertEqual(selectors, ['SourceLinkImportTests/testSubstack', 'PKMWorkflowTests', 'Gate1AppModelWorkflowTests'])
+        self.assertEqual(added, ['Gate1AppModelWorkflowTests'])
+        self.assertEqual(lane.with_scope_classes(['A/test1'], []), (['A/test1'], []))
+        self.assertEqual(lane.with_scope_classes([], ['A']), (['A'], ['A']))
+        self.assertEqual(lane.with_scope_classes(['AB/test1'], ['A']), (['AB/test1', 'A'], ['A']))
+
+    def test_the_classes_come_from_test_scope_old_or_new(self):
+        self.assertEqual(lane.scope_classes({'app_tests': ['A', 'B'], 'lane_request': '/lane T3\ntests: C'}), ['A', 'B'])
+        # next's test-scope.py from before #351 names them only in its suggested request.
+        self.assertEqual(lane.scope_classes({'lane_request': '/lane T3\ntests: SpokenMarginsAppTests/A, '
+                                                             'SpokenMarginsAppTests/B'}), ['A', 'B'])
+        self.assertEqual(lane.scope_classes({'lane_request': None}), [])
+
+    def run_t3(self, tests, classes):
+        """run_t3 against the real test plans, stopping where it would take the simulator slot."""
+        with mock.patch.object(lane, '_run_t3_grouped',
+                               return_value=('PASS', 'sim', 'ran', ['boot line'], 'none', '')) as run:
+            result = lane.run_t3(tests, 'r', Path('/tmp'), classes)
+        return result, (run.call_args[0][0] if run.called else None)
+
+    def test_a_request_naming_one_method_runs_the_whole_class_the_diff_touches(self):
+        # #220: eleven requests named a few PDF methods of Gate1AppModelWorkflowTests; the class's
+        # testPDFOutlineDestinations…MoreThanTwelveChapters failed on every head and never ran.
+        (verdict, _, _, details, _, _), grouped = self.run_t3(
+            ['Gate1AppModelWorkflowTests/testPDFOutlineDestinationsBypassContentsEntriesAndPreserveMoreThanTwelveChapters'],
+            ['Gate1AppModelWorkflowTests'])
+        self.assertEqual(grouped, {'app': ['SpokenMarginsAppTests/Gate1AppModelWorkflowTests']})
+        self.assertRegex(details[0], r'^test-scope added for this diff: Gate1AppModelWorkflowTests \((\d+)\); \1 tests '
+                                     r'beyond the request$')
+        self.assertGreater(int(re.search(r'\((\d+)\)', details[0]).group(1)), 100)
+        self.assertEqual((verdict, details[1:]), ('PASS', ['boot line']))
+
+    def test_a_class_split_across_plans_runs_in_each_so_a_named_adapter_method_still_runs(self):
+        # Review of #370: SupertonicSpeechTests is in AppBehavior except one method, which only AudioAdapters
+        # runs. Naming that method on a branch touching the class dropped it into the class, and the class
+        # went to the app plan alone, so the named test never ran and the run could still pass.
+        method = 'SupertonicSpeechTests/testBundledRendererSynthesizesJamesAndLilyAndReusesSessions'
+        (_, _, _, details, _, _), grouped = self.run_t3([method], ['SupertonicSpeechTests'])
+        self.assertEqual(grouped, {'app': ['SpokenMarginsAppTests/SupertonicSpeechTests'],
+                                   'adapters': ['SpokenMarginsAppTests/SupertonicSpeechTests']})
+        from test_inventory import plan_tests
+        planned = [plan_tests(lane.ROOT, name) for name in lane.PLANS.values()]
+        runs = sum(1 for tests in planned for t in tests if t.startswith('SpokenMarginsAppTests/SupertonicSpeechTests/'))
+        self.assertIn(f'SupertonicSpeechTests ({runs})', details[0])  # the count is what the plans will run
+
+    def test_a_misspelled_method_still_fails_even_when_its_class_is_added(self):
+        (verdict, _, _, details, _, _), grouped = self.run_t3(['Gate1AppModelWorkflowTests/testNope'],
+                                                              ['Gate1AppModelWorkflowTests'])
+        self.assertEqual((verdict, grouped), ('FAIL', None))
+        self.assertIn('Gate1AppModelWorkflowTests/testNope', details[0])
+
+    def test_a_suggested_class_no_plan_runs_is_reported_not_failed(self):
+        (verdict, _, _, details, _, _), grouped = self.run_t3(['PKMWorkflowTests'], ['NotARealTestClass'])
+        self.assertEqual((verdict, grouped), ('PASS', {'app': ['SpokenMarginsAppTests/PKMWorkflowTests']}))
+        self.assertEqual(details[0], 'test-scope suggested, but no app test plan runs: NotARealTestClass')
+        (verdict, _, _, details, _, _), grouped = self.run_t3([], ['NotARealTestClass'])
+        self.assertEqual((verdict, grouped, details[-1]), ('INCONCLUSIVE', None, 'Nothing to run.'))
+
+    def test_an_empty_request_runs_the_diff_s_classes(self):
+        (verdict, _, _, details, _, _), grouped = self.run_t3([], ['PKMWorkflowTests'])
+        self.assertEqual(grouped, {'app': ['SpokenMarginsAppTests/PKMWorkflowTests']})
+        self.assertTrue(details[0].startswith('test-scope added for this diff: PKMWorkflowTests ('))
+
+    def test_each_plan_reports_how_long_it_took(self):
+        now = [0.0]
+
+        def run_plan(plan, selectors, output):
+            now[0] += 912
+            return {'status': 'verified', 'steps': [{'name': 'xcode-tests', 'tests': {'T/A/test1': {'status': 'passed'}}}]}
+
+        with mock.patch.object(lane, 'time', mock.Mock(monotonic=lambda: now[0])):
+            _, _, ran, _ = lane.run_plans({'app': ['T/A']}, run_plan, Path('/e'))
+        self.assertEqual(ran, ['A (1 passed; app plan, build and tests, 15m12s)'])
+
+
 class AutomergeTests(unittest.TestCase):
     """The automerge label runs what the PR's diff needs (test-scope.py's tier)."""
 
@@ -450,7 +539,8 @@ class MergeTests_Runner(unittest.TestCase):
 
     SCOPE = {'tier': 'T2', 'why': ['app UI'], 'files': [{'path': 'App/X.swift', 'category': 'app-ui'}]}
 
-    def run_auto(self, github, verdicts=('PASS',), pushes=(True,), scope=None, comments=(), moved=False):
+    def run_auto(self, github, verdicts=('PASS',), pushes=(True,), scope=None, comments=(), moved=False,
+                 automerge=None):
         events = []
         pushes = list(pushes)
 
@@ -480,8 +570,8 @@ class MergeTests_Runner(unittest.TestCase):
                 mock.patch.object(lane, 'sweep_merge_audit', side_effect=lambda tree, base: events.append('sweep')), \
                 mock.patch.object(lane, 'warm_build_folders', return_value='build folders: warm (SessionKit test)'), \
                 mock.patch.object(lane, 'diff_scope', return_value=scope or self.SCOPE), \
-                mock.patch.object(lane, 'run_automerge',
-                                  side_effect=lambda scope, evidence, **_: (verdicts.pop(0), 'x', 'host tests; builds', [])):
+                mock.patch.object(lane, 'run_automerge', side_effect=automerge or (
+                    lambda scope, evidence, **_: (verdicts.pop(0), 'x', 'host tests; builds', []))):
             result = lane.run_auto(github, {'title': 'T'}, 5, 'next', HEAD, MERGE, Path(folder), list(comments))
         return result, events
 
@@ -597,6 +687,38 @@ class MergeTests_Runner(unittest.TestCase):
         self.assertEqual(events, ['build', 'comment', 'push m1', 'build', 'comment', 'push m2', 'sweep'])
         self.assertIn('attempt 1: the push to next was refused', ' '.join(details))
         self.assertIn('merged into next as m200000', details[-1])
+
+    def test_the_retry_after_a_refused_push_runs_the_host_tests_in_a_folder_of_its_own(self):
+        # #404: the retry handed verify-tests.py the first attempt's --output folder, which it refuses
+        # to reuse, so a PR whose first attempt passed was reported FAIL (#379, #363, #399).
+        outputs = []
+
+        def verify_tests(command, log, timeout):  # verify-tests.py's own start: a crash there is exit 1
+            output = Path(command[command.index('--output') + 1])
+            outputs.append(output)
+            try:
+                run = verification.Run(output, 'fast')
+            except FileExistsError as error:
+                log.write(f'FileExistsError: {error}\n')
+                return 1
+            run.manifest['status'] = 'verified'
+            run.save()
+            return 0
+
+        real_automerge = lane.run_automerge
+
+        def automerge(scope, evidence, **kwargs):
+            return real_automerge(scope, evidence, fast=lambda e: lane.run_fast(e, runner=verify_tests), **kwargs)
+
+        host_only = {'tier': 'T1', 'why': ['scripts'], 'files': [{'path': 'scripts/x.py', 'category': 'scripts'}]}
+        with mock.patch.object(verification, 'input_identity', return_value='x'):
+            (verdict, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=host_only,
+                                                             pushes=(False, True), automerge=automerge)
+        self.assertEqual((verdict, details[-1]), ('PASS', 'merged into next as m200000'), details)
+        self.assertEqual(events, ['build', 'comment', 'push m1', 'build', 'comment', 'push m2', 'sweep'])
+        first, retry = outputs
+        self.assertEqual(first.name, 'fast')  # the first attempt's evidence stays where it always was
+        self.assertEqual(retry, first.parent / 'attempt-2' / 'fast')
 
     def test_a_push_refused_for_another_reason_stops_at_once(self):
         # A queued job with a lane.yml from before #382 has a read-only token: re-testing can't help.
@@ -990,6 +1112,25 @@ class MainFlowTests(unittest.TestCase):
         self.assertEqual(github.labels & {'lane:running', 'lane:queued'}, set())
 
 
+    def test_a_t3_request_runs_with_the_diff_s_classes_from_next_s_policy(self):
+        github = FakeGitHub(comments=[comment('/lane T3\ntests: Gate1AppModelWorkflowTests/testOne')])
+        scope = {'tier': 'T3', 'why': ['app orchestration'], 'app_tests': ['Gate1AppModelWorkflowTests']}
+        with mock.patch.object(lane, 'diff_scope', return_value=scope), \
+                mock.patch.object(lane, 'run_t3', return_value=('PASS', 'sim', 'ran', ['added'], 'none', '')) as run:
+            self.run_main(github)
+        self.assertEqual(run.call_args[0][0], ['Gate1AppModelWorkflowTests/testOne'])
+        self.assertEqual(run.call_args[0][3], ['Gate1AppModelWorkflowTests'])
+        self.assertIn('\nadded\n', github.posted[0])
+
+    def test_a_t3_request_still_runs_when_test_scope_cannot_classify_the_diff(self):
+        github = FakeGitHub(comments=[comment('/lane T3\ntests: PKMWorkflowTests')])
+        with mock.patch.object(lane, 'diff_scope', side_effect=AttributeError('classify')), \
+                mock.patch.object(lane, 'run_t3', return_value=('PASS', 'sim', 'ran', [], 'none', '')) as run:
+            self.run_main(github)
+        self.assertEqual(run.call_args[0][3], [])
+        self.assertIn("test-scope.py could not classify the diff (AttributeError('classify')), so only the requested "
+                      'tests ran', github.posted[0])
+
     def test_a_pr_that_conflicts_with_next_gets_an_inconclusive_report_naming_the_files(self):
         github = FakeGitHub(comments=[comment('/lane T2')])
         with mock.patch.object(self, 'conflicts', ['App/Shared.swift']), \
@@ -1048,6 +1189,20 @@ class MergeTests(unittest.TestCase):
         (self.tree / 'App/SpokenMarginsApp').mkdir(parents=True)
         self.commit(self.tree, 'App/SpokenMarginsApp/View.swift', 'struct V {}\n')
         self.assertEqual(lane.diff_scope(self.tree, 'next')['tier'], 'T2')
+
+    def test_a_diff_touching_the_app_model_suggests_its_whole_workflow_class(self):
+        (self.origin / 'scripts').mkdir()
+        self.commit(self.origin, 'scripts/test-scope.py', (SCRIPTS / 'test-scope.py').read_text())
+        (self.origin / 'App/SpokenMarginsAppTests').mkdir(parents=True)
+        self.commit(self.origin, 'App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift',
+                    'import XCTest\nfinal class Gate1AppModelWorkflowTests: XCTestCase {}\n')
+        subprocess.run(self.git + ['-C', str(self.tree), 'pull', '-q', 'origin', 'next'], check=True)
+        (self.tree / 'App/SpokenMarginsApp/Sources/SpokenMarginsApp').mkdir(parents=True)
+        self.commit(self.tree, 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift', 'final class M {}\n')
+        lane.fetch_base(self.tree, 'next')
+        with tempfile.TemporaryDirectory() as evidence:
+            self.assertEqual(lane.t3_scope(self.tree, 'next', Path(evidence)), (['Gate1AppModelWorkflowTests'], []))
+            self.assertTrue((Path(evidence) / 'scope.json').exists())
 
     def test_the_hot_file_ratchet_is_next_s_copy_and_absent_until_it_is_on_next(self):
         model = 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift'

@@ -10,19 +10,68 @@ final class Build23SharingSeamsTests: XCTestCase {
     func testSharingCoordinatorIgnoresPlaybackAndDiagnosticTicks() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         let coordinator = Build23SharingCoordinator(model: model)
-        // Drain initialization notifications before observing unrelated changes.
-        for _ in 0..<8 { await Task.yield() }
+        // Start-up work (the coordinator's coalesced first model change, and
+        // anything the new model schedules) can land well after a fixed number
+        // of yields on a busy or just-erased simulator (#415). Wait until the
+        // coordinator has been quiet for a while instead.
+        try await waitUntilQuiet(coordinator)
         var notifications = 0
         let subscription = coordinator.objectWillChange.sink { notifications += 1 }
+        // Names any sharing input that changed while ticking, so a failure
+        // says whether a tick leaked or a sharing input really changed.
+        var changedInputs: [String] = []
+        let inputWatch = sharingInputs(of: model).map { name, input in
+            input.dropFirst().sink { changedInputs.append(name) }
+        }
         for index in 0..<100 {
             model.snapshot.currentMediaTimeMs = index * 500
             model.diagnostics["test-tick"] = String(index)
         }
-        for _ in 0..<8 { await Task.yield() }
-        XCTAssertEqual(notifications, 0, "Audio progress must not rebuild shared-Margin presentation")
+        // A leaked tick reaches the coordinator through its coalescing task,
+        // so give that task time to run before counting.
+        try await Task.sleep(for: Self.quietWindow)
+        XCTAssertEqual(
+            notifications, 0,
+            "Audio progress must not rebuild shared-Margin presentation; sharing inputs changed: \(changedInputs)"
+        )
         coordinator.send(.setSenderDisplayLabel("A changed sharing input"))
         XCTAssertGreaterThan(notifications, 0)
-        withExtendedLifetime(subscription) {}
+        withExtendedLifetime((subscription, inputWatch)) {}
+    }
+
+    private static let quietWindow: Duration = .milliseconds(300)
+
+    /// Returns once `coordinator` has sent no change notification for
+    /// `quietWindow`; fails if it keeps changing for `timeout`.
+    private func waitUntilQuiet(
+        _ coordinator: Build23SharingCoordinator,
+        timeout: Duration = .seconds(10)
+    ) async throws {
+        let clock = ContinuousClock()
+        let start = clock.now
+        var lastChange = start
+        let subscription = coordinator.objectWillChange.sink { lastChange = clock.now }
+        defer { withExtendedLifetime(subscription) {} }
+        while clock.now - lastChange < Self.quietWindow {
+            guard clock.now - start < timeout else {
+                XCTFail("The sharing coordinator never went quiet after start-up")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
+    /// The model publishers the coordinator treats as sharing inputs
+    /// (`Build23SharingCoordinator.init`).
+    private func sharingInputs(of model: Gate1AppModel) -> [(String, AnyPublisher<Void, Never>)] {
+        [
+            ("sharingState", model.$sharingState.map { _ in () }.eraseToAnyPublisher()),
+            ("selectedItem", model.$selectedItem.map { _ in () }.eraseToAnyPublisher()),
+            ("importReview", model.$spokenMarginsPackageImportReview.map { _ in () }.eraseToAnyPublisher()),
+            ("isImporting", model.$isImportingSpokenMarginsPackage.map { _ in () }.eraseToAnyPublisher()),
+            ("importError", model.$spokenMarginsPackageImportError.map { _ in () }.eraseToAnyPublisher()),
+            ("sharedPackageURL", model.$sharedSpokenMarginsPackageURL.map { _ in () }.eraseToAnyPublisher())
+        ]
     }
 
     func testTwoMarginsWithLocalSkimReferencesProduceVerifiedShareFile() async throws {

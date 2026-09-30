@@ -742,7 +742,7 @@ final class SupertonicSpeechTests: XCTestCase {
                 preparedAudioDirectory: root.appending(path: "assembled-\(Int(seconds))", directoryHint: .isDirectory),
                 audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
                 observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
-                onGenerationStateChange: { if $0 == .ready { ready.fulfill() } },
+                onGenerationStateChange: { state, _ in if state == .ready { ready.fulfill() } },
                 onPreparedAudio: { _, _ in assembled.fulfill() }
             )
             _ = try client.prepareSpeechText(text)
@@ -1074,6 +1074,48 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    /// #314 audit on 099b712: the voice line preferred the model's one app-wide fallback reason
+    /// over the stop's own reason, so an item could show another item's reason (A stopped by
+    /// the listener, B hit a memory warning, back on A the line said memory warning). The stop
+    /// reason now decides, so a fallback stop must name why the iOS voice took over.
+    func testAFallbackStopNamesWhyTheIOSVoiceTookOverAndThatReasonDecidesTheLine() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template, firstRenderDelay: .seconds(1))
+        let states = GenerationStateCapture()
+        let timedOut = expectation(description: "bounded fallback")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in }, observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient(),
+            onGenerationStateChange: { state, stopReason in states.record(state, stopReason: stopReason) },
+            onFallback: { _, _, _ in timedOut.fulfill() },
+            renderWaitLimit: .milliseconds(100)
+        )
+        _ = try client.prepareSpeechText("A long response that must remain playable when generation does not finish promptly.")
+        try client.play(targetId: "response-timeout", from: 17)
+        await fulfillment(of: [timedOut], timeout: 2)
+        XCTAssertEqual(
+            states.stopReasons.last, SpeechFallbackReason.renderTooSlow.rawValue,
+            "The stop that hands over to the iOS voice says why it did"
+        )
+
+        func line(_ stopReason: String) -> String {
+            RenderedSpeechGenerationState.stopped.listenerDescription(
+                progress: RenderedSpeechGenerationProgress(completedChunks: 0, totalChunks: 0),
+                isDelayed: false,
+                stopReason: stopReason,
+                fallbackReason: .memoryWarning  // left over from another item
+            )
+        }
+        XCTAssertEqual(line(SpeechFallbackReason.renderTooSlow.rawValue), SpeechFallbackReason.renderTooSlow.listenerExplanation)
+        XCTAssertEqual(
+            line(SpeechFallbackReason.listenerStoppedGeneration.rawValue),
+            SpeechFallbackReason.listenerStoppedGeneration.listenerExplanation
+        )
+        try client.stop()
+    }
+
     func testUnavailableConfiguredSystemVoiceDoesNotSilentlyUseGenericVoice() throws {
         let client = SystemSpeechPlaybackClient(
             voiceIdentifier: "com.spokenmargins.missing-voice",
@@ -1192,7 +1234,7 @@ final class SupertonicSpeechTests: XCTestCase {
             fallbackVoiceIdentifier: nil,
             fallbackRate: 0.5,
             fallbackClient: RecordingFallbackAudioClient(),
-            onGenerationStateChange: { state in
+            onGenerationStateChange: { state, _ in
                 if state == .ready { ready.fulfill() }
             },
             onGenerationProgress: { update in
@@ -1375,6 +1417,60 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(prepared.timeline.segments.first?.startChar, 0)
         XCTAssertEqual(prepared.timeline.segments.last?.endChar, source.count)
         XCTAssertGreaterThan(prepared.timeline.durationMs ?? 0, 0)
+        try client.stop()
+    }
+
+    /// #314: when every chunk renders but joining them into the saved file fails, the stop
+    /// carries that error. Before, it arrived as a bare `.stopped` and the player said the
+    /// iOS voice had taken over, which it hadn't.
+    func testPreparedAudioAssemblyFailureStopsGenerationWithItsReason() async throws {
+        let template = try makeTestWAV(duration: 0.1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        // A regular file where the output directory should be: creating the directory throws.
+        let blockedOutput = FileManager.default.temporaryDirectory
+            .appending(path: "supertonic-assembly-blocked-\(UUID().uuidString)")
+        try Data("not a directory".utf8).write(to: blockedOutput)
+        defer { try? FileManager.default.removeItem(at: blockedOutput) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let capture = PreparedAudioCapture()
+        let states = GenerationStateCapture()
+        let stopped = expectation(description: "generation stopped after the assembly error")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1.5,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            preparedAudioDirectory: blockedOutput,
+            audioSessionActivator: {},
+            observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient(),
+            onGenerationStateChange: { state, stopReason in
+                states.record(state, stopReason: stopReason)
+                if state == .stopped { stopped.fulfill() }
+            },
+            onPreparedAudio: { itemId, prepared in capture.record(itemId: itemId, prepared: prepared) }
+        )
+        let source = (1...9).map {
+            "Assembly sentence \($0) has enough text for progressive local audiobook generation."
+        }.joined(separator: " ")
+
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "assembly-fails")
+        try client.pause()
+
+        await fulfillment(of: [stopped], timeout: 5)
+        XCTAssertNil(capture.prepared, "No prepared audio may be reported when assembly failed")
+        let reason = try XCTUnwrap(states.stopReasons.last ?? nil, "The stop must carry the assembly error")
+        XCTAssertTrue(reason.hasPrefix(SpeechGenerationStopReason.assemblyFailedCode), reason)
+        XCTAssertGreaterThan(reason.count, SpeechGenerationStopReason.assemblyFailedCode.count + 2, "The error itself is kept")
+        let shown = RenderedSpeechGenerationState.stopped.listenerDescription(
+            progress: RenderedSpeechGenerationProgress(completedChunks: 0, totalChunks: 0),
+            isDelayed: false,
+            stopReason: reason,
+            fallbackReason: nil
+        )
+        XCTAssertTrue(shown.contains("Couldn't save the finished audio"), shown)
         try client.stop()
     }
 
@@ -1631,7 +1727,7 @@ final class SupertonicSpeechTests: XCTestCase {
             audioPlayerStarter: { _, _ in },
             observesPlayerLifecycle: false,
             fallbackClient: RecordingFallbackAudioClient(),
-            onGenerationStateChange: { state in
+            onGenerationStateChange: { state, _ in
                 if state == .ready { generationReady.fulfill() }
             }
         )
@@ -1672,7 +1768,7 @@ final class SupertonicSpeechTests: XCTestCase {
             audioPlayerStarter: { _, _ in },
             observesPlayerLifecycle: false,
             fallbackClient: RecordingFallbackAudioClient(),
-            onGenerationStateChange: { states.record($0) }
+            onGenerationStateChange: { state, stopReason in states.record(state, stopReason: stopReason) }
         )
         let source = (1...14).map { index in
             "Sentence \(index) contains enough ordinary words to form a useful rendered section."
@@ -1772,7 +1868,7 @@ final class SupertonicSpeechTests: XCTestCase {
             audioPlayerStarter: { _, _ in },
             observesPlayerLifecycle: false,
             fallbackClient: fallback,
-            onGenerationStateChange: { state in if state == .ready { ready.fulfill() } }
+            onGenerationStateChange: { state, _ in if state == .ready { ready.fulfill() } }
         )
         let source = String(
             repeating: "A stable sentence supports repeated navigation without obsolete inference. ",
@@ -1884,6 +1980,7 @@ final class SupertonicSpeechTests: XCTestCase {
         let fallback = RecordingFallbackAudioClient()
         let stopped = expectation(description: "generation stopped")
         stopped.expectedFulfillmentCount = 2
+        let states = GenerationStateCapture()
         let client = SupertonicSpeechPlaybackClient(
             renderer: renderer,
             voice: .m2,
@@ -1893,7 +1990,8 @@ final class SupertonicSpeechTests: XCTestCase {
             audioSessionActivator: {},
             observesPlayerLifecycle: false,
             fallbackClient: fallback,
-            onGenerationStateChange: { state in
+            onGenerationStateChange: { state, stopReason in
+                states.record(state, stopReason: stopReason)
                 if state == .stopped { stopped.fulfill() }
             }
         )
@@ -1911,6 +2009,11 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.play(targetId: "stop-generation", from: 120)
         await fulfillment(of: [stopped], timeout: 1)
         XCTAssertEqual(fallback.playedOffsets, [19, 120], "Resume and navigation must keep generation stopped")
+        XCTAssertEqual(
+            states.stopReasons,
+            ["listener_stopped_generation", "listener_stopped_generation"],
+            "Every stop, including the one reported again on resume, keeps the listener's reason (#314)"
+        )
         try? await Task.sleep(for: .milliseconds(350))
         let countAfterStop = await renderer.renderCount
         try? await Task.sleep(for: .milliseconds(350))
@@ -1920,6 +2023,51 @@ final class SupertonicSpeechTests: XCTestCase {
         let retryCount = await waitForRenderCount(renderer, minimum: countAfterStop + 1)
         XCTAssertGreaterThan(retryCount, countAfterStop)
         XCTAssertEqual(fallback.playedOffsets, [19, 120], "Retry must return to Supertonic now")
+
+        try client.stop()
+    }
+
+    /// #314 audit: a stop's reason belongs to its item. When the listener plays item B and then
+    /// comes back to item A, whose generation they stopped, A must report its own reason, not
+    /// lose it to B's rendering (or borrow B's reason if B had stopped too).
+    func testStoppedItemKeepsItsOwnReasonAfterAnotherItemRenders() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let fallback = RecordingFallbackAudioClient()
+        let states = GenerationStateCapture()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionActivator: {},
+            observesPlayerLifecycle: false,
+            fallbackClient: fallback,
+            onGenerationStateChange: { state, stopReason in states.record(state, stopReason: stopReason) }
+        )
+        let itemA = String(repeating: "Item A stops generating and carries on in the system voice. ", count: 8)
+        let itemB = String(repeating: "Item B renders on this device while item A stays stopped. ", count: 8)
+
+        _ = try client.prepareSpeechText(itemA)
+        try client.play(targetId: "item-a", from: 0)
+        _ = await waitForRenderCount(renderer, minimum: 1)
+        XCTAssertTrue(try client.stopOnDeviceRenderingAndUseSystemSpeech())
+        let statesBeforeB = states.values.count
+
+        _ = try client.prepareSpeechText(itemB)
+        try client.play(targetId: "item-b", from: 0)
+        for _ in 0..<100 {
+            if states.values.dropFirst(statesBeforeB).contains(.rendering) { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(states.values.dropFirst(statesBeforeB).contains(.rendering), "Item B renders on the device")
+
+        _ = try client.prepareSpeechText(itemA)
+        try client.play(targetId: "item-a", from: 0)
+        XCTAssertEqual(states.values.last, .stopped, "Item A's generation stays stopped")
+        XCTAssertEqual(states.stopReasons.last, "listener_stopped_generation", "Item A keeps the reason it stopped for")
 
         try client.stop()
     }
@@ -2477,13 +2625,22 @@ private final class GenerationProgressCapture: @unchecked Sendable {
 private final class GenerationStateCapture: @unchecked Sendable {
     private let lock = NSLock()
     private var recordedValues: [RenderedSpeechGenerationState] = []
+    private var recordedStopReasons: [String?] = []
 
     var values: [RenderedSpeechGenerationState] {
         lock.withLock { recordedValues }
     }
 
-    func record(_ state: RenderedSpeechGenerationState) {
-        lock.withLock { recordedValues.append(state) }
+    /// The reason sent with each `.stopped`, in order; nil where a stop came without one.
+    var stopReasons: [String?] {
+        lock.withLock { recordedStopReasons }
+    }
+
+    func record(_ state: RenderedSpeechGenerationState, stopReason: String?) {
+        lock.withLock {
+            recordedValues.append(state)
+            if state == .stopped { recordedStopReasons.append(stopReason) }
+        }
     }
 }
 
