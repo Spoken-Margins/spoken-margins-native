@@ -70,8 +70,10 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
     /// Renders, hands the result to `keep` (which copies what it needs), then discards the render
     /// on every path. Background preparation made a guard per chunk and never discarded, so each
     /// flagged chunk left its iOS-voice file behind (#363 audit).
+    /// Runs on the caller's actor, so `keep` can use the caller's state.
     func render<Kept>(
         text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int,
+        isolation: isolated (any Actor)? = #isolation,
         keep: (SupertonicNarrationResult) async throws -> Kept
     ) async throws -> Kept {
         let rendered = try await render(text: text, voice: voice, language: language, speed: speed, synthesisSteps: synthesisSteps)
