@@ -276,14 +276,24 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     public func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws {
-        let layer = try loadImportedCommentaryLayer(id: interjection.layerId)
-        try save(
-            kind: "imported_commentary_interjection",
-            id: interjection.id,
-            sessionId: nil,
-            itemId: layer?.itemId,
-            value: interjection
-        )
+        // The lock, not a transaction: markImportedCommentaryInterjectionHeard calls this inside one.
+        try withConnectionLock {
+            var interjection = interjection
+            if interjection.firstHeardAt == nil {
+                // A copy loaded before the listener heard it (a slow anchor resolution pass)
+                // must not make a heard Margin new again (#469).
+                let stored: ImportedCommentaryInterjection? = try loadOptional(kind: "imported_commentary_interjection", id: interjection.id)
+                interjection.firstHeardAt = stored?.firstHeardAt
+            }
+            let layer = try loadImportedCommentaryLayer(id: interjection.layerId)
+            try save(
+                kind: "imported_commentary_interjection",
+                id: interjection.id,
+                sessionId: nil,
+                itemId: layer?.itemId,
+                value: interjection
+            )
+        }
     }
 
     public func markImportedCommentaryInterjectionHeard(id: String, at date: Date) throws -> ImportedCommentaryInterjection? {

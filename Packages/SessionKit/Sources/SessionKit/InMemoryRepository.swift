@@ -203,6 +203,9 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     }
 
     public func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws {
+        var interjection = interjection
+        // Once heard, a stale copy can't make it new again (#469).
+        if interjection.firstHeardAt == nil { interjection.firstHeardAt = importedCommentaryInterjections[interjection.id]?.firstHeardAt }
         importedCommentaryInterjections[interjection.id] = interjection
     }
 

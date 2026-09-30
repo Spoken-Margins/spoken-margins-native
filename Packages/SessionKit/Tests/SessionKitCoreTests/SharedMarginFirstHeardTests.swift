@@ -44,6 +44,16 @@ final class SharedMarginFirstHeardTests: XCTestCase {
         XCTAssertEqual(stored["heard"]?.firstHeardAt, firstPlay, file: file, line: line)
         XCTAssertEqual(stored["heard"]?.isNewToListener, false, file: file, line: line)
         XCTAssertNil(stored["other"]?.firstHeardAt, "hearing one Margin leaves the others new", file: file, line: line)
+
+        // Review on #469: the podcast anchor pass loads the records, resolves them for a while,
+        // then saves its copies back. A Margin heard in between must stay heard.
+        var staleCopy = imported.first { $0.id == "heard" }!
+        XCTAssertNil(staleCopy.firstHeardAt)
+        staleCopy.resolution = ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 1_000, confidence: 1)
+        try repository.saveImportedCommentaryInterjection(staleCopy)
+        let resolved = try repository.loadImportedCommentaryInterjections(layerId: "layer").first { $0.id == "heard" }
+        XCTAssertEqual(resolved?.firstHeardAt, firstPlay, "a stale save keeps the first time", file: file, line: line)
+        XCTAssertEqual(resolved?.resolution.localMediaTimeMs, 1_000, "and still stores the new resolution", file: file, line: line)
     }
 
     func testTheInMemoryStoreRecordsTheFirstPlayOnce() throws {

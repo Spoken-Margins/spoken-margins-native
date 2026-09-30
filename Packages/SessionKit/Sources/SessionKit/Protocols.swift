@@ -49,6 +49,8 @@ public protocol ListeningSessionRepository {
     func loadImportedCommentaryLayers(itemId: String) throws -> [ImportedCommentaryLayer]
     func loadImportedCommentaryInterjections(layerId: String) throws -> [ImportedCommentaryInterjection]
     func saveImportedCommentaryLayer(_ layer: ImportedCommentaryLayer) throws
+    /// Keeps a stored `firstHeardAt` when `interjection` has none, so a copy loaded before
+    /// the listener heard it can't make it new again (#469).
     func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws
     /// Records the first time the listener heard this shared Margin's voice (#469). A later
     /// call keeps the first time. Returns the stored record, or nil when there is none.
