@@ -39,6 +39,11 @@ final class Build23SharingSeamsTests: XCTestCase {
         withExtendedLifetime((subscription, inputWatch)) {}
     }
 
+    // TEMPORARY evidence for #415 "Done when" 3; removed before merge.
+    func testTemporary415TickCheckPassesTwentyTimes() async throws {
+        for _ in 0..<20 { try await testSharingCoordinatorIgnoresPlaybackAndDiagnosticTicks() }
+    }
+
     private static let quietWindow: Duration = .milliseconds(300)
 
     /// Returns once `coordinator` has sent no change notification for
