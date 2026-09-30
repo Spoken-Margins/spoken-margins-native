@@ -166,8 +166,10 @@ tip = os.environ["FAKE_TIP"]
 if args[:1] == ["api"] and args[1].endswith("/issues/12/comments"):
     print("**Merge check (triage desk) on `1234567`: PASS.**\n- Tested the merge commit `%s`.\n"
           "- Ran: --plan fast and both builds.\n- Pushing `%s` to next now." % (tip[:7], tip[:7]))
-elif args[:1] == ["api"] and args[1].endswith("/issues/337/comments"):
-    print("**2026-09-30 09:00 EDT (SM integration run)** · next `%s` PASS, 564 of 564" % tip[:7])
+elif args[:1] == ["api"] and args[1].endswith("/issues/184/comments"):
+    for body in ("```text\nLane report integration-%s — PASS\nran: --plan app (pass: 564 of 564 tests)\n```" % tip[:7],
+                 "```text\nLane report journeys-%s — PASS\nran: J4 (pass)\n```" % tip[:7]):
+        print(json.dumps(body))
 elif args[:2] == ["api", "graphql"]:
     def pr(n, title, files, issue):
         return {"number": n, "title": title, "url": "https://example/pr/%d" % n, "mergedAt": "", "body": "",
@@ -243,7 +245,8 @@ class PhoneBuildTests(unittest.TestCase):
         self.assertIn('(found on your phone)', plan)
         self.assertIn('play an article for a minute', plan)
         self.assertNotIn('Lane: retry evidence', plan)
-        self.assertIn('564 of 564', plan)
+        self.assertIn(f'Latest integration run for this commit: Lane report integration-{self.tip[:7]} — PASS.', plan)
+        self.assertIn(f'Latest journeys run for this commit: Lane report journeys-{self.tip[:7]} — PASS.', plan)
         builds = self.log.read_text()
         self.assertIn('-configuration Release', builds)
         self.assertIn('-allowProvisioningUpdates', builds)
@@ -348,6 +351,87 @@ class ListenerRuleTests(unittest.TestCase):
                          'open an article. Expected: a label that fits.')
 
 
+class VerdictTests(unittest.TestCase):
+    """#444: the plan looked for the verdict on #337, but the integration run and the Test Desk post their
+    reports on #184, so a commit that passed read "No integration run has reported on this commit yet"."""
+
+    # Recorded from #184 on 2026-09-30 (bodies cut after their first lines).
+    RECORDED = [
+        {'user': {'login': 'uncomposed'}, 'created_at': '2026-09-30T13:58:52Z',
+         'body': "```text\nLane report integration-ebf1185 — PASS\ncommit ebf11851 (next's tip) · integration run: "
+                 '--plan app · simulator SM Lane Desk erase-approval (1330F268), iOS 26.5, erased first · about 15 min\n'
+                 'ran: --plan app (pass: 566 of 566 tests, 0 failures; build 47 s)\n```'},
+        {'user': {'login': 'uncomposed'}, 'created_at': '2026-09-30T15:26:25Z',
+         'body': "```text\nLane report integration-828597e — PASS\ncommit 828597e7 (next's tip) · integration run: "
+                 '--plan app · simulator SM Lane Desk erase-approval (1330F268), iOS 26.5, erased first · about 16 min '
+                 '(11:09–11:25)\nrun by: Test Desk\nran: --plan app (pass: 566 of 566 tests)\n```'},
+        {'user': {'login': 'uncomposed'}, 'created_at': '2026-09-30T15:41:23Z',
+         'body': '```text\nLane report journeys-828597e — PASS\ncommit 828597e7 · attended journeys after '
+                 'integration-828597e PASS\n```'},
+        {'user': {'login': 'uncomposed'}, 'created_at': '2026-09-30T15:50:00Z',
+         'body': '## Test Desk hand-off\n\nLane report integration-828597e — FAIL is not a first line.'},
+    ]
+
+    def setUp(self):
+        self.module = load_phone_build()
+        self.calls = []
+
+        def gh(*args):
+            self.calls.append(args)
+            # jq's @json leaves non-ASCII as is, U+2028 included
+            return ''.join(json.dumps(c['body'], ensure_ascii=False) + '\n' for c in self.RECORDED)
+        self.module.gh = gh
+
+    def test_the_integration_report_on_184_for_the_commit_is_found(self):
+        self.assertEqual(self.module.latest_verdict('828597e7' + '0' * 32), 'Lane report integration-828597e — PASS')
+        self.assertEqual(self.calls[0][1], 'repos/uncomposed/spoken-margins-native/issues/184/comments')
+
+    def test_a_report_for_another_commit_is_not_found(self):
+        self.assertIsNone(self.module.latest_verdict('1234567' + '0' * 33))
+        self.assertIsNone(self.module.latest_verdict('828597f' + '0' * 33))
+        self.assertEqual(self.module.latest_verdict('ebf11851' + '0' * 32), 'Lane report integration-ebf1185 — PASS')
+
+    def test_the_newest_report_for_the_commit_wins(self):
+        rerun = {'body': '```text\nLane report integration-828597e — FAIL\n```'}
+        self.RECORDED = self.RECORDED[:2] + [rerun]
+        self.assertEqual(self.module.latest_verdict('828597e' + '0' * 33), 'Lane report integration-828597e — FAIL')
+
+    def test_the_plan_shows_the_integration_and_journeys_reports(self):
+        module = self.module
+        module.plan_base = lambda sha: (None, 'the start')
+        module.merged_prs = lambda base, sha: {}
+        with tempfile.TemporaryDirectory() as folder:
+            plan = module.write_plan(Path(folder), '828597e7' + '0' * 32, 'host tests').read_text()
+        self.assertIn('Latest integration run for this commit: Lane report integration-828597e — PASS.', plan)
+        self.assertIn('Latest journeys run for this commit: Lane report journeys-828597e — PASS.', plan)
+        self.assertEqual(len(self.calls), 1)  # one read of #184 for both lines
+
+    def test_without_github_the_plan_says_the_verdict_is_unknown(self):
+        module = self.module
+        module.gh = lambda *args: None
+        module.plan_base = lambda sha: (None, 'the start')
+        module.merged_prs = lambda base, sha: {}
+        with tempfile.TemporaryDirectory() as folder:
+            plan = module.write_plan(Path(folder), '828597e7' + '0' * 32, 'host tests').read_text()
+        self.assertIn('GitHub could not be reached, so the integration verdict (on #184) is unknown.', plan)
+        self.assertNotIn('No integration run has reported', plan)  # it may have: nobody could look
+        self.assertNotIn('journeys run', plan)
+
+    def test_with_no_report_yet_the_plan_says_so(self):
+        self.RECORDED = self.RECORDED[:1]
+        self.module.plan_base = lambda sha: (None, 'the start')
+        self.module.merged_prs = lambda base, sha: {}
+        with tempfile.TemporaryDirectory() as folder:
+            plan = self.module.write_plan(Path(folder), '828597e7' + '0' * 32, 'host tests').read_text()
+        self.assertIn('No integration run has reported on this commit yet.', plan)
+
+    def test_odd_bodies_are_skipped_not_fatal(self):
+        line_separator = {'body': 'a note\u2028with a line separator'}
+        self.RECORDED = [{'body': None}, line_separator] + self.RECORDED
+        self.assertEqual(self.module.latest_verdict('828597e' + '0' * 33), 'Lane report integration-828597e — PASS')
+        self.assertEqual(self.module.report_comments()[0], 'a note\u2028with a line separator')  # None skipped
+
+
 class PlanGroupingTests(unittest.TestCase):
     """#427: two Follow PRs gave the owner the same check twice (checks 1 and 5)."""
 
@@ -386,7 +470,7 @@ class PlanGroupingTests(unittest.TestCase):
         module.plan_base = lambda sha: (None, 'the start')
         module.merged_prs = lambda base, sha: {n: f'Merge pull request #{n}' for n in prs}
         module.fetch_prs = lambda numbers: prs
-        module.latest_verdict = lambda sha: None
+        module.report_comments = lambda: []
         with tempfile.TemporaryDirectory() as folder:
             plan = module.write_plan(Path(folder), 'a' * 40, 'host tests').read_text()
         self.assertEqual(plan.count('Follow a site with a feed and one without.'), 1, plan)
