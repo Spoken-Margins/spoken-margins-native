@@ -411,7 +411,7 @@ def t3_gate(comments: list[dict]) -> tuple[str, str] | None:
         elif identical and NOTE in body:
             if identical.group(1) == 'T3':  # "already reported": the request is answered by that report
                 latest = index, identical.group(3), identical.group(2), url
-        elif not is_runner_comment(body):
+        elif not is_runner_comment(body) and not verdict:  # a Test Desk report is no request (pending_requests)
             request = parse_request(body)
             if request and request['tier'] == 'T3':
                 asked = index
