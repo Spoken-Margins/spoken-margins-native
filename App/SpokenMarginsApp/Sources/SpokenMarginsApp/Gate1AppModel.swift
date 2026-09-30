@@ -4530,14 +4530,17 @@ final class Gate1AppModel: ObservableObject {
                         .filter { $0.endMs > draft.startMs && $0.startMs < draft.endMs }
                         .map(\.text)
                         .joined(separator: " ")
-                    var label: LocalListeningMapLabel?
+                    var label: ListeningMapSummaryValidator.SceneLabel?
                     if self.localFoundationModelClient.availability().isAvailable, !text.isEmpty {
                         for _ in 0..<2 where label == nil {
                             if let candidate = try? await self.localFoundationModelClient.labelListeningMapChapter(
                                 text: text,
                                 chapterNumber: draft.order + 1
                             ) {
-                                label = try? LocalListeningMapOutputValidator.validate(label: candidate, sourceText: text)
+                                label = try? ListeningMapSummaryValidator.validate(
+                                    title: candidate.title, description: candidate.description,
+                                    eligibility: candidate.eligibility, eligibilityReason: candidate.eligibilityReason,
+                                    sourceText: text)
                             }
                         }
                     }
@@ -4546,13 +4549,15 @@ final class Gate1AppModel: ObservableObject {
                     }?.signatureAssetId
                     let machineEvidence = nearestEvidence.map { [$0] } ?? []
                     let eligibility = label?.eligibility ?? .unknown
+                    // Only an editorial scene keeps a spoken summary (#482).
+                    let summary = ListeningMapSummaryValidator.storedSummary(for: label)
                     scenes.append(PortableListeningMapScene(
                         id: draft.id,
                         order: draft.order,
                         title: label?.title ?? draft.publisherTitle,
-                        summaryText: label?.description,
+                        summaryText: summary.text,
                         summaryAssetId: nil,
-                        summaryProvenance: label == nil ? nil : .modelGenerated,
+                        summaryProvenance: summary.provenance,
                         eligibility: eligibility,
                         eligibilityReason: label?.eligibilityReason,
                         startAnchor: PortableAnchorEvidence(

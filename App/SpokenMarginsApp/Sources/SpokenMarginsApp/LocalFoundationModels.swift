@@ -1931,55 +1931,6 @@ enum LocalFoundationModelError: LocalizedError, Equatable {
     }
 }
 
-enum LocalListeningMapOutputValidator {
-    static func validate(label: LocalListeningMapLabel, sourceText: String) throws -> LocalListeningMapLabel {
-        let title = label.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let description = label.description.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, !description.isEmpty else {
-            throw LocalFoundationModelError.invalidStructuredResponse
-        }
-        guard words(title).count <= 8, words(description).count <= 28 else {
-            throw LocalFoundationModelError.outputTooLong
-        }
-        let generatedWords = words("\(title) \(description)")
-        let sourceWords = words(sourceText)
-        guard !containsSharedRun(lhs: generatedWords, rhs: sourceWords, length: 10) else {
-            throw LocalFoundationModelError.excessiveSourceQuotation
-        }
-        let reason = label.eligibilityReason?.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard reason.map({ $0.count <= 500 }) ?? true else {
-            throw LocalFoundationModelError.outputTooLong
-        }
-        return LocalListeningMapLabel(
-            title: title,
-            description: description,
-            eligibility: label.eligibility ?? .unknown,
-            eligibilityReason: reason?.isEmpty == true ? nil : reason
-        )
-    }
-
-    static func validateOverview(_ overview: String) throws -> String {
-        let trimmed = overview.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw LocalFoundationModelError.emptyResponse }
-        guard words(trimmed).count <= 35 else { throw LocalFoundationModelError.outputTooLong }
-        return trimmed
-    }
-
-    private static func words(_ text: String) -> [String] {
-        text.lowercased()
-            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-            .map(String.init)
-    }
-
-    private static func containsSharedRun(lhs: [String], rhs: [String], length: Int) -> Bool {
-        guard lhs.count >= length, rhs.count >= length else { return false }
-        let sourceRuns = Set((0...(rhs.count - length)).map { rhs[$0..<($0 + length)].joined(separator: " ") })
-        return (0...(lhs.count - length)).contains { index in
-            sourceRuns.contains(lhs[index..<(index + length)].joined(separator: " "))
-        }
-    }
-}
-
 struct AppleFoundationAIProvider: AIProviderClient {
     let providerType = "apple_foundation_on_device"
     let model = "system_language_model"
