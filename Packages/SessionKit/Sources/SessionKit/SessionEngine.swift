@@ -655,7 +655,7 @@ public final class SessionEngine {
             try persistSession(turnSession)
             protectPlaybackPosition(for: turnSession)
             if wasPlaying, turnSession.position.charOffset < text.count {
-                try playCurrentTarget(turnSession)
+                try playCurrentTarget(turnSession, seeking: true)
                 publishPlaybackContinuation(for: turnSession)
             } else {
                 try audio.pause()
@@ -1019,7 +1019,7 @@ public final class SessionEngine {
         try persistSession(session)
         protectPlaybackPosition(for: session)
         if snapshot.status.isPlaybackActive, session.position.charOffset < text.count {
-            try playCurrentTarget(session)
+            try playCurrentTarget(session, seeking: true)
             publishPlaybackContinuation(for: session)
             return snapshot
         } else if session.position.charOffset >= text.count {
@@ -1061,7 +1061,7 @@ public final class SessionEngine {
         try persistSession(session)
         protectPlaybackPosition(for: session)
         if snapshot.status.isPlaybackActive {
-            try playCurrentTarget(session)
+            try playCurrentTarget(session, seeking: true)
             publishPlaybackContinuation(for: session)
             return snapshot
         }
@@ -1085,7 +1085,7 @@ public final class SessionEngine {
         try persistSession(updated)
         protectPlaybackPosition(for: updated)
         if snapshot.status.isPlaybackActive, updated.position.charOffset < text.count {
-            try playCurrentTarget(updated)
+            try playCurrentTarget(updated, seeking: true)
             publishPlaybackContinuation(for: updated)
             return snapshot
         } else if updated.position.charOffset >= text.count {
@@ -1111,7 +1111,7 @@ public final class SessionEngine {
         try persistSession(updated)
         protectPlaybackPosition(for: updated)
         if snapshot.status.isPlaybackActive {
-            try playCurrentTarget(updated)
+            try playCurrentTarget(updated, seeking: true)
             publishPlaybackContinuation(for: updated)
             return snapshot
         }
@@ -1140,7 +1140,7 @@ public final class SessionEngine {
         currentSession = session
         try persistSession(session)
         protectPlaybackPosition(for: session)
-        try playCurrentTarget(session)
+        try playCurrentTarget(session, seeking: true)
         publishPlaybackStart(for: session, phase: session.phase)
         return snapshot
     }
@@ -1168,7 +1168,7 @@ public final class SessionEngine {
         currentSession = session
         try persistSession(session)
         protectPlaybackPosition(for: session)
-        try playCurrentTarget(session)
+        try playCurrentTarget(session, seeking: true)
         publishPlaybackStart(for: session, phase: .itemPlayback)
         return snapshot
     }
@@ -4235,6 +4235,9 @@ public final class SessionEngine {
         return 0
     }
 
+    /// `seeking`: the listener moved on purpose (a seek, skip, chapter jump or restart from the
+    /// beginning), so a playing client must move even when the new position is close to the live
+    /// one. A plain play, resume or rate change isn't a seek (#346).
     private func playCurrentTarget(_ session: Session, seeking: Bool = false) throws {
         if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
             try audio.configureMediaContext(playbackMediaContext(for: session))

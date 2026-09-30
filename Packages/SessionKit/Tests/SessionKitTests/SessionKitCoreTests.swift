@@ -4931,6 +4931,18 @@ final class SessionKitCoreTests: XCTestCase {
         audio.currentOffset = 30
         _ = try engine.restartPlaybackFromCurrentPosition()
         XCTAssertEqual(audio.seekingPlays, [28], "a restart is a plain play")
+        _ = try engine.resumePlayback()
+        XCTAssertEqual(audio.seekingPlays.count, 1, "so is a second play")
+
+        // #346 re-audit: every explicit move is a seek, not only seekText.
+        audio.currentOffset = 38
+        _ = try engine.skipBack(unit: "sentence")
+        XCTAssertEqual(audio.seekingPlays.count, 2, "skip back: \(audio.seekingPlays)")
+        audio.currentOffset = 5
+        _ = try engine.skipForward(unit: "sentence")
+        XCTAssertEqual(audio.seekingPlays.count, 3, "skip forward: \(audio.seekingPlays)")
+        _ = try engine.playSourceFromBeginning()
+        XCTAssertEqual(audio.seekingPlays.last, 0, "play from the beginning: \(audio.seekingPlays)")
     }
 
     func testRoutedClientForwardsASeekToTheSpeechClient() throws {
