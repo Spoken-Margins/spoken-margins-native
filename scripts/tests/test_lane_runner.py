@@ -411,6 +411,137 @@ class T3Tests(unittest.TestCase):
             self.assertEqual(lane.run_t3(['NoSuchTestClassAnywhere'], 'r', Path('/tmp'))[0], 'FAIL')
 
 
+class RunnerDeviceTests(unittest.TestCase):
+    """#440 and #411: every lane job swept "SM Lane Runner" simulators when it started, and an automerge job on
+    the second runner (sm-lane-mac-2) deleted a T3's live device on the main runner mid-run, four times on
+    2026-09-30 (e.g. 14:12:43 "Deleted leftover simulator SM Lane Runner pr432-r36724477838")."""
+
+    def setUp(self):
+        self.state = tempfile.TemporaryDirectory()
+        self.addCleanup(self.state.cleanup)
+        patcher = mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': self.state.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def sweep(self, names):
+        listing = {'devices': {'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+            {'name': name, 'udid': f'U{index}'} for index, name in enumerate(names)]}}
+        commands = []
+
+        def run(command, **_):
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0)
+
+        with mock.patch.object(lane.subprocess, 'check_output', return_value=json.dumps(listing)), \
+                mock.patch.object(lane.subprocess, 'run', side_effect=run):
+            lane.sweep_runner_simulators()
+        return [c[-1] for c in commands if c[:3] == ['xcrun', 'simctl', 'delete']]
+
+    def test_a_sweep_leaves_a_running_t3_s_device_alone_and_deletes_leftovers(self):
+        claim = lane.claim_runner_device('SM Lane Runner pr432-r36724477838')
+        try:
+            deleted = self.sweep(['SM Lane Runner pr432-r36724477838', 'SM Lane Runner pr9-r1', 'SpokenMargins Test Runner'])
+        finally:
+            lane.release_runner_device(claim)
+        self.assertEqual(deleted, ['U1'])
+
+    def test_a_device_whose_job_has_ended_is_swept(self):
+        lane.release_runner_device(lane.claim_runner_device('SM Lane Runner pr1-r1'))
+        self.assertEqual(self.sweep(['SM Lane Runner pr1-r1']), ['U0'])
+
+    def test_a_crashed_job_s_claim_ends_with_its_process(self):
+        name = 'SM Lane Runner pr2-r2'
+        code = (f'import importlib.util, sys, time; spec = importlib.util.spec_from_file_location("l", {str(SCRIPTS / "lane-runner.py")!r}); '
+                f'l = importlib.util.module_from_spec(spec); spec.loader.exec_module(l); held = l.claim_runner_device({name!r}); '
+                'print("held", flush=True); time.sleep(60)')
+        child = subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE, text=True,
+                                 env=dict(os.environ, SM_LANE_STATE_DIR=self.state.name))
+        try:
+            self.assertEqual(child.stdout.readline().strip(), 'held')
+            self.assertTrue(lane.runner_device_claimed(name))
+        finally:
+            child.kill()
+            child.wait()
+            child.stdout.close()
+        self.assertFalse(lane.runner_device_claimed(name))
+
+    def test_the_t3_job_holds_its_device_s_claim_from_before_it_exists_until_it_is_deleted(self):
+        import lane_sim
+        seen = {}
+        name = lane.RUNNER_SIMULATOR_PREFIX + 'pr7-r7'
+
+        def create(created):
+            seen['at create'] = lane.runner_device_claimed(created)
+            return 'U'
+
+        def release(udid):
+            seen['at delete'] = lane.runner_device_claimed(name)
+
+        with mock.patch.object(lane_sim, 'create_temporary', side_effect=create), \
+                mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release', side_effect=release), \
+                mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
+                mock.patch.object(lane, 'first_boot', return_value=(None, {})), \
+                mock.patch.object(lane, 'run_plans', return_value=([lane.summarize_manifest({'steps': []})], ['verified'],
+                                                                   ['A (1 passed)'], [])), \
+                tempfile.TemporaryDirectory() as temporary:
+            lane._t3_on_fresh_device({'app': ['T/A']}, 'pr7-r7', Path(temporary),
+                                     'com.apple.CoreSimulator.SimRuntime.iOS-26-5')
+        self.assertEqual(seen, {'at create': True, 'at delete': True})
+        self.assertFalse(lane.runner_device_claimed(name))
+        self.assertEqual(list(Path(self.state.name).glob('runner-device-*')), [])
+
+
+class LostDeviceTests(unittest.TestCase):
+    """#440: after the app plan's readiness step failed (exit 148), the adapters plan ran anyway and found no
+    simulator. #411: a device gone mid-build made xcodebuild exit 70, which read as a build FAIL."""
+
+    @staticmethod
+    def plans(first):
+        calls = []
+
+        def run_plan(plan, selectors, output):
+            calls.append(plan)
+            return first if plan == 'app' else {'status': 'verified', 'steps': []}
+        return calls, run_plan
+
+    def test_a_failed_readiness_step_stops_the_remaining_plans_with_one_inconclusive(self):
+        calls, run_plan = self.plans({'status': 'failed_or_incomplete', 'error': 'simulator-ready: Process exit 148',
+                                      'steps': [{'name': 'build-for-testing', 'exit_code': 0},
+                                                {'name': 'simulator-ready', 'exit_code': 148, 'errors': ['Process exit 148']}]})
+        summaries, statuses, _, details = lane.run_plans({'app': ['T/A'], 'adapters': ['T/B']}, run_plan, Path('/e'))
+        self.assertEqual(calls, ['app'])
+        self.assertIn('not run', statuses)
+        self.assertTrue(any('not ready (verify-tests.py `simulator-ready`)' in line and 'not run: adapters' in line
+                            for line in details))
+        self.assertEqual(lane.t3_verdict(summaries, statuses), 'INCONCLUSIVE')
+
+    def test_a_device_gone_mid_build_is_the_lane_s_fault_not_a_build_failure(self):
+        calls, run_plan = self.plans({'status': 'failed_or_incomplete', 'error': 'Process exit 70',
+                                      'steps': [{'name': 'build-for-testing', 'exit_code': 70, 'errors': ['Process exit 70']}]})
+        summaries, statuses, _, details = lane.run_plans({'app': ['T/A'], 'adapters': ['T/B']}, run_plan, Path('/e'),
+                                                          lambda: False)
+        self.assertEqual(calls, ['app'])
+        self.assertTrue(any('the fresh simulator is gone' in line for line in details))
+        self.assertEqual(lane.t3_verdict(summaries, statuses), 'INCONCLUSIVE')
+
+    def test_a_real_build_failure_with_the_device_still_there_stays_a_fail(self):
+        calls, run_plan = self.plans({'status': 'failed_or_incomplete', 'error': 'Process exit 65',
+                                      'steps': [{'name': 'build-for-testing', 'exit_code': 65, 'errors': ['Process exit 65']}]})
+        summaries, statuses, _, _ = lane.run_plans({'app': ['T/A'], 'adapters': ['T/B']}, run_plan, Path('/e'),
+                                                    lambda: True)
+        self.assertEqual(calls, ['app', 'adapters'])
+        self.assertEqual(lane.t3_verdict(summaries, statuses), 'FAIL')
+
+    def test_simctl_s_reason_reaches_the_report(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'simulator-ready.log'
+            log.write_text('An error was encountered processing the command (domain=com.apple.CoreSimulator.SimError, '
+                           'code=404):\nInvalid device: 1234\n')
+            self.assertEqual(lane.first_errors(log), [
+                'An error was encountered processing the command (domain=com.apple.CoreSimulator.SimError, code=404):',
+                'Invalid device: 1234'])
+
+
 class ScopeClassTests(unittest.TestCase):
     """#351: a T3 request runs at least the app test classes test-scope.py names for the diff."""
 
