@@ -148,7 +148,7 @@ def validate(root=ROOT):
         all_ui = {f'SpokenMarginsAppUITests/{t}' for t in target_tests(root, 'SpokenMarginsAppUITests')}
         if release != all_app | all_ui:
             errors.append('Release must include all active app and UI tests')
-        for plan in ('UISeams', 'SpeechCanary', 'Smoke'):
+        for plan in ('UISeams', 'SpeechCanary', 'Smoke', 'ScreenTour'):
             if not plan_tests(root, plan) <= all_ui:
                 errors.append(f'{plan}: non-UI test selected')
     except (ValueError, KeyError) as error:
