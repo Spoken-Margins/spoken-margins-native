@@ -641,7 +641,10 @@ final class SupertonicSpeechTests: XCTestCase {
     /// tests that allowed 8 and 10 s for the whole play failed, while the two guard tests that
     /// simply await the render passed in the same run (#417): synthesis was slow, not wrong. Wait
     /// for the guard's own report instead, for longer than the synthesizer's 30 s limit, and check
-    /// that it stood in, so a failure says which of the two happened.
+    /// that it stood in, so a failure says which of the two happened. The client's own render wait
+    /// must outlast that too, or after 15 s it hands the play to its fallback and drops the stand-in.
+    private let standInRenderWaitLimit: Duration = .seconds(60)
+
     private func awaitStandIn(_ reports: GuardReports) async throws {
         await fulfillment(of: [reports.reported], timeout: 45)
         let report = try XCTUnwrap(reports.values.first, "the guard never reported: the iOS voice took over 45 s")
@@ -679,7 +682,8 @@ final class SupertonicSpeechTests: XCTestCase {
                                             systemVoiceIdentifier: nil, onReplacement: { reports.add($0) }),
             voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             diskCache: cache, audioSessionActivator: {}, audioPlayerStarter: { _, _ in started.fulfill() },
-            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient()
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            renderWaitLimit: standInRenderWaitLimit
         )
         _ = try client.prepareSpeechText(text)
         try client.play(targetId: "item", from: 0)
@@ -758,7 +762,8 @@ final class SupertonicSpeechTests: XCTestCase {
                 audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
                 observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
                 onGenerationStateChange: { state, _ in if state == .ready { ready.fulfill() } },
-                onPreparedAudio: { _, _ in assembled.fulfill() }
+                onPreparedAudio: { _, _ in assembled.fulfill() },
+                renderWaitLimit: standInRenderWaitLimit
             )
             _ = try client.prepareSpeechText(text)
             try client.play(targetId: "item", from: 0)
