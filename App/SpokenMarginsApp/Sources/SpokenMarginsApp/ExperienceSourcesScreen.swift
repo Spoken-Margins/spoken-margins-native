@@ -1,3 +1,4 @@
+import SessionKit
 import SwiftUI
 
 struct ExperienceSourcesScreen: View {
@@ -8,12 +9,21 @@ struct ExperienceSourcesScreen: View {
         var id: String { rawValue }
     }
 
+    /// Following's order (#484). Newest stays the default until the owner's D3 M2 evaluation.
+    private enum Order: String, CaseIterable, Identifiable {
+        case top = "Top"
+        case newest = "Newest"
+        var id: String { rawValue }
+    }
+
     @EnvironmentObject private var model: Gate1AppModel
     @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var filter: Filter = .all
     @State private var pendingUnfollowID: String?
+    @AppStorage("following.order") private var order: Order = .newest
+    @StateObject private var ranking = FollowingRankingModel()
     @FocusState private var feedURLIsFocused: Bool
 
     var body: some View {
@@ -41,7 +51,8 @@ struct ExperienceSourcesScreen: View {
             .background(AppColors.bone)
             .scrollContentBackground(.hidden)
             .listStyle(.plain)
-            .animation(.smooth(duration: 0.24), value: filteredCandidates.map(\.id))
+            .task { await ranking.load() }
+            .animation(.smooth(duration: 0.24), value: orderedCandidates.map(\.id))
             .accessibilityIdentifier("sources.screen")
             .navigationTitle("Following")
             .navigationBarTitleDisplayMode(.inline)
@@ -159,7 +170,7 @@ struct ExperienceSourcesScreen: View {
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
             }
 
-            if filteredCandidates.isEmpty {
+            if orderedCandidates.isEmpty {
                 SMExperienceEmptyState(
                     systemImage: "tray",
                     title: "You’re caught up",
@@ -171,16 +182,18 @@ struct ExperienceSourcesScreen: View {
                 }
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
             } else {
-                ForEach(filteredCandidates) { candidate in
-                    SourceInboxRow(candidate: candidate)
-                        .listRowInsets(EdgeInsets(
-                            top: 0,
-                            leading: horizontalSizeClass == .regular ? 28 : 16,
-                            bottom: 0,
-                            trailing: horizontalSizeClass == .regular ? 28 : 16
-                        ))
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(AppColors.bone)
+                ForEach(orderedCandidates) { row in
+                    SourceInboxRow(candidate: row.candidate, reason: row.reason?.text, mark: mark(of: row.candidate)) { mark in
+                        if let sourceID = sourceID(of: row.candidate) { ranking.setMark(mark, for: sourceID) }
+                    }
+                    .listRowInsets(EdgeInsets(
+                        top: 0,
+                        leading: horizontalSizeClass == .regular ? 28 : 16,
+                        bottom: 0,
+                        trailing: horizontalSizeClass == .regular ? 28 : 16
+                    ))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(AppColors.bone)
                 }
             }
         } header: {
@@ -189,13 +202,49 @@ struct ExperienceSourcesScreen: View {
                     .font(.headline)
                     .foregroundStyle(AppColors.text)
                 Spacer()
-                Text("\(filteredCandidates.count)")
+                Picker("Order", selection: $order) {
+                    ForEach(Order.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .accessibilityIdentifier("sources.order")
+                Text("\(orderedCandidates.count)")
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(AppColors.secondaryText)
             }
             .textCase(nil)
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
         }
+    }
+
+    private struct OrderedCandidate: Identifiable {
+        var candidate: QuickAddCandidate
+        var reason: FollowingRankReason?
+        var id: String { candidate.id }
+    }
+
+    /// The filtered inbox in the chosen order, with each entry's reason under Top.
+    private var orderedCandidates: [OrderedCandidate] {
+        let candidates = filteredCandidates
+        guard order == .top else { return candidates.map { OrderedCandidate(candidate: $0) } }
+        let byID = Dictionary(candidates.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let inputs = candidates.map { candidate -> FollowingRankInput in
+            switch candidate {
+            case .localFile(let file): FollowingRankInput(id: candidate.id, sourceID: nil, publishedAt: file.modifiedAt)
+            case .followedSource(let entry): FollowingRankInput(id: candidate.id, sourceID: entry.subscriptionId, publishedAt: entry.publishedAt)
+            }
+        }
+        return FollowingRanker.rank(inputs, asOf: Date(), signals: ranking.signals, preferences: ranking.preferences)
+            .compactMap { ranked in byID[ranked.id].map { OrderedCandidate(candidate: $0, reason: ranked.reason) } }
+    }
+
+    private func sourceID(of candidate: QuickAddCandidate) -> String? {
+        if case .followedSource(let entry) = candidate { return entry.subscriptionId }
+        return nil
+    }
+
+    private func mark(of candidate: QuickAddCandidate) -> FollowingPreferences.Mark? {
+        sourceID(of: candidate).flatMap(ranking.preferences.mark(for:))
     }
 
     @ViewBuilder
@@ -255,6 +304,10 @@ struct ExperienceSourcesScreen: View {
 private struct SourceInboxRow: View {
     @EnvironmentObject private var model: Gate1AppModel
     let candidate: QuickAddCandidate
+    /// Why the entry is here, shown under Top (#484).
+    var reason: String?
+    var mark: FollowingPreferences.Mark?
+    var setMark: (FollowingPreferences.Mark?) -> Void
 
     var body: some View {
         Button(action: addAndOpen) {
@@ -272,6 +325,12 @@ private struct SourceInboxRow: View {
                     Text(provenance)
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
+                    if let reason {
+                        Label(reason, systemImage: reasonImage)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AppColors.evergreen)
+                            .lineLimit(1)
+                    }
                     if let summary, !summary.isEmpty {
                         Text(summary)
                             .font(.subheadline)
@@ -310,8 +369,35 @@ private struct SourceInboxRow: View {
             }
             .tint(AppColors.plum)
         }
+        .contextMenu { showMenu }
         .accessibilityAction(named: "Add to Library", addAndOpen)
         .accessibilityAction(named: "Dismiss", dismiss)
+        .accessibilityActions { showMenu }
+    }
+
+    /// Pin and "Less of this show" (#484), each undone from the same menu. Feed entries only.
+    @ViewBuilder
+    private var showMenu: some View {
+        if case .followedSource = candidate {
+            if mark == .pinned {
+                Button { setMark(nil) } label: { Label("Unpin this show", systemImage: "pin.slash") }
+            } else {
+                Button { setMark(.pinned) } label: { Label("Pin this show", systemImage: "pin") }
+            }
+            if mark == .less {
+                Button { setMark(nil) } label: { Label("Undo Less of this show", systemImage: "arrow.uturn.backward") }
+            } else {
+                Button { setMark(.less) } label: { Label("Less of this show", systemImage: "hand.thumbsdown") }
+            }
+        }
+    }
+
+    private var reasonImage: String {
+        switch mark {
+        case .pinned?: "pin.fill"
+        case .less?: "hand.thumbsdown"
+        case nil: "arrow.up.arrow.down"
+        }
     }
 
     private var title: String {
@@ -373,5 +459,39 @@ private struct SourceInboxRow: View {
         case .localFile(let file): model.dismissQuickAccessFile(file)
         case .followedSource(let entry): model.dismissFollowedSourceEntry(id: entry.id)
         }
+    }
+}
+
+/// Pin, "Less of this show" and the I4 signals behind Following's Top order (#484). The log is
+/// read off the main thread; the preferences file is a few hundred bytes, read once when
+/// Following first appears and written on each change.
+@MainActor
+final class FollowingRankingModel: ObservableObject {
+    @Published private(set) var preferences = FollowingRankingModel.preferencesURL.map(FollowingPreferences.load(from:)) ?? FollowingPreferences()
+    @Published private(set) var signals: [String: FollowingSourceSignals] = [:]
+
+    /// Application Support, where the I4 log (#483) is written too.
+    nonisolated static var directory: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    }
+
+    nonisolated static var preferencesURL: URL? {
+        directory?.appending(path: FollowingPreferences.fileName, directoryHint: .notDirectory)
+    }
+
+    /// The I4 engagement log. nil until #483's recorder lands; Top is then newest-first plus Pin and Less.
+    nonisolated static var signalLogURL: URL? { nil }
+
+    /// Each time Following appears, since the log keeps growing.
+    func load() async {
+        signals = await Task.detached(priority: .utility) {
+            Self.signalLogURL.map(FollowingSignalLog.signals(contentsOf:)) ?? [:]
+        }.value
+    }
+
+    func setMark(_ mark: FollowingPreferences.Mark?, for sourceID: String) {
+        preferences.setMark(mark, for: sourceID)
+        guard let url = Self.preferencesURL else { return }
+        try? preferences.save(to: url)
     }
 }
