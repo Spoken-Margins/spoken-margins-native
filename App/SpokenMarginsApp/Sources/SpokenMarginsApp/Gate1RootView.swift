@@ -2880,9 +2880,7 @@ enum AppLinks {
     }
 
     static var versionDescription: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown"
-        return "\(version) (\(build))"
+        BuildIdentity.describe(info: Bundle.main.infoDictionary ?? [:])
     }
 }
 
