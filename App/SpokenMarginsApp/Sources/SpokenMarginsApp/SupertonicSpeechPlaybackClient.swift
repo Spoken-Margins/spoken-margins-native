@@ -545,6 +545,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     func play(targetId: String, from charOffset: Int) throws {
+        try play(targetId: targetId, from: charOffset, isSeek: false)
+    }
+
+    /// A listener's explicit move: it moves even within `livePositionTolerance` of the live
+    /// position, which only absorbs how far a repeated play or restart trails it (#346 audit).
+    func play(targetId: String, seekingTo charOffset: Int) throws {
+        try play(targetId: targetId, from: charOffset, isSeek: true)
+    }
+
+    private func play(targetId: String, from charOffset: Int, isSeek: Bool) throws {
         try activateAudioSession(forPlayback: false)
         restoreOnDeviceRenderingIfConditionCleared(targetId: targetId)
         let usesStoppedGeneration = lock.withLock {
@@ -566,7 +576,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         let spokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
         let before = resumeDiagnostics(targetId: targetId, spokenOffset: spokenOffset)
-        let action = resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset)
+        let action = resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset, isSeek: isSeek)
         reportResumeDecision(action, before: before)
         switch action {
         case .resumePlayer(let player):
@@ -984,7 +994,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             // at the next chunk, not repeat the passage that just finished.
             currentStartOffset = nextOffset
             currentChunkLength = 0
-            let cached = renderedCache.removeValue(forKey: nextOffset)
+            let cached = cachedOrSavedChunk(containing: nextOffset)
             let finishedURL = activeAudioURL
             player?.replaceCurrentItem(with: nil)
             player = nil
@@ -1033,11 +1043,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             )
         } else {
             try? releaseBackgroundAudio()
-            lock.withLock { pendingAutoplayOffset = snapshot.0 }
+            let rendering = lock.withLock { () -> Bool in
+                pendingAutoplayOffset = snapshot.0
+                return inFlightOffsets.contains(snapshot.0)
+            }
             // A normal render gap is a wait for the selected Supertonic voice,
             // never a reason to change voices. The serial full-item generation
-            // pump will start this chunk as soon as it becomes available.
-            _ = request
+            // pump will start this chunk as soon as it becomes available. If it
+            // isn't rendering (a seek skipped past it, #346), render it now
+            // rather than wait for a render that will never come.
+            if !rendering { enqueueRender(request, shouldPlayWhenReady: false) }
         }
     }
 
@@ -1887,9 +1902,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    private func resumeAction(targetId: String, fromSpokenOffset spokenOffset: Int) -> ResumeAction {
+    private func resumeAction(targetId: String, fromSpokenOffset spokenOffset: Int, isSeek: Bool) -> ResumeAction {
         lock.withLock {
-            guard transportIntent == .paused,
+            // A play on narration that's already playing (a rate change restarts from the synced
+            // position; a second Lock Screen play) reuses the live audio like a resume does,
+            // rather than throwing it away and rendering again (#303).
+            let wasPlaying = transportIntent == .playing
+            guard transportIntent == .paused || wasPlaying,
                   currentTargetId == targetId,
                   activeSourceText == preparedSourceText else { return .none }
             let chunkEnd = currentStartOffset + max(0, currentChunkLength)
@@ -1900,19 +1919,31 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 let currentOffset = currentStartOffset + Int(
                     (Double(currentChunkLength) * max(0, min(1, playerTime(player) / max(activeAudioDuration, 0.001)))).rounded(.down)
                 )
-                if abs(currentOffset - spokenOffset) <= 1 {
+                // While playing, the requested position was sampled a moment ago and lags the live
+                // one by a few characters; that's the same place, not a seek.
+                // An explicit choice of this chunk: no other chunk may autoplay over it later.
+                pendingAutoplayOffset = nil
+                if abs(currentOffset - spokenOffset) <= (wasPlaying && !isSeek ? Self.livePositionTolerance : 1) {
+                    // The player's own clock is the position now, not an earlier request for
+                    // another chunk (#346 re-audit).
+                    initialRequestedSpokenOffset = nil
                     return .resumePlayer(player)
                 }
                 initialRequestedSpokenOffset = spokenOffset
                 let fraction = Double(spokenOffset - currentStartOffset) / Double(max(1, currentChunkLength))
                 return .seekPlayer(player, max(0, min(activeAudioDuration, activeAudioDuration * fraction)))
             }
-            if let cachedEntry = renderedCache.first(where: { entry in
-                spokenOffset >= entry.value.request.startOffset
-                    && spokenOffset < entry.value.request.startOffset + max(1, entry.value.request.sourceLength)
-            }), let cached = renderedCache.removeValue(forKey: cachedEntry.key) {
+            if wasPlaying, let player {
+                // Moving to another chunk: stop the live one first so two never play at once.
+                player.pause()
+                player.replaceCurrentItem(with: nil)
+                self.player = nil
+            }
+            if let cached = cachedOrSavedChunk(containing: spokenOffset) {
                 transportIntent = .playing
                 pendingStartTargetId = targetId
+                // The listener chose this chunk; a marker left for another must not play over it.
+                pendingAutoplayOffset = nil
                 initialPlaybackOffset = cached.request.startOffset
                 initialRequestedSpokenOffset = spokenOffset
                 return .playCached(cached)
@@ -2013,6 +2044,29 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         onResumeDecision(fields)
     }
+
+    /// The chunk covering `spokenOffset`: from the rendered cache (taking it out, as before), or
+    /// else this generation's saved result for it. Playing a cached chunk removes it from the
+    /// cache, so after a seek ahead and back, a chunk already played is found here (#346).
+    /// Call with the lock held.
+    private func cachedOrSavedChunk(containing spokenOffset: Int) -> CachedAudio? {
+        if let entry = renderedCache.first(where: { entry in
+            spokenOffset >= entry.value.request.startOffset
+                && spokenOffset < entry.value.request.startOffset + max(1, entry.value.request.sourceLength)
+        }), let cached = renderedCache.removeValue(forKey: entry.key) {
+            return cached
+        }
+        guard let planned = generationPlan.first(where: {
+            spokenOffset >= $0.startOffset && spokenOffset < $0.startOffset + max(1, $0.sourceLength)
+        }), let saved = generationResults[planned.startOffset],
+              FileManager.default.fileExists(atPath: saved.audioURL.path) else { return nil }
+        let file = try? AVAudioFile(forReading: saved.audioURL)
+        let duration = file.map { Double($0.length) / $0.processingFormat.sampleRate } ?? 0
+        return CachedAudio(url: saved.audioURL, duration: duration, request: planned)
+    }
+
+    /// About two seconds of speech: how far a sampled position can trail the live one.
+    static let livePositionTolerance = 30
 
     private func playerTime(_ player: AVPlayer?) -> TimeInterval {
         guard let seconds = player?.currentTime().seconds, seconds.isFinite else { return 0 }
