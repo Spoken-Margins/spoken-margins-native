@@ -1124,6 +1124,8 @@ def main(argv=None) -> int:
     (evidence / 'request.json').write_text(json.dumps(dict(request, head=head, base=args.base, base_sha=base_sha),
                                                       indent=2))
     if explicit and not desk_waiting:  # a waiting T4/T5 keeps lane:queued so the Test Desk still sees it
+        if DONE in labels:  # adding a label the PR already has is no `labeled` event, and the dispatch waits on one
+            github.relabel(DONE, None)
         github.relabel(QUEUED, RUNNING)
     link_tools(Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Documents/GitHub/spoken-margins-native'))
     no_room = wait_for_room_to_build() \

@@ -38,6 +38,7 @@ class FakeGitHub:
     def __init__(self, labels=('lane:queued',), head=HEAD, comments=(), fail_comment=False):
         self.labels, self.head, self._comments = set(labels), head, list(comments)
         self.posted, self.label_changes, self.fail_comment = [], [], fail_comment
+        self.labeled = []  # GitHub's `labeled` events: none when the label was already there
 
     def pull(self):
         return {'head': {'sha': self.head}, 'labels': [{'name': n} for n in sorted(self.labels)]}
@@ -55,6 +56,8 @@ class FakeGitHub:
     def relabel(self, remove, add):
         self.label_changes.append((remove, add))
         self.labels.discard(remove)
+        if add and add not in self.labels:
+            self.labeled.append(add)
         if add:
             self.labels.add(add)
 
@@ -1049,6 +1052,24 @@ class MainFlowTests(unittest.TestCase):
         self.assertEqual(len(github.posted), 1)
         self.assertTrue(github.posted[0].startswith('Lane report pr5-r42 — PASS'))
         self.assertEqual(github.label_changes, [('lane:queued', 'lane:running'), ('lane:running', 'lane:done')])
+
+    def test_every_finished_run_adds_lane_done_as_a_new_labeled_event(self):
+        # The Hourly dispatch fires on lane:done's `labeled` event. #432's second T3 report (2026-09-30
+        # 16:02Z) made none: its earlier lane:done was still on, so adding it again was no event.
+        github = FakeGitHub(labels=('lane:queued', 'lane:done'), comments=[comment('/lane T2')])
+        self.run_main(github)
+        self.assertEqual(github.labeled, ['lane:running', 'lane:done'])
+        self.assertEqual(github.labels, {'lane:done'})
+        self.assertEqual(github.label_changes[0], ('lane:done', None))
+
+    def test_lane_done_stays_on_when_the_run_leaves_the_lane_labels_alone(self):
+        waiting = FakeGitHub(labels=('lane:queued', 'lane:done'), comments=[comment('/lane T4\nrun: J1'),
+                                                                            comment('/lane T2')])
+        self.run_main(waiting)  # the Test Desk's T4 keeps lane:queued, so this run doesn't take it
+        self.assertEqual(waiting.labels, {'lane:queued', 'lane:done'})
+        automerge = FakeGitHub(labels=('automerge', 'lane:done'))
+        self.run_automerge_main(automerge)
+        self.assertEqual((automerge.labels, automerge.label_changes), ({'automerge', 'lane:done'}, []))
 
     def test_an_older_queued_run_defers_to_the_newest_commit(self):
         github = FakeGitHub(head=NEWER, comments=[comment('/lane T2')])
