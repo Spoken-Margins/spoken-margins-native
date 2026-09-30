@@ -15721,6 +15721,9 @@ final class Gate1AppModel: ObservableObject {
         return sourceId
     }
 
+    /// Read from the store: `feedSubscriptions` lags a follow until its refresh lands (#463).
+    func storedFeedSubscriptions() -> [FeedSubscription] { (try? store?.loadFeedSubscriptions()) ?? feedSubscriptions }
+
     func followSourceCandidate(_ candidate: SourceCandidateEvidence) {
         Task { [weak self] in
             guard let self else { return }

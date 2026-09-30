@@ -148,6 +148,7 @@ struct CatalogDrawerView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 subjectBar
+                importLink
                 list
             }
             .background(AppColors.bone)
@@ -162,6 +163,21 @@ struct CatalogDrawerView: View {
             .task { await drawer.load() }
         }
         .accessibilityIdentifier("catalog.drawer")
+    }
+
+    /// Shown whether or not the podcast list loaded: importing matters most when it didn't (#463).
+    @ViewBuilder
+    private var importLink: some View {
+        if let makeOPMLImport = drawer.makeOPMLImport {
+            NavigationLink {
+                OPMLImportScreen(importer: makeOPMLImport())
+            } label: {
+                Label("Import from another app", systemImage: "square.and.arrow.down")
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            }
+            .padding(.horizontal, 16)
+            .accessibilityIdentifier("catalog.drawer.importOPML")
+        }
     }
 
     private var subjectBar: some View {
@@ -202,18 +218,6 @@ struct CatalogDrawerView: View {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             List {
-                if let makeOPMLImport = drawer.makeOPMLImport {
-                    Section {
-                        NavigationLink {
-                            OPMLImportScreen(importer: makeOPMLImport())
-                        } label: {
-                            Label("Import from another app", systemImage: "square.and.arrow.down")
-                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        }
-                        .accessibilityIdentifier("catalog.drawer.importOPML")
-                        .listRowBackground(Color.clear)
-                    }
-                }
                 Section {
                     ForEach(drawer.entries) { entry in
                         CatalogDrawerRow(entry: entry)

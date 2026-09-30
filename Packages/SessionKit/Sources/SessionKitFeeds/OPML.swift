@@ -280,6 +280,10 @@ public enum OPMLImportRunner {
             do {
                 try await follow(candidate)
                 result.followed.append(candidate)
+            } catch where Task.isCancelled {
+                // Stopping cancels the feed in flight too; it wasn't followed, and it didn't fail.
+                result.notTried = Array(ticked[index...])
+                break
             } catch {
                 result.failed.append(.init(candidate: candidate, reason: describe?(error) ?? error.localizedDescription))
             }

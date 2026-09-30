@@ -156,6 +156,21 @@ final class OPMLTests: XCTestCase {
         XCTAssertEqual(result.notTried.map(\.title), ["Radiolab", "Darknet Diaries"])
     }
 
+    func testStoppingDuringAFollowListsThatFeedAsNotTriedRatherThanFailed() async throws {
+        let preview = OPMLImportPlanner.preview(try OPMLParser.parse(Self.fixture("castro")), existing: [])
+        let task = Task { () -> OPMLImportResult in
+            await OPMLImportRunner.follow(preview, selected: Set(preview.toFollow.map(\.id))) { candidate in
+                guard candidate.title == "Radiolab" else { return }
+                withUnsafeCurrentTask { $0?.cancel() }
+                throw CancellationError()
+            }
+        }
+        let result = await task.value
+        XCTAssertEqual(result.followed.map(\.title), ["99% Invisible"])
+        XCTAssertTrue(result.failed.isEmpty)
+        XCTAssertEqual(result.notTried.map(\.title), ["Radiolab", "Darknet Diaries"])
+    }
+
     private static func subscription(_ title: String, _ url: String) -> FeedSubscription {
         let host = URLComponents(string: url)?.host ?? "unknown"
         return FeedSubscription(id: "subscription-\(title)", source: SourceIdentity(id: "source-\(title)", kind: .podcastFeed, canonicalURL: url, host: host, title: title))
