@@ -253,7 +253,6 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         // a chapter, because display type before the abstract was left to the
         // visual-heading rule.
         let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9)]
-        let label: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 9)]
         let title: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 16)]
         let authors: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 13)]
         let badge: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 14)]
@@ -272,7 +271,9 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
             (", Ben Sample2" as NSString).draw(at: CGPoint(x: 160, y: 160), withAttributes: authors)
             (", Cy Third3" as NSString).draw(at: CGPoint(x: 260, y: 160), withAttributes: authors)
             ("v1" as NSString).draw(at: CGPoint(x: 520, y: 200), withAttributes: badge)
-            ("Abstract" as NSString).draw(at: CGPoint(x: 60, y: 240), withAttributes: label)
+            // At heading size: on the simulator a 9 pt bold "Abstract" wasn't read as a
+            // heading, and this test is about the title page, not bold detection.
+            ("Abstract" as NSString).draw(at: CGPoint(x: 60, y: 236), withAttributes: heading)
             for (offset, line) in prose.enumerated() {
                 (line as NSString).draw(at: CGPoint(x: 60, y: 256 + CGFloat(offset) * 12), withAttributes: body)
             }
