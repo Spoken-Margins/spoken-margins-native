@@ -406,31 +406,32 @@ def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2,
 
 
 AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
-CLEAN_AUDIT = re.compile(r'^\s*no (blocking )?findings\b', re.I | re.M)  # a line that opens with it, as the task writes
+CLEAN_AUDIT = re.compile(r'no (blocking )?findings\b', re.I)  # how the audit task's verdict line opens
 
 
 def audit_blocker(comments: list[dict], head: str) -> str | None:
     """Why the Codex audits on the PR don't clear its head, or None when the newest audit of the head is clean.
 
     #441: any audit comment used to clear the PR, whatever commit it covered or what it found. An audit
-    counts only if it names the head commit (the hourly task's heading says "on `<sha7>`"), and it clears
-    only if it says it has no blocking findings; anything else holds, so a new audit format fails closed.
+    counts only if its heading names the head commit (the hourly task's says "on `<sha7>`"), and it clears
+    only if its verdict, the first line after the heading, opens "No blocking findings". Anything else
+    holds, so a new audit format fails closed.
     """
     audits = []
     for comment in comments:
         body = (comment.get('body') or '').lstrip()
         if body.startswith(AUDITS):
-            first_line = body.split('\n', 1)[0]
-            shas = AUDIT_SHA.findall(first_line if body.startswith(AUDITS[0]) else body)
-            audits.append((shas, body))
+            heading, _, rest = body.partition('\n')
+            verdict = next((line.strip() for line in rest.splitlines() if line.strip()), '')
+            audits.append((AUDIT_SHA.findall(heading), verdict))
     if not audits:
         return 'has no "Codex audit (Astra)" comment yet'
-    on_head = [body for shas, body in audits if any(head.startswith(sha) for sha in shas)]
+    on_head = [verdict for shas, verdict in audits if any(head.startswith(sha) for sha in shas)]
     if not on_head:
         audited = next((shas[0] for shas, _ in reversed(audits) if shas), None)
         return (f'has no Codex audit of its head: the audit is on `{audited}`, the head is `{head[:7]}`' if audited
                 else f'has no Codex audit naming its head `{head[:7]}`')
-    if not CLEAN_AUDIT.search(on_head[-1].split('\n', 1)[-1]):
+    if not CLEAN_AUDIT.match(on_head[-1]):
         return f'the Codex audit on the head `{head[:7]}` has blocking findings (it doesn\'t say "No blocking findings")'
     return None
 

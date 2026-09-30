@@ -772,7 +772,7 @@ class MergeTests_Runner(unittest.TestCase):
         self.assertEqual(events, ['build'])
         self.assertIn('it touches packets and has no "Codex audit (Astra)" comment yet', details[-1])
         for audit in ('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.',
-                      '## Codex audit (gpt-6-astra, high)\n\nAudited `aaaaaaaa`.\n\nNo findings.'):
+                      '## Codex audit (gpt-6-astra, high) of `aaaaaaaa`\n\nNo findings.'):
             with self.subTest(audit=audit[:20]):
                 (_, _, _, details), events = self.run_auto(
                     FakeGitHub(labels=('automerge',), comments=[comment(audit)]), scope=risky)
@@ -806,6 +806,9 @@ class MergeTests_Runner(unittest.TestCase):
                  '`A.swift:626`\n   - Smallest fix: keep it per target; no findings elsewhere.\n\nNothing else found. '
                  'No packet or database changes.\n\nChecked by the SM Codex audit task; Codex ran read-only.')
         self.assertEqual(self.audited(audit)[1], ['build'])
+        also = ('**Codex audit (Astra) on `aaaaaaa`**\n\n1. **Confirmed: data loss.**\n   - Scenario: …\n\n'
+                'No findings against packets or owner data.\n')
+        self.assertEqual(self.audited(also)[1], ['build'])
         clean = ('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings on correctness, owner data, or Build 29 '
                  'compatibility. One plausible gap against "Done when":\n1. **Plausible: …**')
         self.assertEqual(self.audited(clean)[1], ['build', 'comment', 'push m1', 'sweep'])
@@ -817,9 +820,11 @@ class MergeTests_Runner(unittest.TestCase):
         self.assertEqual(self.audited(blocked, clean)[1], ['build', 'comment', 'push m1', 'sweep'])
 
     def test_a_manual_audit_counts_only_if_it_names_the_head(self):
-        (_, _, _, details), events = self.audited('## Codex audit (gpt-6-astra, high)\n\nAudited the PR. No findings.')
+        (_, _, _, details), events = self.audited('## Codex audit (gpt-6-astra, high)\n\nNo findings. Audited the PR.')
         self.assertEqual(events, ['build'])
         self.assertIn('has no Codex audit naming its head `aaaaaaa`', details[-1])
+        older = '## Codex audit of `1234567`\n\nNo findings. The head `aaaaaaa` came later.'  # the sha only in the body
+        self.assertEqual(self.audited(older)[1], ['build'])
 
     def test_an_audit_landing_while_the_run_tested_counts(self):
         github = FakeGitHub(labels=('automerge',))
