@@ -3600,17 +3600,9 @@ final class Gate1AppModel: ObservableObject {
             throw SessionKitError.persistenceFailed("Browser text importer is unavailable.")
         }
         let item = try engine.importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument)
-        // A PDF that moved to the new extraction had its prepared audio retired in the same
-        // transaction (#322); its files and ledger rows go now. A new item has none.
-        if structuredDocument != nil, (try? store.loadPreparedAudioManifests(itemId: item.id))?.isEmpty == true,
-           let ledger = offlineStorageLedger {
-            let itemId = item.id
-            Task { [weak self] in
-                let result: String
-                do { result = "removed_bytes:\(try await ledger.removePreparedAudio(itemId: itemId))" }
-                catch { result = "failed:\(error.localizedDescription)" }
-                await MainActor.run { self?.diagnostics["retiredPreparedAudio:\(itemId)"] = result }
-            }
+        // A PDF that moved to the new extraction had its prepared audio retired (#322).
+        if structuredDocument != nil, let ledger = offlineStorageLedger {
+            Task { [itemId = item.id] in await ledger.removeRetiredPreparedAudio(itemId: itemId) }
         }
         libraryItems = try loadLibraryRows(store: store)
         scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
@@ -10497,7 +10489,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     @discardableResult
-    private func attachPreparedTextAudio(
+    func attachPreparedTextAudio(
         _ prepared: PreparedTextAudio,
         itemId: String,
         preparedStatus: String = "ready",
@@ -11348,7 +11340,7 @@ final class Gate1AppModel: ObservableObject {
         if audioPreparationQueue != rows { audioPreparationQueue = rows }
     }
 
-    private func refreshLibraryRows(store: SQLiteSessionStore) throws {
+    func refreshLibraryRows(store: SQLiteSessionStore) throws {
         libraryItems = try loadLibraryRows(store: store)
         recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
         try refreshAudioPreparationPresentation(store: store)
@@ -15548,91 +15540,6 @@ final class Gate1AppModel: ObservableObject {
             return lhs.requestedAt > rhs.requestedAt
         }
         return lhs.id < rhs.id
-    }
-
-    private func finishBackgroundPreparedAudio(
-        item: Item,
-        sourceText: String,
-        voice: SupertonicVoiceID,
-        signature: TTSRenderSignature,
-        manifest: PreparedAudioManifest,
-        plan: [PreparedChunkPlan],
-        store: SQLiteSessionStore,
-        ledger: OfflineStorageLedger,
-        coordinator: PreparedAudioCoordinator,
-        support: URL
-    ) async throws {
-        // A re-import can upgrade the item and retire this manifest while chunks render
-        // or assemble; its narration then speaks the old text, so it's dropped (#344).
-        func stillCurrent() -> Bool {
-            (try? store.loadPreparedAudioManifest(id: manifest.id)) != nil
-                && (try? store.loadItem(id: item.id))?.text == sourceText
-        }
-        guard stillCurrent() else { return }
-        let byIndex = Dictionary(uniqueKeysWithValues: manifest.chunks.map { ($0.index, $0) })
-        let chunks = try plan.map { entry -> SupertonicPreparedChunk in
-            guard let committed = byIndex[entry.index] else {
-                throw SessionKitError.persistenceFailed("prepared_chunk_missing")
-            }
-            let slice = RenderedSpeechChunker.sourceSlice(
-                from: SpeechTextNormalizer.normalize(sourceText),
-                startOffset: entry.startOffset,
-                maxCharacters: RenderedSpeechChunker.spokenCostBudget
-            )
-            return SupertonicPreparedChunk(
-                startOffset: entry.startOffset,
-                sourceLength: entry.sourceLength,
-                text: entry.text,
-                boundary: slice.boundary,
-                audioURL: support.appending(path: "PreparedAudio/\(committed.relativePath)")
-            )
-        }
-        let assemblyReservation = try await ledger.reserve(
-            ownerId: "prepared-artifact-\(manifest.id)",
-            byteCount: max(1, manifest.chunks.reduce(0) { $0 + $1.byteCount })
-        )
-        do {
-            let prepared = try await SupertonicPreparedAudioAssembler.assemble(
-                itemId: item.id,
-                sourceText: sourceText,
-                projection: SpeechTextNormalizer.normalizeWithSourceOffsets(sourceText),
-                voice: voice,
-                chunks: chunks,
-                outputDirectory: support.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory)
-            )
-            let assembledURL = prepared.media.url.flatMap(URL.init(string:))
-            guard stillCurrent() else {
-                if let assembledURL, assembledURL.isFileURL { _ = try? await ledger.discardUncommittedFile(assembledURL) }
-                try? await ledger.release(reservationId: assemblyReservation.id)
-                return
-            }
-            guard attachPreparedTextAudio(prepared, itemId: item.id, replaceActivePlayback: false),
-                  let url = assembledURL else {
-                throw SessionKitError.persistenceFailed("prepared_audio_attach_failed")
-            }
-            try await coordinator.complete(itemId: item.id, signature: signature, prepared: prepared)
-            try refreshLibraryRows(store: store)
-            let values = try url.resourceValues(forKeys: [.fileSizeKey])
-            let relative = String(url.standardizedFileURL.path.dropFirst(support.standardizedFileURL.path.count + 1))
-            try await ledger.commit(
-                reservationId: assemblyReservation.id,
-                asset: OwnedOfflineAsset(
-                    id: "prepared-artifact-\(manifest.id)",
-                    itemId: item.id,
-                    category: .preparedAudio,
-                    relativePath: relative,
-                    byteCount: Int64(values.fileSize ?? 0),
-                    isReproducible: true
-                )
-            )
-            for var asset in try store.loadOwnedOfflineAssets() where asset.itemId == item.id && asset.category == .preparedChunk {
-                asset.isRedundant = true
-                try store.saveOwnedOfflineAsset(asset)
-            }
-        } catch {
-            try? await ledger.release(reservationId: assemblyReservation.id)
-            throw error
-        }
     }
 
     private nonisolated static let preparationPlanCache = PreparedChunkPlanCache()

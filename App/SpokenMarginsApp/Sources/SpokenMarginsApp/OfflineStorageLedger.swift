@@ -162,6 +162,21 @@ actor OfflineStorageLedger {
         return removed
     }
 
+    /// After an item moved to a new PDF extraction (#322): once its manifests are retired, its
+    /// prepared files and rows go. An item that still has a manifest, or never had audio, keeps all.
+    @discardableResult
+    func removeRetiredPreparedAudio(itemId: String) async -> Int64 {
+        guard (try? repository.loadPreparedAudioManifests(itemId: itemId))?.isEmpty == true else { return 0 }
+        return (try? removePreparedAudio(itemId: itemId)) ?? 0
+    }
+
+    /// Narration assembled for text its item no longer has (#344): the file goes unless an item
+    /// plays it, and its reservation is released.
+    func discardStaleAssembly(_ url: URL?, reservationId: String) async {
+        if let url, url.isFileURL { _ = try? discardUncommittedFile(url) }
+        try? release(reservationId: reservationId)
+    }
+
     /// Deletes a prepared file nothing was committed for, such as narration assembled
     /// for text its item no longer has, unless an item plays it (#344).
     @discardableResult
