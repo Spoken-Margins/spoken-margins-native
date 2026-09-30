@@ -64,6 +64,16 @@ final class ManualFollowPolicyTests: XCTestCase {
         XCTAssertFalse(discovers(itemId: edition.itemID, reference: edition.sourceURL))
     }
 
+    func testDiscoveryURLPrefersTheFollowedFeedAndSkipsFiles() {
+        let article = Item(id: "a", title: "A", mediaType: "text", text: "x", externalReference: "https://x.example/p/a?r=1", status: "ready", externalReferenceType: "url")
+        XCTAssertEqual(ManualFollowPolicy.discoveryURL(for: article)?.absoluteString, "https://x.example/p/a?r=1")
+        var followed = article
+        followed.sourceURL = "https://x.example/feed"
+        XCTAssertEqual(ManualFollowPolicy.discoveryURL(for: followed)?.absoluteString, "https://x.example/feed")
+        let file = Item(id: "f", title: "F", mediaType: "text", text: "x", externalReference: "https://x.example/p/a", status: "ready", externalReferenceType: "file")
+        XCTAssertNil(ManualFollowPolicy.discoveryURL(for: file))
+    }
+
     /// #280: a site with no feed (openai.com in the owner's diagnostics) showed Follow, and tapping failed.
     func testNoFeedFoundMeansNoFollow() {
         XCTAssertNil(ManualFollowPolicy.offer(itemId: "article", mediaType: "text", candidates: []))

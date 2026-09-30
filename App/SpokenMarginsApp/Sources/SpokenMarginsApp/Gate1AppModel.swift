@@ -857,12 +857,12 @@ final class Gate1AppModel: ObservableObject {
     var sourceFollowSuggestionCandidates: [SourceCandidateEvidence] {
         guard sourceFollowSuggestionItemId == selectedItem.id,
               screen != .playback || sourceFollowSuggestionItemId == snapshot.itemId else { return [] }
-        guard !Self.isSourceAlreadyFollowed(
+        guard !FollowedSourceMatching.isSourceAlreadyFollowed(
             sourceURL: libraryItems.first(where: { $0.id == selectedItem.id })?.sourceURL,
             sourceTitle: libraryItems.first(where: { $0.id == selectedItem.id })?.sourceTitle,
             subscriptions: feedSubscriptions
         ) else { return [] }
-        return Self.uniqueUnfollowedCandidates(storedSourceFollowSuggestionCandidates, subscriptions: feedSubscriptions)
+        return FollowedSourceMatching.uniqueUnfollowedCandidates(storedSourceFollowSuggestionCandidates, subscriptions: feedSubscriptions)
     }
     @Published private(set) var followedSourceEntries: [FeedEntry] = [] { didSet { cachedQuickAddCandidates = nil } }
     @Published private(set) var feedSubscriptions: [FeedSubscription] = [] { didSet { cachedQuickAddCandidates = nil } }
@@ -15810,7 +15810,7 @@ final class Gate1AppModel: ObservableObject {
     var canManuallyFollowSelectedSource: Bool {
         guard sourceFollowSuggestionCandidates.isEmpty, selectedFollowOffer != nil else { return false }
         let row = libraryItems.first(where: { $0.id == selectedItem.id })
-        return !Self.isSourceAlreadyFollowed(
+        return !FollowedSourceMatching.isSourceAlreadyFollowed(
             sourceURL: row?.sourceURL,
             sourceTitle: row?.sourceTitle,
             subscriptions: feedSubscriptions
@@ -15833,7 +15833,7 @@ final class Gate1AppModel: ObservableObject {
         guard let found = followOffers[selectedItem.id] else { return nil }
         return ManualFollowPolicy.offer(
             itemId: found.itemId, mediaType: found.mediaType,
-            candidates: Self.uniqueUnfollowedCandidates(found.candidates, subscriptions: feedSubscriptions)
+            candidates: FollowedSourceMatching.uniqueUnfollowedCandidates(found.candidates, subscriptions: feedSubscriptions)
         )
     }
 
@@ -15842,14 +15842,8 @@ final class Gate1AppModel: ObservableObject {
     func discoverFollowOfferIfEligible(itemId: String, store: SQLiteSessionStore) {
         guard followOffers[itemId] == nil,
               let item = try? store.loadItem(id: itemId),
-              ManualFollowPolicy.shouldDiscoverFeed(
-                itemId: item.id, mediaType: item.mediaType, sourceURL: item.sourceURL,
-                sourceReference: item.externalReference, sourceReferenceType: item.externalReferenceType
-              ),
-              let reference = item.sourceURL ?? item.externalReference,
-              let url = URL(string: reference),
-              url.scheme?.lowercased() == "https",
-              !Self.isSourceAlreadyFollowed(
+              let url = ManualFollowPolicy.discoveryURL(for: item),
+              !FollowedSourceMatching.isSourceAlreadyFollowed(
                 sourceURL: item.sourceURL, sourceTitle: item.sourceTitle, subscriptions: feedSubscriptions
               ) else { return }
         Task { [weak self] in
@@ -15892,62 +15886,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    nonisolated static func isSourceAlreadyFollowed(
-        sourceURL: String?,
-        sourceTitle: String?,
-        subscriptions: [FeedSubscription]
-    ) -> Bool {
-        if let sourceURL = normalizedFollowSourceURL(sourceURL) {
-            return subscriptions.contains {
-                normalizedFollowSourceURL($0.source.canonicalURL) == sourceURL
-            }
-        }
-        guard let sourceTitle = sourceTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !sourceTitle.isEmpty else { return false }
-        return subscriptions.contains {
-            ($0.source.title ?? $0.source.host).caseInsensitiveCompare(sourceTitle) == .orderedSame
-        }
-    }
-
-    nonisolated static func uniqueUnfollowedCandidates(
-        _ candidates: [SourceCandidateEvidence], subscriptions: [FeedSubscription]
-    ) -> [SourceCandidateEvidence] {
-        var sourceIDs = Set<String>()
-        var urls = Set<String>()
-        return candidates.filter { candidate in
-            let url = normalizedFollowSourceURL(candidate.source.canonicalURL) ?? candidate.source.canonicalURL
-            guard !subscriptions.contains(where: {
-                $0.source.id == candidate.source.id
-                    || normalizedFollowSourceURL($0.source.canonicalURL) == url
-            }) else { return false }
-            let newID = sourceIDs.insert(candidate.source.id).inserted
-            let newURL = urls.insert(url).inserted
-            return newID && newURL
-        }
-    }
-
-    private nonisolated static func normalizedFollowSourceURL(_ value: String?) -> String? {
-        guard let value,
-              var components = URLComponents(
-                string: value.trimmingCharacters(in: .whitespacesAndNewlines)
-              ),
-              let scheme = components.scheme?.lowercased(),
-              let host = components.host?.lowercased(),
-              !scheme.isEmpty,
-              !host.isEmpty else { return nil }
-        components.scheme = scheme
-        components.host = host
-        components.fragment = nil
-        if (scheme == "https" && components.port == 443)
-            || (scheme == "http" && components.port == 80) {
-            components.port = nil
-        }
-        if components.path.count > 1, components.path.hasSuffix("/") {
-            components.path.removeLast()
-        }
-        return components.string
-    }
-
     func followSelectedSource() {
         guard !isFollowingSelectedSource, let store else { return }
         let itemId = selectedItem.id
@@ -15957,11 +15895,7 @@ final class Gate1AppModel: ObservableObject {
             defer { self.isFollowingSelectedSource = false }
             do {
                 let item = try store.loadItem(id: itemId)
-                guard let reference = item.sourceURL ?? item.externalReference,
-                      let preferredURL = URL(string: reference),
-                      preferredURL.scheme?.lowercased() == "https" else {
-                    throw FollowedSourceError.invalidURL
-                }
+                guard let preferredURL = ManualFollowPolicy.discoveryURL(for: item) else { throw FollowedSourceError.invalidURL }
                 let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
                 self.followedSourceCoordinator = coordinator
                 let candidates = try await self.sharedFollowDiscovery(
@@ -16003,15 +15937,8 @@ final class Gate1AppModel: ObservableObject {
     func offerFollowSuggestionIfEligible(itemId: String, store: SQLiteSessionStore) {
         guard !sourceSuggestionChecks.contains(itemId),
               sourceFollowSuggestionCandidates.isEmpty,
-              let item = try? store.loadItem(id: itemId),
               // Files, PDFs and Listening Editions get no suggestion card either (#280).
-              ManualFollowPolicy.shouldDiscoverFeed(
-                itemId: item.id, mediaType: item.mediaType, sourceURL: item.sourceURL,
-                sourceReference: item.externalReference, sourceReferenceType: item.externalReferenceType
-              ),
-              let reference = item.sourceURL ?? item.externalReference,
-              let url = URL(string: reference),
-              url.scheme?.lowercased() == "https" else { return }
+              let item = try? store.loadItem(id: itemId), let url = ManualFollowPolicy.discoveryURL(for: item) else { return }
         // Opening Item loads its sessions synchronously; Home's display cache
         // may still be awaiting refresh or may have been superseded by navigation.
         let persistedProgress = selectedItem.id == itemId
@@ -16028,7 +15955,7 @@ final class Gate1AppModel: ObservableObject {
             do {
                 let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
                 self.followedSourceCoordinator = coordinator
-                guard !Self.isSourceAlreadyFollowed(
+                guard !FollowedSourceMatching.isSourceAlreadyFollowed(
                     sourceURL: item.sourceURL, sourceTitle: item.sourceTitle,
                     subscriptions: try store.loadFeedSubscriptions()
                 ) else { return }
@@ -16049,12 +15976,12 @@ final class Gate1AppModel: ObservableObject {
                 // Following may finish while network discovery is suspended.
                 let subscriptions = try store.loadFeedSubscriptions()
                 self.feedSubscriptions = subscriptions
-                guard !Self.isSourceAlreadyFollowed(
+                guard !FollowedSourceMatching.isSourceAlreadyFollowed(
                     sourceURL: current.sourceURL, sourceTitle: current.sourceTitle,
                     subscriptions: subscriptions
                 ) else { return }
                 let now = Date()
-                let eligible = try Self.uniqueUnfollowedCandidates(candidates, subscriptions: subscriptions).filter { candidate in
+                let eligible = try FollowedSourceMatching.uniqueUnfollowedCandidates(candidates, subscriptions: subscriptions).filter { candidate in
                     guard let decision = try store.loadSourceSuggestionDecision(sourceId: candidate.source.id) else { return true }
                     if decision.decision == .accepted || decision.decision == .neverSuggest { return false }
                     if let suppressUntil = decision.suppressUntil, suppressUntil > now { return false }

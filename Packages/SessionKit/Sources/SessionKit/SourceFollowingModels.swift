@@ -177,6 +177,16 @@ public enum ManualFollowPolicy {
         }
     }
 
+    /// The link to discover a feed from, or nil when the item isn't worth a lookup.
+    public static func discoveryURL(for item: Item) -> URL? {
+        guard shouldDiscoverFeed(
+            itemId: item.id, mediaType: item.mediaType, sourceURL: item.sourceURL,
+            sourceReference: item.externalReference, sourceReferenceType: item.externalReferenceType
+        ), let reference = item.sourceURL ?? item.externalReference,
+              let url = URL(string: reference), url.scheme?.lowercased() == "https" else { return nil }
+        return url
+    }
+
     /// The Follow action for an item once discovery has run. Nil, so no Follow, when no feed was found.
     public static func offer(itemId: String, mediaType: String, candidates: [SourceCandidateEvidence]) -> FollowOffer? {
         guard !candidates.isEmpty else { return nil }

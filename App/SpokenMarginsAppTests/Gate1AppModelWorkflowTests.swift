@@ -3734,9 +3734,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         distinct.id = "distinct"
         distinct.source.id = "distinct-source"
         distinct.source.canonicalURL = "https://example.com/other-feed"
-        XCTAssertEqual(Gate1AppModel.uniqueUnfollowedCandidates([first, duplicate, alias, distinct], subscriptions: []).map(\.id), ["first", "distinct"])
+        XCTAssertEqual(FollowedSourceMatching.uniqueUnfollowedCandidates([first, duplicate, alias, distinct], subscriptions: []).map(\.id), ["first", "distinct"])
         let followed = FeedSubscription(id: "followed", source: alias.source, state: .muted)
-        XCTAssertEqual(Gate1AppModel.uniqueUnfollowedCandidates([first, duplicate, alias, distinct], subscriptions: [followed]).map(\.id), ["distinct"])
+        XCTAssertEqual(FollowedSourceMatching.uniqueUnfollowedCandidates([first, duplicate, alias, distinct], subscriptions: [followed]).map(\.id), ["distinct"])
     }
 
     func testFollowDiscoveryRechecksSubscriptionsBeforePublishing() async throws {
@@ -4047,7 +4047,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             )
         )
 
-        XCTAssertTrue(Gate1AppModel.isSourceAlreadyFollowed(
+        XCTAssertTrue(FollowedSourceMatching.isSourceAlreadyFollowed(
             sourceURL: "https://example.com/feed.xml",
             sourceTitle: "Imported Podcast Title",
             subscriptions: [subscription]
@@ -4066,7 +4066,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             )
         )
 
-        XCTAssertFalse(Gate1AppModel.isSourceAlreadyFollowed(
+        XCTAssertFalse(FollowedSourceMatching.isSourceAlreadyFollowed(
             sourceURL: "https://example.com/feed.xml",
             sourceTitle: "The Show",
             subscriptions: [subscription]
