@@ -66,15 +66,16 @@ final class ItemCollectionStoreTests: XCTestCase {
         let path = temporaryDatabasePath()
         let store = try SQLiteSessionStore(path: path)
         try seedLibrary(store)
-        let before = try existingReads(store)
+        let before = existingReads(store)
 
         for index in 0..<5 {
             try store.saveItemCollection(ItemCollection(id: "collection-\(index)", name: "C\(index)", itemIDs: ["article"], createdAt: date(Double(index))))
         }
         XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)
         XCTAssertEqual(SQLiteSessionStore.currentSchemaVersion, 5)
-        XCTAssertEqual(try existingReads(store), before)
-        XCTAssertEqual(try existingReads(try SQLiteSessionStore(path: path)), before, "and after a reopen")
+        XCTAssertEqual(existingReads(store), before)
+        XCTAssertEqual(before.count, 43, "every load API the store had before collections")
+        XCTAssertEqual(existingReads(try SQLiteSessionStore(path: path)), before, "and after a reopen")
         XCTAssertEqual(try store.quarantinedRecordCount(), 0)
     }
 
@@ -113,25 +114,56 @@ final class ItemCollectionStoreTests: XCTestCase {
         ))
     }
 
-    /// Every existing read that spans a whole record kind, plus the per-item and per-session ones.
-    private func existingReads(_ store: SQLiteSessionStore) throws -> [String] {
-        [
-            "\(try store.loadItem(id: "article"))",
-            "\(try store.loadSessions())",
-            "\(try store.loadSessions(itemId: "article"))",
-            "\(try store.loadInterjections(sessionId: "session"))",
-            "\(try store.loadImportedCommentaryLayers())",
-            "\(try store.loadImportedCommentaryLayers(itemId: "article"))",
-            "\(try store.loadImportedCommentaryInterjections(layerId: "layer"))",
-            "\(try store.loadPodcastDownloads())",
-            "\(try store.loadPreparedAudioManifests())",
-            "\(try store.loadAudioPreparationJobs())",
-            "\(try store.loadEpisodeMapPreparationJobs())",
-            "\(try store.loadOfflineStorageBudget())",
-            "\(try store.loadOwnedOfflineAssets())",
-            "\(try store.loadOfflineStorageReservations())",
-            "\(try store.loadFeedSubscriptions())",
-            "\(try store.loadStructuredDocumentItemIds())",
+    /// Every public load API the store had before collections, keyed to the seeded records
+    /// where it takes an id. A read that throws is compared by its error, so it still counts.
+    private func existingReads(_ store: SQLiteSessionStore) -> [String] {
+        func read(_ name: String, _ load: () throws -> Any) -> String {
+            do { return "\(name): \(try load())" } catch { return "\(name) threw: \(error)" }
+        }
+        return [
+            read("item") { try store.loadItem(id: "article") },
+            read("listeningMap") { try store.loadListeningMap(itemId: "article") as Any },
+            read("session") { try store.loadSession(id: "session") as Any },
+            read("sessionsForItem") { try store.loadSessions(itemId: "article") },
+            read("sessions") { try store.loadSessions() },
+            read("interjections") { try store.loadInterjections(sessionId: "session") },
+            read("shareRevisions") { try store.loadInterjectionShareRevisions(interjectionId: "margin") },
+            read("layerById") { try store.loadImportedCommentaryLayer(id: "layer") as Any },
+            read("layerByDigest") { try store.loadImportedCommentaryLayer(packageDigest: "digest") as Any },
+            read("layers") { try store.loadImportedCommentaryLayers() },
+            read("layersForItem") { try store.loadImportedCommentaryLayers(itemId: "article") },
+            read("sharedMargins") { try store.loadImportedCommentaryInterjections(layerId: "layer") },
+            read("turns") { try store.loadTurns(sessionId: "session") },
+            read("aiJobs") { try store.loadAIJobs(sessionId: "session") },
+            read("watchPackage") { try store.loadWatchAudioPackage(id: "article") as Any },
+            read("watchPackages") { try store.loadWatchAudioPackages(itemId: "article") },
+            read("watchSyncEvents") { try store.loadWatchSyncEvents(sessionId: "session") },
+            read("watchSyncEvent") { try store.loadWatchSyncEvent(id: "session") as Any },
+            read("watchRequests") { try store.loadWatchPackageRequests(itemId: "article") },
+            read("timelineById") { try store.loadTranscriptTimeline(id: "article") as Any },
+            read("timelineForItem") { try store.loadTranscriptTimeline(itemId: "article") as Any },
+            read("audioAssets") { try store.loadAudioAssets(itemId: "article") },
+            read("podcastDownload") { try store.loadPodcastDownload(itemId: "article") as Any },
+            read("podcastDownloads") { try store.loadPodcastDownloads() },
+            read("canonicalSource") { try store.loadCanonicalSource(itemId: "article") as Any },
+            read("preparedManifest") { try store.loadPreparedAudioManifest(id: "article") as Any },
+            read("preparedManifestsForItem") { try store.loadPreparedAudioManifests(itemId: "article") },
+            read("preparedManifests") { try store.loadPreparedAudioManifests() },
+            read("preparationJobs") { try store.loadAudioPreparationJobs() },
+            read("fingerprintSpine") { try store.loadEditionFingerprintSpine(itemId: "article") as Any },
+            read("phraseSketch") { try store.loadTranscriptPhraseSketch(itemId: "article") as Any },
+            read("mapProposals") { try store.loadPortableListeningMapProposals(itemId: "article") },
+            read("mapProjection") { try store.loadResolvedListeningMapProjection(itemId: "article") as Any },
+            read("episodeMapJobs") { try store.loadEpisodeMapPreparationJobs() },
+            read("storageBudget") { try store.loadOfflineStorageBudget() },
+            read("ownedAssets") { try store.loadOwnedOfflineAssets() },
+            read("reservations") { try store.loadOfflineStorageReservations() },
+            read("feedSubscriptions") { try store.loadFeedSubscriptions() },
+            read("feedEntries") { try store.loadFeedEntries(subscriptionId: nil) },
+            read("feedRefreshState") { try store.loadFeedRefreshState(subscriptionId: "feed") as Any },
+            read("suggestionDecision") { try store.loadSourceSuggestionDecision(sourceId: "feed") as Any },
+            read("structuredDocument") { try store.loadStructuredDocument(itemId: "article") as Any },
+            read("structuredDocumentIds") { try store.loadStructuredDocumentItemIds() },
         ]
     }
 
