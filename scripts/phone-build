@@ -282,6 +282,29 @@ def owner_check(pr: dict) -> str | None:
     return None
 
 
+def plan_entries(facing: list[dict]) -> list[list[dict]]:
+    """Listener-facing PRs grouped into one entry per feature, in the order given (#427).
+
+    PRs that link the same issue, or whose owner check reads the same, are one thing to try: two
+    Follow PRs once gave the owner the same check twice. An entry is its PRs, first one leading.
+    """
+    entries: list[list[dict]] = []
+    by_key: dict[object, list[dict]] = {}
+    for pr in facing:
+        check = owner_check(pr)
+        keys = [('issue', issue['number']) for issue in pr['issues']]
+        if check:
+            keys.append(('check', ' '.join(check.lower().split())))
+        entry = next((by_key[key] for key in keys if key in by_key), None)
+        if entry is None:
+            entry = []
+            entries.append(entry)
+        entry.append(pr)
+        for key in keys:
+            by_key.setdefault(key, entry)
+    return entries
+
+
 def labels(item: dict) -> set[str]:
     return {node['name'] for node in item.get('labels', {}).get('nodes', [])}
 
@@ -320,24 +343,29 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     # Phone-found bugs first, then changes with a written check, then the rest; newest first within each.
     facing.sort(key=lambda pr: (0 if any(FIRST_ON_PHONE & labels(i) for i in pr['issues']) else 1,
                                 0 if owner_check(pr) else 1))
-    budget = facing[:PLAN_CHECKS]
-    rest = facing[PLAN_CHECKS:]
+    entries = plan_entries(facing)
+    budget = entries[:PLAN_CHECKS]
+    rest = entries[PLAN_CHECKS:]
     if not ordered:
         lines += ['Nothing new since that build: this is the same code, rebuilt.', '']
     lines += [f'{len(ordered)} pull requests merged; {len(facing)} change something you see or hear.', '',
               '## Try these (about ten minutes)', '']
     if not budget:
         lines += ['Nothing a listener would notice changed. Use the app as usual for ten minutes.', '']
-    for index, pr in enumerate(budget, 1):
-        issue = pr['issues'][0] if pr['issues'] else None
-        tag = ' (found on your phone)' if issue and FIRST_ON_PHONE & labels(issue) else ''
+    for index, entry in enumerate(budget, 1):
+        pr = entry[0]
+        issues = list({issue['number']: issue for member in entry for issue in member['issues']}.values())
+        tag = ' (found on your phone)' if any(FIRST_ON_PHONE & labels(issue) for issue in issues) else ''
+        check = next((found for found in map(owner_check, entry) if found), None)
+        links = [f'[PR #{member["number"]}]({member["url"]})' for member in entry]
+        links += [f'[issue #{issue["number"]}]({issue["url"]})' for issue in issues]
         lines += [f'{index}. **{pr["title"]}**{tag}',
-                  f'   - Check: {owner_check(pr) or "no check was written; look for what the title describes."}',
-                  f'   - Links: [PR #{pr["number"]}]({pr["url"]})' +
-                  (f', [issue #{issue["number"]}]({issue["url"]})' if issue else ''), '']
+                  f'   - Check: {check or "no check was written; look for what the title describes."}',
+                  f'   - Links: {", ".join(links)}', '']
     if rest:
         lines += ['## Also changed (not in the ten minutes)', '']
-        lines += [f'- {pr["title"]} ([#{pr["number"]}]({pr["url"]}))' for pr in rest]
+        lines += [f'- {entry[0]["title"]} (' + ', '.join(f'[#{pr["number"]}]({pr["url"]})' for pr in entry) + ')'
+                  for entry in rest]
         lines += ['']
     lines += [f'Behind the scenes: {behind} more pull requests changed only tests, scripts or docs.', '',
               '## If something is wrong', '',
