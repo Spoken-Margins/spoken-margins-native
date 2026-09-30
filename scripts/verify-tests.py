@@ -20,7 +20,7 @@ from check_posterboard_repair import new_crash
 import lane_sim
 from lane_slots import acquire_simulator_slot, build_slot, host_test_slot, release_handle
 
-from test_inventory import ROOT, plan_tests, swift_tests, validate
+from test_inventory import ROOT, plan_tests, swift_tests, target_tests, validate
 
 PLANS = {
     'app': ('SpokenMarginsAppBehavior', 'AppBehavior', 600),
@@ -29,6 +29,8 @@ PLANS = {
     'ui': ('SpokenMarginsUISeams', 'UISeams', 900),
     'speech-canary': ('SpokenMarginsUISeams', 'SpeechCanary', 1000),
     'release': ('SpokenMarginsReleaseTests', 'Release', 3600),
+    # The scripted journeys in TestPlans/scripted-journeys.json, from the Release plan (it holds every UI test).
+    'journeys': ('SpokenMarginsReleaseTests', 'Release', 1800),
 }
 
 # A run waits at most this long for a Mac-wide build slot, then fails rather than hanging.
@@ -66,11 +68,30 @@ def select_simulator(devices, device=None, ios=None):
 
 TEST_RUNNER_NAME = 'SpokenMargins Test Runner'
 APP_TEST_TARGET = 'SpokenMarginsAppTests'
+UI_TEST_TARGET = 'SpokenMarginsAppUITests'
 
 
 def selected(test, selector):
     """Whether an -only-testing selector (Target/Class or Target/Class/method) covers a test ID."""
     return test == selector or test.startswith(selector + '/')
+
+
+def narrow_selectors(selectors, planned, available):
+    """Narrow each selector to the planned tests it covers, unless the plan includes all of them.
+
+    xcodebuild's -only-testing replaces a plan's selectedTests, so a class selector runs the whole
+    class even when the plan picks one method of it. AudioAdapters selects one SupertonicSpeechTests
+    method; `-only-testing:…/SupertonicSpeechTests` ran all 74, and the 73 outside the plan were
+    reported as unexpected (#518).
+    """
+    narrowed = []
+    for selector in selectors:
+        covered = sorted(test for test in available if selected(test, selector))
+        if all(test in planned for test in covered):
+            narrowed.append(selector)
+        else:
+            narrowed.extend(test for test in covered if test in planned)
+    return narrowed
 
 
 def dedicated_simulator(devices, ios=None):
@@ -138,21 +159,38 @@ def test_records(log):
     return records
 
 
-def reconcile(expected, records, allowed_skips=()):
+def reconcile(expected, records, allowed_skips=(), probation=()):
+    """Errors that fail the step. A test on probation that fails or is missing is reported, not an error."""
     errors = []
     if not records:
         errors.append('No completed tests recorded')
     if expected is not None:
-        if missing := expected - records.keys():
+        if missing := expected - records.keys() - set(probation):
             errors.append(f'Missing {len(missing)} tests; first ten: {sorted(missing)[:10]}')
         if extra := records.keys() - expected:
             errors.append(f'Unexpected {len(extra)} tests; first ten: {sorted(extra)[:10]}')
     for name, result in records.items():
-        if result['status'] == 'failed':
+        if result['status'] == 'failed' and name not in probation:
             errors.append(f'Failed: {name}')
-        if result['status'] == 'skipped' and name not in allowed_skips:
+        if result['status'] == 'skipped' and name not in allowed_skips and name not in probation:
             errors.append(f'Unexpected skip: {name}')
     return errors
+
+
+def log_errors(text, limit=3, width=300):
+    """The first distinct error lines of a failed step's log, so the lane report can say why.
+
+    The runner's reports quote the manifest's error, and the logs stay on the Mac: T3 reports on
+    #368 and #408 said only "Process exit 70" (#411).
+    """
+    lines = text.splitlines()
+    found = [line.strip() for line in lines if ' error: ' in line or line.startswith('error:')]
+    if 'The following build commands failed:' in lines:
+        for line in lines[lines.index('The following build commands failed:') + 1:]:
+            if not line.strip():
+                break
+            found.append('failed: ' + line.strip())
+    return [line[:width] for line in dict.fromkeys(found)][:limit]
 
 
 class Run:
@@ -190,7 +228,7 @@ class Run:
         print(f'warning: simulator process crashed once ({process}); continuing', flush=True)
         return False
 
-    def command(self, name, args, timeout=180, expected=None, allowed_skips=(), tests=False):
+    def command(self, name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=None):
         entry = {'name': name, 'command': args, 'timeout_seconds': timeout,
                  'expected_tests': sorted(expected) if expected is not None else None}
         self.manifest['steps'].append(entry)
@@ -246,7 +284,11 @@ class Run:
             entry['tests'] = records
             entry['counts'] = {status: sum(r['status'] == status for r in records.values())
                                for status in ('passed', 'failed', 'skipped')}
-            errors = reconcile(expected, records, allowed_skips)
+            errors = reconcile(expected, records, allowed_skips, probation or ())
+            if probation is not None:  # scripted journeys: each listed test's result, by status
+                entry['gating'] = {test: records.get(test, {}).get('status', 'missing')
+                                   for test in sorted(set(expected or ()) - probation)}
+                entry['probation'] = {test: records.get(test, {}).get('status', 'missing') for test in sorted(probation)}
         if name == 'runner-tests':
             match = re.search(r'Ran (\d+) tests? in ', text)
             entry['executed_count'] = int(match[1]) if match else 0
@@ -257,7 +299,12 @@ class Run:
             entry['executed_count'] = int(match[1]) if match else 0
             if not entry['executed_count']:
                 errors.append('Browser runner executed zero tests')
-        if result:
+        # A failing probation test makes xcodebuild exit non-zero; that alone doesn't fail the step.
+        probation_only = (tests and not errors and not entry.get('interrupted')
+                          and any(status != 'passed' for status in entry.get('probation', {}).values()))
+        if result and not probation_only:
+            if not any(error.startswith('Failed: ') for error in errors):  # failed tests already say why
+                errors[:0] = log_errors(text)
             errors.insert(0, f'Process exit {result}')
         entry['errors'] = errors
         self.save()
@@ -284,7 +331,7 @@ class Run:
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         self.command('browser', ['npm', 'run', 'test:browser-extraction'])
         expected = set()
-        for target in ('SessionKitTests', 'SessionKitTraceTests'):
+        for target in ('SessionKitCoreTests', 'SessionKitTests', 'SessionKitTraceTests'):
             expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))
         self.command('package', ['bash', 'scripts/run-sessionkit-tests.sh'], timeout=300,
                      expected=expected, tests=True,
@@ -293,16 +340,19 @@ class Run:
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed during fast verification')
 
-    def xcode(self, plan, device, rebuild, ios=None, only=()):
+    def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None):
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
         # T3 runs a few test classes or methods of a plan. Each selector must name tests in the plan.
-        selectors = [s if s.startswith(f'{APP_TEST_TARGET}/') else f'{APP_TEST_TARGET}/{s}' for s in only]
+        selectors = [s if s.startswith((f'{APP_TEST_TARGET}/', f'{UI_TEST_TARGET}/')) else f'{APP_TEST_TARGET}/{s}'
+                     for s in only]
         planned = plan_tests(ROOT, name)
         unmatched = [s for s in selectors if not any(selected(test, s) for test in planned)]
         if unmatched:
             raise RuntimeError(f'Not in the {name} test plan: {", ".join(unmatched)}')
+        selectors = narrow_selectors(selectors, planned,
+                                     {f'{APP_TEST_TARGET}/{test}' for test in target_tests(ROOT, APP_TEST_TARGET)})
         if selectors:
             self.manifest['only_testing'] = selectors
         devices = json.loads(capture(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
@@ -368,11 +418,13 @@ class Run:
                 subprocess.run(['xcrun', 'simctl', 'uninstall', chosen['udid'], bundle_id],
                                cwd=ROOT, capture_output=True, timeout=60)
             expected = {test for test in planned if not selectors or any(selected(test, s) for s in selectors)}
+            on_probation = None if probation is None else {
+                test for test in expected if any(selected(test, s) for s in probation)}
             self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
                          'test-without-building', '-parallel-testing-enabled', 'NO',
                          '-collect-test-diagnostics', 'never',
                          '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(self.output / 'tests.xcresult')],
-                         timeout=timeout, expected=expected, tests=True)
+                         timeout=timeout, expected=expected, tests=True, probation=on_probation)
         finally:
             if booted_here:
                 # Don't leave an idle simulator holding memory after the run.
@@ -397,9 +449,17 @@ def main():
     args = parser.parse_args()
     if errors := validate():
         parser.error('; '.join(errors))
+    from test_inventory import scripted_journeys  # only the journeys plan reads the list
+    journeys = scripted_journeys() if args.plan == 'journeys' else None
+    if journeys and args.only_testing:
+        parser.error('--plan journeys runs TestPlans/scripted-journeys.json; it takes no --only-testing')
     if args.list:
-        print('\n'.join(sorted(plan_tests(ROOT, PLANS[args.plan][1]))) if args.plan in PLANS
+        print('\n'.join(f'{t} ({status})' for status, tests in journeys.items() for t in tests) if journeys
+              else '\n'.join(sorted(plan_tests(ROOT, PLANS[args.plan][1]))) if args.plan in PLANS
               else 'runner-tests, contracts, surfaces, inventory, browser, all SessionKit tests')
+        return 0
+    if journeys is not None and not any(journeys.values()):
+        print('No scripted journeys are listed in TestPlans/scripted-journeys.json; nothing to run.')
         return 0
     (ROOT / '.build').mkdir(exist_ok=True)
     with (ROOT / '.build/verification.lock').open('w') as lock:
@@ -411,7 +471,12 @@ def main():
             if args.plan in ('fast', 'release'):
                 run.fast()
             if args.plan != 'fast':
-                run.xcode(args.plan, args.device, args.rebuild, args.ios, args.only_testing)
+                if journeys:
+                    run.manifest['scripted_journeys'] = journeys
+                    run.xcode(args.plan, args.device, args.rebuild, args.ios,
+                              journeys['gating'] + journeys['probation'], probation=journeys['probation'])
+                else:
+                    run.xcode(args.plan, args.device, args.rebuild, args.ios, args.only_testing)
             if input_identity() != run.manifest['input_sha256']:
                 raise RuntimeError('Inputs changed during verification; rerun on a stable source state')
             run.manifest['status'] = 'verified'

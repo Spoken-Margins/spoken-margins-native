@@ -17,6 +17,8 @@ Simulator driving pitfalls observed September 24:
 - iOS keyboard tips can appear over the keyboard and swallow the next tap. Screenshot before tapping near the bottom of the screen.
 - Wait a few seconds after launch before the first tap. A cold Debug launch can show a blank screen for about 5 s.
 
+**Scripted journeys.** Some journeys also have a script: a UI test in `App/SpokenMarginsAppUITests/` that runs in the integration run, on probation until the Test Desk has seen it pass twice (`TestPlans/scripted-journeys.json`; rules in `docs/workstreams/test-lane.md`, Scripted journeys). A script never replaces the agent run or the owner's pass for the same journey.
+
 Use a Library that already has content, not only a fresh install. Many of the worst bugs appeared only with real history: old containers, earlier builds' data, long episodes.
 
 Steps are written in terms of what the listener wants, not exact button labels, so they stay valid as the UI changes.
@@ -84,3 +86,14 @@ This journey needs two installs: the sender's phone and a second device or simul
    - Pass: headers, footers and "Downloaded on …" stamps are not read aloud, and body text is.
 2. Record a written Margin, then reopen it later.
    - Pass: it opens at the right passage.
+
+## Writing scripted journeys
+
+The Test Desk keeps this guide. Threads writing a first pass follow it, and the desk corrects it when a script teaches it something.
+
+- **One script per journey.** Name the class after the journey (for example `J3RecordAndRejoinJourneyUITests`) and follow the journey's steps in order, one `XCTContext.runActivity` per step, so a failure names the step.
+- **Find controls by identifier.** Use the app's `accessibilityIdentifier`s (`home.screen`, `playback.screen`, `playback.play.button`, and so on, dot-separated with the area first), never visible text, which changes with copy edits. If a control has no identifier, add one in the same PR.
+- **Wait, don't sleep.** Use `waitForExistence(timeout:)` or an `XCTNSPredicateExpectation` on the state you need, with a timeout of a few seconds and a message that says what didn't appear. No fixed `sleep` except to prove that something does *not* change, such as a paused clock.
+- **Starting state.** A script launched with `--ui-testing` resets the app's library and seeds its own, so the desk runs scripts before building the journey library. Seed only through the existing `SPOKEN_MARGINS_UI_TEST_*` hooks.
+- **What to assert.** What a listener could see: the screen, the item or Margin that is playing, a clock that advances or holds, a control that is there and enabled. Not audio, not exact times or percentages, not layout pixels, and not anything that "looks wrong" but isn't a state; those stay with the agent run and the owner.
+- **Keep it short.** A script should finish in a few minutes. A long soak test is not a journey script.

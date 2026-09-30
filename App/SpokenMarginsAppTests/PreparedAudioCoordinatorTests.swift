@@ -113,8 +113,8 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         let reconstructed = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
         let manifest = try await reconstructed.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plan)
         XCTAssertEqual(manifest.committedChunkCount, 2)
-        let firstChunk = try await reconstructed.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0])
-        let secondChunk = try await reconstructed.committedChunk(itemId: "item", signature: signature("one"), plan: plan[1])
+        let firstChunk = try await reconstructed.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0], sourceText: "First chunk. Second chunk.")
+        let secondChunk = try await reconstructed.committedChunk(itemId: "item", signature: signature("one"), plan: plan[1], sourceText: "First chunk. Second chunk.")
         XCTAssertNotNil(firstChunk)
         XCTAssertNotNil(secondChunk)
         let artifact = fixture.prepared.appending(path: "complete.wav")
@@ -140,7 +140,7 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         try await commit(plan[0], data: Data([1, 2, 3]), coordinator: coordinator, fixture: fixture)
         XCTAssertEqual(try fixture.store.loadPreparedAudioManifest(id: manifest.id)?.committedChunkCount, 1)
         XCTAssertTrue(try fixture.store.loadAudioPreparationJobs().isEmpty)
-        let recovered = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0])
+        let recovered = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0], sourceText: "First chunk. Second chunk.")
         XCTAssertNotNil(recovered)
     }
 
@@ -169,9 +169,126 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         let committed = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: manifest.id)?.chunks.first)
         try Data([9]).write(to: fixture.prepared.appending(path: committed.relativePath), options: .atomic)
 
-        let lookup = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0])
+        let lookup = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0], sourceText: "First chunk. Second chunk.")
         XCTAssertNil(lookup)
         XCTAssertEqual(try fixture.store.loadPreparedAudioManifest(id: manifest.id)?.state, .needsRepreparation)
+    }
+
+    // #312: lookups matched a committed chunk by index alone. When the plan for that index covers
+    // a different stretch of the text, the saved audio is for other words and must not be played.
+    // (A changed article is caught earlier, by the article plan's identity.)
+    func testCommittedChunkForADifferentStretchOfTextIsNotReturned() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let plan = plans()
+        _ = try await coordinator.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plan)
+        try await commit(plan[1], data: Data([1, 2, 3]), coordinator: coordinator, fixture: fixture)
+
+        let shifted = PreparedChunkPlan(index: 1, startOffset: 12, sourceLength: 14, text: " Second chunk.")
+        let lookup = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: shifted, sourceText: "First chunk. Second chunk.")
+        XCTAssertNil(lookup, "audio saved for another stretch of the text does not match")
+        let same = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[1], sourceText: "First chunk. Second chunk.")
+        XCTAssertNotNil(same, "the same stretch of the same text still matches")
+    }
+
+    // #312: background preparation counted any chunk at an index as done, and commit refused a
+    // second chunk at that index. A chunk saved for other words was assembled into "ready offline"
+    // audio and could never be replaced. Only matching chunks count, and commit replaces the rest.
+    func testAChunkSavedForOtherWordsIsNotCountedAndIsReplaced() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let plan = plans()
+        let shifted = PreparedChunkPlan(index: 1, startOffset: 12, sourceLength: 14, text: " Second chunk.")
+        let manifest = try await coordinator.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plan)
+        try await commit(plan[0], data: Data([1]), coordinator: coordinator, fixture: fixture)
+        try await commit(shifted, data: Data([2]), coordinator: coordinator, fixture: fixture)
+
+        let stale = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: manifest.id))
+        XCTAssertEqual(stale.chunks.map(\.index), [0, 1])
+        XCTAssertEqual(PreparedAudioCoordinator.matchingChunks(in: stale, plan: plan, sourceText: "First chunk. Second chunk.").map(\.index), [0],
+                       "the chunk saved for other words does not count as prepared")
+
+        try await commit(plan[1], data: Data([3, 4]), coordinator: coordinator, fixture: fixture)
+        let replaced = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: manifest.id))
+        XCTAssertEqual(PreparedAudioCoordinator.matchingChunks(in: replaced, plan: plan, sourceText: "First chunk. Second chunk.").map(\.index), [0, 1],
+                       "committing the planned chunk replaces it")
+        XCTAssertEqual(replaced.chunks.count, 2)
+        let lookup = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[1], sourceText: "First chunk. Second chunk.")
+        XCTAssertEqual(lookup.map { try? Data(contentsOf: $0.audioURL) }, Data([3, 4]))
+    }
+
+    // #375 audit: a demand window's job ended once every index in it had some saved chunk, even
+    // when those chunks were saved for other words. Only matching chunks make it prepared.
+    func testADemandWindowOfChunksSavedForOtherWordsIsNotPrepared() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let plan = plans()
+        let manifest = try await coordinator.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plan)
+        try await commit(plan[0], data: Data([1]), coordinator: coordinator, fixture: fixture)
+        try await commit(PreparedChunkPlan(index: 1, startOffset: 12, sourceLength: 14, text: " Second chunk."),
+                         data: Data([2]), coordinator: coordinator, fixture: fixture)
+        let saved = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: manifest.id))
+        XCTAssertEqual(saved.chunks.map(\.index), [0, 1])
+        XCTAssertTrue(PreparedAudioCoordinator.isPrepared(Array(plan.prefix(1)), in: saved, sourceText: "First chunk. Second chunk."))
+        XCTAssertFalse(PreparedAudioCoordinator.isPrepared(plan, in: saved, sourceText: "First chunk. Second chunk."),
+                       "chunk 1 was saved for other words")
+    }
+
+    // #375 audit: saved ranges hold offsets, not words. An edit that keeps every offset ("chunk"
+    // to "chonk") matched the old audio. A manifest now records the article it was made from.
+    func testAudioMadeFromOtherWordsAtTheSameOffsetsDoesNotMatch() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let plan = plans()
+        let original = "First chunk. Second chunk.", edited = "First chunk. Second chonk."
+        let manifest = try await coordinator.begin(itemId: "item", sourceText: original, signature: signature("one"), plan: plan)
+        try await commit(plan[1], data: Data([1]), coordinator: coordinator, fixture: fixture)
+        let saved = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: manifest.id))
+
+        let stale = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[1], sourceText: edited)
+        XCTAssertNil(stale, "audio for the old words doesn't match the edited text")
+        XCTAssertTrue(PreparedAudioCoordinator.matchingChunks(in: saved, plan: plan, sourceText: edited).isEmpty)
+        let same = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[1], sourceText: original)
+        XCTAssertNotNil(same, "the unchanged text still matches")
+
+        let restarted = try await coordinator.begin(itemId: "item", sourceText: edited, signature: signature("one"), plan: plan)
+        XCTAssertTrue(restarted.chunks.isEmpty, "preparing the edited text starts over")
+
+        var legacy = saved
+        legacy.articleIdentity = nil
+        try fixture.store.savePreparedAudioManifest(legacy)
+        let kept = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[1], sourceText: original)
+        XCTAssertNotNil(kept, "a manifest from before #312 keeps the range check alone")
+    }
+
+    // #375 audit (Done when 2): assembly stitches the article plan's chunks, the same plan the
+    // player's lookups and background preparation use (the player side is SupertonicSpeechTests).
+    func testAssemblyChunksAreTheArticlePlan() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let article = (1...8).map { "Sentence \($0) of the article carries enough ordinary words to fill part of a chunk." }
+            .joined(separator: " ")
+        let plan = PreparedChunkPlan.articlePlan(article)
+        XCTAssertGreaterThan(plan.count, 1)
+        _ = try await coordinator.begin(itemId: "item", sourceText: article, signature: signature("one"), plan: plan)
+        for entry in plan {
+            let input = fixture.root.appending(path: "input-\(entry.index).wav")
+            try Data([UInt8(entry.index)]).write(to: input)
+            try await coordinator.commit(itemId: "item", signature: signature("one"), plan: entry, sourceText: article, audioURL: input, durationMs: 1_000)
+        }
+        let manifest = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: "prepared-item-one"))
+        let chunks = try PreparedAudioCoordinator.assemblyChunks(plan: plan, manifest: manifest, sourceText: article, preparedRoot: fixture.prepared)
+        let articlePlan = NarrationChunkPlanner.articlePlan(article).chunks
+        XCTAssertEqual(chunks.map(\.startOffset), articlePlan.map(\.startOffset))
+        XCTAssertEqual(chunks.map(\.sourceLength), articlePlan.map(\.sourceLength))
+        XCTAssertEqual(chunks.map(\.text), articlePlan.map(\.text))
+        XCTAssertEqual(chunks.map(\.boundary), articlePlan.map(\.boundary))
+        XCTAssertTrue(chunks.allSatisfy { FileManager.default.fileExists(atPath: $0.audioURL.path) })
     }
 
     func testStopPersistsCancellationWithoutDiscardingEarlierCommits() async throws {
@@ -190,12 +307,14 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         try await commit(plan[1], data: Data([2]), coordinator: coordinator, fixture: fixture)
         let resumed = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: manifest.id))
         XCTAssertEqual(resumed.chunks.map(\.index), [0, 1])
-        let retained = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0])
+        let retained = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0], sourceText: "First chunk. Second chunk.")
         XCTAssertNotNil(retained)
 
     }
 
-    private func commit(_ plan: PreparedChunkPlan, data: Data, coordinator: PreparedAudioCoordinator, fixture: Fixture) async throws {
+    private func commit(
+        _ plan: PreparedChunkPlan, data: Data, coordinator: PreparedAudioCoordinator, fixture: Fixture, engine: String? = nil
+    ) async throws {
         let input = fixture.root.appending(path: "input-\(plan.index).wav")
         try data.write(to: input)
         try await coordinator.commit(
@@ -204,8 +323,44 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
             plan: plan,
             sourceText: "First chunk. Second chunk.",
             audioURL: input,
-            durationMs: 1_000
+            durationMs: 1_000,
+            engine: engine
         )
+    }
+
+    // #363 audit: a stand-in (the iOS voice) committed to prepared audio was found by every later
+    // lookup and played as if it were Supertonic, and nothing could replace it. The player now
+    // skips it and tries Supertonic again, whose chunk replaces the stand-in.
+    func testAStandInChunkIsSkippedAndReplacedBySupertonic() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let plan = plans()
+        _ = try await coordinator.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plan)
+        try await commit(plan[0], data: Data([1]), coordinator: coordinator, fixture: fixture, engine: SupertonicNarrationResult.systemVoiceEngine)
+        let standIn = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0], sourceText: "First chunk. Second chunk.")
+        XCTAssertNil(standIn, "the stand-in isn't played as Supertonic")
+
+        try await commit(plan[0], data: Data([7, 7]), coordinator: coordinator, fixture: fixture, engine: SupertonicNarrationResult.systemVoiceEngine)
+        try await commit(plan[0], data: Data([2, 3]), coordinator: coordinator, fixture: fixture, engine: "supertonic")
+        let replaced = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0], sourceText: "First chunk. Second chunk.")
+        XCTAssertEqual(replaced.flatMap { try? Data(contentsOf: $0.audioURL) }, Data([2, 3]), "Supertonic's chunk replaced it")
+        let manifest = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: "prepared-item-one"))
+        XCTAssertEqual(manifest.chunks.map(\.index), [0])
+        XCTAssertNil(manifest.chunks.first?.engine)
+        XCTAssertFalse(PreparedAudioCoordinator.hasStandIns(manifest), "nothing holds back assembly now")
+        try await commit(plan[1], data: Data([4]), coordinator: coordinator, fixture: fixture, engine: SupertonicNarrationResult.systemVoiceEngine)
+        let withStandIn = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: "prepared-item-one"))
+        XCTAssertTrue(PreparedAudioCoordinator.hasStandIns(withStandIn), "a stand-in holds back assembly")
+
+        // #363 audit: a listener's explicit request retries the stand-in with Supertonic once;
+        // automatic preparation, and a request that already retried, don't.
+        var job = AudioPreparationJob(id: "job", itemId: "item", manifestId: withStandIn.id, policy: .explicit, requestedAt: Date())
+        XCTAssertEqual(PreparedAudioCoordinator.completedIndexes(withStandIn, plan: plan, sourceText: "First chunk. Second chunk.", retryingStandInsFor: job), [0])
+        job.lastFailureCode = PreparedAudioCoordinator.standInRetried
+        XCTAssertEqual(PreparedAudioCoordinator.completedIndexes(withStandIn, plan: plan, sourceText: "First chunk. Second chunk.", retryingStandInsFor: job), [0, 1])
+        job = AudioPreparationJob(id: "job", itemId: "item", manifestId: withStandIn.id, policy: .whileCharging, requestedAt: Date())
+        XCTAssertEqual(PreparedAudioCoordinator.completedIndexes(withStandIn, plan: plan, sourceText: "First chunk. Second chunk.", retryingStandInsFor: job), [0, 1])
     }
 
     // #278: Prepare on an article whose narration the fallback detached answered "already

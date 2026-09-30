@@ -28,6 +28,8 @@ enum PDFStructuredTextExtractor {
         var title: String
         var level: Int
         var pageIndex: Int
+        /// Where the entry points on its page, when the PDF says (v2 only).
+        var point: CGPoint? = nil
     }
 
     private struct TextLine {
@@ -229,7 +231,10 @@ enum PDFStructuredTextExtractor {
     /// what v1 cut (running heads, stamps, contents pages, the reference list)
     /// is labelled, and the speech path decides what is heard (I14).
     static func structuredLines(from document: PDFDocument) throws -> [StructuredDocumentLine] {
-        let outline = outlineHeadings(in: document)
+        // Merged PDFs can carry a bookmark per source file ("main.pdf"): not a heading (#355).
+        let outline = outlineHeadings(in: document).filter {
+            $0.title.range(of: #"\.pdf$"#, options: [.regularExpression, .caseInsensitive]) == nil
+        }
         var pages: [[TextLine]] = []
         for pageIndex in 0..<document.pageCount {
             pages.append(document.page(at: pageIndex).map { lines(from: $0, detectSuperscripts: true) } ?? [])
@@ -275,8 +280,9 @@ enum PDFStructuredTextExtractor {
         let firstContentsPage = pages.firstIndex { $0.contains { isTableOfContentsTitle($0.text) } }
         let bodySize = inferredBodyPointSize(from: allLines)
         let layout = BodyLayout(lines: allLines, bodySize: bodySize)
-        var insertedOutlineHeadingIDs = Set<Int>()
         var result: [StructuredDocumentLine] = []
+        // Outline entries on a page with no text start their chapter on the next page.
+        var carriedOutline: [StructuredDocumentLine.OutlineEntry] = []
 
         // The metadata title, unless the first page already prints it (v1 read it twice).
         if let title = document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String {
@@ -287,10 +293,17 @@ enum PDFStructuredTextExtractor {
             }
         }
 
+        // A contents page comes before the body (#354): the heuristic runs on a page with a
+        // "Contents" title, or on pages before the first outline destination, or, with no
+        // outline, before any heading has been read.
+        let firstOutlinePage = outline.map(\.pageIndex).min()
         for (pageIndex, pageLines) in pages.enumerated() {
             guard let page = document.page(at: pageIndex) else { continue }
             let pageOutline = outline.filter { $0.pageIndex == pageIndex }
-            let tableOfContentsLines = tableOfContentsLineIndices(in: pageLines, pageIndex: pageIndex, outline: outline)
+            let beforeBody = firstOutlinePage.map { pageIndex < $0 } ?? !result.contains(where: { $0.role == .heading })
+            let tableOfContentsLines = beforeBody || pageLines.contains(where: { isTableOfContentsTitle($0.text) })
+                ? tableOfContentsLineIndices(in: pageLines, pageIndex: pageIndex, outline: outline, strict: true)
+                : []
             let (tableLines, figureLines) = tableAndFigureLineIndices(
                 in: pageLines,
                 layout: layout,
@@ -303,13 +316,49 @@ enum PDFStructuredTextExtractor {
                 }
             )
             let titlePage = pageIndex < 2 ? titlePageRoles(in: pageLines, isFirstPage: pageIndex == 0, bodySize: bodySize, pageBox: page.bounds(for: .mediaBox)) : [:]
-            for heading in pageOutline where !pageLines.contains(where: { headingKey($0.text) == headingKey(heading.title) }) {
-                result.append(StructuredDocumentLine(text: heading.title, role: .heading, pageIndex: pageIndex, level: heading.level))
-                insertedOutlineHeadingIDs.insert(heading.id)
+            // The line each outline entry names on its page is a heading, even where a
+            // running head would sit (#347): one line, or two when the heading wraps
+            // (#355). A running head that repeats the title takes it only when no other
+            // line on the page does. An entry no line matches starts a chapter without
+            // adding text, so its title is never read in the wrong place (#355).
+            var outlineLines: [Int: (heading: OutlineHeading, text: String, span: Int)] = [:]
+            var anchors: [Int: [StructuredDocumentLine.OutlineEntry]] = [:]
+            for heading in pageOutline {
+                let keys = outlineKeys(heading.title)
+                var matches: [(start: Int, text: String, span: Int)] = []
+                for index in pageLines.indices where !tableOfContentsLines.contains(index)
+                    && !outlineLines.contains(where: { $0.key <= index && index < $0.key + $0.value.span }) {
+                    if !outlineKeys(pageLines[index].text).isDisjoint(with: keys) {
+                        matches.append((index, pageLines[index].text, 1))
+                    } else if index + 1 < pageLines.count, !tableOfContentsLines.contains(index + 1),
+                              outlineLines[index + 1] == nil,
+                              let joined = joinedHeading(pageLines[index].text, pageLines[index + 1].text, keys: keys) {
+                        matches.append((index, joined, 2))
+                    }
+                }
+                if let chosen = matches.first(where: { furnitureRole(pageLines[$0.start], page: page) == nil }) ?? matches.first {
+                    outlineLines[chosen.start] = (heading, chosen.text, chosen.span)
+                } else if let line = outlineAnchorLine(for: heading, keys: keys, in: pageLines, excluding: tableOfContentsLines,
+                                                       isFurniture: { furnitureRole($0, page: page) != nil }) {
+                    anchors[line, default: []].append(.init(title: cleaned(heading.title), level: heading.level))
+                } else {
+                    carriedOutline.append(.init(title: cleaned(heading.title), level: heading.level))
+                }
             }
+            if !pageLines.isEmpty, !carriedOutline.isEmpty {
+                anchors[0, default: []].insert(contentsOf: carriedOutline, at: 0)
+                carriedOutline = []
+            }
+            var resultIndex: [Int: Int] = [:]
             for (lineIndex, line) in pageLines.enumerated() {
-                let key = headingKey(line.text)
-                if let role = furnitureRole(line, page: page) {
+                if lineIndex > 0, outlineLines[lineIndex - 1]?.span == 2 {
+                    resultIndex[lineIndex] = result.count - 1
+                    continue
+                }
+                resultIndex[lineIndex] = result.count
+                if let match = outlineLines[lineIndex] {
+                    result.append(StructuredDocumentLine(text: match.text, role: .heading, pageIndex: pageIndex, level: match.heading.level))
+                } else if let role = furnitureRole(line, page: page) {
                     result.append(StructuredDocumentLine(text: line.text, role: role, pageIndex: pageIndex))
                 } else if tableOfContentsLines.contains(lineIndex) {
                     result.append(StructuredDocumentLine(text: line.text, role: .frontMatter, pageIndex: pageIndex))
@@ -321,11 +370,6 @@ enum PDFStructuredTextExtractor {
                     result.append(StructuredDocumentLine(text: line.text, role: .figureText, pageIndex: pageIndex))
                 } else if layout.looksLikeDisplayMath(line) {
                     result.append(StructuredDocumentLine(text: line.text, role: .equation, pageIndex: pageIndex))
-                } else if let heading = pageOutline.first(where: {
-                    !insertedOutlineHeadingIDs.contains($0.id) && headingKey($0.title) == key
-                }) {
-                    insertedOutlineHeadingIDs.insert(heading.id)
-                    result.append(StructuredDocumentLine(text: line.text, role: .heading, pageIndex: pageIndex, level: heading.level))
                 } else if outline.isEmpty
                     && (firstContentsPage.map({ pageIndex > $0 }) ?? true)
                     && isVisualHeading(line, bodySize: bodySize) {
@@ -334,6 +378,13 @@ enum PDFStructuredTextExtractor {
                     result.append(StructuredDocumentLine(text: line.text, role: .body, pageIndex: pageIndex, superscripts: line.superscripts))
                 }
             }
+            for (lineIndex, entries) in anchors {
+                guard let index = resultIndex[lineIndex] else { continue }
+                result[index].outlineEntries += entries
+            }
+        }
+        if !carriedOutline.isEmpty, !result.isEmpty {
+            result[result.count - 1].outlineEntries += carriedOutline
         }
         labelReferenceLists(&result)
         joinEquationFragments(&result)
@@ -908,15 +959,29 @@ enum PDFStructuredTextExtractor {
         return 3
     }
 
+    /// `strict` is v2's reading (#354); v1 (`markdown(from:)`) keeps the original so the
+    /// text of items imported under it doesn't change.
     private static func tableOfContentsLineIndices(
         in lines: [TextLine],
         pageIndex: Int,
-        outline: [OutlineHeading]
+        outline: [OutlineHeading],
+        strict: Bool = false
     ) -> Set<Int> {
         let contentsTitleIndices = lines.indices.filter { isTableOfContentsTitle(lines[$0].text) }
         let firstContentsTitle = contentsTitleIndices.first
         let offDestinationOutlineMatches = lines.indices.filter { lineIndex in
             let title = headingKey(lines[lineIndex].text)
+            if strict {
+                // "4.1.1 Experimental Setup" on its own page isn't an entry for "4.3.2
+                // Experimental Setup" elsewhere: a same-named entry here, or a different
+                // section number, makes it a heading.
+                if outline.contains(where: { $0.pageIndex == pageIndex && headingKey($0.title) == title }) { return false }
+                let number = sectionNumber(lines[lineIndex].text)
+                return outline.contains { heading in
+                    heading.pageIndex != pageIndex && headingKey(heading.title) == title
+                        && (number == nil || sectionNumber(heading.title) == nil || number == sectionNumber(heading.title))
+                }
+            }
             return outline.contains { heading in
                 heading.pageIndex != pageIndex && headingKey(heading.title) == title
             }
@@ -942,7 +1007,23 @@ enum PDFStructuredTextExtractor {
         } else {
             result.formUnion(pageReferencedEntries)
         }
+        if strict {
+            // A line that continues a sentence isn't an entry: its previous line ends mid-
+            // sentence (a lower-case letter, comma, semicolon, hyphen or open bracket).
+            // An entry after another entry's page number, or after the "Contents" title, stays.
+            result = result.filter { index in
+                guard index > 0, !isTableOfContentsTitle(lines[index - 1].text) else { return true }
+                return lines[index - 1].text.range(of: #"[\p{Ll},;(\-–]$"#, options: .regularExpression) == nil
+            }
+        }
         return result
+    }
+
+    /// "4.1.1" in "4.1.1 Experimental Setup"; nil when the line has no section number.
+    private static func sectionNumber(_ text: String) -> String? {
+        let text = cleaned(text)
+        guard let range = text.range(of: #"^[0-9]+(?:\.[0-9]+)*"#, options: .regularExpression) else { return nil }
+        return String(text[range])
     }
 
     private static func isTableOfContentsTitle(_ value: String) -> Bool {
@@ -985,11 +1066,13 @@ enum PDFStructuredTextExtractor {
             if let title = child.label?.trimmingCharacters(in: .whitespacesAndNewlines),
                !title.isEmpty,
                let page = child.destination?.page {
+                let point = child.destination?.point
                 result.append(OutlineHeading(
                     id: result.count,
                     title: title,
                     level: min(6, max(1, level)),
-                    pageIndex: document.index(for: page)
+                    pageIndex: document.index(for: page),
+                    point: point.flatMap { $0.y == kPDFDestinationUnspecifiedValue ? nil : $0 }
                 ))
             }
             collectOutlineChildren(child, level: level + 1, document: document, result: &result)
@@ -1029,6 +1112,59 @@ enum PDFStructuredTextExtractor {
     /// PDF bookmarks commonly omit the visible section number (for example,
     /// bookmark "Introduction" versus page text "1 Introduction"). Treating
     /// those as different headings duplicates the same authored destination.
+    /// Keys for matching outline titles in v2: the text as is, and without a leading
+    /// label, numbered or lettered ("4.3", "II.", "A.1", "Appendix A"), which outlines
+    /// usually leave off (#355). Both, because a label can look like a word: "LLM as a
+    /// Judge" would otherwise lose "LLM" as a roman numeral.
+    private static func outlineKeys(_ value: String) -> Set<String> {
+        let withoutLabel = cleaned(value).replacingOccurrences(
+            of: #"^(?:(?:chapter|appendix|section)\s+)?(?:\d+(?:\.\d+)*|[ivxlcdm]+|[a-z](?:\.?\d+)*)[\s.):-]+"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        return Set([normalized(value), normalized(withoutLabel)].filter { !$0.isEmpty })
+    }
+
+    /// A heading printed over two lines, joined, when it has one of `keys`: "Generative
+    /// Mod-" + "els" loses the line-break hyphen; anything else is joined with a space.
+    private static func joinedHeading(_ first: String, _ second: String, keys: Set<String>) -> String? {
+        var candidates = [first + " " + second]
+        if first.hasSuffix("-") { candidates.insert(String(first.dropLast()) + second, at: 0) }
+        return candidates.first { !outlineKeys($0).isDisjoint(with: keys) }
+    }
+
+    /// Where an outline entry with no printed heading starts its chapter: a line that
+    /// opens with the title ("Light stimulation: With fish…") or ends with it (a margin
+    /// stamp on the heading's baseline), else the line the entry points at, else the
+    /// page's first line that isn't furniture.
+    private static func outlineAnchorLine(
+        for heading: OutlineHeading,
+        keys: Set<String>,
+        in lines: [TextLine],
+        excluding tableOfContents: Set<Int>,
+        isFurniture: (TextLine) -> Bool
+    ) -> Int? {
+        let candidates = lines.indices.filter { !tableOfContents.contains($0) }
+        let long = keys.filter { $0.count >= 6 }
+        func printed(_ matches: (String, String) -> Bool) -> Int? {
+            candidates.first { index in
+                let line = outlineKeys(lines[index].text)
+                return long.contains { key in line.contains { matches($0, key) } }
+            }
+        }
+        if let line = printed({ $0.hasPrefix($1) }) ?? printed({ $0.hasSuffix($1) }) {
+            return line
+        }
+        if let point = heading.point {
+            let below = candidates.compactMap { index -> (index: Int, gap: CGFloat)? in
+                guard let bounds = lines[index].bounds, bounds.maxY <= point.y + 4, bounds.maxX >= point.x else { return nil }
+                return (index, point.y - bounds.maxY)
+            }
+            if let nearest = below.min(by: { $0.gap < $1.gap }) { return nearest.index }
+        }
+        return candidates.first { !isFurniture(lines[$0]) } ?? candidates.first
+    }
+
     private static func headingKey(_ value: String) -> String {
         let withoutSectionNumber = cleaned(value).replacingOccurrences(
             of: #"^(?:chapter\s+)?(?:\d+(?:\.\d+)*|[ivxlcdm]+)[\s.):-]+"#,

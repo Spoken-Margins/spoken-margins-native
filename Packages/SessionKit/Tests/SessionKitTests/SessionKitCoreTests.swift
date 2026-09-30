@@ -5059,6 +5059,47 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(sought.phase, .itemPlayback)
     }
 
+    // #346 audit: a seek while speaking reached the client as a plain play, which a playing client
+    // treats as "keep going" when it's near the live position. It must say it's a seek; a restart
+    // (a rate change) must not.
+    func testASeekWhileSpeakingIsMarkedAsASeekButARestartIsNot() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
+        )
+        let text = "First paragraph. Second paragraph. Third paragraph."
+        let item = Item(id: "item-text-seek-mark", title: "Seekable", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: InMemorySessionRepository(items: [item.id: item]), audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.seekText(toCharOffset: 28)
+        XCTAssertEqual(audio.seekingPlays, [28])
+        audio.currentOffset = 30
+        _ = try engine.restartPlaybackFromCurrentPosition()
+        XCTAssertEqual(audio.seekingPlays, [28], "a restart is a plain play")
+        _ = try engine.resumePlayback()
+        XCTAssertEqual(audio.seekingPlays.count, 1, "so is a second play")
+
+        // #346 re-audit: every explicit move is a seek, not only seekText.
+        audio.currentOffset = 38
+        _ = try engine.skipBack(unit: "sentence")
+        XCTAssertEqual(audio.seekingPlays.count, 2, "skip back: \(audio.seekingPlays)")
+        audio.currentOffset = 5
+        _ = try engine.skipForward(unit: "sentence")
+        XCTAssertEqual(audio.seekingPlays.count, 3, "skip forward: \(audio.seekingPlays)")
+        _ = try engine.playSourceFromBeginning()
+        XCTAssertEqual(audio.seekingPlays.last, 0, "play from the beginning: \(audio.seekingPlays)")
+    }
+
+    func testRoutedClientForwardsASeekToTheSpeechClient() throws {
+        let speech = RecordingAudioClient()
+        let routed = RoutedAudioPlaybackClient(speech: speech, media: RecordingAudioClient())
+        try routed.play(targetId: "item", seekingTo: 12)
+        XCTAssertEqual(speech.seekingPlays, [12])
+    }
+
     func testStartSessionSpeaksListeningMapOverviewBeforeItemText() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -5921,6 +5962,40 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.targetType, TargetType.itemTextTTS.rawValue)
         XCTAssertEqual(audio.preparedTexts.last, "Overview. Map\n\nOne. Two. Three.")
         XCTAssertEqual(audio.playedOffsets.last, "Overview. Map\n\n".count + 5)
+    }
+
+    /// #356: the first spoken unit of a fresh start is the item's title, including for a map an
+    /// older build stored with the "Structured into … listening chapters" sentence.
+    func testFreshStartSpeaksTheTitleFirstEvenForAStoredLegacyOverview() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let item = Item(id: "item-agents", title: "Evaluation Agents", mediaType: "text", text: "One. Two. Three.", externalReference: nil, status: "ready")
+        let chapters = [
+            Chapter(id: "ch-1", title: "One", startChar: 0, endChar: 5, percent: 0),
+            Chapter(id: "ch-2", title: "Two", startChar: 5, endChar: 16, percent: 31)
+        ]
+        for overview in [
+            "Structured into 2 listening chapters from canonical document headings in Evaluation Agents.",
+            ListeningMapOverviewText.appGenerated(title: item.title, chapterCount: chapters.count)
+        ] {
+            let map = ListeningMap(id: "map-agents", itemId: item.id, overview: overview, chapters: chapters)
+            let audio = RecordingAudioClient()
+            let repo = InMemorySessionRepository(items: [item.id: item], mapsByItemId: [item.id: map])
+            let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+            _ = try engine.startSession(itemId: item.id)
+
+            let spoken = try XCTUnwrap(audio.preparedTexts.last, overview)
+            XCTAssertEqual(spoken, "Evaluation Agents. 2 chapters.\n\nOne. Two. Three.", overview)
+            XCTAssertEqual(spoken.components(separatedBy: ". ").first, "Evaluation Agents", "the first spoken unit is the title")
+        }
     }
 
     func testInspectSessionDoesNotStartPlayback() throws {
@@ -7430,6 +7505,13 @@ private final class RecordingAudioClient: AudioPlaybackClient {
         currentMediaTimeValue = nil
         playedTargets.append(targetId)
         playedOffsets.append(charOffset)
+    }
+
+    var seekingPlays: [Int] = []
+
+    func play(targetId: String, seekingTo charOffset: Int) throws {
+        seekingPlays.append(charOffset)
+        try play(targetId: targetId, from: charOffset)
     }
 
     func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {

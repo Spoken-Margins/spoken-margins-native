@@ -1,5 +1,7 @@
 import contextlib
+import fcntl
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -118,6 +120,61 @@ class BuildSlotTests(unittest.TestCase):
         self.assertEqual(quick.returncode, 0)
         self.assertIn('build slot 1/2 acquired', err)
         self.assertNotIn('waiting', err)  # the killed holders' slots were free at once
+
+
+class HolderNoteTests(unittest.TestCase):
+    """Wait messages name only live holders (#395): a note left on a free lock is not a holder."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.state = Path(self.temporary.name) / 'state'
+        self.state.mkdir()
+        patch = unittest.mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(self.state)})
+        patch.start()
+        self.addCleanup(patch.stop)
+        sys.path.insert(0, str(SCRIPTS))
+        import lane_slots
+        self.slots = lane_slots
+        self.quiet = open(os.devnull, 'w')
+        self.addCleanup(self.quiet.close)
+        exited = subprocess.Popen([sys.executable, '-c', 'pass'])
+        exited.wait()
+        self.dead_pid = exited.pid
+
+    def note(self, name, pid, label):
+        (self.state / name).write_text(json.dumps({'pid': pid, 'cwd': '/somewhere', 'label': label,
+                                                   'started': '2026-09-29T10:00:00'}))
+
+    def test_a_dead_pids_note_on_a_free_lock_is_not_named(self):
+        # The Test Desk's case: the watcher exited, its slot was free, and its note stayed behind.
+        self.note('b.lock', self.dead_pid, 'the exited watcher')
+        live, _, _ = self.slots.acquire(['a.lock'], 'slot', 'the live job', out=self.quiet)
+        self.addCleanup(self.slots.release_handle, live)
+        waited = io.StringIO()
+        with unittest.mock.patch.object(self.slots, 'POLL_SECONDS', 0.01):
+            with self.assertRaises(TimeoutError) as raised:
+                self.slots.acquire(['a.lock', 'b.lock'], 'slot', 'waiter', out=waited, max_wait=0.5,
+                                   allowed=lambda: 1, why=lambda: 'only one allowed')
+        for message in (str(raised.exception), waited.getvalue()):
+            self.assertIn(f'pid {os.getpid()}', message)
+            self.assertIn('the live job', message)
+            self.assertNotIn(f'pid {self.dead_pid} ', message)
+            self.assertNotIn('the exited watcher', message)
+
+    def test_a_held_lock_whose_taker_exited_is_marked_gone(self):
+        # lane-sim-boot takes the slot and exits; the watcher it started keeps the lock.
+        with open(self.state / 'a.lock', 'a+') as inherited:
+            fcntl.flock(inherited, fcntl.LOCK_EX)
+            self.note('a.lock', self.dead_pid, 'lane-sim-boot T4')
+            with self.assertRaises(TimeoutError) as raised:
+                self.slots.acquire(['a.lock'], 'slot', 'waiter', out=self.quiet, max_wait=0)
+        self.assertIn(f'pid {self.dead_pid} (gone', str(raised.exception))
+        self.assertIn('lane-sim-boot T4', str(raised.exception))
+
+    def test_a_free_lock_with_a_live_pids_note_is_not_named(self):
+        self.note('a.lock', os.getpid(), 'stale note')
+        self.assertEqual(self.slots._read_holders(['a.lock']), [])
 
 
 @unittest.skipUnless(shutil.which('xcodebuild'), 'needs Xcode')
