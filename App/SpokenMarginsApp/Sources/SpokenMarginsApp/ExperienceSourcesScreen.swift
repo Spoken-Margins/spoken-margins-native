@@ -346,7 +346,7 @@ struct ExperienceSourcesScreen: View {
 
     private var emptyDetail: String {
         if isNarrowed { return "Nothing new matches this filter." }
-        switch filter {
+        return switch filter {
         case .all: "Follow a feed or connect a Quick Folder. New entries will wait for an explicit choice."
         case .feeds: "No new entries from followed feeds."
         case .folder: "No new eligible files in your Quick Folder."
