@@ -111,6 +111,7 @@ class TestScopeTests(unittest.TestCase):
         result = self.classify(APP + 'Gate1AppModel.swift')
         self.assertEqual(result['tier'], 'T3')
         self.assertIn('SpokenMarginsAppTests/Gate1AppModelWorkflowTests', result['lane_request'])
+        self.assertEqual(result['app_tests'], ['Gate1AppModelWorkflowTests'])  # the lane runner adds these (#351)
 
     def test_mixed_diff_takes_the_highest_tier_and_keeps_every_suggestion(self):
         result = self.classify('docs/testing.md', KIT + 'SessionKit/ListeningEdition.swift',

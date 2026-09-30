@@ -56,6 +56,10 @@ public struct PreparedAudioChunk: Codable, Equatable, Sendable, Identifiable {
     public var checksumSHA256: String
     public var durationMs: Int
     public var committedAt: Date
+    /// The engine that made this chunk when it isn't the manifest's own, for example the iOS voice
+    /// standing in for a garbled Supertonic chunk (#311). Nil in chunks from earlier builds, and
+    /// for chunks the manifest's engine made; Build 29's decoder ignores the field.
+    public var engine: String?
 
     public init(
         id: String,
@@ -65,7 +69,8 @@ public struct PreparedAudioChunk: Codable, Equatable, Sendable, Identifiable {
         byteCount: Int64,
         checksumSHA256: String,
         durationMs: Int,
-        committedAt: Date = Date()
+        committedAt: Date = Date(),
+        engine: String? = nil
     ) {
         self.id = id
         self.index = index
@@ -75,6 +80,7 @@ public struct PreparedAudioChunk: Codable, Equatable, Sendable, Identifiable {
         self.checksumSHA256 = checksumSHA256
         self.durationMs = max(0, durationMs)
         self.committedAt = committedAt
+        self.engine = engine
     }
 }
 
@@ -107,6 +113,9 @@ public struct PreparedAudioManifest: Codable, Equatable, Sendable, Identifiable 
     public var failureCode: String?
     public var createdAt: Date
     public var updatedAt: Date
+    /// The article plan's identity (NarrationChunkPlanner) of the text this audio was made from.
+    /// Nil for manifests made before #312; Build 29's decoder ignores the field.
+    public var articleIdentity: String?
 
     public init(
         schemaVersion: String = "prepared-audio-manifest.v1",
@@ -120,10 +129,12 @@ public struct PreparedAudioManifest: Codable, Equatable, Sendable, Identifiable 
         artifact: PreparedAudioArtifact? = nil,
         failureCode: String? = nil,
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        articleIdentity: String? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.id = id
+        self.articleIdentity = articleIdentity
         self.itemId = itemId
         self.sourcePackageId = sourcePackageId
         self.signature = signature

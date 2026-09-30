@@ -6,9 +6,15 @@ Spoken Margins is a native iPhone/iPad listening app (iOS/iPadOS 26+). Listeners
 
 Replace this section when the focus changes; do not append to it.
 
-- **Baseline:** Build 29, tag `testflight/0.1-build-29` (`fcc4974`), is the last shipped build (internal TestFlight, 2026-09-25).
-- **Parallel workstreams:** work is split into streams, each with a brief, in [docs/workstreams/](docs/workstreams/README.md). Start there: it lists the streams, what gates what, and the first testable build (Build 30).
-- **Working branch:** streams branch `ws/<id>` from `next` and open PRs into `next`. Only the owner moves `main`. Build 30 work already on branches `play-this-moment` (#156, #158, #159, #166) and `private-feed-urls` (#168) goes into `next` first.
+- **Baseline:** Build 29, tag `testflight/0.1-build-29` (`fcc4974`), is the last shipped build (internal TestFlight, 2026-09-25). `main` stays there; only the owner moves it.
+- **Integration:** `next` carries the Build 30 work, including the new PDF reader and the voice fixes. It goes to testers only after it passes the owner's own use: "working means not being riddled with bugs."
+- **Parallel workstreams:** streams and briefs are in [docs/workstreams/](docs/workstreams/README.md). Streams branch `ws/<id>` from `next` and open PRs into `next`. The owner's Claude Code project hands out work, one thread per `ready` issue, and triages new issues each morning. Hourly scheduled tasks on the Mac report the machine and runner on #337, run Codex audits, and test next's tip; the lane runner merges the `automerge` PRs it passes. There is no standing triage desk ("The lead session" in [kickoff.md](docs/workstreams/kickoff.md) says who does what).
+- **Owner's standing calls (2026-09-29).** Don't ask again:
+  - **Use the token allowance.** The subscriptions are paid for. Aim for roughly linear use of each weekly allowance, Claude and Codex, by its reset. Waste means little working output per token, not high spend.
+  - **The design direction is not changing.** Build on the current look. Where the stream plan says a stream waits on D1, that gate is gone.
+  - **The server on the owner's VPS is approved.** App features that use it go ahead. Any "waits on the owner's hosting call" gate is gone.
+  - **No off switches for new features.** The way back is reverting the merge.
+  - **Merge finished work on host tests plus both builds.** The Test Desk tests the merged tip end to end, instead of per-PR simulator gating.
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
@@ -30,7 +36,8 @@ Replace this section when the focus changes; do not append to it.
 
 ## How to work
 
-- **One agent per stream, one change at a time within it.** Streams run in parallel only as laid out in [docs/workstreams/](docs/workstreams/README.md). Don't spawn manager, implementer and auditor chains. Use sub-agents only for read-only research and for a fresh-context review of your own diff.
+- **One agent per stream, one change at a time within it.** Streams run in parallel only as laid out in [docs/workstreams/](docs/workstreams/README.md). Don't spawn manager, implementer and auditor chains: one owner per change, and one writer per set of files. Sub-agents and workflows are fine for exploration, reviews, critics, and tests in their own worktrees, as long as they don't edit the files you're changing.
+- **A session ends at its PR, not at a compaction.** One issue per session or project thread. When its PR merges, or it hands the issue back, it stops: the next piece of work starts in a fresh session that reads its state from GitHub (the issue, the PR, the lane reports). Don't rely on compaction to keep a session going; it drops detail at a point nobody chose. If a session grows large before its PR is done (a local session can check with the usage tool; past about 300,000 tokens), it pushes its work, posts a short hand-off on the issue (what's done, what's next, what it learned), hands the issue back, and stops.
 - **Small, verified commits.** Each commit is one logical change with a message that says what was wrong and why the change fixes it. The commit message and PR description are the record, so don't write separate handoff, audit or status files for routine work.
 - **Branches.** Work on your stream's branch off `next`. Merging to `main`, pushing `main`, archiving, uploading and distributing are the owner's decisions; ask first.
 - **Decide reversible things yourself.** When a choice can be undone later, post it on your stream's tracking issue under a **Default taken** heading (the options, your pick, why) and keep going on your pick; the owner vetoes by number. Stop and ask only when the choice touches the owner's data, packet or database compatibility, money, anything public, `main` or a release, or taste (design, voice).
