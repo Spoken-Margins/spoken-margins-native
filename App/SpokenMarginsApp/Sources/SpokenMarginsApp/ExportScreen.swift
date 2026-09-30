@@ -195,6 +195,17 @@ struct ExportScreen: View {
 }
 
 #if canImport(UIKit)
+extension View {
+    /// The share sheet for a file while `url` is set; closing it clears `url` (#493).
+    func fileShareSheet(_ url: Binding<URL?>) -> some View {
+        sheet(isPresented: Binding(get: { url.wrappedValue != nil }, set: { if !$0 { url.wrappedValue = nil } })) {
+            if let file = url.wrappedValue {
+                SessionActivityView(activityItems: [file], onSuccessfulCompletion: {})
+            }
+        }
+    }
+}
+
 private struct SessionActivityView: UIViewControllerRepresentable {
     @Environment(\.dismiss) private var dismiss
     let activityItems: [Any]

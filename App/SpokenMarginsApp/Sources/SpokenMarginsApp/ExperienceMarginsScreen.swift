@@ -16,6 +16,7 @@ struct ExperienceMarginsScreen: View {
 
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
+    @State private var markdownFileURL: URL?
 
     var body: some View {
         NavigationStack {
@@ -47,6 +48,7 @@ struct ExperienceMarginsScreen: View {
             .background(AppColors.bone)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("margins.screen")
+            .fileShareSheet($markdownFileURL)
             .navigationTitle("Margins")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -120,6 +122,18 @@ struct ExperienceMarginsScreen: View {
                     .buttonStyle(.borderless)
                     .accessibilityLabel("Share Margins from \(group.itemTitle)")
                     .accessibilityIdentifier("margins.shareItem.\(group.itemID)")
+                    // Every active Margin of the item, not only those the search shows (#493).
+                    Button {
+                        markdownFileURL = model.marginMarkdownFileURL(
+                            for: model.marginRows.filter { $0.interjection.itemId == group.itemID }.map(\.interjection),
+                            asItem: true
+                        )
+                    } label: {
+                        Image(systemName: "doc.text").frame(minWidth: 44, minHeight: 44)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Share Margins from \(group.itemTitle) as Markdown")
+                    .accessibilityIdentifier("margins.shareItemMarkdown.\(group.itemID)")
                     }
                     .padding(.top, 16)
                     .padding(.bottom, 6)

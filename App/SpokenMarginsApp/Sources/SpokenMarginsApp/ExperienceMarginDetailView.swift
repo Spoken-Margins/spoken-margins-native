@@ -1,3 +1,4 @@
+import SessionKit
 import SwiftUI
 import UIKit
 
@@ -8,6 +9,7 @@ struct ExperienceMarginDetailView: View {
     @State private var pendingNavigation: NavigationIntent?
     @State private var showsManagement = false
     @State private var actionFeedback: UserFeedbackEvent?
+    @State private var markdownFileURL: URL?
     let row: MarginRow
 
     private enum NavigationIntent { case moment, item }
@@ -41,6 +43,12 @@ struct ExperienceMarginDetailView: View {
                     }
                     Button("Copy with Context", systemImage: "doc.on.doc") {
                         model.copyInterjectionWithContext(current.interjection)
+                    }
+                    if MarginMarkdownShare.hasNote(current.interjection) {
+                        Button("Share as Markdown", systemImage: "square.and.arrow.up") {
+                            markdownFileURL = model.marginMarkdownFileURL(for: [current.interjection], asItem: false)
+                        }
+                        .accessibilityIdentifier("marginDetail.shareMarkdown.button")
                     }
                     if current.canPlayRecording {
                         Button(
@@ -77,6 +85,7 @@ struct ExperienceMarginDetailView: View {
                 }
             }
             .buttonStyle(MarginDetailActionButtonStyle())
+            .fileShareSheet($markdownFileURL)
             .overlay(alignment: .top) {
                 if let actionFeedback { UserFeedbackBanner(feedback: actionFeedback).padding(.horizontal, 16) }
             }

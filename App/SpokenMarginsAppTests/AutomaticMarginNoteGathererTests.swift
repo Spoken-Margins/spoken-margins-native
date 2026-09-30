@@ -36,5 +36,21 @@ final class AutomaticMarginNoteGathererTests: XCTestCase {
         XCTAssertEqual(result.notes.map(\.id), ["session-a:ij-001"], "blank and deleted Margins are skipped")
         XCTAssertTrue(result.notes.first?.markdown.contains("This is the Margin to save.") == true)
         XCTAssertTrue(result.notes.first?.markdown.contains("A Notes Test Article") == true)
+
+        // "Share as Markdown" (#493): the shared temp file holds the same note the notes folder gets.
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(id: "margin-output", displayName: "Margin output", capabilities: [:]),
+            repository: store
+        )
+        let margins = try store.loadInterjections(sessionId: "session-a")
+        let saved = try XCTUnwrap(margins.first { $0.id == "ij-001" })
+        let shared = try XCTUnwrap(try MarginMarkdownShare.file(for: saved, engine: engine))
+        let url = try MarginMarkdownShare.write(shared, under: root.appending(path: "share"))
+        XCTAssertEqual(url.pathExtension, "md")
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), result.notes.first?.markdown)
+        // The item's file carries only that note too: the others are blank or deleted.
+        let itemFile = try XCTUnwrap(try MarginMarkdownShare.file(forItemMargins: margins, engine: engine))
+        XCTAssertEqual(itemFile.fileName, "Margins - A Notes Test Article.md")
+        XCTAssertEqual(itemFile.markdown, result.notes.first?.markdown)
     }
 }
