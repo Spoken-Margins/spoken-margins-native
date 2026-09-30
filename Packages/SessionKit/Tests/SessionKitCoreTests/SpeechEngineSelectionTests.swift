@@ -51,6 +51,64 @@ final class SpeechEngineSelectionTests: XCTestCase {
         XCTAssertEqual(log, "thermal=serious lowPower=true power=external memoryBackoff=false")
     }
 
+    /// #314: a stop keeps its reason. Before, an assembly failure read as "using the iOS system
+    /// voice", which was wrong: playback never left the on-device voice.
+    func testEveryGenerationStopSaysWhyAndAnAssemblyFailureKeepsItsError() {
+        struct DiskFull: Error {}
+        let reason = SpeechGenerationStopReason.assemblyFailed(DiskFull())
+        XCTAssertEqual(reason, "prepared_audio_assembly_failed: DiskFull()")
+
+        let assembly = SpeechGenerationStopReason.listenerExplanation(stopReason: reason, fallbackReason: nil)
+        XCTAssertTrue(assembly.contains("Couldn't save the finished audio"), assembly)
+        XCTAssertFalse(assembly.contains("iOS system voice"), assembly)
+        XCTAssertEqual(
+            SpeechGenerationStopReason.listenerExplanation(stopReason: reason, fallbackReason: .deviceTooWarm),
+            assembly
+        )
+
+        // The stop's own reason decides. The model's fallback reason can be left from another
+        // item (#314 audit): A stopped by the listener, B hit a memory warning, back on A.
+        XCTAssertEqual(
+            SpeechGenerationStopReason.listenerExplanation(stopReason: "listener_stopped_generation", fallbackReason: .memoryWarning),
+            SpeechFallbackReason.listenerStoppedGeneration.listenerExplanation
+        )
+        XCTAssertFalse(
+            SpeechGenerationStopReason.listenerExplanation(stopReason: "supertonic_render_timeout", fallbackReason: .memoryWarning)
+                .contains("iOS")
+        )
+        XCTAssertEqual(
+            SpeechGenerationStopReason.listenerExplanation(stopReason: nil, fallbackReason: .memoryWarning),
+            SpeechFallbackReason.memoryWarning.listenerExplanation,
+            "Only a stop without a reason falls back to the model's reason"
+        )
+        // A render failure the iOS voice didn't take over from arrives without a fallback reason.
+        // The line says why preparing stopped and never claims the iOS voice is playing.
+        for code in ["supertonic_render_timeout", "supertonic_resource_pressure", "supertonic_render_failed:SomeError"] {
+            let line = SpeechGenerationStopReason.listenerExplanation(stopReason: code, fallbackReason: nil)
+            XCTAssertFalse(line.contains("iOS"), "\(code): \(line)")
+            XCTAssertTrue(line.contains("Retry"), "\(code): \(line)")
+        }
+        XCTAssertTrue(
+            SpeechGenerationStopReason.listenerExplanation(stopReason: "supertonic_render_timeout", fallbackReason: nil)
+                .contains("couldn't keep up")
+        )
+        // Play on an item whose generation is already stopped goes straight to the iOS voice.
+        XCTAssertEqual(
+            SpeechGenerationStopReason.listenerExplanation(
+                stopReason: SpeechGenerationStopReason.generationDisabledCode, fallbackReason: nil
+            ),
+            "Generation stopped · using the iOS system voice"
+        )
+        XCTAssertEqual(
+            SpeechGenerationStopReason.listenerExplanation(stopReason: "memory_warning", fallbackReason: nil),
+            SpeechFallbackReason.memoryWarning.listenerExplanation
+        )
+        XCTAssertEqual(
+            SpeechGenerationStopReason.listenerExplanation(stopReason: nil, fallbackReason: nil),
+            "Generation stopped · using the iOS system voice"
+        )
+    }
+
     func testRateIsOneMultiplierMappedOntoTheMeasuredSystemCurve() {
         XCTAssertEqual(SpeechRateRule.systemSpeechRate(forMultiplier: 1), SpeechRateRule.systemDefaultRate)
         // The old mapping sent 1.75× as rate 0.875, which measured 3.1× real speed.

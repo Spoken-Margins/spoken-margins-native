@@ -13,8 +13,9 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
 - A request identical to one that already has a PASS or FAIL report (same head merged into the
   same next, tier and tests) runs once. After an INCONCLUSIVE report, asking again runs again.
 - T2 builds for simulator and device (unsigned) through scripts/xcodebuild-lane.
-- T3 runs the named app-hosted tests through verify-tests.py on a fresh iOS 26 simulator, created
-  for the job and deleted afterwards. It is booted under the lane's boot rules (scripts/lane_sim.py):
+- T3 runs the named app-hosted tests, plus every app test class the base branch's test-scope.py
+  suggests for the PR's diff (#351), through verify-tests.py on a fresh iOS 26 simulator, created
+  for the job and deleted afterwards. The report lists the classes it added and how long each plan took. It is booted under the lane's boot rules (scripts/lane_sim.py):
   one boot at a time, no builds meanwhile, no retry after a failed boot, a stop at the first crash
   during boot, and a long wait for the first boot's data migration. The job holds the Mac's one
   simulator slot throughout, so it never runs alongside a Test Desk job. A crash flood stops the run.
@@ -31,7 +32,9 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   push; if next moved meanwhile, the push is refused and it tests again on the newest next (up to
   MERGE_ATTEMPTS). It won't merge a PR that changes .github/ or scripts/lane* (a PR can change the
   workflow that tests it), or an audio, persistence or packet change without a Codex audit comment:
-  those pass or fail as usual, and a person merges them.
+  those pass or fail as usual, and a person merges them. A PR someone asked T3 for merges only on a
+  T3 PASS (#410): while its newest T3 report is FAIL or INCONCLUSIVE, or its newest T3 request has
+  no report yet, the automerge run reports that verdict (INCONCLUSIVE while waiting) and doesn't merge.
 - PR code (builds and tests) runs without the GitHub token in its environment, and the checkout
   keeps no credentials, so only this script's own fetch and push can use the token.
 - Build folders stay warm between jobs. The checkout wipes the workspace, so the tree's .build (the
@@ -98,6 +101,7 @@ MARKER = re.compile(r'<!-- lane-request: (\{.*?\}) -->')
 NOTE = '<!-- lane-note -->'
 REQUEST = re.compile(r'^\s*/lane\s+(T\d)\b', re.M)
 REPORT = re.compile(r'^Lane report \S+ — (PASS|FAIL|INCONCLUSIVE)', re.M)
+IDENTICAL = re.compile(r'^Lane: identical (T\d) request for (\w+) already reported \((PASS|FAIL)\)', re.M)
 
 
 # ---- Requests -----------------------------------------------------------------------------------
@@ -128,6 +132,20 @@ def is_runner_comment(body: str) -> bool:
     return bool(MARKER.search(body)) or NOTE in body
 
 
+def report_identity(body: str) -> dict | None:
+    match = MARKER.search(body)
+    try:
+        return json.loads(match.group(1)) if match else None
+    except ValueError:
+        return None
+
+
+def is_automerge_comment(body: str) -> bool:
+    """An automerge run's report or note: the lane job never ran the /lane request before it."""
+    return (report_identity(body) or {}).get('tier') == 'auto' or \
+        (NOTE in body and body.startswith('Lane: the automerge run'))
+
+
 def pending_requests(comments: list[dict]) -> tuple[dict | None, bool]:
     """The newest T2/T3 request the runner hasn't answered, and whether a T4/T5 request is waiting.
 
@@ -138,7 +156,8 @@ def pending_requests(comments: list[dict]) -> tuple[dict | None, bool]:
     for index, comment in enumerate(comments):
         body = comment.get('body') or ''
         if is_runner_comment(body):
-            runner_answered = index
+            if not is_automerge_comment(body):  # the automerge job answers no /lane request (#410)
+                runner_answered = index
             continue
         if REPORT.search(body):
             desk_answered = index
@@ -315,6 +334,19 @@ def diff_scope(tree: Path, base: str) -> dict:
     return policy.classify(paths, diffs, root=tree)
 
 
+def t3_scope(tree: Path, base: str, evidence: Path) -> tuple[list[str], list[str]]:
+    """test-scope.py's app test classes for the PR's diff, and a note if it couldn't say.
+
+    A broken policy doesn't stop the run: the requested tests still run, and the report says so.
+    """
+    try:
+        scope = diff_scope(tree, base)
+    except Exception as error:  # noqa: BLE001 - the report names it
+        return [], [f'test-scope.py could not classify the diff ({error!r}), so only the requested tests ran']
+    (evidence / 'scope.json').write_text(json.dumps(scope, indent=2))
+    return scope_classes(scope), []
+
+
 def hot_file_violations(tree: Path, base: str, labels) -> list[str]:
     """next's hot-file ratchet on the tree's HEAD (none until the ratchet is on next)."""
     ratchet = base_policy(tree, base, 'scripts/hot_file_ratchet.py')
@@ -372,6 +404,41 @@ def merge_blockers(scope: dict, comments: list[dict]) -> list[str]:
     if risky and not any((c.get('body') or '').lstrip().startswith(AUDITS) for c in comments):
         reasons.append(f'it touches {" and ".join(risky)} and has no "Codex audit (Astra)" comment yet')
     return reasons
+
+
+def t3_gate(comments: list[dict]) -> tuple[str, str] | None:
+    """(verdict, why) when the PR's T3 request stands in the way of the runner's merge, else None.
+
+    #408 merged on host tests and builds while its T3 report, minutes older, said FAIL (build-for-testing
+    broke before any test ran), and its changed tests had run nowhere. A PR with no T3 request is not
+    held. With one, the newest T3 request must have a report, and the newest T3 report must be PASS.
+    A FAIL or INCONCLUSIVE on an earlier head still holds a later head until a newer T3 passes.
+    """
+    asked, latest = -1, None
+    for index, comment in enumerate(comments):
+        body = comment.get('body') or ''
+        url = comment.get('html_url') or 'an earlier comment'
+        wanted, verdict, identical = report_identity(body), REPORT.search(body), IDENTICAL.search(body)
+        if wanted and verdict:
+            if wanted.get('tier') == 'T3':
+                latest = index, verdict.group(1), wanted.get('commit', ''), url
+        elif identical and NOTE in body:
+            if identical.group(1) == 'T3':  # "already reported": the request is answered by that report
+                latest = index, identical.group(3), identical.group(2), url
+        elif not is_runner_comment(body) and not verdict:  # a Test Desk report is no request (pending_requests)
+            request = parse_request(body)
+            if request and request['tier'] == 'T3':
+                asked = index
+    if asked < 0:
+        return None
+    again = 'after a T3 PASS, push or remove and re-add automerge to merge'
+    if latest is None or latest[0] < asked:
+        return 'INCONCLUSIVE', f'this PR\'s newest /lane T3 request has no lane report yet; {again}'
+    _, verdict, commit, url = latest
+    if verdict != 'PASS':
+        return verdict, (f'the newest T3 lane report on this PR is {verdict} (on {commit[:7]}: {url}), and a PR '
+                         f'asked for T3 merges only on a T3 PASS. Fix it or ask for T3 again; {again}')
+    return None
 
 
 def build_merge_commit(tree: Path, base: str, head: str, pr: int, title: str) -> tuple[str | None, list[str]]:
@@ -436,6 +503,9 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
     """The automerge run: test the merge commit, and push it to <base> on PASS unless something blocks it."""
     notes: list[str] = []
     for attempt in range(1, attempts + 1):
+        # Each retry gets its own folder: verify-tests.py refuses an --output folder that exists (#404).
+        tried = evidence if attempt == 1 else evidence / f'attempt-{attempt}'
+        tried.mkdir(parents=True, exist_ok=True)
         merge_sha, conflicts = build_merge_commit(ROOT, base, head, pr, pull.get('title', ''))
         if conflicts:
             return 'INCONCLUSIVE', 'no simulator', 'nothing', notes + [
@@ -443,13 +513,16 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 f'Merge {base} into your branch and push; the automerge label runs it again.']
         warm = warm_build_folders(ROOT)
         scope = diff_scope(ROOT, base)
-        (evidence / 'scope.json').write_text(json.dumps(scope, indent=2))
+        (tried / 'scope.json').write_text(json.dumps(scope, indent=2))
         verdict, where, ran, details = run_automerge(
-            scope, evidence, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)))
+            scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)))
         details = [f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR); {warm}'] \
             + notes + details
         if verdict != 'PASS':
             return verdict, where, ran, details
+        held = t3_gate(github.comments())  # read now: a T3 report may have landed while this ran
+        if held:
+            return held[0], where, ran, details + [f'not merged: {held[1]}.']
         blockers = merge_blockers(scope, comments)
         if blockers:
             return verdict, where, ran, details + [f'not merged by the runner: {b}. The desk merges it.'
@@ -579,16 +652,49 @@ def wait_for_room_to_build(out=sys.stdout, max_wait: float = BUILD_RUNNER_WAIT, 
 
 # ---- T3 -----------------------------------------------------------------------------------------
 
+def full_selector(selector: str) -> str:
+    return selector if selector.startswith(APP_TEST_TARGET + '/') else f'{APP_TEST_TARGET}/{selector}'
+
+
+def scope_classes(scope: dict) -> list[str]:
+    """The app test classes test-scope.py suggests for the diff."""
+    if 'app_tests' in scope:
+        return list(scope['app_tests'])
+    # A test-scope.py from before #351 names them only in its suggested lane request.
+    return re.findall(rf'{APP_TEST_TARGET}/(\w+)', scope.get('lane_request') or '')
+
+
+def with_scope_classes(requested: list[str], classes: list[str]) -> tuple[list[str], list[str]]:
+    """The requested selectors plus the diff's test classes, and which classes that added.
+
+    #220 merged while a test in the class its diff touched failed on every head: each request named a
+    few methods, and the runner ran only those. A requested method inside an added class is dropped,
+    since the class runs it anyway.
+    """
+    named = {full_selector(s) for s in requested}
+    added = [c for c in dict.fromkeys(classes) if full_selector(c) not in named]
+    covered = tuple(full_selector(c) + '/' for c in added)
+    return [s for s in requested if not full_selector(s).startswith(covered)] + added, added
+
+
+def count_tests(selector: str, plans: dict[str, set]) -> int:
+    full = full_selector(selector)
+    return len({t for tests in plans.values() for t in tests if t == full or t.startswith(full + '/')})
+
+
 def plan_for_tests(selectors: list[str], plans: dict[str, set]) -> tuple[dict[str, list[str]], list[str]]:
-    """Group selectors by the plan holding them; selectors no plan holds are returned separately."""
+    """Group selectors by the plans holding them; selectors no plan holds are returned separately.
+
+    A class split across plans (SupertonicSpeechTests: one method runs only in AudioAdapters) goes to
+    each plan that runs part of it, or the rest of it would silently not run.
+    """
     grouped, unknown = {}, []
     for selector in selectors:
-        full = selector if selector.startswith(APP_TEST_TARGET + '/') else f'{APP_TEST_TARGET}/{selector}'
-        plan = next((p for p, tests in plans.items()
-                     if any(t == full or t.startswith(full + '/') for t in tests)), None)
-        if plan:
+        full = full_selector(selector)
+        holding = [p for p, tests in plans.items() if any(t == full or t.startswith(full + '/') for t in tests)]
+        for plan in holding:
             grouped.setdefault(plan, []).append(full)
-        else:
+        if not holding:
             unknown.append(selector)
     return grouped, unknown
 
@@ -616,6 +722,17 @@ def summarize_manifest(manifest: dict) -> dict:
     return summary
 
 
+def failed_step_errors(manifest: dict, output: Path, limit: int = 3) -> list[str]:
+    """The first error lines from the log of the step that stopped verify-tests.py.
+
+    Its log stays on the Mac, so without these a report says only "Process exit 70" (#410).
+    """
+    for step in manifest.get('steps', []):
+        if step.get('exit_code') and not step.get('interrupted'):
+            return first_errors(output / f'{step.get("name")}.log', limit)
+    return []
+
+
 def t3_verdict(summaries: list[dict], statuses: list[str]) -> str:
     if statuses and all(status == 'verified' for status in statuses):
         return 'PASS'
@@ -630,12 +747,15 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[
     plans = list(grouped.items())
     for position, (plan, selectors) in enumerate(plans):
         output = evidence / f'verify-{plan}'
+        started = time.monotonic()
         manifest = run_plan(plan, selectors, output)
+        took = time.monotonic() - started
         summary = summarize_manifest(manifest)
         summaries.append(summary)
         statuses.append(manifest.get('status', 'missing'))
         ran.append(f'{", ".join(s.split("/", 1)[1] for s in selectors)} ({summary["passed"]} passed'
-                   f'{", " + str(len(summary["failed"])) + " failed" if summary["failed"] else ""})')
+                   f'{", " + str(len(summary["failed"])) + " failed" if summary["failed"] else ""}'
+                   f'; {plan} plan, build and tests, {duration(took)})')
         for test in summary['failed'][:10]:
             details.append(f'{test} — expected: passes. observed: failed. evidence: {output}/tests.xcresult')
         if summary['out_of_time']:
@@ -646,6 +766,7 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[
                            'The simulator\'s boot has a separate budget and had finished before it started.')
         if manifest.get('status') != 'verified' and not summary['failed']:
             details.append(f'{plan}: {manifest.get("error") or manifest.get("status")}. evidence: {output}/manifest.json')
+            details += [f'{plan}: {line}' for line in failed_step_errors(manifest, output)]
         if summary['flood']:
             skipped = [p for p, _ in plans[position + 1:]]
             if skipped:
@@ -669,17 +790,39 @@ def first_boot(udid: str, log) -> tuple:
     return None, info
 
 
-def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str, str, list[str], str, str]:
-    """Returns verdict, where, ran, details, crashes, cc."""
+def run_t3(tests: list[str], request_id: str, evidence: Path,
+           classes: list[str] = ()) -> tuple[str, str, str, list[str], str, str]:
+    """Returns verdict, where, ran, details, crashes, cc.
+
+    Runs the requested selectors plus `classes`, test-scope.py's app test classes for the diff.
+    """
     from test_inventory import plan_tests
-    if not tests:
-        return ('INCONCLUSIVE', 'no simulator', 'nothing', ['The T3 request names no tests. Add `tests: Class/method, …` '
-                '(scripts/test-scope.py suggests them).'], 'none', '')
+    if not tests and not classes:
+        return ('INCONCLUSIVE', 'no simulator', 'nothing', ['The T3 request names no tests, and test-scope.py suggests '
+                'no app test classes for this diff. Add `tests: Class/method, …`.'], 'none', '')
     plans = {plan: plan_tests(ROOT, name) for plan, name in PLANS.items()}
-    grouped, unknown = plan_for_tests(tests, plans)
-    if unknown:
-        return ('FAIL', 'no simulator', 'nothing', [f'Not in any app test plan: {", ".join(unknown)}. A named test '
+    _, missing = plan_for_tests(tests, plans)  # checked before an added class can absorb a misspelled method
+    if missing:
+        return ('FAIL', 'no simulator', 'nothing', [f'Not in any app test plan: {", ".join(missing)}. A named test '
                 'that does not exist is a failure (verify-tests.py rule).'], 'none', '')
+    selectors, added = with_scope_classes(tests, list(classes))
+    grouped, unknown = plan_for_tests(selectors, plans)
+    scope = []
+    running = [c for c in added if c not in unknown]
+    if running:
+        count = sum(count_tests(c, plans) for c in running)
+        scope.append(f'test-scope added for this diff: {", ".join(f"{c} ({count_tests(c, plans)})" for c in running)}; '
+                     f'{count} test{"s" if count != 1 else ""} beyond the request')
+    if len(running) < len(added):
+        scope.append(f'test-scope suggested, but no app test plan runs: {", ".join(c for c in added if c in unknown)}')
+    if not grouped:
+        return 'INCONCLUSIVE', 'no simulator', 'nothing', scope + ['Nothing to run.'], 'none', ''
+    verdict, where, ran, details, crashes, cc = _run_t3_grouped(grouped, request_id, evidence)
+    return verdict, where, ran, scope + details, crashes, cc
+
+
+def _run_t3_grouped(grouped, request_id, evidence):
+    """Take the simulator slot and run the grouped selectors on a fresh device."""
     import lane_sim
     runtime = lane_sim.newest_runtime()
     if not runtime:
@@ -957,8 +1100,9 @@ def main(argv=None) -> int:
             where, crashes, details = 'no simulator (compile only)', 'none', [warm] + details
         else:
             warm = warm_build_folders(ROOT)
-            verdict, where, ran, details, crashes, cc = run_t3(request['tests'], request_id, evidence)
-            details = [warm] + details
+            classes, problem = t3_scope(ROOT, args.base, evidence)
+            verdict, where, ran, details, crashes, cc = run_t3(request['tests'], request_id, evidence, classes)
+            details = [warm] + problem + details
     except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
         verdict, where, ran, crashes = 'INCONCLUSIVE', 'lane error', 'nothing', 'unknown'
         details = [f'The lane itself failed: {error!r}. evidence: {evidence}']

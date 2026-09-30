@@ -922,6 +922,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var podcastDownloadRecords: [String: PodcastDownloadRecord] = [:]
     @Published var preparedTextAudioStatus = "Not started"
     @Published private(set) var onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.inactive.rawValue
+    @Published private(set) var onDeviceSpeechGenerationStopReason: String?
     /// Why narration is in the iOS voice instead of the chosen one (I14); nil when it isn't.
     @Published private(set) var speechFallbackReason: SpeechFallbackReason?
     @Published private(set) var onDeviceSpeechGenerationProgress = RenderedSpeechGenerationProgress(
@@ -9118,29 +9119,20 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var onDeviceSpeechGenerationStatusDescription: String {
-        switch onDeviceSpeechGenerationStatus {
-        case RenderedSpeechGenerationState.rendering.rawValue:
-            let progress = onDeviceSpeechGenerationProgress
-            guard progress.totalChunks > 0 else {
-                return "Preparing the full Supertonic audio on this iPhone"
-            }
-            if isOnDeviceSpeechGenerationDelayed {
-                return "Still rendering chunk \(min(progress.completedChunks + 1, progress.totalChunks)) of \(progress.totalChunks) · \(progress.percent)% complete"
-            }
-            return "Generating full audio · \(progress.percent)% (\(progress.completedChunks) of \(progress.totalChunks) chunks)"
-        case RenderedSpeechGenerationState.ready.rawValue:
-            return "Prepared audio is ready for playback"
-        case RenderedSpeechGenerationState.stopped.rawValue:
-            return speechFallbackReason?.listenerExplanation ?? "Generation stopped · using the iOS system voice"
-        default:
-            return "On-device voice generation is inactive"
-        }
+        (RenderedSpeechGenerationState(rawValue: onDeviceSpeechGenerationStatus) ?? .inactive).listenerDescription(
+            progress: onDeviceSpeechGenerationProgress, isDelayed: isOnDeviceSpeechGenerationDelayed,
+            stopReason: onDeviceSpeechGenerationStopReason, fallbackReason: speechFallbackReason
+        )
     }
 
-    private func updateOnDeviceSpeechGenerationState(_ state: RenderedSpeechGenerationState) {
+    func updateOnDeviceSpeechGenerationState(_ state: RenderedSpeechGenerationState, stopReason: String?) {
         if onDeviceSpeechGenerationStatus != state.rawValue { onDeviceSpeechGenerationStatus = state.rawValue }
+        if onDeviceSpeechGenerationStopReason != stopReason { onDeviceSpeechGenerationStopReason = stopReason }
+        // Rendering, ready or idle: the iOS voice isn't standing in, so an old reason is stale (#314).
+        if state != .stopped, speechFallbackReason != nil { speechFallbackReason = nil }
         if canPrepareLibraryAudio { startForegroundAudioPreparationIfNeeded() }
         diagnostics["onDeviceSpeechGeneration"] = state.rawValue
+        diagnostics["onDeviceSpeechGenerationStopReason"] = stopReason
         guard state != .rendering else { return }
         onDeviceSpeechGenerationDelayTask?.cancel()
         onDeviceSpeechGenerationDelayTask = nil
@@ -10798,9 +10790,9 @@ final class Gate1AppModel: ObservableObject {
                         self?.handleSpeechPlaybackInterruption(event)
                     }
                 },
-                onGenerationStateChange: { [weak self] state in
+                onGenerationStateChange: { [weak self] state, stopReason in
                     Task { @MainActor [weak self] in
-                        self?.updateOnDeviceSpeechGenerationState(state)
+                        self?.updateOnDeviceSpeechGenerationState(state, stopReason: stopReason)
                     }
                 },
                 onGenerationProgress: { [weak self] progress in
@@ -10808,25 +10800,27 @@ final class Gate1AppModel: ObservableObject {
                         self?.updateOnDeviceSpeechGenerationProgress(progress)
                     }
                 },
-                onPreparationPlan: { itemId, sourceText, plan in
-                    // A turn is not a Library item. A source with an audible
-                    // overview also has different chunk boundaries from its
-                    // source-only offline representation; disk cache still
-                    // serves both, keyed by exact spoken text.
+                onPreparationPlan: { itemId, articleIdentity, plan in
+                    // A turn is not a Library item. The player's article chunks
+                    // share the article plan's identity with background
+                    // preparation (#312); a changed article matches nothing.
                     guard let signature = try? await signatureTask.value,
-                          let item = try? store.loadItem(id: itemId), item.text == sourceText else { return }
+                          let item = try? store.loadItem(id: itemId), let sourceText = item.text,
+                          NarrationChunkPlanner.identity(ofArticle: sourceText) == articleIdentity else { return }
                     _ = try? await coordinator.begin(itemId: itemId, sourceText: sourceText, signature: signature, plan: plan, schedulesJob: false)
                 },
-                onPreparedChunk: { itemId, sourceText, plan, audioURL, durationMs in
+                onPreparedChunk: { itemId, articleIdentity, plan, audioURL, durationMs, engine in
                     guard let signature = try? await signatureTask.value,
-                          let item = try? store.loadItem(id: itemId), item.text == sourceText else { return }
-                    try? await coordinator.commit(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText, audioURL: audioURL, durationMs: durationMs)
+                          let item = try? store.loadItem(id: itemId), let sourceText = item.text,
+                          NarrationChunkPlanner.identity(ofArticle: sourceText) == articleIdentity else { return }
+                    try? await coordinator.commit(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText, audioURL: audioURL, durationMs: durationMs, engine: engine)
                 },
                 articleText: { itemId in try? store.loadItem(id: itemId).text },
-                preparedChunkLookup: { itemId, sourceText, plan in
+                preparedChunkLookup: { itemId, articleIdentity, plan in
                     guard let signature = try? await signatureTask.value,
-                          let item = try? store.loadItem(id: itemId), item.text == sourceText else { return nil }
-                    return try? await coordinator.committedChunk(itemId: itemId, signature: signature, plan: plan)
+                          let item = try? store.loadItem(id: itemId), let sourceText = item.text,
+                          NarrationChunkPlanner.identity(ofArticle: sourceText) == articleIdentity else { return nil }
+                    return try? await coordinator.committedChunk(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText)
                 },
                 onPreparedAudio: { [weak self] itemId, prepared in
                     Task { @MainActor [weak self] in
@@ -15349,7 +15343,7 @@ final class Gate1AppModel: ObservableObject {
                 plan: plan,
                 maximumChunkCount: job.maximumChunkCount
             )
-            let completedIndexes = Set(manifest.chunks.map(\.index))
+            let completedIndexes = PreparedAudioCoordinator.completedIndexes(manifest, plan: plan, sourceText: sourceText, retryingStandInsFor: job)
             let ledger = offlineStorageLedger ?? OfflineStorageLedger(repository: store, rootDirectory: support)
             offlineStorageLedger = ledger
             let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
@@ -15360,7 +15354,7 @@ final class Gate1AppModel: ObservableObject {
             guard let next = eligiblePlan.first(where: { !completedIndexes.contains($0.index) }) else {
                 // All chunks are intact but nothing is assembled (#278): assemble now, because it
                 // otherwise happens only right after the last chunk is committed.
-                if manifest.isCompleteButUnassembled, manifest.plannedChunkCount == plan.count {
+                if manifest.isCompleteButUnassembled, manifest.plannedChunkCount == plan.count, completedIndexes.count == plan.count {
                     try await finishBackgroundPreparedAudio(
                         item: item, sourceText: sourceText, voice: voice, signature: signature,
                         manifest: manifest, plan: plan, store: store, ledger: ledger,
@@ -15377,29 +15371,26 @@ final class Gate1AppModel: ObservableObject {
             let renderer = try makeSupertonicRenderer()
             // Paced per render, not through the shared lifecycle flag (#377).
             let pacedRenderer = BackgroundPreparationRenderer(base: renderer)
-            let rendered: SupertonicNarrationResult
             do {
                 try Task.checkCancellation()
                 recordDeveloperDiagnostic("preparation.render.begin", ["item": DeveloperDiagnosticRecording.token(item.id), "chunk": String(next.index)])
-                rendered = try await supertonicOutputGuard(wrapping: pacedRenderer, systemVoice: speechVoiceIdentifier).render(
-                    text: next.text,
-                    voice: voice,
-                    language: "en",
-                    speed: 1,
-                    synthesisSteps: 8
-                )
-                try Task.checkCancellation()
-                guard !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else {
-                    throw CancellationError()
+                // The render is discarded once committed (copied), or on any failure.
+                try await supertonicOutputGuard(wrapping: pacedRenderer, systemVoice: speechVoiceIdentifier).render(
+                    text: next.text, voice: voice, language: "en", speed: 1, synthesisSteps: 8
+                ) { rendered in
+                    try Task.checkCancellation()
+                    guard !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else {
+                        throw CancellationError()
+                    }
+                    try await coordinator.commit(
+                        itemId: item.id,
+                        signature: signature,
+                        plan: next,
+                        sourceText: sourceText,
+                        audioURL: rendered.audioURL,
+                        durationMs: Int((rendered.duration * 1_000).rounded()), engine: rendered.engine
+                    )
                 }
-                try await coordinator.commit(
-                    itemId: item.id,
-                    signature: signature,
-                    plan: next,
-                    sourceText: sourceText,
-                    audioURL: rendered.audioURL,
-                    durationMs: Int((rendered.duration * 1_000).rounded())
-                )
             } catch {
                 try? await ledger.release(reservationId: reservation.id)
                 throw error
@@ -15424,8 +15415,8 @@ final class Gate1AppModel: ObservableObject {
             job = (try store.loadAudioPreparationJobs()).first(where: { $0.id == job.id }) ?? job
             recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count)])
             job.nextChunkIndex = updated.chunks.count
-            job.lastFailureCode = nil
-            if updated.chunks.count == plan.count {
+            job.lastFailureCode = PreparedAudioCoordinator.hasStandIns(updated) ? PreparedAudioCoordinator.standInRetried : nil
+            if PreparedAudioCoordinator.matchingChunks(in: updated, plan: plan, sourceText: sourceText).count == plan.count {
                 try store.saveAudioPreparationJob(job)
                 try await finishBackgroundPreparedAudio(
                     item: item,
@@ -15440,9 +15431,8 @@ final class Gate1AppModel: ObservableObject {
                     support: support
                 )
             } else if let maximumChunkCount = job.maximumChunkCount {
-                let completed = Set(updated.chunks.map(\.index))
                 let horizon = plan.prefix(min(maximumChunkCount, plan.count))
-                if horizon.allSatisfy({ completed.contains($0.index) }) {
+                if PreparedAudioCoordinator.isPrepared(Array(horizon), in: updated, sourceText: sourceText) {
                     if automaticAudioPreparationPolicy == .whileCharging {
                         job.policy = .whileCharging
                         job.maximumChunkCount = nil
@@ -15537,24 +15527,12 @@ final class Gate1AppModel: ObservableObject {
         coordinator: PreparedAudioCoordinator,
         support: URL
     ) async throws {
-        let byIndex = Dictionary(uniqueKeysWithValues: manifest.chunks.map { ($0.index, $0) })
-        let chunks = try plan.map { entry -> SupertonicPreparedChunk in
-            guard let committed = byIndex[entry.index] else {
-                throw SessionKitError.persistenceFailed("prepared_chunk_missing")
-            }
-            let slice = RenderedSpeechChunker.sourceSlice(
-                from: SpeechTextNormalizer.normalize(sourceText),
-                startOffset: entry.startOffset,
-                maxCharacters: RenderedSpeechChunker.spokenCostBudget
-            )
-            return SupertonicPreparedChunk(
-                startOffset: entry.startOffset,
-                sourceLength: entry.sourceLength,
-                text: entry.text,
-                boundary: slice.boundary,
-                audioURL: support.appending(path: "PreparedAudio/\(committed.relativePath)")
-            )
-        }
+        // A stand-in (iOS voice) chunk waits for a play to retry Supertonic; don't bake it in (#363).
+        guard !PreparedAudioCoordinator.hasStandIns(manifest) else { return }
+        let chunks = try PreparedAudioCoordinator.assemblyChunks(
+            plan: plan, manifest: manifest, sourceText: sourceText,
+            preparedRoot: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
+        )
         let assemblyReservation = try await ledger.reserve(
             ownerId: "prepared-artifact-\(manifest.id)",
             byteCount: max(1, manifest.chunks.reduce(0) { $0 + $1.byteCount })
@@ -15601,15 +15579,7 @@ final class Gate1AppModel: ObservableObject {
     private nonisolated static let preparationPlanCache = PreparedChunkPlanCache()
 
     private nonisolated static func preparedChunkPlan(for sourceText: String) -> [PreparedChunkPlan] {
-        preparationPlanCache.value(for: sourceText) {
-            let normalized = SpeechTextNormalizer.normalize(sourceText)
-            return RenderedSpeechChunker.sourceSlices(from: normalized, maxCharacters: RenderedSpeechChunker.spokenCostBudget)
-                .enumerated()
-                .map { index, planned in
-                    PreparedChunkPlan(index: index, startOffset: planned.startOffset,
-                                      sourceLength: planned.slice.sourceLength, text: planned.slice.text)
-                }
-        }
+        preparationPlanCache.value(for: sourceText) { PreparedChunkPlan.articlePlan(sourceText) }
     }
 
     nonisolated static func preparationHorizon(

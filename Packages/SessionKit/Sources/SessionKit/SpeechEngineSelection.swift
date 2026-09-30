@@ -88,6 +88,47 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
     }
 }
 
+/// Why on-device narration stopped preparing (#314). The Supertonic client reports a code with
+/// every stop: diagnostics keep it whole, and the player turns it into one sentence.
+public enum SpeechGenerationStopReason {
+    /// Every chunk rendered, but joining them into one saved file failed.
+    public static let assemblyFailedCode = "prepared_audio_assembly_failed"
+    /// Play found generation already stopped for this item and went straight to the iOS voice.
+    public static let generationDisabledCode = "supertonic_generation_disabled"
+    static let noReasonExplanation = "Generation stopped · using the iOS system voice"
+
+    /// The code plus the error, so a device report shows what went wrong.
+    public static func assemblyFailed(_ error: any Error) -> String {
+        "\(assemblyFailedCode): \(String(describing: error))"
+    }
+
+    /// One line for the player. The stop's own reason decides: it belongs to the item on
+    /// screen, while `fallbackReason` is the model's one app-wide value and may be left from
+    /// another item, so it is used only for a stop that came without a reason.
+    ///
+    /// A stop that handed over to the iOS voice carries a `SpeechFallbackReason` raw value. A raw
+    /// Supertonic code means a render failed while the on-device voice stayed in charge, so the
+    /// line says why preparing stopped and never that the iOS voice is playing.
+    public static func listenerExplanation(stopReason: String?, fallbackReason: SpeechFallbackReason?) -> String {
+        guard let stopReason, !stopReason.isEmpty else {
+            return fallbackReason?.listenerExplanation ?? noReasonExplanation
+        }
+        if stopReason.hasPrefix(assemblyFailedCode) {
+            return "Couldn't save the finished audio on this iPhone. Tap Retry to try again."
+        }
+        if stopReason == generationDisabledCode { return noReasonExplanation }
+        if let known = SpeechFallbackReason(rawValue: stopReason) { return known.listenerExplanation }
+        switch SpeechFallbackReason(supertonicCode: stopReason, resourceBlock: nil) {
+        case .renderTooSlow:
+            return "The on-device voice stopped preparing because it couldn't keep up. Tap Retry to try again."
+        case .deviceTooWarm, .memoryWarning:
+            return "The on-device voice stopped preparing while this iPhone was too warm or low on memory. Tap Retry to try again."
+        case .playbackFailed, .listenerStoppedGeneration:
+            return "The on-device voice stopped preparing after a rendering problem. Tap Retry to try again."
+        }
+    }
+}
+
 public enum SpeechEnginePolicy {
     /// Nil when the on-device voice may render. Low Power Mode and charging are not reasons:
     /// the listener chose the voice, and narration is the task they asked for (#183).
