@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import SessionKit
 
 // B2 M1: any Substack link (post, home page, custom domain, share link, profile, /feed) resolves

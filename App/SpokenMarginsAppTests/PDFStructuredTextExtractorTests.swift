@@ -171,6 +171,54 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertEqual(StructuredDocumentSpeech.spokenLines(document), ["Reasoning and the aptitude, is revised, and CO2 levels rose in every cohort we studied."])
     }
 
+    func testV2ReadsEachOutlineHeadingOnceWhereItIsPrinted() throws {
+        // #355: outline titles no line matched ("A.1" labels, wrapped headings, run-in
+        // headings) were inserted at the top of their page and read, then the printed
+        // heading was read again; a bookmark with no printed title at all was read too.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10)]
+        let bold: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 12)]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("The introduction explains why listening to papers is slower than reading them." as NSString).draw(at: CGPoint(x: 60, y: 120), withAttributes: body)
+            context.beginPage()
+            ("A.1 Large Language Models Used" as NSString).draw(at: CGPoint(x: 60, y: 120), withAttributes: bold)
+            ("Three models were compared on the same set of forty prompts." as NSString).draw(at: CGPoint(x: 60, y: 140), withAttributes: body)
+            ("4.3 Handling Multiple Evaluations and" as NSString).draw(at: CGPoint(x: 60, y: 180), withAttributes: bold)
+            ("Agreement Thresholds" as NSString).draw(at: CGPoint(x: 60, y: 196), withAttributes: bold)
+            ("Each answer was scored twice and disagreements were settled." as NSString).draw(at: CGPoint(x: 60, y: 216), withAttributes: body)
+            ("Light stimulation: flashes were delivered full-field to one eye." as NSString).draw(at: CGPoint(x: 60, y: 256), withAttributes: body)
+            context.beginPage()
+            ("These notes list every prompt used in the study, in the order given." as NSString).draw(at: CGPoint(x: 60, y: 120), withAttributes: body)
+        }
+        let pdf = try XCTUnwrap(PDFDocument(data: data))
+        let root = PDFOutline()
+        for (title, pageIndex) in [("Large Language Models Used", 1), ("Handling Multiple Evaluations and Agreement Thresholds", 1),
+                                   ("Light stimulation", 1), ("Supplementary Notes", 2)] {
+            let entry = PDFOutline()
+            entry.label = title
+            entry.destination = PDFDestination(page: try XCTUnwrap(pdf.page(at: pageIndex)), at: CGPoint(x: 60, y: 700))
+            root.insertChild(entry, at: root.numberOfChildren)
+        }
+        pdf.outlineRoot = root
+
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ")
+        for title in ["Large Language Models Used", "Handling Multiple Evaluations and", "Light stimulation"] {
+            XCTAssertEqual(spoken.components(separatedBy: title).count - 1, 1, "\(title) is read once")
+        }
+        XCTAssertFalse(spoken.contains("Supplementary Notes"), "a bookmark with no printed title isn't read")
+        let characters = Array(document.text)
+        let headings = document.segments.filter { $0.role == .heading }.map { String(characters[$0.range.start..<$0.range.end]) }
+        XCTAssertEqual(headings, ["A.1 Large Language Models Used", "4.3 Handling Multiple Evaluations and Agreement Thresholds"])
+        XCTAssertEqual(document.outline?.map(\.title), ["Light stimulation", "Supplementary Notes"], "chapter anchors only")
+        let map = try XCTUnwrap(StructuredDocumentImport.listeningMap(for: document, title: "Paper", itemId: "item"))
+        XCTAssertEqual(Array(map.chapters.map(\.title).suffix(4)), [
+            "A.1 Large Language Models Used", "4.3 Handling Multiple Evaluations and Agreement Thresholds",
+            "Light stimulation", "Supplementary Notes",
+        ])
+    }
+
     func testV2SkipsTheAuthorNotesAtTheBottomOfPageOne() throws {
         // #250 on arXiv 2608.09666: page 1's bulleted author notes ("• Corresponding
         // author.", "• Email: ...") were read in the middle of an Introduction sentence.

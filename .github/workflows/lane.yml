@@ -2,7 +2,12 @@
 # docs/workstreams/test-lane.md for the request and report formats, and scripts/lane-runner.py.
 #
 # A stream asks by commenting `/lane T2` or `/lane T3` on its PR into next and adding the
-# lane:queued label.
+# lane:queued label. The automerge label asks for the checks a finished PR needs without a comment:
+# --plan fast, plus both builds when the diff reaches the app (scripts/test-scope.py), again on
+# every push while the label stays. On PASS the runner merges the PR itself (decision 3, approved by
+# the owner): it tests the exact merge commit, next first, and pushes it to next, unless the PR
+# changes .github/ or scripts/lane*, or is an audio, persistence or packet change with no Codex
+# audit yet (scripts/lane-runner.py).
 #
 # Trigger: pull_request. GitHub builds these runs from the PR's merge ref, which it doesn't refresh
 # when next moves, so a PR last pushed before this file reached next gets no run (#221) until it
@@ -21,12 +26,16 @@ on:
     types: [labeled, synchronize, reopened]
 
 permissions:
-  contents: read
+  # write: the runner pushes the merge commits it tested to next. The checkout keeps no credentials
+  # and the PR's own builds and tests run without the token, so only lane-runner.py (taken from the
+  # base branch) can use it.
+  contents: write
   pull-requests: write
   issues: write
 
 jobs:
   lane:
+    # /lane T2 and T3 requests: the main runner, the only one that runs simulators.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       contains(github.event.pull_request.labels.*.name, 'lane:queued') &&
@@ -37,6 +46,66 @@ jobs:
     # sits on the job, not the workflow, so skipped runs (other labels) never cancel a real one.
     concurrency:
       group: lane-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    # 150 minutes for the T3 itself (slot wait, boot and tests), plus room for the automerge run a T3
+    # PASS releases in this same job (#421): host tests and both builds, as in the automerge job.
+    timeout-minutes: 240
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      # Event values reach the shell only through these variables, always quoted.
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+      RUN_ID: ${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          # The Supertonic models are Git LFS files; without them the contracts check sees pointers.
+          # The LFS cache lives in .git, which the checkout's clean keeps, so each runner downloads
+          # the models once.
+          lfs: true
+      - name: Take the lane runner from the base branch
+        run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
+      - name: Run the request
+        id: run
+        run: >-
+          /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
+          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode explicit
+      # The check is green only on PASS (#184): project threads read the check mark. A FAIL or
+      # INCONCLUSIVE report fails this step, after the report is posted and the labels are set.
+      - name: Verdict
+        if: steps.run.outputs.reported == 'true'
+        env:
+          VERDICT: ${{ steps.run.outputs.verdict }}
+        run: |
+          echo "Lane verdict: $VERDICT (the report is on the PR)"
+          if [ "$VERDICT" != PASS ]; then
+            echo "::error title=Lane $VERDICT::The lane reported $VERDICT. The report on the PR says why."
+            exit 1
+          fi
+      - name: Tidy up after a cancelled or failed run
+        if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'
+        run: >-
+          /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --cleanup --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
+          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode explicit
+
+  automerge:
+    # The automerge label: host tests and builds only, so any runner labelled sm-lane-build takes it.
+    # The build-only runner waits for room first (lane-runner.py, wait_for_room_to_build).
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'automerge') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'automerge')
+    runs-on: [self-hosted, macOS, sm-lane-build]
+    # One runner is one lane, so runs from different PRs queue behind each other. Within a PR, a
+    # newer queued run replaces one that hasn't started, so only the newest commit is tested. This
+    # sits on the job, not the workflow, so skipped runs (other labels) never cancel a real one.
+    concurrency:
+      group: lane-auto-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     timeout-minutes: 150
     env:
@@ -52,14 +121,32 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+          persist-credentials: false
+          # The Supertonic models are Git LFS files; without them the contracts check sees pointers.
+          # The LFS cache lives in .git, which the checkout's clean keeps, so each runner downloads
+          # the models once.
+          lfs: true
       - name: Take the lane runner from the base branch
         run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
       - name: Run the request
+        id: run
         run: >-
           /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
-          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF"
+          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode auto
+      # The check is green only on PASS (#184): project threads read the check mark. A FAIL or
+      # INCONCLUSIVE report fails this step, after the report is posted and the labels are set.
+      - name: Verdict
+        if: steps.run.outputs.reported == 'true'
+        env:
+          VERDICT: ${{ steps.run.outputs.verdict }}
+        run: |
+          echo "Lane verdict: $VERDICT (the report is on the PR)"
+          if [ "$VERDICT" != PASS ]; then
+            echo "::error title=Lane $VERDICT::The lane reported $VERDICT. The report on the PR says why."
+            exit 1
+          fi
       - name: Tidy up after a cancelled or failed run
-        if: failure() || cancelled()
+        if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'
         run: >-
           /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --cleanup --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
-          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF"
+          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode auto

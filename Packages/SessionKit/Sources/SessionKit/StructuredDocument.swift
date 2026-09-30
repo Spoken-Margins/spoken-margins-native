@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 
 /// I13: a PDF's extracted text as role-labelled segments. The draft schema and
@@ -108,20 +112,38 @@ public struct StructuredDocument: Codable, Equatable, Sendable {
         }
     }
 
+    /// A chapter the PDF's outline names where no printed line matches it (#355). It
+    /// starts at `start` in `text` and has no text of its own, so nothing is spoken for it.
+    public struct OutlineAnchor: Codable, Equatable, Sendable {
+        public var title: String
+        public var level: Int
+        public var start: Int
+
+        public init(title: String, level: Int, start: Int) {
+            self.title = title
+            self.level = level
+            self.start = start
+        }
+    }
+
     public var schemaVersion: String
     public var extraction: Extraction
     public var text: String
     public var segments: [Segment]
     public var markers: [Marker]
     public var floats: [Float]
+    /// Optional, so documents saved before it existed still decode, and absent when
+    /// there are none, so readers that don't know it never see it.
+    public var outline: [OutlineAnchor]?
 
-    public init(schemaVersion: String = StructuredDocument.currentSchemaVersion, extraction: Extraction, text: String, segments: [Segment], markers: [Marker], floats: [Float] = []) {
+    public init(schemaVersion: String = StructuredDocument.currentSchemaVersion, extraction: Extraction, text: String, segments: [Segment], markers: [Marker], floats: [Float] = [], outline: [OutlineAnchor]? = nil) {
         self.schemaVersion = schemaVersion
         self.extraction = extraction
         self.text = text
         self.segments = segments
         self.markers = markers
         self.floats = floats
+        self.outline = outline
     }
 }
 
@@ -136,14 +158,27 @@ public struct StructuredDocumentLine: Equatable, Sendable {
     /// The line ends in a hyphen that splits one word with the next line ("agree-" +
     /// "ment"), not a compound ("open-" + "ended"). The extractor decides.
     public var endsWithSoftHyphen: Bool
+    /// Outline chapters that start at this line without a printed heading (#355).
+    public var outlineEntries: [OutlineEntry]
 
-    public init(text: String, role: StructuredDocument.Role, pageIndex: Int? = nil, level: Int? = nil, superscripts: [Range<Int>] = [], endsWithSoftHyphen: Bool = false) {
+    public struct OutlineEntry: Equatable, Sendable {
+        public var title: String
+        public var level: Int
+
+        public init(title: String, level: Int) {
+            self.title = title
+            self.level = level
+        }
+    }
+
+    public init(text: String, role: StructuredDocument.Role, pageIndex: Int? = nil, level: Int? = nil, superscripts: [Range<Int>] = [], endsWithSoftHyphen: Bool = false, outlineEntries: [OutlineEntry] = []) {
         self.text = text
         self.role = role
         self.pageIndex = pageIndex
         self.level = level
         self.superscripts = superscripts
         self.endsWithSoftHyphen = endsWithSoftHyphen
+        self.outlineEntries = outlineEntries
     }
 }
 
@@ -162,8 +197,12 @@ public enum StructuredDocumentBuilder {
         var length = 0
         var segments: [StructuredDocument.Segment] = []
         var markers: [StructuredDocument.Marker] = []
+        var outline: [StructuredDocument.OutlineAnchor] = []
+        // An anchor on a line with no text left after cleaning moves to the next line.
+        var pendingOutline: [StructuredDocumentLine.OutlineEntry] = []
 
         for line in lines {
+            pendingOutline += line.outlineEntries
             let cleaned = SpeechTextNormalizer.normalizeImportedTextWithSourceOffsets(line.text)
             guard !cleaned.text.isEmpty else { continue }
             let current = segments.last
@@ -175,6 +214,8 @@ public enum StructuredDocumentBuilder {
                 length += separator.count
             }
             let start = length
+            outline += pendingOutline.map { StructuredDocument.OutlineAnchor(title: $0.title, level: $0.level, start: start) }
+            pendingOutline = []
             text += cleaned.text
             length += cleaned.text.count
             if continues {
@@ -222,7 +263,8 @@ public enum StructuredDocumentBuilder {
             ),
             text: text,
             segments: segments,
-            markers: markers
+            markers: markers,
+            outline: outline.isEmpty ? nil : outline
         )
     }
 

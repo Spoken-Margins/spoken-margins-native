@@ -12,11 +12,14 @@ targets:
     platform: iOS
     sources:
       - path: App/SpokenMarginsApp/Sources
+        type: syncedFolder
         excludes:
           - SpokenMarginsApp/Gate3WatchConnectivityController.swift
           - SpokenMarginsApp/WatchPackageRenderCoordinator.swift
       - path: App/Gate2Shared/Sources
+        type: syncedFolder
       - path: App/SharedSources
+        type: syncedFolder
       - path: App/SpokenMarginsApp/Resources/Supertonic
         type: folder
         buildPhase: resources
@@ -81,6 +84,7 @@ targets:
         CFBundleDisplayName: Spoken Margins
         CFBundleShortVersionString: "0.1"
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        SMBuildCommit: $(SM_BUILD_COMMIT)
         CFBundleURLTypes:
           - CFBundleURLName: SpokenMarginsCompactControls
             CFBundleURLSchemes:
@@ -137,7 +141,9 @@ targets:
     platform: iOS
     sources:
       - path: App/SpokenMarginsGate2Widget/Sources
+        type: syncedFolder
       - path: App/Gate2Shared/Sources
+        type: syncedFolder
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.gate2widget
@@ -161,6 +167,7 @@ targets:
     platform: iOS
     sources:
       - path: App/SpokenMarginsBrowserTextExtension/Sources
+        type: syncedFolder
       - path: App/SpokenMarginsBrowserTextExtension/Resources
       - path: App/SharedResources/browserTextCapture.js
         buildPhase: resources
@@ -184,8 +191,10 @@ targets:
     platform: iOS
     sources:
       - path: App/SpokenMarginsShareExtension/Sources
+        type: syncedFolder
       - path: App/SpokenMarginsShareExtension/Resources
       - path: App/Gate2Shared/Sources
+        type: syncedFolder
         excludes:
           - Gate2CompactCommandQueue.swift
           - Gate2CompactCommandURL.swift
@@ -230,6 +239,7 @@ targets:
     platform: iOS
     sources:
       - path: App/SpokenMarginsAppUITests
+        type: syncedFolder
       - path: App/TestFixtures
         buildPhase: resources
     dependencies:
@@ -244,6 +254,7 @@ targets:
     platform: iOS
     sources:
       - path: App/SpokenMarginsAppTests
+        type: syncedFolder
         excludes:
           - Gate4WatchPackageRenderTests.swift
       - path: App/TestFixtures

@@ -1,8 +1,10 @@
 import SwiftUI
+import UIKit
 
 struct ExperienceMarginDetailView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @State private var pendingNavigation: NavigationIntent?
     @State private var showsManagement = false
     @State private var actionFeedback: UserFeedbackEvent?
@@ -42,7 +44,7 @@ struct ExperienceMarginDetailView: View {
                     }
                     if current.canPlayRecording {
                         Button(
-                            model.isPlayingInterjectionAudio(current.interjection) ? "Stop Recording" : "Play Recording",
+                            model.isPlayingInterjectionAudio(current.interjection) ? "Stop playing" : "Play Margin",
                             systemImage: model.isPlayingInterjectionAudio(current.interjection) ? "stop.fill" : "play.fill"
                         ) { model.toggleInterjectionAudioPlayback(current.interjection) }
                     }
@@ -51,6 +53,12 @@ struct ExperienceMarginDetailView: View {
                             model.retryInterjectionTranscription(current.interjection)
                         }
                         .disabled(model.isRetryingInterjectionTranscription(current.interjection))
+                    }
+                    if current.transcriptWaitsForSpeechRecognition {
+                        Button("Open Settings", systemImage: "gearshape") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                        }
+                        .accessibilityIdentifier("marginDetail.openSettings.button")
                     }
                     if !current.isWritten, current.interjection.anchorContextStatus == .unavailable {
                         Button(model.isRetryingAnchorContext(current.interjection) ? "Recovering Context…" : "Retry Context", systemImage: "arrow.clockwise") {
