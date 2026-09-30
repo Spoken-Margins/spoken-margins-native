@@ -9,6 +9,14 @@ struct PreparedChunkPlan: Equatable, Sendable {
     var startOffset: Int
     var sourceLength: Int
     var text: String
+
+    /// Background preparation's plan for an article: the article plan the player's lookups use too
+    /// (#312). Production and the tests both call this, so they can't drift apart.
+    static func articlePlan(_ articleText: String) -> [PreparedChunkPlan] {
+        NarrationChunkPlanner.articlePlan(articleText).chunks.map {
+            PreparedChunkPlan(index: $0.index, startOffset: $0.startOffset, sourceLength: $0.sourceLength, text: $0.text)
+        }
+    }
 }
 
 /// Single-entry cache: bounds retained text/plans while reusing a document
@@ -360,6 +368,13 @@ actor PreparedAudioCoordinator {
         return manifest.chunks.filter { chunk in
             planned[chunk.index].map { chunk.sourceRange == sourceRange(of: $0, manifest: manifest, sourceText: sourceText) } ?? false
         }
+    }
+
+    /// Whether every planned chunk has matching committed audio, as a demand window needs before
+    /// its job is done. A chunk saved for other words doesn't count (#375 audit).
+    static func isPrepared(_ plan: [PreparedChunkPlan], in manifest: PreparedAudioManifest, sourceText: String) -> Bool {
+        let matching = Set(matchingChunks(in: manifest, plan: plan, sourceText: sourceText).map(\.index))
+        return plan.allSatisfy { matching.contains($0.index) }
     }
 
     private static func sourceRange(of plan: PreparedChunkPlan, manifest: PreparedAudioManifest, sourceText: String) -> SourceLocator {

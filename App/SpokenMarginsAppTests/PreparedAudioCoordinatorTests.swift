@@ -219,6 +219,24 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         XCTAssertEqual(lookup.map { try? Data(contentsOf: $0.audioURL) }, Data([3, 4]))
     }
 
+    // #375 audit: a demand window's job ended once every index in it had some saved chunk, even
+    // when those chunks were saved for other words. Only matching chunks make it prepared.
+    func testADemandWindowOfChunksSavedForOtherWordsIsNotPrepared() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let plan = plans()
+        let manifest = try await coordinator.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plan)
+        try await commit(plan[0], data: Data([1]), coordinator: coordinator, fixture: fixture)
+        try await commit(PreparedChunkPlan(index: 1, startOffset: 12, sourceLength: 14, text: " Second chunk."),
+                         data: Data([2]), coordinator: coordinator, fixture: fixture)
+        let saved = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: manifest.id))
+        XCTAssertEqual(saved.chunks.map(\.index), [0, 1])
+        XCTAssertTrue(PreparedAudioCoordinator.isPrepared(Array(plan.prefix(1)), in: saved, sourceText: "First chunk. Second chunk."))
+        XCTAssertFalse(PreparedAudioCoordinator.isPrepared(plan, in: saved, sourceText: "First chunk. Second chunk."),
+                       "chunk 1 was saved for other words")
+    }
+
     func testStopPersistsCancellationWithoutDiscardingEarlierCommits() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

@@ -379,11 +379,9 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertTrue(wrong.isEmpty, "\(wrong.count) lookups asked for plans background preparation never made")
     }
 
-    /// Background preparation's plan, as the app builds it.
+    /// Background preparation's plan: the same function the app calls.
     private func backgroundPlan(_ article: String) -> [PreparedChunkPlan] {
-        NarrationChunkPlanner.articlePlan(article).chunks.map {
-            PreparedChunkPlan(index: $0.index, startOffset: $0.startOffset, sourceLength: $0.sourceLength, text: $0.text)
-        }
+        PreparedChunkPlan.articlePlan(article)
     }
 
     private func preparedLookups(spoken: String, article: String, waitFor count: Int) async throws -> [(String, PreparedChunkPlan)] {

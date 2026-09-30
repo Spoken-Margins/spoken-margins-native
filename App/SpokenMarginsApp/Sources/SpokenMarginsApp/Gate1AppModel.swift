@@ -15457,9 +15457,8 @@ final class Gate1AppModel: ObservableObject {
                     support: support
                 )
             } else if let maximumChunkCount = job.maximumChunkCount {
-                let completed = Set(updated.chunks.map(\.index))
                 let horizon = plan.prefix(min(maximumChunkCount, plan.count))
-                if horizon.allSatisfy({ completed.contains($0.index) }) {
+                if PreparedAudioCoordinator.isPrepared(Array(horizon), in: updated, sourceText: sourceText) {
                     if automaticAudioPreparationPolicy == .whileCharging {
                         job.policy = .whileCharging
                         job.maximumChunkCount = nil
@@ -15617,11 +15616,7 @@ final class Gate1AppModel: ObservableObject {
     private nonisolated static let preparationPlanCache = PreparedChunkPlanCache()
 
     private nonisolated static func preparedChunkPlan(for sourceText: String) -> [PreparedChunkPlan] {
-        preparationPlanCache.value(for: sourceText) {
-            NarrationChunkPlanner.articlePlan(sourceText).chunks.map {
-                PreparedChunkPlan(index: $0.index, startOffset: $0.startOffset, sourceLength: $0.sourceLength, text: $0.text)
-            }
-        }
+        preparationPlanCache.value(for: sourceText) { PreparedChunkPlan.articlePlan(sourceText) }
     }
 
     nonisolated static func preparationHorizon(
