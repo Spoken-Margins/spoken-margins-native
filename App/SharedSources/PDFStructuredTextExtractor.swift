@@ -293,10 +293,17 @@ enum PDFStructuredTextExtractor {
             }
         }
 
+        // A contents page comes before the body (#354): the heuristic runs on a page with a
+        // "Contents" title, or on pages before the first outline destination, or, with no
+        // outline, before any heading has been read.
+        let firstOutlinePage = outline.map(\.pageIndex).min()
         for (pageIndex, pageLines) in pages.enumerated() {
             guard let page = document.page(at: pageIndex) else { continue }
             let pageOutline = outline.filter { $0.pageIndex == pageIndex }
-            let tableOfContentsLines = tableOfContentsLineIndices(in: pageLines, pageIndex: pageIndex, outline: outline)
+            let beforeBody = firstOutlinePage.map { pageIndex < $0 } ?? !result.contains(where: { $0.role == .heading })
+            let tableOfContentsLines = beforeBody || pageLines.contains(where: { isTableOfContentsTitle($0.text) })
+                ? tableOfContentsLineIndices(in: pageLines, pageIndex: pageIndex, outline: outline, strict: true)
+                : []
             let (tableLines, figureLines) = tableAndFigureLineIndices(
                 in: pageLines,
                 layout: layout,
@@ -952,15 +959,29 @@ enum PDFStructuredTextExtractor {
         return 3
     }
 
+    /// `strict` is v2's reading (#354); v1 (`markdown(from:)`) keeps the original so the
+    /// text of items imported under it doesn't change.
     private static func tableOfContentsLineIndices(
         in lines: [TextLine],
         pageIndex: Int,
-        outline: [OutlineHeading]
+        outline: [OutlineHeading],
+        strict: Bool = false
     ) -> Set<Int> {
         let contentsTitleIndices = lines.indices.filter { isTableOfContentsTitle(lines[$0].text) }
         let firstContentsTitle = contentsTitleIndices.first
         let offDestinationOutlineMatches = lines.indices.filter { lineIndex in
             let title = headingKey(lines[lineIndex].text)
+            if strict {
+                // "4.1.1 Experimental Setup" on its own page isn't an entry for "4.3.2
+                // Experimental Setup" elsewhere: a same-named entry here, or a different
+                // section number, makes it a heading.
+                if outline.contains(where: { $0.pageIndex == pageIndex && headingKey($0.title) == title }) { return false }
+                let number = sectionNumber(lines[lineIndex].text)
+                return outline.contains { heading in
+                    heading.pageIndex != pageIndex && headingKey(heading.title) == title
+                        && (number == nil || sectionNumber(heading.title) == nil || number == sectionNumber(heading.title))
+                }
+            }
             return outline.contains { heading in
                 heading.pageIndex != pageIndex && headingKey(heading.title) == title
             }
@@ -986,7 +1007,23 @@ enum PDFStructuredTextExtractor {
         } else {
             result.formUnion(pageReferencedEntries)
         }
+        if strict {
+            // A line that continues a sentence isn't an entry: its previous line ends mid-
+            // sentence (a lower-case letter, comma, semicolon, hyphen or open bracket).
+            // An entry after another entry's page number, or after the "Contents" title, stays.
+            result = result.filter { index in
+                guard index > 0, !isTableOfContentsTitle(lines[index - 1].text) else { return true }
+                return lines[index - 1].text.range(of: #"[\p{Ll},;(\-–]$"#, options: .regularExpression) == nil
+            }
+        }
         return result
+    }
+
+    /// "4.1.1" in "4.1.1 Experimental Setup"; nil when the line has no section number.
+    private static func sectionNumber(_ text: String) -> String? {
+        let text = cleaned(text)
+        guard let range = text.range(of: #"^[0-9]+(?:\.[0-9]+)*"#, options: .regularExpression) else { return nil }
+        return String(text[range])
     }
 
     private static func isTableOfContentsTitle(_ value: String) -> Bool {

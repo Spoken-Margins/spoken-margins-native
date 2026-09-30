@@ -20,7 +20,7 @@ from check_posterboard_repair import new_crash
 import lane_sim
 from lane_slots import acquire_simulator_slot, build_slot, host_test_slot, release_handle
 
-from test_inventory import ROOT, plan_tests, swift_tests, validate
+from test_inventory import ROOT, plan_tests, swift_tests, target_tests, validate
 
 PLANS = {
     'app': ('SpokenMarginsAppBehavior', 'AppBehavior', 600),
@@ -74,6 +74,24 @@ UI_TEST_TARGET = 'SpokenMarginsAppUITests'
 def selected(test, selector):
     """Whether an -only-testing selector (Target/Class or Target/Class/method) covers a test ID."""
     return test == selector or test.startswith(selector + '/')
+
+
+def narrow_selectors(selectors, planned, available):
+    """Narrow each selector to the planned tests it covers, unless the plan includes all of them.
+
+    xcodebuild's -only-testing replaces a plan's selectedTests, so a class selector runs the whole
+    class even when the plan picks one method of it. AudioAdapters selects one SupertonicSpeechTests
+    method; `-only-testing:…/SupertonicSpeechTests` ran all 74, and the 73 outside the plan were
+    reported as unexpected (#518).
+    """
+    narrowed = []
+    for selector in selectors:
+        covered = sorted(test for test in available if selected(test, selector))
+        if all(test in planned for test in covered):
+            narrowed.append(selector)
+        else:
+            narrowed.extend(test for test in covered if test in planned)
+    return narrowed
 
 
 def dedicated_simulator(devices, ios=None):
@@ -333,6 +351,8 @@ class Run:
         unmatched = [s for s in selectors if not any(selected(test, s) for test in planned)]
         if unmatched:
             raise RuntimeError(f'Not in the {name} test plan: {", ".join(unmatched)}')
+        selectors = narrow_selectors(selectors, planned,
+                                     {f'{APP_TEST_TARGET}/{test}' for test in target_tests(ROOT, APP_TEST_TARGET)})
         if selectors:
             self.manifest['only_testing'] = selectors
         devices = json.loads(capture(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
