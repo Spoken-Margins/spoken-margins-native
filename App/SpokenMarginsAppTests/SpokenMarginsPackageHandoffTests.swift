@@ -313,11 +313,16 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         model.resetAndSeed()
         XCTAssertFalse(try store.listItems().contains { $0.media?.url == Self.podcastAudioURL })
 
+        var podcastId: String?
         for index in [1, 2, 0] {
             model.handleIncomingURL(packets[index].0)
+            // The second and third packets find the podcast the first one added, rather than adding it again.
+            XCTAssertEqual(model.spokenMarginsPackageImportReview?.matchingItemId, podcastId, senders[index].name)
             model.confirmSpokenMarginsPackageImport()
             try await waitForImportToFinish(model)
             XCTAssertNil(model.spokenMarginsPackageImportError, senders[index].name)
+            podcastId = try store.listItems().first { $0.media?.url == Self.podcastAudioURL }?.id
+            XCTAssertNotNil(podcastId, senders[index].name)
         }
 
         let podcasts = try store.listItems().filter { $0.media?.url == Self.podcastAudioURL }
@@ -329,6 +334,11 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
         // Opening one again adds nothing.
         model.handleIncomingURL(packets[0].0)
+        XCTAssertNil(model.spokenMarginsPackageImportReview)
+        XCTAssertEqual(
+            model.diagnostics["lastSpokenMarginsPackageImport"],
+            "duplicate:\(try XCTUnwrap(packets[0].1.contentDigest))"
+        )
         XCTAssertEqual(try store.listItems().filter { $0.media?.url == Self.podcastAudioURL }.count, 1)
         XCTAssertEqual(try store.loadImportedCommentaryLayers().count, 3)
     }
