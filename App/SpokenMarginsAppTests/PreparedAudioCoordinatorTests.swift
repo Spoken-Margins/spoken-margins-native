@@ -231,6 +231,10 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         let manifest = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: "prepared-item-one"))
         XCTAssertEqual(manifest.chunks.map(\.index), [0])
         XCTAssertNil(manifest.chunks.first?.engine)
+        XCTAssertFalse(PreparedAudioCoordinator.hasStandIns(manifest), "nothing holds back assembly now")
+        try await commit(plan[1], data: Data([4]), coordinator: coordinator, fixture: fixture, engine: SupertonicNarrationResult.systemVoiceEngine)
+        XCTAssertTrue(PreparedAudioCoordinator.hasStandIns(try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: "prepared-item-one"))),
+                      "a stand-in holds back assembly")
     }
 
     // #278: Prepare on an article whose narration the fallback detached answered "already

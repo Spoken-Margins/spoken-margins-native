@@ -15550,6 +15550,8 @@ final class Gate1AppModel: ObservableObject {
         coordinator: PreparedAudioCoordinator,
         support: URL
     ) async throws {
+        // A stand-in (iOS voice) chunk waits for a play to retry Supertonic; don't bake it in (#363).
+        guard !PreparedAudioCoordinator.hasStandIns(manifest) else { return }
         let byIndex = Dictionary(uniqueKeysWithValues: manifest.chunks.map { ($0.index, $0) })
         let chunks = try plan.map { entry -> SupertonicPreparedChunk in
             guard let committed = byIndex[entry.index] else {

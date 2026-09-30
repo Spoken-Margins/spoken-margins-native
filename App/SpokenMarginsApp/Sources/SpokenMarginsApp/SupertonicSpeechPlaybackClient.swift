@@ -387,6 +387,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var generationPlan: [RenderRequest] = []
     private var generationRenderOrder: [RenderRequest] = []
     private var generationResults: [Int: SupertonicPreparedChunk] = [:]
+    /// Chunks the guard gave to the iOS voice. While any remain, the whole article isn't
+    /// assembled into the item's audio, so the next play can try Supertonic again (#363 audit).
+    private var standInOffsets: Set<Int> = []
     private var initialPlaybackOffset: Int?
     private var initialRequestedSpokenOffset: Int?
     private var failedRenderReasons: [Int: String] = [:]
@@ -878,6 +881,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
             generationResults.removeAll()
+            standInOffsets.removeAll()
             initialPlaybackOffset = nil
             initialRequestedSpokenOffset = nil
             failedRenderReasons.removeAll()
@@ -945,6 +949,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
             generationResults.removeAll()
+            standInOffsets.removeAll()
             failedRenderReasons.removeAll()
             initialPlaybackOffset = nil
             initialRequestedSpokenOffset = nil
@@ -1098,6 +1103,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
             generationResults.removeAll()
+            standInOffsets.removeAll()
             failedRenderReasons.removeAll()
             preparedAudioAssemblyStarted = false
             return (source, nextGeneration, Array(urls), renderControl)
@@ -1396,6 +1402,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             guard generation == request.generation else { return (false, nil, nil, 0, 0, false) }
             inFlightOffsets.remove(request.startOffset)
             let cached = CachedAudio(url: result.audioURL, duration: result.duration, request: request)
+            if result.engine == SupertonicNarrationResult.supertonicEngine {
+                standInOffsets.remove(request.startOffset)
+            } else {
+                standInOffsets.insert(request.startOffset)
+            }
             generationResults[request.startOffset] = SupertonicPreparedChunk(
                 startOffset: request.startOffset,
                 sourceLength: request.sourceLength,
@@ -1549,6 +1560,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 generationPlan.removeAll()
                 generationRenderOrder.removeAll()
                 generationResults.removeAll()
+                standInOffsets.removeAll()
                 failedRenderReasons.removeAll()
                 initialPlaybackOffset = nil
                 initialRequestedSpokenOffset = nil
@@ -1835,6 +1847,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                   !preparedAudioAssemblyStarted,
                   !generationPlan.isEmpty,
                   generationResults.count == generationPlan.count,
+                  standInOffsets.isEmpty,
                   let targetId = generationPlan.first?.targetId else { return nil }
             preparedAudioAssemblyStarted = true
             return (

@@ -657,6 +657,34 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertNil(cache.cachedAudio(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 8))
     }
 
+    // #363 audit (#311 outcome: a wrongly flagged chunk can be rendered again): after a full
+    // listen, the whole article was assembled with its iOS-voice stand-ins and attached as the
+    // item's audio, so the stand-in played forever. It isn't assembled while a stand-in remains;
+    // with Supertonic's own audio it still is.
+    func testAnArticleWithAStandInIsNotAssembledButOneWithoutIs() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "assemble-standin-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let text = "A short sentence that Supertonic reads in about three seconds."
+        for (seconds, expectsAssembly) in [(20.0, false), (4.0, true)] {
+            let assembled = expectation(description: "assembled (\(seconds) s)")
+            assembled.isInverted = !expectsAssembly
+            let client = SupertonicSpeechPlaybackClient(
+                renderer: SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: seconds),
+                                                systemVoiceIdentifier: nil),
+                voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+                preparedAudioDirectory: root.appending(path: "assembled-\(Int(seconds))", directoryHint: .isDirectory),
+                audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
+                observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+                onPreparedAudio: { _, _ in assembled.fulfill() }
+            )
+            _ = try client.prepareSpeechText(text)
+            try client.play(targetId: "item", from: 0)
+            await fulfillment(of: [assembled], timeout: 8)
+            try client.stop()
+        }
+    }
+
     // #363 audit: a stop during a stand-in render that ignores cancellation returned a file that
     // nothing owned; the cancellation check threw and the file leaked.
     func testAStopDuringAnUncachedRenderDeletesItsFile() async throws {

@@ -337,6 +337,12 @@ actor PreparedAudioCoordinator {
         return Int64(data.count) == chunk.byteCount && SupertonicRenderIdentity.sha256(data) == chunk.checksumSHA256
     }
 
+    /// Whether any committed chunk is a stand-in. Such a manifest isn't assembled into the item's
+    /// audio, so a wrongly flagged chunk can be rendered again on a later play (#311, #363 audit).
+    static func hasStandIns(_ manifest: PreparedAudioManifest) -> Bool {
+        manifest.chunks.contains { $0.engine != nil }
+    }
+
     func committedChunk(itemId: String, signature: TTSRenderSignature, plan: PreparedChunkPlan) throws -> PreparedChunkLookupResult? {
         let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
         guard let manifest = try repository.loadPreparedAudioManifest(id: manifestId),
