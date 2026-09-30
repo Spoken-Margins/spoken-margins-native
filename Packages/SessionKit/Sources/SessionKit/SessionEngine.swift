@@ -4972,6 +4972,7 @@ public final class SessionEngine {
         }
         try repository.saveSession(stamped)
         if stamped.completionPercent > 98,
+           completionPercentIsMeasured(stamped),
            var item = try? repository.loadItem(id: stamped.itemId),
            item.sourceCompletedAt == nil {
             item.sourceCompletedAt = timestamp
@@ -4981,6 +4982,36 @@ public final class SessionEngine {
         if currentSession?.id == stamped.id {
             currentSession = stamped
         }
+    }
+
+    /// A media percent is only as good as the length it was divided by. It completes the
+    /// item only when this item's own length is known, or when the player reported
+    /// reaching the end (phase .finished). An unknown length once made any seek read as
+    /// 100%, and Build 29 episodes were marked completed on upgrade (#293, #352).
+    /// A summary or reply keeps the item's percent while it plays, so the rule follows
+    /// the item, not what is playing.
+    private func completionPercentIsMeasured(_ session: Session) -> Bool {
+        let item = item(for: session)
+        let mediaTargetId: String?
+        switch session.currentTargetType {
+        case .transcriptBackedMedia, .browserOwnedMedia:
+            mediaTargetId = session.currentTargetId
+        case .summaryTurnTTS, .assistantTurnTTS:
+            guard let item, playbackTargetType(for: item) != .itemTextTTS else { return true }
+            mediaTargetId = item.media?.url
+        case .itemTextTTS:
+            return true
+        }
+        guard session.phase != .finished, !isGeneratedTextMedia(item?.media) else {
+            return true
+        }
+        let playerDurationMs = audio.currentPlaybackPosition().flatMap {
+            $0.targetId == mediaTargetId ? $0.durationMs : nil
+        }
+        let packageDurationMs = currentWatchPackage.flatMap {
+            $0.itemId == session.itemId ? $0.primaryAudioAsset?.durationMs ?? $0.timeline.durationMs : nil
+        }
+        return [durableMediaDurationMs(for: session), packageDurationMs, playerDurationMs].contains { ($0 ?? 0) > 0 }
     }
 
     private func sentenceUnits(in text: String, includeTrailingFragment: Bool) -> [String] {
