@@ -7024,22 +7024,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    /// "Share as Markdown" (#493): the notes-folder note of one Margin, or of an item's Margins, as a
-    /// named `.md` file in a temporary folder, for the share sheet.
-    func marginMarkdownFileURL(for margins: [Interjection], asItem: Bool) -> URL? {
-        var url: URL?
-        run { engine in
-            let file = asItem ? try MarginMarkdownShare.file(forItemMargins: margins, engine: engine)
-                : try margins.first.flatMap { try MarginMarkdownShare.file(for: $0, engine: engine) }
-            guard let file else { return reportFailure("There's no written or transcribed Margin to share yet.") }
-            // One share sheet at a time, so the previous share's file can go.
-            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MarginMarkdown", isDirectory: true)
-            try? FileManager.default.removeItem(at: directory)
-            url = try MarginMarkdownShare.write(file, under: directory)
-        }
-        return url
-    }
-
     func copyInterjectionWithContext(_ interjection: Interjection, format: String = "markdown") {
         run { engine in
             let export = try engine.buildExport(options: ExportOptions(
@@ -9984,7 +9968,7 @@ final class Gate1AppModel: ObservableObject {
         } catch { marginOutputStatus = "Delivery needs attention: \(error.localizedDescription)" }
     }
 
-    private func run(_ operation: (SessionEngine) throws -> Void) {
+    func run(_ operation: (SessionEngine) throws -> Void) {
         if engine == nil {
             do {
                 let store = try requireStore()
@@ -14861,7 +14845,7 @@ final class Gate1AppModel: ObservableObject {
         reportFailure([context, message].compactMap { $0 }.joined(separator: ": "), itemId: itemId, retry: retry)
     }
 
-    private func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
+    func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
         statusMessage = "Error"
         lastError = message
         presentFeedback(UserFeedbackEvent(kind: .error, message: message, retry: retry))
