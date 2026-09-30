@@ -339,6 +339,25 @@ class ListenerRuleTests(unittest.TestCase):
         self.assertFalse(facing(self.pr('Test that a Build 29 Library keeps completion',
                                         'App/SpokenMarginsAppTests/D.swift', 'App/SpokenMarginsApp/Sources/E.swift')))
 
+    def test_lane_work_is_not_listener_facing(self):
+        # #374 (stream:A1) touched fifteen SessionKit sources, all to build them on Linux (#504).
+        linux = self.pr("Run SessionKit's core tests on Linux (T1) and on every PR into next",
+                        'Packages/SessionKit/Sources/SessionKit/SessionEngine.swift', 'scripts/verify-tests.py')
+        self.assertTrue(self.module.listener_facing(linux))  # the paths alone would count it
+        linux['labels'] = {'nodes': [{'name': 'stream:A1'}, {'name': 'automerge'}]}
+        self.assertFalse(self.module.listener_facing(linux))
+
+    def test_owner_check_none_is_no_check(self):
+        # #124 says "**Owner check:** none." and the 9b0d275 plan printed "Check: none." (#504).
+        none = {'body': '**Where:** cloud.\n**Owner check:** none.\n**Taken by:** nobody yet.'}
+        self.assertIsNone(self.module.owner_check({'body': '', 'issues': [none]}))
+        self.assertIsNone(self.module.owner_check({'body': 'Owner check: n/a', 'issues': []}))
+        self.assertEqual(self.module.owner_check({'body': 'Owner check: open a chapter list.', 'issues': [none]}),
+                         'open a chapter list.')
+        self.assertIsNone(self.module.owner_check({'body': 'Owner check: nothing (lane only)', 'issues': []}))
+        real = {'body': '**Owner check:** Nothing plays twice after a call.\n'}
+        self.assertEqual(self.module.owner_check({'body': '', 'issues': [real]}), 'Nothing plays twice after a call.')
+
     def test_owner_check_prefers_the_issue(self):
         pr = {'body': 'Owner check: from the PR', 'issues': [{'body': 'x\n**Owner check:** from the issue\nmore'}]}
         self.assertEqual(self.module.owner_check(pr), 'from the issue')
@@ -479,6 +498,51 @@ class PlanGroupingTests(unittest.TestCase):
         self.assertIn('1. **Follow sites without a feed** (found on your phone)', plan)
         self.assertIn('2. **Library wording**', plan)
         self.assertNotIn('3. ', plan)
+
+    def write(self, prs):
+        module = self.module
+        module.plan_base = lambda sha: (None, 'the start')
+        module.merged_prs = lambda base, sha: {n: f'Merge pull request #{n}' for n in prs}
+        module.fetch_prs = lambda numbers: prs
+        module.report_comments = lambda: []
+        with tempfile.TemporaryDirectory() as folder:
+            return module.write_plan(Path(folder), 'a' * 40, 'host tests').read_text()
+
+    def test_only_what_the_owner_can_check_is_in_the_ten_minutes(self):
+        # The 828597e plan (#504): one checkable item, one he couldn't judge, one that can't be seen on a phone.
+        linux = self.pr(374, "Run SessionKit's core tests on Linux (T1) and on every PR into next")
+        linux['labels'] = {'nodes': [{'name': 'stream:A1'}]}
+        chapters = self.pr(497, 'Article import: give closing notes one chapter', [
+            {'number': 124, 'title': 'Notes', 'url': 'https://example/issue/124', 'labels': {'nodes': []},
+             'body': '**Owner check:** none.\n'}])
+        fixed = self.pr(401, 'Voice keeps going after a call', [
+            {'number': 90, 'title': 'Voice stops', 'url': 'https://example/issue/90', 'body': 'It stopped.',
+             'labels': {'nodes': [{'name': 'found-on-phone'}]}}])
+        plan = self.write({
+            424: self.pr(424, "Show the build's commit in Settings", [self.issue(384, 'Double-click the Desktop icon.')]),
+            366: self.pr(366, 'Take the rendered speech cache out of the offline storage ledger'),
+            374: linux, 497: chapters, 401: fixed})
+        ten_minutes = plan.split('## Try these')[1].split('## ')[0]
+        self.assertIn("**Show the build's commit in Settings**", ten_minutes)
+        self.assertIn('Double-click the Desktop icon.', ten_minutes)
+        self.assertIn('**Voice keeps going after a call** (found on your phone)', ten_minutes)
+        self.assertIn('repeat what you did when you found it', ten_minutes)
+        self.assertNotIn('storage ledger', ten_minutes)
+        self.assertNotIn('closing notes', ten_minutes)
+        unchecked = plan.split('## Also changed (no phone check written)')[1].split('Behind the scenes')[0]
+        self.assertIn('- Take the rendered speech cache out of the offline storage ledger ([#366]', unchecked)
+        self.assertIn('- Article import: give closing notes one chapter ([#497]', unchecked)
+        self.assertNotIn('Linux', plan)
+        self.assertIn('5 pull requests merged; 4 change something you see or hear.', plan)
+        self.assertIn('Behind the scenes: 1 more pull requests', plan)
+        self.assertNotIn('Check: none', plan)
+        self.assertNotIn('look for what the title describes', plan)
+
+    def test_with_no_written_checks_the_plan_says_so(self):
+        plan = self.write({366: self.pr(366, 'Take the rendered speech cache out of the offline storage ledger')})
+        self.assertIn('No phone checks were written for this build', plan)
+        self.assertNotIn('Use the app as usual', plan)
+        self.assertNotIn('1. ', plan)
 
 
 if __name__ == '__main__':

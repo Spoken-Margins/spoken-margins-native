@@ -80,6 +80,9 @@ LISTENER_PATHS = ('App/', 'Packages/SessionKit/Sources/')
 NOT_LISTENER_PATHS = ('App/SpokenMarginsAppTests/', 'App/SpokenMarginsAppUITests/', 'App/TestFixtures/')
 NOT_LISTENER_TITLE = re.compile(r'to its own file|^(tests?|docs|lane|runner|verify-tests)\b|^test ', re.I)
 FIRST_ON_PHONE = {'found-on-phone', 'regression'}
+NOT_LISTENER_LABELS = {'stream:A1'}  # the test lane: its SessionKit edits are compile guards, not behaviour
+# "Owner check: none." (or "n/a", "nothing (lane only)") isn't a check; "Nothing plays twice ..." is (#504).
+NO_CHECK = re.compile(r'^(none|n/?a|nothing)\s*(?:[.;:,(\u2014\u2013]|-\s|$)', re.I)
 
 
 # ---- small helpers ------------------------------------------------------------------------------
@@ -259,20 +262,25 @@ def fetch_prs(numbers: list[int]) -> dict[int, dict] | None:
 def listener_facing(pr: dict) -> bool:
     """Changes something a listener sees or hears: the scorecard's rule on #337, made mechanical.
 
-    App code or SessionKit sources changed (tests and fixtures don't count), and the title isn't a
-    pure move, test or tooling change.
+    App code or SessionKit sources changed (tests and fixtures don't count), the title isn't a pure
+    move, test or tooling change, and it isn't lane work (#374 touched SessionKit only to build on Linux).
     """
+    if NOT_LISTENER_LABELS & labels(pr):
+        return False
     paths = [node['path'] for node in pr['files']['nodes']]
     touches = any(p.startswith(LISTENER_PATHS) and not p.startswith(NOT_LISTENER_PATHS) for p in paths)
     return touches and not NOT_LISTENER_TITLE.search(pr['title'])
 
 
 def owner_check(pr: dict) -> str | None:
-    """The issue's "Owner check" line; else a bug report's Steps and Expected; else the PR's own."""
+    """The issue's "Owner check" line; else a bug report's Steps and Expected; else the PR's own.
+
+    "Owner check: none" counts as no check, so it never reaches the plan as a thing to try.
+    """
     texts = [issue.get('body') or '' for issue in pr['issues']] + [pr.get('body') or '']
     for text in texts:
         found = re.search(r'\*\*Owner check:?\*\*:?\s*(.+)', text) or re.search(r'(?m)^Owner check:\s*(.+)', text)
-        if found:
+        if found and not NO_CHECK.match(found.group(1).strip()):
             return found.group(1).strip()
     for text in texts:
         steps = re.search(r'\*\*Steps:?\*\*:?\s*(.+)', text)
@@ -303,6 +311,10 @@ def plan_entries(facing: list[dict]) -> list[list[dict]]:
         for key in keys:
             by_key.setdefault(key, entry)
     return entries
+
+
+def found_on_phone(entry: list[dict]) -> bool:
+    return any(FIRST_ON_PHONE & labels(issue) for pr in entry for issue in pr['issues'])
 
 
 def labels(item: dict) -> set[str]:
@@ -377,30 +389,39 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     facing.sort(key=lambda pr: (0 if any(FIRST_ON_PHONE & labels(i) for i in pr['issues']) else 1,
                                 0 if owner_check(pr) else 1))
     entries = plan_entries(facing)
-    budget = entries[:PLAN_CHECKS]
-    rest = entries[PLAN_CHECKS:]
+    # Only what the owner can check goes in the ten minutes: a written check, or a bug his phone found (#504).
+    checkable = [entry for entry in entries if any(map(owner_check, entry)) or found_on_phone(entry)]
+    unchecked = [entry for entry in entries if entry not in checkable]
+    budget = checkable[:PLAN_CHECKS]
+    rest = checkable[PLAN_CHECKS:]
     if not ordered:
         lines += ['Nothing new since that build: this is the same code, rebuilt.', '']
     lines += [f'{len(ordered)} pull requests merged; {len(facing)} change something you see or hear.', '',
               '## Try these (about ten minutes)', '']
     if not budget:
-        lines += ['Nothing a listener would notice changed. Use the app as usual for ten minutes.', '']
+        lines += ['No phone checks were written for this build; the changes you might notice are listed below.'
+                  if unchecked else 'Nothing a listener would notice changed. Use the app as usual for ten minutes.', '']
     for index, entry in enumerate(budget, 1):
         pr = entry[0]
         issues = list({issue['number']: issue for member in entry for issue in member['issues']}.values())
-        tag = ' (found on your phone)' if any(FIRST_ON_PHONE & labels(issue) for issue in issues) else ''
+        tag = ' (found on your phone)' if found_on_phone(entry) else ''
         check = next((found for found in map(owner_check, entry) if found), None)
         links = [f'[PR #{member["number"]}]({member["url"]})' for member in entry]
         links += [f'[issue #{issue["number"]}]({issue["url"]})' for issue in issues]
         lines += [f'{index}. **{pr["title"]}**{tag}',
-                  f'   - Check: {check or "no check was written; look for what the title describes."}',
+                  f'   - Check: {check or "repeat what you did when you found it, and see that it is fixed."}',
                   f'   - Links: {", ".join(links)}', '']
+
+    def titles(group):
+        return [f'- {entry[0]["title"]} (' + ', '.join(f'[#{pr["number"]}]({pr["url"]})' for pr in entry) + ')'
+                for entry in group]
     if rest:
-        lines += ['## Also changed (not in the ten minutes)', '']
-        lines += [f'- {entry[0]["title"]} (' + ', '.join(f'[#{pr["number"]}]({pr["url"]})' for pr in entry) + ')'
-                  for entry in rest]
-        lines += ['']
-    lines += [f'Behind the scenes: {behind} more pull requests changed only tests, scripts or docs.', '',
+        lines += ['## Also changed (not in the ten minutes)', ''] + titles(rest) + ['']
+    if unchecked:
+        lines += ['## Also changed (no phone check written)', '',
+                  "You don't need to test these. If one seems off while you use the app, open a "
+                  '`found-on-phone` issue.', ''] + titles(unchecked) + ['']
+    lines += [f'Behind the scenes: {behind} more pull requests changed only tests, scripts, docs or the test lane.', '',
               '## If something is wrong', '',
               f'Open an issue labelled `found-on-phone` and name this build: commit `{sha[:7]}`.', '']
     path.write_text('\n'.join(lines))
