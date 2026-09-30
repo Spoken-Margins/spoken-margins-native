@@ -54,6 +54,20 @@
       "type": "array",
       "items": { "$ref": "#/$defs/float" }
     },
+    "outline": {
+      "description": "Optional. Chapters the PDF's outline names where no printed line matches them (#355). Each starts at `start` in `text` and has no text of its own, so it is never spoken. Absent when there are none.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "level", "start"],
+        "properties": {
+          "title": { "type": "string" },
+          "level": { "type": "integer", "minimum": 1, "maximum": 6 },
+          "start": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
     "quality": {
       "description": "Optional pre-check result (C1 M2): whether the app expects this document to sound bad, and why.",
       "type": ["object", "null"],

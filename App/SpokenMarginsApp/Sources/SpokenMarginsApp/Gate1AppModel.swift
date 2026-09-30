@@ -657,15 +657,9 @@ final class Gate1AppModel: ObservableObject {
             || previous.lastFailure != snapshot.lastFailure
         guard changed || (snapshot.status.isPlaybackActive && now - lastPlaybackEventCheckpoint >= 30) else { return }
         lastPlaybackEventCheckpoint = now
-        playbackEventRecording.record("playback.state", [
-            "item": DeveloperDiagnosticRecording.token(snapshot.itemId),
-            "target": DeveloperDiagnosticRecording.token(snapshot.targetId),
-            "status": snapshot.status.rawValue,
-            "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
-            "durationMs": String(snapshot.currentPlaybackDurationMs ?? -1),
-            "failure": DeveloperDiagnosticRecording.token(snapshot.lastFailure),
-            "failureDetail": PlaybackFailureDetail.privacySafe(snapshot.lastFailure)
-        ])
+        playbackEventRecording.record("playback.state", DeveloperDiagnosticRecording.playbackStateFields(
+            snapshot, player: (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.playerDiagnostics() ?? [:]
+        ))
     }
 
     private func configureDeveloperDiagnosticRecording() {
@@ -774,6 +768,10 @@ final class Gate1AppModel: ObservableObject {
                 storedSourceFollowSuggestionCandidates = []
                 sourceFollowSuggestionItemId = nil
             }
+            // Every way to an item (Library, Safari import, Continue listening) looks for its feed (#280).
+            if oldValue.id != selectedItem.id, let store {
+                discoverFollowOfferIfEligible(itemId: selectedItem.id, store: store)
+            }
         }
     }
     @Published private(set) var marginRows: [MarginRow] = []
@@ -853,12 +851,12 @@ final class Gate1AppModel: ObservableObject {
     var sourceFollowSuggestionCandidates: [SourceCandidateEvidence] {
         guard sourceFollowSuggestionItemId == selectedItem.id,
               screen != .playback || sourceFollowSuggestionItemId == snapshot.itemId else { return [] }
-        guard !Self.isSourceAlreadyFollowed(
+        guard !FollowedSourceMatching.isSourceAlreadyFollowed(
             sourceURL: libraryItems.first(where: { $0.id == selectedItem.id })?.sourceURL,
             sourceTitle: libraryItems.first(where: { $0.id == selectedItem.id })?.sourceTitle,
             subscriptions: feedSubscriptions
         ) else { return [] }
-        return Self.uniqueUnfollowedCandidates(storedSourceFollowSuggestionCandidates, subscriptions: feedSubscriptions)
+        return FollowedSourceMatching.uniqueUnfollowedCandidates(storedSourceFollowSuggestionCandidates, subscriptions: feedSubscriptions)
     }
     @Published private(set) var followedSourceEntries: [FeedEntry] = [] { didSet { cachedQuickAddCandidates = nil } }
     @Published private(set) var feedSubscriptions: [FeedSubscription] = [] { didSet { cachedQuickAddCandidates = nil } }
@@ -1008,6 +1006,8 @@ final class Gate1AppModel: ObservableObject {
     private(set) var libraryWasEmptyAtLaunch = false
     private let readablePageExtractor = AppOwnedReadablePageExtractor()
     private var sourceSuggestionChecks: Set<String> = []
+    private var followDiscoveries: [String: Task<[SourceCandidateEvidence], Error>] = [:]
+    @Published private var followOffers: [String: FollowOffer] = [:]
     private var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
     private let recordingClientOverride: RecordingClient?
     private let microphonePermissionRequest: (() async -> Bool)?
@@ -5575,6 +5575,7 @@ final class Gate1AppModel: ObservableObject {
             scheduleTextAudioPrewarmIfNeeded(itemId: id)
             listeningMapJSON = ""
             screen = .item
+            discoverFollowOfferIfEligible(itemId: id, store: store)
             offerFollowSuggestionIfEligible(itemId: id, store: store)
             reportSuccess("Opened \(selectedItem.title).")
         } catch {
@@ -10901,6 +10902,9 @@ final class Gate1AppModel: ObservableObject {
                         self.diagnostics["supertonicFallbackRestored"] = itemId
                     }
                 },
+                onStall: { [weak self] kind, fields in
+                    Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) }
+                },
                 onResumeDecision: { [weak self] fields in
                     Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) }
                 }
@@ -13266,7 +13270,7 @@ final class Gate1AppModel: ObservableObject {
                 isIncluded: !hasStarredCandidates || interjection.isStarredForSharing == true,
                 approvedTranscript: transcript,
                 representationChoice: hasAudio ? .original : .textOnly,
-                warning: shareAnchorWarning(for: interjection),
+                warning: SharedMarginTextRequirement.reviewWarning(for: transcript) ?? shareAnchorWarning(for: interjection),
                 anchorBefore: context.before,
                 anchorAfter: context.after
             )
@@ -13612,7 +13616,7 @@ final class Gate1AppModel: ObservableObject {
         sharingState.drafts[index].preparationMessage = nil
         sharingState.drafts[index].approvedTranscript = interjection.transcript ?? interjection.displayText ?? ""
         sharingState.drafts[index].representationChoice = originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
-        sharingState.drafts[index].warning = shareAnchorWarning(for: interjection)
+        sharingState.drafts[index].warning = SharedMarginTextRequirement.reviewWarning(for: sharingState.drafts[index].approvedTranscript) ?? shareAnchorWarning(for: interjection)
     }
 
     private func recordShareEdit(
@@ -13809,11 +13813,9 @@ final class Gate1AppModel: ObservableObject {
             sharingState.errorMessage = "Finish or cancel bulk preparation before sharing."
             return
         }
-        let drafts = sharingState.drafts.filter {
-            $0.isIncluded && !$0.approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
+        let (drafts, omission) = SharedMarginTextRequirement.shareable(sharingState.drafts.filter(\.isIncluded), text: \.approvedTranscript)
         guard !drafts.isEmpty else {
-            sharingState.errorMessage = "Select at least one Margin with reviewed text."
+            sharingState.errorMessage = omission ?? "Select at least one Margin with reviewed text."
             return
         }
         sharingState.isExporting = true
@@ -13935,6 +13937,7 @@ final class Gate1AppModel: ObservableObject {
                 isSharedSpokenMarginsPackagePresented = true
             }
             diagnostics["lastSharedPackage"] = "margins=\(drafts.count);evidence=\(machineEvidence.count);map=\(mapProposals.isEmpty ? "preparing_or_unavailable" : "included")"
+            if let omission { reportWarning(omission) }
         } catch {
             sharingState.isExporting = false
             sharingState.errorMessage = error.localizedDescription
@@ -15799,88 +15802,84 @@ final class Gate1AppModel: ObservableObject {
         followedSourceCandidates = []
     }
 
+    /// Follow shows only once discovery found a feed for the selected item (#280).
     var canManuallyFollowSelectedSource: Bool {
-        guard sourceFollowSuggestionCandidates.isEmpty,
-              let row = libraryItems.first(where: { $0.id == selectedItem.id }),
-              ManualFollowPolicy.offersFollow(
-                mediaType: row.mediaType, sourceURL: row.sourceURL, sourceReference: row.sourceReference
-              ) else {
-            return false
-        }
-        return !Self.isSourceAlreadyFollowed(
-            sourceURL: row.sourceURL,
-            sourceTitle: row.sourceTitle,
+        guard sourceFollowSuggestionCandidates.isEmpty, selectedFollowOffer != nil else { return false }
+        let row = libraryItems.first(where: { $0.id == selectedItem.id })
+        return !FollowedSourceMatching.isSourceAlreadyFollowed(
+            sourceURL: row?.sourceURL,
+            sourceTitle: row?.sourceTitle,
             subscriptions: feedSubscriptions
         )
     }
 
-    /// The selected item's Follow button: an article follows its publication, not a podcast (#243).
+    /// Names what will be followed, and is settled when the button first appears (#243, #280).
     var manualFollowButtonTitle: String {
-        ManualFollowPolicy.buttonTitle(mediaType: selectedItemMediaType, isFollowing: isFollowingSelectedSource)
+        guard let offer = selectedFollowOffer else { return "" }
+        return isFollowingSelectedSource ? offer.followingTitle : offer.title
     }
 
     var manualFollowButtonSymbol: String {
-        ManualFollowPolicy.buttonSymbol(mediaType: selectedItemMediaType)
+        selectedFollowOffer?.symbol ?? ManualFollowPolicy.buttonSymbol(mediaType: "podcast")
     }
 
-    private var selectedItemMediaType: String {
-        libraryItems.first(where: { $0.id == selectedItem.id })?.mediaType ?? "podcast"
+    /// Built from the same de-duplicated, unfollowed feeds the suggestion card lists, so the
+    /// button and the card name the feed the same way.
+    private var selectedFollowOffer: FollowOffer? {
+        guard let found = followOffers[selectedItem.id] else { return nil }
+        return ManualFollowPolicy.offer(
+            itemId: found.itemId, mediaType: found.mediaType,
+            candidates: FollowedSourceMatching.uniqueUnfollowedCandidates(found.candidates, subscriptions: feedSubscriptions)
+        )
     }
 
-    nonisolated static func isSourceAlreadyFollowed(
-        sourceURL: String?,
-        sourceTitle: String?,
-        subscriptions: [FeedSubscription]
-    ) -> Bool {
-        if let sourceURL = normalizedFollowSourceURL(sourceURL) {
-            return subscriptions.contains {
-                normalizedFollowSourceURL($0.source.canonicalURL) == sourceURL
+    /// Starts feed discovery when an item opens. Follow appears when a feed is found, and never
+    /// for a file, a PDF, a Listening Edition or a site with no feed (#280).
+    func discoverFollowOfferIfEligible(itemId: String, store: SQLiteSessionStore) {
+        guard followOffers[itemId] == nil,
+              let item = try? store.loadItem(id: itemId),
+              let url = ManualFollowPolicy.discoveryURL(for: item),
+              !FollowedSourceMatching.isSourceAlreadyFollowed(
+                sourceURL: item.sourceURL, sourceTitle: item.sourceTitle, subscriptions: feedSubscriptions
+              ) else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
+            self.followedSourceCoordinator = coordinator
+            do {
+                let candidates = try await self.sharedFollowDiscovery(item: item, preferredURL: url, coordinator: coordinator)
+                self.diagnostics["followOffer"] = candidates.isEmpty ? "none:empty" : "found:\(candidates.count)"
+            } catch {
+                self.diagnostics["followOffer"] = "none:\(String(describing: type(of: error)))"
             }
         }
-        guard let sourceTitle = sourceTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !sourceTitle.isEmpty else { return false }
-        return subscriptions.contains {
-            ($0.source.title ?? $0.source.host).caseInsensitiveCompare(sourceTitle) == .orderedSame
-        }
     }
 
-    nonisolated static func uniqueUnfollowedCandidates(
-        _ candidates: [SourceCandidateEvidence], subscriptions: [FeedSubscription]
-    ) -> [SourceCandidateEvidence] {
-        var sourceIDs = Set<String>()
-        var urls = Set<String>()
-        return candidates.filter { candidate in
-            let url = normalizedFollowSourceURL(candidate.source.canonicalURL) ?? candidate.source.canonicalURL
-            guard !subscriptions.contains(where: {
-                $0.source.id == candidate.source.id
-                    || normalizedFollowSourceURL($0.source.canonicalURL) == url
-            }) else { return false }
-            let newID = sourceIDs.insert(candidate.source.id).inserted
-            let newURL = urls.insert(url).inserted
-            return newID && newURL
+    /// One discovery per item and link, shared by the Follow button, the suggestion card and the
+    /// tap, so all three show the same feeds and the same name. "No feed" is kept for the session;
+    /// other failures (offline, timeouts) are retried on the next open.
+    private func sharedFollowDiscovery(
+        item: Item,
+        preferredURL: URL,
+        coordinator: FollowedSourceCoordinator
+    ) async throws -> [SourceCandidateEvidence] {
+        let key = item.id + "\u{1f}" + preferredURL.absoluteString
+        if let task = followDiscoveries[key] { return try await task.value }
+        let task = Task { try await self.discoverFollowCandidates(item: item, preferredURL: preferredURL, coordinator: coordinator) }
+        followDiscoveries[key] = task
+        do {
+            let candidates = try await task.value
+            // Whichever path ran discovery, the Follow button can use what it found.
+            if followOffers[item.id] == nil {
+                followOffers[item.id] = ManualFollowPolicy.offer(itemId: item.id, mediaType: item.mediaType, candidates: candidates)
+            }
+            return candidates
+        } catch FollowedSourceError.noFeedCandidates {
+            throw FollowedSourceError.noFeedCandidates
+        } catch {
+            followDiscoveries[key] = nil
+            throw error
         }
-    }
-
-    private nonisolated static func normalizedFollowSourceURL(_ value: String?) -> String? {
-        guard let value,
-              var components = URLComponents(
-                string: value.trimmingCharacters(in: .whitespacesAndNewlines)
-              ),
-              let scheme = components.scheme?.lowercased(),
-              let host = components.host?.lowercased(),
-              !scheme.isEmpty,
-              !host.isEmpty else { return nil }
-        components.scheme = scheme
-        components.host = host
-        components.fragment = nil
-        if (scheme == "https" && components.port == 443)
-            || (scheme == "http" && components.port == 80) {
-            components.port = nil
-        }
-        if components.path.count > 1, components.path.hasSuffix("/") {
-            components.path.removeLast()
-        }
-        return components.string
     }
 
     func followSelectedSource() {
@@ -15892,14 +15891,10 @@ final class Gate1AppModel: ObservableObject {
             defer { self.isFollowingSelectedSource = false }
             do {
                 let item = try store.loadItem(id: itemId)
-                guard let reference = item.sourceURL ?? item.externalReference,
-                      let preferredURL = URL(string: reference),
-                      preferredURL.scheme?.lowercased() == "https" else {
-                    throw FollowedSourceError.invalidURL
-                }
+                guard let preferredURL = ManualFollowPolicy.discoveryURL(for: item) else { throw FollowedSourceError.invalidURL }
                 let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
                 self.followedSourceCoordinator = coordinator
-                let candidates = try await self.discoverFollowCandidates(
+                let candidates = try await self.sharedFollowDiscovery(
                     item: item,
                     preferredURL: preferredURL,
                     coordinator: coordinator
@@ -15938,10 +15933,8 @@ final class Gate1AppModel: ObservableObject {
     func offerFollowSuggestionIfEligible(itemId: String, store: SQLiteSessionStore) {
         guard !sourceSuggestionChecks.contains(itemId),
               sourceFollowSuggestionCandidates.isEmpty,
-              let item = try? store.loadItem(id: itemId),
-              let reference = item.sourceURL ?? item.externalReference,
-              let url = URL(string: reference),
-              url.scheme?.lowercased() == "https" else { return }
+              // Files, PDFs and Listening Editions get no suggestion card either (#280).
+              let item = try? store.loadItem(id: itemId), let url = ManualFollowPolicy.discoveryURL(for: item) else { return }
         // Opening Item loads its sessions synchronously; Home's display cache
         // may still be awaiting refresh or may have been superseded by navigation.
         let persistedProgress = selectedItem.id == itemId
@@ -15958,11 +15951,11 @@ final class Gate1AppModel: ObservableObject {
             do {
                 let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
                 self.followedSourceCoordinator = coordinator
-                guard !Self.isSourceAlreadyFollowed(
+                guard !FollowedSourceMatching.isSourceAlreadyFollowed(
                     sourceURL: item.sourceURL, sourceTitle: item.sourceTitle,
                     subscriptions: try store.loadFeedSubscriptions()
                 ) else { return }
-                let candidates = try await self.discoverFollowCandidates(
+                let candidates = try await self.sharedFollowDiscovery(
                     item: item,
                     preferredURL: url,
                     coordinator: coordinator
@@ -15979,12 +15972,12 @@ final class Gate1AppModel: ObservableObject {
                 // Following may finish while network discovery is suspended.
                 let subscriptions = try store.loadFeedSubscriptions()
                 self.feedSubscriptions = subscriptions
-                guard !Self.isSourceAlreadyFollowed(
+                guard !FollowedSourceMatching.isSourceAlreadyFollowed(
                     sourceURL: current.sourceURL, sourceTitle: current.sourceTitle,
                     subscriptions: subscriptions
                 ) else { return }
                 let now = Date()
-                let eligible = try Self.uniqueUnfollowedCandidates(candidates, subscriptions: subscriptions).filter { candidate in
+                let eligible = try FollowedSourceMatching.uniqueUnfollowedCandidates(candidates, subscriptions: subscriptions).filter { candidate in
                     guard let decision = try store.loadSourceSuggestionDecision(sourceId: candidate.source.id) else { return true }
                     if decision.decision == .accepted || decision.decision == .neverSuggest { return false }
                     if let suppressUntil = decision.suppressUntil, suppressUntil > now { return false }
