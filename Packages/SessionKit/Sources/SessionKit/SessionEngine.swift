@@ -2404,7 +2404,8 @@ public final class SessionEngine {
                 mediaSourceType: item.media?.sourceType.rawValue,
                 includedFullText: exposesFullSourceText,
                 text: exposesFullSourceText ? item.text : nil,
-                sourceTranscript: sourceTranscript
+                sourceTranscript: sourceTranscript,
+                author: item.author.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
             ),
             session: ExportSession(id: session.id, status: session.status, completionPercent: session.completionPercent),
             listeningMap: options.includeListeningMap ? try repository.loadListeningMap(itemId: item.id) : nil,

@@ -18,7 +18,8 @@
         "mediaSourceType": { "type": ["string", "null"] },
         "includedFullText": { "type": "boolean" },
         "text": { "type": ["string", "null"] },
-        "sourceTranscript": { "type": ["string", "null"] }
+        "sourceTranscript": { "type": ["string", "null"] },
+        "author": { "type": ["string", "null"] }
       }
     },
     "session": {
