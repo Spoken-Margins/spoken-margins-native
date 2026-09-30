@@ -4,6 +4,7 @@ The installer runs against a fake `xcrun` on PATH, so no test can reach a real p
 answers `devicectl list devices` from FAKE_DEVICES and records every other call. The build runs
 against a scratch repo and a fake xcodebuild (SM_LANE_XCODEBUILD) that makes an ad-hoc signed app.
 """
+import datetime
 import importlib.machinery
 import importlib.util
 import json
@@ -74,10 +75,11 @@ class InstallerTests(unittest.TestCase):
         os.symlink(folder.name, self.phone / 'latest')
         return folder
 
-    def run_installer(self, devices, **extra):
+    def run_installer(self, devices, answer='', **extra):
         env = {**os.environ, 'PATH': f'{self.bin}:/usr/bin:/bin', 'SM_PHONE_DIR': str(self.phone),
                'FAKE_LOG': str(self.log), 'FAKE_DEVICES': json.dumps(devices), **extra}
-        done = subprocess.run(['/bin/zsh', str(INSTALLER)], env=env, capture_output=True, text=True, timeout=60)
+        done = subprocess.run(['/bin/zsh', str(INSTALLER)], env=env, input=answer, capture_output=True, text=True,
+                              timeout=60)
         calls = self.log.read_text().splitlines() if self.log.exists() else []
         return done, calls
 
@@ -131,6 +133,56 @@ class InstallerTests(unittest.TestCase):
         self.assertIn('no phone build yet', done.stdout)
         self.assertEqual(calls, [])
 
+    def test_names_the_installed_build_before_installing_a_newer_one(self):
+        self.make_build()
+        (self.phone / 'installed.txt').write_text(f'{"cd" * 20} 2026-09-29T09:05:29 Cole iPhone\n')
+        done, calls = self.run_installer([iphone('A')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('Your phone has commit cdcdcdc', done.stdout)
+        self.assertIn('This build is newer', done.stdout)
+        self.assertTrue(any('install app' in c for c in calls))
+
+    def test_already_installed_says_so_and_changes_nothing(self):
+        self.make_build()
+        record = f'{self.sha} 2026-09-30T09:05:29 Slaw’s iPhone\n'
+        (self.phone / 'installed.txt').write_text(record)
+        done, calls = self.run_installer([iphone('A')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn(f'Slaw’s iPhone already has this build: commit {self.sha[:7]}', done.stdout)
+        self.assertIn('No newer build yet', done.stdout)
+        self.assertIn('type R', done.stdout)
+        self.assertEqual(calls, [])  # not even a device listing: the phone needn't be plugged in
+        self.assertEqual((self.phone / 'installed.txt').read_text(), record)
+
+    def test_already_installed_reinstalls_on_r(self):
+        folder = self.make_build()
+        (self.phone / 'installed.txt').write_text(f'{self.sha} 2026-09-30T09:05:29 Cole iPhone\n')
+        done, calls = self.run_installer([iphone('A')], answer='r\n')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn(f'devicectl device install app --device A {folder.resolve()}/SpokenMarginsApp.app', calls)
+
+    def test_already_installed_mentions_a_newer_build_in_progress(self):
+        self.make_build()
+        (self.phone / 'installed.txt').write_text(f'{self.sha} 2026-09-30T09:05:29 Cole iPhone\n')
+        started = datetime.datetime.now() - datetime.timedelta(minutes=3)
+        (self.phone / '.work' / f'{started:%Y%m%d-%H%M%S}-1234567').mkdir(parents=True)
+        (self.phone / '.work' / '20200101-000000-7654321').mkdir()  # a leftover, not a running build
+        done, calls = self.run_installer([iphone('A')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn(f'being made right now: commit 1234567, started today at {started:%H:%M}', done.stdout)
+        self.assertNotIn('7654321', done.stdout)
+        self.assertEqual(calls, [])
+
+    def test_already_installed_mentions_a_failed_newer_attempt(self):
+        self.make_build()
+        (self.phone / 'installed.txt').write_text(f'{self.sha} 2026-09-30T09:05:29 Cole iPhone\n')
+        (self.phone / 'last-attempt.json').write_text(json.dumps(
+            {'sha': 'ef' * 20, 'result': 'failed: host tests (--plan fast) failed', 'at': '2026-09-30T11:00:00'}))
+        done, _ = self.run_installer([iphone('A')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('commit efefefe, failed', done.stdout)
+        self.assertIn('host tests (--plan fast) failed.', done.stdout)
+
 
 FAKE_XCODEBUILD = r'''#!/usr/bin/python3
 import os, plistlib, shutil, subprocess, sys
@@ -155,6 +207,10 @@ with open(os.path.join(app, "Info.plist"), "wb") as handle:
     plistlib.dump(info, handle)
 open(os.path.join(app, "embedded.mobileprovision"), "w").write("profile")
 subprocess.check_call(["codesign", "-s", "-", "--force", app], stderr=subprocess.DEVNULL)
+'''
+
+FAKE_NOTIFY = '''#!/bin/sh
+echo "notify $*" >> "$FAKE_LOG"
 '''
 
 FAKE_GH = r'''#!/usr/bin/python3
@@ -195,7 +251,7 @@ class PhoneBuildTests(unittest.TestCase):
         self.repo, self.phone, self.bin, self.log = (self.tmp / 'repo', self.tmp / 'phone', self.tmp / 'bin',
                                                      self.tmp / 'calls.log')
         self.bin.mkdir()
-        for name, body in (('xcodebuild', FAKE_XCODEBUILD), ('gh', FAKE_GH)):
+        for name, body in (('xcodebuild', FAKE_XCODEBUILD), ('gh', FAKE_GH), ('notify', FAKE_NOTIFY)):
             (self.bin / name).write_text(body)
             (self.bin / name).chmod(0o755)
         self.repo.mkdir()
@@ -214,7 +270,7 @@ class PhoneBuildTests(unittest.TestCase):
                     'SM_PHONE_GH': str(self.bin / 'gh'), 'SM_PHONE_DISK_FREE_GB': '100',
                     'SM_LANE_XCODEBUILD': str(self.bin / 'xcodebuild'), 'SM_LANE_STATE_DIR': str(self.tmp / 'lane'),
                     'SM_LANE_MEMORY_PRESSURE': '1', 'FAKE_LOG': str(self.log), 'FAKE_TIP': self.tip,
-                    'FAKE_PLIST_KEY': '1'}
+                    'FAKE_PLIST_KEY': '1', 'SM_PHONE_NOTIFY': str(self.bin / 'notify')}
 
     def git(self, *args):
         return subprocess.run(['git', *args], cwd=str(self.repo), check=True, capture_output=True,
@@ -248,6 +304,7 @@ class PhoneBuildTests(unittest.TestCase):
         self.assertIn('-configuration Release', builds)
         self.assertIn('-allowProvisioningUpdates', builds)
         self.assertNotIn('build-for-testing', builds)  # the runner already tested this commit
+        self.assertIn(f'Commit {self.tip[:7]} is ready: 2 things to try.', builds)  # the owner's notification
         self.assertFalse(any((self.phone / '.work').iterdir()))  # scratch worktree and DerivedData gone
         self.assertNotIn('.work', self.git('worktree', 'list'))
 
@@ -283,6 +340,8 @@ class PhoneBuildTests(unittest.TestCase):
         done = self.run_build(FAKE_FAIL='error: errSecInternalComponent')
         self.assertEqual(done.returncode, 1)
         self.assertIn('Always Allow', done.stdout)
+        self.assertIn('phone build needs you', self.log.read_text())
+        self.assertNotIn('is ready', self.log.read_text())
         self.assertFalse((self.phone / 'latest').exists())
         self.assertTrue((self.phone / 'last-failure.log').exists())
         again = self.run_build('--if-changed')
