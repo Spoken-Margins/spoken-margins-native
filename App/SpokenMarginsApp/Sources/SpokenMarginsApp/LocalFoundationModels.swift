@@ -1931,6 +1931,19 @@ enum LocalFoundationModelError: LocalizedError, Equatable {
     }
 }
 
+extension ListeningMapSummaryValidator {
+    /// Checks the on-device model's label for one scene (#482); keeps the call site in the model to one line.
+    static func validate(_ label: LocalListeningMapLabel, sourceText: String) throws -> SceneLabel {
+        try validate(
+            title: label.title,
+            description: label.description,
+            eligibility: label.eligibility,
+            eligibilityReason: label.eligibilityReason,
+            sourceText: sourceText
+        )
+    }
+}
+
 struct AppleFoundationAIProvider: AIProviderClient {
     let providerType = "apple_foundation_on_device"
     let model = "system_language_model"

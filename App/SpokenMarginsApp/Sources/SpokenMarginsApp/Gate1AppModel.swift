@@ -4537,10 +4537,7 @@ final class Gate1AppModel: ObservableObject {
                                 text: text,
                                 chapterNumber: draft.order + 1
                             ) {
-                                label = try? ListeningMapSummaryValidator.validate(
-                                    title: candidate.title, description: candidate.description,
-                                    eligibility: candidate.eligibility, eligibilityReason: candidate.eligibilityReason,
-                                    sourceText: text)
+                                label = try? ListeningMapSummaryValidator.validate(candidate, sourceText: text)
                             }
                         }
                     }
@@ -4549,15 +4546,13 @@ final class Gate1AppModel: ObservableObject {
                     }?.signatureAssetId
                     let machineEvidence = nearestEvidence.map { [$0] } ?? []
                     let eligibility = label?.eligibility ?? .unknown
-                    // Only an editorial scene keeps a spoken summary (#482).
-                    let summary = ListeningMapSummaryValidator.storedSummary(for: label)
                     scenes.append(PortableListeningMapScene(
                         id: draft.id,
                         order: draft.order,
                         title: label?.title ?? draft.publisherTitle,
-                        summaryText: summary.text,
+                        summaryText: ListeningMapSummaryValidator.storedSummary(for: label).text,
                         summaryAssetId: nil,
-                        summaryProvenance: summary.provenance,
+                        summaryProvenance: ListeningMapSummaryValidator.storedSummary(for: label).provenance,
                         eligibility: eligibility,
                         eligibilityReason: label?.eligibilityReason,
                         startAnchor: PortableAnchorEvidence(
