@@ -438,6 +438,53 @@ final class OfflineStorageLedgerTests: XCTestCase {
         XCTAssertEqual(row.protections, [.activePlayback], "the playing episode keeps its protection")
     }
 
+    // #530: eviction decided from rows read before it deleted anything, so an episode that started
+    // playing after that read was deleted mid-play.
+    @MainActor
+    func testAnEpisodeThatStartsPlayingDuringEvictionIsNotDeleted() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "offline-ledger-evict-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let support = root.appending(path: "ApplicationSupport", directoryHint: .isDirectory)
+        let podcasts = support.appending(path: "PodcastAudio", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: podcasts, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = podcasts.appending(path: "episode.mp3")
+        try Data(repeating: 1, count: 3).write(to: file)
+        let store = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
+        try store.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 3))
+        try store.savePodcastDownload(PodcastDownloadRecord(
+            id: "download-episode", itemId: "episode", remoteURL: "https://example.com/episode.mp3",
+            localRelativePath: "episode.mp3", state: .availableOffline, bytesWritten: 3
+        ))
+        try store.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: "podcast-offline-episode", itemId: "episode", category: .podcast,
+            relativePath: "PodcastAudio/episode.mp3", byteCount: 3, isReproducible: true
+        ))
+        let fileManager = EvictionHookFileManager()
+        let ledger = OfflineStorageLedger(repository: store, rootDirectory: support, fileManager: fileManager)
+        let coordinator = try PodcastDownloadCoordinator(
+            store: store, ledger: ledger, applicationSupportDirectory: support,
+            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false
+        )
+        fileManager.beforeDelete = {
+            // The plan has chosen the idle episode. The ledger runs off the main actor, which is
+            // free while this test awaits it, so playback can start now.
+            DispatchQueue.main.sync { MainActor.assumeIsolated { coordinator.configureActiveItem("episode") } }
+        }
+
+        do {
+            _ = try await ledger.reserve(ownerId: "other-download", byteCount: 3)
+            XCTFail("Nothing could be freed, so the reservation must be refused")
+        } catch OfflineStorageLedgerError.insufficientSpace {}
+
+        XCTAssertTrue(fileManager.didFire, "playback started after the eviction plan was made")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path), "the playing episode's file survives")
+        let row = try XCTUnwrap(store.loadOwnedOfflineAssets().first { $0.id == "podcast-offline-episode" })
+        XCTAssertEqual(row.protections, [.activePlayback])
+        XCTAssertNotNil(coordinator.validatedLocalURL(for: "episode"))
+        XCTAssertTrue(try store.loadOfflineStorageReservations().isEmpty)
+        coordinator.shutdown()
+    }
+
     private func writeAsset(_ fixture: Fixture, relativePath: String, category: OfflineAssetCategory) throws -> URL {
         let file = fixture.root.appending(path: relativePath)
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -508,5 +555,27 @@ private final class FileCheckHookFileManager: FileManager, @unchecked Sendable {
             hook()
         }
         return super.fileExists(atPath: path, isDirectory: isDirectory)
+    }
+}
+
+/// Runs a hook the first time eviction checks the episode's file, after the plan is made and
+/// before anything is deleted. Reconcile's directory-aware checks don't fire it.
+private final class EvictionHookFileManager: FileManager, @unchecked Sendable {
+    var beforeDelete: (@Sendable () -> Void)?
+    private(set) var didFire = false
+    private var checkingWithDirectory = false
+
+    override func fileExists(atPath path: String, isDirectory: UnsafeMutablePointer<ObjCBool>?) -> Bool {
+        checkingWithDirectory = true
+        defer { checkingWithDirectory = false }
+        return super.fileExists(atPath: path, isDirectory: isDirectory)
+    }
+
+    override func fileExists(atPath path: String) -> Bool {
+        if !checkingWithDirectory, !didFire, path.hasSuffix("episode.mp3"), let hook = beforeDelete {
+            didFire = true
+            hook()
+        }
+        return super.fileExists(atPath: path)
     }
 }
