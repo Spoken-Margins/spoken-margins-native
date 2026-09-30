@@ -1,9 +1,14 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+#if canImport(FoundationXML)
+import FoundationXML
+#endif
 import SessionKit
-import SessionKitFeeds
 
-struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
-    typealias Fetch = @Sendable (URL) throws -> Data
+public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
+    public typealias Fetch = @Sendable (URL) throws -> Data
 
     private struct EpisodeEvidence {
         var title: String
@@ -32,13 +37,13 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
     private let fetch: Fetch
     private let asynchronousFetch: (@Sendable (URL) async throws -> Data)?
 
-    init(fetch: @escaping Fetch = PublicPodcastLinkResolver.fetchSynchronously,
+    public init(fetch: @escaping Fetch = PublicPodcastLinkResolver.fetchSynchronously,
          asynchronousFetch: (@Sendable (URL) async throws -> Data)? = nil) {
         self.fetch = fetch
         self.asynchronousFetch = asynchronousFetch
     }
 
-    func canonicalFeedURL(for url: URL) throws -> URL? {
+    public func canonicalFeedURL(for url: URL) throws -> URL? {
         guard url.scheme?.lowercased() == "https" else { return nil }
         if isApplePodcastsURL(url), let showId = appleShowId(in: url) {
             let data = try fetch(appleLookupURL(showId: showId))
@@ -65,7 +70,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         return nil
     }
 
-    func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
+    public func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
         let trimmed = request.inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), url.scheme?.lowercased() == "https" else {
             return unsupported(request: request, reason: "invalid_url")
@@ -113,7 +118,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         return try metadataOnlyResult(request: request, url: url, provider: url.host, reason: "audio_enclosure_not_found")
     }
 
-    func resolveAsync(
+    public func resolveAsync(
         _ request: LinkResolutionRequest,
         requestTimeoutSeconds: TimeInterval = 8,
         overallTimeoutSeconds: TimeInterval = 20
@@ -1379,7 +1384,9 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         return Int(text[valueRange])
     }
 
-    private static func fetchSynchronously(_ url: URL) throws -> Data {
+    // Internal, not private: a public initializer's default argument must be usable from inlinable code.
+    @usableFromInline
+    static func fetchSynchronously(_ url: URL) throws -> Data {
         var request = URLRequest(url: url)
         request.timeoutInterval = 8
         request.setValue("SpokenMargins/0.1", forHTTPHeaderField: "User-Agent")
