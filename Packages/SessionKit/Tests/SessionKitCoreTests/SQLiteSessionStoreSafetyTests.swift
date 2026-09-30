@@ -73,6 +73,39 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
         XCTAssertEqual(try store.loadOwnedOfflineAssets().count, 480)
     }
 
+    // #287: the ledger reconciles sizes from a read taken before it checks every file, while the
+    // app toggles protections on the same rows. The size update must not undo the toggle.
+    func testOwnedOfflineAssetUpdateKeepsAProtectionSavedAfterTheCallersRead() throws {
+        let store = try SQLiteSessionStore(path: temporaryDatabasePath())
+        try assertOwnedOfflineAssetUpdateKeepsALaterProtection(store)
+    }
+
+    func testInMemoryOwnedOfflineAssetUpdateKeepsAProtectionSavedAfterTheCallersRead() throws {
+        try assertOwnedOfflineAssetUpdateKeepsALaterProtection(InMemorySessionRepository())
+    }
+
+    private func assertOwnedOfflineAssetUpdateKeepsALaterProtection(
+        _ repository: any SessionRepository, file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        try repository.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: "episode", itemId: "item", category: .podcast, relativePath: "PodcastAudio/episode.mp3",
+            byteCount: 10, isReproducible: true
+        ))
+        let callersRead = try XCTUnwrap(repository.loadOwnedOfflineAssets().first, file: file, line: line)
+        var toggled = callersRead
+        toggled.protections.insert(.activePlayback)
+        try repository.saveOwnedOfflineAsset(toggled)
+
+        let saved = try repository.updateOwnedOfflineAsset(id: callersRead.id) { $0.byteCount = 3 }
+
+        let row = try XCTUnwrap(repository.loadOwnedOfflineAssets().first, file: file, line: line)
+        XCTAssertEqual(row.byteCount, 3, file: file, line: line)
+        XCTAssertEqual(row.protections, [.activePlayback], "the later protection survives", file: file, line: line)
+        XCTAssertEqual(saved, row, file: file, line: line)
+        XCTAssertNil(try repository.updateOwnedOfflineAsset(id: "missing") { $0.byteCount = 1 }, file: file, line: line)
+        XCTAssertEqual(try repository.loadOwnedOfflineAssets().count, 1, "a missing id creates no row", file: file, line: line)
+    }
+
     func testStoreWritesCurrentSchemaVersion() throws {
         let path = temporaryDatabasePath()
         _ = try SQLiteSessionStore(path: path)
