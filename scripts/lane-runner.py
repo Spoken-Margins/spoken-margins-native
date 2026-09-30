@@ -34,6 +34,12 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   those pass or fail as usual, and a person merges them.
 - PR code (builds and tests) runs without the GitHub token in its environment, and the checkout
   keeps no credentials, so only this script's own fetch and push can use the token.
+- Build folders stay warm between jobs. The checkout wipes the workspace, so the tree's .build (the
+  app's DerivedData and verify-tests' output) and Packages/SessionKit/.build (SwiftPM) link to a cache
+  outside it, keyed by the SessionKit source tree under test: a DerivedData reused after SessionKit
+  changes gives false "does not conform" errors (AGENTS.md), so any SessionKit change starts a new
+  cache. At most WARM_KEEP caches, never below WARM_FREE_FLOOR of free disk; otherwise the job runs
+  cold. A warm rebuild measured 6 to 10 s against 90 s cold, per build.
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
 default ~/Library/Caches/SpokenMarginsLane/evidence), SM_LANE_TOOLS (a checkout whose .venv and
@@ -61,6 +67,8 @@ QUEUED, RUNNING, DONE = 'lane:queued', 'lane:running', 'lane:done'
 AUTOMERGE = 'automerge'
 FAST_TIMEOUT = 2400
 MERGE_ATTEMPTS = 3
+WARM_KEEP = 2
+WARM_FREE_FLOOR = 15 * 10**9
 MERGE_CHECK = '**Merge check (triage desk)'  # the prefix scripts/merge_audit.py requires
 AUDITS = ('**Codex audit (Astra)', '## Codex audit')  # how an audit comment starts: the hourly task's, or an older manual one
 DESK_ONLY = ('.github/', 'scripts/lane')
@@ -427,11 +435,12 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             return 'INCONCLUSIVE', 'no simulator', 'nothing', notes + [
                 f'The PR does not merge cleanly into {base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
                 f'Merge {base} into your branch and push; the automerge label runs it again.']
+        warm = warm_build_folders(ROOT)
         scope = diff_scope(ROOT, base)
         (evidence / 'scope.json').write_text(json.dumps(scope, indent=2))
         verdict, where, ran, details = run_automerge(
             scope, evidence, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)))
-        details = [f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR)'] \
+        details = [f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR); {warm}'] \
             + notes + details
         if verdict != 'PASS':
             return verdict, where, ran, details
@@ -456,6 +465,79 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
         base_sha = fetch_base(ROOT, base)
     return 'PASS', where, ran, details + notes[-1:] + [
         f'not merged: {base} kept moving ({attempts} attempts). Remove and re-add automerge to try again.']
+
+
+# ---- Warm build folders -------------------------------------------------------------------------
+
+def warm_root() -> Path:
+    return Path(os.environ.get('SM_LANE_WARM_DIR') or Path.home() / 'Library/Caches/SpokenMarginsLane/warm-build')
+
+
+def sessionkit_key(tree: Path) -> str | None:
+    """The SessionKit source tree in the tree under test (its git tree hash), or None."""
+    found = subprocess.run(['git', '-C', str(tree), 'rev-parse', 'HEAD:Packages/SessionKit'],
+                           capture_output=True, text=True)
+    return found.stdout.strip()[:12] if found.returncode == 0 and found.stdout.strip() else None
+
+
+_WARM_LOCKS: dict = {}
+
+
+def warm_build_folders(tree: Path, root: Path | None = None, free=lambda path: shutil.disk_usage(path).free) -> str:
+    """Link the tree's build folders to the cache for its SessionKit tree; returns a line for the report."""
+    import fcntl
+    root = root or warm_root()
+    key = sessionkit_key(tree)
+    if not key:
+        return 'build folders: cold (no SessionKit tree to key a cache on)'
+    root.mkdir(parents=True, exist_ok=True)
+    wanted = root / f'sk-{key}'
+    others = sorted((d for d in root.iterdir() if d.is_dir() and d.name.startswith('sk-') and d != wanted),
+                    key=lambda d: d.stat().st_mtime, reverse=True)
+    for old in others[WARM_KEEP - 1:]:
+        if not _cache_busy(old):
+            shutil.rmtree(old, ignore_errors=True)
+    if free(root) < WARM_FREE_FLOOR:
+        for old in others:
+            if not _cache_busy(old):
+                shutil.rmtree(old, ignore_errors=True)
+        if free(root) < WARM_FREE_FLOOR:
+            return f'build folders: cold (less than {WARM_FREE_FLOOR // 10**9} GB free)'
+    was_warm = (wanted / 'root').is_dir()
+    for name in ('root', 'sessionkit'):
+        (wanted / name).mkdir(parents=True, exist_ok=True)
+    lock = open(wanted / '.lock', 'a+')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock.close()
+        return f'build folders: cold (the SessionKit {key} cache is in use by another runner job)'
+    for held in _WARM_LOCKS.values():  # a new key in a later attempt: this job moves to the new cache
+        held.close()
+    _WARM_LOCKS.clear()
+    _WARM_LOCKS[key] = lock  # held until this job's process exits
+    os.utime(wanted)
+    for link, target in ((tree / '.build', wanted / 'root'), (tree / 'Packages/SessionKit/.build', wanted / 'sessionkit')):
+        if link.is_symlink():
+            link.unlink()
+        elif link.exists():
+            shutil.rmtree(link)
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(target, target_is_directory=True)
+    return f'build folders: {"warm" if was_warm else "cold, new cache"} (SessionKit {key})'
+
+
+def _cache_busy(cache: Path) -> bool:
+    import fcntl
+    try:
+        with open(cache / '.lock', 'a+') as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        return False
+    except BlockingIOError:
+        return True
+    except OSError:
+        return False
 
 
 # ---- T3 -----------------------------------------------------------------------------------------
@@ -817,10 +899,13 @@ def main(argv=None) -> int:
             details = [f'The PR does not merge cleanly into {args.base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
                        f'Merge {args.base} into your branch, push, and ask again.']
         elif request['tier'] == 'T2':
+            warm = warm_build_folders(ROOT)
             verdict, ran, details = run_t2(evidence)
-            where, crashes = 'no simulator (compile only)', 'none'
+            where, crashes, details = 'no simulator (compile only)', 'none', [warm] + details
         else:
+            warm = warm_build_folders(ROOT)
             verdict, where, ran, details, crashes, cc = run_t3(request['tests'], request_id, evidence)
+            details = [warm] + details
     except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
         verdict, where, ran, crashes = 'INCONCLUSIVE', 'lane error', 'nothing', 'unknown'
         details = [f'The lane itself failed: {error!r}. evidence: {evidence}']
@@ -834,8 +919,9 @@ def main(argv=None) -> int:
     _, desk_waiting = pending_requests(github.comments())
     if explicit:
         github.relabel(RUNNING, QUEUED if desk_waiting else DONE)
-    shutil.rmtree(ROOT / '.build/dd', ignore_errors=True)
-    shutil.rmtree(ROOT / '.build/verification', ignore_errors=True)
+    if not (ROOT / '.build').is_symlink():  # a cold job (disk floor, busy cache) built in the workspace
+        shutil.rmtree(ROOT / '.build/dd', ignore_errors=True)
+        shutil.rmtree(ROOT / '.build/verification', ignore_errors=True)
     return 0
 
 
