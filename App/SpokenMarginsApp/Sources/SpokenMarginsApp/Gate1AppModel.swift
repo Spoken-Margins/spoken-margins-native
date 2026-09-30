@@ -8933,7 +8933,7 @@ final class Gate1AppModel: ObservableObject {
         }) else {
             return snapshotTitle
         }
-        return "Ch. \(chapterIndex + 1): \(snapshotTitle)"
+        return ChapterHeaderLabel.title(snapshotTitle, index: chapterIndex)
     }
 
     private var inferredPlaybackChapterTitle: String? {
