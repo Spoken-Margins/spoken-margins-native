@@ -77,7 +77,7 @@ struct Build23SenderSharingExperience: View {
         }
         .sheet(isPresented: $isSystemSharePresented, onDismiss: finishSystemShare) {
             if let packageURL = verifiedShareURLForPresentation {
-                SharedSpokenMarginsPackageActivityView(packageURL: packageURL)
+                SharedSpokenMarginsPackageActivityView(packageURL: packageURL, onShared: coordinator.recordSystemShareCompleted)
             }
         }
     }

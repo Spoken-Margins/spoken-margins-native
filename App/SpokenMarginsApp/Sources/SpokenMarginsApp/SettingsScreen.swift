@@ -15,6 +15,9 @@ struct SettingsScreen: View {
     @State private var isEmptyRecentlyDeletedConfirmationPresented = false
     @State private var isResetConfirmationPresented = false
     @State private var copiedDiagnostics = false
+    @State private var listeningSignalsExportURL: URL?
+    @State private var isListeningSignalsSharePresented = false
+    @State private var hasNoListeningSignals = false
 
     private enum Field {
         case mapModel
@@ -363,6 +366,28 @@ struct SettingsScreen: View {
                     }
                     .buttonStyle(.borderless)
                         .accessibilityIdentifier("settings.copyDiagnostics.button")
+                    #if canImport(UIKit)
+                    Button {
+                        listeningSignalsExportURL = model.listeningSignals.exportFileURL()
+                        isListeningSignalsSharePresented = listeningSignalsExportURL != nil
+                        hasNoListeningSignals = listeningSignalsExportURL == nil
+                    } label: {
+                        Label(
+                            hasNoListeningSignals ? "Nothing Recorded Yet" : "Export Listening Signals",
+                            systemImage: "square.and.arrow.up"
+                        )
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("settings.exportListeningSignals.button")
+                    .sheet(isPresented: $isListeningSignalsSharePresented) {
+                        if let listeningSignalsExportURL {
+                            ListeningSignalsActivityView(fileURL: listeningSignalsExportURL)
+                        }
+                    }
+                    Text("A private log of listening time, Margins, shares and finishes for followed sources: titles, times and counts, never Margin text or audio. It stays on this device unless you export it.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    #endif
                     LabeledContent("Version", value: AppLinks.versionDescription)
                 }
                 #if DEBUG
@@ -477,3 +502,16 @@ private struct RuntimeDiagnosticRows: View {
         }
     }
 }
+
+#if canImport(UIKit)
+/// Hands the listening-signals log (#483) to the share sheet. Nothing is uploaded by the app.
+private struct ListeningSignalsActivityView: UIViewControllerRepresentable {
+    let fileURL: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+#endif

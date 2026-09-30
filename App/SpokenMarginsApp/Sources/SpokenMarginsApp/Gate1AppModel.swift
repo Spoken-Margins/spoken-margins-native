@@ -965,6 +965,7 @@ final class Gate1AppModel: ObservableObject {
 
     private var engine: SessionEngine?
     private var store: SQLiteSessionStore?
+    lazy var listeningSignals = ListeningSignalsCoordinator(repository: { [weak self] in self?.store })
     private var databaseURLOverride: URL?
     private let gate2CompactControls: Gate2CompactControlController
     private let featureFlags: SpokenMarginsFeatureFlags
@@ -1719,6 +1720,7 @@ final class Gate1AppModel: ObservableObject {
                         if updated != self.snapshot {
                             self.snapshot = updated
                         }
+                        self.listeningSignals.listened(itemId: updated.itemId)
                         if previousEngagementProgress < 25,
                            updated.currentPlaybackProgressPercent >= 25,
                            let itemId = updated.itemId,
@@ -1742,6 +1744,7 @@ final class Gate1AppModel: ObservableObject {
     private func stopPlaybackProgressTicker() {
         playbackProgressTask?.cancel()
         playbackProgressTask = nil
+        listeningSignals.endListening()
     }
 
     func syncPlaybackProgressForLifecycle() {
@@ -5693,6 +5696,7 @@ final class Gate1AppModel: ObservableObject {
             let markedAt = Date()
             item.sourceCompletedAt = markedAt
             try store.saveItem(item)
+            listeningSignals.finish(itemId: id)
             try refreshLibraryRows(store: store)
             if selectedItem.id == id {
                 selectedItem = try loadItemDetail(id: id, store: store)
@@ -6443,6 +6447,7 @@ final class Gate1AppModel: ObservableObject {
             recordSavedInterjectionForOnboarding()
             if let interjection = latestInterjectionNeedingTranscription() {
                 scheduleTranscription(for: interjection)
+                listeningSignals.spokenMargin(itemId: interjection.itemId, audioURL: interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)))
             }
             reportConfirmation("Margin saved. Transcription is continuing in the background.")
         }
@@ -6525,6 +6530,7 @@ final class Gate1AppModel: ObservableObject {
         guard let draft = writtenMarginDraft, let engine else { return }
         do {
             snapshot = try engine.saveWrittenInterjection(captureId: draft.capture.id, text: text)
+            listeningSignals.writtenMargin(itemId: draft.capture.itemId, text: text)
             writtenMarginDraft = nil
             if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
             refreshSelectedItem()
@@ -6746,6 +6752,7 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         guard snapshot.phase == .finished else { return }
+        listeningSignals.finish(itemId: snapshot.itemId)
         if let store {
             try? refreshLibraryRows(store: store)
         }
@@ -8028,6 +8035,7 @@ final class Gate1AppModel: ObservableObject {
                     self.diagnostics["lastSpokenMarginsPackageImport"] = "duplicate_layer:\(existingLayerId)"
                 case .imported(let layerId, let interjectionIds):
                     self.diagnostics["lastSpokenMarginsPackageImport"] = "imported:\(layerId):\(interjectionIds.count)"
+                    self.listeningSignals.packetImport(itemId: itemId, packetId: review.contents.manifest.packageId, marginCount: interjectionIds.count)
                 }
                 if let itemId {
                     self.activeItemId = itemId
@@ -13914,6 +13922,7 @@ final class Gate1AppModel: ObservableObject {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let destination = directory.appending(path: "\(safeShareFilename(item.title))-\(packageID.suffix(8)).spokenmargins")
             _ = try SpokenMarginsPackageArchive.write(prepared, to: destination)
+            listeningSignals.export(itemId: item.id, packetId: packageID, marginCount: drafts.count)
             UserDefaults.standard.set(sharingState.senderDisplayLabel, forKey: "sharingSenderDisplayLabel")
             sharedSpokenMarginsPackageURL = destination
             sharingState.isExporting = false
@@ -16028,6 +16037,7 @@ final class Gate1AppModel: ObservableObject {
 
     func dismissFollowedSourceEntry(id: String) {
         guard let coordinator = followedSourceCoordinator else { return }
+        listeningSignals.dismiss(entryId: id)
         Task { [weak self] in
             try? await coordinator.setEntryState(id: id, state: .dismissed)
             await self?.refreshFollowedSources(force: false)

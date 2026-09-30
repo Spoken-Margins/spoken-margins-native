@@ -517,6 +517,11 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         stage = newStage
     }
 
+    /// The share sheet sent the verified packet (logged as an I4 `share`, #483).
+    func recordSystemShareCompleted() {
+        model.listeningSignals.share(itemId: model.selectedItem.id)
+    }
+
     private func buildRecipientPreview() {
         guard stage == .review,
               snapshot.canAdvance else { return }

@@ -46,9 +46,12 @@ actor FollowedSourceCoordinator {
     /// error codes only, never a full link.
     private(set) var lastDiscoveryTrace: [String] = []
     private var lastDiscoveryHost = "unknown"
+    /// Where newly seen entries are logged as I4 `item_published` rows (#483).
+    private let signals: ListeningSignalRecorder?
 
-    init(repository: any SessionRepository, session: URLSession? = nil) {
+    init(repository: any SessionRepository, session: URLSession? = nil, signals: ListeningSignalRecorder? = .app) {
         self.repository = repository
+        self.signals = signals
         if let session {
             self.session = session
         } else {
@@ -396,9 +399,10 @@ actor FollowedSourceCoordinator {
             .map { $0.element }
         let retainedIDs = Set(retainedItems.map { Self.entryID(subscriptionID: subscription.id, itemID: $0.id) })
 
+        let seenAt = Date()
         for item in retainedItems {
             let id = Self.entryID(subscriptionID: subscription.id, itemID: item.id)
-            try repository.saveFeedEntry(FeedEntry(
+            let entry = FeedEntry(
                 id: id,
                 subscriptionId: subscription.id,
                 canonicalURL: item.url,
@@ -408,7 +412,11 @@ actor FollowedSourceCoordinator {
                 summary: item.summary,
                 publishedAt: item.publishedAt,
                 state: existing[id]?.state ?? .unseen
-            ))
+            )
+            try repository.saveFeedEntry(entry)
+            if existing[id] == nil {
+                signals?.record(.itemPublished, source: ListeningSignalContext.source(for: subscription), item: ListeningSignalContext.item(for: entry, seenAt: seenAt, durationMs: item.durationMs), at: seenAt)
+            }
         }
 
         for entry in existingEntries where !retainedIDs.contains(entry.id) {
