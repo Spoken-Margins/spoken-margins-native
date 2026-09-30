@@ -15388,13 +15388,13 @@ final class Gate1AppModel: ObservableObject {
                 byteCount: 64 * 1_024 * 1_024
             )
             let renderer = try makeSupertonicRenderer()
-            renderer.setBackgroundInferencePacingEnabled(true)
-            defer { renderer.setBackgroundInferencePacingEnabled(false) }
+            // Paced per render, not through the shared lifecycle flag (#377).
+            let pacedRenderer = BackgroundPreparationRenderer(base: renderer)
             let rendered: SupertonicNarrationResult
             do {
                 try Task.checkCancellation()
                 recordDeveloperDiagnostic("preparation.render.begin", ["item": DeveloperDiagnosticRecording.token(item.id), "chunk": String(next.index)])
-                rendered = try await supertonicOutputGuard(wrapping: renderer, systemVoice: speechVoiceIdentifier).render(
+                rendered = try await supertonicOutputGuard(wrapping: pacedRenderer, systemVoice: speechVoiceIdentifier).render(
                     text: next.text,
                     voice: voice,
                     language: "en",
