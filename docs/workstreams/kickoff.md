@@ -37,79 +37,26 @@ Why it's shaped this way:
 - **`/goal` holds the agent to the endpoint.** It's a command the person who started the session types, not something the agent can run. After the agent posts its approach, send `/goal <the milestone's "Done when", minus (owner) and (Mac) items>` as the next message. After each turn, a separate evaluator checks the condition against what the agent has shown in the transcript, and the agent keeps working until it's met ([docs](https://code.claude.com/docs/en/goal)). Without it, the agent still works toward the same list; `/goal` just stops it from declaring victory early. That's why every "Done when" in the briefs is written as something the agent can *demonstrate* (a test output, a measured number, a tap count, a lane report), not something it can merely assert.
 - **Items marked (owner) stay out of the goal.** Listening by ear, measurements on the owner's phone, and data only the owner has can't be demonstrated by an agent. The agent prepares them (a build, exact steps, what to look for) and the milestone waits on the owner.
 - **Stating the approach first** gives the owner a moment to redirect from the phone before hours go into the wrong idea. It isn't a request for approval; the agent continues unless redirected.
-- **Defaults instead of waits.** On 2026-09-28 about 15 owner decisions reached the owner one at a time, and several were reversible: which simulator the lane uses, C3's pause behavior, whether author names are read aloud. Streams now take a default for those and keep going. The lead session collects each "Default taken" so the owner can veto in one batch.
+- **Defaults instead of waits.** On 2026-09-28 about 15 owner decisions reached the owner one at a time, and several were reversible: which simulator the lane uses, C3's pause behavior, whether author names are read aloud. Streams now take a default for those and keep going. The project's morning digest lists each "Default taken" so the owner can veto in one batch.
 - **A turn cap** stops a stuck stream from burning a day. Blocked is a legitimate outcome if it's reported.
 - **A fresh-context review** before a milestone catches the "looks done" failure without an auditor agent chain ([best practices](https://code.claude.com/docs/en/best-practices#add-an-adversarial-review-step)). Tell the reviewer to flag only gaps against the brief's "Done when" and "Must not break", or it will invent work.
 
 ## The lead session
 
-The triage desk's job is capacity. It keeps every useful session busy on work that merges and works, and spends the owner's attention only on real decisions. It writes no feature code.
+Retired on 2026-09-29. A long-lived triage desk re-read a large context on every turn and took most of the owner's messages, so its jobs moved to owners that start fresh:
 
-A coordinating session degrades as its context fills, and after compaction it misremembers details. So start it fresh each morning, and again whenever it hands over. GitHub carries the state. Paste:
+| Job | Who does it now |
+| --- | --- |
+| Hand out work: one thread per `ready` issue, in the order the project's instructions give | The owner's Claude Code project |
+| Triage new and `critic:*` issues daily: `ready`, `needs-owner`, `deferred`, or closed as a duplicate | The project, in a morning routine |
+| Decisions, defaults the streams took, and phone candidates, for the owner | The project conversation |
+| Pace, runner queue, disk, memory, the main checkout, and the daily scorecard | The hourly `SM Mac tick` scheduled task, posting on #337 |
+| Merge finished work | The lane runner merges `automerge` PRs it passes; the Mac tick is the fallback. PRs that change `.github/` or `scripts/lane*` wait for the owner. |
+| Codex audits of sharing, persistence and audio changes | The hourly `SM Codex audit` scheduled task |
+| Test next's tip | The hourly `SM integration run` (XCTest only, because scheduled sessions can't drive the simulator), then the journeys it lists in an attended Test Desk session |
+| Check that the scheduled tasks ran | The project's morning routine reads #337. The owner starts an ops desk session only when something is wrong. |
 
-```text
-You are the triage desk for Spoken Margins' parallel streams. Your job is capacity:
-keep every useful session busy on work that merges and works, and spend the
-owner's attention only on real decisions. You don't write feature code. Read
-AGENTS.md (Current focus holds the owner's standing calls: don't re-ask them),
-docs/workstreams/README.md, docs/workstreams/test-lane.md, and "The lead session"
-in docs/workstreams/kickoff.md. Then read the latest hand-off comment on #184.
-
-1. Pace. Read the plan's usage (the get_usage tool) and compare it with the
-   straight line: the share of the week that has passed. Below the line means
-   start more work in step 3. Codex usage too, if you can read it; if you can't,
-   say so. Check again every hour or two.
-2. Survey: open PRs into next; the Test Desk's latest report on #184; each
-   stream's tracking issue (label stream:*); every session and whether it is
-   busy or idle (ListAgents); `git worktree list`; free disk (`df -h /`).
-3. Keep sessions busy. An idle session is a problem to fix, not a status to
-   report.
-   - Give each idle stream its next milestone, or the next issue labelled
-     `ready`.
-   - If a stream says it's waiting, check the gate against the standing calls. If
-     the gate is stale, tell the stream to go ahead and note it on its tracking
-     issue.
-   - Cloud sessions can't message back, so read their PRs and tracking issues.
-     They can write app code: the Mac's lane runner builds a PR when it has a
-     `/lane T2` request and the `lane:queued` label. It doesn't build unasked.
-   - You can't start new sessions yourself. When you're under the line and every
-     session is busy, ask the owner to start more, with the exact kickoff for
-     each so he only pastes it.
-4. Merge finished work. For a PR that's ready, merge current next into a temporary
-   worktree and run `--plan fast` plus both T2 builds through
-   scripts/xcodebuild-lane. Post the merge check as a PR comment whose first line
-   is **Merge check (triage desk) on `<sha7>`**, then what ran and the results.
-   Then `gh pr ready` and `gh pr merge --merge --match-head-commit <full sha>`.
-   - A conflict or a failure goes back to the owning session with the exact
-     failing test.
-   - A failure in code the PR doesn't change counts as passed only when the
-     same test passes when re-run alone, or fails the same way without the PR.
-     File it as its own issue.
-   - No per-PR simulator runs unless the owning session asks for one on audio
-     session, storage or packet changes.
-5. Test the whole thing. After a batch of merges, send the Test Desk the tip sha
-   for a full-up run: a library shaped like the owner's, upgraded from Build 29,
-   every journey, and evidence for each check.
-   - After each run, start three read-only critic sub-agents on its evidence and
-     the code: UX and human factors, backend, and architecture.
-   - Turn the findings you accept into `ready` issues, each with a "done when".
-6. Digest for the owner, short and written for the ear:
-   - Decisions: only real choices, with enough in the message itself to decide.
-     Give the options, what each costs, your pick and what it blocks. If there's
-     nothing to decide, say so.
-   - Pace: usage against the line, and sessions busy against idle.
-   - What merged, what the Test Desk and critics found, and what's stuck and why.
-   - For information only, and not as decisions: defaults the streams took, in
-     plain words, in case he disagrees.
-   - Describe everything in plain words; issue numbers go in a list at the end.
-     He listens to replies and won't leave the chat to open a link.
-7. Hand over before you degrade. When your context is about half full, or right
-   after a compaction, post a short hand-off on #184 and ask the owner to start
-   a fresh desk.
-8. Guardrails: without an explicit owner yes in this session, never touch the
-   owner's phone, Library, main, the VPS, or simulators. Use one temporary
-   worktree per job and remove it afterwards.
-```
+The merge-check comment keeps its old first line, **Merge check (triage desk) on `<sha7>`**. The lane runner writes it and `scripts/merge_audit.py` looks for that exact text, so don't reword it.
 
 ## Model and effort
 
