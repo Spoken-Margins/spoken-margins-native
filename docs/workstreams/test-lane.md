@@ -171,6 +171,7 @@ Two self-hosted GitHub Actions runners on the owner's Mac run `.github/workflows
   - A SessionKit change starts a new cache, because stale SessionKit modules give false "does not conform" errors. An Xcode project change does too.
   - Each runner has its own caches. DerivedData and SwiftPM's state record absolute paths, and a cache shared by both runners lost Xcode's VFS overlay and the onnxruntime binary (#405).
   - A cache whose SwiftPM state lists a binary artifact that isn't on disk is emptied, and the job builds cold. Its report says which artifact was missing.
+  - The T2 simulator and device builds each have their own DerivedData (`.build/dd-simulator`, `.build/dd-device`). When they shared one, the warm simulator build after a device build failed on a missing `all-product-headers.yaml` (#405).
   - At most two caches are kept per runner. Below 15 GB of free disk the job builds cold, and its report says so.
   - If a build error disappears on a cold rebuild, delete `warm-build/` while no job runs.
 - **Merging.** An `automerge` PASS is merged by the runner itself (`scripts/lane-runner.py`, `run_auto`):
