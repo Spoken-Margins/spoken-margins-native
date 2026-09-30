@@ -134,6 +134,15 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
     private let renderQueue = DispatchQueue(label: "com.spokenmargins.supertonic.render", qos: .userInitiated)
     private let inferencePacingLock = NSLock()
     private var backgroundInferencePacingEnabled = false
+    #if DEBUG
+    private var pacingRecords: [(pacing: SupertonicRenderPacing, delay: TimeInterval)] = []
+    /// Each inference step's pacing: who asked for the render and how long it was held back.
+    var debugPacingRecords: [(pacing: SupertonicRenderPacing, delay: TimeInterval)] {
+        inferencePacingLock.lock()
+        defer { inferencePacingLock.unlock() }
+        return pacingRecords
+    }
+    #endif
     private var runtime: Runtime?
     private var sessionLoadCount = 0
     private var generatedAudioURLs: Set<URL> = []
@@ -293,6 +302,11 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
 
     private func paceBackgroundInference(after inferenceDuration: TimeInterval, pacing: SupertonicRenderPacing) {
         var remaining = pacingDelay(afterInferenceDuration: inferenceDuration, for: pacing)
+        #if DEBUG
+        inferencePacingLock.lock()
+        pacingRecords.append((pacing, remaining))
+        inferencePacingLock.unlock()
+        #endif
         while remaining > 0 {
             guard isPaced(pacing) else { return }
             let interval = min(0.1, remaining)
