@@ -69,6 +69,16 @@ struct SpokenMarginsApp: App {
             follow: { [weak model] feedURL in
                 guard let model else { throw CancellationError() }
                 return try await model.followCatalogFeed(feedURL)
+            },
+            makeOPMLImport: { [weak model] in
+                OPMLImportModel(
+                    subscriptions: { model?.feedSubscriptions ?? [] },
+                    follow: { feedURL in
+                        guard let model else { throw CancellationError() }
+                        _ = try await model.followCatalogFeed(feedURL, refreshAfter: false)
+                    },
+                    didFollow: { model?.refreshFollowedSources(force: false) }
+                )
             }
         ))
     }

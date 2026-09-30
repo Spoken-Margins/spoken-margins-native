@@ -27,17 +27,21 @@ final class CatalogDrawerModel: ObservableObject {
     private let subscriptions: @MainActor () -> [FeedSubscription]
     private let defaults: UserDefaults
     private var hasLoaded = false
+    /// Makes a fresh OPML import (#463) for the drawer and Following; nil hides the entry.
+    let makeOPMLImport: (@MainActor () -> OPMLImportModel)?
 
     init(
         store: SourceCatalogStore?,
         defaults: UserDefaults = .standard,
         subscriptions: @escaping @MainActor () -> [FeedSubscription],
-        follow: @escaping @MainActor (String) async throws -> String
+        follow: @escaping @MainActor (String) async throws -> String,
+        makeOPMLImport: (@MainActor () -> OPMLImportModel)? = nil
     ) {
         self.store = store
         self.defaults = defaults
         self.subscriptions = subscriptions
         self.follow = follow
+        self.makeOPMLImport = makeOPMLImport
     }
 
     /// The app's drawer: the bundled snapshot plus a cache in Application Support.
@@ -198,6 +202,18 @@ struct CatalogDrawerView: View {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             List {
+                if let makeOPMLImport = drawer.makeOPMLImport {
+                    Section {
+                        NavigationLink {
+                            OPMLImportScreen(importer: makeOPMLImport())
+                        } label: {
+                            Label("Import from another app", systemImage: "square.and.arrow.down")
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        }
+                        .accessibilityIdentifier("catalog.drawer.importOPML")
+                        .listRowBackground(Color.clear)
+                    }
+                }
                 Section {
                     ForEach(drawer.entries) { entry in
                         CatalogDrawerRow(entry: entry)
