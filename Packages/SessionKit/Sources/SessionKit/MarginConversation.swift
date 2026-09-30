@@ -178,6 +178,8 @@ public struct MarginReplyGraph: Equatable, Sendable {
         layers: [ImportedCommentaryLayer],
         importedMargins: [ImportedCommentaryInterjection]
     ) -> MarginReplyGraph {
+        // A deleted Margin is neither a parent nor a reply (it stays in the store as "deleted").
+        let localMargins = localMargins.filter { $0.status == "active" }
         let liveLayers = Dictionary(
             layers.filter { $0.deletedAt == nil }.map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }

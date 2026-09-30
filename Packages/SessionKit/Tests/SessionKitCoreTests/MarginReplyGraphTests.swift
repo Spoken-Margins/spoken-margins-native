@@ -60,6 +60,26 @@ final class MarginReplyGraphTests: XCTestCase {
         XCTAssertEqual(graph.states[.imported("reply")], .linked(.init(link: link, parent: .local("own"))))
     }
 
+    /// Codex audit on 8fe7edf: a deleted local Margin overrode the live copy imported back.
+    func testADeletedLocalMarginIsNeitherAParentNorAReply() {
+        let identity = MarginPacketIdentity(packageDigest: digestA, packageScopedId: "a-1")
+        let link = MarginReplyLink.replying(to: identity, parentConversationId: nil)
+        var deletedOwn = margin("own").recordingShare(as: identity)
+        deletedOwn.status = "deleted"
+        var deletedReply = margin("mine", replyTo: link).recordingShare(as: .init(packageDigest: digestB, packageScopedId: "b-9"))
+        deletedReply.status = "deleted"
+        let layerA = ImportedCommentaryLayer(id: "layer-a", packageDigest: digestA, packageId: "a", itemIdentity: item, importedAt: date)
+        let layerB = ImportedCommentaryLayer(id: "layer-b", packageDigest: digestB, packageId: "b", itemIdentity: item, importedAt: date)
+        let graph = MarginReplyGraph.build(
+            localMargins: [deletedOwn, deletedReply],
+            layers: [layerA, layerB],
+            importedMargins: [importedMargin("copy", layer: "layer-a", scoped: "a-1"), importedMargin("reply", layer: "layer-b", scoped: "b-1", links: [link])]
+        )
+        XCTAssertEqual(graph.states[.imported("reply")], .linked(.init(link: link, parent: .imported("copy"))))
+        XCTAssertNil(graph.states[.local("mine")])
+        XCTAssertEqual(graph.threads, [link.conversationId: [.init(reply: .init(packageDigest: digestB, packageScopedId: "b-1"), parent: identity)]])
+    }
+
     func testADeletedLayerIsNotAParentAndAnUnsharedReplyHasNoThreadYet() {
         let identity = MarginPacketIdentity(packageDigest: digestA, packageScopedId: "a-1")
         let link = MarginReplyLink.replying(to: identity, parentConversationId: nil)
