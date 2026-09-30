@@ -40,6 +40,9 @@
          <TestPlanReference
             reference = "container:TestPlans/SpeechCanary.xctestplan">
          </TestPlanReference>
+         <TestPlanReference
+            reference = "container:TestPlans/ScreenTour.xctestplan">
+         </TestPlanReference>
       </TestPlans>
       <MacroExpansion>
          <BuildableReference
