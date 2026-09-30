@@ -336,6 +336,74 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(SourceLinkShareRepresentation.url(from: representation), expected)
     }
 
+    func testSafariPDFShareHandsOffThePDFBeforeItsURL() throws {
+        // #271: PubMed Central answers a re-download of the link with an HTML
+        // page, so the PDF Safari already has must be tried first.
+        let provider = makeSharedPDFProvider(url: Self.pmcPDFURL)
+
+        let identifiers = rankedShareIdentifiers([provider])
+
+        XCTAssertEqual(identifiers.first, ShareSheetRepresentationOrder.pdfIdentifier)
+        let pdfIndex = try XCTUnwrap(identifiers.firstIndex(of: ShareSheetRepresentationOrder.pdfIdentifier))
+        let urlIndex = try XCTUnwrap(
+            identifiers.firstIndex(of: ShareSheetRepresentationOrder.urlIdentifier),
+            "The URL must stay as the fallback"
+        )
+        XCTAssertLessThan(pdfIndex, urlIndex)
+    }
+
+    func testSafariPDFShareOnSeparateAttachmentsHandsOffThePDFFirst() throws {
+        let linkProvider = NSItemProvider(object: Self.pmcPDFURL as NSURL)
+        let pdfProvider = makeSharedPDFProvider(url: nil)
+
+        let candidates = ShareSheetRepresentationOrder.candidates(
+            from: [linkProvider, pdfProvider],
+            conforms: { $0.hasItemConformingToTypeIdentifier($1) },
+            additionalIdentifiers: { _, _ in [] }
+        )
+
+        let first = try XCTUnwrap(candidates.first)
+        XCTAssertTrue(first.provider === pdfProvider)
+        XCTAssertEqual(first.identifier, ShareSheetRepresentationOrder.pdfIdentifier)
+        XCTAssertTrue(candidates.contains {
+            $0.provider === linkProvider && $0.identifier == ShareSheetRepresentationOrder.urlIdentifier
+        })
+    }
+
+    func testSafariWebPageShareStillPrefersTheReadablePage() throws {
+        let provider = NSItemProvider(object: try XCTUnwrap(URL(string: "https://example.com/article")) as NSURL)
+        provider.registerItem(forTypeIdentifier: ShareSheetRepresentationOrder.propertyListIdentifier) { completion, _, _ in
+            completion?(["NSExtensionJavaScriptPreprocessingResultsKey": ["title": "Article"]] as NSDictionary, nil)
+        }
+
+        let identifiers = rankedShareIdentifiers([provider])
+
+        XCTAssertEqual(identifiers.first, ShareSheetRepresentationOrder.propertyListIdentifier)
+        XCTAssertFalse(identifiers.contains(ShareSheetRepresentationOrder.pdfIdentifier))
+    }
+
+    private static let pmcPDFURL = URL(string: "https://pmc.ncbi.nlm.nih.gov/articles/PMC13305550/pdf/f1000research-12-157633.pdf")!
+
+    private func makeSharedPDFProvider(url: URL?) -> NSItemProvider {
+        let provider = url.map { NSItemProvider(object: $0 as NSURL) } ?? NSItemProvider()
+        provider.registerDataRepresentation(
+            forTypeIdentifier: ShareSheetRepresentationOrder.pdfIdentifier,
+            visibility: .all
+        ) { completion in
+            completion(Data("%PDF-1.7 shared from Safari".utf8), nil)
+            return nil
+        }
+        return provider
+    }
+
+    private func rankedShareIdentifiers(_ providers: [NSItemProvider]) -> [String] {
+        ShareSheetRepresentationOrder.candidates(
+            from: providers,
+            conforms: { $0.hasItemConformingToTypeIdentifier($1) },
+            additionalIdentifiers: { _, _ in [] }
+        ).map(\.identifier)
+    }
+
     func testSourceLinkPayloadStoreRoundTripsAndDeletes() throws {
         let store = makePayloadStore()
         let handoff = SourceLinkHandoff(

@@ -74,35 +74,20 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             completion(.failure(SourceLinkShareError.noInput))
             return
         }
-        // Rank the representations per content type so the extension does the
-        // least expensive reliable handoff for each source.
-        let candidates = providers.flatMap { provider -> [ProviderCandidate] in
-            let presentsPDF = provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier)
-            // Safari's PDF viewer can vend both a remote URL and a PDF file.
-            // Hand the URL to the main app first so a large document is not
-            // parsed inside the memory-constrained share extension. Ordinary
-            // webpages still prefer the readable-page property list.
-            let preferredIdentifiers = presentsPDF
-                ? [
-                    SpokenMarginsPackageHandoffStore.uniformTypeIdentifier,
-                    UTType.url.identifier,
-                    UTType.pdf.identifier,
-                    UTType.fileURL.identifier,
-                    UTType.propertyList.identifier
-                ]
-                : [
-                    SpokenMarginsPackageHandoffStore.uniformTypeIdentifier,
-                    UTType.propertyList.identifier,
-                    UTType.fileURL.identifier,
-                    UTType.url.identifier
-                ]
-            let identifiers = preferredIdentifiers.filter(provider.hasItemConformingToTypeIdentifier)
-                + provider.registeredTypeIdentifiers.filter {
+        // Safari's PDF viewer offers the PDF it is showing as well as its URL.
+        // The PDF comes first: a re-download of the link can return an HTML
+        // page instead (#271). The file is only copied here, never parsed.
+        // Ordinary webpages still prefer the readable-page property list.
+        let candidates = ShareSheetRepresentationOrder.candidates(
+            from: providers,
+            conforms: { $0.hasItemConformingToTypeIdentifier($1) },
+            additionalIdentifiers: { provider, preferredIdentifiers in
+                provider.registeredTypeIdentifiers.filter {
                     !preferredIdentifiers.contains($0)
                         && Self.acceptsRegisteredIdentifier($0, suggestedName: provider.suggestedName)
                 }
-            return identifiers.map { ProviderCandidate(provider: provider, identifier: $0) }
-        }
+            }
+        ).map { ProviderCandidate(provider: $0.provider, identifier: $0.identifier) }
         loadFirstSharedImport(candidates, index: 0, completion: completion)
     }
 
@@ -138,11 +123,21 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         }
         if candidateType?.conforms(to: .pdf) == true {
             candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { [weak self] url, _ in
-                if let url, let sharedImport = Self.persistedPDFImport(
-                    from: url,
-                    suggestedName: candidate.provider.suggestedName
-                ) {
-                    completion(.success(sharedImport))
+                if let url {
+                    if let sharedImport = Self.persistedPDFImport(
+                        from: url,
+                        suggestedName: candidate.provider.suggestedName
+                    ) {
+                        completion(.success(sharedImport))
+                    } else {
+                        // The file exists but couldn't be copied (over the
+                        // size limit, say). Loading the same bytes into the
+                        // extension's memory won't help, so fall back to the
+                        // next representation, such as the URL.
+                        DispatchQueue.main.async {
+                            self?.loadFirstSharedImport(candidates, index: index + 1, completion: completion)
+                        }
+                    }
                 } else {
                     DispatchQueue.main.async {
                         self?.loadCandidateItem(candidate, candidates: candidates, index: index, completion: completion)
