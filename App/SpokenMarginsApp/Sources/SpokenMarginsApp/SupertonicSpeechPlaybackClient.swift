@@ -437,6 +437,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var currentChunkLength = 0
     private var currentChunkBoundary = RenderedSpeechChunkBoundary.hard
     private var fallbackIsActive = false
+    /// Counts plays of the iOS voice started outside the stall monitor: by the listener or by a
+    /// hand-off from Supertonic. A stall sampled during an earlier one is stale (#432 audit).
+    private var systemVoicePlayback = 0
     private var completedTargetId: String?
     private var playbackComplete = false
     private var pendingStartTargetId: String?
@@ -639,6 +642,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             let spokenOffset = spokenOffset(forSourceOffset: charOffset)
             lock.withLock {
                 fallbackIsActive = true
+                systemVoicePlayback += 1
                 currentTargetId = targetId
                 currentStartOffset = spokenOffset
                 transportIntent = .playing
@@ -1039,6 +1043,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             try fallback.pause()
         }
         lock.withLock {
+            systemVoicePlayback += 1
             pendingStartTargetId = nil
             startedTargetId = state.1 == .playing ? targetId : nil
             transportIntent = state.1
@@ -1633,6 +1638,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             let spokenOffset = spokenOffset(forSourceOffset: sourceOffset)
             lock.withLock {
                 fallbackIsActive = true
+                systemVoicePlayback += 1
                 currentTargetId = targetId
                 currentStartOffset = spokenOffset
                 currentChunkLength = 0
@@ -1759,24 +1765,31 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 var stallOngoing = false
                 // Each player is watched from scratch: a re-seat or another item must not inherit a
                 // stall (both start at clock zero). A re-seat that doesn't help stalls again anew.
-                var watchedPlayer: ObjectIdentifier?
+                // Each play of the iOS voice is watched from scratch too (#432 audit).
+                var watched = WatchedPlayback()
                 // The iOS voice is watched only once it has moved by a word or so: a voice still
                 // starting up, or one that reports its place only per utterance, isn't a stall.
                 var systemVoiceOffset: Int?
                 var systemVoiceIsArmed = false
+                var watchedVoicePlayback: Int?
                 let start = ContinuousClock.now
                 while !Task.isCancelled {
                     try? await Task.sleep(for: interval)
                     guard let self else { return }
                     // The iOS voice has no player clock; its place in the text is its clock (#288). It
                     // is read on the main actor, where the synthesizer's callbacks move it.
-                    var systemVoice: (offset: Int?, complete: Bool)?
+                    var systemVoice: (offset: Int?, complete: Bool, playback: Int)?
                     if self.lock.withLock({ self.transportIntent == .playing && self.fallbackIsActive }) {
-                        systemVoice = await MainActor.run { () -> (offset: Int?, complete: Bool) in
-                            let target = self.lock.withLock { self.currentTargetId }
+                        systemVoice = await MainActor.run { () -> (offset: Int?, complete: Bool, playback: Int) in
+                            let (target, playback) = self.lock.withLock { (self.currentTargetId, self.systemVoicePlayback) }
                             return (self.fallback.currentCharOffset(),
-                                    target.map { self.fallback.isPlaybackComplete(targetId: $0) } ?? true)
+                                    target.map { self.fallback.isPlaybackComplete(targetId: $0) } ?? true, playback)
                         }
+                    }
+                    if let playback = systemVoice?.playback, playback != watchedVoicePlayback {
+                        watchedVoicePlayback = playback
+                        systemVoiceOffset = nil
+                        systemVoiceIsArmed = false
                     }
                     if let offset = systemVoice?.offset {
                         if let last = systemVoiceOffset, offset != last,
@@ -1789,21 +1802,23 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         systemVoiceIsArmed = false
                     }
                     let armed = systemVoiceIsArmed
-                    let sample = self.lock.withLock { () -> (active: Bool, intends: Bool, clock: Int?, player: ObjectIdentifier?) in
+                    let sample = self.lock.withLock { () -> (active: Bool, intends: Bool, clock: Int?, watched: WatchedPlayback) in
                         if self.fallbackIsActive {
-                            guard armed, let systemVoice, let offset = systemVoice.offset, !systemVoice.complete else {
-                                return (self.transportIntent == .playing, false, nil, nil)
+                            let voice = WatchedPlayback(systemVoicePlayback: self.systemVoicePlayback)
+                            guard armed, let systemVoice, systemVoice.playback == self.systemVoicePlayback,
+                                  let offset = systemVoice.offset, !systemVoice.complete else {
+                                return (self.transportIntent == .playing, false, nil, voice)
                             }
                             // One character counts as progress: the detector's unit is scaled to match.
-                            return (self.transportIntent == .playing, self.transportIntent == .playing, offset * 1_000, nil)
+                            return (self.transportIntent == .playing, self.transportIntent == .playing, offset * 1_000, voice)
                         }
                         let intends = self.transportIntent == .playing && self.player != nil
                         let time = self.playerTime(self.player)
                         return (self.transportIntent == .playing, intends, self.currentStartOffset * 1_000_000 + Int(time * 1_000),
-                                self.player.map(ObjectIdentifier.init))
+                                WatchedPlayback(player: self.player.map(ObjectIdentifier.init)))
                     }
-                    if sample.player != watchedPlayer {
-                        watchedPlayer = sample.player
+                    if sample.watched != watched {
+                        watched = sample.watched
                         detector.reset()
                         stallOngoing = false
                     }
@@ -1815,12 +1830,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         #if DEBUG
                         self.debugStallWillBeHandled?()
                         #endif
-                        await MainActor.run { self.handleStallEvent(event, sampledPlayer: sample.player) }
+                        await MainActor.run { self.handleStallEvent(event, sampled: sample.watched) }
                     } else if stallOngoing, sample.intends {
                         #if DEBUG
                         self.debugStallWillBeHandled?()
                         #endif
-                        await MainActor.run { self.pauseIfReseatDidNotHelp(sampledPlayer: sample.player) }
+                        await MainActor.run { self.pauseIfReseatDidNotHelp(sampled: sample.watched) }
                     }
                     if !sample.active {
                         #if DEBUG
@@ -1846,18 +1861,25 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// this small shows word-by-word progress; a whole utterance is at least several times longer.
     private static let systemVoiceWordStepLimit = 120
 
-    /// True while the player a stall sample saw is still the one playing. Between the sample and
-    /// its handling on the main actor, the listener can switch items; the stall is then stale.
-    private func isStillPlaying(_ sampledPlayer: ObjectIdentifier?) -> Bool {
+    /// What a stall sample watched: the Supertonic player, or which play of the iOS voice.
+    private struct WatchedPlayback: Equatable {
+        var player: ObjectIdentifier?
+        var systemVoicePlayback: Int?
+    }
+
+    /// True while the playback a stall sample saw is still the one playing. Between the sample and
+    /// its handling on the main actor, the listener can switch items, or pause and play the iOS
+    /// voice again; the stall is then stale.
+    private func isStillPlaying(_ sampled: WatchedPlayback) -> Bool {
         lock.withLock {
-            transportIntent == .playing && player.map(ObjectIdentifier.init) == sampledPlayer
-                && (sampledPlayer != nil || fallbackIsActive)
+            guard transportIntent == .playing, player.map(ObjectIdentifier.init) == sampled.player else { return false }
+            return sampled.player != nil || (fallbackIsActive && sampled.systemVoicePlayback == systemVoicePlayback)
         }
     }
 
     @MainActor
-    private func handleStallEvent(_ event: PlaybackStallDetector.Event, sampledPlayer: ObjectIdentifier?) {
-        if case .stalled = event, !isStillPlaying(sampledPlayer) { return }
+    private func handleStallEvent(_ event: PlaybackStallDetector.Event, sampled: WatchedPlayback) {
+        if case .stalled = event, !isStillPlaying(sampled) { return }
         let (player, usesSystemVoice) = lock.withLock { (self.player, fallbackIsActive) }
         var fields = AudioSessionDiagnostics.fields().merging(AudioSessionDiagnostics.fields(for: player)) { first, _ in first }
         if usesSystemVoice { fields["engine"] = "system_voice" }
@@ -1890,8 +1912,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// A stall still going `stallThreshold` after its re-seat: the re-seat didn't help.
     @MainActor
-    private func pauseIfReseatDidNotHelp(sampledPlayer: ObjectIdentifier?) {
-        guard isStillPlaying(sampledPlayer) else { return }
+    private func pauseIfReseatDidNotHelp(sampled: WatchedPlayback) {
+        guard isStillPlaying(sampled) else { return }
         let due = lock.withLock { lastStallRecovery.map { ContinuousClock.now - $0 >= stallThreshold } ?? false }
         guard due else { return }
         let (player, usesSystemVoice) = lock.withLock { (self.player, fallbackIsActive) }

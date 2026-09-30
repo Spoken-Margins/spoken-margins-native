@@ -597,6 +597,31 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    // #432 audit: the listener pauses and plays the iOS voice again between a stall sample and its
+    // handling. The stale stall must not restart or pause the voice the listener just started.
+    func testAStallSampledBeforeTheListenerPlaysTheIOSVoiceAgainLeavesItAlone() async throws {
+        let log = StallEventLog()
+        let fallback = RecordingFallbackAudioClient()
+        fallback.advancesPerRead = 3
+        let client = try systemVoiceStallClient(log, fallback: fallback)
+        let replay = SystemVoiceReplay()
+        replay.client = client
+        replay.fallback = fallback
+        client.debugStallWillBeHandled = { replay.run() }
+        _ = try client.prepareSpeechText("A long response that must remain playable when generation does not finish promptly.")
+        try client.play(targetId: "replayed", from: 17)
+        for _ in 0..<100 where !log.values.contains("fallback") { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(300))
+        fallback.advancesPerRead = 0
+        for _ in 0..<150 where !replay.didRun { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(replay.didRun, "the voice went silent and a stall was sampled: \(log.values)")
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertEqual(fallback.playedOffsets, [17, 40], "only the listener's play started the voice: \(log.values)")
+        XCTAssertFalse(log.values.contains { $0.hasPrefix("supertonic.stall") }, "\(log.values)")
+        XCTAssertEqual(client.playbackTransportState(targetId: "replayed"), .playing)
+        try client.stop()
+    }
+
     // #258: with a Listening Map overview, the engine speaks "Overview. …" before the article.
     // Lookups carried that whole text and chunks planned across it, so no prepared chunk ever
     // matched and a fully prepared article was rendered again. They now ask for the article's own
@@ -3017,6 +3042,23 @@ private final class ItemSwitch: @unchecked Sendable {
         try? client.stop()
         _ = try? client.prepareSpeechText("A different article starts playing here instead.")
         try? client.play(targetId: "second", from: 0)
+    }
+}
+
+/// The listener pauses the iOS voice and plays it again from offset 40, once, and it speaks.
+private final class SystemVoiceReplay: @unchecked Sendable {
+    weak var client: SupertonicSpeechPlaybackClient?
+    var fallback: RecordingFallbackAudioClient?
+    private let lock = NSLock()
+    private var done = false
+    var didRun: Bool { lock.withLock { done } }
+
+    func run() {
+        let first = lock.withLock { () -> Bool in defer { done = true }; return !done }
+        guard first, let client else { return }
+        try? client.pause()
+        fallback?.advancesPerRead = 3
+        try? client.play(targetId: "replayed", from: 40)
     }
 }
 
