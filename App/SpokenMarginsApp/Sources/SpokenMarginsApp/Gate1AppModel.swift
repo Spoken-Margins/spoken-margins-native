@@ -202,18 +202,6 @@ struct SourceLinkCandidateReviewState: Identifiable, Equatable {
     var id: String { request.id }
 }
 
-struct UserFeedbackEvent: Identifiable, Equatable {
-    enum Kind: Equatable {
-        case success
-        case warning
-        case error
-    }
-
-    let id = UUID()
-    let kind: Kind
-    let message: String
-}
-
 struct ItemDetailState {
     var id = ""
     var title = ""
@@ -714,6 +702,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var statusMessage = "Ready."
     @Published var lastError: String?
     @Published private(set) var feedbackEvent: UserFeedbackEvent?
+    @Published private(set) var itemFailures = ItemFailureLog()
     @Published var exportPreview = ""
     @Published private(set) var exportFileURL: URL?
     @Published private(set) var exportShareCandidates: [Interjection] = []
@@ -2471,7 +2460,7 @@ final class Gate1AppModel: ObservableObject {
                     speechFallbackReason = .memoryWarning
                     let message = SpeechFallbackReason.memoryWarning.listenerExplanation
                     statusMessage = message
-                    feedbackEvent = UserFeedbackEvent(kind: .warning, message: message)
+                    presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
                 }
             } catch {
                 reportFailure(error, context: "Memory-pressure voice recovery failed")
@@ -3153,6 +3142,7 @@ final class Gate1AppModel: ObservableObject {
 
     @discardableResult
     private func importSourceLinkAsync(urlString: String, sourceSurface: String, startSession: Bool = true) async -> Bool {
+        withdrawRetryOffer("sourceLink")
         let shouldStartSession = startSession && !hasActiveSession
         guard sourceLinkResolver == nil else {
             return importSourceLink(urlString: urlString, sourceSurface: sourceSurface, startSession: shouldStartSession)
@@ -3180,7 +3170,10 @@ final class Gate1AppModel: ObservableObject {
             }
             return importResolvedSourceLink(request: request, result: result, startSession: shouldStartSession)
         } catch {
-            reportFailure(error, context: "Source link import failed")
+            reportFailure(error, context: "Source link import failed", retry: .init(key: "sourceLink") { [weak self] in
+                self?.sourceLinkURL = urlString
+                _ = self?.beginSourceLinkImportFromForm(startSession: startSession)
+            })
             return false
         }
     }
@@ -4655,7 +4648,7 @@ final class Gate1AppModel: ObservableObject {
                 try? self.store?.saveEpisodeMapPreparationJob(job)
                 self.episodeMapPreparationStatus = "Failed"
                 self.diagnostics["episodeMapPreparation:\(item.id)"] = "failed:\(error.localizedDescription)"
-                if item.id == self.activeItemId { self.reportFailure(error, context: "Episode map preparation failed") }
+                if item.id == self.activeItemId { self.reportFailure(error, context: "Episode map preparation failed", itemId: item.id) }
             }
         }
     }
@@ -5784,7 +5777,7 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
         } catch {
-            reportFailure(error, context: "Offline preparation failed")
+            reportFailure(error, context: "Offline preparation failed", itemId: id)
         }
     }
 
@@ -5864,6 +5857,11 @@ final class Gate1AppModel: ObservableObject {
         guard id == nil || feedbackEvent?.id == id else { return }
         feedbackEvent = nil
     }
+
+    func clearLastFailure(itemId: String) { itemFailures.clear(itemId: itemId) }
+
+    /// Trying an action again answers its Retry banner, so a stale one can't linger over the result.
+    private func withdrawRetryOffer(_ key: String) { if feedbackEvent?.retry?.key == key { feedbackEvent = nil } }
 
     func dismissLegacyLibraryResetNotice() {
         legacyLibraryResetNotice = nil
@@ -6615,6 +6613,7 @@ final class Gate1AppModel: ObservableObject {
     #endif
 
     func summarize() {
+        withdrawRetryOffer("summary")
         if !remoteProviderExperienceEnabled {
             guard localFoundationModelAvailable else {
                 diagnostics["summaryPreflight"] = "local_model_unavailable"
@@ -9119,7 +9118,7 @@ final class Gate1AppModel: ObservableObject {
                 self.diagnostics["onDeviceSpeechGeneration"] = "retry_current_target"
                 self.reportConfirmation("Retrying Supertonic at the current position.")
             } catch {
-                self.reportFailure(error, context: "Prepared audio retry failed")
+                self.reportFailure(error, context: "Prepared audio retry failed", itemId: itemId)
             }
         }
     }
@@ -10685,7 +10684,7 @@ final class Gate1AppModel: ObservableObject {
             reportSuccess("Preparing generated audio for \(item.title).")
             return true
         } catch {
-            reportFailure(error, context: "Prepare text playback failed")
+            reportFailure(error, context: "Prepare text playback failed", itemId: itemId)
             return true
         }
     }
@@ -10891,7 +10890,7 @@ final class Gate1AppModel: ObservableObject {
                         self.diagnostics["supertonicFallbackOffset"] = "\(offset)"
                         let message = fallbackReason.listenerExplanation
                         self.statusMessage = message
-                        self.feedbackEvent = UserFeedbackEvent(kind: .warning, message: message)
+                        self.presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
                     }
                 },
                 onRestore: { [weak self] itemId in
@@ -11814,7 +11813,8 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["lastLocalSummaryErrorType"] = String(reflecting: type(of: error))
                 markProviderFailure(
                     String(describing: error),
-                    userMessage: "On-device summary failed: \(error.localizedDescription) Tap Retry Summary to try the model again."
+                    userMessage: "On-device summary failed: \(error.localizedDescription) Tap Retry Summary to try the model again.",
+                    retry: .init(key: "summary") { [weak self] in self?.summarize() }
                 )
             }
         }
@@ -12104,7 +12104,7 @@ final class Gate1AppModel: ObservableObject {
         """
     }
 
-    private func markProviderFailure(_ error: String, userMessage: String) {
+    private func markProviderFailure(_ error: String, userMessage: String, retry: UserFeedbackEvent.Retry? = nil) {
         do {
             if let engine {
                 snapshot = try engine.aiProviderFailed(error: error)
@@ -12115,7 +12115,7 @@ final class Gate1AppModel: ObservableObject {
         }
         providerProbeStatus = userMessage
         diagnostics["providerProbe"] = providerProbeStatus
-        reportFailure(userMessage)
+        reportFailure(userMessage, retry: retry)
     }
 
     private func latestInterjectionNeedingTranscription() -> Interjection? {
@@ -14834,7 +14834,7 @@ final class Gate1AppModel: ObservableObject {
     /// otherwise apparent from the current interface.
     private func reportConfirmation(_ message: String) {
         reportSuccess(message)
-        feedbackEvent = UserFeedbackEvent(kind: .success, message: message)
+        presentFeedback(UserFeedbackEvent(kind: .success, message: message))
     }
 
     /// Presents degraded-but-successful behavior without styling it as either a
@@ -14842,12 +14842,12 @@ final class Gate1AppModel: ObservableObject {
     private func reportWarning(_ message: String) {
         statusMessage = message
         lastError = nil
-        feedbackEvent = UserFeedbackEvent(kind: .warning, message: message)
+        presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
         diagnostics["lastStatus"] = message
         diagnostics["recentFailure"] = "none"
     }
 
-    private func reportFailure(_ error: Error, context: String? = nil) {
+    private func reportFailure(_ error: Error, context: String? = nil, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
         let message: String
         if let urlError = error as? URLError {
             message = Self.userFacingMessage(for: urlError)
@@ -14857,33 +14857,21 @@ final class Gate1AppModel: ObservableObject {
         } else {
             message = String(describing: error)
         }
-        reportFailure([context, message].compactMap { $0 }.joined(separator: ": "))
+        reportFailure([context, message].compactMap { $0 }.joined(separator: ": "), itemId: itemId, retry: retry)
     }
 
-    /// URLError's default description is a raw domain/code string, which is not useful to a listener.
-    nonisolated static func userFacingMessage(for urlError: URLError) -> String {
-        switch urlError.code {
-        case .timedOut:
-            return "The request timed out. Please try again."
-        case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed, .internationalRoamingOff:
-            return "You appear to be offline. Check your connection and try again."
-        case .badServerResponse, .fileDoesNotExist, .resourceUnavailable, .zeroByteResource:
-            return "The server couldn’t provide anything at that address. Check the link and try again."
-        case .badURL, .unsupportedURL, .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost:
-            return "That address couldn’t be reached. Check the link and try again."
-        case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate,
-             .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .clientCertificateRejected:
-            return "A secure connection to that site couldn’t be made."
-        default:
-            return "The network request failed. Please try again."
-        }
-    }
-
-    private func reportFailure(_ message: String) {
+    private func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
         statusMessage = "Error"
         lastError = message
-        feedbackEvent = UserFeedbackEvent(kind: .error, message: message)
+        presentFeedback(UserFeedbackEvent(kind: .error, message: message, retry: retry))
+        // The failure stays readable on its item: the one named, else the one on screen (#310).
+        itemFailures.record(message, itemId: itemId ?? (screen == .item ? selectedItem.id : screen == .playback ? snapshot.itemId ?? "" : ""))
         diagnostics["recentFailure"] = message
+    }
+
+    private func presentFeedback(_ event: UserFeedbackEvent) {
+        guard feedbackEvent?.mayBeReplaced(by: event) ?? true else { return }
+        feedbackEvent = event
     }
 
     private func refreshSelectedItem() {
