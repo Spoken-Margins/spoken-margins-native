@@ -42,7 +42,7 @@ struct ExperienceMarginDetailView: View {
                     }
                     if current.canPlayRecording {
                         Button(
-                            model.isPlayingInterjectionAudio(current.interjection) ? "Stop Recording" : "Play Recording",
+                            model.isPlayingInterjectionAudio(current.interjection) ? "Stop playing" : "Play Margin",
                             systemImage: model.isPlayingInterjectionAudio(current.interjection) ? "stop.fill" : "play.fill"
                         ) { model.toggleInterjectionAudioPlayback(current.interjection) }
                     }

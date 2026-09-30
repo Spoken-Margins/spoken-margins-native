@@ -917,31 +917,95 @@ final class SharingTests: XCTestCase {
         XCTAssertLessThanOrEqual(sortedErrors[p95Index], 1_500)
     }
 
+    /// The ambiguity rule itself: when a Margin's two flanks place it more than the fusion spread apart,
+    /// the resolver declines to place it. An ad inserted between the flanks does exactly this: the "pre"
+    /// flank (anchor offset +11.5 s) still lands at 42 s, the "post" flank (−0.5 s) after the 7 s ad.
+    ///
+    /// Two flanks that agree on the same wrong place look like agreement and are fused. The resolver
+    /// can't tell that apart from a real match; repeated theme music can cause it (C4 benchmark, #296).
+    func testAcousticResolverDeclinesFlanksThatDisagreeByMoreThanTheFusionSpread() {
+        let query = PodcastPortableAnchorQuery(
+            packageScopedId: "margin-at-an-inserted-ad",
+            senderMediaTimeMs: 42_000,
+            evidence: [
+                PodcastAcousticEvidenceQuery(id: "pre", signatureData: Data([1]), anchorOffsetMs: 11_500),
+                PodcastAcousticEvidenceQuery(id: "post", signatureData: Data([2]), anchorOffsetMs: -500)
+            ]
+        )
+        func resolve(_ candidates: [(timeMs: Int, confidence: Double)]) -> ImportedAnchorResolution {
+            PodcastAcousticAnchorResolver.resolveCandidates(
+                candidates,
+                query: query,
+                senderDurationMs: 75_000,
+                recipientDurationMs: 82_000,
+                strongSourceIdentity: true,
+                exactDigestContradiction: false,
+                matchedAnchorOffsets: [11_500, -500]
+            )
+        }
+        let spread = PodcastAcousticAnchorResolver.maximumFusionSpreadMs
+        for disagreement in [spread + 1, 7_000, 23_000] {
+            let declined = resolve([(42_000, 0.97), (42_000 + disagreement, 0.96)])
+            XCTAssertEqual(declined.evidenceClass, .ambiguous, "flanks \(disagreement) ms apart")
+            XCTAssertTrue(declined.isAmbiguous)
+            XCTAssertNil(declined.localMediaTimeMs, "an ambiguous Margin is not placed")
+        }
+        let fused = resolve([(49_000, 0.97), (49_000 + spread, 0.96)])
+        XCTAssertEqual(fused.evidenceClass, .fused)
+        XCTAssertEqual(fused.localMediaTimeMs, 49_000 + spread)
+    }
+
+    /// The same rule end to end, on audio that never repeats: a 7 s ad inserted right at the Margin, between
+    /// its two flanks, so the flanks honestly disagree by 7 s. (This used a tone fixture that repeated every
+    /// 23 s, with the ad before both flanks; its verdict depended on which copy each flank matched, #296.)
     func testAcousticResolverDeclinesConflictingSyntheticMatchesAcrossInsertedAd() async throws {
         #if canImport(AVFoundation)
+        let resolution = try await resolveSyntheticAdEdition(adInsertedAtMs: 42_000, anchorMs: 42_000)
+        XCTAssertEqual(resolution.evidenceClass, .ambiguous)
+        XCTAssertNil(resolution.localMediaTimeMs)
+        #else
+        throw XCTSkip("AVFoundation is required")
+        #endif
+    }
+
+    /// The counterpart: an ad before both flanks shifts the Margin by the ad's length, and both flanks agree.
+    func testAcousticResolverPlacesAMarginAfterAnInsertedAdByTheAdsLength() async throws {
+        #if canImport(AVFoundation)
+        let resolution = try await resolveSyntheticAdEdition(adInsertedAtMs: 25_000, anchorMs: 42_000)
+        XCTAssertEqual(resolution.evidenceClass, .fused)
+        let placed = try XCTUnwrap(resolution.localMediaTimeMs)
+        XCTAssertLessThanOrEqual(abs(placed - 49_000), PodcastAcousticAnchorResolver.maximumFusionSpreadMs)
+        #else
+        throw XCTSkip("AVFoundation is required")
+        #endif
+    }
+
+    #if canImport(AVFoundation)
+    /// A 75 s sender edition of seeded noise, and a recipient edition with a 7 s ad of other audio inserted.
+    private func resolveSyntheticAdEdition(adInsertedAtMs: Int, anchorMs: Int) async throws -> ImportedAnchorResolution {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let senderURL = root.appendingPathComponent("sender.m4a")
         let adURL = root.appendingPathComponent("recipient-ad.m4a")
         let recipientURL = root.appendingPathComponent("recipient.m4a")
-        try writePatternedM4A(to: senderURL, durationSeconds: 75)
-        try writePatternedM4A(to: adURL, durationSeconds: 7, frequencyOffset: 900)
+        try SeededNoiseAudio.write(to: senderURL, seconds: 75)
+        try SeededNoiseAudio.write(to: adURL, seconds: 7, seed: 0xD1B54A32D192ED03, startSecond: 600)
         try await composeRecipientEdition(
             senderURL: senderURL,
             insertedAudioURL: adURL,
-            insertionTimeMs: 25_000,
+            insertionTimeMs: adInsertedAtMs,
             destinationURL: recipientURL
         )
         let generated = try await PodcastAnchorEvidenceGenerator.generate(
             sourceURL: senderURL,
-            anchorMediaTimeMs: 42_000,
+            anchorMediaTimeMs: anchorMs,
             outputDirectory: root.appendingPathComponent("evidence"),
             idPrefix: "ad-shift"
         )
         XCTAssertEqual(generated.count, 2)
         let query = PodcastPortableAnchorQuery(
             packageScopedId: "shifted-margin",
-            senderMediaTimeMs: 42_000,
+            senderMediaTimeMs: anchorMs,
             evidence: try generated.map {
                 PodcastAcousticEvidenceQuery(
                     id: $0.id,
@@ -957,13 +1021,9 @@ final class SharingTests: XCTestCase {
             senderDurationMs: 75_000,
             strongSourceIdentity: true
         )
-        let resolution = try XCTUnwrap(resolutions[query.packageScopedId])
-        XCTAssertEqual(resolution.evidenceClass, .ambiguous)
-        XCTAssertNil(resolution.localMediaTimeMs)
-        #else
-        throw XCTSkip("AVFoundation is required")
-        #endif
+        return try XCTUnwrap(resolutions[query.packageScopedId])
     }
+    #endif
 
     func testHeldOutPublicDomainPodcastAnchorCorpus() async throws {
         let environment = ProcessInfo.processInfo.environment
