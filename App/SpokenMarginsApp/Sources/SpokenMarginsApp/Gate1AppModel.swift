@@ -8337,30 +8337,19 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["uiTestSharedSourceMiss"] = "forced_once"
             return nil
         }
-        let matches = try store.listItems().filter { item in
-            ImportedItemResolver.canRepresentSameWork(itemIdentity, localSharedItemIdentity(for: item))
-        }
-        return matches.count == 1 ? matches[0].id : nil
+        return SharedPacketItemMatcher.matchingItemId(
+            for: itemIdentity, among: try store.listItems(), ownedAudiobookDigest: ownedAudiobookDigest(for:))
     }
 
     func localSharedItemIdentity(for item: Item) -> SharedItemIdentity {
-        let isPodcast = item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile
-        let external = item.externalReference.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
-        let enclosure = item.media?.url.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
-        let localAudioDigest = item.mediaType == "audiobook"
-            ? (try? store?.loadOwnedOfflineAssets())?.first(where: {
-                $0.itemId == item.id && $0.category == .audiobook && $0.integrity == .valid
-            })?.checksumSHA256 : nil
-        return SharedItemIdentity(
-            itemType: sharedItemType(for: item),
-            canonicalURL: external ?? enclosure,
-            originalURL: external,
-            title: item.title,
-            enclosureURL: enclosure,
-            durationMs: item.media?.durationMs,
-            normalizedContentSHA256: isPodcast ? nil : PortableArticleAnchorResolver.normalizedContentSHA256(item.text ?? ""),
-            exactEditionSHA256: localAudioDigest ?? (isPodcast ? nil : PortableArticleAnchorResolver.exactEditionSHA256(item.text ?? ""))
-        )
+        SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: ownedAudiobookDigest(for: item))
+    }
+
+    private func ownedAudiobookDigest(for item: Item) -> String? {
+        guard item.mediaType == "audiobook" else { return nil }
+        return (try? store?.loadOwnedOfflineAssets())?.first(where: {
+            $0.itemId == item.id && $0.category == .audiobook && $0.integrity == .valid
+        })?.checksumSHA256
     }
 
     private func normalizedSharingURL(_ value: String?) -> String? {
@@ -13983,14 +13972,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func sharedItemType(for item: Item) -> SharedItemType {
-        if item.mediaType == "audiobook" { return .other }
-        if item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile {
-            return .podcast
-        }
-        let extensionName = URL(fileURLWithPath: item.externalReference ?? "").pathExtension.lowercased()
-        if extensionName == "pdf" { return .pdf }
-        if extensionName == "epub" { return .epub }
-        return .text
+        SharedPacketItemMatcher.itemType(for: item)
     }
 
     private func portableAnchor(
