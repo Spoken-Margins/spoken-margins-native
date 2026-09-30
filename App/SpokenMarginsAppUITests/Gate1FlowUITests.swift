@@ -207,6 +207,36 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Completed items hidden"].exists)
     }
 
+    // #426: the owner clears his Library by swiping items from the leading edge. The completion test
+    // above uses the context menu, so the swipe broke on the phone without any test noticing.
+    func testLibrarySwipeFromLeadingEdgeMarksCompleteAndUndoRestoresIt() throws {
+        let row = app.buttons["library.row.item-pill"]
+        XCTAssertTrue(row.waitForExistence(timeout: 8), app.debugDescription)
+        let undo = element("completion.undo.button")
+
+        // A short swipe reveals Complete; tapping it marks the item complete, with an undo.
+        row.swipeRight()
+        let complete = app.buttons.matching(NSPredicate(
+            format: "identifier == %@ OR label == %@", "library.complete.item-pill", "Complete"
+        )).firstMatch
+        XCTAssertTrue(complete.waitForExistence(timeout: 4), "A right swipe must reveal Complete. \(app.debugDescription)")
+        complete.tap()
+        XCTAssertTrue(undo.waitForExistence(timeout: 4), app.debugDescription)
+        XCTAssertTrue(row.waitForNonExistence(timeout: 4))
+        undo.tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 4))
+
+        // A full swipe across the row marks it complete in one gesture, and undo brings it back.
+        row.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5))
+            .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0))
+                .withOffset(CGVector(dx: 0, dy: row.frame.midY)))
+        XCTAssertTrue(undo.waitForExistence(timeout: 4), "A full right swipe must mark the item complete. \(app.debugDescription)")
+        XCTAssertTrue(row.waitForNonExistence(timeout: 4))
+        undo.tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["Completed items hidden"].exists)
+    }
+
     func testLibraryCompactRowStaysDense() throws {
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
         let open = app.buttons["library.row.item-pill"]
