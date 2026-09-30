@@ -522,6 +522,18 @@ class MergeTests_Runner(unittest.TestCase):
         self.assertIn('attempt 1: the push to next was refused', ' '.join(details))
         self.assertIn('merged into next as m200000', details[-1])
 
+    def test_a_push_refused_for_another_reason_stops_at_once(self):
+        # A queued job with a lane.yml from before #382 has a read-only token: re-testing can't help.
+        github = FakeGitHub(labels=('automerge',))
+        with mock.patch.object(lane, 'next_moved', return_value=False):
+            (verdict, _, _, details), events = self.run_auto(github, pushes=(False,))
+        self.assertEqual(events, ['build', 'comment', 'push m1'])
+        self.assertIn('not merged: the push to next failed', details[-1])
+        self.assertTrue(lane.next_moved(' ! [rejected]        abc -> next (fetch first)'))
+        self.assertTrue(lane.next_moved(' ! [rejected]        abc -> next (non-fast-forward)'))
+        self.assertFalse(lane.next_moved('remote: Permission to uncomposed/x.git denied to github-actions[bot].'))
+        self.assertFalse(lane.next_moved('fatal: unable to access \'https://github.com/x.git/\': The requested URL returned error: 403'))
+
     def test_it_gives_up_after_three_refused_pushes(self):
         github = FakeGitHub(labels=('automerge',))
         (verdict, _, _, details), events = self.run_auto(github, verdicts=('PASS',) * 3, pushes=(False,) * 3)
@@ -590,6 +602,7 @@ class PushTests(unittest.TestCase):
         pushed, message = lane.push_merge(self.tree, sha, 'next')
         self.assertFalse(pushed)
         self.assertIn('rejected', message)
+        self.assertTrue(lane.next_moved(message), message)  # so the runner tests again
         self.assertEqual(self.rev(self.origin, 'next'), moved)  # nothing untested landed
 
     def test_a_conflict_names_the_files_and_leaves_the_tree_clean(self):

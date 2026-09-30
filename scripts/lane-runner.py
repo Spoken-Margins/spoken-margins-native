@@ -402,6 +402,12 @@ def sweep_merge_audit(tree: Path, base: str) -> None:
         print(f'merge-audit sweep skipped: {error!r}')
 
 
+def next_moved(push_message: str) -> bool:
+    """Whether a refused push means the branch moved (so testing again on its newest commit can help)."""
+    return 'rejected' in push_message and any(
+        reason in push_message for reason in ('fetch first', 'non-fast-forward', 'stale info'))
+
+
 def merge_check(head: str, merge_sha: str, base: str, base_sha: str, ran: str) -> str:
     return (f'{MERGE_CHECK} on `{head[:7]}`: PASS.**\n'
             f'- Tested the merge commit `{merge_sha[:7]}`: {base} at `{base_sha[:7]}` first, then this PR.\n'
@@ -442,6 +448,9 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
         if pushed:
             sweep_merge_audit(ROOT, base)
             return verdict, where, ran, details + [f'merged into {base} as {merge_sha[:7]}']
+        if not next_moved(message):  # no permission, network: testing again wouldn't help
+            return verdict, where, ran, details + [f'not merged: the push to {base} failed ({message}). A job '
+                                                   'whose lane.yml predates push rights (#382) can\'t push.']
         notes.append(f'attempt {attempt}: the push to {base} was refused ({message}), so {base} moved; '
                      'tested again on the newest one')
         base_sha = fetch_base(ROOT, base)
