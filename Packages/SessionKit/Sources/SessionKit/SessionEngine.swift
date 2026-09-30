@@ -2160,8 +2160,10 @@ public final class SessionEngine {
     @discardableResult
     public func transcriptionFailed(interjectionId: String, sessionId: String? = nil, error: String) throws -> SessionSnapshot {
         try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            // The status says the transcript failed. displayText is the listener's
+            // own words, so it stays as it was: nil for a new Margin, or the text a
+            // Margin already had when a retry fails (#304).
             interjection.transcriptionStatus = "failed"
-            interjection.displayText = "Audio saved. Transcript failed."
         }
         snapshot.lastFailure = "transcription_failed:\(error)"
         return snapshot

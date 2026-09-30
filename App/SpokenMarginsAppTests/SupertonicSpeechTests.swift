@@ -305,6 +305,147 @@ final class SupertonicSpeechTests: XCTestCase {
         try XCTUnwrap(value, file: file, line: line)
     }
 
+    private func stallClient(
+        _ log: StallEventLog, template: URL, plays: Bool,
+        playsFromStart: Int? = nil, onStart: (@Sendable (AVPlayer) -> Void)? = nil
+    ) -> SupertonicSpeechPlaybackClient {
+        SupertonicSpeechPlaybackClient(
+            renderer: CountingAudioSupertonicRenderer(templateURL: template), voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                log.started()
+                onStart?(player)
+                if plays || playsFromStart.map({ log.startCount >= $0 }) == true {
+                    player.volume = 0; player.playImmediately(atRate: rate)
+                }
+            },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            interruptionHandler: { event in log.stall("interruption.\(event)", [:]) },
+            onStall: { kind, fields in log.stall(kind, fields) },
+            stallThreshold: .milliseconds(400), stallSampleInterval: .milliseconds(100)
+        )
+    }
+
+    // #288: the player says it's playing but its clock doesn't move. It must be noticed, logged
+    // with the session's and player's state, and re-seated, at most once per 30 s.
+    func testAPlayerWhoseClockStopsIsLoggedAndReseated() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: false)
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "stall", from: 0)
+        for _ in 0..<150 where log.startCount < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.values.first, "supertonic.stall")
+        XCTAssertEqual(log.lastFields["recovery"], "reseat_player")
+        XCTAssertNotNil(log.lastFields["playerRate"])
+        XCTAssertNotNil(log.lastFields["sessionCategory"], "the session's state is recorded")
+        XCTAssertGreaterThanOrEqual(log.startCount, 2, "the player was re-seated")
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertEqual(log.values.filter { $0 == "supertonic.stall" }.count, 1, "at most one re-seat per 30 s")
+        try client.stop()
+    }
+
+    // #302 Done when 3 and 5: a re-seat that doesn't bring the clock back used to leave the app
+    // showing "playing" (and retry only after 30 s). It now pauses at the listener's place, so the
+    // control shows Play, and one tap plays again in a new player whose clock advances.
+    func testAStallTheReseatDoesNotFixPausesAndOneTapPlaysAgain() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: false, playsFromStart: 3)
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "tap", from: 0)
+        for _ in 0..<150 where !log.values.contains("supertonic.stall_paused") { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.values.prefix(2), ["supertonic.stall", "supertonic.stall_paused"], "\(log.values)")
+        XCTAssertTrue(log.values.contains("interruption.began"), "the app is told playback paused")
+        XCTAssertEqual(client.playbackTransportState(targetId: "tap"), .paused, "the control shows Play, not Pause")
+        XCTAssertEqual(log.startCount, 2, "one re-seat, then a pause")
+        XCTAssertEqual(client.debugBackgroundAudioReleaseCount, 1, "other apps' audio is no longer lowered")
+
+        try client.play(targetId: "tap", from: 0)
+        for _ in 0..<100 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.startCount, 3, "one tap starts a new player")
+        let before = client.currentCharOffset() ?? 0
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertEqual(client.playbackTransportState(targetId: "tap"), .playing)
+        XCTAssertGreaterThan(client.currentCharOffset() ?? 0, before, "and its clock advances")
+        XCTAssertEqual(log.values.filter { $0.hasPrefix("supertonic.stall") }.count, 2, "no new stall: \(log.values)")
+        try client.stop()
+    }
+
+    // #301 audit: the listener switches items between a stall sample and its handling. The stale
+    // stall must not re-seat or pause the new item's player.
+    func testAStallSampledBeforeAnItemSwitchLeavesTheNewItemAlone() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: false, playsFromStart: 2)
+        let switcher = ItemSwitch()
+        switcher.client = client
+        client.debugStallWillBeHandled = { switcher.run() }
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "first", from: 0)
+        for _ in 0..<150 where log.startCount < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(log.startCount, 2, "the new item started once and was never re-seated: \(log.values)")
+        XCTAssertFalse(log.values.contains { $0.hasPrefix("supertonic.stall") }, "\(log.values)")
+        XCTAssertEqual(client.playbackTransportState(targetId: "second"), .playing)
+        try client.stop()
+    }
+
+    // #301 audit: a stall right after resuming mid-chunk, before the initial seek lands, reads the
+    // player's clock as zero. The re-seat must keep the place asked for, not replay from the start.
+    func testAReseatBeforeTheInitialSeekLandsKeepsTheRequestedPlace() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: false) { player in
+            player.currentItem?.cancelPendingSeeks()
+            player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "mid", from: 24)
+        for _ in 0..<150 where log.startCount < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThanOrEqual(log.startCount, 2, "re-seated: \(log.values)")
+        XCTAssertGreaterThanOrEqual(client.currentRecoveryCharOffset() ?? 0, 24, "the place asked for is kept")
+        try client.stop()
+    }
+
+    // Re-audit of #301: a pause and resume between the monitor's last sample and its exit left no
+    // stall monitor, because the resume saw the exiting one and started nothing.
+    func testResumingAsTheStallMonitorExitsKeepsAMonitor() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: true)
+        let resume = MonitorExitResume()
+        resume.client = client
+        client.debugStallMonitorWillExit = { resume.run() }
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "exit", from: 0)
+        for _ in 0..<100 where log.startCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(300))
+        try client.pause()
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertTrue(client.debugHasStallMonitor, "playback resumed, so a stall monitor is running")
+        try client.stop()
+    }
+
+    func testAPlayerThatIsPlayingIsNotAStall() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: true)
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "playing", from: 0)
+        try await Task.sleep(for: .milliseconds(1_500))
+        XCTAssertTrue(log.values.isEmpty, "\(log.values)")
+        XCTAssertEqual(log.startCount, 1)
+        try client.stop()
+    }
+
     // #258: with a Listening Map overview, the engine speaks "Overview. …" before the article.
     // Lookups carried that whole text and chunks planned across it, so no prepared chunk ever
     // matched and a fully prepared article was rendered again. They now ask for the article's own
@@ -2067,6 +2208,44 @@ private final class PreparedChunkCommitGate: @unchecked Sendable {
     func commit() async {
         let index = lock.withLock { commits += 1; return commits }
         if index == 2 { for await _ in stream {} }
+    }
+}
+
+private final class StallEventLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var kinds: [String] = []
+    private var starts = 0
+    private var last: [String: String] = [:]
+    var values: [String] { lock.withLock { kinds } }
+    var startCount: Int { lock.withLock { starts } }
+    var lastFields: [String: String] { lock.withLock { last } }
+    func stall(_ kind: String, _ fields: [String: String]) { lock.withLock { kinds.append(kind); last = fields } }
+    func started() { lock.withLock { starts += 1 } }
+}
+
+/// Switches to another item the first time a stall is about to be handled.
+private final class ItemSwitch: @unchecked Sendable {
+    weak var client: SupertonicSpeechPlaybackClient?
+    private let lock = NSLock()
+    private var done = false
+
+    func run() {
+        let first = lock.withLock { () -> Bool in defer { done = true }; return !done }
+        guard first, let client else { return }
+        try? client.stop()
+        _ = try? client.prepareSpeechText("A different article starts playing here instead.")
+        try? client.play(targetId: "second", from: 0)
+    }
+}
+
+private final class MonitorExitResume: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    var client: SupertonicSpeechPlaybackClient?
+    func run() {
+        let first = lock.withLock { () -> Bool in defer { done = true }; return !done }
+        guard first, let client, let offset = client.currentCharOffset() else { return }
+        try? client.play(targetId: "exit", from: offset)
     }
 }
 
