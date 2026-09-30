@@ -90,7 +90,7 @@ enum SupertonicRenderIdentity {
             parametersHash,
             normalizationVersion,
             chunkingVersion,
-            "prepared-audio-manifest.v1"
+            "prepared-audio-manifest.v2"
         ].joined(separator: "\u{1f}")
         return TTSRenderSignature(
             engine: "supertonic",

@@ -1229,6 +1229,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 try Task.checkCancellation()
                 let result: SupertonicNarrationResult
                 var performedInference = false
+                var ownsResult = false
                 let articleChunk = self?.articleChunkPlan(for: request)
                 if let articleChunk,
                    let recovered = await self?.preparedChunkLookup?(request.targetId, articleChunk.sourceText, articleChunk.plan) {
@@ -1282,9 +1283,15 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         result = retained
                     } else {
                         result = rendered
+                        ownsResult = true
                     }
                 }
-                try Task.checkCancellation()
+                if Task.isCancelled {
+                    // An uncached render (a stand-in, or no disk cache) belongs to nothing else: a
+                    // stop or seek during it must delete it, not leak it (#363 audit).
+                    if ownsResult { Task { await renderer.discardGeneratedAudio(at: result.audioURL) } }
+                    throw CancellationError()
+                }
                 guard !performedInference || self?.onDeviceRenderingAllowed() != false else {
                     Task { await renderer.discardGeneratedAudio(at: result.audioURL) }
                     await MainActor.run {

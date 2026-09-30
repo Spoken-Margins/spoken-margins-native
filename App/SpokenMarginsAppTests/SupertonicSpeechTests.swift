@@ -436,6 +436,28 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertNil(cache.cachedAudio(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 8))
     }
 
+    // #363 audit: a stop during a stand-in render that ignores cancellation returned a file that
+    // nothing owned; the cancellation check threw and the file leaked.
+    func testAStopDuringAnUncachedRenderDeletesItsFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "cancel-standin-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let renderer = SlowStandInRenderer(template: try guardTemplate(root))
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient()
+        )
+        _ = try client.prepareSpeechText("A sentence the guard hands to the iOS voice.")
+        try client.play(targetId: "item", from: 0)
+        for _ in 0..<50 where renderer.made.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        try client.stop()
+        try await Task.sleep(for: .milliseconds(700))
+        let made = renderer.made
+        XCTAssertEqual(made.count, 1)
+        XCTAssertFalse(made.contains { FileManager.default.fileExists(atPath: $0.path) }, "the stand-in file was deleted")
+    }
+
     func testSelectableCatalogExposesOnlyJamesLilyAndSystem() {
         XCTAssertEqual(AppTTSVoiceSelection.allCases, [.james, .lily, .system])
         XCTAssertEqual(AppTTSVoiceSelection.james.rawValue, "supertonic:M2")
@@ -2179,6 +2201,27 @@ private actor BabbleSupertonicRenderer: SupertonicRendering {
     }
     func discardGeneratedAudio(at url: URL) async {
         if generated.remove(url) != nil { try? FileManager.default.removeItem(at: url) }
+    }
+}
+
+/// Returns an iOS-voice stand-in after a delay, ignoring cancellation, like a synthesizer that
+/// doesn't check for it. Deletes only files it made.
+private final class SlowStandInRenderer: SupertonicRendering, @unchecked Sendable {
+    let template: URL
+    private let lock = NSLock()
+    private var files: [URL] = []
+    var made: [URL] { lock.withLock { files } }
+    init(template: URL) { self.template = template }
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        let url = FileManager.default.temporaryDirectory.appending(path: "system-voice-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: template, to: url)
+        lock.withLock { files.append(url) }
+        Thread.sleep(forTimeInterval: 0.3)
+        return SupertonicNarrationResult(audioURL: url, duration: 1, sampleRate: 44_100, renderDuration: 0.3, sessionLoadCount: 0,
+                                         engine: SupertonicNarrationResult.systemVoiceEngine)
+    }
+    func discardGeneratedAudio(at url: URL) async {
+        if lock.withLock({ files.contains(url) }) { try? FileManager.default.removeItem(at: url) }
     }
 }
 
