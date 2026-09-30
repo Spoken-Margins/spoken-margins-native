@@ -218,6 +218,24 @@ class T3Tests(unittest.TestCase):
         self.assertEqual(grouped, {'app': ['SpokenMarginsAppTests/A'], 'adapters': ['SpokenMarginsAppTests/Audio/test1']})
         self.assertEqual(unknown, ['Missing', 'A/test9'])
 
+    def test_the_screen_tour_is_found_among_the_ui_tests(self):
+        plans = dict(self.PLANS, tour={'SpokenMarginsAppUITests/ScreenTourTests/testTourInLightAppearance'})
+        grouped, unknown = lane.plan_for_tests(['ScreenTourTests', 'SpokenMarginsAppUITests/ScreenTourTests', 'A'], plans)
+        self.assertEqual(grouped, {'tour': ['SpokenMarginsAppUITests/ScreenTourTests'] * 2,
+                                   'app': ['SpokenMarginsAppTests/A']})
+        self.assertEqual(unknown, [])
+        self.assertEqual(lane.PLANS['tour'], 'ScreenTour')
+
+    def test_the_report_lists_the_tours_exported_screenshots(self):
+        def run_plan(plan, selectors, output):
+            return {'status': 'verified', 'screenshots': ['tour-dark-01-library.png', 'tour-light-01-library.png'],
+                    'steps': [{'name': 'xcode-tests', 'tests': {'T/S/test1': {'status': 'passed'}}}]}
+
+        summaries, statuses, _, details = lane.run_plans({'tour': ['T/S']}, run_plan, Path('/e'))
+        self.assertEqual(lane.t3_verdict(summaries, statuses), 'PASS')
+        self.assertEqual(details, ['tour: 2 screenshots in /e/verify-tour/screens: '
+                                   'tour-dark-01-library.png, tour-light-01-library.png'])
+
     def test_verdicts_separate_failures_from_lane_trouble(self):
         failing = lane.summarize_manifest({'status': 'failed_or_incomplete', 'steps': [
             {'name': 'xcode-tests', 'tests': {'A/test1': {'status': 'passed'}, 'A/test2': {'status': 'failed'}}}]})

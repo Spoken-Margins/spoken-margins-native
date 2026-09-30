@@ -21,7 +21,7 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 **Three test levels** (owner's decision, 2026-09-29). These replace per-milestone T3 and T4 and "T5 once per candidate":
 
 1. **Per PR:** host tests plus both builds (`--plan fast` and T2), before merge. T3 only for audio session, storage and packet changes.
-2. **Per batch:** the integration run on `next`'s merged tip: `--plan app`, every journey on a library shaped like the owner's and upgraded from Build 29, and a screen tour for the critics. It runs when the runner's queue is empty after several merges, and always overnight. A failure becomes the top `ready` issue.
+2. **Per batch:** the integration run on `next`'s merged tip: `--plan app`, every journey on a library shaped like the owner's and upgraded from Build 29, and a screen tour for the critics (`verify-tests.py --plan tour`, which saves one screenshot per screen, light and dark, in the run's `screens/` folder; a PR asks for it with `/lane T3` and `tests: ScreenTourTests`). It runs when the runner's queue is empty after several merges, and always overnight. A failure becomes the top `ready` issue.
 3. **Per candidate:** the owner's phone. The latest green integration run is the candidate.
 
 **Rules of thumb**

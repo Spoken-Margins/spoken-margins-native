@@ -14,7 +14,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   same next, tier and tests) runs once. After an INCONCLUSIVE report, asking again runs again.
 - T2 builds for simulator and device (unsigned) through scripts/xcodebuild-lane.
 - T3 runs the named app-hosted tests through verify-tests.py on a fresh iOS 26 simulator, created
-  for the job and deleted afterwards. It is booted under the lane's boot rules (scripts/lane_sim.py):
+  for the job and deleted afterwards. `tests: ScreenTourTests` runs the UI screen tour instead, and
+  the report lists its exported screenshots. It is booted under the lane's boot rules (scripts/lane_sim.py):
   one boot at a time, no builds meanwhile, no retry after a failed boot, a stop at the first crash
   during boot, and a long wait for the first boot's data migration. The job holds the Mac's one
   simulator slot throughout, so it never runs alongside a Test Desk job. A crash flood stops the run.
@@ -82,7 +83,9 @@ AUDITED = {'audio': 'the audio session', 'persistence': 'persistence', 'packet':
 BOT = ('github-actions[bot]', '41898282+github-actions[bot]@users.noreply.github.com')
 RUNNER_TIERS = ('T2', 'T3')
 APP_TEST_TARGET = 'SpokenMarginsAppTests'
-PLANS = {'app': 'AppBehavior', 'adapters': 'AudioAdapters'}
+UI_TEST_TARGET = 'SpokenMarginsAppUITests'
+# The app test plans, plus the screen tour: the one UI test plan a T3 request may name (#381).
+PLANS = {'app': 'AppBehavior', 'adapters': 'AudioAdapters', 'tour': 'ScreenTour'}
 # The device build compiles without signing: the runner is a background service with no access to
 # the login keychain's signing key (errSecInternalComponent), and signing is a release-archive check.
 T2_BUILDS = (('simulator', ["-destination", "generic/platform=iOS Simulator", "build-for-testing"]),
@@ -579,15 +582,21 @@ def wait_for_room_to_build(out=sys.stdout, max_wait: float = BUILD_RUNNER_WAIT, 
 
 # ---- T3 -----------------------------------------------------------------------------------------
 
+def full_selectors(selector: str) -> list[str]:
+    """The target-qualified names a selector may mean: a bare Class[/method] is an app test, else a UI test."""
+    if selector.startswith((APP_TEST_TARGET + '/', UI_TEST_TARGET + '/')):
+        return [selector]
+    return [f'{APP_TEST_TARGET}/{selector}', f'{UI_TEST_TARGET}/{selector}']
+
+
 def plan_for_tests(selectors: list[str], plans: dict[str, set]) -> tuple[dict[str, list[str]], list[str]]:
     """Group selectors by the plan holding them; selectors no plan holds are returned separately."""
     grouped, unknown = {}, []
     for selector in selectors:
-        full = selector if selector.startswith(APP_TEST_TARGET + '/') else f'{APP_TEST_TARGET}/{selector}'
-        plan = next((p for p, tests in plans.items()
-                     if any(t == full or t.startswith(full + '/') for t in tests)), None)
-        if plan:
-            grouped.setdefault(plan, []).append(full)
+        found = next(((plan, full) for full in full_selectors(selector) for plan, tests in plans.items()
+                      if any(t == full or t.startswith(full + '/') for t in tests)), None)
+        if found:
+            grouped.setdefault(found[0], []).append(found[1])
         else:
             unknown.append(selector)
     return grouped, unknown
@@ -644,6 +653,9 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[
             details.append(f'{plan}: the {what} ran out of its own {duration(limit)} budget (verify-tests.py `{step}`) '
                            f'after {summary["passed"]} passing test{"s" if summary["passed"] != 1 else ""}. '
                            'The simulator\'s boot has a separate budget and had finished before it started.')
+        if manifest.get('screenshots'):  # the screen tour's exported files, one per screen (#381)
+            details.append(f'{plan}: {len(manifest["screenshots"])} screenshots in {output}/screens: '
+                           + ', '.join(manifest['screenshots']))
         if manifest.get('status') != 'verified' and not summary['failed']:
             details.append(f'{plan}: {manifest.get("error") or manifest.get("status")}. evidence: {output}/manifest.json')
         if summary['flood']:
