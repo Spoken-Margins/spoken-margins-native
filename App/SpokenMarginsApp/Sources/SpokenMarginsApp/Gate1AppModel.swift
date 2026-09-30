@@ -7109,13 +7109,13 @@ final class Gate1AppModel: ObservableObject {
         guard interjection.captureKind != .written else { return }
         if isPlayingInterjectionAudio(interjection) {
             stopInterjectionAudioPlayback()
-            reportConfirmation("Recording stopped.")
+            reportConfirmation("Stopped playing your Margin.")
             return
         }
         guard let audioPath = interjection.audioPath,
               let url = resolvedInterjectionAudioURL(for: audioPath),
               FileManager.default.fileExists(atPath: url.path) else {
-            reportFailure("The saved Margin recording is unavailable.")
+            reportFailure("This Margin's audio is unavailable.")
             return
         }
         if snapshot.status.isPlaybackActive {
@@ -7142,7 +7142,7 @@ final class Gate1AppModel: ObservableObject {
                     guard !Task.isCancelled else { return }
                     if item.status == .failed {
                         self?.stopInterjectionAudioPlayback()
-                        self?.reportFailure("The saved recording could not be played.")
+                        self?.reportFailure("This Margin's audio couldn't be played.")
                         return
                     }
                     let duration = item.duration.seconds
@@ -7154,7 +7154,7 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
             player.playImmediately(atRate: Float(rate))
-            reportConfirmation("Playing recording.")
+            reportConfirmation("Playing your Margin.")
         } catch {
             stopInterjectionAudioPlayback()
             reportFailure(error, context: "Margin playback failed")
@@ -8926,7 +8926,7 @@ final class Gate1AppModel: ObservableObject {
         }) else {
             return snapshotTitle
         }
-        return "Ch. \(chapterIndex + 1): \(snapshotTitle)"
+        return ChapterHeaderLabel.title(snapshotTitle, index: chapterIndex)
     }
 
     private var inferredPlaybackChapterTitle: String? {
