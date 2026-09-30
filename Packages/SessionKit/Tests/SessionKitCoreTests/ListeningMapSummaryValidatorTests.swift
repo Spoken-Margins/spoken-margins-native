@@ -42,6 +42,9 @@ final class ListeningMapSummaryValidatorTests: XCTestCase {
             XCTAssertEqual($0 as? ListeningMapSummaryValidator.Rejection, .ungroundedNumber("12"))
         }
         XCTAssertNoThrow(try validate("Output rose about 3 times on the year before."))
+        XCTAssertThrowsError(try validate("Lopez says fifty homes were added.")) {
+            XCTAssertEqual($0 as? ListeningMapSummaryValidator.Rejection, .ungroundedNumber("50"))
+        }
         // Numbers in the title count as well.
         XCTAssertThrowsError(try validate(title: "Housing in 1999", "Lopez credits the new zoning rules.")) {
             XCTAssertEqual($0 as? ListeningMapSummaryValidator.Rejection, .ungroundedNumber("1999"))
@@ -51,6 +54,14 @@ final class ListeningMapSummaryValidatorTests: XCTestCase {
     func testEveryCapitalisedNameMustAppearInTheScene() {
         XCTAssertThrowsError(try validate("Lopez and Mayor Chen credit the zoning rules.")) {
             XCTAssertEqual($0 as? ListeningMapSummaryValidator.Rejection, .ungroundedName("Mayor"))
+        }
+        // A title's full stop or a colon doesn't hide the name after it.
+        for description in ["Lopez and Dr. Hale credit zoning.", "Lopez credits zoning: Hale agrees."] {
+            XCTAssertThrowsError(try validate(description), description) {
+                guard case .ungroundedName = $0 as? ListeningMapSummaryValidator.Rejection else {
+                    return XCTFail("\(description): \($0)")
+                }
+            }
         }
         // The first word of a sentence may be capitalised; names from the scene may appear anywhere.
         XCTAssertNoThrow(try validate("Zoning helped, says Maria Lopez. Homes followed."))

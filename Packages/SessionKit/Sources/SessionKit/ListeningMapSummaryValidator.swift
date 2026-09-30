@@ -47,6 +47,10 @@ public enum ListeningMapSummaryValidator {
         "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen",
         "nineteen", "twenty"
     ]
+    static let spelledTens = ["thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90]
+
+    /// Titles whose full stop doesn't end a sentence, so the name after them is still checked.
+    static let abbreviations: Set<String> = ["mr", "mrs", "ms", "dr", "prof", "st", "sen", "rep", "gov", "gen", "jr", "sr"]
 
     public static func validate(
         title rawTitle: String,
@@ -105,7 +109,7 @@ public enum ListeningMapSummaryValidator {
     }
 
     /// Every number in `text`, as digits: "1,200" is "1200", "5th" and "1990s" count as "5" and "1990",
-    /// and a spelled-out number up to twenty counts as its digits.
+    /// and a spelled-out number up to twenty, or a spelled-out multiple of ten up to ninety, counts as its digits.
     static func numbers(in text: String) -> Set<String> {
         var result = Set<String>()
         let withoutGrouping = text.replacingOccurrences(
@@ -125,6 +129,7 @@ public enum ListeningMapSummaryValidator {
         if !digits.isEmpty { result.insert(normalised(digits)) }
         for word in words(text) {
             if let value = spelledNumbers.firstIndex(of: word) { result.insert(String(value)) }
+            if let value = spelledTens[word] { result.insert(String(value)) }
         }
         return result
     }
@@ -144,7 +149,8 @@ public enum ListeningMapSummaryValidator {
                 .replacingOccurrences(of: #"['’]s$"#, with: "", options: .regularExpression)
                 .trimmingCharacters(in: CharacterSet.letters.inverted)
             let startsSentence = sentenceStart
-            sentenceStart = token.last.map { ".!?:".contains($0) } ?? false
+            sentenceStart = (token.last.map { ".!?".contains($0) } ?? false)
+                && !abbreviations.contains(core.lowercased())
             guard !startsSentence, core.count >= 2, let first = core.first, first.isUppercase else { continue }
             for part in core.split(whereSeparator: { !$0.isLetter }) where part.count >= 2 && part.first!.isUppercase {
                 names.append(String(part))
