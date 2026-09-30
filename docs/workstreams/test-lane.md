@@ -21,7 +21,7 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 **Three test levels** (owner's decision, 2026-09-29). These replace per-milestone T3 and T4 and "T5 once per candidate":
 
 1. **Per PR:** host tests plus both builds (`--plan fast` and T2), before merge. T3 only for audio session, storage and packet changes.
-2. **Per batch:** the integration run on `next`'s merged tip: `--plan app`, a screen tour for the critics, and every journey on a library shaped like the owner's and upgraded from Build 29. The standing Test Desk runs it on each new tip (Starting the Test Desk). A real failure is reverted first: the desk opens a "Revert #N" PR for the culprit merge and files a `ready` + `regression` issue to re-land the change. Persistence, migration, packet-format and lane changes aren't reverted; the desk reports those to the owner on #184.
+2. **Per batch:** the integration run on `next`'s merged tip: `--plan app`, a screen tour for the critics, the scripted journeys (below), and every journey on a library shaped like the owner's and upgraded from Build 29. The standing Test Desk runs it on each new tip (Starting the Test Desk). A real failure is reverted first: the desk opens a "Revert #N" PR for the culprit merge and files a `ready` + `regression` issue to re-land the change. Persistence, migration, packet-format and lane changes aren't reverted; the desk reports those to the owner on #184.
 3. **Per candidate:** the owner's phone. The latest green integration run is the candidate.
 
 **Rules of thumb**
@@ -32,6 +32,18 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 - **Never escalate to T5 on a stream branch.** Full regression runs on `next`'s merged tip, in the integration run.
 - A new regression test must be run once **without** the fix and seen to fail (`AGENTS.md`). That run counts as T1, not an extra tier.
 - When unsure, ask the lane for the tier (A1 ships `scripts/test-scope.py`, which maps a diff to its minimum tier and suggested test filters). If the tool and your judgment disagree, take the higher tier and say why in the request.
+
+## Scripted journeys
+
+Scripted journeys are UI tests in `App/SpokenMarginsAppUITests/` that each follow one journey from `docs/journeys.md` (owner's decision, 2026-09-30, #445). Threads draft them, the Test Desk proves them, and they count only after probation.
+
+- **Where they run.** Only in the integration run on `next`'s merged tip, never as a per-PR gate. Per PR, a script only has to compile: `scripts/test-scope.py` puts `App/SpokenMarginsAppUITests/` at T2 and never adds its classes to a T3 request.
+- **Who writes them.** A thread that changes a listener's flow may add or update the script for the journey it affects, and names that journey in the PR.
+- **Probation.** `TestPlans/scripted-journeys.json` is the one list the integration run reads. A new or changed script goes under `probation` in the same PR. It runs and is reported, but can't turn the integration run red. The Test Desk moves it to `gating` after seeing it pass twice on the simulator, and moves a gating script that flakes twice back to `probation`. `scripts/test_inventory.py` rejects an entry that names no real UI test or no journey.
+- **What they don't cover.** Audible content, the Lock Screen, Bluetooth, and anything that only looks wrong. Agent-driven journeys and the owner's phone keep those.
+- **How this differs from the retired plans.** `--plan ui`, `speech-canary` and `release` ran a broad route suite as a gate and stay retired (`AGENTS.md`). Scripted journeys are one short script per journey, each earning its place on probation.
+
+A week after the first script gates, the desk's daily hand-off on #184 counts two things: regressions a script caught that the owner would otherwise have found on the phone, and simulator crashes or flakes the scripts caused. If the scripts caught nothing, or cost more desk time than they saved, that is the sign this was a mistake.
 
 ## The lane
 
@@ -123,7 +135,13 @@ When next's tip has no integration report on #184, run one job on that tip, in t
    scripts/verify-tests.py --plan app --device <udid>. Post "Lane report
    integration-<sha7> — PASS | FAIL | INCONCLUSIVE" on #184, with the line
    "run by: Test Desk".
-2. Only after a PASS: the screen tour, if the repo has one.
+2. Only after a PASS: the screen tour, if the repo has one, then the scripted journeys in
+   TestPlans/scripted-journeys.json (gating, then probation). They launch with --ui-testing,
+   which resets the app's library, so they run before step 3 builds the journey library. A
+   probation failure goes in the report but doesn't make it FAIL. Move a script to gating
+   after two passes, and back to probation after two flakes, in a PR into next. Run them
+   with scripts/verify-tests.py --plan journeys --device <udid>; its manifest's gating and
+   probation maps give each script's result.
 3. Then the journeys in docs/journeys.md. Erase the standing device again first, because the
    app tests wrote to its app data, and build a library shaped like the owner's and upgraded
    from Build 29 (lane-build29) before installing the candidate over it. Post
