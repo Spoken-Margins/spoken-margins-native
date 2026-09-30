@@ -102,22 +102,21 @@ public enum SpeechGenerationStopReason {
         "\(assemblyFailedCode): \(String(describing: error))"
     }
 
-    /// One line for the player. An assembly failure is the newest event when it is the stop
-    /// reason, so it wins over an older fallback; otherwise the fallback reason keeps its
-    /// richer wording (it knows which resource refused rendering).
+    /// One line for the player. The stop's own reason decides: it belongs to the item on
+    /// screen, while `fallbackReason` is the model's one app-wide value and may be left from
+    /// another item, so it is used only for a stop that came without a reason.
     ///
-    /// `fallbackReason` is set exactly when the iOS voice took over. Without it, a render
-    /// failure stopped preparing while the on-device voice stayed in charge, so the line says
-    /// why preparing stopped and never that the iOS voice is playing.
+    /// A stop that handed over to the iOS voice carries a `SpeechFallbackReason` raw value. A raw
+    /// Supertonic code means a render failed while the on-device voice stayed in charge, so the
+    /// line says why preparing stopped and never that the iOS voice is playing.
     public static func listenerExplanation(stopReason: String?, fallbackReason: SpeechFallbackReason?) -> String {
-        if let stopReason, stopReason.hasPrefix(assemblyFailedCode) {
+        guard let stopReason, !stopReason.isEmpty else {
+            return fallbackReason?.listenerExplanation ?? noReasonExplanation
+        }
+        if stopReason.hasPrefix(assemblyFailedCode) {
             return "Couldn't save the finished audio on this iPhone. Tap Retry to try again."
         }
-        if let fallbackReason { return fallbackReason.listenerExplanation }
-        guard let stopReason, !stopReason.isEmpty, stopReason != generationDisabledCode else {
-            return noReasonExplanation
-        }
-        // The client sends these only when it has switched to the iOS voice.
+        if stopReason == generationDisabledCode { return noReasonExplanation }
         if let known = SpeechFallbackReason(rawValue: stopReason) { return known.listenerExplanation }
         switch SpeechFallbackReason(supertonicCode: stopReason, resourceBlock: nil) {
         case .renderTooSlow:

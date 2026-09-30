@@ -66,9 +66,20 @@ final class SpeechEngineSelectionTests: XCTestCase {
             assembly
         )
 
+        // The stop's own reason decides. The model's fallback reason can be left from another
+        // item (#314 audit): A stopped by the listener, B hit a memory warning, back on A.
         XCTAssertEqual(
-            SpeechGenerationStopReason.listenerExplanation(stopReason: "supertonic_render_timeout", fallbackReason: .memoryWarning),
-            SpeechFallbackReason.memoryWarning.listenerExplanation
+            SpeechGenerationStopReason.listenerExplanation(stopReason: "listener_stopped_generation", fallbackReason: .memoryWarning),
+            SpeechFallbackReason.listenerStoppedGeneration.listenerExplanation
+        )
+        XCTAssertFalse(
+            SpeechGenerationStopReason.listenerExplanation(stopReason: "supertonic_render_timeout", fallbackReason: .memoryWarning)
+                .contains("iOS")
+        )
+        XCTAssertEqual(
+            SpeechGenerationStopReason.listenerExplanation(stopReason: nil, fallbackReason: .memoryWarning),
+            SpeechFallbackReason.memoryWarning.listenerExplanation,
+            "Only a stop without a reason falls back to the model's reason"
         )
         // A render failure the iOS voice didn't take over from arrives without a fallback reason.
         // The line says why preparing stopped and never claims the iOS voice is playing.

@@ -1567,6 +1567,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     private func activateSystemFallback(targetId: String, sourceOffset: Int, reason: String) {
         let source = lock.withLock { preparedSourceText }
+        // The stop names why the iOS voice took over, so the player's line needs nothing else (#314).
+        let stopReason = SpeechFallbackReason(
+            supertonicCode: reason,
+            resourceBlock: SpeechEnginePolicy.onDeviceRenderingBlock(SupertonicResourcePolicy.currentConditions())
+        ).rawValue
         do {
             _ = try fallback.prepareSpeechText(source)
             removePlaybackEndObserver()
@@ -1574,7 +1579,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 generation = UUID()
                 let renderControl = activeRenderControl
                 activeRenderControl = nil
-                generationDisabledReasons[targetId] = reason
+                generationDisabledReasons[targetId] = stopReason
                 if reason == "supertonic_resource_pressure" {
                     resourceFallbackTargetIds.insert(targetId)
                 } else {
@@ -1617,7 +1622,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 playbackFailure = nil
                 transportIntent = .playing
             }
-            reportGenerationState(.stopped, stopReason: reason)
+            reportGenerationState(.stopped, stopReason: stopReason)
             onFallback?(reason, sourceOffset, targetId)
         } catch {
             lock.withLock {
