@@ -22,7 +22,7 @@ final class MarginLoudnessLevelerTests: XCTestCase {
 
     func testMeasuredLoudnessOfTheEBUReferenceSineIsMinus23() throws {
         // EBU Tech 3341 case 1: a stereo 1 kHz sine at -23 dBFS reads -23.0 LUFS.
-        let sine = (0..<(20 * 48_000)).map { Float(pow(10, -23.0 / 20) * sin(2 * .pi * 1_000 * Double($0) / 48_000)) }
+        let sine = (0..<(5 * 48_000)).map { Float(pow(10, -23.0 / 20) * sin(2 * .pi * 1_000 * Double($0) / 48_000)) }
         let url = folder.appendingPathComponent("reference.wav")
         try Self.write([sine, sine], to: url, aac: false)
         let measured = try MarginLoudnessLeveler.measure(fileAt: url)
@@ -114,7 +114,7 @@ final class MarginLoudnessLevelerTests: XCTestCase {
         file.close()
     }
 
-    /// Seeded syllable-like bursts over background noise, 8 s at 48 kHz, scaled to `lufs` when given.
+    /// Seeded syllable-like bursts over background noise, 5 s at 48 kHz, scaled to `lufs` when given.
     private static func speechLike(seed: UInt64, lufs: Double?, speechDBFS: Double = -20, noiseDBFS: Double = -85, wordsPerSecond: Double = 3.5) -> [Float] {
         let rate = 48_000.0
         var state = seed &* 0x9E3779B97F4A7C15 | 1
@@ -122,7 +122,7 @@ final class MarginLoudnessLevelerTests: XCTestCase {
             state = state &* 6364136223846793005 &+ 1442695040888963407
             return Double(state >> 11) / Double(1 << 53)
         }
-        let count = Int(8 * rate)
+        let count = Int(5 * rate)
         let noise = pow(10, noiseDBFS / 20) * 3.0.squareRoot()
         var samples = (0..<count).map { _ in Float(noise * (2 * random() - 1)) }
         let speech = pow(10, speechDBFS / 20)

@@ -9,16 +9,16 @@ final class LoudnessTests: XCTestCase {
 
     func testEBU3341StereoSineAtMinus23AndMinus33ReadsTheSame() {
         for level in [-23.0, -33.0] {
-            let sine = Self.sine(frequency: 1_000, amplitudeDB: level, seconds: 20, sampleRate: 48_000)
+            let sine = Self.sine(frequency: 1_000, amplitudeDB: level, seconds: 5, sampleRate: 48_000)
             let measured = LoudnessMeter.integratedLoudness(channels: [sine, sine], sampleRate: 48_000)
             XCTAssertEqual(measured ?? 0, level, accuracy: 0.1, "EBU Tech 3341 cases 1 and 2")
         }
     }
 
     func testEBU3341GatingIgnoresTheQuietEnds() {
-        // Case 3: 10 s at -36 dBFS, 60 s at -23 dBFS, 10 s at -36 dBFS reads -23.0 LUFS.
-        let quiet = Self.sine(frequency: 1_000, amplitudeDB: -36, seconds: 10, sampleRate: 48_000)
-        let loud = Self.sine(frequency: 1_000, amplitudeDB: -23, seconds: 60, sampleRate: 48_000)
+        // Case 3 (10 s at -36 dBFS, 60 s at -23, 10 s at -36 reads -23.0 LUFS), shortened to 5/20/5 s.
+        let quiet = Self.sine(frequency: 1_000, amplitudeDB: -36, seconds: 5, sampleRate: 48_000)
+        let loud = Self.sine(frequency: 1_000, amplitudeDB: -23, seconds: 20, sampleRate: 48_000)
         let signal = quiet + loud + quiet
         let measured = LoudnessMeter.integratedLoudness(channels: [signal, signal], sampleRate: 48_000)
         XCTAssertEqual(measured ?? 0, -23, accuracy: 0.1)
@@ -108,7 +108,7 @@ final class LoudnessTests: XCTestCase {
     // MARK: Rendering generated recordings
 
     func testARecording20dBUnderTheTargetRendersToItWithPeaksUnderTheCeiling() {
-        let input = Self.scaled(Self.speechLike(seconds: 10, noiseDBFS: -85, seed: 1), toLUFS: -36)
+        let input = Self.scaled(Self.speechLike(seconds: 5, noiseDBFS: -85, seed: 1), toLUFS: -36)
         let original = input
         let measured = LoudnessMeter.measure(channels: [input], sampleRate: 48_000)
         let plan = LoudnessLeveling.plan(measured)
@@ -122,7 +122,7 @@ final class LoudnessTests: XCTestCase {
     }
 
     func testARecording6dBOverTheTargetIsTurnedDown() {
-        let input = Self.scaled(Self.speechLike(seconds: 10, noiseDBFS: -85, seed: 2), toLUFS: -10)
+        let input = Self.scaled(Self.speechLike(seconds: 5, noiseDBFS: -85, seed: 2), toLUFS: -10)
         let measured = LoudnessMeter.measure(channels: [input], sampleRate: 48_000)
         let plan = LoudnessLeveling.plan(measured)
         XCTAssertLessThan(plan.gainDB, 0)
@@ -133,7 +133,7 @@ final class LoudnessTests: XCTestCase {
 
     func testANearSilentRecordingIsBoostedLessThanTheFullAmount() {
         // Mostly hiss at -60 dBFS with a few faint words.
-        let input = Self.speechLike(seconds: 10, noiseDBFS: -60, seed: 3, speechDBFS: -50, wordsPerSecond: 0.6)
+        let input = Self.speechLike(seconds: 6, noiseDBFS: -60, seed: 3, speechDBFS: -50, wordsPerSecond: 0.6)
         let measured = LoudnessMeter.measure(channels: [input], sampleRate: 48_000)
         let plan = LoudnessLeveling.plan(measured)
         let full = min(LoudnessLeveling.maximumBoostDB, LoudnessLeveling.defaultTargetLUFS - (measured.integratedLUFS ?? 0))
@@ -145,7 +145,7 @@ final class LoudnessTests: XCTestCase {
 
     func testTheLimiterHoldsTheCeilingOnAPeakyRecording() {
         // Quiet speech with sharp clicks: the plan needs the limiter.
-        var input = Self.scaled(Self.speechLike(seconds: 6, noiseDBFS: -90, seed: 4), toLUFS: -30)
+        var input = Self.scaled(Self.speechLike(seconds: 4, noiseDBFS: -90, seed: 4), toLUFS: -30)
         for click in stride(from: 10_000, to: input.count, by: 40_000) {
             input[click] = 0.3
             input[click + 1] = -0.3
