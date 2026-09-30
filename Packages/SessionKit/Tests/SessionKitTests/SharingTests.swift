@@ -956,6 +956,33 @@ final class SharingTests: XCTestCase {
         XCTAssertEqual(fused.localMediaTimeMs, 49_000 + spread)
     }
 
+    /// The wrong-episode rule (#456) on its own: when at most half of a packet's flanks found the recipient's
+    /// edition, even a Margin whose two flanks agree is not placed. A majority, or a single Margin, is unchanged.
+    func testAcousticResolverPlacesNothingWhenMostEvidenceMissesTheEdition() {
+        let placed = ImportedAnchorResolution(
+            evidenceClass: .fused, localMediaTimeMs: 10_000, confidence: 0.95, algorithmVersion: "podcast-anchor.v1"
+        )
+        let unresolved = ImportedAnchorResolution(evidenceClass: .unresolved, algorithmVersion: "podcast-anchor.v1")
+        let packet = ["inside-intro": placed, "after-intro": unresolved, "deep-content": unresolved]
+
+        let wrongEpisode = PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+            packet, matchedFlanks: 3, declaredFlanks: 6
+        )
+        XCTAssertNil(wrongEpisode["inside-intro"]?.localMediaTimeMs)
+        XCTAssertEqual(wrongEpisode["inside-intro"]?.evidenceClass, .unresolved)
+        XCTAssertEqual(wrongEpisode["inside-intro"]?.algorithmVersion, "podcast-anchor-edition-unconfirmed.v1")
+        XCTAssertEqual(wrongEpisode["deep-content"], unresolved)
+
+        // One of three Margins inside a replaced ad: most evidence still found the edition.
+        XCTAssertEqual(PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+            packet, matchedFlanks: 4, declaredFlanks: 6
+        ), packet)
+        // A single Margin can't show the edition is wrong, so it keeps its placement.
+        XCTAssertEqual(PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+            ["only": placed], matchedFlanks: 2, declaredFlanks: 2
+        ), ["only": placed])
+    }
+
     /// The same rule end to end, on audio that never repeats: a 7 s ad inserted right at the Margin, between
     /// its two flanks, so the flanks honestly disagree by 7 s. (This used a tone fixture that repeated every
     /// 23 s, with the ad before both flanks; its verdict depended on which copy each flank matched, #296.)
@@ -997,12 +1024,7 @@ final class SharingTests: XCTestCase {
         // The same seed from second 0 gives the sender's first 20 s again: the show's intro.
         try SeededNoiseAudio.write(to: introURL, seconds: 20)
         try SeededNoiseAudio.write(to: otherContentURL, seconds: 55, seed: 0xBF58476D1CE4E5B9, startSecond: 1_200)
-        try await composeRecipientEdition(
-            senderURL: otherContentURL,
-            insertedAudioURL: introURL,
-            insertionTimeMs: 0,
-            destinationURL: recipientURL
-        )
+        try await concatenateAudio([introURL, otherContentURL], destinationURL: recipientURL)
         let margins = [("inside-intro", 10_000), ("after-intro", 26_000), ("deep-content", 55_000)]
         var queries: [PodcastPortableAnchorQuery] = []
         for (id, anchorMs) in margins {
@@ -1663,6 +1685,31 @@ final class SharingTests: XCTestCase {
             }
             try audioFile.write(from: buffer)
         }
+        #else
+        throw XCTSkip("AVFoundation is required")
+        #endif
+    }
+
+    private func concatenateAudio(_ parts: [URL], destinationURL: URL) async throws {
+        #if canImport(AVFoundation)
+        let composition = AVMutableComposition()
+        let outputTrack = try XCTUnwrap(composition.addMutableTrack(
+            withMediaType: .audio,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        ))
+        var cursor = CMTime.zero
+        for url in parts {
+            let asset = AVURLAsset(url: url)
+            let duration = try await asset.load(.duration)
+            let track = try XCTUnwrap(try await asset.loadTracks(withMediaType: .audio).first)
+            try outputTrack.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: track, at: cursor)
+            cursor = CMTimeAdd(cursor, duration)
+        }
+        let exporter = try XCTUnwrap(AVAssetExportSession(
+            asset: composition,
+            presetName: AVAssetExportPresetAppleM4A
+        ))
+        try await exporter.export(to: destinationURL, as: .m4a)
         #else
         throw XCTSkip("AVFoundation is required")
         #endif

@@ -289,7 +289,10 @@ public enum PodcastAcousticAnchorResolver {
         }
 
         var resolutions: [String: ImportedAnchorResolution] = [:]
+        var declaredFlanks = 0
+        var matchedFlanks = 0
         for query in queries {
+            declaredFlanks += query.evidence.count
             var candidates: [(timeMs: Int, confidence: Double)] = []
             var matchedAnchorOffsets: [Int] = []
             for evidence in query.evidence {
@@ -326,8 +329,13 @@ public enum PodcastAcousticAnchorResolver {
                 exactDigestContradiction: senderExactEditionSHA256 != nil,
                 matchedAnchorOffsets: matchedAnchorOffsets
             )
+            matchedFlanks += candidates.count
         }
-        return corroboratePartialFlanks(queries: queries, resolutions: resolutions)
+        return requiringEditionConfirmation(
+            corroboratePartialFlanks(queries: queries, resolutions: resolutions),
+            matchedFlanks: matchedFlanks,
+            declaredFlanks: declaredFlanks
+        )
         #else
         return Dictionary(uniqueKeysWithValues: queries.map { query in
             (query.packageScopedId, timestampFallback(
@@ -463,6 +471,30 @@ public enum PodcastAcousticAnchorResolver {
             confidence: confidence,
             algorithmVersion: "podcast-anchor.v1"
         )
+    }
+
+    /// A different episode of the same show can share the sender's intro or outro. A Margin there matches
+    /// perfectly, on both flanks, although nothing else in the packet does (#456). So a placement counts only
+    /// when more than half of the packet's evidence found this edition. Below that, the edition is unconfirmed
+    /// and nothing is placed. A packet with fewer flanks than `minimumFlanksForEditionCheck` (one Margin)
+    /// can't tell the difference and is left as it is.
+    static let minimumFlanksForEditionCheck = 4
+
+    static func requiringEditionConfirmation(
+        _ resolutions: [String: ImportedAnchorResolution],
+        matchedFlanks: Int,
+        declaredFlanks: Int
+    ) -> [String: ImportedAnchorResolution] {
+        guard declaredFlanks >= minimumFlanksForEditionCheck, matchedFlanks * 2 <= declaredFlanks else {
+            return resolutions
+        }
+        return resolutions.mapValues { resolution in
+            guard resolution.localMediaTimeMs != nil else { return resolution }
+            return ImportedAnchorResolution(
+                evidenceClass: .unresolved,
+                algorithmVersion: "podcast-anchor-edition-unconfirmed.v1"
+            )
+        }
     }
 
     /// A high-confidence single flank remains useful direct evidence, but it
