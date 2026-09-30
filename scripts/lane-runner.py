@@ -32,7 +32,9 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   push; if next moved meanwhile, the push is refused and it tests again on the newest next (up to
   MERGE_ATTEMPTS). It won't merge a PR that changes .github/ or scripts/lane* (a PR can change the
   workflow that tests it), or an audio, persistence or packet change without a Codex audit comment:
-  those pass or fail as usual, and a person merges them.
+  those pass or fail as usual, and a person merges them. A PR someone asked T3 for merges only on a
+  T3 PASS (#410): while its newest T3 report is FAIL or INCONCLUSIVE, or its newest T3 request has
+  no report yet, the automerge run reports that verdict (INCONCLUSIVE while waiting) and doesn't merge.
 - PR code (builds and tests) runs without the GitHub token in its environment, and the checkout
   keeps no credentials, so only this script's own fetch and push can use the token.
 - Build folders stay warm between jobs. The checkout wipes the workspace, so the tree's .build (the
@@ -99,6 +101,7 @@ MARKER = re.compile(r'<!-- lane-request: (\{.*?\}) -->')
 NOTE = '<!-- lane-note -->'
 REQUEST = re.compile(r'^\s*/lane\s+(T\d)\b', re.M)
 REPORT = re.compile(r'^Lane report \S+ — (PASS|FAIL|INCONCLUSIVE)', re.M)
+IDENTICAL = re.compile(r'^Lane: identical (T\d) request for (\w+) already reported \((PASS|FAIL)\)', re.M)
 
 
 # ---- Requests -----------------------------------------------------------------------------------
@@ -129,6 +132,20 @@ def is_runner_comment(body: str) -> bool:
     return bool(MARKER.search(body)) or NOTE in body
 
 
+def report_identity(body: str) -> dict | None:
+    match = MARKER.search(body)
+    try:
+        return json.loads(match.group(1)) if match else None
+    except ValueError:
+        return None
+
+
+def is_automerge_comment(body: str) -> bool:
+    """An automerge run's report or note: the lane job never ran the /lane request before it."""
+    return (report_identity(body) or {}).get('tier') == 'auto' or \
+        (NOTE in body and body.startswith('Lane: the automerge run'))
+
+
 def pending_requests(comments: list[dict]) -> tuple[dict | None, bool]:
     """The newest T2/T3 request the runner hasn't answered, and whether a T4/T5 request is waiting.
 
@@ -139,7 +156,8 @@ def pending_requests(comments: list[dict]) -> tuple[dict | None, bool]:
     for index, comment in enumerate(comments):
         body = comment.get('body') or ''
         if is_runner_comment(body):
-            runner_answered = index
+            if not is_automerge_comment(body):  # the automerge job answers no /lane request (#410)
+                runner_answered = index
             continue
         if REPORT.search(body):
             desk_answered = index
@@ -388,6 +406,41 @@ def merge_blockers(scope: dict, comments: list[dict]) -> list[str]:
     return reasons
 
 
+def t3_gate(comments: list[dict]) -> tuple[str, str] | None:
+    """(verdict, why) when the PR's T3 request stands in the way of the runner's merge, else None.
+
+    #408 merged on host tests and builds while its T3 report, minutes older, said FAIL (build-for-testing
+    broke before any test ran), and its changed tests had run nowhere. A PR with no T3 request is not
+    held. With one, the newest T3 request must have a report, and the newest T3 report must be PASS.
+    A FAIL or INCONCLUSIVE on an earlier head still holds a later head until a newer T3 passes.
+    """
+    asked, latest = -1, None
+    for index, comment in enumerate(comments):
+        body = comment.get('body') or ''
+        url = comment.get('html_url') or 'an earlier comment'
+        wanted, verdict, identical = report_identity(body), REPORT.search(body), IDENTICAL.search(body)
+        if wanted and verdict:
+            if wanted.get('tier') == 'T3':
+                latest = index, verdict.group(1), wanted.get('commit', ''), url
+        elif identical and NOTE in body:
+            if identical.group(1) == 'T3':  # "already reported": the request is answered by that report
+                latest = index, identical.group(3), identical.group(2), url
+        elif not is_runner_comment(body) and not verdict:  # a Test Desk report is no request (pending_requests)
+            request = parse_request(body)
+            if request and request['tier'] == 'T3':
+                asked = index
+    if asked < 0:
+        return None
+    again = 'after a T3 PASS, push or remove and re-add automerge to merge'
+    if latest is None or latest[0] < asked:
+        return 'INCONCLUSIVE', f'this PR\'s newest /lane T3 request has no lane report yet; {again}'
+    _, verdict, commit, url = latest
+    if verdict != 'PASS':
+        return verdict, (f'the newest T3 lane report on this PR is {verdict} (on {commit[:7]}: {url}), and a PR '
+                         f'asked for T3 merges only on a T3 PASS. Fix it or ask for T3 again; {again}')
+    return None
+
+
 def build_merge_commit(tree: Path, base: str, head: str, pr: int, title: str) -> tuple[str | None, list[str]]:
     """The exact commit that would land: origin/<base> as first parent, the PR head as second.
 
@@ -467,6 +520,9 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             + notes + details
         if verdict != 'PASS':
             return verdict, where, ran, details
+        held = t3_gate(github.comments())  # read now: a T3 report may have landed while this ran
+        if held:
+            return held[0], where, ran, details + [f'not merged: {held[1]}.']
         blockers = merge_blockers(scope, comments)
         if blockers:
             return verdict, where, ran, details + [f'not merged by the runner: {b}. The desk merges it.'
@@ -666,6 +722,17 @@ def summarize_manifest(manifest: dict) -> dict:
     return summary
 
 
+def failed_step_errors(manifest: dict, output: Path, limit: int = 3) -> list[str]:
+    """The first error lines from the log of the step that stopped verify-tests.py.
+
+    Its log stays on the Mac, so without these a report says only "Process exit 70" (#410).
+    """
+    for step in manifest.get('steps', []):
+        if step.get('exit_code') and not step.get('interrupted'):
+            return first_errors(output / f'{step.get("name")}.log', limit)
+    return []
+
+
 def t3_verdict(summaries: list[dict], statuses: list[str]) -> str:
     if statuses and all(status == 'verified' for status in statuses):
         return 'PASS'
@@ -699,6 +766,7 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[
                            'The simulator\'s boot has a separate budget and had finished before it started.')
         if manifest.get('status') != 'verified' and not summary['failed']:
             details.append(f'{plan}: {manifest.get("error") or manifest.get("status")}. evidence: {output}/manifest.json')
+            details += [f'{plan}: {line}' for line in failed_step_errors(manifest, output)]
         if summary['flood']:
             skipped = [p for p, _ in plans[position + 1:]]
             if skipped:
