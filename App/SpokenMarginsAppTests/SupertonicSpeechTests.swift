@@ -1727,7 +1727,30 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    // A move to another chunk while the first chunk is still rendering: that render is obsolete,
+    // so it's cancelled and the new position rendered. #407: this used a single chunk, where the
+    // "obsolete" render was the very chunk the move landed in. Since #346 a move there waits for
+    // that render instead (testAMoveWithinTheChunkStillRenderingWaitsForItAndStartsThere), so this
+    // needs a second chunk to test what it names.
     func testSeekingCancelsObsoleteRenderBeforeStartingReplacementGeneration() async throws {
+        try await assertMoveDuringFirstRenderReplacesIt { client, targetId, source in
+            try client.play(targetId: targetId, from: source.count / 2)
+        }
+    }
+
+    // #407: the app sends a listener's seek through play(targetId:seekingTo:); it cancels the
+    // obsolete render the same way.
+    func testExplicitSeekToAnotherChunkCancelsTheFirstRender() async throws {
+        try await assertMoveDuringFirstRenderReplacesIt { client, targetId, source in
+            try client.play(targetId: targetId, seekingTo: source.count / 2)
+        }
+    }
+
+    private func assertMoveDuringFirstRenderReplacesIt(
+        _ move: (SupertonicSpeechPlaybackClient, String, String) throws -> Void,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws {
         let template = try makeTestWAV(duration: 0.5)
         defer { try? FileManager.default.removeItem(at: template) }
         let started = expectation(description: "obsolete render started")
@@ -1743,7 +1766,8 @@ final class SupertonicSpeechTests: XCTestCase {
             speed: 1,
             fallbackVoiceIdentifier: nil,
             fallbackRate: 0.5,
-            maxCharacters: 1_000,
+            // One sentence per chunk, so the move lands in a later chunk than the one rendering.
+            maxCharacters: 120,
             audioSessionActivator: {},
             audioPlayerStarter: { _, _ in },
             observesPlayerLifecycle: false,
@@ -1758,13 +1782,58 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.play(targetId: "seek-cancellation", from: 0)
         await fulfillment(of: [started], timeout: 2)
 
-        try client.play(targetId: "seek-cancellation", from: source.count / 2)
+        try move(client, "seek-cancellation", source)
         await fulfillment(of: [cancelled, ready], timeout: 3)
 
         let cancelledCount = await renderer.cancelledCount
-        XCTAssertEqual(cancelledCount, 1)
-        XCTAssertTrue(fallback.playedOffsets.isEmpty)
-        XCTAssertTrue(client.debugActiveAudioState().hasURL)
+        XCTAssertEqual(cancelledCount, 1, file: file, line: line)
+        XCTAssertTrue(fallback.playedOffsets.isEmpty, file: file, line: line)
+        let active = client.debugActiveAudioState()
+        XCTAssertTrue(active.hasURL, file: file, line: line)
+        XCTAssertGreaterThan(active.startOffset, 0, "the new position's chunk plays, not the first", file: file, line: line)
+        try client.stop()
+    }
+
+    // #407, #346: a play or seek inside the chunk that is still rendering for the first start
+    // waits for that render and starts at the chosen place. The render is the one the move
+    // needs, so cancelling it would only render the same chunk again, later.
+    func testAMoveWithinTheChunkStillRenderingWaitsForItAndStartsThere() async throws {
+        let template = try makeTestWAV(duration: 2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let (renderGate, releaseRender) = AsyncStream<Void>.makeStream()
+        defer { releaseRender.finish() }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template, firstRenderGate: renderGate)
+        let playbackStarted = expectation(description: "playback started")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            maxCharacters: 1_000,
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in playbackStarted.fulfill() },
+            observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient()
+        )
+        let source = String(
+            repeating: "A stable sentence supports repeated navigation without obsolete inference. ",
+            count: 6
+        )
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "move-within", from: 0)
+        for _ in 0..<100 where await renderer.renderCount < 1 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let target = source.count / 2
+        try client.play(targetId: "move-within", seekingTo: target)
+        releaseRender.finish()
+        await fulfillment(of: [playbackStarted], timeout: 3)
+
+        let renderCount = await renderer.renderCount
+        XCTAssertEqual(renderCount, 1, "the chunk rendering was used, not rendered again")
+        XCTAssertEqual(client.debugActiveAudioState().startOffset, 0)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(client.currentCharOffset()), target - 1, "reports the chosen place, not the top")
         try client.stop()
     }
 
