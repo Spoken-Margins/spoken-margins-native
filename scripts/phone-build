@@ -29,7 +29,10 @@ pass; bugs are fine, crashes the runners would catch are not):
   gets `verify-tests.py --plan fast` and a simulator build-for-testing here first.
 - A commit that failed once isn't retried by --if-changed; a newer tip is.
 
+The owner gets a macOS notification when a new build is ready, and when signing needs him (#500).
+
 Environment (tests): SM_PHONE_DIR (default ~/SpokenMargins-phone), SM_PHONE_KEEP (3),
+SM_PHONE_NOTIFY (the notification command, default osascript; `off` skips it),
 SM_PHONE_DISK_FREE_GB (instead of measuring), SM_LANE_* (scripts/lane_slots.py, xcodebuild-lane),
 SM_PHONE_GH (the gh command), SM_PHONE_NO_FETCH=1 (skip the fetch), SM_PHONE_REPO (the repo to
 build from; default this checkout).
@@ -466,6 +469,31 @@ def point_latest(folder: Path) -> None:
     os.replace(temporary, link)
 
 
+def notify(title: str, message: str) -> None:
+    """Post a macOS notification (Notification Center keeps it). Never fails the build."""
+    command = os.environ.get('SM_PHONE_NOTIFY', 'osascript')
+    if command == 'off':
+        return
+    script = ['-e', 'on run argv', '-e',
+              'display notification (item 1 of argv) with title (item 2 of argv) sound name "Glass"', '-e', 'end run']
+    try:
+        subprocess.run([*command.split(), *script, message, title], capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def notify_ready(sha: str, plan: Path) -> None:
+    try:
+        count = len(re.findall(r'(?m)^\d+\. \*\*', plan.read_text()))
+    except OSError:
+        count = 0
+    things = (f'{count} thing{"" if count == 1 else "s"} to try' if count else
+              'nothing a listener would notice changed')
+    notify('Spoken Margins: new phone build',
+           f'Commit {sha[:7]} is ready: {things}. Plug in your iPhone and double-click '
+           '"Install Spoken Margins on iPhone" on the Desktop.')
+
+
 def record_attempt(sha: str, result: str) -> None:
     (phone_dir() / 'last-attempt.json').write_text(json.dumps(
         {'sha': sha, 'result': result, 'at': datetime.datetime.now().isoformat(timespec='seconds')}) + '\n')
@@ -532,6 +560,7 @@ def build(sha: str) -> int:
         prune()
         say(f'done: {folder}')
         say(f'app {size / 1e6:.0f} MB, built in {seconds} s; test plan: {plan}')
+        notify_ready(sha, plan)
         return 0
     except (BuildFailed, RuntimeError, subprocess.CalledProcessError, OSError) as failure:
         record_attempt(sha, f'failed: {failure}')
@@ -539,6 +568,9 @@ def build(sha: str) -> int:
             shutil.copy(log, phone_dir() / 'last-failure.log')
         say(f'FAILED on {sha[:7]}: {failure}')
         say(f'log: {phone_dir() / "last-failure.log"}; its end:\n{tail(log)}')
+        if 'Signing needs the owner' in str(failure):
+            # Only signing waits on the owner; other failures clear with the next change on next.
+            notify('Spoken Margins: phone build needs you', str(failure).split('Signing needs the owner: ', 1)[-1])
         return 1
     finally:
         remove_worktree(src)
