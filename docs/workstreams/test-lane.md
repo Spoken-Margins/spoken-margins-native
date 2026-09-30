@@ -14,16 +14,22 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 | **T1** | The tests for the touched module only: `swift test --filter <Suite>` for SessionKit, or the stream's own Python/Node/server suite | Mac host, or cloud once A1 enables Linux SessionKit tests | 1–3 min | Pure logic: parsers, ranking, packet merge, text cleanup, resolvers |
 | **T2** | Compile the app for simulator **and** device (the two `xcodebuild` commands in `AGENTS.md`), no simulator boot | Mac, build semaphore | 4–10 min | Any change to `App/`, `project.yml`, or a SessionKit public API |
 | **T3** | Targeted app-hosted XCTest (`-only-testing:` the touched test classes) in the Test Runner simulator | Mac, via the lane | 5–15 min | App orchestration: model/coordinator wiring, persistence through the app |
-| **T4** | Named journeys from `docs/journeys.md`, or a one-off scenario the request spells out, driven with real taps and screenshots | Mac, via the lane (Test Desk) | 10–40 min each | A stream milestone that changes something a listener does |
-| **T5** | Full regression: `--plan fast`, `--plan app`, every journey | Mac, via the lane | 1–3 h | Only for a TestFlight candidate on `next`, once per candidate |
+| **T4** | Named journeys from `docs/journeys.md`, or a one-off scenario the request spells out, driven with real taps and screenshots | Mac, via the lane (Test Desk) | 10–40 min each | A one-off scenario a PR asks for; the named journeys run in the integration run |
+| **T5** | Full regression: `--plan fast`, `--plan app`, every journey | Mac, via the lane | 1–3 h | The integration run on `next`'s merged tip (see Three test levels) |
 | **T6** | Owner on the phone | owner | owner time | Audible content, Bluetooth, Lock Screen, background, thermal. Batched per TestFlight build |
+
+**Three test levels** (owner's decision, 2026-09-29). These replace per-milestone T3 and T4 and "T5 once per candidate":
+
+1. **Per PR:** host tests plus both builds (`--plan fast` and T2), before merge. T3 only for audio session, storage and packet changes.
+2. **Per batch:** the integration run on `next`'s merged tip: `--plan app`, every journey on a library shaped like the owner's and upgraded from Build 29, and a screen tour for the critics. It runs when the runner's queue is empty after several merges, and always overnight. A failure becomes the top `ready` issue.
+3. **Per candidate:** the owner's phone. The latest green integration run is the candidate.
 
 **Rules of thumb**
 
 - A change you could describe in one sentence, in one module, with a test that fails without it, stops at **T1**, or **T2** if it touched the app.
-- Most commits stop at T1 or T2. T3 and T4 happen at **milestones**, not per commit.
+- Most PRs stop at T1 or T2. T3 per PR only for the escalations below; T4 per PR only for a one-off scenario the PR needs. Journeys and full regression run on the merged tip, not per PR or per milestone.
 - **Escalate one tier** for anything touching the audio session, players, playback state, persistence/migrations, or packet import/export. These are where Build 28 → co-op went wrong.
-- **Never escalate to T5 on a stream branch.** Full regression runs once per TestFlight candidate on `next`.
+- **Never escalate to T5 on a stream branch.** Full regression runs on `next`'s merged tip, in the integration run.
 - A new regression test must be run once **without** the fix and seen to fail (`AGENTS.md`). That run counts as T1, not an extra tier.
 - When unsure, ask the lane for the tier (A1 ships `scripts/test-scope.py`, which maps a diff to its minimum tier and suggested test filters). If the tool and your judgment disagree, take the higher tier and say why in the request.
 
@@ -131,8 +137,8 @@ that run's .xcresult bundles and raw build logs. Keep only the screenshots and s
 logs the report names, under artifacts/lane/<id>/. Shut the simulator down whenever
 the queue is empty.
 
-Reports: post in the report format above, on the PR. After each PASS, message the day's
-lead session "PASS #<pr> <head sha> <tiers>", if it has told you its name.
+Reports: post in the report format above, on the PR. There is no lead session to message;
+the project reads reports on GitHub.
 
 Decisions: for reversible lane choices, post them on #184 under "Default taken" and keep
 going. Stop only for owner data, the phone, money, anything public, main or releases.
