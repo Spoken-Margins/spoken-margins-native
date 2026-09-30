@@ -359,7 +359,7 @@ class T3Tests(unittest.TestCase):
 class AutomergeTests(unittest.TestCase):
     """The automerge label runs what the PR's diff needs (test-scope.py's tier)."""
 
-    def run_checks(self, tier, fast='PASS', t2='PASS'):
+    def run_checks(self, tier, fast='PASS', t2='PASS', too_big=()):
         calls = []
 
         def fake_fast(evidence):
@@ -370,8 +370,14 @@ class AutomergeTests(unittest.TestCase):
             calls.append('t2')
             return t2, f'simulator build ({t2.lower()})', []
 
-        result = lane.run_automerge({'tier': tier, 'why': ['x']}, Path('/e'), fast=fake_fast, t2=fake_t2)
+        result = lane.run_automerge({'tier': tier, 'why': ['x']}, Path('/e'), fast=fake_fast, t2=fake_t2,
+                                    ratchet=lambda: list(too_big))
         return result, calls
+
+    def test_a_hot_file_above_its_ceiling_fails_before_any_build(self):
+        (verdict, where, ran, details), calls = self.run_checks('T2', too_big=['Gate1AppModel.swift would be 9 lines'])
+        self.assertEqual((verdict, where, calls), ('FAIL', 'no build', []))
+        self.assertIn('hot-file ratchet — Gate1AppModel.swift would be 9 lines', details[-1])
 
     def test_docs_research_and_server_only_diffs_build_nothing(self):
         (verdict, where, ran, details), calls = self.run_checks('T0')
@@ -446,9 +452,10 @@ class MergeTests_Runner(unittest.TestCase):
                 mock.patch.object(lane, 'build_merge_commit', side_effect=build), \
                 mock.patch.object(lane, 'push_merge', side_effect=push), \
                 mock.patch.object(lane, 'fetch_base', side_effect=lambda tree, base: NEWER), \
+                mock.patch.object(lane, 'sweep_merge_audit', side_effect=lambda tree, base: events.append('sweep')), \
                 mock.patch.object(lane, 'diff_scope', return_value=scope or self.SCOPE), \
                 mock.patch.object(lane, 'run_automerge',
-                                  side_effect=lambda scope, evidence: (verdicts.pop(0), 'x', 'host tests; builds', [])):
+                                  side_effect=lambda scope, evidence, **_: (verdicts.pop(0), 'x', 'host tests; builds', [])):
             result = lane.run_auto(github, {'title': 'T'}, 5, 'next', HEAD, MERGE, Path(folder), list(comments))
         return result, events
 
@@ -456,8 +463,11 @@ class MergeTests_Runner(unittest.TestCase):
         github = FakeGitHub(labels=('automerge',))
         (verdict, _, _, details), events = self.run_auto(github)
         self.assertEqual(verdict, 'PASS')
-        self.assertEqual(events, ['build', 'comment', 'push m1'])  # the check is on the PR before the merge
-        self.assertTrue(github.posted[0].startswith(f'**Merge check (lane runner) on `{HEAD[:7]}`: PASS.**'))
+        self.assertEqual(events, ['build', 'comment', 'push m1', 'sweep'])  # the check is on the PR before the merge
+        self.assertTrue(github.posted[0].startswith(f'**Merge check (triage desk) on `{HEAD[:7]}`: PASS.**'))
+        import merge_audit  # the comment satisfies the merge audit's rule
+        self.assertTrue(merge_audit.has_merge_check([dict(body=github.posted[0], created_at='2026-09-29T20:00:00Z')],
+                                                    HEAD, '2026-09-29T20:00:01Z'))
         self.assertIn('merged into next as m100000', details[-1])
 
     def test_a_fail_or_inconclusive_never_merges(self):
@@ -484,10 +494,15 @@ class MergeTests_Runner(unittest.TestCase):
                                                         'category': 'packet'}]}
         (_, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=risky)
         self.assertEqual(events, ['build'])
-        self.assertIn('it touches packets and has no "## Codex audit" comment', details[-1])
-        audited = [comment('## Codex audit (gpt-6-astra, high)\n\nAudited `abc`.')]
-        (_, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=risky, comments=audited)
-        self.assertEqual(events, ['build', 'comment', 'push m1'])
+        self.assertIn('it touches packets and has no "Codex audit (Astra)" comment yet', details[-1])
+        for audit in ('**Codex audit (Astra) on `aaaaaaa`**\n\nNo findings.', '## Codex audit (gpt-6-astra, high)\n\nAudited `abc`.'):
+            with self.subTest(audit=audit[:20]):
+                (_, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=risky,
+                                                           comments=[comment(audit)])
+                self.assertEqual(events, ['build', 'comment', 'push m1', 'sweep'])
+        mention = [comment('Waiting on the Codex audit (Astra) for this one.')]  # not an audit: not its first line
+        (_, _, _, _), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=risky, comments=mention)
+        self.assertEqual(events, ['build'])
 
     def test_lane_tests_themselves_are_not_desk_only(self):
         scope = {'tier': 'T1', 'why': [], 'files': [{'path': 'scripts/tests/test_lane_runner.py', 'category': 'scripts'}]}
@@ -503,7 +518,7 @@ class MergeTests_Runner(unittest.TestCase):
     def test_a_refused_push_means_next_moved_so_it_tests_again_on_the_newest_next(self):
         github = FakeGitHub(labels=('automerge',))
         (verdict, _, _, details), events = self.run_auto(github, verdicts=('PASS', 'PASS'), pushes=(False, True))
-        self.assertEqual(events, ['build', 'comment', 'push m1', 'build', 'comment', 'push m2'])
+        self.assertEqual(events, ['build', 'comment', 'push m1', 'build', 'comment', 'push m2', 'sweep'])
         self.assertIn('attempt 1: the push to next was refused', ' '.join(details))
         self.assertIn('merged into next as m200000', details[-1])
 
@@ -792,6 +807,25 @@ class MergeTests(unittest.TestCase):
         (self.tree / 'App/SpokenMarginsApp').mkdir(parents=True)
         self.commit(self.tree, 'App/SpokenMarginsApp/View.swift', 'struct V {}\n')
         self.assertEqual(lane.diff_scope(self.tree, 'next')['tier'], 'T2')
+
+    def test_the_hot_file_ratchet_is_next_s_copy_and_absent_until_it_is_on_next(self):
+        model = 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift'
+        (self.origin / model).parent.mkdir(parents=True)
+        self.commit(self.origin, model, 'one\ntwo\n')
+        subprocess.run(self.git + ['-C', str(self.tree), 'pull', '-q', 'origin', 'next'], check=True)
+        self.commit(self.tree, model, 'one\ntwo\nthree\n')
+        lane.fetch_base(self.tree, 'next')
+        self.assertEqual(lane.hot_file_violations(self.tree, 'next', set()), [])  # not on next yet
+        (self.origin / 'scripts').mkdir(exist_ok=True)
+        self.commit(self.origin, 'scripts/hot_file_ratchet.py', (SCRIPTS / 'hot_file_ratchet.py').read_text())
+        lane.fetch_base(self.tree, 'next')
+        self.assertEqual(lane.merge_base_branch(self.tree, 'next'), [])
+        # The PR swaps in a ratchet that always passes; next's copy still judges it.
+        self.commit(self.tree, 'scripts/hot_file_ratchet.py', 'def violations(*args):\n    return []\n')
+        found = lane.hot_file_violations(self.tree, 'next', set())
+        self.assertEqual(len(found), 1, found)
+        self.assertIn('Gate1AppModel.swift would be 3 lines, above its ceiling of 2', found[0])
+        self.assertEqual(lane.hot_file_violations(self.tree, 'next', {'hot-file-ok'}), [])
 
     def test_a_conflict_names_the_files_and_leaves_the_tree_clean(self):
         self.commit(self.tree, 'shared.txt', 'pr side\n')

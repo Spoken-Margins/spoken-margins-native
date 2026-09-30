@@ -22,13 +22,16 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
 - The automerge label asks for the checks a finished PR needs, with no request comment (the
   ready-queue plan, decision 3). The base branch's scripts/test-scope.py classifies the PR's
   committed diff: T0 (docs, research, the server) runs nothing, T1 runs --plan fast, and T2 or
-  higher runs --plan fast and both builds. An explicit request on the PR goes first.
-- The runner merges what it passes (decision 3). An automerge run tests the exact merge commit, with
-  next as its first parent. On PASS it posts a "Merge check (lane runner)" comment and pushes that
-  commit to next with a plain push; if next moved meanwhile, the push is refused and it tests again
-  on the newest next (up to MERGE_ATTEMPTS). It won't merge a PR that changes .github/ or
-  scripts/lane* (a PR can change the workflow that tests it), or an audio, persistence or packet
-  change without a "## Codex audit" comment: those pass or fail as usual and go to the desk.
+  higher runs --plan fast and both builds. An explicit request on the PR goes first. Before any of
+  that, next's scripts/hot_file_ratchet.py fails a PR that grows Gate1AppModel.swift or
+  Gate1RootView.swift above its ceiling, unless the PR has the hot-file-ok label.
+- The runner merges what it passes (decision 3, owner-approved). An automerge run tests the exact
+  merge commit, with next as its first parent. On PASS it posts a "Merge check (triage desk)"
+  comment (the prefix scripts/merge_audit.py looks for) and pushes that commit to next with a plain
+  push; if next moved meanwhile, the push is refused and it tests again on the newest next (up to
+  MERGE_ATTEMPTS). It won't merge a PR that changes .github/ or scripts/lane* (a PR can change the
+  workflow that tests it), or an audio, persistence or packet change without a Codex audit comment:
+  those pass or fail as usual, and a person merges them.
 - PR code (builds and tests) runs without the GitHub token in its environment, and the checkout
   keeps no credentials, so only this script's own fetch and push can use the token.
 
@@ -58,8 +61,8 @@ QUEUED, RUNNING, DONE = 'lane:queued', 'lane:running', 'lane:done'
 AUTOMERGE = 'automerge'
 FAST_TIMEOUT = 2400
 MERGE_ATTEMPTS = 3
-MERGE_CHECK = '**Merge check (lane runner)'
-AUDIT = '## Codex audit'
+MERGE_CHECK = '**Merge check (triage desk)'  # the prefix scripts/merge_audit.py requires
+AUDITS = ('**Codex audit (Astra)', '## Codex audit')  # how an audit comment starts: the hourly task's, or an older manual one
 DESK_ONLY = ('.github/', 'scripts/lane')
 AUDITED = {'audio': 'the audio session', 'persistence': 'persistence', 'packet': 'packets'}
 BOT = ('github-actions[bot]', '41898282+github-actions[bot]@users.noreply.github.com')
@@ -277,16 +280,31 @@ def committed_changes(tree: Path, base: str) -> tuple[list[str], dict[str, str]]
     return sorted(set(paths)), diffs
 
 
+def base_policy(tree: Path, base: str, path: str):
+    """A script from the base branch, loaded as a module, so a PR can't change the rules that judge it.
+    None if the base doesn't have it yet."""
+    import types
+    shown = subprocess.run(['git', '-C', str(tree), 'show', f'origin/{base}:{path}'], capture_output=True, text=True)
+    if shown.returncode != 0:
+        return None
+    module = types.ModuleType('lane_policy_' + Path(path).stem.replace('-', '_'))
+    module.__file__ = str(tree / path)
+    exec(compile(shown.stdout, f'origin/{base}:{path}', 'exec'), module.__dict__)
+    return module
+
+
 def diff_scope(tree: Path, base: str) -> dict:
     """test-scope.py's answer for the PR, from the base branch's copy of the policy, so a PR can't
     reclassify itself to skip its builds."""
-    import types
-    source = subprocess.check_output(['git', '-C', str(tree), 'show', f'origin/{base}:scripts/test-scope.py'], text=True)
-    policy = types.ModuleType('lane_test_scope')
-    policy.__file__ = str(tree / 'scripts/test-scope.py')
-    exec(compile(source, f'origin/{base}:scripts/test-scope.py', 'exec'), policy.__dict__)
+    policy = base_policy(tree, base, 'scripts/test-scope.py')
     paths, diffs = committed_changes(tree, base)
     return policy.classify(paths, diffs, root=tree)
+
+
+def hot_file_violations(tree: Path, base: str, labels) -> list[str]:
+    """next's hot-file ratchet on the tree's HEAD (none until the ratchet is on next)."""
+    ratchet = base_policy(tree, base, 'scripts/hot_file_ratchet.py')
+    return ratchet.violations(tree, f'origin/{base}', 'HEAD', labels) if ratchet else []
 
 
 def run_fast(evidence: Path, runner=run_bounded) -> tuple[str, list[str]]:
@@ -306,10 +324,15 @@ def run_fast(evidence: Path, runner=run_bounded) -> tuple[str, list[str]]:
                     *[f'  {line}' for line in first_errors(log_path)]]
 
 
-def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2) -> tuple[str, str, str, list[str]]:
+def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2,
+                  ratchet=lambda: []) -> tuple[str, str, str, list[str]]:
     """Returns verdict, where, ran, details for the checks the PR's diff needs."""
     tier = int(scope['tier'][1:])
     details = [f'test-scope: {scope["tier"]} ({"; ".join(scope["why"]) or "no changes"})']
+    too_big = ratchet()
+    if too_big:
+        return 'FAIL', 'no build', 'hot-file ratchet: failed', details + [f'hot-file ratchet — {line}'
+                                                                          for line in too_big]
     if tier == 0:
         return 'PASS', 'no build', 'nothing to build or test', details + [
             'nothing here reaches the host tests or the app (docs, research or server only)']
@@ -332,8 +355,8 @@ def merge_blockers(scope: dict, comments: list[dict]) -> list[str]:
         reasons.append(f'it changes the lane or its workflows ({", ".join(desk[:5])}), and a PR can change '
                        'what tests it')
     risky = sorted({AUDITED[f['category']] for f in scope['files'] if f['category'] in AUDITED})
-    if risky and not any((c.get('body') or '').lstrip().startswith(AUDIT) for c in comments):
-        reasons.append(f'it touches {" and ".join(risky)} and has no "{AUDIT}" comment')
+    if risky and not any((c.get('body') or '').lstrip().startswith(AUDITS) for c in comments):
+        reasons.append(f'it touches {" and ".join(risky)} and has no "Codex audit (Astra)" comment yet')
     return reasons
 
 
@@ -367,16 +390,29 @@ def push_merge(tree: Path, sha: str, base: str) -> tuple[bool, str]:
     return pushed.returncode == 0, (telling or lines or [f'exit {pushed.returncode}'])[0]
 
 
+def sweep_merge_audit(tree: Path, base: str) -> None:
+    """Pushes made with the workflow token start no workflow, so merge-audit's push run never sees the
+    runner's merges, and its hourly schedule runs only once merge-audit.yml is on the default branch.
+    After each merge, run next's audit over the last two hours instead. Best effort: never fails a job."""
+    try:
+        audit = base_policy(tree, base, 'scripts/merge_audit.py')
+        if audit:
+            audit.main(['--sweep-hours', '2'])
+    except Exception as error:  # noqa: BLE001 - the audit is a safety net, not part of the verdict
+        print(f'merge-audit sweep skipped: {error!r}')
+
+
 def merge_check(head: str, merge_sha: str, base: str, base_sha: str, ran: str) -> str:
     return (f'{MERGE_CHECK} on `{head[:7]}`: PASS.**\n'
             f'- Tested the merge commit `{merge_sha[:7]}`: {base} at `{base_sha[:7]}` first, then this PR.\n'
             f'- Ran: {ran}.\n'
             f'- Pushing `{merge_sha[:7]}` to {base} now. If {base} moved meanwhile, the push is refused and the '
-            'runner tests again on the newest one.')
+            'runner tests again on the newest one.\n'
+            '_Posted by the lane runner (scripts/lane-runner.py)._')
 
 
 def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, evidence: Path,
-             comments: list[dict], attempts: int = MERGE_ATTEMPTS) -> tuple[str, str, str, list[str]]:
+             comments: list[dict], labels=(), attempts: int = MERGE_ATTEMPTS) -> tuple[str, str, str, list[str]]:
     """The automerge run: test the merge commit, and push it to <base> on PASS unless something blocks it."""
     notes: list[str] = []
     for attempt in range(1, attempts + 1):
@@ -387,7 +423,8 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 f'Merge {base} into your branch and push; the automerge label runs it again.']
         scope = diff_scope(ROOT, base)
         (evidence / 'scope.json').write_text(json.dumps(scope, indent=2))
-        verdict, where, ran, details = run_automerge(scope, evidence)
+        verdict, where, ran, details = run_automerge(
+            scope, evidence, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)))
         details = [f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR)'] \
             + notes + details
         if verdict != 'PASS':
@@ -403,6 +440,7 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
         github.comment(merge_check(head, merge_sha, base, base_sha, ran))
         pushed, message = push_merge(ROOT, merge_sha, base)
         if pushed:
+            sweep_merge_audit(ROOT, base)
             return verdict, where, ran, details + [f'merged into {base} as {merge_sha[:7]}']
         notes.append(f'attempt {attempt}: the push to {base} was refused ({message}), so {base} moved; '
                      'tested again on the newest one')
@@ -763,7 +801,7 @@ def main(argv=None) -> int:
         conflicts = [] if request['tier'] == 'auto' else merge_base_branch(ROOT, args.base)
         if request['tier'] == 'auto':
             verdict, where, ran, details = run_auto(github, pull, args.pr, args.base, head, base_sha, evidence,
-                                                    comments)
+                                                    comments, labels)
             crashes = 'none'
         elif conflicts:
             verdict, where, ran, crashes = 'INCONCLUSIVE', 'no simulator', 'nothing', 'none'
