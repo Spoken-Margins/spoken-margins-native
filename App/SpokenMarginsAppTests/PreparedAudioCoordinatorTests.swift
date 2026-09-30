@@ -237,6 +237,60 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
                        "chunk 1 was saved for other words")
     }
 
+    // #375 audit: saved ranges hold offsets, not words. An edit that keeps every offset ("chunk"
+    // to "chonk") matched the old audio. A manifest now records the article it was made from.
+    func testAudioMadeFromOtherWordsAtTheSameOffsetsDoesNotMatch() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let plan = plans()
+        let original = "First chunk. Second chunk.", edited = "First chunk. Second chonk."
+        let manifest = try await coordinator.begin(itemId: "item", sourceText: original, signature: signature("one"), plan: plan)
+        try await commit(plan[1], data: Data([1]), coordinator: coordinator, fixture: fixture)
+        let saved = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: manifest.id))
+
+        let stale = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[1], sourceText: edited)
+        XCTAssertNil(stale, "audio for the old words doesn't match the edited text")
+        XCTAssertTrue(PreparedAudioCoordinator.matchingChunks(in: saved, plan: plan, sourceText: edited).isEmpty)
+        let same = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[1], sourceText: original)
+        XCTAssertNotNil(same, "the unchanged text still matches")
+
+        let restarted = try await coordinator.begin(itemId: "item", sourceText: edited, signature: signature("one"), plan: plan)
+        XCTAssertTrue(restarted.chunks.isEmpty, "preparing the edited text starts over")
+
+        var legacy = saved
+        legacy.articleIdentity = nil
+        try fixture.store.savePreparedAudioManifest(legacy)
+        let kept = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[1], sourceText: original)
+        XCTAssertNotNil(kept, "a manifest from before #312 keeps the range check alone")
+    }
+
+    // #375 audit (Done when 2): assembly stitches the article plan's chunks, the same plan the
+    // player's lookups and background preparation use (the player side is SupertonicSpeechTests).
+    func testAssemblyChunksAreTheArticlePlan() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let article = (1...8).map { "Sentence \($0) of the article carries enough ordinary words to fill part of a chunk." }
+            .joined(separator: " ")
+        let plan = PreparedChunkPlan.articlePlan(article)
+        XCTAssertGreaterThan(plan.count, 1)
+        _ = try await coordinator.begin(itemId: "item", sourceText: article, signature: signature("one"), plan: plan)
+        for entry in plan {
+            let input = fixture.root.appending(path: "input-\(entry.index).wav")
+            try Data([UInt8(entry.index)]).write(to: input)
+            try await coordinator.commit(itemId: "item", signature: signature("one"), plan: entry, sourceText: article, audioURL: input, durationMs: 1_000)
+        }
+        let manifest = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: "prepared-item-one"))
+        let chunks = try PreparedAudioCoordinator.assemblyChunks(plan: plan, manifest: manifest, sourceText: article, preparedRoot: fixture.prepared)
+        let articlePlan = NarrationChunkPlanner.articlePlan(article).chunks
+        XCTAssertEqual(chunks.map(\.startOffset), articlePlan.map(\.startOffset))
+        XCTAssertEqual(chunks.map(\.sourceLength), articlePlan.map(\.sourceLength))
+        XCTAssertEqual(chunks.map(\.text), articlePlan.map(\.text))
+        XCTAssertEqual(chunks.map(\.boundary), articlePlan.map(\.boundary))
+        XCTAssertTrue(chunks.allSatisfy { FileManager.default.fileExists(atPath: $0.audioURL.path) })
+    }
+
     func testStopPersistsCancellationWithoutDiscardingEarlierCommits() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

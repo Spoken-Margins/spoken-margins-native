@@ -185,7 +185,8 @@ actor PreparedAudioCoordinator {
         }
         if var existing = try repository.loadPreparedAudioManifest(id: manifestId),
            existing.signature == signature,
-           existing.plannedChunkCount == plan.count {
+           existing.plannedChunkCount == plan.count,
+           Self.isMade(from: sourceText, existing) {
             // Eligibility/Stop is separate from artifact identity. Resume a
             // compatible partial representation without discarding its chunks.
             if existing.state == .notPrepared || existing.state == .stopped {
@@ -217,7 +218,8 @@ actor PreparedAudioCoordinator {
             sourcePackageId: sourceId,
             signature: signature,
             state: .preparing,
-            plannedChunkCount: plan.count
+            plannedChunkCount: plan.count,
+            articleIdentity: NarrationChunkPlanner.identity(ofArticle: sourceText)
         )
         try repository.savePreparedAudioManifest(manifest)
         if schedulesJob {
@@ -242,7 +244,8 @@ actor PreparedAudioCoordinator {
         let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
         guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId),
               manifest.signature == signature,
-              manifest.state == .preparing || manifest.state == .pausedForThermal else { return }
+              manifest.state == .preparing || manifest.state == .pausedForThermal,
+              Self.isMade(from: sourceText, manifest) else { return }
         if let existing = manifest.chunks.first(where: { $0.index == plan.index }) {
             if existing.sourceRange == Self.sourceRange(of: plan, manifest: manifest, sourceText: sourceText) { return }
             // Saved for another stretch of the text (#312): replace it rather than keep it forever.
@@ -342,6 +345,7 @@ actor PreparedAudioCoordinator {
         guard let manifest = try repository.loadPreparedAudioManifest(id: manifestId),
               manifest.signature == signature,
               manifest.state == .preparing || manifest.state == .pausedForThermal || manifest.state == .readyOffline,
+              Self.isMade(from: sourceText, manifest),
               let chunk = manifest.chunks.first(where: { $0.index == plan.index }),
               chunk.sourceRange == Self.sourceRange(of: plan, manifest: manifest, sourceText: sourceText) else { return nil }
         let url = rootDirectory.appending(path: chunk.relativePath)
@@ -364,10 +368,38 @@ actor PreparedAudioCoordinator {
     static func matchingChunks(
         in manifest: PreparedAudioManifest, plan: [PreparedChunkPlan], sourceText: String
     ) -> [PreparedAudioChunk] {
+        guard isMade(from: sourceText, manifest) else { return [] }
         let planned = Dictionary(plan.map { ($0.index, $0) }, uniquingKeysWith: { first, _ in first })
         return manifest.chunks.filter { chunk in
             planned[chunk.index].map { chunk.sourceRange == sourceRange(of: $0, manifest: manifest, sourceText: sourceText) } ?? false
         }
+    }
+
+    /// What assembly stitches together: each planned chunk's matching committed audio, with the
+    /// article plan's boundary. Only chunks saved for the same stretch of this text count (#312);
+    /// a missing or stale one throws, and is rendered again first.
+    static func assemblyChunks(
+        plan: [PreparedChunkPlan], manifest: PreparedAudioManifest, sourceText: String, preparedRoot: URL
+    ) throws -> [SupertonicPreparedChunk] {
+        let byIndex = Dictionary(uniqueKeysWithValues: matchingChunks(in: manifest, plan: plan, sourceText: sourceText).map { ($0.index, $0) })
+        let articleChunks = NarrationChunkPlanner.articlePlan(sourceText).chunks
+        return try plan.map { entry in
+            guard let committed = byIndex[entry.index], articleChunks.indices.contains(entry.index) else {
+                throw SessionKitError.persistenceFailed("prepared_chunk_missing")
+            }
+            return SupertonicPreparedChunk(
+                startOffset: entry.startOffset, sourceLength: entry.sourceLength, text: entry.text,
+                boundary: articleChunks[entry.index].boundary,
+                audioURL: preparedRoot.appending(path: committed.relativePath)
+            )
+        }
+    }
+
+    /// Whether the manifest's audio was made from this article text. Saved ranges hold offsets, not
+    /// words, so an edit that keeps the offsets would otherwise match old audio (#375 audit).
+    /// Manifests from before #312 carry no identity and keep the range check alone.
+    static func isMade(from sourceText: String, _ manifest: PreparedAudioManifest) -> Bool {
+        manifest.articleIdentity.map { $0 == NarrationChunkPlanner.identity(ofArticle: sourceText) } ?? true
     }
 
     /// Whether every planned chunk has matching committed audio, as a demand window needs before

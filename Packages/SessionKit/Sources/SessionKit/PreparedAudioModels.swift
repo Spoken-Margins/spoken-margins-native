@@ -107,6 +107,9 @@ public struct PreparedAudioManifest: Codable, Equatable, Sendable, Identifiable 
     public var failureCode: String?
     public var createdAt: Date
     public var updatedAt: Date
+    /// The article plan's identity (NarrationChunkPlanner) of the text this audio was made from.
+    /// Nil for manifests made before #312; Build 29's decoder ignores the field.
+    public var articleIdentity: String?
 
     public init(
         schemaVersion: String = "prepared-audio-manifest.v1",
@@ -120,10 +123,12 @@ public struct PreparedAudioManifest: Codable, Equatable, Sendable, Identifiable 
         artifact: PreparedAudioArtifact? = nil,
         failureCode: String? = nil,
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        articleIdentity: String? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.id = id
+        self.articleIdentity = articleIdentity
         self.itemId = itemId
         self.sourcePackageId = sourcePackageId
         self.signature = signature

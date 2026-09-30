@@ -15556,23 +15556,10 @@ final class Gate1AppModel: ObservableObject {
         coordinator: PreparedAudioCoordinator,
         support: URL
     ) async throws {
-        // Only chunks saved for the same stretch of the text (#312); a stale one is rendered again first.
-        let byIndex = Dictionary(uniqueKeysWithValues: PreparedAudioCoordinator.matchingChunks(
-            in: manifest, plan: plan, sourceText: sourceText
-        ).map { ($0.index, $0) })
-        let articleChunks = NarrationChunkPlanner.articlePlan(sourceText).chunks
-        let chunks = try plan.map { entry -> SupertonicPreparedChunk in
-            guard let committed = byIndex[entry.index], articleChunks.indices.contains(entry.index) else {
-                throw SessionKitError.persistenceFailed("prepared_chunk_missing")
-            }
-            return SupertonicPreparedChunk(
-                startOffset: entry.startOffset,
-                sourceLength: entry.sourceLength,
-                text: entry.text,
-                boundary: articleChunks[entry.index].boundary,
-                audioURL: support.appending(path: "PreparedAudio/\(committed.relativePath)")
-            )
-        }
+        let chunks = try PreparedAudioCoordinator.assemblyChunks(
+            plan: plan, manifest: manifest, sourceText: sourceText,
+            preparedRoot: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
+        )
         let assemblyReservation = try await ledger.reserve(
             ownerId: "prepared-artifact-\(manifest.id)",
             byteCount: max(1, manifest.chunks.reduce(0) { $0 + $1.byteCount })
