@@ -624,15 +624,18 @@ def count_tests(selector: str, plans: dict[str, set]) -> int:
 
 
 def plan_for_tests(selectors: list[str], plans: dict[str, set]) -> tuple[dict[str, list[str]], list[str]]:
-    """Group selectors by the plan holding them; selectors no plan holds are returned separately."""
+    """Group selectors by the plans holding them; selectors no plan holds are returned separately.
+
+    A class split across plans (SupertonicSpeechTests: one method runs only in AudioAdapters) goes to
+    each plan that runs part of it, or the rest of it would silently not run.
+    """
     grouped, unknown = {}, []
     for selector in selectors:
         full = full_selector(selector)
-        plan = next((p for p, tests in plans.items()
-                     if any(t == full or t.startswith(full + '/') for t in tests)), None)
-        if plan:
+        holding = [p for p, tests in plans.items() if any(t == full or t.startswith(full + '/') for t in tests)]
+        for plan in holding:
             grouped.setdefault(plan, []).append(full)
-        else:
+        if not holding:
             unknown.append(selector)
     return grouped, unknown
 

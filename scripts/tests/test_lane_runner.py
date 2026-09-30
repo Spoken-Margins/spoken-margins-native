@@ -213,6 +213,12 @@ class T3Tests(unittest.TestCase):
     PLANS = {'app': {'SpokenMarginsAppTests/A/test1', 'SpokenMarginsAppTests/A/test2'},
              'adapters': {'SpokenMarginsAppTests/Audio/test1'}}
 
+    def test_a_class_goes_to_every_plan_that_runs_part_of_it(self):
+        plans = {'app': {'SpokenMarginsAppTests/A/test1'}, 'adapters': {'SpokenMarginsAppTests/A/test2'}}
+        self.assertEqual(lane.plan_for_tests(['A', 'A/test2'], plans),
+                         ({'app': ['SpokenMarginsAppTests/A'],
+                           'adapters': ['SpokenMarginsAppTests/A', 'SpokenMarginsAppTests/A/test2']}, []))
+
     def test_tests_are_grouped_by_plan_and_unknown_ones_are_reported(self):
         grouped, unknown = lane.plan_for_tests(['A', 'SpokenMarginsAppTests/Audio/test1', 'Missing', 'A/test9'],
                                                self.PLANS)
@@ -395,6 +401,19 @@ class ScopeClassTests(unittest.TestCase):
                                      r'beyond the request$')
         self.assertGreater(int(re.search(r'\((\d+)\)', details[0]).group(1)), 100)
         self.assertEqual((verdict, details[1:]), ('PASS', ['boot line']))
+
+    def test_a_class_split_across_plans_runs_in_each_so_a_named_adapter_method_still_runs(self):
+        # Review of #370: SupertonicSpeechTests is in AppBehavior except one method, which only AudioAdapters
+        # runs. Naming that method on a branch touching the class dropped it into the class, and the class
+        # went to the app plan alone, so the named test never ran and the run could still pass.
+        method = 'SupertonicSpeechTests/testBundledRendererSynthesizesJamesAndLilyAndReusesSessions'
+        (_, _, _, details, _, _), grouped = self.run_t3([method], ['SupertonicSpeechTests'])
+        self.assertEqual(grouped, {'app': ['SpokenMarginsAppTests/SupertonicSpeechTests'],
+                                   'adapters': ['SpokenMarginsAppTests/SupertonicSpeechTests']})
+        from test_inventory import plan_tests
+        planned = [plan_tests(lane.ROOT, name) for name in lane.PLANS.values()]
+        runs = sum(1 for tests in planned for t in tests if t.startswith('SpokenMarginsAppTests/SupertonicSpeechTests/'))
+        self.assertIn(f'SupertonicSpeechTests ({runs})', details[0])  # the count is what the plans will run
 
     def test_a_misspelled_method_still_fails_even_when_its_class_is_added(self):
         (verdict, _, _, details, _, _), grouped = self.run_t3(['Gate1AppModelWorkflowTests/testNope'],
