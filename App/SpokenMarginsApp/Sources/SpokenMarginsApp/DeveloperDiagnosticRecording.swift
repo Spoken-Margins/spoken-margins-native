@@ -1,5 +1,7 @@
 import Foundation
 import CryptoKit
+import SessionKit
+import SessionKitAudio
 
 /// Bounded event history with optional automatic, persistent breadcrumbs. Call from the main actor; disk writes are serial
 /// and off-main. Fields at call sites are state/counters, never source content.
@@ -105,5 +107,28 @@ final class DeveloperDiagnosticRecording {
             try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: fileURL, options: .atomic)
         }
+    }
+}
+
+extension DeveloperDiagnosticRecording {
+    /// The fields of a "playback.state" record. While playing, the audio session's and the
+    /// Supertonic player's state are added, so a silent player can be told from a stopped clock
+    /// (#288, #301). For live speech the media clock is -1; the text offset shows whether it advances.
+    static func playbackStateFields(_ snapshot: SessionSnapshot, player: @autoclosure () -> [String: String]) -> [String: String] {
+        var fields: [String: String] = [
+            "item": token(snapshot.itemId),
+            "target": token(snapshot.targetId),
+            "status": snapshot.status.rawValue,
+            "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
+            "durationMs": String(snapshot.currentPlaybackDurationMs ?? -1),
+            "textOffset": String(snapshot.currentTextStart ?? -1),
+            "failure": token(snapshot.lastFailure),
+            "failureDetail": PlaybackFailureDetail.privacySafe(snapshot.lastFailure)
+        ]
+        if snapshot.status.isPlaybackActive {
+            fields.merge(AudioSessionDiagnostics.fields()) { current, _ in current }
+            fields.merge(player()) { current, _ in current }
+        }
+        return fields
     }
 }
