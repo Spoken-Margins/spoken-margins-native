@@ -37,54 +37,26 @@ Why it's shaped this way:
 - **`/goal` holds the agent to the endpoint.** It's a command the person who started the session types, not something the agent can run. After the agent posts its approach, send `/goal <the milestone's "Done when", minus (owner) and (Mac) items>` as the next message. After each turn, a separate evaluator checks the condition against what the agent has shown in the transcript, and the agent keeps working until it's met ([docs](https://code.claude.com/docs/en/goal)). Without it, the agent still works toward the same list; `/goal` just stops it from declaring victory early. That's why every "Done when" in the briefs is written as something the agent can *demonstrate* (a test output, a measured number, a tap count, a lane report), not something it can merely assert.
 - **Items marked (owner) stay out of the goal.** Listening by ear, measurements on the owner's phone, and data only the owner has can't be demonstrated by an agent. The agent prepares them (a build, exact steps, what to look for) and the milestone waits on the owner.
 - **Stating the approach first** gives the owner a moment to redirect from the phone before hours go into the wrong idea. It isn't a request for approval; the agent continues unless redirected.
-- **Defaults instead of waits.** On 2026-09-28 about 15 owner decisions reached the owner one at a time, and several were reversible: which simulator the lane uses, C3's pause behavior, whether author names are read aloud. Streams now take a default for those and keep going. The lead session collects each "Default taken" so the owner can veto in one batch.
+- **Defaults instead of waits.** On 2026-09-28 about 15 owner decisions reached the owner one at a time, and several were reversible: which simulator the lane uses, C3's pause behavior, whether author names are read aloud. Streams now take a default for those and keep going. The project's morning digest lists each "Default taken" so the owner can veto in one batch.
 - **A turn cap** stops a stuck stream from burning a day. Blocked is a legitimate outcome if it's reported.
 - **A fresh-context review** before a milestone catches the "looks done" failure without an auditor agent chain ([best practices](https://code.claude.com/docs/en/best-practices#add-an-adversarial-review-step)). Tell the reviewer to flag only gaps against the brief's "Done when" and "Must not break", or it will invent work.
 
 ## The lead session
 
-One session a day coordinates the streams: it batches decisions for the owner, relays answers, and merges on green. It writes no feature code. Start it fresh each morning, because a long coordinating session degrades, and the issues and PRs carry the state. Paste:
+Retired on 2026-09-29. A long-lived triage desk re-read a large context on every turn and took most of the owner's messages, so its jobs moved to owners that start fresh:
 
-```text
-You are today's lead session for Spoken Margins' parallel streams. You coordinate;
-you don't write feature code. Read AGENTS.md, docs/workstreams/README.md,
-docs/workstreams/test-lane.md, and "The lead session" in docs/workstreams/kickoff.md.
+| Job | Who does it now |
+| --- | --- |
+| Hand out work: one thread per `ready` issue, in the order the project's instructions give | The owner's Claude Code project |
+| Triage new and `critic:*` issues daily: `ready`, `needs-owner`, `deferred`, or closed as a duplicate | The project, in a morning routine |
+| Decisions, defaults the streams took, and phone candidates, for the owner | The project conversation |
+| Pace, runner queue, disk, memory, the main checkout, and the daily scorecard | The hourly `SM Mac tick` scheduled task, posting on #337 |
+| Merge finished work | The lane runner merges `automerge` PRs it passes; the Mac tick is the fallback. PRs that change `.github/` or `scripts/lane*` wait for the owner. |
+| Codex audits of sharing, persistence and audio changes | The hourly `SM Codex audit` scheduled task |
+| Test next's tip | The hourly `SM integration run` (XCTest only, because scheduled sessions can't drive the simulator), then the journeys it lists in an attended Test Desk session |
+| Check that the scheduled tasks ran | The project's morning routine reads #337. The owner starts an ops desk session only when something is wrong. |
 
-1. Survey, read-only: open PRs into next and their latest lane reports; the latest
-   comment on each stream tracking issue (label stream:*); local sessions and
-   `git worktree list`; booted simulators; free disk (`df -h /`).
-   Check open `merge-audit` labels (`gh pr list --state merged --label merge-audit`
-   and `gh issue list --label merge-audit`); push the owner only for ones the owner
-   didn't do.
-2. Give the owner one digest, short and written for the ear:
-   - Decisions only the owner can make, numbered, each with your recommendation,
-     what it blocks, and a link.
-   - Every "Default taken" since the last digest, numbered, so the owner can veto
-     by number.
-   - What merged, what's waiting on the lane, and what's stuck and why.
-3. Merge on green (the owner allows this). When a PR's lane report is PASS for its
-   current head, merge current next into a temporary worktree of it and re-run the
-   tests for what it touches, plus anything on next that uses it. Add T2 through
-   scripts/xcodebuild-lane for App/ changes. Before merging, post the merge check as
-   a PR comment whose first line starts with **Merge check (triage desk) on `<sha7>`
-   (the head you're merging), then what you ran and the results. Then `gh pr ready`
-   and `gh pr merge --merge --match-head-commit <full sha>`. A conflict or a failing
-   combination goes back to the owning session with the exact failing test. Squash
-   only where the PR says so.
-   A FAIL counts as passed for that PR only when the failing step is in code the PR
-   doesn't change: the report shows the files aren't in its diff, or the same step
-   fails on a control build without the PR. File the failure as its own issue and link
-   it from the PR (owner's standing rule, 2026-09-28).
-4. Keep streams moving. Relay owner answers to the stream as a message, and quote
-   them on its tracking issue. Wake idle cloud streams whose gate has opened. Tell
-   the Test Desk your session's name, and ask it to message "PASS #<pr> <sha>"
-   after each PASS.
-5. Guardrails: without an explicit owner yes in this session, never touch the
-   owner's phone, Library, main, the VPS, or simulators. Use one temporary worktree
-   per job and remove it afterwards.
-
-Repeat the digest mid-afternoon, or whenever the owner asks what's waiting on them.
-```
+The merge-check comment keeps its old first line, **Merge check (triage desk) on `<sha7>`**. The lane runner writes it and `scripts/merge_audit.py` looks for that exact text, so don't reword it.
 
 ## Model and effort
 

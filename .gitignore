@@ -1,6 +1,8 @@
 .DS_Store
 DerivedData/
 .build/
+# The lane runner links .build folders to a warm cache; ignore the links too.
+.build
 .swiftpm/
 xcuserdata/
 *.xcuserstate

@@ -19,6 +19,31 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   during boot, and a long wait for the first boot's data migration. The job holds the Mac's one
   simulator slot throughout, so it never runs alongside a Test Desk job. A crash flood stops the run.
 - A timeout interrupts the whole process group, so no xcodebuild keeps running outside the slots.
+- The automerge label asks for the checks a finished PR needs, with no request comment (the
+  ready-queue plan, decision 3). The base branch's scripts/test-scope.py classifies the PR's
+  committed diff: T0 (docs, research, the server) runs nothing, T1 runs --plan fast, and T2 or
+  higher runs --plan fast and both builds. An explicit request on the PR goes first. Before any of
+  that, next's scripts/hot_file_ratchet.py fails a PR that grows Gate1AppModel.swift or
+  Gate1RootView.swift above its ceiling, unless the PR has the hot-file-ok label.
+- The runner merges what it passes (decision 3, owner-approved). An automerge run tests the exact
+  merge commit, with next as its first parent. On PASS it posts a "Merge check (triage desk)"
+  comment (the prefix scripts/merge_audit.py looks for) and pushes that commit to next with a plain
+  push; if next moved meanwhile, the push is refused and it tests again on the newest next (up to
+  MERGE_ATTEMPTS). It won't merge a PR that changes .github/ or scripts/lane* (a PR can change the
+  workflow that tests it), or an audio, persistence or packet change without a Codex audit comment:
+  those pass or fail as usual, and a person merges them.
+- PR code (builds and tests) runs without the GitHub token in its environment, and the checkout
+  keeps no credentials, so only this script's own fetch and push can use the token.
+- Build folders stay warm between jobs. The checkout wipes the workspace, so the tree's .build (the
+  app's DerivedData and verify-tests' output) and Packages/SessionKit/.build (SwiftPM) link to a cache
+  outside it, keyed by the SessionKit source tree under test: a DerivedData reused after SessionKit
+  changes gives false "does not conform" errors (AGENTS.md), so any SessionKit change starts a new
+  cache. At most WARM_KEEP caches, never below WARM_FREE_FLOOR of free disk; otherwise the job runs
+  cold. A warm rebuild measured 6 to 10 s against 90 s cold, per build.
+- Two runners (item 5). lane.yml's `lane` job answers /lane requests on the main runner (the only
+  one that runs simulators); its `automerge` job runs on any runner labelled sm-lane-build. --mode
+  keeps each job to its own work. On the build-only runner (SM_LANE_RUNNER_ROLE=build), an
+  automerge job first waits for room: no simulator job, normal memory pressure, and enough free disk.
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
 default ~/Library/Caches/SpokenMarginsLane/evidence), SM_LANE_TOOLS (a checkout whose .venv and
@@ -28,6 +53,7 @@ Stdlib only, Python 3.9-compatible: it runs under /usr/bin/python3.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 from pathlib import Path
@@ -42,6 +68,18 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 
 QUEUED, RUNNING, DONE = 'lane:queued', 'lane:running', 'lane:done'
+AUTOMERGE = 'automerge'
+FAST_TIMEOUT = 2400
+MERGE_ATTEMPTS = 3
+WARM_KEEP = 2
+BUILD_RUNNER_WAIT = 90 * 60
+BUILD_RUNNER_FREE_DISK = 20 * 10**9
+WARM_FREE_FLOOR = 15 * 10**9
+MERGE_CHECK = '**Merge check (triage desk)'  # the prefix scripts/merge_audit.py requires
+AUDITS = ('**Codex audit (Astra)', '## Codex audit')  # how an audit comment starts: the hourly task's, or an older manual one
+DESK_ONLY = ('.github/', 'scripts/lane')
+AUDITED = {'audio': 'the audio session', 'persistence': 'persistence', 'packet': 'packets'}
+BOT = ('github-actions[bot]', '41898282+github-actions[bot]@users.noreply.github.com')
 RUNNER_TIERS = ('T2', 'T3')
 APP_TEST_TARGET = 'SpokenMarginsAppTests'
 PLANS = {'app': 'AppBehavior', 'adapters': 'AudioAdapters'}
@@ -122,8 +160,11 @@ def identity(tier: str, commit: str, base: str, tests: list[str]) -> dict:
     return {'tier': tier, 'commit': commit, 'next': base, 'tests': sorted(tests)}
 
 
-def earlier_report(comments: list[dict], wanted: dict) -> str | None:
-    """URL of a PASS or FAIL lane report already posted for this exact request. INCONCLUSIVE doesn't count."""
+def earlier_report(comments: list[dict], wanted: dict) -> tuple[str, str] | None:
+    """(URL, verdict) of a PASS or FAIL lane report already posted for this exact request.
+
+    INCONCLUSIVE doesn't count: that request runs again.
+    """
     for comment in comments:
         body = comment.get('body') or ''
         match, verdict = MARKER.search(body), REPORT.search(body)
@@ -131,7 +172,7 @@ def earlier_report(comments: list[dict], wanted: dict) -> str | None:
             continue
         try:
             if json.loads(match.group(1)) == wanted:
-                return comment.get('html_url') or 'an earlier comment'
+                return comment.get('html_url') or 'an earlier comment', verdict.group(1)
         except ValueError:
             continue
     return None
@@ -158,6 +199,22 @@ def report(request_id: str, verdict: str, head: str, base: str, tier: str, where
 
 # ---- Processes ----------------------------------------------------------------------------------
 
+def pr_code_env() -> dict:
+    """The environment for the PR's own code (builds, tests): without the GitHub token, so nothing the
+    PR changes can use the lane's write access."""
+    return {name: value for name, value in os.environ.items() if name not in ('GH_TOKEN', 'GITHUB_TOKEN')}
+
+
+def git_with_token(tree: Path) -> list[str]:
+    """git for this script's own fetch and push: the token goes in a header for that one command, since
+    the checkout keeps no credentials."""
+    token = os.environ.get('GH_TOKEN')
+    if not token:
+        return ['git', '-C', str(tree)]
+    basic = base64.b64encode(f'x-access-token:{token}'.encode()).decode()
+    return ['git', '-C', str(tree), '-c', f'http.https://github.com/.extraheader=AUTHORIZATION: basic {basic}']
+
+
 def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUPT_GRACE) -> int | None:
     """Run in a new process group and return its exit code, or None if it timed out.
 
@@ -167,7 +224,7 @@ def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUP
     # The child gets default SIGINT handling even if this process was started with it ignored (as
     # background jobs are), or the interrupt below would be silently ignored all the way down.
     process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
-                               preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+                               env=pr_code_env(), preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
     try:
         return process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -216,6 +273,308 @@ def run_t2(evidence: Path, runner=run_bounded) -> tuple[str, str, list[str]]:
     failed = [r for r in results if not r.endswith('(pass)')]
     verdict = 'PASS' if not failed else ('INCONCLUSIVE' if all('timed out' in r for r in failed) else 'FAIL')
     return verdict, ', '.join(results), details
+
+
+# ---- Automerge ----------------------------------------------------------------------------------
+
+def committed_changes(tree: Path, base: str) -> tuple[list[str], dict[str, str]]:
+    """The PR's committed changes against origin/<base>: paths, and SessionKit source diffs (for the
+    public-API check). Nothing untracked in the runner's workspace counts."""
+    git = ['git', '-C', str(tree)]
+    merge_base = subprocess.check_output(git + ['merge-base', 'HEAD', f'origin/{base}'], text=True).strip()
+    paths = subprocess.check_output(git + ['diff', '--name-only', merge_base, 'HEAD'], text=True).splitlines()
+    diffs, current = {}, None
+    for line in subprocess.check_output(git + ['diff', '-U0', merge_base, 'HEAD', '--', 'Packages/SessionKit/Sources'],
+                                        text=True).splitlines():
+        if line.startswith('diff --git '):
+            current = line.split(' b/', 1)[1]
+            diffs[current] = ''
+        elif current:
+            diffs[current] += line + '\n'
+    return sorted(set(paths)), diffs
+
+
+def base_policy(tree: Path, base: str, path: str):
+    """A script from the base branch, loaded as a module, so a PR can't change the rules that judge it.
+    None if the base doesn't have it yet."""
+    import types
+    shown = subprocess.run(['git', '-C', str(tree), 'show', f'origin/{base}:{path}'], capture_output=True, text=True)
+    if shown.returncode != 0:
+        return None
+    module = types.ModuleType('lane_policy_' + Path(path).stem.replace('-', '_'))
+    module.__file__ = str(tree / path)
+    exec(compile(shown.stdout, f'origin/{base}:{path}', 'exec'), module.__dict__)
+    return module
+
+
+def diff_scope(tree: Path, base: str) -> dict:
+    """test-scope.py's answer for the PR, from the base branch's copy of the policy, so a PR can't
+    reclassify itself to skip its builds."""
+    policy = base_policy(tree, base, 'scripts/test-scope.py')
+    paths, diffs = committed_changes(tree, base)
+    return policy.classify(paths, diffs, root=tree)
+
+
+def hot_file_violations(tree: Path, base: str, labels) -> list[str]:
+    """next's hot-file ratchet on the tree's HEAD (none until the ratchet is on next)."""
+    ratchet = base_policy(tree, base, 'scripts/hot_file_ratchet.py')
+    return ratchet.violations(tree, f'origin/{base}', 'HEAD', labels) if ratchet else []
+
+
+def run_fast(evidence: Path, runner=run_bounded) -> tuple[str, list[str]]:
+    """--plan fast (host tests): returns (PASS, FAIL or INCONCLUSIVE, details)."""
+    python = ROOT / '.venv/bin/python'
+    output, log_path = evidence / 'fast', evidence / 'verify-fast.log'
+    command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', 'fast',
+               '--output', str(output)]
+    with log_path.open('w') as log:
+        code = runner(command, log, FAST_TIMEOUT)
+    if code is None:
+        return 'INCONCLUSIVE', [f'host tests (--plan fast) — no result after {duration(FAST_TIMEOUT)}; interrupted. '
+                                f'evidence: {log_path}']
+    if code == 0 and _read_manifest(output).get('status') == 'verified':
+        return 'PASS', []
+    return 'FAIL', [f'host tests (--plan fast) — expected: verified. observed: exit {code}. evidence: {log_path}',
+                    *[f'  {line}' for line in first_errors(log_path)]]
+
+
+def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2,
+                  ratchet=lambda: []) -> tuple[str, str, str, list[str]]:
+    """Returns verdict, where, ran, details for the checks the PR's diff needs."""
+    tier = int(scope['tier'][1:])
+    details = [f'test-scope: {scope["tier"]} ({"; ".join(scope["why"]) or "no changes"})']
+    too_big = ratchet()
+    if too_big:
+        return 'FAIL', 'no build', 'hot-file ratchet: failed', details + [f'hot-file ratchet — {line}'
+                                                                          for line in too_big]
+    if tier == 0:
+        return 'PASS', 'no build', 'nothing to build or test', details + [
+            'nothing here reaches the host tests or the app (docs, research or server only)']
+    verdict, more = fast(evidence)
+    details += more
+    if verdict != 'PASS':
+        return verdict, 'host only', 'host tests (--plan fast): ' + verdict.lower(), details
+    if tier == 1:
+        return 'PASS', 'host only', 'host tests (--plan fast): passed', details + [
+            'no app build: nothing in the diff reaches the app (T1)']
+    verdict, builds, more = t2(evidence)
+    return verdict, 'no simulator (compile only)', f'host tests (--plan fast): passed; {builds}', details + more
+
+
+def merge_blockers(scope: dict, comments: list[dict]) -> list[str]:
+    """Why the runner won't merge this PR itself even on PASS; the desk merges those."""
+    reasons = []
+    desk = [f['path'] for f in scope['files'] if f['path'].startswith(DESK_ONLY)]
+    if desk:
+        reasons.append(f'it changes the lane or its workflows ({", ".join(desk[:5])}), and a PR can change '
+                       'what tests it')
+    risky = sorted({AUDITED[f['category']] for f in scope['files'] if f['category'] in AUDITED})
+    if risky and not any((c.get('body') or '').lstrip().startswith(AUDITS) for c in comments):
+        reasons.append(f'it touches {" and ".join(risky)} and has no "Codex audit (Astra)" comment yet')
+    return reasons
+
+
+def build_merge_commit(tree: Path, base: str, head: str, pr: int, title: str) -> tuple[str | None, list[str]]:
+    """The exact commit that would land: origin/<base> as first parent, the PR head as second.
+
+    Returns (its SHA, []) or (None, the conflicting files); a conflict leaves the tree clean.
+    """
+    git = ['git', '-C', str(tree)]
+    subprocess.run(git + ['checkout', '--quiet', '--detach', f'origin/{base}'], check=True, capture_output=True)
+    name, email = BOT
+    merged = subprocess.run(git + ['-c', f'user.name={name}', '-c', f'user.email={email}', 'merge', '--no-ff',
+                                   '--quiet', '-m', f'Merge pull request #{pr}: {title}',
+                                   '-m', 'Tested as this exact commit and merged by the lane runner.', head],
+                            capture_output=True, text=True)
+    if merged.returncode == 0:
+        return subprocess.check_output(git + ['rev-parse', 'HEAD'], text=True).strip(), []
+    conflicts = subprocess.run(git + ['diff', '--name-only', '--diff-filter=U'], capture_output=True,
+                               text=True).stdout.split()
+    subprocess.run(git + ['merge', '--abort'], capture_output=True)
+    return None, conflicts or ['the merge failed']
+
+
+def push_merge(tree: Path, sha: str, base: str) -> tuple[bool, str]:
+    """A plain push of the tested merge commit to <base>: refused unless <base> is still its first parent."""
+    pushed = subprocess.run(git_with_token(tree) + ['push', '--quiet', 'origin', f'{sha}:refs/heads/{base}'],
+                            capture_output=True, text=True)
+    lines = [line.strip() for line in (pushed.stderr + pushed.stdout).splitlines()
+             if line.strip() and not line.startswith('hint:')]
+    telling = [line for line in lines if 'rejected' in line or line.startswith(('error:', 'fatal:'))]
+    return pushed.returncode == 0, (telling or lines or [f'exit {pushed.returncode}'])[0]
+
+
+def sweep_merge_audit(tree: Path, base: str) -> None:
+    """Pushes made with the workflow token start no workflow, so merge-audit's push run never sees the
+    runner's merges, and its hourly schedule runs only once merge-audit.yml is on the default branch.
+    After each merge, run next's audit over the last two hours instead. Best effort: never fails a job."""
+    try:
+        audit = base_policy(tree, base, 'scripts/merge_audit.py')
+        if audit:
+            audit.main(['--sweep-hours', '2'])
+    except Exception as error:  # noqa: BLE001 - the audit is a safety net, not part of the verdict
+        print(f'merge-audit sweep skipped: {error!r}')
+
+
+def next_moved(push_message: str) -> bool:
+    """Whether a refused push means the branch moved (so testing again on its newest commit can help)."""
+    return 'rejected' in push_message and any(
+        reason in push_message for reason in ('fetch first', 'non-fast-forward', 'stale info'))
+
+
+def merge_check(head: str, merge_sha: str, base: str, base_sha: str, ran: str) -> str:
+    return (f'{MERGE_CHECK} on `{head[:7]}`: PASS.**\n'
+            f'- Tested the merge commit `{merge_sha[:7]}`: {base} at `{base_sha[:7]}` first, then this PR.\n'
+            f'- Ran: {ran}.\n'
+            f'- Pushing `{merge_sha[:7]}` to {base} now. If {base} moved meanwhile, the push is refused and the '
+            'runner tests again on the newest one.\n'
+            '_Posted by the lane runner (scripts/lane-runner.py)._')
+
+
+def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, evidence: Path,
+             comments: list[dict], labels=(), attempts: int = MERGE_ATTEMPTS) -> tuple[str, str, str, list[str]]:
+    """The automerge run: test the merge commit, and push it to <base> on PASS unless something blocks it."""
+    notes: list[str] = []
+    for attempt in range(1, attempts + 1):
+        merge_sha, conflicts = build_merge_commit(ROOT, base, head, pr, pull.get('title', ''))
+        if conflicts:
+            return 'INCONCLUSIVE', 'no simulator', 'nothing', notes + [
+                f'The PR does not merge cleanly into {base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
+                f'Merge {base} into your branch and push; the automerge label runs it again.']
+        warm = warm_build_folders(ROOT)
+        scope = diff_scope(ROOT, base)
+        (evidence / 'scope.json').write_text(json.dumps(scope, indent=2))
+        verdict, where, ran, details = run_automerge(
+            scope, evidence, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)))
+        details = [f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR); {warm}'] \
+            + notes + details
+        if verdict != 'PASS':
+            return verdict, where, ran, details
+        blockers = merge_blockers(scope, comments)
+        if blockers:
+            return verdict, where, ran, details + [f'not merged by the runner: {b}. The desk merges it.'
+                                                   for b in blockers]
+        now = github.pull()
+        if now['head']['sha'] != head or AUTOMERGE not in {label['name'] for label in now.get('labels', [])}:
+            return verdict, where, ran, details + ['not merged: the PR moved on or lost the automerge label while '
+                                                   'it was tested']
+        github.comment(merge_check(head, merge_sha, base, base_sha, ran))
+        pushed, message = push_merge(ROOT, merge_sha, base)
+        if pushed:
+            sweep_merge_audit(ROOT, base)
+            return verdict, where, ran, details + [f'merged into {base} as {merge_sha[:7]}']
+        if not next_moved(message):  # no permission, network: testing again wouldn't help
+            return verdict, where, ran, details + [f'not merged: the push to {base} failed ({message}). A job '
+                                                   'whose lane.yml predates push rights (#382) can\'t push.']
+        notes.append(f'attempt {attempt}: the push to {base} was refused ({message}), so {base} moved; '
+                     'tested again on the newest one')
+        base_sha = fetch_base(ROOT, base)
+    return 'PASS', where, ran, details + notes[-1:] + [
+        f'not merged: {base} kept moving ({attempts} attempts). Remove and re-add automerge to try again.']
+
+
+# ---- Warm build folders -------------------------------------------------------------------------
+
+def warm_root() -> Path:
+    return Path(os.environ.get('SM_LANE_WARM_DIR') or Path.home() / 'Library/Caches/SpokenMarginsLane/warm-build')
+
+
+def sessionkit_key(tree: Path) -> str | None:
+    """The SessionKit source tree in the tree under test (its git tree hash), or None."""
+    found = subprocess.run(['git', '-C', str(tree), 'rev-parse', 'HEAD:Packages/SessionKit'],
+                           capture_output=True, text=True)
+    return found.stdout.strip()[:12] if found.returncode == 0 and found.stdout.strip() else None
+
+
+_WARM_LOCKS: dict = {}
+
+
+def warm_build_folders(tree: Path, root: Path | None = None, free=lambda path: shutil.disk_usage(path).free) -> str:
+    """Link the tree's build folders to the cache for its SessionKit tree; returns a line for the report."""
+    import fcntl
+    root = root or warm_root()
+    key = sessionkit_key(tree)
+    if not key:
+        return 'build folders: cold (no SessionKit tree to key a cache on)'
+    root.mkdir(parents=True, exist_ok=True)
+    wanted = root / f'sk-{key}'
+    others = sorted((d for d in root.iterdir() if d.is_dir() and d.name.startswith('sk-') and d != wanted),
+                    key=lambda d: d.stat().st_mtime, reverse=True)
+    for old in others[WARM_KEEP - 1:]:
+        if not _cache_busy(old):
+            shutil.rmtree(old, ignore_errors=True)
+    if free(root) < WARM_FREE_FLOOR:
+        for old in others:
+            if not _cache_busy(old):
+                shutil.rmtree(old, ignore_errors=True)
+        if free(root) < WARM_FREE_FLOOR:
+            return f'build folders: cold (less than {WARM_FREE_FLOOR // 10**9} GB free)'
+    was_warm = (wanted / 'root').is_dir()
+    for name in ('root', 'sessionkit'):
+        (wanted / name).mkdir(parents=True, exist_ok=True)
+    lock = open(wanted / '.lock', 'a+')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock.close()
+        return f'build folders: cold (the SessionKit {key} cache is in use by another runner job)'
+    for held in _WARM_LOCKS.values():  # a new key in a later attempt: this job moves to the new cache
+        held.close()
+    _WARM_LOCKS.clear()
+    _WARM_LOCKS[key] = lock  # held until this job's process exits
+    os.utime(wanted)
+    for link, target in ((tree / '.build', wanted / 'root'), (tree / 'Packages/SessionKit/.build', wanted / 'sessionkit')):
+        if link.is_symlink():
+            link.unlink()
+        elif link.exists():
+            shutil.rmtree(link)
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(target, target_is_directory=True)
+    return f'build folders: {"warm" if was_warm else "cold, new cache"} (SessionKit {key})'
+
+
+def _cache_busy(cache: Path) -> bool:
+    import fcntl
+    try:
+        with open(cache / '.lock', 'a+') as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        return False
+    except BlockingIOError:
+        return True
+    except OSError:
+        return False
+
+
+# ---- The build-only runner ----------------------------------------------------------------------
+
+def wait_for_room_to_build(out=sys.stdout, max_wait: float = BUILD_RUNNER_WAIT, poll: float = 30,
+                           clock=time.monotonic, sleep=time.sleep, simulator_jobs=None, pressure=None,
+                           free=lambda: shutil.disk_usage(Path.home()).free) -> str | None:
+    """The second runner builds only while the Mac has room: no simulator job, normal memory pressure,
+    and BUILD_RUNNER_FREE_DISK free. Returns None when there's room, or why it gave up waiting."""
+    if simulator_jobs is None or pressure is None:
+        from lane_slots import memory_pressure_level, simulator_jobs_running
+        simulator_jobs = simulator_jobs or simulator_jobs_running
+        pressure = pressure or memory_pressure_level
+    started, last_note = clock(), None
+    while True:
+        busy = []
+        if simulator_jobs():
+            busy.append('a simulator job is running')
+        if pressure() not in (1, None):
+            busy.append('memory pressure is above normal')
+        if free() < BUILD_RUNNER_FREE_DISK:
+            busy.append(f'less than {BUILD_RUNNER_FREE_DISK // 10**9} GB of disk is free')
+        if not busy:
+            return None
+        waited = clock() - started
+        if waited >= max_wait:
+            return f'the build runner waited {duration(waited)} for room: {"; ".join(busy)}'
+        if last_note is None or clock() - last_note >= 300:
+            print(f'[lane] build runner waiting ({duration(waited)} so far): {"; ".join(busy)}', file=out, flush=True)
+            last_note = clock()
+        sleep(poll)
 
 
 # ---- T3 -----------------------------------------------------------------------------------------
@@ -452,9 +811,13 @@ def sweep_runner_simulators() -> None:
                 print(f'Deleted leftover simulator {device["name"]}')
 
 
-def cleanup(github: GitHub, run_url: str) -> int:
+def cleanup(github: GitHub, run_url: str, mode: str = 'any') -> int:
     """After a failed or cancelled job: remove leftovers, say so on the PR, and free the labels."""
     sweep_runner_simulators()
+    if mode == 'auto':  # the lane:* labels belong to /lane requests
+        github.comment(f'Lane: the automerge run stopped before reporting ({run_url}). Push again, or remove and '
+                       f're-add automerge, to run it again.\n{NOTE}')
+        return 0
     _, desk_waiting = pending_requests(github.comments())
     github.comment(f'Lane: the runner stopped before reporting ({run_url}). If it is still needed, comment '
                    f'the request again and add lane:queued.\n{NOTE}')
@@ -466,7 +829,7 @@ def cleanup(github: GitHub, run_url: str) -> int:
 
 def fetch_base(tree: Path, base: str) -> str:
     """Fetch the newest base branch into the tree and return its commit."""
-    subprocess.run(['git', '-C', str(tree), 'fetch', '--no-tags', '--quiet', 'origin', base], check=True)
+    subprocess.run(git_with_token(tree) + ['fetch', '--no-tags', '--quiet', 'origin', base], check=True)
     return subprocess.check_output(['git', '-C', str(tree), 'rev-parse', f'origin/{base}'], text=True).strip()
 
 
@@ -481,6 +844,18 @@ def merge_base_branch(tree: Path, base: str) -> list[str]:
                                text=True).stdout.split()
     subprocess.run(git + ['merge', '--abort'], capture_output=True)
     return conflicts or [merged.stderr.strip().splitlines()[-1] if merged.stderr.strip() else 'the merge failed']
+
+
+def record_outcome(verdict: str) -> None:
+    """Hand the verdict to the workflow, whose last step makes the check red unless it is PASS (#184).
+
+    The script itself exits 0 once it has reported, so a lane.yml from before this change (on a PR that
+    hasn't merged next) stays green on FAIL, as before, instead of posting "stopped before reporting".
+    """
+    outputs = os.environ.get('GITHUB_OUTPUT')
+    if outputs:
+        with open(outputs, 'a') as handle:
+            handle.write(f'reported=true\nverdict={verdict}\n')
 
 
 def link_tools(source: Path) -> None:
@@ -498,6 +873,8 @@ def main(argv=None) -> int:
     parser.add_argument('--tree', type=Path, default=ROOT, help='checkout of the PR head to test')
     parser.add_argument('--base', default='next', help='branch the PR merges into')
     parser.add_argument('--cleanup', action='store_true', help='tidy up after a cancelled or failed job')
+    parser.add_argument('--mode', choices=['explicit', 'auto', 'any'], default='any',
+                        help='explicit: answer /lane requests only; auto: the automerge label only')
     args = parser.parse_args(argv)
     ROOT = args.tree.resolve()
     sys.path.insert(0, str(ROOT / 'scripts'))
@@ -505,16 +882,27 @@ def main(argv=None) -> int:
     github = GitHub(repo, args.pr)
     run_url = f'{os.environ.get("GITHUB_SERVER_URL", "https://github.com")}/{repo}/actions/runs/{args.run_id}'
     if args.cleanup:
-        return cleanup(github, run_url)
+        return cleanup(github, run_url, args.mode)
     sweep_runner_simulators()
-    head = github.pull()['head']['sha']
+    pull = github.pull()
+    head = pull['head']['sha']
+    labels = {label['name'] for label in pull.get('labels', [])}
+    automerge = AUTOMERGE in labels
     if head != args.event_head:
         print(f'The PR moved on to {head[:7]} since this run was queued; the newer run tests it.')
         return 0
     comments = github.comments()
     request, desk_waiting = pending_requests(comments)
+    if args.mode == 'auto':  # the automerge job never answers /lane requests: the lane job does
+        if not automerge:
+            print('The automerge label is gone; nothing to do.')
+            return 0
+        request = None
+    if request is None and automerge and args.mode != 'explicit':
+        request = {'tier': 'auto', 'tests': [], 'commit': ''}  # the automerge label is the request
+    explicit = request is not None and request['tier'] != 'auto'  # automerge runs leave lane:* labels alone
     if request is None:
-        if not desk_waiting:
+        if not desk_waiting and QUEUED in labels and args.mode != 'auto':
             github.comment('Lane: lane:queued is set, but there is no `/lane T2` or `/lane T3` request comment newer '
                            'than the last lane report, so nothing ran. Comment the request (format in '
                            f'docs/workstreams/test-lane.md), then add lane:queued.\n{NOTE}')
@@ -523,11 +911,16 @@ def main(argv=None) -> int:
         return 0
     base_sha = fetch_base(ROOT, args.base)
     wanted = identity(request['tier'], head, base_sha, request['tests'])
-    done_before = earlier_report(comments, wanted)
+    # An automerge run always runs: after an earlier PASS that didn't merge (no audit yet, next moved),
+    # re-adding the label is how to try again.
+    done_before = earlier_report(comments, wanted) if explicit else None
     if done_before:
-        github.comment(f'Lane: identical {request["tier"]} request for {head[:7]} already reported: {done_before}\n{NOTE}')
-        if not desk_waiting:
+        url, earlier_verdict = done_before
+        github.comment(f'Lane: identical {request["tier"]} request for {head[:7]} already reported '
+                       f'({earlier_verdict}): {url}\n{NOTE}')
+        if explicit and not desk_waiting:
             github.relabel(QUEUED, DONE)
+        record_outcome(earlier_verdict)  # a repeated FAIL stays red
         return 0
     request_id = f'pr{args.pr}-r{args.run_id}'
     evidence = Path(os.environ.get('SM_LANE_EVIDENCE_DIR') or
@@ -535,25 +928,37 @@ def main(argv=None) -> int:
     evidence.mkdir(parents=True, exist_ok=True)
     (evidence / 'request.json').write_text(json.dumps(dict(request, head=head, base=args.base, base_sha=base_sha),
                                                       indent=2))
-    if not desk_waiting:  # a waiting T4/T5 keeps lane:queued so the Test Desk still sees it
+    if explicit and not desk_waiting:  # a waiting T4/T5 keeps lane:queued so the Test Desk still sees it
         github.relabel(QUEUED, RUNNING)
     link_tools(Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Documents/GitHub/spoken-margins-native'))
+    no_room = wait_for_room_to_build() \
+        if request['tier'] == 'auto' and os.environ.get('SM_LANE_RUNNER_ROLE') == 'build' else None
     started = time.monotonic()
     requested = request.get('commit', '')
     moved = [f'requested {requested[:7]}, tested the newest commit {head[:7]}'] \
         if requested and not head.startswith(requested) else []
     cc = ''
     try:
-        conflicts = merge_base_branch(ROOT, args.base)
-        if conflicts:
+        conflicts = [] if request['tier'] == 'auto' else merge_base_branch(ROOT, args.base)
+        if no_room:
+            verdict, where, ran, crashes = 'INCONCLUSIVE', 'no build', 'nothing', 'none'
+            details = [f'{no_room}. Push again, or remove and re-add automerge, to try again.']
+        elif request['tier'] == 'auto':
+            verdict, where, ran, details = run_auto(github, pull, args.pr, args.base, head, base_sha, evidence,
+                                                    comments, labels)
+            crashes = 'none'
+        elif conflicts:
             verdict, where, ran, crashes = 'INCONCLUSIVE', 'no simulator', 'nothing', 'none'
             details = [f'The PR does not merge cleanly into {args.base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
                        f'Merge {args.base} into your branch, push, and ask again.']
         elif request['tier'] == 'T2':
+            warm = warm_build_folders(ROOT)
             verdict, ran, details = run_t2(evidence)
-            where, crashes = 'no simulator (compile only)', 'none'
+            where, crashes, details = 'no simulator (compile only)', 'none', [warm] + details
         else:
+            warm = warm_build_folders(ROOT)
             verdict, where, ran, details, crashes, cc = run_t3(request['tests'], request_id, evidence)
+            details = [warm] + details
     except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
         verdict, where, ran, crashes = 'INCONCLUSIVE', 'lane error', 'nothing', 'unknown'
         details = [f'The lane itself failed: {error!r}. evidence: {evidence}']
@@ -563,10 +968,13 @@ def main(argv=None) -> int:
     (evidence / 'report.md').write_text(body)
     print(body)
     github.comment(body)  # if this fails, the job fails and the tidy step says so on the PR
+    record_outcome(verdict)
     _, desk_waiting = pending_requests(github.comments())
-    github.relabel(RUNNING, QUEUED if desk_waiting else DONE)
-    shutil.rmtree(ROOT / '.build/dd', ignore_errors=True)
-    shutil.rmtree(ROOT / '.build/verification', ignore_errors=True)
+    if explicit:
+        github.relabel(RUNNING, QUEUED if desk_waiting else DONE)
+    if not (ROOT / '.build').is_symlink():  # a cold job (disk floor, busy cache) built in the workspace
+        shutil.rmtree(ROOT / '.build/dd', ignore_errors=True)
+        shutil.rmtree(ROOT / '.build/verification', ignore_errors=True)
     return 0
 
 
