@@ -1,4 +1,5 @@
 import AVFoundation
+import CryptoKit
 import SessionKit
 import SessionKitAudio
 import SessionKitPersistence
@@ -388,6 +389,51 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertNil(cache.cachedAudio(text: SpeechTextNormalizer.normalize(text), voice: .m2, language: "en", speed: 1, synthesisSteps: 8),
                      "the iOS-voice audio isn't cached as Supertonic's")
         try client.stop()
+    }
+
+    // #363 audit: background preparation made a guard per chunk and never discarded its render, so
+    // every flagged chunk left an iOS-voice file behind. The render is discarded once kept, or on
+    // failure.
+    func testABackgroundRenderIsDiscardedOnceKeptOrOnFailure() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "guard-keep-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let guardRenderer = SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil)
+        let text = "Table 3 reports 91.1% 8.9% 0.0 and 7,494 tool decisions across 2,548 summaries."
+        var standIn: URL?
+        let kept = try await guardRenderer.render(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 8) { rendered in
+            standIn = rendered.audioURL
+            let copy = root.appending(path: "kept.wav")
+            try FileManager.default.copyItem(at: rendered.audioURL, to: copy)
+            return copy
+        }
+        XCTAssertTrue(try XCTUnwrap(standIn).lastPathComponent.hasPrefix("system-voice-"), "the guard stood in")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: kept.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(standIn).path), "the stand-in is deleted once kept")
+
+        do {
+            _ = try await guardRenderer.render(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 8) { rendered -> URL in
+                standIn = rendered.audioURL
+                throw CancellationError()
+            }
+            XCTFail("the failure is rethrown")
+        } catch is CancellationError {}
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(standIn).path), "and on failure")
+    }
+
+    // #363 audit: before #311 a stand-in could be cached under the Supertonic key. The key's
+    // version moved on, so such an entry is never found again.
+    func testAnEntryCachedUnderTheOldKeyIsNotFound() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "cache-v1-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let text = "An entry cached before the key changed."
+        let payload = "supertonic-v1\u{1f}M2\u{1f}en\u{1f}\(Float(1))\u{1f}8\u{1f}\(text)"
+        let digest = SHA256.hash(data: Data(payload.utf8)).map { String(format: "%02x", $0) }.joined()
+        let directory = root.appending(path: "cache", directoryHint: .isDirectory)
+        let cache = try RenderedSpeechDiskCache(directory: directory, limitBytes: 50_000_000)
+        try FileManager.default.copyItem(at: try guardTemplate(root), to: directory.appending(path: "\(digest).wav"))
+        XCTAssertNil(cache.cachedAudio(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 8))
     }
 
     func testSelectableCatalogExposesOnlyJamesLilyAndSystem() {

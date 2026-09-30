@@ -15390,29 +15390,26 @@ final class Gate1AppModel: ObservableObject {
             let renderer = try makeSupertonicRenderer()
             renderer.setBackgroundInferencePacingEnabled(true)
             defer { renderer.setBackgroundInferencePacingEnabled(false) }
-            let rendered: SupertonicNarrationResult
             do {
                 try Task.checkCancellation()
                 recordDeveloperDiagnostic("preparation.render.begin", ["item": DeveloperDiagnosticRecording.token(item.id), "chunk": String(next.index)])
-                rendered = try await supertonicOutputGuard(wrapping: renderer, systemVoice: speechVoiceIdentifier).render(
-                    text: next.text,
-                    voice: voice,
-                    language: "en",
-                    speed: 1,
-                    synthesisSteps: 8
-                )
-                try Task.checkCancellation()
-                guard !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else {
-                    throw CancellationError()
+                // The render is discarded once committed (copied), or on any failure.
+                try await supertonicOutputGuard(wrapping: renderer, systemVoice: speechVoiceIdentifier).render(
+                    text: next.text, voice: voice, language: "en", speed: 1, synthesisSteps: 8
+                ) { rendered in
+                    try Task.checkCancellation()
+                    guard !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else {
+                        throw CancellationError()
+                    }
+                    try await coordinator.commit(
+                        itemId: item.id,
+                        signature: signature,
+                        plan: next,
+                        sourceText: sourceText,
+                        audioURL: rendered.audioURL,
+                        durationMs: Int((rendered.duration * 1_000).rounded()), engine: rendered.engine
+                    )
                 }
-                try await coordinator.commit(
-                    itemId: item.id,
-                    signature: signature,
-                    plan: next,
-                    sourceText: sourceText,
-                    audioURL: rendered.audioURL,
-                    durationMs: Int((rendered.duration * 1_000).rounded()), engine: rendered.engine
-                )
             } catch {
                 try? await ledger.release(reservationId: reservation.id)
                 throw error

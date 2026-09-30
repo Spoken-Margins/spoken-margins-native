@@ -236,7 +236,12 @@ actor PreparedAudioCoordinator {
         guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId),
               manifest.signature == signature,
               manifest.state == .preparing || manifest.state == .pausedForThermal else { return }
-        if manifest.chunks.contains(where: { $0.index == plan.index }) { return }
+        let madeByManifestEngine = engine == nil || engine == manifest.signature.engine
+        if let existing = manifest.chunks.first(where: { $0.index == plan.index }) {
+            // Only the manifest's own engine replaces a stand-in; anything else keeps what's there.
+            guard existing.engine != nil, madeByManifestEngine else { return }
+            manifest.chunks.removeAll { $0.index == plan.index }
+        }
 
         let directory = rootDirectory
             .appending(path: safePath(itemId), directoryHint: .isDirectory)
@@ -266,7 +271,7 @@ actor PreparedAudioCoordinator {
             byteCount: Int64(data.count),
             checksumSHA256: SupertonicRenderIdentity.sha256(data),
             durationMs: durationMs,
-            engine: engine == manifest.signature.engine ? nil : engine
+            engine: madeByManifestEngine ? nil : engine
         ))
         manifest.chunks.sort { $0.index < $1.index }
         manifest.updatedAt = Date()
@@ -337,7 +342,10 @@ actor PreparedAudioCoordinator {
         guard let manifest = try repository.loadPreparedAudioManifest(id: manifestId),
               manifest.signature == signature,
               manifest.state == .preparing || manifest.state == .pausedForThermal || manifest.state == .readyOffline,
-              let chunk = manifest.chunks.first(where: { $0.index == plan.index }) else { return nil }
+              let chunk = manifest.chunks.first(where: { $0.index == plan.index }),
+              // A stand-in (the iOS voice) isn't this manifest's audio: the player tries its engine
+              // again rather than play the stand-in forever as if it were Supertonic (#363 audit).
+              chunk.engine == nil else { return nil }
         let url = rootDirectory.appending(path: chunk.relativePath)
         guard fileManager.fileExists(atPath: url.path) else { return nil }
         let data = try Data(contentsOf: url, options: [.mappedIfSafe])

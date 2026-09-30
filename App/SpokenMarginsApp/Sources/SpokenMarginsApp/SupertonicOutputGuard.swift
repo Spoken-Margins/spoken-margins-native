@@ -67,6 +67,24 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
         }
     }
 
+    /// Renders, hands the result to `keep` (which copies what it needs), then discards the render
+    /// on every path. Background preparation made a guard per chunk and never discarded, so each
+    /// flagged chunk left its iOS-voice file behind (#363 audit).
+    func render<Kept>(
+        text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int,
+        keep: (SupertonicNarrationResult) async throws -> Kept
+    ) async throws -> Kept {
+        let rendered = try await render(text: text, voice: voice, language: language, speed: speed, synthesisSteps: synthesisSteps)
+        do {
+            let kept = try await keep(rendered)
+            await discardGeneratedAudio(at: rendered.audioURL)
+            return kept
+        } catch {
+            await discardGeneratedAudio(at: rendered.audioURL)
+            throw error
+        }
+    }
+
     func discardGeneratedAudio(at url: URL) async {
         if lock.withLock({ replacementURLs.remove(url) }) != nil {
             try? FileManager.default.removeItem(at: url)

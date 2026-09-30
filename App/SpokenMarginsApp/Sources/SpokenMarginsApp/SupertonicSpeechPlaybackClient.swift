@@ -157,7 +157,9 @@ final class RenderedSpeechDiskCache: @unchecked Sendable {
         speed: Float,
         synthesisSteps: Int
     ) -> URL {
-        let payload = "supertonic-v1\u{1f}\(voice.rawValue)\u{1f}\(language)\u{1f}\(speed)\u{1f}\(synthesisSteps)\u{1f}\(text)"
+        // v2: v1 entries can hold iOS-voice stand-ins cached as Supertonic before #311; they now
+        // miss once and age out under the cache limit (#363 audit).
+        let payload = "supertonic-v2\u{1f}\(voice.rawValue)\u{1f}\(language)\u{1f}\(speed)\u{1f}\(synthesisSteps)\u{1f}\(text)"
         let digest = SHA256.hash(data: Data(payload.utf8))
             .map { String(format: "%02x", $0) }
             .joined()
