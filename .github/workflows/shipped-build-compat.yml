@@ -20,7 +20,7 @@ on:
       - 'Packages/SessionKit/Sources/SessionKitPersistence/**'
       - 'Packages/SessionKit/Sources/SessionKitSharing/**'
       - 'Packages/SessionKit/Tests/ShippedReader/**'
-      - 'Packages/SessionKit/Tests/SessionKitTests/Build29DatabaseFixtureTests.swift'
+      - 'Packages/SessionKit/Tests/*/Build29DatabaseFixtureTests.swift'
       - 'scripts/check-build29-database.sh'
       - 'scripts/build29-db-reader/**'
       - 'scripts/freeze-shipped-reader.sh'
