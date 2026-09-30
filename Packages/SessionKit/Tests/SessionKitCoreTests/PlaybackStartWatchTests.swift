@@ -33,6 +33,26 @@ final class PlaybackStartWatchTests: XCTestCase {
                        .firstAudio(itemId: "podcast", milliseconds: 1_250))
     }
 
+    /// Review of #580: skips, seeks and rate changes send a playing item back through "starting".
+    func testASkipWhilePlayingIsNotANewStart() {
+        var watch = PlaybackStartWatch()
+        _ = watch.observe(itemId: "podcast", status: .starting, at: tap)
+        XCTAssertEqual(watch.observe(itemId: "podcast", status: .playing, at: tap + 2),
+                       .firstAudio(itemId: "podcast", milliseconds: 2_000))
+
+        XCTAssertNil(watch.observe(itemId: "podcast", status: .starting, at: tap + 60))
+        XCTAssertNil(watch.waitingItemId)
+        XCTAssertFalse(watch.takeCue(at: tap + 65))
+        XCTAssertNil(watch.observe(itemId: "podcast", status: .playing, at: tap + 66))
+
+        _ = watch.observe(itemId: "podcast", status: .paused, at: tap + 70)
+        _ = watch.observe(itemId: "podcast", status: .starting, at: tap + 80)
+        XCTAssertEqual(watch.waitingItemId, "podcast", "resuming after a pause is a start")
+        _ = watch.observe(itemId: "article", status: .playing, at: tap + 81)
+        _ = watch.observe(itemId: "article", status: .starting, at: tap + 90)
+        XCTAssertNil(watch.waitingItemId, "a skip within the next item is not a start")
+    }
+
     func testCueComesOnceAfterTheDelayAndNotForAQuickStart() {
         var watch = PlaybackStartWatch(cueDelay: 0.8)
         _ = watch.observe(itemId: "quick", status: .starting, at: tap)

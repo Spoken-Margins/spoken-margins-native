@@ -61,9 +61,10 @@ struct SpokenMarginsApp: App {
         ListeningEditionShortcutBridge.model = model
         #endif
         _model = StateObject(wrappedValue: model)
-        _playbackStartCue = StateObject(wrappedValue: PlaybackStartCue(record: { [weak model] key, value in
+        let playbackStartCue = PlaybackStartCue(snapshots: model.$snapshot.eraseToAnyPublisher(), record: { [weak model] key, value in
             model?.diagnostics[key] = value
-        }))
+        })
+        _playbackStartCue = StateObject(wrappedValue: playbackStartCue)
         _sharingCoordinator = StateObject(
             wrappedValue: Build23SharingCoordinator(model: model)
         )
@@ -84,7 +85,6 @@ struct SpokenMarginsApp: App {
                 .environmentObject(sharingCoordinator)
                 .environmentObject(catalogDrawer)
                 .onReceive(NotificationCenter.default.publisher(for: ListeningReadyNotifications.opened)) { _ in model.openReadyListeningEdition() }
-                .onReceive(model.$snapshot) { playbackStartCue.observe($0) }
                 .onOpenURL { url in
                     model.handleIncomingURL(url)
                 }

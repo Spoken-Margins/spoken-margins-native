@@ -19,6 +19,7 @@ public struct PlaybackStartWatch: Sendable {
 
     public let cueDelay: TimeInterval
     private var start: Start?
+    private var last: (itemId: String?, status: PlaybackStatus)?
 
     public init(cueDelay: TimeInterval = 0.8) {
         self.cueDelay = cueDelay
@@ -27,8 +28,12 @@ public struct PlaybackStartWatch: Sendable {
     /// The item whose start is still silent, if any.
     public var waitingItemId: String? { start?.itemId }
 
-    /// Feed every snapshot change. Returns the outcome when a start resolves.
+    /// Feed every snapshot change. Returns the outcome when a start resolves. A start opens when playback goes to
+    /// "starting" from a stop (idle, paused, failed, recording) or on another item. A skip, seek or rate change
+    /// while playing also passes through "starting", and is not a new start.
     public mutating func observe(itemId: String?, status: PlaybackStatus, at now: Date) -> Outcome? {
+        let previous = last
+        last = (itemId, status)
         var outcome: Outcome?
         if let start {
             if status == .starting, itemId == start.itemId { return nil }
@@ -38,7 +43,8 @@ public struct PlaybackStartWatch: Sendable {
                 : .ended(itemId: start.itemId, milliseconds: milliseconds, status: status)
             self.start = nil
         }
-        if status == .starting, let itemId {
+        let continuesPlayback = previous.map { $0.status.isPlaybackActive && $0.itemId == itemId } ?? false
+        if status == .starting, let itemId, !continuesPlayback {
             start = Start(itemId: itemId, startedAt: now)
         }
         return outcome

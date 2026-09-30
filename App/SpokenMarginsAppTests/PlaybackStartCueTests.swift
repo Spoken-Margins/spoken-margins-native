@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 import SessionKit
 @testable import SpokenMarginsApp
@@ -52,6 +53,23 @@ final class PlaybackStartCueTests: XCTestCase {
         XCTAssertEqual(chimes, 0)
         XCTAssertNil(recorded["lastPlaybackStartCue"])
         XCTAssertEqual(recorded["firstAudioMs:article"], "300")
+    }
+
+    /// The cue follows the model's snapshots itself, with no view attached.
+    func testFollowsSnapshotsFromThePublisher() {
+        let snapshots = PassthroughSubject<SessionSnapshot, Never>()
+        let cue = PlaybackStartCue(
+            snapshots: snapshots.eraseToAnyPublisher(),
+            now: { [unowned self] in self.clock },
+            record: { [unowned self] key, value in self.recorded[key] = value }
+        )
+
+        snapshots.send(snapshot("article", .starting))
+        clock += 2.5
+        snapshots.send(snapshot("article", .playing))
+
+        XCTAssertEqual(recorded["firstAudioMs:article"], "2500")
+        withExtendedLifetime(cue) {}
     }
 
     func testAbandonedStartIsNotFirstAudio() {

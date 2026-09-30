@@ -19,7 +19,12 @@ final class PlaybackStartCue: ObservableObject {
     /// Writes one diagnostic (key, value), normally into the model's diagnostics.
     private let record: @MainActor (String, String) -> Void
 
+    private var subscription: AnyCancellable?
+
+    /// `snapshots` is the model's `$snapshot`. Subscribing here rather than from a view keeps the cue working when
+    /// playback starts with no window attached (a Live Activity or an intent after a background launch).
     init(
+        snapshots: AnyPublisher<SessionSnapshot, Never>? = nil,
         now: @escaping () -> Date = Date.init,
         playChime: (@MainActor () -> String)? = nil,
         record: @escaping @MainActor (String, String) -> Void
@@ -27,6 +32,10 @@ final class PlaybackStartCue: ObservableObject {
         self.now = now
         self.playChime = playChime
         self.record = record
+        // The model is main-actor bound, so its snapshots are published on the main thread.
+        subscription = snapshots?.sink { [weak self] snapshot in
+            MainActor.assumeIsolated { self?.observe(snapshot) }
+        }
     }
 
     /// Feed every snapshot change.
