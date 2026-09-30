@@ -716,7 +716,9 @@ class MainFlowTests(unittest.TestCase):
     def run_main(self, github, event_head=HEAD, verdict='PASS', *extra):
         with tempfile.TemporaryDirectory() as temporary, \
                 mock.patch.object(lane, 'GitHub', return_value=github), \
-                mock.patch.dict('os.environ', {'GH_REPO': 'o/r', 'SM_LANE_EVIDENCE_DIR': temporary}), \
+                mock.patch.dict('os.environ', {'GH_REPO': 'o/r', 'SM_LANE_EVIDENCE_DIR': temporary,
+                                               # set, not inherited: runner two's own .env has role=build
+                                               'SM_LANE_RUNNER_ROLE': self.role}), \
                 mock.patch.object(lane, 'run_t2', return_value=(verdict, 'simulator build (pass), device build (pass)', [])), \
                 mock.patch.object(lane, 'sweep_runner_simulators'), \
                 mock.patch.object(lane, 'fetch_base', return_value=MERGE), \
@@ -726,6 +728,7 @@ class MainFlowTests(unittest.TestCase):
             return lane.main(['--pr', '5', '--event-head', event_head, '--run-id', '42', *extra])
 
     conflicts = []
+    role = ''  # the main runner, unless a test says otherwise
 
     def test_a_queued_t2_request_is_run_reported_and_relabelled(self):
         github = FakeGitHub(comments=[comment(f'/lane T2\ncommit: {HEAD[:7]}')])
@@ -789,6 +792,9 @@ class MainFlowTests(unittest.TestCase):
 
     def test_the_workflow_fails_its_verdict_step_and_tidies_only_when_nothing_was_reported(self):
         workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/lane.yml').read_text()
+        # Both jobs check out the Git LFS models: --plan fast's contracts check reads them (#301).
+        self.assertEqual(workflow.count('lfs: true'), 2)
+        self.assertEqual(workflow.count('persist-credentials: false'), 2)
         self.assertIn("if: steps.run.outputs.reported == 'true'", workflow)
         self.assertIn('if [ "$VERDICT" != PASS ]; then', workflow)
         self.assertIn("if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'", workflow)
@@ -827,13 +833,14 @@ class MainFlowTests(unittest.TestCase):
         self.run_main(github)
         self.assertEqual((github.posted, github.label_changes), ([], []))
 
-    def run_mode(self, github, mode, role=None, no_room=None):
-        env = {'SM_LANE_RUNNER_ROLE': role} if role else {}
+    def run_mode(self, github, mode, role='', no_room=None):
+        self.role = role
+        self.addCleanup(setattr, self, 'role', '')
         with mock.patch.object(lane, 'run_auto', return_value=('PASS', 'x', 'host tests; builds', [])) as auto, \
                 mock.patch.object(lane, 'run_t3', return_value=('PASS', 'x', 'T/A', [], 'none', '')) as t3, \
-                mock.patch.object(lane, 'wait_for_room_to_build', return_value=no_room) as wait, \
-                mock.patch.dict('os.environ', env):
+                mock.patch.object(lane, 'wait_for_room_to_build', return_value=no_room) as wait:
             self.run_main(github, HEAD, 'PASS', '--mode', mode)
+        self.role = ''
         return auto, t3, wait
 
     def test_the_automerge_job_never_answers_a_lane_request(self):
