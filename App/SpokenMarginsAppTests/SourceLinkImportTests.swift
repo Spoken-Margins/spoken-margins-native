@@ -382,6 +382,32 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertFalse(identifiers.contains(ShareSheetRepresentationOrder.pdfIdentifier))
     }
 
+    func testSafariPageSentPDFBytesAreUsedWithTheLinksFileName() throws {
+        // #271's T4: Safari offered no PDF attachment, only the page results, so the PDF
+        // comes from the bytes the preprocessor read in the page.
+        let pdf = Data("%PDF-1.7 F1000Research 12:1146".utf8)
+        let results: [String: Any] = [
+            "documentURL": Self.pmcPDFURL.absoluteString,
+            "isPDFDocument": true,
+            SourceLinkShareRepresentation.pagePDFKey: pdf.base64EncodedString()
+        ]
+
+        let pagePDF = try XCTUnwrap(SourceLinkShareRepresentation.pagePDF(fromPageResults: results))
+
+        XCTAssertEqual(pagePDF.data, pdf)
+        XCTAssertEqual(pagePDF.suggestedFilename, "f1000research-12-157633.pdf")
+        let copied = try makePayloadStore().savePDF(data: pagePDF.data, suggestedFilename: pagePDF.suggestedFilename)
+        XCTAssertEqual(copied.lastPathComponent, "f1000research-12-157633.pdf")
+    }
+
+    func testSafariPageResultsWithoutPDFBytesFallBackToTheLink() {
+        let html = Data("<html>Preparing to download</html>".utf8).base64EncodedString()
+
+        XCTAssertNil(SourceLinkShareRepresentation.pagePDF(fromPageResults: ["documentURL": Self.pmcPDFURL.absoluteString]))
+        XCTAssertNil(SourceLinkShareRepresentation.pagePDF(fromPageResults: [SourceLinkShareRepresentation.pagePDFKey: html]))
+        XCTAssertNil(SourceLinkShareRepresentation.pagePDF(fromPageResults: [SourceLinkShareRepresentation.pagePDFKey: "not base64"]))
+    }
+
     private static let pmcPDFURL = URL(string: "https://pmc.ncbi.nlm.nih.gov/articles/PMC13305550/pdf/f1000research-12-157633.pdf")!
 
     private func makeSharedPDFProvider(url: URL?) -> NSItemProvider {
