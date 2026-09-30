@@ -51,6 +51,22 @@ final class FollowingFilterTests: XCTestCase {
                        FollowedSourceCategory(contentKind: .article))
     }
 
+    func testCategoriesForManySubscriptionsMatchOneAtATime() {
+        let subscriptions = [
+            FeedSubscription(id: "a", source: source(.podcastFeed, "https://FEEDS.example.com/daily.xml/")),
+            FeedSubscription(id: "b", source: source(.articleFeed, "https://lab.example.org/feed")),
+            FeedSubscription(id: "c", source: source(.podcastFeed, "https://feeds.example.com/other.xml")),
+            FeedSubscription(id: "d", source: source(.website, "https://site.example.net")),
+        ]
+        let categories = FollowedSourceCategory.bySubscription(subscriptions, catalog: catalog)
+        XCTAssertEqual(categories.count, 4)
+        for subscription in subscriptions {
+            XCTAssertEqual(categories[subscription.id], FollowedSourceCategory.of(subscription.source, catalog: catalog), subscription.id)
+        }
+        XCTAssertEqual(categories["a"]?.subjects, ["news"])
+        XCTAssertEqual(FollowedSourceCategory.bySubscription(subscriptions, catalog: nil)["b"], FollowedSourceCategory(contentKind: .article))
+    }
+
     func testWithNothingChosenOrHiddenEveryEntryShows() {
         let filter = FollowingFilter()
         XCTAssertTrue(filter.includes(nil), "Quick Folder files")
@@ -73,11 +89,12 @@ final class FollowingFilterTests: XCTestCase {
         XCTAssertFalse(filter.includes(nil))
     }
 
-    func testAHiddenSubjectHidesEntriesWhosePrimarySubjectItIs() {
+    func testAHiddenSubjectHidesEveryEntryThatListsIt() {
         let filter = FollowingFilter(hiddenSubjects: ["news"])
         XCTAssertFalse(filter.includes(FollowedSourceCategory(contentKind: .podcast, subjects: ["news"])))
-        XCTAssertTrue(filter.includes(FollowedSourceCategory(contentKind: .newsletter, subjects: ["science", "news"])),
-                      "a science newsletter that also lists news stays")
+        XCTAssertFalse(filter.includes(FollowedSourceCategory(contentKind: .newsletter, subjects: ["science", "news"])),
+                       "the entries choosing news would show")
+        XCTAssertTrue(filter.includes(FollowedSourceCategory(contentKind: .newsletter, subjects: ["science"])))
         XCTAssertTrue(filter.includes(FollowedSourceCategory(contentKind: .podcast)), "no subject, nothing to hide")
         XCTAssertTrue(filter.includes(nil))
         var chosen = filter

@@ -80,7 +80,7 @@ struct ExperienceSourcesScreen: View {
             }
             .task { model.refreshQuickAddFeed(force: false) }
             // The catalog tags followed shows with a kind and subjects (I2).
-            .task { await catalogDrawer.load() }
+            .task { await catalogDrawer.loadSnapshot() }
         }
     }
 
@@ -289,9 +289,10 @@ struct ExperienceSourcesScreen: View {
 
     private var filteredCandidates: [QuickAddCandidate] {
         let narrowing = FollowingFilter(kind: kind, subject: subject, hiddenSubjects: hiddenSubjects)
+        let categories = subscriptionCategories
         return model.quickAddCandidates.filter { candidate in
             switch (filter, candidate) {
-            case (.all, _), (.feeds, .followedSource), (.folder, .localFile): narrowing.includes(category(of: candidate))
+            case (.all, _), (.feeds, .followedSource), (.folder, .localFile): narrowing.includes(category(of: candidate, in: categories))
             default: false
             }
         }
@@ -312,16 +313,19 @@ struct ExperienceSourcesScreen: View {
 
     /// Categories of the inbox's followed-feed entries, for the chips and menu.
     private var inboxCategories: [FollowedSourceCategory] {
-        model.quickAddCandidates.compactMap(category(of:))
+        let categories = subscriptionCategories
+        return model.quickAddCandidates.compactMap { category(of: $0, in: categories) }
+    }
+
+    /// One lookup per followed feed, not per inbox entry: feeds keep up to 200 entries each.
+    private var subscriptionCategories: [String: FollowedSourceCategory] {
+        FollowedSourceCategory.bySubscription(model.feedSubscriptions, catalog: catalogDrawer.catalog)
     }
 
     /// nil for a Quick Folder file. A feed entry whose subscription is gone is classed by its audio.
-    private func category(of candidate: QuickAddCandidate) -> FollowedSourceCategory? {
+    private func category(of candidate: QuickAddCandidate, in categories: [String: FollowedSourceCategory]) -> FollowedSourceCategory? {
         guard case .followedSource(let entry) = candidate else { return nil }
-        guard let source = model.feedSubscriptions.first(where: { $0.id == entry.subscriptionId })?.source else {
-            return FollowedSourceCategory(contentKind: entry.audioURL == nil ? .article : .podcast)
-        }
-        return FollowedSourceCategory.of(source, catalog: catalogDrawer.catalog)
+        return categories[entry.subscriptionId] ?? FollowedSourceCategory(contentKind: entry.audioURL == nil ? .article : .podcast)
     }
 
     private func subjectTitle(_ id: String) -> String {

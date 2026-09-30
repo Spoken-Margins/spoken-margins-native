@@ -19,6 +19,29 @@ public struct FollowedSourceCategory: Equatable, Hashable, Sendable {
         if let entry = catalog?.entry(matchingFeedURL: source.canonicalURL) {
             return FollowedSourceCategory(contentKind: entry.contentKind, subjects: entry.subjects)
         }
+        return fallback(for: source)
+    }
+
+    /// `of` for every subscription, keyed by subscription id. The catalog's feed URLs are
+    /// normalised once here, not once per source, so Following can call it on every render.
+    public static func bySubscription(_ subscriptions: [FeedSubscription], catalog: SourceCatalog?) -> [String: FollowedSourceCategory] {
+        var entries: [String: SourceCatalogEntry] = [:]
+        for entry in catalog?.entries ?? [] {
+            guard let key = SourceCatalog.feedKey(entry.feedURL), entries[key] == nil else { continue }
+            entries[key] = entry  // the first match, as `entry(matchingFeedURL:)` finds
+        }
+        var result: [String: FollowedSourceCategory] = [:]
+        for subscription in subscriptions {
+            if let key = SourceCatalog.feedKey(subscription.source.canonicalURL), let entry = entries[key] {
+                result[subscription.id] = FollowedSourceCategory(contentKind: entry.contentKind, subjects: entry.subjects)
+            } else {
+                result[subscription.id] = fallback(for: subscription.source)
+            }
+        }
+        return result
+    }
+
+    private static func fallback(for source: SourceIdentity) -> FollowedSourceCategory {
         switch source.kind {
         case .podcastFeed: return FollowedSourceCategory(contentKind: .podcast)
         case .articleFeed, .website: return FollowedSourceCategory(contentKind: .article)
@@ -41,14 +64,13 @@ public struct FollowingFilter: Equatable, Sendable {
 
     /// Whether an entry with this category shows. `nil` is an entry without a followed source
     /// (a Quick Folder file): it shows only while no kind or subject is chosen.
-    /// A hidden subject hides entries whose primary subject it is, unless that subject is
-    /// the one chosen.
+    /// A hidden subject hides every entry that lists it, as choosing it would show them,
+    /// unless it is the subject chosen.
     public func includes(_ category: FollowedSourceCategory?) -> Bool {
         guard let category else { return kind == nil && subject == nil }
         if let kind, category.contentKind != kind { return false }
         if let subject { return category.subjects.contains(subject) }
-        if let primary = category.primarySubject, hiddenSubjects.contains(primary) { return false }
-        return true
+        return hiddenSubjects.isDisjoint(with: category.subjects)
     }
 
     /// The kinds to offer as chips: those present, in a fixed order, then any newer kinds by name.
