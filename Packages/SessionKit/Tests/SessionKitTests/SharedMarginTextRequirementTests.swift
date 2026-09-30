@@ -51,4 +51,24 @@ final class SharedMarginTextRequirementTests: XCTestCase {
             "None of the selected Margins has a transcript yet, so there's nothing to share. Retry their transcription in Margin detail."
         )
     }
+
+    func testAMarginWithoutWordsIsWarnedAboutInReview() {
+        XCTAssertEqual(SharedMarginTextRequirement.reviewWarning(for: "  "), SharedMarginTextRequirement.reviewWarningText)
+        XCTAssertNil(SharedMarginTextRequirement.reviewWarning(for: "Remember this line."))
+    }
+
+    func testSharingSplitsOutMarginsWithoutWordsAndSaysSo() {
+        let selected = ["First thought.", "", "Second thought.", " "]
+        let (margins, omission) = SharedMarginTextRequirement.shareable(selected, text: { $0 })
+        XCTAssertEqual(margins, ["First thought.", "Second thought."])
+        XCTAssertEqual(omission, "2 Margins have no transcript and weren't included.")
+
+        let (none, reason) = SharedMarginTextRequirement.shareable([""], text: { $0 })
+        XCTAssertTrue(none.isEmpty)
+        XCTAssertEqual(reason, SharedMarginTextRequirement.omissionNotice(omitted: 1, remaining: 0))
+
+        let (all, quiet) = SharedMarginTextRequirement.shareable(["Only thought."], text: { $0 })
+        XCTAssertEqual(all, ["Only thought."])
+        XCTAssertNil(quiet)
+    }
 }

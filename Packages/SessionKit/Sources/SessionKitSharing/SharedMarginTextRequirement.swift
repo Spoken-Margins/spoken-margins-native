@@ -10,7 +10,22 @@ public enum SharedMarginTextRequirement {
     }
 
     /// Shown on the Margin itself while the listener reviews what to share.
-    public static let reviewWarning = "No transcript yet, so this Margin can't be shared. Retry its transcription in Margin detail."
+    public static let reviewWarningText = "No transcript yet, so this Margin can't be shared. Retry its transcription in Margin detail."
+
+    /// The review warning for a Margin with these words, or `nil` when it can be shared.
+    public static func reviewWarning(for approvedTranscript: String) -> String? {
+        hasReviewedText(approvedTranscript) ? nil : reviewWarningText
+    }
+
+    /// Splits the Margins the listener selected into those a packet can carry and the
+    /// notice that says what was left out (`nil` when nothing was).
+    public static func shareable<Margin>(
+        _ selected: [Margin],
+        text: (Margin) -> String
+    ) -> (margins: [Margin], omission: String?) {
+        let margins = selected.filter { hasReviewedText(text($0)) }
+        return (margins, omissionNotice(omitted: selected.count - margins.count, remaining: margins.count))
+    }
 
     /// What to tell the listener when selected Margins had to be left out. `nil` when
     /// nothing was left out. When nothing is left to share, it explains why.
