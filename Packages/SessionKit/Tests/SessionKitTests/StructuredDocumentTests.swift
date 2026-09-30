@@ -151,4 +151,38 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual((object["segments"] as? [[String: Any]])?.first?["role"] as? String, "body")
         XCTAssertEqual(try JSONDecoder().decode(StructuredDocument.self, from: json), doc)
     }
+
+    func testAnOutlineChapterWithNoPrintedHeadingIsAnchoredAndNeverSpoken() throws {
+        // #355: an outline title with no matching line was inserted at the top of its page
+        // and read aloud, and the run-in heading that really starts the section read again.
+        let doc = document([
+            StructuredDocumentLine(text: "Methods", role: .heading, pageIndex: 0, level: 1),
+            StructuredDocumentLine(text: "We asked twelve researchers.", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "   ", role: .body, pageIndex: 1, outlineEntries: [.init(title: "Light stimulation", level: 2)]),
+            StructuredDocumentLine(text: "Light stimulation: flashes were full-field.", role: .body, pageIndex: 1),
+        ])
+        let characters = Array(doc.text)
+        let anchor = try XCTUnwrap(doc.outline?.first)
+        XCTAssertEqual(anchor.title, "Light stimulation")
+        XCTAssertEqual(String(characters[anchor.start...].prefix(18)), "Light stimulation:", "moved past the empty line")
+        XCTAssertEqual(StructuredDocumentSpeech.spokenLines(doc), [
+            "Methods", "We asked twelve researchers.", "Light stimulation: flashes were full-field.",
+        ], "the title is spoken once, where it's printed")
+        let map = try XCTUnwrap(StructuredDocumentImport.listeningMap(for: doc, title: "Paper", itemId: "item"))
+        XCTAssertEqual(map.chapters.map(\.title), ["Methods", "Light stimulation"])
+        XCTAssertEqual(map.chapters.last?.startChar, anchor.start)
+    }
+
+    func testOutlineAnchorsAreOptionalInStoredDocuments() throws {
+        // Documents saved before anchors existed decode, and one with none doesn't write the key.
+        let plain = document([StructuredDocumentLine(text: "Body.", role: .body, pageIndex: 0)])
+        XCTAssertNil(plain.outline)
+        let encoded = try JSONEncoder().encode(plain)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("outline"))
+        XCTAssertEqual(try JSONDecoder().decode(StructuredDocument.self, from: encoded), plain)
+
+        let anchored = document([StructuredDocumentLine(text: "Body.", role: .body, pageIndex: 0, outlineEntries: [.init(title: "A", level: 1)])])
+        let roundTrip = try JSONDecoder().decode(StructuredDocument.self, from: JSONEncoder().encode(anchored))
+        XCTAssertEqual(roundTrip.outline, [StructuredDocument.OutlineAnchor(title: "A", level: 1, start: 0)])
+    }
 }
