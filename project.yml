@@ -84,6 +84,7 @@ targets:
         CFBundleDisplayName: Spoken Margins
         CFBundleShortVersionString: "0.1"
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        SMBuildCommit: $(SM_BUILD_COMMIT)
         CFBundleURLTypes:
           - CFBundleURLName: SpokenMarginsCompactControls
             CFBundleURLSchemes:

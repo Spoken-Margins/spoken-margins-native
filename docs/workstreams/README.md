@@ -10,11 +10,22 @@ Planned 2026-09-28 from the owner's voice notes. This folder lets several agents
 
 Status never lives in these files. It lives in GitHub: one tracking issue per stream (label `stream:<id>`), plus that stream's PRs. A brief changes only when the goal changes.
 
+## Reading a brief's "Done when"
+
+A milestone's "Done when" is met through PRs, and a PR is done when it's armed: `automerge` on, plus a `/lane T3` request when the diff needs one (`AGENTS.md`, [lane-request skill](../../.claude/skills/lane-request/SKILL.md)). This rule covers every brief, so the briefs themselves don't repeat it.
+
+- **Items the agent can show** (a test that fails without the change, a measured number, a fixture, a tap count, a screenshot) are shown in the PR description before arming.
+- **Lane items** ("T2 green", "T3 green", "Lane T3 is green") are met by arming the PR. The runner merges only on PASS, so the thread doesn't wait for the report.
+- **"Lane T4" items and named journeys** run in the integration run on `next`'s merged tip ([test-lane.md](test-lane.md), Three test levels). The PR names them so that run covers them.
+- **Items marked (owner) or (Mac)** stay out, as before.
+
+The thread that armed the PR moves on to its next issue and doesn't chase the lane. A lane FAIL on the PR's own code goes to whoever is free, through the project's hourly dispatcher. A runner fault gets one more run (a new `/lane T3` comment with the same `tests:` line plus `lane:queued` for an INCONCLUSIVE T3, or `automerge` removed and re-added for a host-test or build fault), and becomes an issue labelled `ready` and `regression` only if it fails the same way again.
+
 ## Ground rules
 
 These keep the rules in `AGENTS.md` and add what's needed for parallel work. The September 23–24 co-op attempt failed on the things listed here, so they aren't optional (see `docs/repo-review-2026-09-24.md`).
 
-1. **One agent per stream, one change at a time within it.** Parallelism comes from separate streams, not from manager, implementer and auditor agents on one stream. Sub-agents are fine for read-only research, and for a fresh-context review of a diff before a milestone.
+1. **One agent per stream, one change at a time within it.** Parallelism comes from separate streams, not from manager, implementer and auditor agents on one stream. One owner per change, and one writer per set of files. Sub-agents and workflows are fine for exploration, reviews, critics, and tests in their own worktrees.
 2. **Streams meet only at seams.** If you need something from another stream, build against its published seam or a stub of it. If the seam doesn't exist yet, comment on the owner stream's tracking issue. Don't reach into its files.
 3. **No handoff, audit or status documents.** Commit messages, PR descriptions and lane reports are the record.
 4. **Don't grow `Gate1AppModel` or `Gate1RootView`.** New logic goes in focused types, in SessionKit when it can be host-tested. Keep edits to either file to thin call sites.
@@ -34,17 +45,16 @@ These keep the rules in `AGENTS.md` and add what's needed for parallel work. The
 | B1 | [onboard](streams/B1-onboard.md) | A new listener follows five podcasts in under a minute without leaving the app | Both | 0→1 | — |
 | B2 | [substack](streams/B2-substack.md) | Any Substack link reliably offers Follow; paid subscribers can listen to paid posts | Both | 0 | M2 shipping: owner call |
 | B3 | [youtube](streams/B3-youtube.md) | Pasting a YouTube podcast link finds the podcast episode, or says honestly that it can't | Both | 0→1 | M2: I1 (B1) |
-| B4 | [bridge](streams/B4-bridge.md) | Sites without RSS can be followed like any feed, through a small privacy-preserving server | Both | 0→2 | M1: owner hosting and budget call |
+| B4 | [bridge](streams/B4-bridge.md) | Sites without RSS can be followed like any feed, through a small privacy-preserving server | Both | 0→2 | — |
 | C1 | [pdf](streams/C1-pdf.md) | Scientific PDFs from many publishers read cleanly, and figures and tables can be seen | Both | 0→1 | M3: I14 role rules (C2 M1) |
 | C2 | [voice](streams/C2-voice.md) | Narration never degrades silently, and a bundled fallback voice beats Samantha at ≥2× real time | Both | 0→1 | — |
 | C3 | [live-activity](streams/C3-live-activity.md) | The Live Activity removes itself when Spoken Margins is no longer playing | Mac | 0 | — |
 | C4 | anchors | Shared podcast Margins land in the right place ([existing plan](../podcast-anchor-plan.md)). Slices 3 and 6 are on `play-this-moment`. Also owns #177 (episode GUIDs, after #168) | Mac | ongoing | #177: `private-feed-urls` merged |
-| D1 | [design](streams/D1-design.md) | The owner picks a navigation and visual direction from clickable prototypes, with tap budgets | Cloud | 0 | M2: owner's pick |
-| D2 | [home](streams/D2-home.md) | A Home screen a listener could live in | Mac | 1 | M1: D1. M2: D3 M2 |
+| D2 | [home](streams/D2-home.md) | A Home screen a listener could live in | Mac | 1 | M2: D3 M2 |
 | D3 | [following](streams/D3-following.md) | Following ranks and filters new items transparently, and the listener can tune it with their own AI | Both | 1 | M2: logged signals from a shipped build |
-| D4 | [share](streams/D4-share.md) | Sharing a Margin or exporting notes takes two taps | Mac | 0→1 | M1: D1 (look only) |
-| D5 | [player](streams/D5-player.md) | A redesigned playback screen, with Skim to the next Margin and "Play this moment" | Mac | 2 | M1: A2 M1, D1. M2: A2 M2 |
-| D6 | [settings](streams/D6-settings.md) | Settings a tester isn't intimidated by, with diagnostics tucked away rather than removed | Mac | 1 | A2 M1, D1 |
+| D4 | [share](streams/D4-share.md) | Sharing a Margin or exporting notes takes two taps | Mac | 0→1 | — |
+| D5 | [player](streams/D5-player.md) | A redesigned playback screen, with Skim to the next Margin and "Play this moment" | Mac | 2 | M1: A2 M1. M2: A2 M2 |
+| D6 | [settings](streams/D6-settings.md) | Settings a tester isn't intimidated by, with diagnostics tucked away rather than removed | Mac | 1 | A2 M1 |
 | E1 | [structure](streams/E1-structure.md) | Every Margin gets an on-device structured form: claim, question, what it refers to | Both | 0→2 | M1: owner's Margin export. M4: I12 (D4 M2) |
 | E2 | [reflect](streams/E2-reflect.md) | A weekly review turns a week of Margins into a note worth keeping | Mac | 2 | M1: D4 M2. M2: A2 M2, D5 M2 |
 | E3 | [maps](streams/E3-maps.md) | Listeners without on-device AI still get listening maps, shared through a community server | Both | 1→3 | M2: B4 M1. M3: B4 M1, #177 (C4), owner route call |
@@ -59,24 +69,22 @@ flowchart LR
   A1[A1 lane] -. journey runs .-> ALL[every Mac stream's milestones]
   A2M1[A2 M1: screens out of root view] --> D5M1[D5 M1 player redesign] & D6[D6 settings] & G1[G1 guides]
   A2M1 --> A2M2[A2 M2: playback coordinator]
-  D1[D1 design direction] --> D2[D2 home] & D4[D4 share] & D5M1 & D6
   A2M2 --> D5M2[D5 M2 Margin navigation] & F1[F1 coop]
   D5M2 --> F1 & E2[E2 reflect]
   C4[C4 anchors] --> F1
   D4M0[#168 fix, branch private-feed-urls] --> G177[C4: #177 episode GUIDs] --> E3M3[E3 M3 community maps]
-  D4 --> E2
+  D4[D4 share] --> E2
   B4M1[B4 M1 server foundation] --> B4M3[B4 app side] & E3M3 & F1S[F1 M3 server clubs]
   C2M1[C2 M1: I14 role rules] --> C1M3[C1 M3 clean body text]
   E1[E1 structure] -. enriches .-> E2 & F1
-  D3[D3 following] -. suggestions .-> D2
+  D3[D3 following] -. suggestions .-> D2[D2 home]
 ```
 
 The gates, in plain words:
 
 - **The root-view split (A2 M1).** Library, Following, Margins, Item and the tab shell already have their own files. Playback, Settings, Export, Batch Export and Help still live inside the 5,500-line `Gate1RootView.swift`, alongside about 1,200 lines of dead views. A2 M1 moves them out and adds stable UI identifiers. It gates the player redesign, Settings and the guides. Other UI streams can start without it; their shared risk is `Gate1AppModel`, covered by ground rule 4.
-- **The design direction (D1)** comes from the owner picking between prototypes. It gates the look of Home, Share, Player and Settings, not their plumbing, so those streams can build data and logic first.
 - **The playback coordinator (A2 M2)** comes before any *new* feature that interleaves Margin audio with source audio: Skim to the next Margin, the weekly review's audio mode, and co-op. This is the fix the repo review recommended after four playback state machines collided. "Play this moment" (#158, #159) already exists on `play-this-moment` as `MarginMomentConductor`; the coordinator absorbs it rather than adding another.
-- **The server foundation (B4 M1)** comes before any app feature that calls a server. It needs owner decisions on hosting, cost ceiling and privacy wording.
+- **The server foundation (B4 M1)** comes before any app feature that calls a server. It runs on the owner's VPS, which is approved (`AGENTS.md`); deploying to it is the owner's step.
 - **The #168 → #177 chain.** Packets could leak private feed URLs (#168); the fix is on `private-feed-urls` (`ShareableLinkPolicy`). Storing episode GUIDs (#177) builds on it, and community maps need GUIDs to find an episode.
 - **Rights (owner call)** decide whether the community server may store transcripts or only derived maps (#14, #173).
 
@@ -91,7 +99,6 @@ These streams can start in Claude Code on the web today and do real work before 
 | Stream | What it can finish without the laptop | Waits for the laptop or owner |
 | --- | --- | --- |
 | A3 triage | M1: the full triage table | M2: owner approval |
-| D1 design | M1: 2–3 clickable prototypes as pages the owner can open on the phone | Owner's pick |
 | G2 growth | M1–M3 | — |
 | C1 pdf | M1: corpus manifest, scorer, and a baseline using a reference parser | (Mac) running the app's own extractor over the corpus |
 | C2 voice | M2 research: candidates, licenses, Linux speed numbers, and a blind listening page with audio samples the owner can play on the phone | (Mac) Mac benchmark; (owner) phone benchmark |
@@ -99,7 +106,7 @@ These streams can start in Claude Code on the web today and do real work before 
 | B3 youtube | M1: test set and matcher | `itunes.apple.com` allowed in the cloud environment's network settings |
 | B1 onboard | M1's catalog half: the top-podcast snapshot by subject and the remote catalog format | (Mac) the drawer itself |
 | B2 substack | M2 research: what paid access Substack offers, and the risks | (Mac) M1, the Follow fix |
-| B4 bridge | M1 design note and a server skeleton with tests | Owner's hosting decision; deploying to the VPS |
+| B4 bridge | M1 design note and a server skeleton with tests | (owner) deploying to the VPS |
 
 ## Waves
 
@@ -108,7 +115,7 @@ Waves are an order, not dates. A stream starts when its gates open. It doesn't w
 **Wave 0: start now.**
 
 - *Mac:* A1 `lane`, A2 `seams`, and the Build 30 quick wins below. C4 `anchors` continues.
-- *Cloud:* A3 `triage`, D1 `design`, G2 `growth`, B4 `bridge` M1 design (hosting is an owner call), and the research halves of:
+- *Cloud:* A3 `triage`, G2 `growth`, B4 `bridge` M1 design, and the research halves of:
   - C1 `pdf` (corpus and scoring);
   - C2 `voice` (fallback voice candidates);
   - B3 `youtube` (matching method and test set);
@@ -136,21 +143,22 @@ The reach pass (#141, #145–#149, #151) moves into B1, D3, D4 and D5.
 
 ## How many at once
 
-- **Mac:** at most **three** stream sessions writing code, plus the Test Desk.
-  - Builds are the constraint: **one** Mac-wide semaphore allows two `xcodebuild` runs at a time, shared by stream sessions and the lane. Simulators only through the lane.
-  - If builds queue for more than about 15 minutes, drop to two streams.
+- **Mac:** no fixed number of sessions. Memory and disk are the limits: start Mac work only while memory pressure is normal and free disk is at least 10 GB plus 4 GB for each build that's running. The pinned Mac status issue shows both.
+  - Builds are shared: **one** Mac-wide semaphore allows two `xcodebuild` runs at a time (one while a simulator job runs), shared by stream sessions and the lane. Simulators only through the lane.
+  - Most work runs in the cloud; the Mac's lane runner builds it on request.
   - Wave 0 slots, in order:
     1. A1 `lane`. Its M1 lands before the other slots start, so they get the guard hook and build wrapper. Once M3 is done, this slot becomes the Test Desk.
     2. A2 `seams`.
     3. The Build 30 quick wins, one after another in one session: C3 M1 → C2 M1 → B2 M1 → B1 M1.
   - C4 `anchors` takes the next free slot. If the owner wants anchors to keep priority, it takes slot 3 and the quick wins wait.
 - **Cloud:** no practical limit beyond attention. Six to eight at once is a reasonable start: every Wave 0 cloud stream.
-- **Owner attention** is the real limit. Streams stop for the owner only under the reversible-decision rule in [kickoff.md](kickoff.md) (owner data, packets and databases, money, anything public, `main` and releases, taste), for owner-only checks, and for FAIL reports on gate streams ([test-lane.md](test-lane.md)). A daily lead session ([kickoff.md](kickoff.md#the-lead-session)) batches the rest into one digest.
+- **Owner attention** is the real limit. Streams stop for the owner only under the reversible-decision rule in [kickoff.md](kickoff.md) (owner data, packets and databases, money, anything public, `main` and releases, taste), for owner-only checks, and for FAIL reports on gate streams ([test-lane.md](test-lane.md)). The owner's Claude Code project batches the rest into its daily routine's report ([kickoff.md](kickoff.md#the-lead-session) says who does what).
 
 ## Branches and merging
 
-- `next` is the integration branch, created from `main`. Every stream branches `ws/<id>` from `next` and opens PRs back into `next`.
-- A PR merges into `next` when its tier's lane report is green. The owner taps merge from the phone. If that becomes the bottleneck, the owner can let T1/T2-only PRs merge themselves.
+- `next` is the integration branch, created from `main`. Every stream branches `ws/<id>-…` from `next`, one branch per PR, and opens PRs back into `next`.
+- A PR merges into `next` when its tier's lane report is green. The lane runner merges armed `automerge` PRs itself. PRs that change `.github/` or `scripts/lane*` wait for the owner, and audio, persistence and packet diffs wait for a clean Codex audit of their head commit.
+- GitHub closes the issue named by "Closes #N" only when a PR merges into the default branch (`main`), so an issue whose PR merged into `next` stays open. The hourly dispatcher then removes `in-progress`, adds `status: needs-human-validation` and names the PR; only the owner validates it.
 - Streams merge `next` into their branch at least daily, and before any lane request, so reports test what will actually integrate.
 - Merge order when PRs conflict: gate streams (A2 first), then the older PR.
 - A TestFlight candidate is a commit on `next` that passed T5. Releasing still follows "Releasing a build" in `AGENTS.md`. `main` is fast-forwarded only at release, by the owner's decision.
@@ -165,13 +173,9 @@ The reach pass (#141, #145–#149, #151) moves into B1, D3, D4 and D5.
 
 ## Decisions the owner owns
 
-The first one is needed before Wave 0 starts. The briefs flag the rest where they come up.
+The briefs flag these where they come up. Parallel streams, the lane runner merging into `next`, hosting on the VPS and the design direction are settled (`AGENTS.md`, owner's standing calls).
 
 | Decision | Blocks | Recommendation |
 | --- | --- | --- |
-| Allow one agent per stream in parallel (this plan) instead of "one agent at a time" | everything | Yes. Merge this branch; its `AGENTS.md` change says so |
-| Who merges into `next` | throughput | Owner taps merge at first; allow self-merge for T1/T2 once trust builds |
-| Server hosting and monthly cost ceiling | B4 M1, E3 M2–M3, F1 M3 | The existing VPS for manifests plus one small service, with a hard budget alert |
 | Community server stores transcripts, or only derived maps | E3 M3 | Maps only at first. Transcripts stay on devices until the rights question (#14) is settled |
 | Whether the app may hold a Substack sign-in for paid posts | B2 M2 | Decide after B2's research. Nothing handling credentials ships before then |
-| Design direction | D2, D4, D5, D6 look and feel | Decided from D1's prototypes |

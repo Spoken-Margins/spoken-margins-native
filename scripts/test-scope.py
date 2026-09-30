@@ -151,7 +151,7 @@ def classify_path(root, path, diff_text='', build_script_paths=frozenset()):
     if path.startswith(BROWSER_PREFIXES) or path in BROWSER_FILES:
         return Finding(path, 1, 'browser', commands=['npm run test:browser-extraction'])
     if path.startswith(PERSISTENCE_FIXTURES):
-        return Finding(path, 2, 'persistence', swift_filters=['PriorBuildPersistenceTests'],
+        return Finding(path, 2, 'persistence', swift_filters=['PriorBuildPersistenceTests', 'Build29UpgradeProgressTests'],
                        commands=['.venv/bin/python scripts/validate-contracts.py'] + T2_COMMANDS)
     if path.startswith(PACKET_FIXTURES) or (path.startswith('Contracts/schemas/') and name in PACKET_SCHEMAS):
         return Finding(path, 2, 'packet', swift_filters=['SharingTests'],
@@ -226,8 +226,10 @@ def classify(paths, diffs=None, root=ROOT):
         tests = ', '.join(f'SpokenMarginsAppTests/{t}' for t in app_tests) or '<the app test classes that cover it>'
         lane = f'/lane T3\ntests: {tests}'
     top = [f for f in findings if f.tier == tier]
+    # app_tests: the classes the lane runner adds to every T3 request for this diff (#351).
     return {'tier': f'T{tier}', 'why': sorted({REASONS[f.category] for f in top}),
-            'files': [f.as_dict() for f in findings], 'run': commands, 'lane_request': lane, 'notes': notes}
+            'files': [f.as_dict() for f in findings], 'run': commands, 'lane_request': lane, 'notes': notes,
+            'app_tests': app_tests}
 
 
 def git(*args):

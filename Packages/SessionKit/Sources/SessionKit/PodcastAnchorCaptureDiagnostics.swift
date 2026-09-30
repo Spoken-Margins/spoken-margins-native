@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 
 /// Keeps podcast anchor capture outcomes readable after the fact.
 ///
