@@ -63,6 +63,34 @@ def plan_tests(root, name):
     return selected
 
 
+def scripted_journey_errors(root):
+    """TestPlans/scripted-journeys.json: which UI test scripts the integration run runs (#445).
+
+    Only `gating` scripts can turn the integration run red; `probation` scripts run and are reported.
+    Each entry names an existing SpokenMarginsAppUITests class or method and the journey it covers.
+    """
+    try:
+        listing = json.loads((root / 'TestPlans/scripted-journeys.json').read_text())
+    except (OSError, ValueError) as error:
+        return [f'scripted-journeys.json: {error}']
+    if listing.get('version') != 1 or set(listing) != {'version', 'gating', 'probation'}:
+        return ['scripted-journeys.json: expected version 1 with exactly "gating" and "probation" lists']
+    available = target_tests(root, 'SpokenMarginsAppUITests')
+    errors, seen = [], {}
+    for status in ('gating', 'probation'):
+        for entry in listing[status]:
+            test = entry.get('test', '') if isinstance(entry, dict) else ''
+            name = test.removeprefix('SpokenMarginsAppUITests/')
+            if name == test or not any(matches(t, name) for t in available):
+                errors.append(f'scripted-journeys.json: {status} names no SpokenMarginsAppUITests test: {test!r}')
+            if not (isinstance(entry, dict) and str(entry.get('journey', '')).strip()):
+                errors.append(f'scripted-journeys.json: {status} entry {test!r} names no journey')
+            if test in seen:
+                errors.append(f'scripted-journeys.json: {test!r} is listed twice ({seen[test]} and {status})')
+            seen[test] = status
+    return errors
+
+
 def validate(root=ROOT):
     errors = []
     inventory = json.loads((root / 'validation/test-inventory.json').read_text())
@@ -110,6 +138,7 @@ def validate(root=ROOT):
                 errors.append(f'{plan}: non-UI test selected')
     except (ValueError, KeyError) as error:
         errors.append(str(error))
+    errors += scripted_journey_errors(root)
     return errors
 
 
