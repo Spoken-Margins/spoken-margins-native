@@ -65,6 +65,23 @@ final class Build29UpgradeProgressTests: XCTestCase {
         XCTAssertNil(try repo.loadItem(id: item.id).sourceCompletedAt)
     }
 
+    /// A summary or reply keeps the episode's percent while it plays, so the guard must
+    /// follow the item, not what is playing (Codex audit on dda72fc).
+    func testPlayingASummaryOrReplyOnAnEpisodeWithNoKnownLengthDoesNotCompleteIt() throws {
+        let (item, session, _) = podcastInProgress(percent: 99, durationMs: nil)
+        let summary = ConversationTurn(id: "turn-summary-352", sessionId: session.id, role: "assistant", turnType: "interjection_summary", status: "complete", summary: nil, text: "Summary.", rawText: nil, sourceInterjectionIds: [])
+        let reply = ConversationTurn(id: "turn-reply-352", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: nil, text: "Reply.", rawText: nil, sourceInterjectionIds: [])
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], turns: [summary.id: summary, reply.id: reply])
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "phone", displayName: "Phone", capabilities: [
+            "sync": ["canonical_persistence"], "playback": ["native_media", "summary_turn_tts", "assistant_turn_tts"],
+        ]), repository: repo, audio: StreamNotYetMeasuredAudioClient())
+
+        for turn in [summary, reply] {
+            _ = try engine.playTurn(turnId: turn.id)
+            XCTAssertNil(try repo.loadItem(id: item.id).sourceCompletedAt, "completed by playing \(turn.turnType)")
+        }
+    }
+
     func testAHighPercentOfTheEpisodesOwnPlayerLengthStillCompletesIt() throws {
         // Must not break: a stream whose length only its player knows still completes
         // once the listener reaches the end of it.
