@@ -2012,6 +2012,7 @@ final class Gate1AppModel: ObservableObject {
         }
         scheduleAutomaticAudioPreparationIfNeeded()
         submitAutomaticEpisodeMapPreparationIfNeeded()
+        if canPrepareLibraryAudio { startForegroundAudioPreparationIfNeeded() } // a background task may have ended while the app was away (#534)
         refreshQuickAddFeed(force: false)
     }
 
@@ -15195,7 +15196,7 @@ final class Gate1AppModel: ObservableObject {
             if ownsLoop || self.foregroundAudioPreparationTask == nil {
                 self.libraryAudioTurns.stopped(.foreground) // also when cancelled between passes: its item stops showing progress (#281)
                 if ownsLoop { self.foregroundAudioPreparationTask = nil }
-                if ownsLoop, Task.isCancelled, self.canPrepareLibraryAudio {
+                if ownsLoop, Task.isCancelled || self.libraryAudioTurns.foregroundShouldResume, self.canPrepareLibraryAudio {
                     self.startForegroundAudioPreparationIfNeeded()
                 }
                 if let store = self.store {

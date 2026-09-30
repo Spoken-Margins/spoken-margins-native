@@ -51,6 +51,32 @@ final class LibraryAudioPreparationTurnsTests: XCTestCase {
         XCTAssertEqual(turns.preparingItemId, "b")
     }
 
+    func testAWaitingForegroundLoopResumesOnceTheBackgroundTaskStops() {
+        // Review on #380: the loop that stopped to wait must start again when the task ends,
+        // even if the task ended before the loop finished stopping.
+        var turns = LibraryAudioPreparationTurns()
+        let jobs = [whileChargingPinned, prepareNow]
+        _ = turns.select(jobs, activeItemId: nil, for: .background)
+        XCTAssertNil(turns.select(jobs, activeItemId: nil, for: .foreground))
+        XCTAssertFalse(turns.foregroundShouldResume, "the background task is still preparing A")
+        turns.stopped(.background)
+        turns.stopped(.foreground)
+        XCTAssertTrue(turns.foregroundShouldResume)
+        XCTAssertEqual(turns.select(jobs, activeItemId: nil, for: .foreground)?.itemId, "b")
+        XCTAssertFalse(turns.foregroundShouldResume, "no restart loop once it has its own work")
+    }
+
+    func testAForegroundLoopSharingTheBackgroundTasksItemFollowsANewHead() {
+        var turns = LibraryAudioPreparationTurns()
+        _ = turns.select([prepareNow], activeItemId: nil, for: .background)
+        let playing = AudioPreparationJob(
+            id: "job-p", itemId: "p", manifestId: "m-p", policy: .demandWindow,
+            requestedAt: Date(timeIntervalSince1970: 0), maximumChunkCount: 2
+        )
+        XCTAssertEqual(turns.select([prepareNow, playing], activeItemId: "p", for: .foreground)?.itemId, "p")
+        XCTAssertEqual(turns.preparingItemId, "p", "the row that shows progress is the one being prepared")
+    }
+
     func testTheForegroundLoopNeverPreparesWhileChargingWork() {
         var turns = LibraryAudioPreparationTurns()
         XCTAssertNil(turns.select([whileChargingPinned], activeItemId: nil, for: .foreground))

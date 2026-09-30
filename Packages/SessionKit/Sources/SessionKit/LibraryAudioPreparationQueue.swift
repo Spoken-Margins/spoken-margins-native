@@ -55,6 +55,12 @@ public struct LibraryAudioPreparationTurns: Sendable {
     public var preparingItemId: String?
     /// True from the background task's first pick until it stops or has nothing left.
     public private(set) var backgroundIsPreparing = false
+    /// True when the foreground loop last stopped to wait for the background task.
+    public private(set) var foregroundIsWaiting = false
+
+    /// The foreground loop stopped to wait, and the background task has stopped since:
+    /// start the loop again, or an explicit request waits for an unrelated trigger.
+    public var foregroundShouldResume: Bool { foregroundIsWaiting && !backgroundIsPreparing }
 
     public init() {}
 
@@ -85,9 +91,13 @@ public struct LibraryAudioPreparationTurns: Sendable {
             return chosen
         case .foreground where backgroundIsPreparing:
             // Share the background task's item, or wait for it.
-            return ordered.first.flatMap { Self.isForegroundDemand($0) ? $0 : nil }
+            let chosen = ordered.first.flatMap { Self.isForegroundDemand($0) ? $0 : nil }
+            foregroundIsWaiting = chosen == nil
+            if let chosen { preparingItemId = chosen.itemId }
+            return chosen
         case .foreground:
             let chosen = ordered.first(where: Self.isForegroundDemand)
+            foregroundIsWaiting = false
             preparingItemId = chosen?.itemId
             return chosen
         }
