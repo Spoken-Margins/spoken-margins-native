@@ -241,8 +241,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         // Playback position and diagnostics are not sharing inputs. Observe the
         // relevant publishers and coalesce their willSet notifications.
         model.$sharingState.map { _ in () }
-            .merge(with: model.$snapshot.map { _ in () }, // TEMPORARY #415 leak check; removed before merge.
-                   model.$selectedItem.map { _ in () },
+            .merge(with: model.$selectedItem.map { _ in () },
                    model.$spokenMarginsPackageImportReview.map { _ in () },
                    model.$isImportingSpokenMarginsPackage.map { _ in () },
                    model.$spokenMarginsPackageImportError.map { _ in () },
