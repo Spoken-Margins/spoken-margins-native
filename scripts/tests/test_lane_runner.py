@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import re
 from pathlib import Path
@@ -799,24 +800,90 @@ class WarmBuildTests(unittest.TestCase):
         self.assertIn('cold, new cache', second)
         self.assertNotEqual(first.split('SessionKit ')[1], second.split('SessionKit ')[1])
 
+    def caches(self):
+        return sorted(self.cache.glob('*/sk-*'))
+
     def test_it_keeps_at_most_two_caches_and_never_goes_below_the_disk_floor(self):
         for n in range(3):
             self.commit('Packages/SessionKit/Sources/A.swift', f'struct A{n} {{}}\n')
             self.warm()
             time.sleep(0.01)
-        self.assertEqual(len([d for d in self.cache.iterdir() if d.name.startswith('sk-')]), lane.WARM_KEEP)
+        self.assertEqual(len(self.caches()), lane.WARM_KEEP)
         self.assertIn('cold (less than 15 GB free)', self.warm(free=10**9))
-        self.assertEqual(len([d for d in self.cache.iterdir() if d.name.startswith('sk-')]), 1)  # this key's
+        self.assertEqual(len(self.caches()), 1)  # this key's
 
     def test_a_cache_in_use_by_another_runner_job_is_left_alone(self):
         import fcntl
         self.warm()
-        cache = next(d for d in self.cache.iterdir() if d.name.startswith('sk-'))
+        cache = self.caches()[0]
         with open(cache / '.lock', 'a+') as other:
             fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
             (self.tree / '.build').unlink()
             self.assertIn('in use by another runner job', self.warm())
             self.assertFalse((self.tree / '.build').exists())  # the job builds cold in its own tree
+
+
+    # #405: the two runners share this cache folder but check out to different paths, and DerivedData and
+    # SwiftPM's state record absolute paths. A cache one runner built, reused by the other, lost Xcode's VFS
+    # overlay (exit 65 on T2) and the onnxruntime binary artifact (host tests ran nothing).
+    def test_each_checkout_gets_its_own_caches(self):
+        other = Path(self.temporary.name) / 'runner-2' / 'tree'
+        subprocess.run(['git', 'clone', '-q', str(self.tree), str(other)], check=True)
+        self.warm()
+        line = lane.warm_build_folders(other, root=self.cache, free=lambda path: 10**12)
+        self.assertIn('cold, new cache', line, 'the same SessionKit tree in another checkout')
+        self.assertNotEqual((self.tree / '.build').resolve(), (other / '.build').resolve())
+
+    def test_a_project_change_starts_a_new_cache(self):
+        self.commit('SpokenMarginsNative.xcodeproj/project.pbxproj', '// one layout\n')
+        self.warm()
+        self.commit('SpokenMarginsNative.xcodeproj/project.pbxproj', '// synchronized folders\n')
+        self.assertIn('cold, new cache', self.warm())
+
+    def swiftpm_state(self, folder):
+        artifact = self.tree / 'Packages/SessionKit/.build/artifacts/onnxruntime-swift-package-manager' \
+            / 'onnxruntime/onnxruntime.xcframework'
+        state = {'object': {'artifacts': [{'path': str(artifact), 'targetName': 'onnxruntime'}]}, 'version': 6}
+        (folder / 'workspace-state.json').write_text(json.dumps(state))
+        return artifact
+
+    def test_a_cache_missing_a_binary_artifact_starts_again_cold(self):
+        self.warm()
+        build = self.tree / 'Packages/SessionKit/.build'
+        self.swiftpm_state(build)
+        (build / 'debug').mkdir()
+        line = self.warm()
+        self.assertTrue(line.startswith('build folders: cold'), line)
+        self.assertIn('onnxruntime.xcframework', line)
+        self.assertFalse((build / 'debug').exists())
+        self.assertFalse((build / 'workspace-state.json').exists())
+
+    def test_a_cache_whose_binary_artifacts_are_all_there_stays_warm(self):
+        self.warm()
+        build = self.tree / 'Packages/SessionKit/.build'
+        self.swiftpm_state(build).mkdir(parents=True)
+        self.assertTrue(self.warm().startswith('build folders: warm'))
+
+    def test_the_app_builds_package_state_is_checked_too(self):
+        self.warm()
+        packages = self.tree / '.build/dd/SourcePackages'
+        packages.mkdir(parents=True)
+        self.swiftpm_state(packages)
+        self.assertIn('onnxruntime.xcframework', self.warm())
+        self.assertFalse(packages.exists())
+
+    def test_the_old_shared_caches_are_removed_when_idle(self):
+        import fcntl
+        idle, busy = self.cache / 'sk-1a29b9c8d31d', self.cache / 'sk-1ad43f80e405'
+        for old in (idle, busy):
+            (old / 'root/dd').mkdir(parents=True)
+        with open(busy / '.lock', 'a+') as other:
+            fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.warm()
+        self.assertFalse(idle.exists())
+        self.assertTrue(busy.exists())  # a job from before this change still uses it
+        self.warm()
+        self.assertFalse(busy.exists())
 
 
 class BuildRunnerRoomTests(unittest.TestCase):
