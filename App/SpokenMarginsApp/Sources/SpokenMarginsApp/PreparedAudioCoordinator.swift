@@ -281,7 +281,10 @@ actor PreparedAudioCoordinator {
         ))
         manifest.chunks.sort { $0.index < $1.index }
         manifest.updatedAt = Date()
-        try repository.savePreparedAudioManifest(manifest)
+        guard try saveUnlessRetired(manifest, stillCurrent: { $0.text == sourceText }) else {
+            try? fileManager.removeItem(at: destination)
+            return
+        }
         if var job = try repository.loadAudioPreparationJobs().first(where: { $0.manifestId == manifestId }) {
             job.nextChunkIndex = manifest.chunks.count
             try repository.saveAudioPreparationJob(job)
@@ -290,11 +293,13 @@ actor PreparedAudioCoordinator {
 
     func complete(itemId: String, signature: TTSRenderSignature, prepared: PreparedTextAudio) throws {
         let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
-        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId),
+        guard try repository.loadPreparedAudioManifest(id: manifestId) != nil,
               let rawURL = prepared.media.url,
               let url = URL(string: rawURL),
               url.isFileURL else { return }
         let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        // Loaded after the hash, which a re-import can overtake (#344 audit).
+        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return }
         manifest.artifact = PreparedAudioArtifact(
             relativePath: relativePath(url),
             byteCount: Int64(data.count),
@@ -304,8 +309,26 @@ actor PreparedAudioCoordinator {
         manifest.state = .readyOffline
         manifest.failureCode = nil
         manifest.updatedAt = Date()
-        try repository.savePreparedAudioManifest(manifest)
+        guard try saveUnlessRetired(manifest, stillCurrent: { Self.isMade(from: $0.text ?? "", manifest) }) else { return }
         try repository.deleteAudioPreparationJob(id: "job-\(manifestId)")
+    }
+
+    /// Saves `manifest` unless a re-import retired it (#322) while this actor copied a chunk
+    /// or hashed the narration: the import runs on the main actor, so it can land between
+    /// this actor's load and save, and saving would bring the manifest back (#344 audit).
+    /// `stillCurrent` checks the item as stored; an item that isn't stored has nothing to move.
+    /// If the retirement commits between the check and the save, the save is taken back out.
+    private func saveUnlessRetired(_ manifest: PreparedAudioManifest, stillCurrent: (Item) -> Bool) throws -> Bool {
+        func current() -> Bool {
+            (try? repository.loadItem(id: manifest.itemId)).map(stillCurrent) ?? true
+        }
+        guard try repository.loadPreparedAudioManifest(id: manifest.id) != nil, current() else { return false }
+        try repository.savePreparedAudioManifest(manifest)
+        guard current() else {
+            try repository.deletePreparedAudioManifest(id: manifest.id)
+            return false
+        }
+        return true
     }
 
     func stop(itemId: String, signature: TTSRenderSignature) throws {
