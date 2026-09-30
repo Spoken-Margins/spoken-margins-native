@@ -610,6 +610,34 @@ class WarmBuildTests(unittest.TestCase):
             self.assertFalse((self.tree / '.build').exists())  # the job builds cold in its own tree
 
 
+class BuildRunnerRoomTests(unittest.TestCase):
+    """The second runner builds only while the Mac has room (item 5)."""
+
+    def wait(self, jobs, pressures, frees, max_wait=100):
+        now = [0.0]
+        states = {'jobs': list(jobs), 'pressure': list(pressures), 'free': list(frees)}
+        take = lambda key: (states[key].pop(0) if len(states[key]) > 1 else states[key][0])
+        with open(os.devnull, 'w') as quiet:
+            return lane.wait_for_room_to_build(
+                out=quiet, max_wait=max_wait, poll=10, clock=lambda: now[0],
+                sleep=lambda seconds: now.__setitem__(0, now[0] + seconds),
+                simulator_jobs=lambda: take('jobs'), pressure=lambda: take('pressure'), free=lambda: take('free')), now[0]
+
+    def test_it_starts_at_once_when_the_mac_has_room(self):
+        self.assertEqual(self.wait([0], [1], [10**12]), (None, 0.0))
+
+    def test_it_waits_for_the_simulator_job_pressure_and_disk_to_clear(self):
+        result, waited = self.wait([1, 1, 0], [2, 2, 2, 1], [10**9, 10**12])
+        self.assertIsNone(result)
+        self.assertEqual(waited, 30.0)
+
+    def test_it_gives_up_after_its_limit_and_says_why(self):
+        result, _ = self.wait([1], [2], [10**9], max_wait=60)
+        self.assertIn('waited 1m00s for room', result)
+        for reason in ('a simulator job is running', 'memory pressure is above normal', 'less than 20 GB of disk is free'):
+            self.assertIn(reason, result)
+
+
 class PushTests(unittest.TestCase):
     """Building and pushing the merge commit, with real git and a bare origin."""
 
@@ -785,6 +813,54 @@ class MainFlowTests(unittest.TestCase):
         github = FakeGitHub(labels=())
         self.run_main(github)
         self.assertEqual((github.posted, github.label_changes), ([], []))
+
+    def run_mode(self, github, mode, role=None, no_room=None):
+        env = {'SM_LANE_RUNNER_ROLE': role} if role else {}
+        with mock.patch.object(lane, 'run_auto', return_value=('PASS', 'x', 'host tests; builds', [])) as auto, \
+                mock.patch.object(lane, 'run_t3', return_value=('PASS', 'x', 'T/A', [], 'none', '')) as t3, \
+                mock.patch.object(lane, 'wait_for_room_to_build', return_value=no_room) as wait, \
+                mock.patch.dict('os.environ', env):
+            self.run_main(github, HEAD, 'PASS', '--mode', mode)
+        return auto, t3, wait
+
+    def test_the_automerge_job_never_answers_a_lane_request(self):
+        github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[comment('/lane T3\ntests: T/A')])
+        auto, t3, _ = self.run_mode(github, 'auto')
+        auto.assert_called_once()
+        t3.assert_not_called()
+        self.assertIn('tier auto', github.posted[0])
+        self.assertEqual(github.label_changes, [])  # lane:queued stays for the lane job
+        idle = FakeGitHub(labels=('lane:queued',), comments=[comment('/lane T3\ntests: T/A')])
+        auto, t3, _ = self.run_mode(idle, 'auto')
+        auto.assert_not_called()
+        t3.assert_not_called()
+        self.assertEqual((idle.posted, idle.label_changes), ([], []))
+
+    def test_the_lane_job_never_runs_automerge(self):
+        github = FakeGitHub(labels=('automerge',))
+        auto, _, _ = self.run_mode(github, 'explicit')
+        auto.assert_not_called()
+        self.assertEqual(github.posted, [])
+
+    def test_the_build_runner_waits_for_room_and_says_so_if_it_gives_up(self):
+        github = FakeGitHub(labels=('automerge',))
+        auto, _, wait = self.run_mode(github, 'auto', role='build', no_room='the build runner waited 1h30m00s for room: '
+                                                                         'a simulator job is running')
+        wait.assert_called_once()
+        auto.assert_not_called()
+        self.assertTrue(github.posted[0].startswith('Lane report pr5-r42 — INCONCLUSIVE'))
+        self.assertIn('a simulator job is running. Push again', github.posted[0])
+        main_runner = FakeGitHub(labels=('automerge',))
+        auto, _, wait = self.run_mode(main_runner, 'auto')
+        wait.assert_not_called()  # the main runner doesn't wait
+        auto.assert_called_once()
+
+    def test_an_automerge_cleanup_leaves_the_lane_labels_alone(self):
+        github = FakeGitHub(labels=('lane:queued', 'automerge'))
+        with mock.patch.object(lane, 'sweep_runner_simulators'):
+            lane.cleanup(github, 'https://example.test/run', 'auto')
+        self.assertEqual(github.label_changes, [])
+        self.assertIn('automerge run stopped before reporting', github.posted[0])
 
     def test_requeueing_without_a_new_request_says_so_and_clears_the_label(self):
         github = FakeGitHub(comments=[comment('/lane T2')])

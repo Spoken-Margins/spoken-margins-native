@@ -40,6 +40,10 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   changes gives false "does not conform" errors (AGENTS.md), so any SessionKit change starts a new
   cache. At most WARM_KEEP caches, never below WARM_FREE_FLOOR of free disk; otherwise the job runs
   cold. A warm rebuild measured 6 to 10 s against 90 s cold, per build.
+- Two runners (item 5). lane.yml's `lane` job answers /lane requests on the main runner (the only
+  one that runs simulators); its `automerge` job runs on any runner labelled sm-lane-build. --mode
+  keeps each job to its own work. On the build-only runner (SM_LANE_RUNNER_ROLE=build), an
+  automerge job first waits for room: no simulator job, normal memory pressure, and enough free disk.
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
 default ~/Library/Caches/SpokenMarginsLane/evidence), SM_LANE_TOOLS (a checkout whose .venv and
@@ -68,6 +72,8 @@ AUTOMERGE = 'automerge'
 FAST_TIMEOUT = 2400
 MERGE_ATTEMPTS = 3
 WARM_KEEP = 2
+BUILD_RUNNER_WAIT = 90 * 60
+BUILD_RUNNER_FREE_DISK = 20 * 10**9
 WARM_FREE_FLOOR = 15 * 10**9
 MERGE_CHECK = '**Merge check (triage desk)'  # the prefix scripts/merge_audit.py requires
 AUDITS = ('**Codex audit (Astra)', '## Codex audit')  # how an audit comment starts: the hourly task's, or an older manual one
@@ -531,6 +537,37 @@ def _cache_busy(cache: Path) -> bool:
         return False
 
 
+# ---- The build-only runner ----------------------------------------------------------------------
+
+def wait_for_room_to_build(out=sys.stdout, max_wait: float = BUILD_RUNNER_WAIT, poll: float = 30,
+                           clock=time.monotonic, sleep=time.sleep, simulator_jobs=None, pressure=None,
+                           free=lambda: shutil.disk_usage(Path.home()).free) -> str | None:
+    """The second runner builds only while the Mac has room: no simulator job, normal memory pressure,
+    and BUILD_RUNNER_FREE_DISK free. Returns None when there's room, or why it gave up waiting."""
+    if simulator_jobs is None or pressure is None:
+        from lane_slots import memory_pressure_level, simulator_jobs_running
+        simulator_jobs = simulator_jobs or simulator_jobs_running
+        pressure = pressure or memory_pressure_level
+    started, last_note = clock(), None
+    while True:
+        busy = []
+        if simulator_jobs():
+            busy.append('a simulator job is running')
+        if pressure() not in (1, None):
+            busy.append('memory pressure is above normal')
+        if free() < BUILD_RUNNER_FREE_DISK:
+            busy.append(f'less than {BUILD_RUNNER_FREE_DISK // 10**9} GB of disk is free')
+        if not busy:
+            return None
+        waited = clock() - started
+        if waited >= max_wait:
+            return f'the build runner waited {duration(waited)} for room: {"; ".join(busy)}'
+        if last_note is None or clock() - last_note >= 300:
+            print(f'[lane] build runner waiting ({duration(waited)} so far): {"; ".join(busy)}', file=out, flush=True)
+            last_note = clock()
+        sleep(poll)
+
+
 # ---- T3 -----------------------------------------------------------------------------------------
 
 def plan_for_tests(selectors: list[str], plans: dict[str, set]) -> tuple[dict[str, list[str]], list[str]]:
@@ -765,9 +802,13 @@ def sweep_runner_simulators() -> None:
                 print(f'Deleted leftover simulator {device["name"]}')
 
 
-def cleanup(github: GitHub, run_url: str) -> int:
+def cleanup(github: GitHub, run_url: str, mode: str = 'any') -> int:
     """After a failed or cancelled job: remove leftovers, say so on the PR, and free the labels."""
     sweep_runner_simulators()
+    if mode == 'auto':  # the lane:* labels belong to /lane requests
+        github.comment(f'Lane: the automerge run stopped before reporting ({run_url}). Push again, or remove and '
+                       f're-add automerge, to run it again.\n{NOTE}')
+        return 0
     _, desk_waiting = pending_requests(github.comments())
     github.comment(f'Lane: the runner stopped before reporting ({run_url}). If it is still needed, comment '
                    f'the request again and add lane:queued.\n{NOTE}')
@@ -823,6 +864,8 @@ def main(argv=None) -> int:
     parser.add_argument('--tree', type=Path, default=ROOT, help='checkout of the PR head to test')
     parser.add_argument('--base', default='next', help='branch the PR merges into')
     parser.add_argument('--cleanup', action='store_true', help='tidy up after a cancelled or failed job')
+    parser.add_argument('--mode', choices=['explicit', 'auto', 'any'], default='any',
+                        help='explicit: answer /lane requests only; auto: the automerge label only')
     args = parser.parse_args(argv)
     ROOT = args.tree.resolve()
     sys.path.insert(0, str(ROOT / 'scripts'))
@@ -830,7 +873,7 @@ def main(argv=None) -> int:
     github = GitHub(repo, args.pr)
     run_url = f'{os.environ.get("GITHUB_SERVER_URL", "https://github.com")}/{repo}/actions/runs/{args.run_id}'
     if args.cleanup:
-        return cleanup(github, run_url)
+        return cleanup(github, run_url, args.mode)
     sweep_runner_simulators()
     pull = github.pull()
     head = pull['head']['sha']
@@ -841,11 +884,16 @@ def main(argv=None) -> int:
         return 0
     comments = github.comments()
     request, desk_waiting = pending_requests(comments)
-    if request is None and automerge:
+    if args.mode == 'auto':  # the automerge job never answers /lane requests: the lane job does
+        if not automerge:
+            print('The automerge label is gone; nothing to do.')
+            return 0
+        request = None
+    if request is None and automerge and args.mode != 'explicit':
         request = {'tier': 'auto', 'tests': [], 'commit': ''}  # the automerge label is the request
     explicit = request is not None and request['tier'] != 'auto'  # automerge runs leave lane:* labels alone
     if request is None:
-        if not desk_waiting and QUEUED in labels:
+        if not desk_waiting and QUEUED in labels and args.mode != 'auto':
             github.comment('Lane: lane:queued is set, but there is no `/lane T2` or `/lane T3` request comment newer '
                            'than the last lane report, so nothing ran. Comment the request (format in '
                            f'docs/workstreams/test-lane.md), then add lane:queued.\n{NOTE}')
@@ -874,6 +922,8 @@ def main(argv=None) -> int:
     if explicit and not desk_waiting:  # a waiting T4/T5 keeps lane:queued so the Test Desk still sees it
         github.relabel(QUEUED, RUNNING)
     link_tools(Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Documents/GitHub/spoken-margins-native'))
+    no_room = wait_for_room_to_build() \
+        if request['tier'] == 'auto' and os.environ.get('SM_LANE_RUNNER_ROLE') == 'build' else None
     started = time.monotonic()
     requested = request.get('commit', '')
     moved = [f'requested {requested[:7]}, tested the newest commit {head[:7]}'] \
@@ -881,7 +931,10 @@ def main(argv=None) -> int:
     cc = ''
     try:
         conflicts = [] if request['tier'] == 'auto' else merge_base_branch(ROOT, args.base)
-        if request['tier'] == 'auto':
+        if no_room:
+            verdict, where, ran, crashes = 'INCONCLUSIVE', 'no build', 'nothing', 'none'
+            details = [f'{no_room}. Push again, or remove and re-add automerge, to try again.']
+        elif request['tier'] == 'auto':
             verdict, where, ran, details = run_auto(github, pull, args.pr, args.base, head, base_sha, evidence,
                                                     comments, labels)
             crashes = 'none'
