@@ -2,6 +2,32 @@ import SwiftUI
 import UniformTypeIdentifiers
 import SessionKit
 
+/// The Margin Output status line. A failure is drawn with the failure icon, so a listener can
+/// tell it from ordinary status without relying on colour (#308).
+struct MarginOutputStatus: Equatable {
+    let message: String
+    var isFailure = false
+
+    init(_ message: String, isFailure: Bool = false) {
+        self.message = message
+        self.isFailure = isFailure
+    }
+
+    static func failure(_ message: String) -> MarginOutputStatus {
+        MarginOutputStatus(message, isFailure: true)
+    }
+}
+
+/// Plain footnote text, or the failure label when the message reports a failure (#308).
+struct StatusMessageText: View {
+    let message: String
+    let isFailure: Bool
+
+    var body: some View {
+        if isFailure { FailureMessageLabel(message).font(.footnote) } else { Text(message).font(.footnote) }
+    }
+}
+
 struct MarginOutputSettingsSection: View {
     @EnvironmentObject private var model: Gate1AppModel
     @State private var choosingFolder = false
@@ -16,7 +42,7 @@ struct MarginOutputSettingsSection: View {
                 .onChange(of: model.automaticMarginOutputEnabled) { _, _ in model.automaticMarginOutputChanged() }
             Button("Retry Delivery") { Task { await model.deliverAutomaticMargins() } }
                 .disabled(!model.automaticMarginOutputEnabled)
-            Text(model.marginOutputStatus).font(.footnote)
+            StatusMessageText(message: model.marginOutputStatus.message, isFailure: model.marginOutputStatus.isFailure)
             Text("Writes each text Margin as a Markdown note in the folder you choose, such as an Obsidian vault. It doesn’t change how Margins play. Notes are written while the app is active and retried when you return. Existing Margins are included. Audio recordings and full source text are excluded. Your folder provider may sync files to its cloud.").font(.footnote).foregroundStyle(.secondary)
         }
         .fileImporter(isPresented: $choosingFolder, allowedContentTypes: [.folder]) { result in
@@ -37,17 +63,23 @@ struct ListeningEditionImportScreen: View {
     @State private var choosingFile = false
     @State private var replaceMap = false
     @State private var notifications = ""
+    @State private var notificationsFailed = false
     @FocusState private var editingJSON: Bool
     var body: some View {
         Form {
             Section {
                 Button("Enable Ready Notifications") {
                     Task {
-                        do { notifications = try await ListeningReadyNotifications.requestPermission() ? "Notifications enabled for completed audio." : "Notifications are off. You can change this in system Settings." }
-                        catch { notifications = "Notifications could not be enabled." }
+                        do {
+                            notifications = try await ListeningReadyNotifications.requestPermission() ? "Notifications enabled for completed audio." : "Notifications are off. You can change this in system Settings."
+                            notificationsFailed = false
+                        } catch {
+                            notifications = "Notifications could not be enabled."
+                            notificationsFailed = true
+                        }
                     }
                 }
-                if !notifications.isEmpty { Text(notifications).font(.footnote) }
+                if !notifications.isEmpty { StatusMessageText(message: notifications, isFailure: notificationsFailed) }
                 Button("Choose JSON File") { choosingFile = true }
                 TextEditor(text: $json).frame(minHeight: 140, maxHeight: 240)
                     .accessibilityLabel("Listening edition JSON")
@@ -119,7 +151,7 @@ struct ReadLaterScreen: View {
                      ? "Reader requires a Readwise account. This view lists Later articles with available text. PDFs, books and highlights are not imported by this adapter."
                      : "Raindrop has a free bookmark account. For personal setup, create an integration and paste its test token. Articles are fetched from their original websites; saved paid/offline copies are not used.")
                     .font(.footnote).foregroundStyle(.secondary)
-                Text(connection.status).font(.footnote)
+                StatusMessageText(message: connection.status, isFailure: connection.statusIsFailure)
             }
             Section("Choose Articles") {
                 ForEach(connection.documents) { document in

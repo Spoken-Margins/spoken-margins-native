@@ -861,7 +861,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var sourceLinkImportMessage: String?
     @Published private(set) var selectedListeningEdition: ListeningEdition?
     @Published var automaticMarginOutputEnabled = UserDefaults.standard.bool(forKey: "automaticMarginOutputEnabled")
-    @Published var marginOutputStatus = "Choose a folder and send a test note before enabling automatic delivery."
+    @Published var marginOutputStatus = MarginOutputStatus("Choose a folder and send a test note before enabling automatic delivery.")
     @Published private(set) var isImportingReadLater = false
     private var automaticMarginOutputTask: Task<Void, Never>?
     private var automaticMarginWriter: AutomaticMarginWriter?
@@ -9912,7 +9912,7 @@ final class Gate1AppModel: ObservableObject {
     func automaticMarginOutputChanged() {
         UserDefaults.standard.set(automaticMarginOutputEnabled, forKey: "automaticMarginOutputEnabled")
         if automaticMarginOutputEnabled { startAutomaticMarginOutput() }
-        else { automaticMarginOutputTask?.cancel(); automaticMarginOutputTask = nil; marginOutputStatus = "Automatic delivery is off. Exported files remain in your folder." }
+        else { automaticMarginOutputTask?.cancel(); automaticMarginOutputTask = nil; marginOutputStatus = MarginOutputStatus("Automatic delivery is off. Exported files remain in your folder.") }
     }
 
     func startAutomaticMarginOutput() {
@@ -9932,8 +9932,8 @@ final class Gate1AppModel: ObservableObject {
                 guard let folder = resolvedBatchExportFolderURL() else { throw EditionError.invalid("Choose an output folder first.") }
                 let writer = try marginWriter()
                 _ = try await writer.deliver([.init(id: "sample-margin", markdown: "# Spoken Margins test\n\nYour thoughts will arrive here as Markdown, with source context and anchors.\n")], to: folder, destinationID: marginOutputDestinationID)
-                marginOutputStatus = "Test note saved. Open Margin-\(ListeningEdition.digest("sample-margin")).md in your notes app."
-            } catch { marginOutputStatus = error.localizedDescription }
+                marginOutputStatus = MarginOutputStatus("Test note saved. Open Margin-\(ListeningEdition.digest("sample-margin")).md in your notes app.")
+            } catch { marginOutputStatus = .failure(error.localizedDescription) }
         }
     }
 
@@ -9969,8 +9969,8 @@ final class Gate1AppModel: ObservableObject {
             let notes = gathered.notes
             recordAutomaticMarginGather(ms: gathered.elapsedMs, sessions: gathered.sessionCount, notes: notes.count)
             let count = try await marginWriter().deliver(notes, to: folder, destinationID: marginOutputDestinationID)
-            marginOutputStatus = "\(count) Margins saved to \(folder.lastPathComponent). Last checked \(Date().formatted(date: .omitted, time: .shortened))."
-        } catch { marginOutputStatus = "Delivery needs attention: \(error.localizedDescription)" }
+            marginOutputStatus = MarginOutputStatus("\(count) Margins saved to \(folder.lastPathComponent). Last checked \(Date().formatted(date: .omitted, time: .shortened)).")
+        } catch { marginOutputStatus = .failure("Delivery needs attention: \(error.localizedDescription)") }
     }
 
     private func run(_ operation: (SessionEngine) throws -> Void) {
