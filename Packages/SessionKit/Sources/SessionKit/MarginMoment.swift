@@ -105,3 +105,11 @@ public struct MarginMomentSequence: Sendable, Equatable {
         phase = unplayed.contains(target) ? .leadIn : .listening
     }
 }
+
+extension Interjection {
+    /// A spoken Margin on the item with a media time and a saved voice, which a Margin moment plays inline.
+    public var isInlineSpokenMargin: Bool {
+        guard status == "active", captureKind != .written, targetType == .item else { return false }
+        return anchor.mediaTimeMs != nil && audioPath != nil
+    }
+}
