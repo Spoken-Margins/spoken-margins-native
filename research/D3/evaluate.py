@@ -11,6 +11,9 @@ from pathlib import Path
 
 from rank import load_policy, parse_time, rank_items
 
+# i4-engagement.1 is what the app records and exports (Contracts/schemas/i4-engagement.schema.json);
+# draft-1 is the synthetic rehearsal's format. Both have the same fields.
+SCHEMA_VERSIONS = {"i4-engagement.1", "i4-engagement.draft-1"}
 KNOWN_EVENTS = {"item_published", "listened", "margin", "share", "export", "packet_import", "dismiss", "finish"}
 ITEM_EVENTS = KNOWN_EVENTS - {"packet_import"}
 
@@ -23,7 +26,7 @@ def load_log(path):
                 row = json.loads(line)
                 if not isinstance(row, dict):
                     raise ValueError("row is not an object")
-                if row.get("schema_version") != "i4-engagement.draft-1":
+                if row.get("schema_version") not in SCHEMA_VERSIONS:
                     raise ValueError("unsupported schema_version")
                 if row.get("event") not in KNOWN_EVENTS:
                     raise ValueError("unknown event")
