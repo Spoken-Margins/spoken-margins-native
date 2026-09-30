@@ -236,7 +236,10 @@ struct ExperienceSourcesScreen: View {
             }
         }
         return FollowingRanker.rank(inputs, asOf: Date(), signals: ranking.signals, preferences: ranking.preferences)
-            .compactMap { ranked in byID[ranked.id].map { OrderedCandidate(candidate: $0, reason: ranked.reason) } }
+            .compactMap { ranked in
+                // Reasons talk about a show, so a Quick Folder file shows none.
+                byID[ranked.id].map { OrderedCandidate(candidate: $0, reason: sourceID(of: $0) == nil ? nil : ranked.reason) }
+            }
     }
 
     /// Subscription id → the followed source's SourceIdentity id, which the I4 log (#483) and
