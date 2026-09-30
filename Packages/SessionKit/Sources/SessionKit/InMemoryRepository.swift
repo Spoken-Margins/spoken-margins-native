@@ -311,7 +311,7 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
         if let canonicalSource { canonicalSources[item.id] = canonicalSource }
         if let listeningMap { mapsByItemId[item.id] = listeningMap }
         if let audioAsset { audioAssets[audioAsset.id] = audioAsset }
-        ownedOfflineAssets[ownedAsset.id] = ownedAsset
+        ownedOfflineAssetsLock.withLock { ownedOfflineAssets[ownedAsset.id] = ownedAsset }
     }
 
     public func savePreparedAudioManifest(_ manifest: PreparedAudioManifest) throws { preparedAudioManifests[manifest.id] = manifest }

@@ -5018,7 +5018,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func protectSummaryBridgeAsset(_ assetID: String, protected: Bool) {
-        try? store?.updateOwnedOfflineAsset(id: assetID) { asset in
+        _ = try? store?.updateOwnedOfflineAsset(id: assetID) { asset in
             if protected {
                 asset.protections.insert(.activeSummaryBridge)
             } else {

@@ -124,7 +124,8 @@ public protocol OfflineStorageRepository {
     func deleteOwnedOfflineAsset(id: String) throws
     /// Reads one row, applies `change` and saves it, with no other write in between (#287): a
     /// protection another caller saved after this caller's earlier read survives. Returns the saved
-    /// row, or nil when there is no row with that id.
+    /// row, or nil when there is no row with that id. `change` must not call the repository: it runs
+    /// inside the store's transaction, which can't be nested.
     @discardableResult
     func updateOwnedOfflineAsset(id: String, _ change: (inout OwnedOfflineAsset) -> Void) throws -> OwnedOfflineAsset?
     func saveOfflineStorageReservation(_ reservation: OfflineStorageReservation) throws

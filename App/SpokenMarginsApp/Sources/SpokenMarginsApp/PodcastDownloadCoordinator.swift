@@ -223,7 +223,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             let wasActive = asset.protections.contains(.activePlayback)
             guard isActive != wasActive else { continue }
             // One atomic row update, so a ledger reconcile can't write back a copy without it (#287).
-            try? store.updateOwnedOfflineAsset(id: asset.id) { current in
+            _ = try? store.updateOwnedOfflineAsset(id: asset.id) { current in
                 if isActive { current.protections.insert(.activePlayback) }
                 else { current.protections.remove(.activePlayback) }
             }
