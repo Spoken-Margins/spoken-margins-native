@@ -1985,6 +1985,51 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    /// #314 audit: a stop's reason belongs to its item. When the listener plays item B and then
+    /// comes back to item A, whose generation they stopped, A must report its own reason, not
+    /// lose it to B's rendering (or borrow B's reason if B had stopped too).
+    func testStoppedItemKeepsItsOwnReasonAfterAnotherItemRenders() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let fallback = RecordingFallbackAudioClient()
+        let states = GenerationStateCapture()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionActivator: {},
+            observesPlayerLifecycle: false,
+            fallbackClient: fallback,
+            onGenerationStateChange: { state, stopReason in states.record(state, stopReason: stopReason) }
+        )
+        let itemA = String(repeating: "Item A stops generating and carries on in the system voice. ", count: 8)
+        let itemB = String(repeating: "Item B renders on this device while item A stays stopped. ", count: 8)
+
+        _ = try client.prepareSpeechText(itemA)
+        try client.play(targetId: "item-a", from: 0)
+        _ = await waitForRenderCount(renderer, minimum: 1)
+        XCTAssertTrue(try client.stopOnDeviceRenderingAndUseSystemSpeech())
+        let statesBeforeB = states.values.count
+
+        _ = try client.prepareSpeechText(itemB)
+        try client.play(targetId: "item-b", from: 0)
+        for _ in 0..<100 {
+            if states.values.dropFirst(statesBeforeB).contains(.rendering) { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(states.values.dropFirst(statesBeforeB).contains(.rendering), "Item B renders on the device")
+
+        _ = try client.prepareSpeechText(itemA)
+        try client.play(targetId: "item-a", from: 0)
+        XCTAssertEqual(states.values.last, .stopped, "Item A's generation stays stopped")
+        XCTAssertEqual(states.stopReasons.last, "listener_stopped_generation", "Item A keeps the reason it stopped for")
+
+        try client.stop()
+    }
+
     func testStopGenerationPreservesPausedTransportAndForwardsFallbackRate() async throws {
         let template = try makeTestWAV(duration: 0.5)
         defer { try? FileManager.default.removeItem(at: template) }
