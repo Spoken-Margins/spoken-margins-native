@@ -981,6 +981,70 @@ final class SharingTests: XCTestCase {
         #endif
     }
 
+    /// The wrong episode (#456): the recipient's copy is another episode of the same show. It shares only a
+    /// 20 s intro with the sender's, then has different content, and is the same length, so neither a digest nor
+    /// the duration gives it away (the streamed case). No Margin may be placed on it: not one inside the shared
+    /// intro, not one just after it, and not one deep in the content.
+    func testAcousticResolverPlacesNoMarginOnADifferentEpisodeThatSharesTheIntro() async throws {
+        #if canImport(AVFoundation)
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let senderURL = root.appendingPathComponent("sender.m4a")
+        let introURL = root.appendingPathComponent("intro.m4a")
+        let otherContentURL = root.appendingPathComponent("other-episode-content.m4a")
+        let recipientURL = root.appendingPathComponent("recipient-other-episode.m4a")
+        try SeededNoiseAudio.write(to: senderURL, seconds: 75)
+        // The same seed from second 0 gives the sender's first 20 s again: the show's intro.
+        try SeededNoiseAudio.write(to: introURL, seconds: 20)
+        try SeededNoiseAudio.write(to: otherContentURL, seconds: 55, seed: 0xBF58476D1CE4E5B9, startSecond: 1_200)
+        try await composeRecipientEdition(
+            senderURL: otherContentURL,
+            insertedAudioURL: introURL,
+            insertionTimeMs: 0,
+            destinationURL: recipientURL
+        )
+        let margins = [("inside-intro", 10_000), ("after-intro", 26_000), ("deep-content", 55_000)]
+        var queries: [PodcastPortableAnchorQuery] = []
+        for (id, anchorMs) in margins {
+            let generated = try await PodcastAnchorEvidenceGenerator.generate(
+                sourceURL: senderURL,
+                anchorMediaTimeMs: anchorMs,
+                outputDirectory: root.appendingPathComponent("evidence"),
+                idPrefix: id
+            )
+            XCTAssertEqual(generated.count, 2, id)
+            queries.append(PodcastPortableAnchorQuery(
+                packageScopedId: id,
+                senderMediaTimeMs: anchorMs,
+                evidence: try generated.map {
+                    PodcastAcousticEvidenceQuery(
+                        id: $0.id,
+                        signatureData: try Data(contentsOf: $0.fileURL),
+                        anchorOffsetMs: $0.anchorOffsetMs
+                    )
+                }
+            ))
+        }
+        // Strong identity is the worst case: the item match said "same episode", and only the audio disagrees.
+        let resolutions = try await PodcastAcousticAnchorResolver.resolve(
+            queries: queries,
+            recipientAudioURL: recipientURL,
+            senderExactEditionSHA256: nil,
+            senderDurationMs: 75_000,
+            strongSourceIdentity: true
+        )
+        for (id, _) in margins {
+            let resolution = try XCTUnwrap(resolutions[id], id)
+            let observed = "\(id): \(resolution.evidenceClass) at \(resolution.localMediaTimeMs.map(String.init) ?? "nil")"
+                + " (\(resolution.algorithmVersion))"
+            XCTAssertNil(resolution.localMediaTimeMs, observed)
+            XCTAssertTrue([.unresolved, .ambiguous].contains(resolution.evidenceClass), observed)
+        }
+        #else
+        throw XCTSkip("AVFoundation is required")
+        #endif
+    }
+
     #if canImport(AVFoundation)
     /// A 75 s sender edition of seeded noise, and a recipient edition with a 7 s ad of other audio inserted.
     private func resolveSyntheticAdEdition(adInsertedAtMs: Int, anchorMs: Int) async throws -> ImportedAnchorResolution {
