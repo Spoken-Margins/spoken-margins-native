@@ -97,6 +97,15 @@ def scripted_journey_errors(root):
     return errors
 
 
+def scripted_journeys(root=ROOT):
+    """The scripted journeys the integration run runs, as {'gating': [...], 'probation': [...]} test IDs."""
+    if errors := scripted_journey_errors(root):
+        raise ValueError('; '.join(errors))
+    listing = json.loads((root / 'TestPlans/scripted-journeys.json').read_text())
+    return {status: [entry['test'].removesuffix('()') for entry in listing[status]]
+            for status in ('gating', 'probation')}
+
+
 def validate(root=ROOT):
     errors = []
     inventory = json.loads((root / 'validation/test-inventory.json').read_text())
