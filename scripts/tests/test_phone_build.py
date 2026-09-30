@@ -342,6 +342,11 @@ class ListenerRuleTests(unittest.TestCase):
         self.assertEqual(self.module.owner_check({'body': 'Owner check: from the PR', 'issues': []}), 'from the PR')
         self.assertIsNone(self.module.owner_check({'body': '', 'issues': []}))
 
+    def test_bug_report_steps_stand_in_for_a_missing_owner_check(self):
+        issue = {'body': '**Steps:** open an article.\n**Expected:** a label that fits.\n'}
+        self.assertEqual(self.module.owner_check({'body': '', 'issues': [issue]}),
+                         'open an article. Expected: a label that fits.')
+
 
 if __name__ == '__main__':
     unittest.main()

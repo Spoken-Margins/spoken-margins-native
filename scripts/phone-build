@@ -238,9 +238,11 @@ def fetch_prs(numbers: list[int]) -> dict[int, dict] | None:
     for pr in prs.values():
         linked = [issue['number'] for issue in pr['closingIssuesReferences']['nodes']]
         if not linked:
-            text = pr['title'] + '\n' + (pr.get('body') or '')
-            linked = [int(n) for n in re.findall(r'(?:\(|\b(?:fixes|closes|resolves|for|part of|issue)\s+)#(\d+)',
-                                                  text, re.I) if int(n) != pr['number']][:3]
+            # Closing keywords don't link issues on next (not the default branch), so read the
+            # title's "(#347, #355)" and the body's "Fixes #N" / "for #N" by hand.
+            found = re.findall(r'#(\d+)', pr['title']) + re.findall(
+                r'\b(?:fixes|fixed|closes|closed|resolves|for|part of|issue)\s+#(\d+)', pr.get('body') or '', re.I)
+            linked = list(dict.fromkeys(int(n) for n in found if int(n) != pr['number']))[:3]
             wanted.update({n: None for n in linked})
         pr['linked'] = linked
     issues = {issue['number']: issue for pr in prs.values() for issue in pr['closingIssuesReferences']['nodes']}
@@ -266,10 +268,17 @@ def listener_facing(pr: dict) -> bool:
 
 
 def owner_check(pr: dict) -> str | None:
-    for text in [issue.get('body') or '' for issue in pr['issues']] + [pr.get('body') or '']:
+    """The issue's "Owner check" line; else a bug report's Steps and Expected; else the PR's own."""
+    texts = [issue.get('body') or '' for issue in pr['issues']] + [pr.get('body') or '']
+    for text in texts:
         found = re.search(r'\*\*Owner check:?\*\*:?\s*(.+)', text) or re.search(r'(?m)^Owner check:\s*(.+)', text)
         if found:
             return found.group(1).strip()
+    for text in texts:
+        steps = re.search(r'\*\*Steps:?\*\*:?\s*(.+)', text)
+        expected = re.search(r'\*\*Expected:?\*\*:?\s*(.+)', text)
+        if steps and expected:
+            return f'{steps.group(1).strip()} Expected: {expected.group(1).strip()}'
     return None
 
 
@@ -308,21 +317,22 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     ordered = [prs[n] for n in merged if n in prs]
     facing = [pr for pr in ordered if listener_facing(pr)]
     behind = len(ordered) - len(facing)
-    facing.sort(key=lambda pr: 0 if any(FIRST_ON_PHONE & labels(i) for i in pr['issues']) else 1)
-    with_check = [pr for pr in facing if owner_check(pr)]
-    budget = with_check[:PLAN_CHECKS]
-    rest = [pr for pr in facing if pr not in budget]
+    # Phone-found bugs first, then changes with a written check, then the rest; newest first within each.
+    facing.sort(key=lambda pr: (0 if any(FIRST_ON_PHONE & labels(i) for i in pr['issues']) else 1,
+                                0 if owner_check(pr) else 1))
+    budget = facing[:PLAN_CHECKS]
+    rest = facing[PLAN_CHECKS:]
     if not ordered:
         lines += ['Nothing new since that build: this is the same code, rebuilt.', '']
     lines += [f'{len(ordered)} pull requests merged; {len(facing)} change something you see or hear.', '',
               '## Try these (about ten minutes)', '']
     if not budget:
-        lines += ['None of the listener-facing changes wrote an owner check. Use the app as usual for ten minutes.', '']
+        lines += ['Nothing a listener would notice changed. Use the app as usual for ten minutes.', '']
     for index, pr in enumerate(budget, 1):
         issue = pr['issues'][0] if pr['issues'] else None
         tag = ' (found on your phone)' if issue and FIRST_ON_PHONE & labels(issue) else ''
         lines += [f'{index}. **{pr["title"]}**{tag}',
-                  f'   - Check: {owner_check(pr)}',
+                  f'   - Check: {owner_check(pr) or "no check was written; look for what the title describes."}',
                   f'   - Links: [PR #{pr["number"]}]({pr["url"]})' +
                   (f', [issue #{issue["number"]}]({issue["url"]})' if issue else ''), '']
     if rest:
@@ -491,7 +501,7 @@ def main(argv) -> int:
         if not info:
             say('no latest build yet')
             return 1
-        say(f'rewrote {write_plan(folder, info["sha"], info.get("checks", "unknown"))}')
+        say(f'rewrote {write_plan(folder, info["sha"], info.get("checks", "unknown"), bool(info.get("commit_in_app")))}')
         return 0
     lock = open(phone_dir() / '.phone-build.lock', 'a+')
     try:
