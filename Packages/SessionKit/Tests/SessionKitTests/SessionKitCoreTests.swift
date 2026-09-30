@@ -72,6 +72,33 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertNil(lifecycle.pending)
     }
 
+    // #166: a pending seek the player has already passed is abandoned; one still in flight is kept.
+    func testMediaSeekLifecycleAbandonsOnlyASeekThePlayerHasPassed() {
+        var lifecycle = MediaSeekLifecycle()
+        // Resume at 5:46.9 from where the player paused: the seek lands where it already was.
+        _ = lifecycle.begin(targetId: "episode", mediaTimeMs: 346_922, originMediaTimeMs: 346_915, uptimeMs: 10_000)
+        XCTAssertNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 347_500, uptimeMs: 10_600, playbackRate: 1), "not yet 1 s past the target")
+        XCTAssertNotNil(lifecycle.pending)
+        let abandoned = lifecycle.abandonIfOverrun(playerMediaTimeMs: 348_400, uptimeMs: 11_500, playbackRate: 1)
+        XCTAssertEqual(abandoned?.mediaTimeMs, 346_922)
+        XCTAssertNil(lifecycle.pending)
+
+        // A skip back 5 s whose completion hasn't arrived: the player is still playing on from where it was.
+        _ = lifecycle.begin(targetId: "episode", mediaTimeMs: 100_000, purpose: .navigation, originMediaTimeMs: 105_000, uptimeMs: 20_000)
+        XCTAssertNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 107_000, uptimeMs: 22_000, playbackRate: 1))
+        XCTAssertEqual(lifecycle.pending?.mediaTimeMs, 100_000, "a seek still in flight keeps reporting its target")
+
+        // A jump forward 50 s still in flight: the player is short of the target.
+        _ = lifecycle.begin(targetId: "episode", mediaTimeMs: 200_000, purpose: .navigation, originMediaTimeMs: 150_000, uptimeMs: 30_000)
+        XCTAssertNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 151_000, uptimeMs: 31_000, playbackRate: 1))
+        // A player far past the target, further than playback since the seek could take it, isn't this seek landing.
+        XCTAssertNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 290_000, uptimeMs: 32_000, playbackRate: 1))
+        // Landed and played on.
+        XCTAssertEqual(lifecycle.abandonIfOverrun(playerMediaTimeMs: 203_000, uptimeMs: 33_000, playbackRate: 1)?.purpose, .navigation)
+        XCTAssertNil(lifecycle.pending)
+        XCTAssertNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 203_000, uptimeMs: 33_000, playbackRate: 1), "nothing pending")
+    }
+
     func testMediaSeekLifecycleIgnoresSupersededSeekCompletion() {
         var lifecycle = MediaSeekLifecycle()
         let first = lifecycle.begin(targetId: "episode", mediaTimeMs: 120_000)

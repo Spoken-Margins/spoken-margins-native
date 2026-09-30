@@ -1586,7 +1586,13 @@ struct MediaSeekLifecycle: Equatable {
         var mediaTimeMs: Int
         var retryCount: Int
         var purpose: Purpose
+        /// Where the player was when the seek began, and when (system uptime), for `abandonIfOverrun`.
+        var originMediaTimeMs: Int? = nil
+        var beganUptimeMs = 0
     }
+
+    /// How far past its target the player must be before a pending seek counts as landed.
+    static let overrunToleranceMs = 1_000
 
     enum Resolution: Equatable {
         case ignored
@@ -1601,7 +1607,9 @@ struct MediaSeekLifecycle: Equatable {
     mutating func begin(
         targetId: String,
         mediaTimeMs: Int,
-        purpose: Purpose = .playbackStart
+        purpose: Purpose = .playbackStart,
+        originMediaTimeMs: Int? = nil,
+        uptimeMs: Int = 0
     ) -> Int {
         generation += 1
         pending = Pending(
@@ -1610,9 +1618,30 @@ struct MediaSeekLifecycle: Equatable {
             targetId: targetId,
             mediaTimeMs: max(0, mediaTimeMs),
             retryCount: 0,
-            purpose: purpose
+            purpose: purpose,
+            originMediaTimeMs: originMediaTimeMs,
+            beganUptimeMs: uptimeMs
         )
         return generation
+    }
+
+    /// A seek whose completion never arrived kept every clock at its target while the audio played
+    /// on (#166). Forgets and returns the pending seek when the player's clock shows it landed: more
+    /// than the tolerance past the target, by no more than playback since the seek began explains,
+    /// and not explained by the player still playing on from where it was (a seek still in flight).
+    mutating func abandonIfOverrun(playerMediaTimeMs: Int?, uptimeMs: Int, playbackRate: Double) -> Pending? {
+        guard let current = pending, let player = playerMediaTimeMs else { return nil }
+        let played = Double(max(0, uptimeMs - current.beganUptimeMs)) * max(playbackRate, 0)
+        let reach = Int(played.rounded()) + Self.overrunToleranceMs
+        let pastTarget = player - current.mediaTimeMs
+        guard pastTarget > Self.overrunToleranceMs, pastTarget <= reach else { return nil }
+        if let origin = current.originMediaTimeMs,
+           abs(origin - current.mediaTimeMs) > Self.overrunToleranceMs,
+           player >= origin, player - origin <= reach {
+            return nil
+        }
+        invalidate()
+        return current
     }
 
     mutating func finish(generation: Int, targetId: String, completed: Bool) -> Resolution {
@@ -1636,7 +1665,9 @@ struct MediaSeekLifecycle: Equatable {
             targetId: current.targetId,
             mediaTimeMs: current.mediaTimeMs,
             retryCount: 1,
-            purpose: current.purpose
+            purpose: current.purpose,
+            originMediaTimeMs: current.originMediaTimeMs,
+            beganUptimeMs: current.beganUptimeMs
         )
         pending = retry
         return .retry(retry)
@@ -1692,6 +1723,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     public var playbackStartTraceHandler: (@Sendable ([String: String]) -> Void)?
     /// Receives a record when the player's clock stops moving while playback is intended, and when it moves
     /// again (#166). Carries AVPlayer's own state so the log can tell a buffering stall from a frozen clock.
+    /// Also receives `event: seek_abandoned` when a seek the player has passed is given up.
     public var playbackStallTraceHandler: (@Sendable ([String: String]) -> Void)?
     private var stallDetector = PlaybackStallDetector()
     private var stallWatchdog: Timer?
@@ -2223,8 +2255,33 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             )
         }
         mediaSeekFailure = nil
-        mediaSeekStartedUptime = ProcessInfo.processInfo.systemUptime
-        return mediaSeekLifecycle.begin(targetId: targetId, mediaTimeMs: mediaTimeMs, purpose: purpose)
+        let uptime = ProcessInfo.processInfo.systemUptime
+        mediaSeekStartedUptime = uptime
+        return mediaSeekLifecycle.begin(
+            targetId: targetId, mediaTimeMs: mediaTimeMs, purpose: purpose,
+            originMediaTimeMs: observedPlayerMediaTimeMs(), uptimeMs: Int(uptime * 1_000)
+        )
+    }
+
+    /// Runs on each watchdog tick (#166), and logs a `seek_abandoned` trace when it gives up a seek.
+    private func abandonOverrunMediaSeek(uptime: TimeInterval) {
+        let observed = observedPlayerMediaTimeMs()
+        guard let abandoned = mediaSeekLifecycle.abandonIfOverrun(
+            playerMediaTimeMs: observed, uptimeMs: Int(uptime * 1_000), playbackRate: playbackRate
+        ) else { return }
+        mediaSeekFailure = nil
+        if abandoned.purpose == .navigation {
+            storeNavigationSeekResolution(.accepted(mediaTimeMs: observed ?? abandoned.mediaTimeMs), for: abandoned.requestId)
+        }
+        var fields = [
+            "event": "seek_abandoned", "toMs": String(abandoned.mediaTimeMs),
+            "purpose": abandoned.purpose == .navigation ? "navigation" : "start",
+            "retry": String(abandoned.retryCount),
+            "ageMs": String(Int(uptime * 1_000) - abandoned.beganUptimeMs)
+        ]
+        fields.merge(playerStateFields(uptime: uptime)) { current, _ in current }
+        playbackStallTraceHandler?(fields)
+        publishNowPlaying(isPlaying: !paused)
     }
 
     private func startStallWatchdog() {
@@ -2245,6 +2302,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     private func checkForStall() {
         let uptime = ProcessInfo.processInfo.systemUptime
+        abandonOverrunMediaSeek(uptime: uptime)
         guard let event = stallDetector.observe(
             uptimeMs: Int(uptime * 1_000),
             mediaTimeMs: observedPlayerMediaTimeMs(),
