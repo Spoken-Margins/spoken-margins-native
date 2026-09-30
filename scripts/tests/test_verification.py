@@ -218,41 +218,6 @@ class VerificationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'stale'):
                 inventory.plan_tests(root, 'Broken')
 
-    def test_scripted_journey_list_names_real_ui_tests_once_each(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / 'TestPlans').mkdir()
-            (root / 'App/SpokenMarginsAppUITests').mkdir(parents=True)
-            (root / 'App/SpokenMarginsAppUITests/Tour.swift').write_text(
-                'final class ScreenTourUITests: XCTestCase { func testTour() {} func testShare() {} }')
-            listing = root / 'TestPlans/scripted-journeys.json'
-            write = lambda **lists: listing.write_text(json.dumps({'version': 1, 'gating': [], 'probation': [], **lists}))
-            write(gating=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests/testTour', 'journey': 'screen tour'}],
-                  probation=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests/testShare()', 'journey': 'J5'}])
-            self.assertEqual(inventory.scripted_journey_errors(root), [])
-            write(probation=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests/testRenamed', 'journey': 'J1'},
-                             {'test': 'ScreenTourUITests', 'journey': 'J1'},
-                             {'test': 'SpokenMarginsAppUITests/ScreenTourUITests'}])
-            errors = inventory.scripted_journey_errors(root)
-            self.assertEqual(len(errors), 3, errors)
-            self.assertIn('testRenamed', errors[0])
-            self.assertIn("'ScreenTourUITests'", errors[1])
-            self.assertIn('names no journey', errors[2])
-            write(gating=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests', 'journey': 'tour'}],
-                  probation=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests', 'journey': 'tour'}])
-            self.assertIn('also listed', inventory.scripted_journey_errors(root)[0])
-            write(gating=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests', 'journey': 'tour'}],
-                  probation=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests/testShare()', 'journey': 'J5'}])
-            self.assertIn('also listed', inventory.scripted_journey_errors(root)[0])
-            for malformed in ([], {'version': 1, 'gating': None, 'probation': []},
-                              {'version': 1, 'gating': [{'test': 7, 'journey': 'J1'}, 'x'], 'probation': []}):
-                listing.write_text(json.dumps(malformed))
-                self.assertTrue(inventory.scripted_journey_errors(root), malformed)
-            listing.write_text(json.dumps({'version': 1, 'gating': [], 'probation': [], 'passes': {}}))
-            self.assertTrue(inventory.scripted_journey_errors(root))
-            listing.unlink()
-            self.assertTrue(inventory.scripted_journey_errors(root))
-
     def test_unclassified_trace_and_fixture_and_empty_selection_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -295,6 +260,41 @@ class VerificationTests(unittest.TestCase):
             step = json.loads((run.output / 'manifest.json').read_text())['steps'][0]
             self.assertTrue(step['interrupted'])
             self.assertLess(step['seconds'], 5)
+
+    def test_scripted_journey_list_names_real_ui_tests_once_each(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'TestPlans').mkdir()
+            (root / 'App/SpokenMarginsAppUITests').mkdir(parents=True)
+            (root / 'App/SpokenMarginsAppUITests/Tour.swift').write_text(
+                'final class ScreenTourUITests: XCTestCase { func testTour() {} func testShare() {} }')
+            listing = root / 'TestPlans/scripted-journeys.json'
+            write = lambda **lists: listing.write_text(json.dumps({'version': 1, 'gating': [], 'probation': [], **lists}))
+            write(gating=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests/testTour', 'journey': 'screen tour'}],
+                  probation=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests/testShare()', 'journey': 'J5'}])
+            self.assertEqual(inventory.scripted_journey_errors(root), [])
+            write(probation=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests/testRenamed', 'journey': 'J1'},
+                             {'test': 'ScreenTourUITests', 'journey': 'J1'},
+                             {'test': 'SpokenMarginsAppUITests/ScreenTourUITests'}])
+            errors = inventory.scripted_journey_errors(root)
+            self.assertEqual(len(errors), 3, errors)
+            self.assertIn('testRenamed', errors[0])
+            self.assertIn("'ScreenTourUITests'", errors[1])
+            self.assertIn('names no journey', errors[2])
+            write(gating=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests', 'journey': 'tour'}],
+                  probation=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests', 'journey': 'tour'}])
+            self.assertIn('also listed', inventory.scripted_journey_errors(root)[0])
+            write(gating=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests', 'journey': 'tour'}],
+                  probation=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests/testShare()', 'journey': 'J5'}])
+            self.assertIn('also listed', inventory.scripted_journey_errors(root)[0])
+            for malformed in ([], {'version': 1, 'gating': None, 'probation': []},
+                              {'version': 1, 'gating': [{'test': 7, 'journey': 'J1'}, 'x'], 'probation': []}):
+                listing.write_text(json.dumps(malformed))
+                self.assertTrue(inventory.scripted_journey_errors(root), malformed)
+            listing.write_text(json.dumps({'version': 1, 'gating': [], 'probation': [], 'passes': {}}))
+            self.assertTrue(inventory.scripted_journey_errors(root))
+            listing.unlink()
+            self.assertTrue(inventory.scripted_journey_errors(root))
 
 
 if __name__ == '__main__':
