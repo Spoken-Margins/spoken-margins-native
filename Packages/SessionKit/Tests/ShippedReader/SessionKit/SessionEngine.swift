@@ -1,0 +1,4893 @@
+import CryptoKit
+import Foundation
+
+public final class SessionEngine {
+    private static let textAnchorShoulderSentenceCount = 4
+    private static let mediaClockBackwardToleranceMs = 2_000
+    public private(set) var profile: RuntimeCapabilityProfile
+    public private(set) var snapshot = SessionSnapshot()
+    public private(set) var currentSession: Session?
+    public private(set) var currentItem: Item?
+    public private(set) var currentMap: ListeningMap?
+    public private(set) var lastExport: SessionExport?
+    public private(set) var lastSummaryCandidates: [Interjection] = []
+    public private(set) var lastSpokenText: String?
+    public private(set) var lastScheduledTranscriptionInterjectionId: String?
+    public private(set) var currentWatchPackage: WatchAudioPackage?
+    public private(set) var lastResolvedMediaAnchor: MediaResolvedAnchor?
+    public private(set) var lastQueuedWatchSyncEvent: WatchSyncEvent?
+    public private(set) var lastImportedWatchSyncEvent: WatchSyncEvent?
+    public private(set) var lastLinkResolutionResult: LinkResolutionResult?
+    public private(set) var pendingWatchEventCount = 0
+    public private(set) var lastMediaSeekRequest: MediaSeekRequest?
+    public private(set) var lastMediaSeekResolution: MediaSeekResolution?
+
+    private let repository: SessionRepository
+    private let audio: AudioPlaybackClient
+    private let recorder: RecordingClient
+    private let transcriber: TranscriptionClient
+    private let aiProvider: AIProviderClient
+    private let linkResolver: LinkResolutionClient
+    private let textAudio: TextAudioPreparationClient?
+    private let playbackStartTimeout: TimeInterval
+    private let now: () -> Date
+    private(set) var recordingAnchor: Anchor?
+    private var recordingTargetType: InterjectionTargetType?
+    private var recordingTargetId: String?
+    private var priorPhase: SessionPhase?
+    private var streamingBuffers: [String: String] = [:]
+    private var spokenPrefixes: [String: Int] = [:]
+    private var externallyStreamedTurnId: String?
+    private var playbackStartRecoveryAttemptId: Int?
+    private var playbackStartAttemptId = 0
+    private var activePlaybackStartAttemptId: Int?
+    private var playbackStartPendingAttemptId: Int?
+    private var playbackStartPendingTargetId: String?
+    private var playbackStartDeadline: Date?
+    private var playbackURLOverrides: [String: String] = [:]
+    private var pinnedMediaTransport: (sessionId: String, targetId: String, playbackURL: String?)?
+    private var lastMediaPercentageRepair: (sessionId: String, durationMs: Int)?
+    private var pendingPlaybackPosition: PendingPlaybackPosition?
+    private var pendingWrittenInterjection: WrittenInterjectionCapture?
+
+    private struct PendingPlaybackPosition {
+        var targetId: String
+        var targetType: TargetType
+        var position: Position
+        var mediaSeekRequest: MediaSeekRequest?
+    }
+
+    private struct PlaybackPlan {
+        var text: String
+        var audioOffset: Int
+    }
+
+    private struct PlaybackProgress {
+        var sourcePercent: Int
+        var currentPercent: Int
+        var chapterTitle: String?
+    }
+
+    public init(
+        profile: RuntimeCapabilityProfile,
+        repository: SessionRepository,
+        audio: AudioPlaybackClient = NoopAudioPlaybackClient(),
+        recorder: RecordingClient = NoopRecordingClient(),
+        transcriber: TranscriptionClient = DeferredTranscriptionClient(),
+        aiProvider: AIProviderClient = DeterministicAIProvider(),
+        linkResolver: LinkResolutionClient = UnsupportedLinkResolutionClient(),
+        textAudio: TextAudioPreparationClient? = nil,
+        playbackStartTimeout: TimeInterval = 10,
+        now: @escaping () -> Date = Date.init
+    ) {
+        self.profile = profile
+        self.repository = repository
+        self.audio = audio
+        self.recorder = recorder
+        self.transcriber = transcriber
+        self.aiProvider = aiProvider
+        self.linkResolver = linkResolver
+        self.textAudio = textAudio
+        self.playbackStartTimeout = playbackStartTimeout
+        self.now = now
+    }
+
+    @discardableResult
+    public func startSession(itemId: String) throws -> SessionSnapshot {
+        try require("startSession", category: "sync", capabilities: ["canonical_persistence", "receive_prepared_packages", "browser_session_handoff"])
+        var item = try repository.loadItem(id: itemId)
+        item = try discardUnavailableGeneratedTextAudio(from: item)
+        currentItem = item
+        currentMap = try repository.loadListeningMap(itemId: itemId)
+        item = try prepareGeneratedTextAudioIfAvailable(for: item)
+        currentItem = item
+        let targetType = playbackTargetType(for: item)
+        let startedAt = now()
+        let session = Session(
+            id: nextSessionId(itemId: itemId),
+            itemId: itemId,
+            createdAt: startedAt,
+            updatedAt: startedAt,
+            completedAt: nil,
+            status: "in_progress",
+            phase: .itemPlayback,
+            currentTargetType: targetType,
+            currentTargetId: itemPlaybackTargetId(for: item, targetType: targetType),
+            position: targetType == .itemTextTTS ? Position(charOffset: 0, chapterId: nil) : Position(charOffset: 0, mediaTimeMs: 0, chapterId: nil),
+            completionPercent: 0,
+            playbackRate: 1
+        )
+        currentSession = session
+        try persistSession(session)
+        try playCurrentTarget(session)
+        publishPlaybackStart(for: session, phase: .itemPlayback)
+        return snapshot
+    }
+
+    @discardableResult
+    public func importSourceLink(_ request: LinkResolutionRequest, startSessionWhenPlayable: Bool = false) throws -> SessionSnapshot {
+        try require("importSourceLink", category: "sync", capabilities: ["canonical_persistence"])
+        snapshot.linkResolutionStatus = LinkResolutionStatus.resolving.rawValue
+        snapshot.linkResolutionFailureReason = nil
+
+        let result = try linkResolver.resolve(request)
+        return try importResolvedSourceLink(request, result: result, startSessionWhenPlayable: startSessionWhenPlayable)
+    }
+
+    @discardableResult
+    public func importResolvedSourceLink(
+        _ request: LinkResolutionRequest,
+        result: LinkResolutionResult,
+        startSessionWhenPlayable: Bool = false
+    ) throws -> SessionSnapshot {
+        try require("importSourceLink", category: "sync", capabilities: ["canonical_persistence"])
+        lastLinkResolutionResult = result
+        snapshot.linkResolutionStatus = result.status.rawValue
+        snapshot.linkResolutionFailureReason = result.failureReason
+        snapshot.sourceTranscriptStatus = nil
+
+        guard result.status == .playable,
+              let candidate = result.selectedCandidate,
+              let audioURL = candidate.audioURL,
+              !audioURL.isEmpty else {
+            return snapshot
+        }
+
+        let item = try sourceImportItem(from: candidate, result: result, request: request)
+        try repository.saveItem(item)
+        currentItem = item
+        currentMap = nil
+        snapshot.itemId = item.id
+        snapshot.targetType = TargetType.transcriptBackedMedia.rawValue
+        snapshot.targetId = itemPlaybackTargetId(for: item, targetType: .transcriptBackedMedia)
+        snapshot.title = item.title
+        snapshot.chapterTitle = item.title
+        snapshot.status = .idle
+        snapshot.phase = .idle
+        snapshot.sourceTranscriptStatus = item.transcriptId == nil ? "not_started" : "ready"
+        snapshot.progressPercent = 0
+        snapshot.sourceProgressPercent = 0
+        snapshot.currentPlaybackProgressPercent = 0
+        snapshot.currentMediaTimeMs = 0
+        snapshot.currentPlaybackDurationMs = item.media?.durationMs
+        snapshot.currentTextStart = nil
+        snapshot.currentTextEnd = nil
+        snapshot.currentTranscriptSegmentId = item.transcriptId
+        snapshot.currentAnchorConfidence = .providerMetadata
+
+        if item.media?.url == candidate.audioURL,
+           try repository.loadListeningMap(itemId: item.id) == nil,
+           let publisherChapters = preferredPublisherChapterCollection(in: candidate) {
+            _ = try attachPublisherChapters(itemId: item.id, collection: publisherChapters)
+        }
+
+        if startSessionWhenPlayable {
+            return try startSession(itemId: item.id)
+        }
+        return snapshot
+    }
+
+    /// Persists a resolved source without replacing the item or session the user is
+    /// currently listening to. Background share intake must use this path.
+    @discardableResult
+    public func importResolvedSourceLinkInBackground(
+        _ request: LinkResolutionRequest,
+        result: LinkResolutionResult,
+        sourceIdentity: String? = nil
+    ) throws -> Item? {
+        try require("importSourceLink", category: "sync", capabilities: ["canonical_persistence"])
+        guard result.status == .playable,
+              let candidate = result.selectedCandidate,
+              let audioURL = candidate.audioURL,
+              !audioURL.isEmpty else {
+            return nil
+        }
+        let item = try sourceImportItem(from: candidate, result: result, request: request, sourceIdentity: sourceIdentity)
+        try repository.saveItem(item)
+        if item.media?.url == candidate.audioURL,
+           try repository.loadListeningMap(itemId: item.id) == nil,
+           let publisherChapters = preferredPublisherChapterCollection(in: candidate) {
+            _ = try attachPublisherChapters(itemId: item.id, collection: publisherChapters)
+        }
+        return item
+    }
+
+    @discardableResult
+    public func togglePlayPause() throws -> SessionSnapshot {
+        try requireNavigationAllowed("togglePlayPause")
+        if snapshot.status.isPlaybackActive {
+            return try pause()
+        }
+        return try resumePlayback()
+    }
+
+    @discardableResult
+    public func pause() throws -> SessionSnapshot {
+        try requireNavigationAllowed("pause")
+        try requirePlayback("pause")
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("pause")
+        }
+        session = try syncCurrentPositionFromAudio(session)
+        currentSession = session
+        try persistSession(session)
+        try audio.pause()
+        publish(status: .paused, phase: session.phase)
+        return snapshot
+    }
+
+    /// Reconciles a pause that the active audio client has already applied in
+    /// response to an interruption or route loss. Unlike `pause()`, this does
+    /// not send a second pause command to the client, so interruption-specific
+    /// resume intent remains intact until the system reports how it ended.
+    @discardableResult
+    public func reconcileSystemInitiatedPause() throws -> SessionSnapshot {
+        try requirePlayback("reconcileSystemInitiatedPause")
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("reconcileSystemInitiatedPause")
+        }
+        session = try syncCurrentPositionFromAudio(session)
+        currentSession = session
+        try persistSession(session)
+        publish(status: .paused, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func resumePlayback() throws -> SessionSnapshot {
+        try requireNavigationAllowed("resumePlayback")
+        try requirePlayback("resumePlayback")
+        guard let session = currentSession else {
+            throw SessionKitError.invalidCommandForState("resumePlayback")
+        }
+        try playCurrentTarget(session)
+        publishPlaybackStart(for: session, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func restartPlaybackFromCurrentPosition() throws -> SessionSnapshot {
+        try requireNavigationAllowed("restartPlaybackFromCurrentPosition")
+        try requirePlayback("restartPlaybackFromCurrentPosition")
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("restartPlaybackFromCurrentPosition")
+        }
+        session = try syncCurrentPositionFromAudio(session)
+        currentSession = session
+        try persistSession(session)
+        if snapshot.status.isPlaybackActive {
+            try playCurrentTarget(session)
+        }
+        publishPlaybackContinuation(for: session)
+        return snapshot
+    }
+
+    /// Applies native-speech settings without replacing the playback client. When speech is
+    /// active, restart from the last position reported by the audio client so an unconfirmed
+    /// utterance can never advance the source cursor.
+    @discardableResult
+    public func updateSpeechPlaybackSettings(voiceIdentifier: String?, rate: Float) throws -> SessionSnapshot {
+        try requirePlayback("updateSpeechPlaybackSettings")
+        try audio.configureSpeechSettings(voiceIdentifier: voiceIdentifier, rate: rate)
+        guard currentSession != nil,
+              snapshot.targetType == TargetType.itemTextTTS.rawValue
+                || snapshot.targetType == TargetType.assistantTurnTTS.rawValue
+                || snapshot.targetType == TargetType.summaryTurnTTS.rawValue else {
+            return snapshot
+        }
+        return try restartPlaybackFromCurrentPosition()
+    }
+
+    /// Changes only the transport asset for an item. Canonical target ids, source URLs,
+    /// playback rate, source time, and interjection anchors remain unchanged.
+    @discardableResult
+    public func updatePlaybackTransport(
+        itemId: String,
+        playbackURL: String?,
+        replaceActivePlayback: Bool = true
+    ) throws -> SessionSnapshot {
+        if let playbackURL {
+            playbackURLOverrides[itemId] = playbackURL
+        } else {
+            playbackURLOverrides[itemId] = nil
+        }
+        guard var session = currentSession,
+              session.itemId == itemId,
+              session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
+            return snapshot
+        }
+        guard replaceActivePlayback else {
+            // A second request can contain different dynamically inserted ads.
+            // Keep this session on its original edition across skips, pauses and
+            // interjections; a new session may select the completed download.
+            return snapshot
+        }
+        pinnedMediaTransport = nil
+        session = try syncCurrentPositionFromAudio(session)
+        currentSession = session
+        try persistSession(session)
+        if snapshot.status.isPlaybackActive {
+            try playCurrentTarget(session)
+            publishPlaybackContinuation(for: session)
+        } else {
+            try audio.configureMediaContext(playbackMediaContext(for: session))
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func stopPlayback() throws -> SessionSnapshot {
+        try requireNavigationAllowed("stopPlayback")
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("stopPlayback")
+        }
+        session = try syncCurrentPositionFromAudio(session)
+        currentSession = session
+        try persistSession(session)
+        try audio.stop()
+        publish(status: .paused, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func syncPlaybackProgress() throws -> SessionSnapshot {
+        guard var session = currentSession else {
+            return snapshot
+        }
+        guard snapshot.status != .recording else {
+            return snapshot
+        }
+        if externallyStreamedTurnId == session.currentTargetId {
+            // Streaming speech uses chunk-scoped audio target IDs. Its queue
+            // publishes confirmed start and position observations explicitly,
+            // so reconciling against the turn-scoped target would promote or
+            // demote the UI from an unrelated transport sample.
+            publish(status: snapshot.status, phase: session.phase)
+            return snapshot
+        }
+        let mediaSeekFailure = try reconcilePendingMediaSeek(for: &session)
+        let positionIsPending = hasPendingPlaybackPosition(for: session)
+        let playbackCompleted = positionIsPending ? false : audio.isPlaybackComplete(targetId: session.currentTargetId)
+        let transportState = audio.playbackTransportState(targetId: session.currentTargetId)
+        var updated = try syncCurrentPositionFromAudio(session)
+        if snapshot.status == .starting {
+            switch playbackStartStatus(for: session.currentTargetId, attemptId: activePlaybackStartAttemptId ?? playbackStartAttemptId) {
+            case .confirmed:
+                // A confirmed start is the first point at which the newly
+                // requested transport position is authoritative.
+                updated = try syncCurrentPositionFromAudio(session)
+                snapshot.status = .playing
+            case .pending:
+                // Startup can remain pending while a buffered speech client is
+                // already advancing or after the user seeks. Preserve that
+                // canonical position instead of repeatedly publishing the
+                // pre-start session offset (usually zero).
+                if updated.position != session.position
+                    || updated.completionPercent != session.completionPercent
+                    || updated.phase != session.phase
+                    || updated.status != session.status {
+                    session = updated
+                    currentSession = session
+                    try persistSession(session)
+                }
+                publish(status: .starting, phase: session.phase)
+                return snapshot
+            case .failed(let message):
+                if updated.position != session.position
+                    || updated.completionPercent != session.completionPercent
+                    || updated.phase != session.phase
+                    || updated.status != session.status {
+                    session = updated
+                    currentSession = session
+                    try persistSession(session)
+                }
+                snapshot.lastFailure = "playback_start_failed:\(message)"
+                publish(status: .failed, phase: session.phase)
+                return snapshot
+            }
+        } else if snapshot.status == .playing {
+            if case .failed(let message) = audio.playbackStartStatus(targetId: session.currentTargetId) {
+                if updated.position != session.position
+                    || updated.completionPercent != session.completionPercent
+                    || updated.phase != session.phase
+                    || updated.status != session.status {
+                    session = updated
+                    currentSession = session
+                    try persistSession(session)
+                }
+                snapshot.lastFailure = "playback_failed:\(message)"
+                publish(status: .failed, phase: session.phase)
+                return snapshot
+            }
+        }
+        if playbackCompleted {
+            updated = markPlaybackComplete(updated, item: currentItem)
+        }
+        if updated.position != session.position
+            || updated.completionPercent != session.completionPercent
+            || updated.phase != session.phase
+            || updated.status != session.status {
+            session = updated
+            currentSession = session
+            try persistSession(session)
+        }
+        let reconciledStatus: PlaybackStatus
+        if playbackCompleted || (snapshot.status == .playing && transportState == .paused) {
+            reconciledStatus = .paused
+        } else {
+            reconciledStatus = snapshot.status
+        }
+        publish(status: reconciledStatus, phase: session.phase)
+        if let mediaSeekFailure {
+            snapshot.lastFailure = "media_seek_failed:\(mediaSeekFailure)"
+        } else if case .accepted = lastMediaSeekResolution,
+                  snapshot.lastFailure?.hasPrefix("media_seek_failed:") == true {
+            snapshot.lastFailure = nil
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func attachTranscriptTimeline(itemId: String, timeline: TranscriptTimeline) throws -> SessionSnapshot {
+        try require("attachTranscriptTimeline", category: "sync", capabilities: ["canonical_persistence"])
+        var item = try repository.loadItem(id: itemId)
+        var timelineWithPreferredChapters = timeline
+        if let map = try repository.loadListeningMap(itemId: itemId),
+           publisherChapterSource(from: map.id) != nil,
+           let existingChapters = try repository.loadTranscriptTimeline(itemId: itemId)?.timeline.chapters,
+           !existingChapters.isEmpty {
+            timelineWithPreferredChapters.chapters = existingChapters
+        }
+        let normalized = normalizedSourceTranscriptTimeline(timelineWithPreferredChapters)
+        let transcriptId = item.transcriptId ?? "transcript-\(item.id)"
+        let stored = SourceTranscriptTimeline(
+            id: transcriptId,
+            itemId: item.id,
+            createdAt: Date(),
+            timeline: normalized.timeline
+        )
+        try repository.saveTranscriptTimeline(stored)
+        item.transcriptId = transcriptId
+        item.text = normalized.text
+        if item.status == "ready" || item.status == "needs_transcript" || item.status == "audio_ready" {
+            item.status = "needs_listening_map"
+        }
+        try repository.saveItem(item)
+        if currentItem?.id == item.id || currentSession?.itemId == item.id {
+            currentItem = item
+            if let session = currentSession, session.itemId == item.id {
+                currentSession = try syncMediaPositionFromAudio(session)
+                if let currentSession {
+                    try persistSession(currentSession)
+                }
+                publish(status: snapshot.status, phase: currentSession?.phase ?? snapshot.phase)
+            } else {
+                snapshot.itemId = item.id
+                snapshot.title = item.title
+                snapshot.currentTranscriptSegmentId = item.transcriptId
+            }
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func attachPreparedTextAudio(
+        itemId: String,
+        prepared: PreparedTextAudio,
+        replaceActivePlayback: Bool = false
+    ) throws -> SessionSnapshot {
+        try require("attachPreparedTextAudio", category: "sync", capabilities: ["canonical_persistence"])
+        let item = try repository.loadItem(id: itemId)
+        guard shouldPrepareGeneratedTextAudio(for: item) else {
+            return snapshot
+        }
+        let updated = try applyPreparedTextAudio(prepared, to: item)
+        if currentItem?.id == updated.id || currentSession?.itemId == updated.id {
+            currentItem = updated
+            if let session = currentSession, session.itemId == updated.id {
+                if session.currentTargetType == .itemTextTTS, session.phase == .itemPlayback {
+                    let synchronized = syncSessionPositionFromAudio(session, item: updated)
+                    if replaceActivePlayback {
+                        var migrated = synchronized
+                        let mediaTimeMs = mediaTimeMs(
+                            forTextOffset: synchronized.position.charOffset,
+                            timeline: prepared.timeline
+                        )
+                        migrated.currentTargetType = .transcriptBackedMedia
+                        migrated.currentTargetId = itemPlaybackTargetId(
+                            for: updated,
+                            targetType: .transcriptBackedMedia
+                        )
+                        migrated = mediaSession(migrated, movedTo: mediaTimeMs)
+                        currentSession = migrated
+                        try persistSession(migrated)
+                        protectPlaybackPosition(for: migrated)
+                        if snapshot.status.isPlaybackActive {
+                            try playCurrentTarget(migrated)
+                        }
+                        publishPlaybackContinuation(for: migrated)
+                    } else {
+                        // System speech preparation can use a different voice and
+                        // cadence, so its generic attachment remains next-session
+                        // only unless the caller explicitly guarantees continuity.
+                        currentSession = synchronized
+                        try persistSession(synchronized)
+                        publish(status: snapshot.status, phase: synchronized.phase)
+                    }
+                } else if session.currentTargetType == .transcriptBackedMedia,
+                          item.media?.sourceType == .generatedTTSPrerendered,
+                          updated.media?.sourceType == .generatedTTSPrerendered {
+                    let replacementTargetId = itemPlaybackTargetId(for: updated, targetType: .transcriptBackedMedia)
+                    guard session.currentTargetId != replacementTargetId else {
+                        publish(status: snapshot.status, phase: session.phase)
+                        return snapshot
+                    }
+                    var migrated = try syncMediaPositionFromAudio(session)
+                    let sourceOffset = migrated.position.charOffset
+                    let mediaTimeMs = mediaTimeMs(forTextOffset: sourceOffset, timeline: prepared.timeline)
+                    migrated.currentTargetId = replacementTargetId
+                    migrated = mediaSession(migrated, movedTo: mediaTimeMs)
+                    currentSession = migrated
+                    try persistSession(migrated)
+                    protectPlaybackPosition(for: migrated)
+                    if snapshot.status.isPlaybackActive {
+                        try playCurrentTarget(migrated)
+                    }
+                    publishPlaybackContinuation(for: migrated)
+                } else {
+                    publish(status: snapshot.status, phase: session.phase)
+                }
+            } else {
+                snapshot.itemId = updated.id
+                snapshot.title = updated.title
+                snapshot.targetType = TargetType.transcriptBackedMedia.rawValue
+                snapshot.targetId = itemPlaybackTargetId(for: updated, targetType: .transcriptBackedMedia)
+            }
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func seekMedia(toMediaTimeMs mediaTimeMs: Int) throws -> SessionSnapshot {
+        try requireNavigationAllowed("seekMedia")
+        try requirePlayback("seekMedia")
+        guard let session = currentSession,
+              session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
+            throw SessionKitError.invalidCommandForState("seekMedia")
+        }
+        let updated = mediaSession(session, movedTo: mediaTimeMs)
+        currentSession = updated
+        try persistSession(updated)
+        do {
+            let request = try audio.requestMediaSeek(toMediaTimeMs: updated.position.mediaTimeMs ?? 0)
+            protectPlaybackPosition(for: updated, mediaSeekRequest: request)
+            lastMediaSeekRequest = request
+            lastMediaSeekResolution = .pending
+        } catch {
+            currentSession = session
+            try persistSession(session)
+            throw error
+        }
+        // Seeking within the active target is navigation, not a new playback
+        // start. Preserve the current transport status while the matching seek
+        // transaction is acknowledged by the audio client.
+        publish(status: snapshot.status, phase: updated.phase)
+        return snapshot
+    }
+
+    /// Records a media destination while paused when no player exists yet (for example,
+    /// after restoring a session). The next playback start opens the source at this position.
+    /// Active playback must use seekMedia so a real player seek is acknowledged.
+    @discardableResult
+    public func stagePausedMediaPosition(toMediaTimeMs mediaTimeMs: Int) throws -> SessionSnapshot {
+        try requireNavigationAllowed("stagePausedMediaPosition")
+        try requirePlayback("stagePausedMediaPosition")
+        guard snapshot.status == .paused,
+              let session = currentSession,
+              session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
+            throw SessionKitError.invalidCommandForState("stagePausedMediaPosition")
+        }
+        let updated = mediaSession(session, movedTo: mediaTimeMs)
+        currentSession = updated
+        try persistSession(updated)
+        protectPlaybackPosition(for: updated)
+        lastMediaSeekRequest = nil
+        lastMediaSeekResolution = nil
+        publish(status: .paused, phase: updated.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func seekText(toCharOffset charOffset: Int) throws -> SessionSnapshot {
+        try requireNavigationAllowed("seekText")
+        try requirePlayback("seekText")
+        if var turnSession = currentSession,
+           turnSession.currentTargetType == .assistantTurnTTS || turnSession.currentTargetType == .summaryTurnTTS {
+            guard let turn = try repository.loadTurns(sessionId: turnSession.id).first(where: { $0.id == turnSession.currentTargetId }) else {
+                throw SessionKitError.invalidCommandForState("seekText")
+            }
+            let text = generatedTurnNavigationText(for: turn)
+            guard !text.isEmpty else { throw SessionKitError.invalidCommandForState("seekText") }
+            let wasPlaying = snapshot.status.isPlaybackActive
+            externallyStreamedTurnId = nil
+            turnSession.position = Position(charOffset: max(0, min(charOffset, text.count)))
+            turnSession.position.chapterId = turn.chapters?.last(where: { $0.startChar <= turnSession.position.charOffset })?.id
+            currentSession = turnSession
+            try persistSession(turnSession)
+            protectPlaybackPosition(for: turnSession)
+            if wasPlaying, turnSession.position.charOffset < text.count {
+                try playCurrentTarget(turnSession)
+                publishPlaybackContinuation(for: turnSession)
+            } else {
+                try audio.pause()
+                publish(status: .paused, phase: turnSession.phase)
+            }
+            return snapshot
+        }
+        guard var session = currentSession,
+              session.currentTargetType == .itemTextTTS,
+              let item = currentItem ?? (try? repository.loadItem(id: session.itemId)),
+              let text = item.text,
+              !text.isEmpty else {
+            throw SessionKitError.invalidCommandForState("seekText")
+        }
+        currentItem = item
+        session.position.charOffset = max(0, min(charOffset, text.count))
+        session.position.mediaTimeMs = nil
+        session.position.chapterId = chapterId(for: session.position.charOffset)
+        session.completionPercent = percent(for: session.position.charOffset, text: text)
+        session.phase = .itemPlayback
+        session.status = "in_progress"
+        currentSession = session
+        try persistSession(session)
+        protectPlaybackPosition(for: session)
+        if session.position.charOffset >= text.count {
+            try audio.stop()
+            publish(status: .paused, phase: .itemPlayback)
+        } else if snapshot.status.isPlaybackActive {
+            try playCurrentTarget(session)
+            publishPlaybackContinuation(for: session)
+        } else {
+            publish(status: snapshot.status, phase: session.phase)
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func setPlaybackRate(_ rate: Double) throws -> SessionSnapshot {
+        try requirePlayback("setPlaybackRate")
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("setPlaybackRate")
+        }
+        let clamped = max(0.25, min(3.0, rate))
+        session.playbackRate = clamped
+        currentSession = session
+        try persistSession(session)
+        try audio.setPlaybackRate(clamped)
+        publish(status: snapshot.status, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func prepareSpeechText(itemId: String, targetType: TargetType) throws -> SessionSnapshot {
+        let item = try repository.loadItem(id: itemId)
+        lastSpokenText = SpeechTextNormalizer.normalize(item.text ?? "")
+        currentItem = item
+        snapshot.title = item.title
+        return snapshot
+    }
+
+    @discardableResult
+    public func importBrowserText(_ handoff: BrowserTextHandoff) throws -> SessionSnapshot {
+        try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
+        let (item, deterministicMap) = try browserTextImportRecords(handoff)
+        try repository.saveItem(item)
+        if let deterministicMap {
+            try repository.saveListeningMap(deterministicMap)
+        }
+        currentItem = item
+        currentMap = deterministicMap
+        snapshot.itemId = item.id
+        snapshot.targetType = TargetType.itemTextTTS.rawValue
+        snapshot.targetId = item.id
+        snapshot.title = item.title
+        snapshot.chapterTitle = item.title
+        snapshot.status = .idle
+        snapshot.phase = .idle
+        snapshot.progressPercent = 0
+        snapshot.sourceProgressPercent = 0
+        snapshot.currentPlaybackProgressPercent = 0
+        if handoff.requestedContinuation.startSession {
+            return try startSession(itemId: item.id)
+        }
+        return snapshot
+    }
+
+    /// Persists a browser or file share without disturbing active playback state.
+    @discardableResult
+    public func importBrowserTextInBackground(_ handoff: BrowserTextHandoff) throws -> Item {
+        try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
+        let (item, deterministicMap) = try browserTextImportRecords(handoff)
+        try repository.saveItem(item)
+        if let deterministicMap {
+            try repository.saveListeningMap(deterministicMap)
+        }
+        return item
+    }
+
+    @discardableResult
+    public func loadWatchPackage(watchPackageId: String) throws -> SessionSnapshot {
+        try require("loadWatchPackage", category: "sync", capabilities: ["receive_prepared_packages"])
+        try require("loadWatchPackage", category: "playback", capabilities: ["prerendered_audio", "native_media"])
+        guard let package = try repository.loadWatchAudioPackage(id: watchPackageId) else {
+            throw SessionKitError.missingFixture("watch_package:\(watchPackageId)")
+        }
+        try ensureWatchPackageRecords(package)
+        currentWatchPackage = package
+        currentItem = try repository.loadItem(id: package.itemId)
+        currentMap = nil
+        let firstChapter = package.chapters.sorted { $0.startMs < $1.startMs }.first
+        let session = Session(
+            id: package.sessionId,
+            itemId: package.itemId,
+            status: "in_progress",
+            phase: .itemPlayback,
+            currentTargetType: .transcriptBackedMedia,
+            currentTargetId: package.primaryAudioAsset?.audioAssetId ?? package.id,
+            position: Position(
+                charOffset: package.transcript.segments.first?.startChar ?? 0,
+                mediaTimeMs: firstChapter?.startMs ?? 0,
+                segmentIndex: 0,
+                chapterId: firstChapter?.id
+            ),
+            completionPercent: mediaPercent(firstChapter?.startMs ?? 0, package: package),
+            playbackRate: package.settings.defaultPlaybackRate
+        )
+        currentSession = session
+        try persistSession(session)
+        lastResolvedMediaAnchor = resolveMediaAnchor(for: session)
+        publish(status: .paused, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func importWatchSyncEvent(eventId: String) throws -> SessionSnapshot {
+        try require("importWatchSyncEvent", category: "sync", capabilities: ["import_offline_events", "canonical_persistence"])
+        guard let event = try repository.loadWatchSyncEvent(id: eventId) else {
+            throw SessionKitError.missingFixture("watch_sync_event:\(eventId)")
+        }
+        if try repository.hasImportedWatchSyncEvent(id: event.id) {
+            lastImportedWatchSyncEvent = event
+            publish(status: snapshot.status, phase: currentSession?.phase ?? snapshot.phase)
+            return snapshot
+        }
+        guard let package = try repository.loadWatchAudioPackage(id: event.watchPackageId) else {
+            throw SessionKitError.missingFixture("watch_package:\(event.watchPackageId)")
+        }
+        try ensureWatchPackageRecords(package)
+        currentWatchPackage = package
+        currentItem = try repository.loadItem(id: package.itemId)
+        switch event.eventType {
+        case "interjection_recorded":
+            try importWatchInterjection(event, package: package)
+        case "playback_position":
+            try importWatchPlaybackPosition(event, package: package)
+        case "session_finished":
+            if var session = try repository.loadSession(id: event.sessionId) {
+                session.status = "finished"
+                session.phase = .finished
+                currentSession = session
+                try persistSession(session)
+            }
+        default:
+            break
+        }
+        try repository.markWatchSyncEventImported(id: event.id)
+        lastImportedWatchSyncEvent = event
+        pendingWatchEventCount = try unimportedWatchEventCount(sessionId: event.sessionId)
+        publish(status: snapshot.status, phase: currentSession?.phase ?? snapshot.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func generateListeningMap(itemId: String) throws -> SessionSnapshot {
+        try require("generateListeningMap", category: "ai", capabilities: ["generate_listening_map"])
+        if let existing = try repository.loadListeningMap(itemId: itemId) {
+            if currentItem?.id == itemId || currentSession?.itemId == itemId {
+                currentMap = existing
+            }
+            return snapshot
+        }
+        var item = try repository.loadItem(id: itemId)
+        let map = generatedListeningMap(for: item)
+        try repository.saveListeningMap(map)
+        if item.status == "needs_listening_map" {
+            item.status = "ready"
+            try repository.saveItem(item)
+        }
+        if currentItem?.id == itemId || currentSession?.itemId == itemId {
+            currentItem = item
+            currentMap = map
+            if var session = currentSession, session.itemId == itemId {
+                session.position.chapterId = chapterId(for: session.position.charOffset)
+                currentSession = session
+                try persistSession(session)
+                publish(status: snapshot.status, phase: session.phase)
+            } else {
+                snapshot.title = item.title
+            }
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func attachListeningMap(_ map: ListeningMap) throws -> SessionSnapshot {
+        try require("attachListeningMap", category: "sync", capabilities: ["canonical_persistence"])
+        var item = try repository.loadItem(id: map.itemId)
+        try repository.saveListeningMap(map)
+        if item.status == "needs_listening_map" {
+            item.status = "ready"
+            try repository.saveItem(item)
+        }
+        guard currentItem?.id == map.itemId || currentSession?.itemId == map.itemId else {
+            return snapshot
+        }
+        currentItem = item
+        currentMap = map
+        if var session = currentSession, session.itemId == map.itemId {
+            if session.currentTargetType == .itemTextTTS {
+                session.position.chapterId = chapterId(for: session.position.charOffset)
+                currentSession = session
+                try persistSession(session)
+            }
+            publish(status: snapshot.status, phase: session.phase)
+        } else {
+            snapshot.itemId = item.id
+            snapshot.title = item.title
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func attachPublisherChapters(
+        itemId: String,
+        collection: PublisherChapterCollection
+    ) throws -> SessionSnapshot {
+        try require("attachPublisherChapters", category: "sync", capabilities: ["canonical_persistence"])
+        var item = try repository.loadItem(id: itemId)
+        if let existingMap = try repository.loadListeningMap(itemId: itemId),
+           let existingSource = publisherChapterSource(from: existingMap.id),
+           existingSource.precedence > collection.source.precedence {
+            return snapshot
+        }
+
+        let existingTimeline = try repository.loadTranscriptTimeline(itemId: itemId)
+        let durationMs = item.media?.durationMs ?? existingTimeline?.timeline.durationMs
+        let normalized = normalizedPublisherChapters(collection.chapters, durationMs: durationMs)
+        guard !normalized.isEmpty else { return snapshot }
+
+        let segments = existingTimeline?.timeline.segments ?? []
+        let mediaChapters = normalized.enumerated().map { index, chapter in
+            let id = publisherChapterId(source: collection.source, index: index)
+            let segmentId = segments.last(where: { $0.startMs <= chapter.startMs })?.id
+                ?? segments.first?.id
+                ?? "publisher-anchor-\(index + 1)"
+            return MediaTimelineChapter(
+                id: id,
+                title: chapter.title,
+                description: chapter.description,
+                startMs: chapter.startMs,
+                transcriptSegmentId: segmentId
+            )
+        }
+        let timeline = TranscriptTimeline(
+            segments: segments,
+            chapters: mediaChapters,
+            durationMs: durationMs ?? normalized.compactMap(\.endMs).max() ?? normalized.last?.startMs
+        )
+        try repository.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: existingTimeline?.id ?? "media-chapters-\(itemId)",
+            itemId: itemId,
+            createdAt: existingTimeline?.createdAt ?? Date(),
+            timeline: timeline
+        ))
+
+        let percentDuration = max(1, timeline.durationMs ?? normalized.last?.startMs ?? 1)
+        let chapters = normalized.enumerated().map { index, chapter in
+            Chapter(
+                id: mediaChapters[index].id,
+                title: chapter.title,
+                startChar: index,
+                endChar: index + 1,
+                percent: max(0, min(100, Int((Double(chapter.startMs) / Double(percentDuration) * 100).rounded())))
+            )
+        }
+        let map = ListeningMap(
+            id: "map-\(itemId)-publisher-\(collection.source.rawValue)",
+            itemId: itemId,
+            overview: "Publisher-provided chapters for \(item.title).",
+            chapters: chapters
+        )
+        try repository.saveListeningMap(map)
+        if item.status == "needs_listening_map" {
+            item.status = "ready"
+            try repository.saveItem(item)
+        }
+
+        guard currentItem?.id == itemId || currentSession?.itemId == itemId else { return snapshot }
+        currentItem = item
+        currentMap = map
+        if let session = currentSession, session.itemId == itemId {
+            publish(status: snapshot.status, phase: session.phase)
+        } else {
+            snapshot.itemId = item.id
+            snapshot.title = item.title
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func skipForward(unit: String) throws -> SessionSnapshot {
+        return try skipForward(unit: unit, minimumDistance: 0)
+    }
+
+    @discardableResult
+    public func skipForward(unit: String, minimumDistance: Int) throws -> SessionSnapshot {
+        try requireNavigationAllowed("skipForward")
+        try requirePlayback("skipForward")
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("skipForward")
+        }
+        if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
+            return try skipMediaForward(session: session, unit: unit)
+        }
+        guard session.currentTargetType == .itemTextTTS else {
+            return try skipGeneratedTurnForward(session: session, unit: unit)
+        }
+        guard let item = currentItem else {
+            throw SessionKitError.invalidCommandForState("skipForward")
+        }
+        session = syncSessionPositionFromAudio(session, item: item)
+        let text = item.text ?? ""
+        if unit == "chapter" {
+            session.position.charOffset = nextChapterBoundary(after: session.position.charOffset, text: text)
+        } else {
+            let baseline = session.position.charOffset
+            let firstBoundary = nextBoundary(after: baseline, unit: unit, text: text)
+            if minimumDistance > 0, firstBoundary < min(text.count, baseline + minimumDistance) {
+                session.position.charOffset = nextBoundary(after: min(text.count, baseline + minimumDistance), unit: unit, text: text)
+            } else {
+                session.position.charOffset = firstBoundary
+            }
+        }
+        session.completionPercent = percent(for: session.position.charOffset, text: text)
+        session.position.chapterId = chapterId(for: session.position.charOffset)
+        session.phase = .itemPlayback
+        session.status = "in_progress"
+        currentSession = session
+        try persistSession(session)
+        protectPlaybackPosition(for: session)
+        if snapshot.status.isPlaybackActive, session.position.charOffset < text.count {
+            try playCurrentTarget(session)
+            publishPlaybackContinuation(for: session)
+            return snapshot
+        } else if session.position.charOffset >= text.count {
+            try audio.stop()
+        }
+        publish(status: session.position.charOffset >= text.count ? .paused : snapshot.status, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func skipBack(unit: String) throws -> SessionSnapshot {
+        try requireNavigationAllowed("skipBack")
+        try requirePlayback("skipBack")
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("skipBack")
+        }
+        if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
+            return try skipMediaBack(session: session, unit: unit)
+        }
+        guard session.currentTargetType == .itemTextTTS else {
+            return try skipGeneratedTurnBack(session: session, unit: unit)
+        }
+        guard let item = currentItem else {
+            throw SessionKitError.invalidCommandForState("skipBack")
+        }
+        session = syncSessionPositionFromAudio(session, item: item)
+        let text = item.text ?? ""
+        if unit == "chapter" {
+            session.position.charOffset = previousChapterBoundary(before: session.position.charOffset)
+        } else {
+            session.position.charOffset = previousBoundary(before: session.position.charOffset, unit: unit, text: text)
+        }
+        session.completionPercent = percent(for: session.position.charOffset, text: text)
+        session.position.chapterId = chapterId(for: session.position.charOffset)
+        if session.phase == .finished {
+            session.phase = .itemPlayback
+        }
+        currentSession = session
+        try persistSession(session)
+        protectPlaybackPosition(for: session)
+        if snapshot.status.isPlaybackActive {
+            try playCurrentTarget(session)
+            publishPlaybackContinuation(for: session)
+            return snapshot
+        }
+        publish(status: snapshot.status, phase: session.phase)
+        return snapshot
+    }
+
+    private func skipGeneratedTurnForward(session: Session, unit: String) throws -> SessionSnapshot {
+        var updated = try syncGeneratedTurnPositionFromAudio(session)
+        guard let turn = try repository.loadTurns(sessionId: updated.id).first(where: { $0.id == updated.currentTargetId }) else {
+            throw SessionKitError.invalidCommandForState("skipForward")
+        }
+        let text = generatedTurnNavigationText(for: turn)
+        guard !text.isEmpty else {
+            throw SessionKitError.invalidCommandForState("skipForward")
+        }
+        updated.position.charOffset = nextBoundary(after: updated.position.charOffset, unit: unit, text: text)
+        updated.position.charOffset = max(0, min(updated.position.charOffset, text.count))
+        updated.position.chapterId = turn.chapters?.last(where: { $0.startChar <= updated.position.charOffset })?.id
+        currentSession = updated
+        try persistSession(updated)
+        protectPlaybackPosition(for: updated)
+        if snapshot.status.isPlaybackActive, updated.position.charOffset < text.count {
+            try playCurrentTarget(updated)
+            publishPlaybackContinuation(for: updated)
+            return snapshot
+        } else if updated.position.charOffset >= text.count {
+            try audio.stop()
+        }
+        publish(status: updated.position.charOffset >= text.count ? .paused : snapshot.status, phase: updated.phase)
+        return snapshot
+    }
+
+    private func skipGeneratedTurnBack(session: Session, unit: String) throws -> SessionSnapshot {
+        var updated = try syncGeneratedTurnPositionFromAudio(session)
+        guard let turn = try repository.loadTurns(sessionId: updated.id).first(where: { $0.id == updated.currentTargetId }) else {
+            throw SessionKitError.invalidCommandForState("skipBack")
+        }
+        let text = generatedTurnNavigationText(for: turn)
+        guard !text.isEmpty else {
+            throw SessionKitError.invalidCommandForState("skipBack")
+        }
+        updated.position.charOffset = previousBoundary(before: updated.position.charOffset, unit: unit, text: text)
+        updated.position.charOffset = max(0, min(updated.position.charOffset, text.count))
+        updated.position.chapterId = turn.chapters?.last(where: { $0.startChar <= updated.position.charOffset })?.id
+        currentSession = updated
+        try persistSession(updated)
+        protectPlaybackPosition(for: updated)
+        if snapshot.status.isPlaybackActive {
+            try playCurrentTarget(updated)
+            publishPlaybackContinuation(for: updated)
+            return snapshot
+        }
+        publish(status: snapshot.status, phase: updated.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func jumpToChapter(chapterId: String) throws -> SessionSnapshot {
+        try requireNavigationAllowed("jumpToChapter")
+        try require("jumpToChapter", category: "timeline", capabilities: ["chapter_timing"])
+        try requirePlayback("jumpToChapter")
+        if let session = currentSession,
+           session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
+            return try jumpToMediaChapter(chapterId: chapterId, session: session)
+        }
+        guard var session = currentSession, let chapter = currentMap?.chapters.first(where: { $0.id == chapterId }) else {
+            throw SessionKitError.invalidCommandForState("jumpToChapter")
+        }
+        session.currentTargetType = .itemTextTTS
+        session.currentTargetId = session.itemId
+        session.phase = .itemPlayback
+        session.position.charOffset = chapter.startChar
+        session.position.chapterId = chapter.id
+        session.completionPercent = chapter.percent
+        currentSession = session
+        try persistSession(session)
+        protectPlaybackPosition(for: session)
+        try playCurrentTarget(session)
+        publishPlaybackStart(for: session, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func playSourceFromBeginning() throws -> SessionSnapshot {
+        try requireNavigationAllowed("playSourceFromBeginning")
+        try requirePlayback("playSourceFromBeginning")
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("playSourceFromBeginning")
+        }
+        if currentItem?.id != session.itemId {
+            currentItem = try repository.loadItem(id: session.itemId)
+        }
+        currentMap = try repository.loadListeningMap(itemId: session.itemId)
+        if let item = currentItem {
+            currentItem = try prepareGeneratedTextAudioIfAvailable(for: item)
+        }
+        let targetType = currentItem.map(playbackTargetType(for:)) ?? .itemTextTTS
+        session.currentTargetType = targetType
+        session.currentTargetId = currentItem.map { itemPlaybackTargetId(for: $0, targetType: targetType) } ?? session.itemId
+        session.phase = .itemPlayback
+        session.position = targetType == .itemTextTTS ? Position(charOffset: 0, chapterId: nil) : Position(charOffset: 0, mediaTimeMs: 0, chapterId: nil)
+        session.completionPercent = 0
+        currentSession = session
+        try persistSession(session)
+        protectPlaybackPosition(for: session)
+        try playCurrentTarget(session)
+        publishPlaybackStart(for: session, phase: .itemPlayback)
+        return snapshot
+    }
+
+    @discardableResult
+    public func inspectSession(sessionId: String) throws -> SessionSnapshot {
+        guard var session = try repository.loadSession(id: sessionId) else {
+            throw SessionKitError.invalidCommandForState("inspectSession")
+        }
+        pendingPlaybackPosition = nil
+        if (session.phase == .finished || session.status == "finished"), session.completionPercent < 100 {
+            if session.phase == .finished {
+                session.phase = .itemPlayback
+            }
+            session.status = "in_progress"
+            try persistSession(session)
+        }
+        var item = try repository.loadItem(id: session.itemId)
+        item = try discardUnavailableGeneratedTextAudio(from: item)
+        currentItem = item
+        currentMap = try repository.loadListeningMap(itemId: session.itemId)
+        if session.currentTargetType == .itemTextTTS,
+           isGeneratedTextMedia(item.media),
+           let timeline = sourceTranscriptTimeline(itemId: item.id),
+           !timeline.segments.isEmpty,
+           !isPartialGeneratedTextMedia(item: item, timeline: timeline) {
+            let mediaTimeMs = mediaTimeMs(forTextOffset: session.position.charOffset, timeline: timeline)
+            session.currentTargetType = .transcriptBackedMedia
+            session.currentTargetId = itemPlaybackTargetId(for: item, targetType: .transcriptBackedMedia)
+            session = mediaSession(session, movedTo: mediaTimeMs)
+            try persistSession(session)
+        }
+        if let durationMs = durableMediaDurationMs(for: session) {
+            session = try repairMediaPercentages(session, durationMs: durationMs, forceNotes: true)
+        }
+        currentSession = session
+        publish(status: .paused, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func beginInterjection() throws -> SessionSnapshot {
+        try require("beginInterjection", category: "interjection", capabilities: ["record_audio", "delegate_interjection_to_canonical_runtime"])
+        guard pendingWrittenInterjection == nil else {
+            throw SessionKitError.invalidCommandForState("beginInterjection")
+        }
+        guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
+        let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
+            || session.currentTargetType == .browserOwnedMedia
+        if usesNativeMediaClock {
+            // Freeze native transport before sampling its clock. Sampling first
+            // lets media advance before the interruption and accumulates drift.
+            try audio.pause()
+            session = try syncCurrentPositionFromAudio(session)
+        } else {
+            // Speech pause callbacks can report terminal state synchronously.
+            // Capture text position before pausing so that callback cannot turn an
+            // in-progress interjection anchor into end-of-source completion.
+            session = try syncCurrentPositionFromAudio(session)
+            try audio.pause()
+        }
+        currentSession = session
+        try persistSession(session)
+        priorPhase = session.phase
+        let target = currentInterjectionTarget(for: session)
+        recordingTargetType = target.type
+        recordingTargetId = target.id
+        recordingAnchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
+        try recorder.beginRecording()
+        session.phase = .recordingInterjection
+        currentSession = session
+        snapshot.recordingTargetId = target.id
+        publish(status: .recording, phase: .recordingInterjection)
+        return snapshot
+    }
+
+    @discardableResult
+    public func beginWrittenInterjection() throws -> WrittenInterjectionCapture {
+        try requireNavigationAllowed("beginWrittenInterjection")
+        guard let originalSession = currentSession else {
+            throw SessionKitError.invalidCommandForState("beginWrittenInterjection")
+        }
+        guard pendingWrittenInterjection == nil else {
+            throw SessionKitError.invalidCommandForState("beginWrittenInterjection")
+        }
+        let wasPlaying = snapshot.status.isPlaybackActive
+        // Resolve the immutable target before changing transport. The native
+        // media clock still has to be sampled after pause, but every other
+        // fallible part of the transaction happens before audio is stopped.
+        let target = currentInterjectionTarget(for: originalSession)
+        _ = buildAnchor(for: originalSession, targetType: target.type, targetId: target.id)
+
+        do {
+            var session = originalSession
+            let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
+                || session.currentTargetType == .browserOwnedMedia
+            if usesNativeMediaClock {
+                try audio.pause()
+                session = try syncCurrentPositionFromAudio(session)
+            } else {
+                session = try syncCurrentPositionFromAudio(session)
+                try audio.pause()
+            }
+            let anchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
+            try persistSession(session)
+            currentSession = session
+            let capture = WrittenInterjectionCapture(
+                id: UUID().uuidString,
+                sessionId: session.id,
+                itemId: session.itemId,
+                targetType: target.type,
+                targetId: target.id,
+                anchor: anchor,
+                roughPercent: interjectionPercent(
+                    for: session,
+                    targetType: target.type,
+                    targetId: target.id,
+                    anchor: anchor
+                ),
+                wasPlaying: wasPlaying
+            )
+            pendingWrittenInterjection = capture
+            publish(status: .paused, phase: session.phase)
+            return capture
+        } catch {
+            // A failed begin must leave no draft and must restore transport if
+            // the source had been playing. The persisted session was only
+            // written after the pause/synchronization transaction succeeded.
+            currentSession = originalSession
+            if wasPlaying {
+                try? restoreWrittenInterjectionTransport(wasPlaying: true, session: originalSession)
+            } else {
+                try? audio.pause()
+                publish(status: .paused, phase: originalSession.phase)
+            }
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func saveWrittenInterjection(captureId: String, text: String) throws -> SessionSnapshot {
+        guard let capture = pendingWrittenInterjection, capture.id == captureId,
+              let session = currentSession,
+              session.id == capture.sessionId,
+              session.itemId == capture.itemId else {
+            throw SessionKitError.invalidCommandForState("saveWrittenInterjection")
+        }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SessionKitError.invalidCommandForState("saveWrittenInterjection")
+        }
+        let interjection = Interjection(
+            id: "ij-written-\(capture.id)",
+            itemId: capture.itemId,
+            sessionId: capture.sessionId,
+            targetType: capture.targetType,
+            targetId: capture.targetId,
+            createdAt: now(),
+            roughPercent: capture.roughPercent,
+            anchor: capture.anchor,
+            audioPath: nil,
+            audioStatus: "discarded",
+            transcriptionStatus: "transcribed",
+            transcript: text,
+            cleanedTranscript: nil,
+            displayText: text,
+            status: "active",
+            // Written capture does not schedule transcription. A missing
+            // cached context is unavailable, never pending background work.
+            anchorContextStatus: capture.anchor.mediaTimeMs == nil
+                || !capture.anchor.anchorBefore.isEmpty
+                || !capture.anchor.anchorAfter.isEmpty ? .ready : .unavailable,
+            captureKind: .written
+        )
+        try repository.saveInterjection(interjection)
+        lastMediaPercentageRepair = nil
+        pendingWrittenInterjection = nil
+        do {
+            try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying, session: session)
+        } catch {
+            // The note is already durable. Do not report this as a save failure
+            // or retain a retryable draft: doing either would allow a second
+            // submit to create a duplicate. Leave transport safely paused.
+            try? audio.pause()
+            publish(status: .paused, phase: session.phase)
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func cancelWrittenInterjection(captureId: String) throws -> SessionSnapshot {
+        guard let capture = pendingWrittenInterjection, capture.id == captureId,
+              let session = currentSession,
+              session.id == capture.sessionId,
+              session.itemId == capture.itemId else {
+            throw SessionKitError.invalidCommandForState("cancelWrittenInterjection")
+        }
+        try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying, session: session)
+        pendingWrittenInterjection = nil
+        return snapshot
+    }
+
+    private func restoreWrittenInterjectionTransport(wasPlaying: Bool, session: Session) throws {
+        if wasPlaying {
+            if externallyStreamedTurnId == session.currentTargetId {
+                publish(status: .starting, phase: session.phase)
+            } else {
+                try playCurrentTarget(session)
+                publishPlaybackStart(for: session, phase: session.phase)
+            }
+        } else {
+            try audio.pause()
+            publish(status: .paused, phase: session.phase)
+        }
+    }
+
+    private struct InterjectionAnchorPlaybackPlan {
+        var originalSession: Session
+        var session: Session
+        var item: Item
+        var map: ListeningMap?
+    }
+
+    private func interjectionAnchorPlaybackPlan(for requested: Interjection) throws -> InterjectionAnchorPlaybackPlan {
+        guard let originalSession = try repository.loadSession(id: requested.sessionId),
+              originalSession.itemId == requested.itemId,
+              let stored = try repository.loadInterjections(sessionId: requested.sessionId).first(where: {
+                  $0.id == requested.id
+                      && $0.sessionId == requested.sessionId
+                      && $0.itemId == requested.itemId
+              }),
+              stored.status == "active" else {
+            throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
+        }
+
+        let item = try repository.loadItem(id: originalSession.itemId)
+        let map = try repository.loadListeningMap(itemId: item.id)
+        var session = originalSession
+        switch stored.targetType {
+        case .item:
+            guard stored.targetId == item.id else {
+                throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
+            }
+            let targetType = playbackTargetType(for: item)
+            session.currentTargetType = targetType
+            session.currentTargetId = itemPlaybackTargetId(for: item, targetType: targetType)
+            session.phase = .itemPlayback
+            if targetType == .transcriptBackedMedia || targetType == .browserOwnedMedia {
+                guard let mediaTimeMs = stored.anchor.mediaTimeMs,
+                      mediaTimeMs >= 0 else {
+                    throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
+                }
+                let durableDurationMs = (try repository.loadTranscriptTimeline(itemId: item.id))?.timeline.durationMs
+                    ?? item.media?.durationMs
+                guard durableDurationMs.map({ mediaTimeMs <= $0 }) ?? true else {
+                    throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
+                }
+                session = mediaSession(session, movedTo: mediaTimeMs)
+            } else {
+                guard let text = item.text,
+                      stored.anchor.startChar >= 0,
+                      stored.anchor.endChar >= stored.anchor.startChar,
+                      stored.anchor.endChar <= text.count else {
+                    throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
+                }
+                session.position = Position(
+                    charOffset: stored.anchor.startChar,
+                    chapterId: map?.chapters.last(where: { $0.startChar <= stored.anchor.startChar })?.id
+                )
+                session.completionPercent = percent(for: stored.anchor.startChar, text: text)
+            }
+        case .assistantTurn, .summaryTurn:
+            guard let turn = try repository.loadTurns(sessionId: originalSession.id).first(where: { $0.id == stored.targetId }),
+                  turn.role == "assistant",
+                  (turn.status == "complete" || turn.status == "streaming"),
+                  (stored.targetType == .assistantTurn && turn.turnType == "assistant_response")
+                      || (stored.targetType == .summaryTurn && turn.turnType == "interjection_summary") else {
+                throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
+            }
+            let text = generatedTurnNavigationText(for: turn)
+            guard stored.anchor.startChar >= 0,
+                  stored.anchor.endChar >= stored.anchor.startChar,
+                  stored.anchor.endChar <= text.count else {
+                throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
+            }
+            session.currentTargetType = stored.targetType == .assistantTurn ? .assistantTurnTTS : .summaryTurnTTS
+            session.currentTargetId = turn.id
+            session.phase = stored.targetType == .assistantTurn ? .aiResponsePlayback : .summaryPlayback
+            session.position = Position(charOffset: stored.anchor.startChar, chapterId: nil)
+            session.completionPercent = percent(for: stored.anchor.startChar, text: text)
+        }
+        return InterjectionAnchorPlaybackPlan(originalSession: originalSession, session: session, item: item, map: map)
+    }
+
+    @discardableResult
+    public func playInterjectionAnchor(_ interjection: Interjection) throws -> SessionSnapshot {
+        try requireNavigationAllowed("playInterjectionAnchor")
+        let plan = try interjectionAnchorPlaybackPlan(for: interjection)
+        let previousSession = currentSession
+        let previousItem = currentItem
+        let previousMap = currentMap
+        let previousSnapshot = snapshot
+        let previousPendingPlaybackPosition = pendingPlaybackPosition
+        let previousExternallyStreamedTurnId = externallyStreamedTurnId
+
+        do {
+            currentSession = plan.session
+            currentItem = plan.item
+            currentMap = plan.map
+            externallyStreamedTurnId = nil
+            try persistSession(plan.session)
+            protectPlaybackPosition(for: plan.session)
+            try playCurrentTarget(plan.session)
+            publishPlaybackStart(for: plan.session, phase: plan.session.phase)
+            return snapshot
+        } catch {
+            // The target session has not become the user's current source until
+            // both its durable target and adapter setup succeed. Restore its
+            // stored position before returning to the prior source.
+            try? repository.saveSession(plan.originalSession)
+            currentSession = previousSession
+            currentItem = previousItem
+            currentMap = previousMap
+            pendingPlaybackPosition = previousPendingPlaybackPosition
+            externallyStreamedTurnId = previousExternallyStreamedTurnId
+            snapshot = previousSnapshot
+            if let previousSession {
+                do {
+                    if previousSnapshot.status.isPlaybackActive {
+                        try playCurrentTarget(previousSession)
+                        publishPlaybackStart(for: previousSession, phase: previousSession.phase)
+                    } else {
+                        try audio.pause()
+                        publish(status: .paused, phase: previousSession.phase)
+                    }
+                } catch {
+                    // Identity is still truthful even when the adapter cannot
+                    // restore the old transport.
+                    snapshot.status = .paused
+                    snapshot.phase = previousSession.phase
+                    snapshot.lastFailure = "playback_anchor_rollback_failed"
+                }
+            }
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func finishInterjection(audioRef: String?) throws -> SessionSnapshot {
+        guard var session = currentSession,
+              let anchor = recordingAnchor,
+              let targetType = recordingTargetType,
+              let targetId = recordingTargetId else {
+            throw SessionKitError.invalidCommandForState("finishInterjection")
+        }
+        let savedAudioRef = try recorder.finishRecording(audioRef: audioRef)
+        if profile.has("sync", "queue_offline_events"), let package = currentWatchPackage {
+            let event = try queueWatchInterjectionEvent(audioRef: savedAudioRef, session: session, package: package)
+            lastQueuedWatchSyncEvent = event
+            snapshot.lastInterjectionAnchorType = anchor.anchorType
+            snapshot.lastInterjectionTargetType = targetType
+            session.phase = priorPhaseForResume(targetType: targetType)
+            session = applyMediaRollback(session, package: package)
+            currentSession = session
+            try persistSession(session)
+            try playCurrentTarget(session)
+            publishPlaybackStart(for: session, phase: session.phase)
+            return snapshot
+        }
+        let count = try repository.loadInterjections(sessionId: session.id).count + 1
+        let item = try? repository.loadItem(id: session.itemId)
+        let shouldCapturePostResumePodcastEvidence = targetType == .item
+            && anchor.mediaTimeMs != nil
+            && item.map(isNativeAudioSource) == true
+        var interjection = Interjection(
+            id: targetType == .assistantTurn ? "ij-ai-\(String(format: "%03d", count))" : "ij-\(String(format: "%03d", count))",
+            itemId: session.itemId,
+            sessionId: session.id,
+            targetType: targetType,
+            targetId: targetId,
+            createdAt: Date(timeIntervalSince1970: Double(count)),
+            roughPercent: interjectionPercent(
+                for: session,
+                targetType: targetType,
+                targetId: targetId,
+                anchor: anchor
+            ),
+            anchor: anchor,
+            audioPath: savedAudioRef,
+            audioStatus: "saved",
+            transcriptionStatus: "pending",
+            transcript: nil,
+            cleanedTranscript: nil,
+            displayText: nil,
+            status: "active",
+            anchorContextStatus: anchor.mediaTimeMs == nil || !anchor.anchorBefore.isEmpty || !anchor.anchorAfter.isEmpty ? .ready : .pending,
+            podcastAnchorEvidenceCaptureStatus: shouldCapturePostResumePodcastEvidence
+                ? .pendingPostResumeSample
+                : nil
+        )
+        try repository.saveInterjection(interjection)
+        lastMediaPercentageRepair = nil
+        if shouldCapturePostResumePodcastEvidence,
+           let anchorMediaTimeMs = anchor.mediaTimeMs {
+            let evidenceRequest = PostResumeAudioSampleRequest(
+                interjectionId: interjection.id,
+                sessionId: session.id,
+                itemId: session.itemId,
+                anchorMediaTimeMs: anchorMediaTimeMs,
+                targetDurationMs: SparseFingerprintSchedule.targetDurationMs,
+                captureDelayMs: SparseFingerprintSchedule.seekDebounceMs
+            )
+            let capturedPreWindow = audio.captureBufferedPreInterjectionAudioSample(evidenceRequest)
+            let armedPostWindow = audio.armPostResumeAudioSample(evidenceRequest)
+            if !capturedPreWindow && !armedPostWindow {
+                interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
+                interjection.podcastAnchorEvidenceFailureReason = "decoded_playback_sample_unavailable"
+                try repository.saveInterjection(interjection)
+                lastMediaPercentageRepair = nil
+            } else if !capturedPreWindow || !armedPostWindow {
+                // One window still runs; record the one that didn't so a later success can't hide it.
+                interjection.podcastAnchorEvidenceFailureReason = PodcastAnchorCaptureDiagnostics.appendingFailureReason(
+                    capturedPreWindow ? "post_window_not_armed" : "pre_window_not_captured",
+                    to: interjection.podcastAnchorEvidenceFailureReason
+                )
+                try repository.saveInterjection(interjection)
+                lastMediaPercentageRepair = nil
+            }
+        }
+        try transcriber.scheduleTranscription(interjection: interjection)
+        lastScheduledTranscriptionInterjectionId = interjection.id
+        snapshot.lastInterjectionAnchorType = anchor.anchorType
+        snapshot.lastInterjectionTargetType = targetType
+        session.phase = priorPhaseForResume(targetType: targetType)
+        // beginInterjection already captured and persisted the authoritative
+        // source position before pausing. Resume from that position exactly;
+        // applying a second sentence-boundary adjustment here causes backward
+        // drift and can move an exact boundary into the preceding sentence.
+        currentSession = session
+        try persistSession(session)
+        if externallyStreamedTurnId == session.currentTargetId {
+            publish(status: .starting, phase: session.phase)
+        } else {
+            try playCurrentTarget(session)
+            publishPlaybackStart(for: session, phase: session.phase)
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func cancelInterjection() throws -> SessionSnapshot {
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("cancelInterjection")
+        }
+        try recorder.cancelRecording()
+        session.phase = priorPhase ?? priorPhaseForResume(targetType: recordingTargetType ?? .item)
+        // Cancellation follows the same exact-resume policy as completion.
+        // The captured position is already present in the session.
+        recordingAnchor = nil
+        recordingTargetType = nil
+        recordingTargetId = nil
+        currentSession = session
+        try persistSession(session)
+        if externallyStreamedTurnId == session.currentTargetId {
+            publish(status: .starting, phase: session.phase)
+        } else {
+            try playCurrentTarget(session)
+            publishPlaybackStart(for: session, phase: session.phase)
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func generateInterjectionSummary(scope: SummaryScope) throws -> SessionSnapshot {
+        try require("generateInterjectionSummary", category: "ai", capabilities: ["summarize_interjections", "defer_ai_jobs"])
+        let session = try resolveSession(scope.sessionId)
+        lastSummaryCandidates = try selectSummaryCandidates(scope: scope)
+        let shouldCall = aiProvider.shouldStartProviderCall(profile: profile, kind: "interjection_summary")
+        let status = shouldCall ? "pending" : "deferred"
+        let turns = try repository.loadTurns(sessionId: session.id)
+        let interjections = try repository.loadInterjections(sessionId: session.id)
+        let existingTurn = replacementSummaryTurn(scope: scope, session: session, turns: turns, interjections: interjections)
+        if let existingTurn,
+           existingTurn.status != "failed",
+           existingTurn.status != "failed_partial",
+           Set(existingTurn.sourceInterjectionIds) == Set(lastSummaryCandidates.map(\.id)) {
+            throw SessionKitError.invalidCommandForState("interjection_summary_already_current")
+        }
+        let summaryIndex = existingTurn.flatMap { turnSequenceNumber($0.id) } ?? turns.filter { $0.turnType == "interjection_summary" }.count + 1
+        let turnId = existingTurn?.id ?? "turn-summary-\(String(format: "%03d", summaryIndex))"
+        let turn = ConversationTurn(
+            id: turnId,
+            sessionId: session.id,
+            role: "assistant",
+            turnType: "interjection_summary",
+            status: status,
+            summary: nil,
+            text: nil,
+            rawText: nil,
+            chapters: nil,
+            sourceInterjectionIds: lastSummaryCandidates.map(\.id)
+        )
+        try repository.saveTurn(turn)
+        let job = aiJob(id: "job-interjection-summary-\(String(format: "%03d", summaryIndex))", kind: "interjection_summary", session: session, turnId: turn.id, status: status)
+        try repository.saveAIJob(job)
+        snapshot.pendingAiJobKind = job.kind
+        snapshot.pendingAiJobStatus = job.status
+        snapshot.providerCallStarted = shouldCall
+        snapshot.pendingAiJobCount = try repository.loadAIJobs(sessionId: session.id).filter { $0.status != "complete" }.count
+        return snapshot
+    }
+
+    private func replacementSummaryTurn(scope: SummaryScope, session: Session, turns: [ConversationTurn], interjections: [Interjection]) -> ConversationTurn? {
+        let target = summaryTarget(scope: scope, session: session)
+        return turns
+            .filter { $0.turnType == "interjection_summary" && summaryTurn($0, matches: target, interjections: interjections) }
+            .sorted { $0.id < $1.id }
+            .last
+    }
+
+    private func summaryTarget(scope: SummaryScope, session: Session) -> (type: InterjectionTargetType, id: String) {
+        if scope.targetType == "turn", let turnId = scope.turnId {
+            return (.assistantTurn, turnId)
+        }
+        return (.item, session.itemId)
+    }
+
+    private func summaryTurn(
+        _ turn: ConversationTurn,
+        matches target: (type: InterjectionTargetType, id: String),
+        interjections: [Interjection]
+    ) -> Bool {
+        guard !turn.sourceInterjectionIds.isEmpty else { return false }
+        let byId = Dictionary(uniqueKeysWithValues: interjections.map { ($0.id, $0) })
+        let sourceInterjections = turn.sourceInterjectionIds.compactMap { byId[$0] }
+        guard sourceInterjections.count == turn.sourceInterjectionIds.count,
+              sourceInterjections.allSatisfy({ $0.status == "active" }) else { return false }
+        switch target.type {
+        case .item:
+            return sourceInterjections.allSatisfy { $0.targetType == .item && $0.targetId == target.id }
+        case .assistantTurn, .summaryTurn:
+            return sourceInterjections.allSatisfy { $0.targetType != .item && $0.targetId == target.id }
+        }
+    }
+
+    @discardableResult
+    public func playTurn(turnId: String) throws -> SessionSnapshot {
+        try requireNavigationAllowed("playTurn")
+        externallyStreamedTurnId = nil
+        var session = try resolveSession(nil)
+        let turns = try repository.loadTurns(sessionId: session.id)
+        let targetType: TargetType
+        let phase: SessionPhase
+        if let turn = turns.first(where: { $0.id == turnId }), turn.turnType == "interjection_summary" {
+            try require("playTurn", category: "playback", capabilities: ["summary_turn_tts"])
+            targetType = .summaryTurnTTS
+            phase = .summaryPlayback
+        } else {
+            try require("playTurn", category: "playback", capabilities: ["assistant_turn_tts"])
+            targetType = .assistantTurnTTS
+            phase = .aiResponsePlayback
+        }
+        session.currentTargetType = targetType
+        session.currentTargetId = turnId
+        session.phase = phase
+        session.position = Position(charOffset: 0)
+        currentSession = session
+        try persistSession(session)
+        try playCurrentTarget(session)
+        publishPlaybackStart(for: session, phase: phase)
+        return snapshot
+    }
+
+    /// Makes an incrementally generated turn the canonical interjection target. The
+    /// app's streaming queue feeds audio chunks, while SessionEngine remains the
+    /// canonical owner of user-visible playback state and position.
+    @discardableResult
+    public func activateStreamingTurn(turnId: String) throws -> SessionSnapshot {
+        var session = try resolveSession(nil)
+        let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == turnId })
+        let targetType: TargetType = turn?.turnType == "interjection_summary" ? .summaryTurnTTS : .assistantTurnTTS
+        let phase: SessionPhase = targetType == .summaryTurnTTS ? .summaryPlayback : .aiResponsePlayback
+
+        if session.currentTargetId != turnId, snapshot.status.isPlaybackActive {
+            session = try syncCurrentPositionFromAudio(session)
+            try audio.pause()
+        }
+        externallyStreamedTurnId = turnId
+        if session.currentTargetId != turnId || session.currentTargetType != targetType {
+            session.currentTargetType = targetType
+            session.currentTargetId = turnId
+            session.position = Position(charOffset: 0)
+        }
+        session.phase = phase
+        currentSession = session
+        try persistSession(session)
+        // The streaming queue has only claimed the turn at this point. Its
+        // speech client may still be rendering or buffering the first chunk.
+        publish(status: .starting, phase: phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func finishStreamingTurnPlayback(turnId: String) throws -> SessionSnapshot {
+        guard var session = currentSession,
+              externallyStreamedTurnId == turnId,
+              session.currentTargetId == turnId,
+              session.currentTargetType == .summaryTurnTTS || session.currentTargetType == .assistantTurnTTS else {
+            return snapshot
+        }
+        let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == turnId })
+        let text = turn.map { generatedTurnNavigationText(for: $0) } ?? ""
+        session.position.charOffset = text.count
+        session.position.chapterId = turn?.chapters?.last?.id
+        // The streaming queue uses chunk-scoped target IDs. Clear that completed
+        // transport before publishing the turn-scoped terminal snapshot so a
+        // final chunk offset cannot make a completed response appear 80–90% done.
+        try audio.stop()
+        externallyStreamedTurnId = nil
+        currentSession = session
+        try persistSession(session)
+        publish(status: .paused, phase: session.phase)
+        return snapshot
+    }
+
+    /// Updates the conservative sentence-level cursor supplied by the streaming
+    /// speech queue. The canonical audio client must not overwrite this position.
+    @discardableResult
+    public func updateStreamingTurnPosition(turnId: String, charOffset: Int) throws -> SessionSnapshot {
+        guard var session = currentSession,
+              externallyStreamedTurnId == turnId,
+              session.currentTargetId == turnId,
+              session.currentTargetType == .summaryTurnTTS || session.currentTargetType == .assistantTurnTTS else {
+            return snapshot
+        }
+        let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == turnId })
+        let turnText = turn.map { generatedTurnNavigationText(for: $0) } ?? ""
+        session.position.charOffset = max(0, min(charOffset, turnText.count))
+        session.position.chapterId = turn?
+            .chapters?
+            .last(where: { $0.startChar <= session.position.charOffset })?
+            .id
+        currentSession = session
+        try persistSession(session)
+        publish(status: snapshot.status, phase: session.phase)
+        return snapshot
+    }
+
+    /// Reconciles the observed start of an externally fed speech chunk with the
+    /// canonical generated-turn state used by every playback surface.
+    @discardableResult
+    public func streamingTurnPlaybackStarted(turnId: String, charOffset: Int) throws -> SessionSnapshot {
+        _ = try updateStreamingTurnPosition(turnId: turnId, charOffset: charOffset)
+        guard let session = currentSession,
+              externallyStreamedTurnId == turnId,
+              session.currentTargetId == turnId else {
+            return snapshot
+        }
+        publish(status: .playing, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func jumpToTurnChapter(turnId: String, chapterId: String) throws -> SessionSnapshot {
+        try requireNavigationAllowed("jumpToTurnChapter")
+        var session = try resolveSession(nil)
+        let turns = try repository.loadTurns(sessionId: session.id)
+        guard let turn = turns.first(where: { $0.id == turnId }),
+              let chapter = turn.chapters?.first(where: { $0.id == chapterId }) else {
+            throw SessionKitError.invalidCommandForState("jumpToTurnChapter")
+        }
+        if turn.turnType == "interjection_summary" {
+            try require("jumpToTurnChapter", category: "playback", capabilities: ["summary_turn_tts"])
+            session.currentTargetType = .summaryTurnTTS
+            session.phase = .summaryPlayback
+        } else {
+            try require("jumpToTurnChapter", category: "playback", capabilities: ["assistant_turn_tts"])
+            session.currentTargetType = .assistantTurnTTS
+            session.phase = .aiResponsePlayback
+        }
+        session.currentTargetId = turnId
+        session.position = Position(charOffset: chapter.startChar, chapterId: chapter.id)
+        currentSession = session
+        try persistSession(session)
+        try playCurrentTarget(session)
+        publishPlaybackStart(for: session, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func submitFollowup(text: String) throws -> SessionSnapshot {
+        try require("submitFollowup", category: "ai", capabilities: ["continue_discussion", "defer_ai_jobs"])
+        var session = try resolveSession(nil)
+        session.phase = .conversation
+        currentSession = session
+        let userTurn = ConversationTurn(
+            id: "turn-addendum-\(UUID().uuidString.prefix(8))",
+            sessionId: session.id,
+            role: "user",
+            turnType: "user_response",
+            status: "complete",
+            summary: nil,
+            text: text,
+            rawText: text,
+            chapters: nil,
+            sourceInterjectionIds: []
+        )
+        try repository.saveTurn(userTurn)
+        let shouldCall = aiProvider.shouldStartProviderCall(profile: profile, kind: "assistant_response")
+        let status = shouldCall ? "pending" : "deferred"
+        let responseIndex = try repository.loadTurns(sessionId: session.id).filter { $0.turnType == "assistant_response" }.count + 1
+        let responseTurnId = "turn-response-\(String(format: "%03d", responseIndex))"
+        let responseTurn = ConversationTurn(
+            id: responseTurnId,
+            sessionId: session.id,
+            role: "assistant",
+            turnType: "assistant_response",
+            status: status,
+            summary: nil,
+            text: nil,
+            rawText: nil,
+            chapters: nil,
+            sourceInterjectionIds: []
+        )
+        try repository.saveTurn(responseTurn)
+        let job = aiJob(id: "job-assistant-response-\(String(format: "%03d", responseIndex))", kind: "assistant_response", session: session, turnId: responseTurn.id, status: status, messages: [text])
+        try repository.saveAIJob(job)
+        snapshot.lastUserTurnType = userTurn.turnType
+        snapshot.pendingAiJobKind = job.kind
+        snapshot.pendingAiJobStatus = job.status
+        snapshot.providerCallStarted = shouldCall
+        publish(status: snapshot.status, phase: .conversation)
+        return snapshot
+    }
+
+    @discardableResult
+    public func importAssistantResponse(text rawText: String, autoPlay: Bool = true) throws -> SessionSnapshot {
+        try require("importAssistantResponse", category: "sync", capabilities: ["canonical_persistence"])
+        var session = try resolveSession(nil)
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw SessionKitError.invalidCommandForState("importAssistantResponse")
+        }
+        let parsed = parseSectionedResponse(from: trimmed)
+        let turns = try repository.loadTurns(sessionId: session.id)
+        let responseIndex = turns.filter { $0.turnType == "assistant_response" }.count + 1
+        let turn = ConversationTurn(
+            id: "turn-response-\(String(format: "%03d", responseIndex))",
+            sessionId: session.id,
+            role: "assistant",
+            turnType: "assistant_response",
+            status: "complete",
+            summary: parsed.summary,
+            text: parsed.response.isEmpty ? trimmed : parsed.response,
+            rawText: trimmed,
+            chapters: parsed.chapters,
+            sourceInterjectionIds: []
+        )
+        try repository.saveTurn(turn)
+        session.phase = .conversation
+        currentSession = session
+        try persistSession(session)
+        snapshot.turnStatus = "complete"
+        if autoPlay {
+            return try playTurn(turnId: turn.id)
+        }
+        publish(status: snapshot.status, phase: .conversation)
+        return snapshot
+    }
+
+    @discardableResult
+    public func aiProviderFailed(error: String) throws -> SessionSnapshot {
+        let session = try resolveSession(nil)
+        var jobs = try repository.loadAIJobs(sessionId: session.id)
+        guard var job = jobs.last(where: { $0.status == "pending" || $0.status == "deferred" }) else {
+            throw SessionKitError.invalidCommandForState("aiProviderFailed")
+        }
+        job.status = "retryable"
+        job.lastError = error
+        job.attempts = max(1, job.attempts)
+        try repository.updateAIJob(job)
+        if let turnId = job.turnId,
+           var turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == turnId }) {
+            let hasPartialContent = turn.rawText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                || turn.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            turn.status = hasPartialContent ? "failed_partial" : "failed"
+            try repository.saveTurn(turn)
+        }
+        snapshot.pendingAiJobKind = job.kind
+        snapshot.pendingAiJobStatus = job.status
+        snapshot.lastFailure = "ai_provider_unreachable"
+        snapshot.turnStatus = "failed"
+        jobs = try repository.loadAIJobs(sessionId: session.id)
+        snapshot.pendingAiJobCount = jobs.filter { $0.status != "complete" }.count
+        return snapshot
+    }
+
+    @discardableResult
+    public func retryAIJob(jobId: String) throws -> SessionSnapshot {
+        let session = try resolveSession(nil)
+        guard var job = try repository.loadAIJobs(sessionId: session.id).first(where: { $0.id == jobId }) else {
+            throw SessionKitError.invalidCommandForState("retryAiJob")
+        }
+        job.status = "pending"
+        job.attempts += 1
+        try repository.updateAIJob(job)
+        if let turnId = job.turnId {
+            streamingBuffers[turnId] = ""
+            spokenPrefixes[turnId] = 0
+            var turns = try repository.loadTurns(sessionId: session.id)
+            if let idx = turns.firstIndex(where: { $0.id == turnId }) {
+                turns[idx].status = "streaming"
+                try repository.saveTurn(turns[idx])
+            }
+        }
+        snapshot.pendingAiJobKind = job.kind
+        snapshot.pendingAiJobStatus = job.status
+        snapshot.turnStatus = "streaming"
+        return snapshot
+    }
+
+    @discardableResult
+    public func aiStreamDelta(turnId: String, content: String) throws -> SessionSnapshot {
+        let session = try resolveSession(nil)
+        let previous = streamingBuffers[turnId] ?? ""
+        let combined = previous + content
+        streamingBuffers[turnId] = combined
+        let parsed = parseSectionedResponse(from: combined)
+        let text = parsed.response
+        let alreadySpoken = spokenPrefixes[turnId] ?? 0
+        let completeUnits = completeSentenceUnits(in: text)
+        let unitsToSpeak = completeUnits.dropFirst(alreadySpoken)
+        spokenPrefixes[turnId] = completeUnits.count
+        var turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == turnId }) ?? ConversationTurn(
+            id: turnId,
+            sessionId: session.id,
+            role: "assistant",
+            turnType: "assistant_response",
+            status: "streaming",
+            summary: nil,
+            text: nil,
+            rawText: nil,
+            chapters: nil,
+            sourceInterjectionIds: []
+        )
+        turn.status = "streaming"
+        turn.summary = parsed.summary
+        turn.text = text
+        turn.rawText = combined
+        try repository.saveTurn(turn)
+        snapshot.turnStatus = "streaming"
+        snapshot.spokenUnits = Array(unitsToSpeak)
+        return snapshot
+    }
+
+    @discardableResult
+    public func aiJobCompleted(turnId: String) throws -> SessionSnapshot {
+        let session = try resolveSession(nil)
+        var turns = try repository.loadTurns(sessionId: session.id)
+        var turn = turns.first(where: { $0.id == turnId }) ?? ConversationTurn(
+            id: turnId,
+            sessionId: session.id,
+            role: "assistant",
+            turnType: turnId.contains("summary") ? "interjection_summary" : "assistant_response",
+            status: "complete",
+            summary: nil,
+            text: nil,
+            rawText: nil,
+            chapters: nil,
+            sourceInterjectionIds: []
+        )
+        turn.status = "complete"
+        let parsed = parseSectionedResponse(from: turn.rawText ?? "")
+        if turn.summary == nil || turn.summary?.isEmpty == true {
+            turn.summary = parsed.summary
+        }
+        if turn.text == nil {
+            turn.text = parsed.response
+            if turn.text?.isEmpty != false {
+                turn.text = turn.turnType == "interjection_summary" ? "Summary ready." : "AI response ready."
+            }
+        }
+        if turn.chapters == nil || turn.chapters?.isEmpty == true {
+            turn.chapters = parsed.chapters
+        }
+        let allSpeechUnits = sentenceUnits(in: parsed.response, includeTrailingFragment: true)
+        let alreadySpoken = spokenPrefixes[turnId] ?? 0
+        snapshot.spokenUnits = Array(allSpeechUnits.dropFirst(alreadySpoken))
+        spokenPrefixes[turnId] = allSpeechUnits.count
+        streamingBuffers.removeValue(forKey: turnId)
+        try repository.saveTurn(turn)
+        for var job in try repository.loadAIJobs(sessionId: session.id) where job.turnId == turnId {
+            job.status = "complete"
+            try repository.updateAIJob(job)
+        }
+        turns = try repository.loadTurns(sessionId: session.id)
+        let pendingJobs = try repository.loadAIJobs(sessionId: session.id).filter { $0.status != "complete" }
+        snapshot.turnStatus = "complete"
+        snapshot.pendingAiJobCount = pendingJobs.count
+        let nextPhase: SessionPhase
+        if snapshot.status.isPlaybackActive, rawAudioTextOffset() != nil {
+            nextPhase = session.phase
+        } else if turn.turnType == "interjection_summary" {
+            nextPhase = .interjectionSummary
+        } else {
+            nextPhase = .conversation
+        }
+        publish(status: snapshot.status, phase: nextPhase)
+        _ = turns
+        return snapshot
+    }
+
+    @discardableResult
+    public func aiChaptersCompleted(turnId: String, chapters: [Chapter]) throws -> SessionSnapshot {
+        let session = try resolveSession(nil)
+        guard var turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == turnId }) else {
+            throw SessionKitError.invalidCommandForState("aiChaptersCompleted")
+        }
+        turn.chapters = chapters.sorted { $0.startChar < $1.startChar }
+        try repository.saveTurn(turn)
+        return snapshot
+    }
+
+    @discardableResult
+    public func transcriptionCompleted(interjectionId: String, sessionId: String? = nil, transcript: String) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            interjection.transcript = transcript
+            interjection.alignedTranscript = nil
+            interjection.transcriptionStatus = "transcribed"
+            interjection.cleanedTranscript = nil
+            interjection.displayText = transcript
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func transcriptionCompleted(
+        interjectionId: String,
+        sessionId: String? = nil,
+        alignedTranscript: AlignedInterjectionTranscript
+    ) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            interjection.transcript = alignedTranscript.text
+            interjection.alignedTranscript = alignedTranscript
+            interjection.transcriptionStatus = "transcribed"
+            interjection.cleanedTranscript = nil
+            interjection.displayText = alignedTranscript.text
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func podcastAnchorEvidenceCompleted(
+        interjectionId: String,
+        sessionId: String? = nil,
+        evidence: [CapturedPodcastAnchorEvidence],
+        sourceExactEditionSHA256: String?
+    ) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            interjection.podcastAnchorEvidence = evidence
+            interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256
+            interjection.podcastAnchorEvidenceCaptureStatus = .ready
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func podcastAnchorEvidenceFailed(
+        interjectionId: String,
+        sessionId: String? = nil,
+        reason: String
+    ) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
+            interjection.podcastAnchorEvidenceFailureReason = PodcastAnchorCaptureDiagnostics.appendingFailureReason(
+                reason,
+                to: interjection.podcastAnchorEvidenceFailureReason
+            )
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func transcriptionFailed(interjectionId: String, sessionId: String? = nil, error: String) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            interjection.transcriptionStatus = "failed"
+            interjection.displayText = "Audio saved. Transcript failed."
+        }
+        snapshot.lastFailure = "transcription_failed:\(error)"
+        return snapshot
+    }
+
+    @discardableResult
+    public func sourceWindowContextCompleted(interjectionId: String, sessionId: String? = nil, timeline: TranscriptTimeline) throws -> SessionSnapshot {
+        let normalized = normalizedSourceTranscriptTimeline(timeline).timeline
+        guard !normalized.segments.isEmpty else {
+            return try sourceWindowContextUnavailable(interjectionId: interjectionId, sessionId: sessionId)
+        }
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            let mediaTimeMs = interjection.anchor.mediaTimeMs ?? 0
+            let resolved = MediaTimelineAnchorResolver.resolve(
+                mediaTimeMs: mediaTimeMs,
+                timeline: normalized,
+                playbackRateObserved: interjection.anchor.playbackRateObserved
+            )
+            let context = SourceAnchorContextResolver.resolve(mediaTimeMs: mediaTimeMs, timeline: normalized)
+            interjection.anchor.mediaTimeMs = resolved.mediaTimeMs
+            interjection.anchor.playbackRateObserved = resolved.playbackRateObserved
+            if let context {
+                interjection.anchor.anchorType = .transcript
+                interjection.anchor.startChar = context.startChar
+                interjection.anchor.endChar = context.endChar
+                interjection.anchor.anchorBefore = context.anchorBefore
+                interjection.anchor.anchorAfter = context.anchorAfter
+                interjection.anchor.transcriptSegmentId = context.transcriptSegmentId
+                interjection.anchorContextStatus = .ready
+            } else {
+                interjection.anchor.anchorType = .media
+                interjection.anchor.startChar = resolved.startChar
+                interjection.anchor.endChar = resolved.endChar
+                interjection.anchor.anchorBefore = ""
+                interjection.anchor.anchorAfter = ""
+                interjection.anchor.transcriptSegmentId = nil
+                interjection.anchorContextStatus = .unavailable
+            }
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func sourceWindowContextUnavailable(interjectionId: String, sessionId: String? = nil) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            interjection.anchorContextStatus = .unavailable
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func sourceWindowContextPending(interjectionId: String, sessionId: String? = nil) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            interjection.anchorContextStatus = .pending
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func cleanupCompleted(interjectionId: String, sessionId: String? = nil, cleanedTranscript: String) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            interjection.cleanedTranscript = cleanedTranscript
+            interjection.displayText = cleanedTranscript
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func deleteRepresentation(interjectionId: String, sessionId: String? = nil, representation: String) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            if representation == "cleanedTranscript" {
+                interjection.cleanedTranscript = nil
+                interjection.displayText = interjection.transcript
+            } else if representation == "transcript" {
+                interjection.transcript = nil
+                interjection.cleanedTranscript = nil
+                interjection.displayText = nil
+                interjection.transcriptionStatus = interjection.audioPath == nil ? "failed" : "pending"
+            }
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func deleteInterjection(interjectionId: String, sessionId: String? = nil) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            interjection.status = "deleted"
+        }
+        publish(status: snapshot.status, phase: snapshot.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func endSession() throws -> SessionSnapshot {
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("endSession")
+        }
+        let sourceWasComplete = session.completionPercent >= 100
+        let targetWasComplete = audio.isPlaybackComplete(targetId: session.currentTargetId)
+        // Inspecting completed history does not load that session into the audio
+        // adapter. Its idle/stale position must not rewrite the completed record.
+        if session.phase != .finished || !sourceWasComplete {
+            session = try syncCurrentPositionFromAudio(session)
+        }
+        if targetWasComplete {
+            switch session.currentTargetType {
+            case .itemTextTTS, .transcriptBackedMedia, .browserOwnedMedia:
+                session = markPlaybackComplete(session, item: currentItem)
+            case .summaryTurnTTS, .assistantTurnTTS:
+                if sourceWasComplete {
+                    session.completionPercent = 100
+                    session.phase = .finished
+                    session.status = "finished"
+                }
+            }
+        }
+        try audio.stop()
+        if session.phase == .finished, session.completionPercent >= 100 {
+            session.status = "finished"
+        } else {
+            session.status = "in_progress"
+        }
+        if session.phase == .finished, session.completionPercent < 100 {
+            session.phase = .itemPlayback
+        }
+        currentSession = session
+        try persistSession(session)
+        currentSession = nil
+        currentItem = nil
+        currentMap = nil
+        recordingAnchor = nil
+        recordingTargetType = nil
+        recordingTargetId = nil
+        priorPhase = nil
+        externallyStreamedTurnId = nil
+        streamingBuffers.removeAll()
+        spokenPrefixes.removeAll()
+        clearPlaybackStartPending()
+        snapshot = SessionSnapshot()
+        return snapshot
+    }
+
+    @discardableResult
+    public func selectSummaryCandidates(scope: SummaryScope) throws -> [Interjection] {
+        let session = try resolveSession(scope.sessionId)
+        let all = try repository.loadInterjections(sessionId: scope.sessionId ?? session.id)
+            .filter { $0.status == "active" }
+        if let explicit = scope.interjectionIds {
+            lastSummaryCandidates = all.filter { explicit.contains($0.id) }
+        } else if scope.targetType == "turn", let turnId = scope.turnId {
+            lastSummaryCandidates = all.filter { $0.targetId == turnId && $0.targetType != .item }
+        } else {
+            lastSummaryCandidates = all.filter { $0.targetType == .item }
+        }
+        return lastSummaryCandidates
+    }
+
+    public func hasSummaryCandidates(scope: SummaryScope) -> Bool {
+        guard let candidates = try? summaryCandidates(scope: scope),
+              !candidates.isEmpty,
+              let session = try? summarySession(scope.sessionId),
+              let turns = try? repository.loadTurns(sessionId: session.id),
+              let interjections = try? repository.loadInterjections(sessionId: session.id) else {
+            return false
+        }
+        guard let existingTurn = replacementSummaryTurn(scope: scope, session: session, turns: turns, interjections: interjections) else {
+            return true
+        }
+        if existingTurn.status == "failed" || existingTurn.status == "failed_partial" {
+            return true
+        }
+        return Set(existingTurn.sourceInterjectionIds) != Set(candidates.map(\.id))
+    }
+
+    private func summaryCandidates(scope: SummaryScope) throws -> [Interjection] {
+        let session = try summarySession(scope.sessionId)
+        let all = try repository.loadInterjections(sessionId: scope.sessionId ?? session.id)
+            .filter { $0.status == "active" }
+        if let explicit = scope.interjectionIds {
+            return all.filter { explicit.contains($0.id) }
+        }
+        if scope.targetType == "turn", let turnId = scope.turnId {
+            return all.filter { $0.targetId == turnId && $0.targetType != .item }
+        }
+        return all.filter { $0.targetType == .item }
+    }
+
+    private func summarySession(_ sessionId: String?) throws -> Session {
+        if let sessionId, let loaded = try repository.loadSession(id: sessionId) {
+            return loaded
+        }
+        if let currentSession {
+            return currentSession
+        }
+        throw SessionKitError.invalidCommandForState("selectSummaryCandidates")
+    }
+
+    @discardableResult
+    public func buildExport(options: ExportOptions) throws -> SessionExport {
+        let session = try resolveSession(options.sessionId)
+        let item = try repository.loadItem(id: session.itemId)
+        let sourceTimeline = try repository.loadTranscriptTimeline(itemId: item.id)?.timeline
+        let allInterjections = try repository.loadInterjections(sessionId: session.id)
+            .filter { $0.status == "active" }
+        let activeInterjectionIDs = Set(allInterjections.map(\.id))
+        let allTurns = try repository.loadTurns(sessionId: session.id).filter { turn in
+            guard turn.turnType == "interjection_summary", !turn.sourceInterjectionIds.isEmpty else {
+                return true
+            }
+            return Set(turn.sourceInterjectionIds).isSubset(of: activeInterjectionIDs)
+        }
+        let exposesFullSourceText = options.includeFullText && !isNativeAudioSource(item)
+        let sourceTranscript = exposesFullSourceText
+            ? sourceTimeline?.segments
+                .sorted { $0.startMs < $1.startMs }
+                .map(\.text)
+                .joined(separator: " ")
+            : nil
+        let interjections = options.includeInterjections ? scopedExportInterjections(options: options, session: session, interjections: allInterjections) : []
+        let turns = options.includeTurns ? scopedExportTurns(options: options, turns: allTurns, interjections: interjections) : []
+        let export = SessionExport(
+            item: ExportItem(
+                id: item.id,
+                title: item.title,
+                externalReference: options.includeReference ? item.externalReference : nil,
+                sourceURL: options.includeReference ? item.media?.url : nil,
+                mediaSourceType: item.media?.sourceType.rawValue,
+                includedFullText: exposesFullSourceText,
+                text: exposesFullSourceText ? item.text : nil,
+                sourceTranscript: sourceTranscript
+            ),
+            session: ExportSession(id: session.id, status: session.status, completionPercent: session.completionPercent),
+            listeningMap: options.includeListeningMap ? try repository.loadListeningMap(itemId: item.id) : nil,
+            turns: turns,
+            timeline: exportTimeline(interjections: interjections, turns: turns),
+            interjections: interjections.map { interjection in
+                let resolvedContext: SourceAnchorContext?
+                let shouldResolveNativeContext = isNativeAudioSource(item)
+                    && interjection.targetType == .item
+                    && interjection.anchor.mediaTimeMs != nil
+                    && sourceTimeline != nil
+                if shouldResolveNativeContext,
+                   interjection.targetType == .item,
+                   let mediaTimeMs = interjection.anchor.mediaTimeMs,
+                   let sourceTimeline {
+                    resolvedContext = SourceAnchorContextResolver.resolve(
+                        mediaTimeMs: mediaTimeMs,
+                        timeline: sourceTimeline
+                    )
+                } else {
+                    resolvedContext = nil
+                }
+                let turn = interjection.targetType == .item
+                    ? nil
+                    : allTurns.first(where: { $0.id == interjection.targetId })
+                let turnContext = turn.map {
+                    exportTurnAnchorContext(for: interjection.anchor, turn: $0)
+                }
+                return ExportInterjection(
+                    id: interjection.id,
+                    sessionId: interjection.sessionId,
+                    targetType: interjection.targetType.rawValue,
+                    targetId: interjection.targetId,
+                    roughPercent: turn.map {
+                        percent(
+                            for: max(0, min(interjection.anchor.startChar, generatedTurnNavigationText(for: $0).count)),
+                            text: generatedTurnNavigationText(for: $0)
+                        )
+                    } ?? interjection.roughPercent,
+                    anchorBefore: shouldResolveNativeContext
+                        ? resolvedContext?.anchorBefore ?? ""
+                        : turnContext?.before ?? interjection.anchor.anchorBefore,
+                    anchorAfter: shouldResolveNativeContext
+                        ? resolvedContext?.anchorAfter ?? ""
+                        : turnContext?.after ?? interjection.anchor.anchorAfter,
+                    mediaTimeMs: interjection.anchor.mediaTimeMs,
+                    transcriptionStatus: interjection.transcriptionStatus,
+                    transcript: interjection.captureKind == .written
+                        ? interjection.transcript
+                        : interjection.cleanedTranscript ?? interjection.transcript,
+                    audioPath: nil,
+                    captureKind: interjection.captureKind
+                )
+            }
+        )
+        lastExport = export
+        return export
+    }
+
+    private func isNativeAudioSource(_ item: Item) -> Bool {
+        switch item.media?.sourceType {
+        case .nativeMediaFile, .remoteStream:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func scopedExportInterjections(options: ExportOptions, session: Session, interjections: [Interjection]) -> [Interjection] {
+        switch options.scope {
+        case "original", "source_only":
+            return []
+        case "source_interjections", "original_with_interjections":
+            return interjections.filter { $0.targetType == .item && $0.targetId == session.itemId }
+        case "target":
+            guard let targetType = options.targetType, let targetId = options.targetId else { return interjections }
+            if targetType == InterjectionTargetType.item.rawValue || targetType == TargetType.itemTextTTS.rawValue {
+                return interjections.filter { $0.targetType == .item && $0.targetId == targetId }
+            }
+            return interjections.filter { $0.targetId == targetId && $0.targetType != .item }
+        case "selected_interjections":
+            guard let ids = options.interjectionIds else { return [] }
+            return interjections.filter { ids.contains($0.id) }
+        default:
+            return interjections
+        }
+    }
+
+    private func scopedExportTurns(options: ExportOptions, turns: [ConversationTurn], interjections: [Interjection]) -> [ConversationTurn] {
+        switch options.scope {
+        case "original", "source_only", "source_interjections", "original_with_interjections":
+            return []
+        case "target":
+            guard let targetId = options.targetId else { return turns }
+            return turns.filter { $0.id == targetId }
+        case "selected_interjections":
+            let targetTurnIds = Set(interjections.filter { $0.targetType != .item }.map(\.targetId))
+            return turns.filter { targetTurnIds.contains($0.id) }
+        default:
+            return turns
+        }
+    }
+
+    public func compactTimelineEntries() -> [CompactTimelineEntry] {
+        guard let session = currentSession else { return [] }
+        let item = currentItem ?? (try? repository.loadItem(id: session.itemId))
+        let map = currentMap ?? (try? repository.loadListeningMap(itemId: session.itemId))
+        let sourceChapters = map?.chapters ?? []
+        let interjections = ((try? repository.loadInterjections(sessionId: session.id)) ?? [])
+            .filter { $0.status != "deleted" }
+        let turns = (try? repository.loadTurns(sessionId: session.id)) ?? []
+
+        var entries: [CompactTimelineEntry] = []
+        if let overview = map?.overview, !overview.isEmpty {
+            entries.append(
+                CompactTimelineEntry(
+                    id: "source-overview",
+                    kind: "overview",
+                    title: "Summary",
+                    detail: overview,
+                    percent: 0,
+                    isCurrent: session.currentTargetType == .itemTextTTS && session.position.chapterId == nil
+                )
+            )
+        } else if sourceChapters.isEmpty {
+            entries.append(
+                CompactTimelineEntry(
+                    id: "source-\(session.itemId)",
+                    kind: "source_item",
+                    title: item?.title ?? "Source",
+                    detail: "Source",
+                    percent: 0,
+                    isCurrent: session.currentTargetType == .itemTextTTS
+                )
+            )
+        }
+
+        let sourceTargetTypes: [TargetType] = [.itemTextTTS, .transcriptBackedMedia, .browserOwnedMedia]
+        let sourceEntries = sourceChapters.map { chapter in
+            CompactTimelineEntry(
+                id: "source-\(chapter.id)",
+                kind: "source_chapter",
+                title: chapter.title,
+                detail: "Source",
+                chapterId: chapter.id,
+                percent: chapter.percent,
+                isCurrent: sourceTargetTypes.contains(session.currentTargetType) && session.position.chapterId == chapter.id
+            )
+        } + interjections
+            .filter { $0.targetType == .item }
+            .map { interjection in
+                CompactTimelineEntry(
+                    id: "interjection-\(interjection.id)",
+                    kind: "interjection",
+                    title: "Interjection",
+                    detail: interjectionPreview(interjection),
+                    percent: interjection.roughPercent
+                )
+            }
+        entries.append(contentsOf: sourceEntries.sorted(by: compactTimelineSort))
+
+        for turn in turns {
+            let title = turnTitle(for: turn)
+            entries.append(
+                CompactTimelineEntry(
+                    id: "turn-\(turn.id)",
+                    kind: turn.turnType,
+                    title: title,
+                    detail: turn.summary ?? turn.text,
+                    turnId: turn.id,
+                    isCurrent: session.currentTargetId == turn.id
+                )
+            )
+            entries.append(
+                contentsOf: (turn.chapters ?? []).map { chapter in
+                    CompactTimelineEntry(
+                        id: "turn-\(turn.id)-\(chapter.id)",
+                        kind: "turn_chapter",
+                        title: chapter.title,
+                        detail: title,
+                        chapterId: chapter.id,
+                        turnId: turn.id,
+                        percent: chapter.percent,
+                        isCurrent: session.currentTargetId == turn.id && session.position.chapterId == chapter.id
+                    )
+                }
+            )
+            entries.append(
+                contentsOf: interjections
+                    .filter { $0.targetId == turn.id && $0.targetType != .item }
+                    .map { interjection in
+                        CompactTimelineEntry(
+                            id: "interjection-\(interjection.id)",
+                            kind: "interjection",
+                            title: "Interjection",
+                            detail: interjectionPreview(interjection),
+                            turnId: turn.id
+                        )
+                    }
+            )
+        }
+
+        let turnIds = Set(turns.map(\.id))
+        entries.append(
+            contentsOf: interjections
+                .filter { $0.targetType != .item && !turnIds.contains($0.targetId) }
+                .map { interjection in
+                    CompactTimelineEntry(
+                        id: "interjection-\(interjection.id)",
+                        kind: "interjection",
+                        title: "Interjection",
+                        detail: interjectionPreview(interjection)
+                    )
+                }
+        )
+
+        return entries
+    }
+
+    private func compactTimelineSort(_ lhs: CompactTimelineEntry, _ rhs: CompactTimelineEntry) -> Bool {
+        let lhsPercent = lhs.percent ?? 101
+        let rhsPercent = rhs.percent ?? 101
+        if lhsPercent == rhsPercent {
+            return compactTimelineSortRank(lhs.kind) < compactTimelineSortRank(rhs.kind)
+        }
+        return lhsPercent < rhsPercent
+    }
+
+    private func compactTimelineSortRank(_ kind: String) -> Int {
+        switch kind {
+        case "source_item": return -2
+        case "overview": return -1
+        case "source_chapter": return 0
+        case "interjection": return 1
+        case "user_response", "interjection_summary", "assistant_response": return 2
+        case "turn_chapter": return 3
+        default: return 4
+        }
+    }
+
+    private func interjectionPreview(_ interjection: Interjection) -> String? {
+        let text = (interjection.displayText ?? interjection.cleanedTranscript ?? interjection.transcript ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        return String(text.prefix(80))
+    }
+
+    private func exportTimeline(interjections: [Interjection], turns: [ConversationTurn]) -> [ExportTimelineEntry] {
+        let sourceInterjections = interjections.filter { $0.targetType == .item }.map {
+            ExportTimelineEntry(type: "interjection", interjectionId: $0.id, turnId: nil, targetType: $0.targetType.rawValue, targetId: $0.targetId, percent: $0.roughPercent, chapterId: nil)
+        }
+        let exportedTurnIds = Set(turns.map(\.id))
+        let turnEntries = turns.flatMap { turn -> [ExportTimelineEntry] in
+            let base = ExportTimelineEntry(type: "ai_turn", interjectionId: nil, turnId: turn.id, targetType: nil, targetId: nil, percent: nil, chapterId: nil)
+            let chapters = (turn.chapters ?? []).map {
+                ExportTimelineEntry(type: "ai_turn_chapter", interjectionId: nil, turnId: turn.id, targetType: nil, targetId: nil, percent: $0.percent, chapterId: $0.id)
+            }
+            let turnInterjections = interjections.filter { $0.targetId == turn.id && $0.targetType != .item }.map {
+                ExportTimelineEntry(type: "interjection", interjectionId: $0.id, turnId: nil, targetType: $0.targetType.rawValue, targetId: $0.targetId, percent: $0.roughPercent, chapterId: nil)
+            }
+            return [base] + chapters + turnInterjections
+        }
+        let orphanedTurnInterjections = interjections
+            .filter { $0.targetType != .item && !exportedTurnIds.contains($0.targetId) }
+            .map {
+                ExportTimelineEntry(type: "interjection", interjectionId: $0.id, turnId: nil, targetType: $0.targetType.rawValue, targetId: $0.targetId, percent: $0.roughPercent, chapterId: nil)
+            }
+        return sourceInterjections + turnEntries + orphanedTurnInterjections
+    }
+
+    public func diagnostics() throws -> [String: String] {
+        let sessionId = currentSession?.id ?? "none"
+        return [
+            "runtimeProfile": profile.id,
+            "providerStatus": profile.has("ai", "provider_diagnostics") ? "available" : "unavailable",
+            "pendingAiJobs": "\(try currentSession.map { try repository.loadAIJobs(sessionId: $0.id).filter { $0.status != "complete" }.count } ?? 0)",
+            "recentFailure": snapshot.lastFailure ?? "none",
+            "sessionId": sessionId
+        ]
+    }
+
+    private func playbackTargetType(for item: Item) -> TargetType {
+        if item.mediaType == TargetType.transcriptBackedMedia.rawValue || item.media?.url != nil {
+            return .transcriptBackedMedia
+        }
+        if item.mediaType == TargetType.browserOwnedMedia.rawValue {
+            return .browserOwnedMedia
+        }
+        return .itemTextTTS
+    }
+
+    private func prepareGeneratedTextAudioIfAvailable(for item: Item) throws -> Item {
+        guard shouldPrepareGeneratedTextAudio(for: item),
+              let textAudio,
+              let sourceText = item.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !sourceText.isEmpty else {
+            return item
+        }
+        guard let prepared = try textAudio.prepareTextAudio(itemId: item.id, title: item.title, text: sourceText) else {
+            return item
+        }
+        return try applyPreparedTextAudio(prepared, to: item)
+    }
+
+    /// Prepared narration is cache-backed. If iOS purges that cache, the text item
+    /// remains playable through live speech and can be rendered again in the
+    /// background instead of handing AVPlayer a permanently missing file URL.
+    private func discardUnavailableGeneratedTextAudio(from item: Item) throws -> Item {
+        guard let media = item.media,
+              media.sourceType == .generatedTTSPrerendered else {
+            return item
+        }
+        let identifier = [media.url, media.nativeMediaId]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty }) ?? ""
+        guard let url = URL(string: identifier),
+              url.isFileURL,
+              !FileManager.default.fileExists(atPath: url.path) else {
+            return item
+        }
+        var repaired = item
+        repaired.media = nil
+        try repository.saveItem(repaired)
+        return repaired
+    }
+
+    private func applyPreparedTextAudio(_ prepared: PreparedTextAudio, to item: Item) throws -> Item {
+        let transcriptId = item.transcriptId ?? "generated-transcript-\(item.id)"
+        let map = currentMap?.itemId == item.id ? currentMap : (try? repository.loadListeningMap(itemId: item.id))
+        let timeline = generatedTextTimeline(prepared.timeline, using: map)
+        let stored = SourceTranscriptTimeline(
+            id: transcriptId,
+            itemId: item.id,
+            createdAt: prepared.createdAt,
+            timeline: timeline
+        )
+        try repository.saveTranscriptTimeline(stored)
+        var updated = item
+        updated.text = prepared.normalizedText
+        updated.media = prepared.media
+        updated.transcriptId = transcriptId
+        if updated.status == "ready" || updated.status == "needs_listening_map" {
+            updated.status = currentMap == nil ? "needs_listening_map" : "ready"
+        }
+        try repository.saveItem(updated)
+        return updated
+    }
+
+    private func shouldPrepareGeneratedTextAudio(for item: Item) -> Bool {
+        guard profile.has("playback", "prerendered_audio") else { return false }
+        guard let text = item.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return false }
+        if item.mediaType == TargetType.transcriptBackedMedia.rawValue {
+            return item.media?.sourceType == .generatedTTSPrerendered
+        }
+        if item.mediaType == TargetType.browserOwnedMedia.rawValue {
+            return false
+        }
+        switch item.media?.sourceType {
+        case .none, .some(.generatedTTSRealtime), .some(.generatedTTSPrerendered):
+            return true
+        case .some(.nativeMediaFile), .some(.browserOwnedMedia), .some(.remoteStream):
+            return false
+        }
+    }
+
+    private func generatedTextTimeline(_ timeline: TranscriptTimeline, using map: ListeningMap?) -> TranscriptTimeline {
+        guard let map, !map.chapters.isEmpty, !timeline.segments.isEmpty else {
+            return timeline
+        }
+        let chapters = map.chapters.compactMap { chapter -> MediaTimelineChapter? in
+            guard let segment = timeline.segments.last(where: { ($0.startChar ?? 0) <= chapter.startChar })
+                    ?? timeline.segments.first else {
+                return nil
+            }
+            return MediaTimelineChapter(
+                id: chapter.id,
+                title: chapter.title,
+                startMs: segment.startMs,
+                transcriptSegmentId: segment.id
+            )
+        }
+        guard !chapters.isEmpty else { return timeline }
+        return TranscriptTimeline(
+            segments: timeline.segments,
+            chapters: chapters,
+            durationMs: timeline.durationMs
+        )
+    }
+
+    private func itemPlaybackTargetId(for item: Item, targetType: TargetType) -> String {
+        guard targetType == .transcriptBackedMedia || targetType == .browserOwnedMedia else {
+            return item.id
+        }
+        return item.media?.nativeMediaId ?? item.media?.url ?? item.id
+    }
+
+    private func sourceTranscriptTimeline(itemId: String) -> TranscriptTimeline? {
+        try? repository.loadTranscriptTimeline(itemId: itemId)?.timeline
+    }
+
+    private func sourceTranscriptTimeline(for session: Session) -> TranscriptTimeline? {
+        sourceTranscriptTimeline(itemId: session.itemId)
+    }
+
+    private func mediaDurationMs(for session: Session, position: PlaybackPosition? = nil) -> Int? {
+        position?.durationMs
+            ?? audio.currentPlaybackDurationMs()
+            ?? currentWatchPackage?.primaryAudioAsset?.durationMs
+            ?? currentWatchPackage?.timeline.durationMs
+            ?? sourceTranscriptTimeline(for: session)?.durationMs
+            ?? currentItem?.media?.durationMs
+    }
+
+    private func durableMediaDurationMs(for session: Session) -> Int? {
+        sourceTranscriptTimeline(for: session)?.durationMs
+            ?? item(for: session)?.media?.durationMs
+    }
+
+    private func item(for session: Session) -> Item? {
+        if currentItem?.id == session.itemId {
+            return currentItem
+        }
+        return try? repository.loadItem(id: session.itemId)
+    }
+
+    private func isGeneratedTextMedia(_ media: ItemMedia?) -> Bool {
+        media?.sourceType == .generatedTTSPrerendered
+    }
+
+    private func isStarterGeneratedTextMedia(_ media: ItemMedia?) -> Bool {
+        guard isGeneratedTextMedia(media) else { return false }
+        let identifier = media?.nativeMediaId ?? media?.url ?? ""
+        return identifier.contains("-starter.caf") || identifier.contains("-starter.")
+    }
+
+    private func isPartialGeneratedTextMedia(item: Item?, timeline: TranscriptTimeline?) -> Bool {
+        guard let item,
+              isStarterGeneratedTextMedia(item.media),
+              let text = item.text,
+              !text.isEmpty else {
+            return false
+        }
+        let renderedEnd = timeline?.segments.compactMap(\.endChar).max() ?? 0
+        return renderedEnd < text.count
+    }
+
+    private func isPartialGeneratedTextPlayback(_ session: Session) -> Bool {
+        guard session.currentTargetType == .transcriptBackedMedia else { return false }
+        return isPartialGeneratedTextMedia(item: item(for: session), timeline: sourceTranscriptTimeline(for: session))
+    }
+
+    private func generatedTextSourcePercent(for session: Session, textStart: Int?) -> Int {
+        let text = item(for: session)?.text ?? ""
+        return percent(for: max(0, min(textStart ?? session.position.charOffset, text.count)), text: text)
+    }
+
+    private func generatedTextOffset(mediaTimeMs: Int, timeline: TranscriptTimeline) -> Int {
+        let sortedSegments = timeline.segments.sorted { $0.startMs < $1.startMs }
+        guard !sortedSegments.isEmpty else { return 0 }
+        let clamped = max(0, mediaTimeMs)
+        let segment = sortedSegments.first { $0.startMs <= clamped && clamped < $0.endMs }
+            ?? sortedSegments.last(where: { $0.startMs <= clamped })
+            ?? sortedSegments.first
+        guard let segment,
+              let startChar = segment.startChar,
+              let endChar = segment.endChar,
+              segment.endMs > segment.startMs,
+              endChar > startChar else {
+            return segment?.startChar ?? 0
+        }
+        let fraction = Double(clamped - segment.startMs) / Double(segment.endMs - segment.startMs)
+        let offset = startChar + Int((Double(endChar - startChar) * max(0, min(1, fraction))).rounded())
+        return max(startChar, min(offset, endChar))
+    }
+
+    private func mediaPercent(_ mediaTimeMs: Int, durationMs: Int?) -> Int {
+        guard let durationMs, durationMs > 0 else { return 0 }
+        return max(0, min(100, Int((Double(max(0, mediaTimeMs)) / Double(durationMs)) * 100)))
+    }
+
+    private func mediaChapter(at mediaTimeMs: Int, timeline: TranscriptTimeline) -> MediaTimelineChapter? {
+        timeline.chapters
+            .filter { !isSyntheticTranscriptChapter($0) && $0.startMs <= max(0, mediaTimeMs) }
+            .max { $0.startMs < $1.startMs }
+    }
+
+    private func mediaTimeMs(forTextOffset textOffset: Int, timeline: TranscriptTimeline) -> Int {
+        let sortedSegments = timeline.segments.sorted { $0.startMs < $1.startMs }
+        guard !sortedSegments.isEmpty else { return 0 }
+        if let segment = sortedSegments.first(where: { segment in
+            guard let start = segment.startChar, let end = segment.endChar else { return false }
+            return start <= textOffset && textOffset < end
+        }) {
+            guard let startChar = segment.startChar,
+                  let endChar = segment.endChar,
+                  endChar > startChar else {
+                return segment.startMs
+            }
+            let fraction = Double(textOffset - startChar) / Double(endChar - startChar)
+            return segment.startMs + Int((Double(segment.endMs - segment.startMs) * max(0, min(1, fraction))).rounded())
+        }
+        if let next = sortedSegments.first(where: { ($0.startChar ?? .max) > textOffset }) {
+            return next.startMs
+        }
+        return timeline.durationMs ?? sortedSegments.last?.endMs ?? 0
+    }
+
+    private func preferredPublisherChapterCollection(in candidate: LinkResolutionCandidate) -> PublisherChapterCollection? {
+        candidate.publisherChapterCollections
+            .filter { !$0.chapters.isEmpty }
+            .max { lhs, rhs in lhs.source.precedence < rhs.source.precedence }
+    }
+
+    private func publisherChapterSource(from mapId: String) -> PublisherChapterSource? {
+        PublisherChapterSource.allCases.first { mapId.hasSuffix("publisher-\($0.rawValue)") }
+    }
+
+    private func normalizedPublisherChapters(
+        _ chapters: [PublisherChapter],
+        durationMs: Int?
+    ) -> [PublisherChapter] {
+        let sorted = chapters
+            .filter { chapter in
+                let title = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !title.isEmpty, chapter.startMs >= 0 else { return false }
+                if let durationMs, durationMs > 0, chapter.startMs > durationMs { return false }
+                return true
+            }
+            .sorted { lhs, rhs in
+                lhs.startMs == rhs.startMs ? lhs.title < rhs.title : lhs.startMs < rhs.startMs
+            }
+        var seenStarts: Set<Int> = []
+        let unique = sorted.filter { seenStarts.insert($0.startMs).inserted }
+        return Array(unique.prefix(500)).enumerated().map { index, chapter in
+            let nextStart = unique.indices.contains(index + 1) ? unique[index + 1].startMs : durationMs
+            let explicitEnd = chapter.endMs.flatMap { $0 >= chapter.startMs ? $0 : nil }
+            let end = [explicitEnd, nextStart, durationMs]
+                .compactMap { $0 }
+                .filter { $0 >= chapter.startMs }
+                .min()
+            return PublisherChapter(
+                title: String(chapter.title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240)),
+                description: chapter.description.map {
+                    String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(500))
+                }.flatMap { $0.isEmpty ? nil : $0 },
+                startMs: chapter.startMs,
+                endMs: end
+            )
+        }
+    }
+
+    private func publisherChapterId(source: PublisherChapterSource, index: Int) -> String {
+        "ch-publisher-\(source.rawValue)-\(String(format: "%03d", index + 1))"
+    }
+
+    private func sourceImportItem(
+        from candidate: LinkResolutionCandidate,
+        result: LinkResolutionResult,
+        request: LinkResolutionRequest,
+        sourceIdentity: String? = nil
+    ) throws -> Item {
+        let id = resolvedSourceItemId(for: candidate, request: request, sourceIdentity: sourceIdentity)
+        // Reimport is idempotent. Keep the accepted media edition, transcript,
+        // download and creation date; metadata is not permission to replace
+        // audio underneath already-anchored sessions or private maps.
+        do {
+            var existing = try repository.loadItem(id: id)
+            // Explicit import also restores a trashed item, without rebuilding
+            // it and discarding its existing media/transcript association.
+            existing.deletedAt = nil
+            return existing
+        } catch SessionKitError.missingFixture(let key) where key == "item:\(id)" || key == id {
+            // A new identity gets a fresh record, never a legacy title-slug's
+            // derivatives. Ambiguous old records remain available for recovery.
+        }
+        let title = candidate.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? (candidate.sourceLink.title ?? request.inputURL) : candidate.title
+        return Item(
+            id: id,
+            title: title,
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: result.originalLink.url,
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(
+                sourceType: .remoteStream,
+                url: candidate.audioURL,
+                durationMs: candidate.durationMs
+            ),
+            transcriptId: nil,
+            sourceTitle: candidate.showTitle ?? candidate.sourceLink.title,
+            sourceURL: candidate.sourceLink.role == "canonical_feed" ? candidate.sourceLink.url : nil,
+            createdAt: request.createdAt
+        )
+    }
+
+    private func resolvedSourceItemId(
+        for candidate: LinkResolutionCandidate,
+        request: LinkResolutionRequest,
+        sourceIdentity: String?
+    ) -> String {
+        // Titles and filenames are presentation, not identity. In particular,
+        // unrelated CDN enclosures often all end in default.mp3. Preserve URL
+        // path case and query parameters: either can distinguish episodes.
+        let identity = sourceIdentity.map { "feed-entry:\($0)" }
+            ?? "audio-url:\(candidate.audioURL ?? request.inputURL)"
+        let digest = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        return "item-source-v2-\(digest)"
+    }
+
+    private func publish(status: PlaybackStatus, phase: SessionPhase) {
+        if status != .starting {
+            clearPlaybackStartPending()
+        }
+        snapshot.status = status
+        snapshot.phase = phase
+        snapshot.isRecording = status == .recording
+        guard let session = currentSession else { return }
+        snapshot.sessionId = session.id
+        snapshot.itemId = session.itemId
+        snapshot.targetType = session.currentTargetType.rawValue
+        snapshot.targetId = session.currentTargetId
+        snapshot.title = currentItem?.title
+        snapshot.progressPercent = session.completionPercent
+        let progress = playbackProgress(for: session)
+        let position = playbackPosition(for: session)
+        snapshot.sourceProgressPercent = progress.sourcePercent
+        let completedFullTarget = audio.isPlaybackComplete(targetId: session.currentTargetId)
+            && !isPartialGeneratedTextPlayback(session)
+        snapshot.currentPlaybackProgressPercent = completedFullTarget ? 100 : progress.currentPercent
+        snapshot.currentMediaTimeMs = position.mediaTimeMs
+        snapshot.currentPlaybackDurationMs = position.durationMs
+        snapshot.currentTextStart = position.textStart
+        snapshot.currentTextEnd = position.textEnd
+        snapshot.currentTranscriptSegmentId = position.transcriptSegmentId
+        snapshot.currentAnchorConfidence = position.anchorConfidence
+        snapshot.playbackRate = session.playbackRate
+        snapshot.preparedTextAudioStatus = preparedTextAudioStatus(for: currentItem)
+        snapshot.sourceTranscriptStatus = sourceTranscriptStatus(for: session, item: currentItem)
+        snapshot.chapterTitle = progress.chapterTitle ?? currentItem?.title
+        snapshot.activeInterjectionCount = (try? repository.loadInterjections(sessionId: session.id).filter { $0.status == "active" }.count) ?? snapshot.activeInterjectionCount
+        snapshot.pendingAiJobCount = (try? repository.loadAIJobs(sessionId: session.id).filter { $0.status != "complete" }.count) ?? snapshot.pendingAiJobCount
+    }
+
+    private func publishPlaybackStart(for session: Session, phase: SessionPhase) {
+        playbackStartAttemptId += 1
+        activePlaybackStartAttemptId = playbackStartAttemptId
+        switch playbackStartStatus(for: session.currentTargetId, attemptId: playbackStartAttemptId) {
+        case .confirmed:
+            publish(status: .playing, phase: phase)
+        case .pending:
+            publish(status: .starting, phase: phase)
+        case .failed(let message):
+            snapshot.lastFailure = "playback_start_failed:\(message)"
+            publish(status: .failed, phase: phase)
+        }
+    }
+
+    private func publishPlaybackContinuation(for session: Session) {
+        if snapshot.status.isPlaybackActive {
+            publishPlaybackStart(for: session, phase: session.phase)
+        } else {
+            publish(status: snapshot.status, phase: session.phase)
+        }
+    }
+
+    private func playbackStartStatus(for targetId: String, attemptId: Int) -> PlaybackStartStatus {
+        switch audio.playbackStartStatus(targetId: targetId) {
+        case .confirmed:
+            clearPlaybackStartPending()
+            if pendingPlaybackPosition?.targetId == targetId {
+                pendingPlaybackPosition = nil
+            }
+            return .confirmed
+        case .failed(let message):
+            return recoverRemotePlaybackStart(targetId: targetId, attemptId: attemptId, failure: message)
+        case .pending:
+            if playbackStartPendingTargetId != targetId || playbackStartPendingAttemptId != attemptId {
+                playbackStartPendingTargetId = targetId
+                playbackStartPendingAttemptId = attemptId
+                playbackStartDeadline = now().addingTimeInterval(playbackStartTimeout)
+                return .pending
+            }
+            if let playbackStartDeadline, now() >= playbackStartDeadline {
+                return recoverRemotePlaybackStart(
+                    targetId: targetId, attemptId: attemptId, failure: "playback_start_timeout"
+                )
+            }
+            return .pending
+        }
+    }
+
+    /// Recreate a stalled remote transport once, just as closing and reopening
+    /// playback does, while retaining the requested chapter rather than a stale
+    /// player observation. A second failure remains terminal for this attempt.
+    private func recoverRemotePlaybackStart(
+        targetId: String, attemptId: Int, failure: String
+    ) -> PlaybackStartStatus {
+        guard playbackStartRecoveryAttemptId != attemptId,
+              let session = currentSession,
+              session.currentTargetId == targetId,
+              session.currentTargetType == .transcriptBackedMedia,
+              session.phase == .itemPlayback,
+              let context = playbackMediaContext(for: session),
+              context.sourceType == .remoteStream,
+              let url = URL(string: context.playbackURL ?? targetId),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+            clearPlaybackStartPending()
+            return .failed(failure)
+        }
+        playbackStartRecoveryAttemptId = attemptId
+        do {
+            try audio.stop()
+            protectPlaybackPosition(for: session)
+            try playCurrentTarget(session)
+            playbackStartPendingTargetId = targetId
+            playbackStartPendingAttemptId = attemptId
+            playbackStartDeadline = now().addingTimeInterval(playbackStartTimeout)
+            return .pending
+        } catch {
+            clearPlaybackStartPending()
+            return .failed("\(failure); recovery_failed:\(error.localizedDescription)")
+        }
+    }
+
+    private func clearPlaybackStartPending() {
+        activePlaybackStartAttemptId = nil
+        playbackStartPendingAttemptId = nil
+        playbackStartPendingTargetId = nil
+        playbackStartDeadline = nil
+    }
+
+    private func preparedTextAudioStatus(for item: Item?) -> String? {
+        guard let item, item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return nil }
+        switch item.media?.sourceType {
+        case .some(.generatedTTSPrerendered):
+            return isPartialGeneratedTextMedia(item: item, timeline: sourceTranscriptTimeline(itemId: item.id)) ? "starter_ready" : "ready"
+        case .some(.generatedTTSRealtime), .none:
+            return profile.has("playback", "prerendered_audio") ? "live_fallback" : nil
+        case .some(.nativeMediaFile), .some(.remoteStream), .some(.browserOwnedMedia):
+            return nil
+        }
+    }
+
+    private func sourceTranscriptStatus(for session: Session, item: Item?) -> String? {
+        guard let item,
+              session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
+            return nil
+        }
+        if sourceTranscriptTimeline(for: session)?.segments.isEmpty == false {
+            return "ready"
+        }
+        switch item.media?.sourceType {
+        case .some(.remoteStream), .some(.nativeMediaFile), .some(.browserOwnedMedia):
+            return "not_started"
+        default:
+            return nil
+        }
+    }
+
+    private func playbackProgress(for session: Session) -> PlaybackProgress {
+        let sourcePercent = session.completionPercent
+        let position = playbackPosition(for: session)
+        switch session.currentTargetType {
+        case .itemTextTTS:
+            let currentAudioOffset = rawAudioTextOffset()
+            let prefixLength = itemPlaybackPreface().count
+            let isInPreface = prefixLength > 0 && (currentAudioOffset ?? 0) <= prefixLength && session.position.chapterId == nil
+            let currentPercent: Int
+            if isInPreface, let offset = currentAudioOffset {
+                currentPercent = percent(offset: offset, length: prefixLength)
+            } else if let offset = currentAudioOffset {
+                currentPercent = percent(for: itemSourceOffset(forAudioOffset: offset), text: currentItem?.text ?? "")
+            } else {
+                currentPercent = session.completionPercent
+            }
+            let title = isInPreface ? "Summary" : (currentMap?.chapters.first(where: { $0.id == session.position.chapterId })?.title ?? currentItem?.title)
+            return PlaybackProgress(sourcePercent: sourcePercent, currentPercent: currentPercent, chapterTitle: title)
+        case .summaryTurnTTS, .assistantTurnTTS:
+            guard let turn = try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }) else {
+                return PlaybackProgress(sourcePercent: sourcePercent, currentPercent: 0, chapterTitle: currentItem?.title)
+            }
+            let playable = playableText(for: turn)
+            let audioOffset = rawAudioTextOffset() ?? turnAudioOffset(for: turn, responseOffset: session.position.charOffset)
+            let currentPercent = playable.isEmpty ? 0 : percent(for: max(0, min(audioOffset, playable.count)), text: playable)
+            let responseOffset = turnResponseOffset(for: turn, audioOffset: audioOffset)
+            let title = turn.chapters?.last(where: { $0.startChar <= responseOffset })?.title ?? turnTitle(for: turn)
+            return PlaybackProgress(sourcePercent: sourcePercent, currentPercent: currentPercent, chapterTitle: title)
+        case .transcriptBackedMedia, .browserOwnedMedia:
+            let mediaTimeMs = position.mediaTimeMs ?? session.position.mediaTimeMs ?? 0
+            if let package = currentWatchPackage {
+                let resolved = MediaTimelineAnchorResolver.resolve(
+                    mediaTimeMs: mediaTimeMs,
+                    timeline: package.timeline,
+                    playbackRateObserved: session.playbackRate
+                )
+                let title = resolved.chapterId.flatMap { chapterId in
+                    package.chapters.first(where: { $0.id == chapterId })?.title
+                } ?? currentItem?.title
+                return PlaybackProgress(
+                    sourcePercent: mediaPercent(mediaTimeMs, package: package),
+                    currentPercent: mediaPercent(mediaTimeMs, package: package),
+                    chapterTitle: title
+                )
+            }
+            if let timeline = sourceTranscriptTimeline(for: session) {
+                let chapterTitle: String?
+                if timeline.segments.isEmpty {
+                    chapterTitle = mediaChapter(at: mediaTimeMs, timeline: timeline)?.title
+                } else {
+                    let resolved = MediaTimelineAnchorResolver.resolve(
+                        mediaTimeMs: mediaTimeMs,
+                        timeline: timeline,
+                        playbackRateObserved: session.playbackRate
+                    )
+                    chapterTitle = resolved.chapterId.flatMap { chapterId in
+                        timeline.chapters.first(where: {
+                            $0.id == chapterId && !isSyntheticTranscriptChapter($0)
+                        })?.title
+                    }
+                }
+                let percent = isGeneratedTextMedia(item(for: session)?.media)
+                    ? generatedTextSourcePercent(for: session, textStart: position.textStart)
+                    : mediaPercent(mediaTimeMs, durationMs: mediaDurationMs(for: session, position: position))
+                return PlaybackProgress(sourcePercent: percent, currentPercent: percent, chapterTitle: chapterTitle ?? currentItem?.title)
+            }
+            let percent = isGeneratedTextMedia(item(for: session)?.media)
+                ? generatedTextSourcePercent(for: session, textStart: position.textStart)
+                : mediaPercent(mediaTimeMs, durationMs: mediaDurationMs(for: session, position: position))
+            return PlaybackProgress(sourcePercent: percent, currentPercent: percent, chapterTitle: currentItem?.title)
+        }
+    }
+
+    private func rawAudioTextOffset() -> Int? {
+        audio.currentPlaybackPosition()?.textStart ?? audio.currentCharOffset()
+    }
+
+    private func playbackPosition(for session: Session) -> PlaybackPosition {
+        let audioPosition = audio.currentPlaybackPosition()
+        let protectedPosition = protectedPlaybackPosition(for: session)
+        let positionIsPending = protectedPosition != nil
+        switch session.currentTargetType {
+        case .itemTextTTS:
+            let prefixLength = itemPlaybackPreface().count
+            let text = currentItem?.text ?? ""
+            let rawOffset = positionIsPending ? nil : rawAudioTextOffset()
+            let isInPreface = rawOffset.map { prefixLength > 0 && $0 <= prefixLength && session.position.chapterId == nil } ?? false
+            let sourceOffset = rawOffset.map { isInPreface ? 0 : itemSourceOffset(forAudioOffset: $0) }
+                ?? protectedPosition?.charOffset
+                ?? session.position.charOffset
+            let start = max(0, min(sourceOffset, text.count))
+            let end = min(text.count, max(start + 1, nextBoundary(after: start, unit: "sentence", text: text)))
+            return PlaybackPosition(
+                itemId: session.itemId,
+                targetType: session.currentTargetType,
+                targetId: session.currentTargetId,
+                textStart: start,
+                textEnd: end,
+                chapterId: isInPreface ? nil : chapterId(for: start),
+                playbackRate: session.playbackRate,
+                anchorConfidence: .textRange
+            )
+        case .summaryTurnTTS, .assistantTurnTTS:
+            let turn = try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId })
+            let text = turn.map { generatedTurnNavigationText(for: $0) } ?? ""
+            let canonicalOffset = protectedPosition?.charOffset ?? session.position.charOffset
+            let audioOffset = (positionIsPending ? nil : rawAudioTextOffset())
+                ?? turn.map { turnAudioOffset(for: $0, responseOffset: canonicalOffset) }
+                ?? canonicalOffset
+            let responseOffset = turn.map { turnResponseOffset(for: $0, audioOffset: audioOffset) } ?? session.position.charOffset
+            let start = max(0, min(responseOffset, text.count))
+            let end = min(text.count, max(start + 1, nextBoundary(after: start, unit: "sentence", text: text)))
+            return PlaybackPosition(
+                itemId: session.itemId,
+                targetType: session.currentTargetType,
+                targetId: session.currentTargetId,
+                textStart: start,
+                textEnd: end,
+                chapterId: turn?.chapters?.last(where: { $0.startChar <= start })?.id,
+                playbackRate: session.playbackRate,
+                anchorConfidence: .textRange
+            )
+        case .transcriptBackedMedia, .browserOwnedMedia:
+            let observedMediaTimeMs = audioPosition?.mediaTimeMs ?? audio.currentMediaTimeMs()
+            let mediaTimeMs: Int?
+            if positionIsPending {
+                mediaTimeMs = protectedPosition?.mediaTimeMs
+            } else if let observedMediaTimeMs,
+                      let canonicalMediaTimeMs = session.position.mediaTimeMs,
+                      observedMediaTimeMs + Self.mediaClockBackwardToleranceMs < canonicalMediaTimeMs {
+                // Transport clocks may briefly publish an obsolete or reset
+                // timestamp after a seek, route rebuild, or interruption. Every
+                // legitimate backward movement enters through a canonical
+                // command first, so an unsolicited backward sample is never
+                // allowed to rewind the session or its scrubber.
+                mediaTimeMs = canonicalMediaTimeMs
+            } else {
+                mediaTimeMs = observedMediaTimeMs ?? session.position.mediaTimeMs
+            }
+            let durationMs = mediaDurationMs(for: session, position: audioPosition)
+            guard let mediaTimeMs else {
+                return PlaybackPosition(
+                    itemId: session.itemId,
+                    targetType: session.currentTargetType,
+                    targetId: session.currentTargetId,
+                    durationMs: durationMs,
+                    chapterId: session.position.chapterId,
+                    playbackRate: session.playbackRate,
+                    anchorConfidence: .localFallback
+                )
+            }
+            if let package = currentWatchPackage {
+                let resolved = MediaTimelineAnchorResolver.resolve(
+                    mediaTimeMs: mediaTimeMs,
+                    timeline: package.timeline,
+                    playbackRateObserved: session.playbackRate
+                )
+                return PlaybackPosition(
+                    itemId: session.itemId,
+                    targetType: session.currentTargetType,
+                    targetId: session.currentTargetId,
+                    mediaTimeMs: resolved.mediaTimeMs,
+                    durationMs: durationMs,
+                    textStart: resolved.startChar,
+                    textEnd: resolved.endChar,
+                    transcriptSegmentId: resolved.transcriptSegmentId,
+                    chapterId: resolved.chapterId,
+                    playbackRate: resolved.playbackRateObserved,
+                    anchorConfidence: resolved.transcriptSegmentId == nil ? .mediaTime : .transcriptSpan
+                )
+            }
+            if let timeline = sourceTranscriptTimeline(for: session), !timeline.segments.isEmpty {
+                let resolved = MediaTimelineAnchorResolver.resolve(
+                    mediaTimeMs: mediaTimeMs,
+                    timeline: timeline,
+                    playbackRateObserved: session.playbackRate
+                )
+                let textStart = isGeneratedTextMedia(item(for: session)?.media)
+                    ? generatedTextOffset(mediaTimeMs: mediaTimeMs, timeline: timeline)
+                    : resolved.startChar
+                return PlaybackPosition(
+                    itemId: session.itemId,
+                    targetType: session.currentTargetType,
+                    targetId: session.currentTargetId,
+                    mediaTimeMs: resolved.mediaTimeMs,
+                    durationMs: durationMs,
+                    textStart: textStart,
+                    textEnd: resolved.endChar,
+                    transcriptSegmentId: resolved.transcriptSegmentId,
+                    chapterId: resolved.chapterId,
+                    playbackRate: resolved.playbackRateObserved,
+                    anchorConfidence: resolved.transcriptSegmentId == nil ? .mediaTime : .transcriptSpan
+                )
+            }
+            if let timeline = sourceTranscriptTimeline(for: session),
+               let chapter = mediaChapter(at: mediaTimeMs, timeline: timeline) {
+                return PlaybackPosition(
+                    itemId: session.itemId,
+                    targetType: session.currentTargetType,
+                    targetId: session.currentTargetId,
+                    mediaTimeMs: max(0, mediaTimeMs),
+                    durationMs: durationMs,
+                    chapterId: chapter.id,
+                    playbackRate: session.playbackRate,
+                    anchorConfidence: .providerMetadata
+                )
+            }
+            return PlaybackPosition(
+                itemId: session.itemId,
+                targetType: session.currentTargetType,
+                targetId: session.currentTargetId,
+                mediaTimeMs: max(0, mediaTimeMs),
+                durationMs: durationMs,
+                chapterId: session.position.chapterId,
+                playbackRate: session.playbackRate,
+                anchorConfidence: .mediaTime
+            )
+        }
+    }
+
+    private func require(_ command: String, category: String, capabilities: [String]) throws {
+        guard profile.hasAny(category, capabilities) else {
+            throw SessionKitError.invalidCommandForCapability(command)
+        }
+    }
+
+    private func requirePlayback(_ command: String) throws {
+        guard profile.hasAny("playback", ["realtime_tts", "prerendered_audio", "native_media", "assistant_turn_tts", "summary_turn_tts"])
+            || profile.has("remoteControl", "send_transport_commands") else {
+            throw SessionKitError.invalidCommandForCapability(command)
+        }
+    }
+
+    private func requireNavigationAllowed(_ command: String) throws {
+        guard snapshot.status != .recording, pendingWrittenInterjection == nil else {
+            throw SessionKitError.invalidCommandForState(command)
+        }
+    }
+
+    private func browserTextImportRecords(_ handoff: BrowserTextHandoff) throws -> (Item, ListeningMap?) {
+        let fallbackTitle = cleanedBrowserTextTitle(handoff.source.title, url: handoff.source.url)
+        let rawText = handoff.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawText.isEmpty else {
+            throw SessionKitError.invalidCommandForState("importBrowserText")
+        }
+
+        let parsedMarkdown: ParsedObsidianMarkdown?
+        if handoff.contentFormat == .markdown {
+            parsedMarkdown = try? ObsidianMarkdownParser.parse(fileName: fallbackTitle, contents: rawText)
+        } else {
+            parsedMarkdown = nil
+        }
+        let title = parsedMarkdown?.title ?? fallbackTitle
+        let text = (parsedMarkdown?.text ?? rawText).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            throw SessionKitError.invalidCommandForState("importBrowserText")
+        }
+        var itemId = handoff.itemId ?? browserTextItemId(title: title, url: handoff.source.url)
+        if handoff.itemId == nil, handoff.captureMode == .readablePage {
+            // A corrected extraction must not move existing Margin anchors.
+            // Retain the original edition and give changed text its own identity.
+            if let existing = try existingItem(id: itemId), existing.text != text {
+                let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+                itemId += "-edition-\(digest)"
+            }
+            if var existing = try existingItem(id: itemId) {
+                existing.deletedAt = nil
+                return (existing, try repository.loadListeningMap(itemId: itemId))
+            }
+        }
+        let sourceExtension = URL(string: handoff.source.url)?.pathExtension.lowercased()
+        let mapPolicy: DeterministicListeningMapPolicy = handoff.captureMode == .markdownFile && sourceExtension == "pdf"
+            ? .canonicalHeadings
+            : .adaptiveListeningSections
+        let deterministicMap = parsedMarkdown?.deterministicListeningMap(
+            itemId: itemId,
+            policy: mapPolicy
+        )
+        let source = parsedMarkdown?.source ?? handoff.source.url
+        let item = Item(
+            id: itemId,
+            title: title,
+            mediaType: sourceExtension == "pdf" ? "pdf" : "text",
+            text: text,
+            externalReference: source,
+            status: deterministicMap == nil ? "needs_listening_map" : "ready",
+            externalReferenceType: handoff.captureMode == .markdownFile || handoff.captureMode == .plainTextFile ? "file" : "url",
+            createdAt: Date(),
+            documentStructure: handoff.documentStructure
+        )
+        return (item, deterministicMap)
+    }
+
+    private func existingItem(id: String) throws -> Item? {
+        do { return try repository.loadItem(id: id) }
+        catch SessionKitError.missingFixture(let key) where key == "item:\(id)" || key == id { return nil }
+    }
+
+    private func cleanedBrowserTextTitle(_ title: String, url: String) -> String {
+        let cleaned = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleaned.isEmpty {
+            return cleaned
+        }
+        guard let host = URLComponents(string: url)?.host, !host.isEmpty else {
+            return "Browser Text"
+        }
+        return host
+    }
+
+    private func browserTextItemId(title: String, url: String) -> String {
+        let base = [title, url].joined(separator: "-").lowercased()
+        let allowed = CharacterSet.alphanumerics
+        let slug = base.unicodeScalars.map { scalar -> Character in
+            allowed.contains(scalar) ? Character(scalar) : "-"
+        }
+        let collapsed = String(slug).split(separator: "-").joined(separator: "-")
+        return "item-browser-\(collapsed.prefix(48))"
+    }
+
+    private func resolveSession(_ sessionId: String?) throws -> Session {
+        if let sessionId, let session = try repository.loadSession(id: sessionId) {
+            return session
+        }
+        if let currentSession { return currentSession }
+        if let memory = repository as? InMemorySessionRepository, let session = memory.sessions.values.first {
+            currentSession = session
+            currentItem = try? repository.loadItem(id: session.itemId)
+            currentMap = try? repository.loadListeningMap(itemId: session.itemId)
+            publish(status: .paused, phase: session.phase)
+            return session
+        }
+        if let item = currentItem {
+            let session = Session(
+                id: "session-\(item.id)-export",
+                itemId: item.id,
+                status: "in_progress",
+                phase: .itemPlayback,
+                currentTargetType: .itemTextTTS,
+                currentTargetId: item.id,
+                position: Position(),
+                completionPercent: 0,
+                playbackRate: 1
+            )
+            currentSession = session
+            try persistSession(session)
+            publish(status: .paused, phase: session.phase)
+            return session
+        }
+        throw SessionKitError.invalidCommandForState("buildExport")
+    }
+
+    private func nextSessionId(itemId: String) -> String {
+        if let memory = repository as? InMemorySessionRepository {
+            let next = memory.sessions.values.filter { $0.itemId == itemId }.count + 1
+            return "session-\(itemId)-gate1-\(String(format: "%03d", next))"
+        }
+        return "session-\(itemId)-\(UUID().uuidString)"
+    }
+
+    private func currentInterjectionTarget(for session: Session) -> (type: InterjectionTargetType, id: String) {
+        switch session.currentTargetType {
+        case .assistantTurnTTS:
+            return (.assistantTurn, session.currentTargetId)
+        case .summaryTurnTTS:
+            return (.summaryTurn, session.currentTargetId)
+        case .transcriptBackedMedia, .browserOwnedMedia:
+            return (.item, session.itemId)
+        default:
+            return (.item, session.itemId)
+        }
+    }
+
+    private func priorPhaseForResume(targetType: InterjectionTargetType) -> SessionPhase {
+        switch targetType {
+        case .assistantTurn: return .aiResponsePlayback
+        case .summaryTurn: return .summaryPlayback
+        case .item: return .itemPlayback
+        }
+    }
+
+    func buildAnchor(for session: Session, targetType: InterjectionTargetType, targetId: String) -> Anchor {
+        let playbackPosition = playbackPosition(for: session)
+        if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
+            let resolved = resolveMediaAnchor(for: session, playbackPosition: playbackPosition)
+            lastResolvedMediaAnchor = resolved
+            return Anchor(
+                anchorType: resolved.transcriptSegmentId == nil ? .media : .transcript,
+                startChar: resolved.startChar,
+                endChar: resolved.endChar,
+                anchorBefore: resolved.anchorBefore,
+                anchorAfter: resolved.anchorAfter,
+                mediaTimeMs: resolved.mediaTimeMs,
+                playbackRateObserved: resolved.playbackRateObserved,
+                transcriptSegmentId: resolved.transcriptSegmentId
+            )
+        }
+        if targetType != .item {
+            let turn = try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == targetId })
+            let turnText = turn.map { generatedTurnNavigationText(for: $0) } ?? ""
+            let start = max(0, min(playbackPosition.textStart ?? session.position.charOffset, turnText.count))
+            let sentenceStart = previousBoundary(before: min(start + 1, turnText.count), unit: "sentence", text: turnText)
+            let end = min(turnText.count, max(sentenceStart + 1, nextBoundary(after: start, unit: "sentence", text: turnText)))
+            let segmentIndex = completeSentenceUnits(in: slice(turnText, start: 0, end: sentenceStart)).count
+            let context = textAnchorShoulder(in: turnText, at: start)
+            return Anchor(
+                anchorType: .turn,
+                startChar: start,
+                endChar: end,
+                anchorBefore: context.before,
+                anchorAfter: context.after,
+                turnSegmentIndex: segmentIndex
+            )
+        }
+        let text = currentItem?.text ?? ""
+        let start = max(0, min(playbackPosition.textStart ?? session.position.charOffset, text.count))
+        let end = min(text.count, max(start + 1, nextBoundary(after: start, unit: "sentence", text: text)))
+        let context = textAnchorShoulder(in: text, at: start)
+        return Anchor(
+            anchorType: .text,
+            startChar: start,
+            endChar: end,
+            anchorBefore: context.before,
+            anchorAfter: context.after
+        )
+    }
+
+    private func textAnchorShoulder(in text: String, at rawOffset: Int) -> (before: String, after: String) {
+        guard !text.isEmpty else { return ("", "") }
+        let split = completedWordBoundary(in: text, at: rawOffset)
+        var beforeStart = split
+        var afterEnd = split
+        for _ in 0..<Self.textAnchorShoulderSentenceCount {
+            let previous = previousBoundary(before: beforeStart, unit: "sentence", text: text)
+            if previous == beforeStart { break }
+            beforeStart = previous
+        }
+        for _ in 0..<Self.textAnchorShoulderSentenceCount {
+            let next = nextBoundary(after: afterEnd, unit: "sentence", text: text)
+            if next == afterEnd { break }
+            afterEnd = next
+        }
+        return (
+            slice(text, start: beforeStart, end: split),
+            slice(text, start: split, end: afterEnd)
+        )
+    }
+
+    private func completedWordBoundary(in text: String, at rawOffset: Int) -> Int {
+        let characters = Array(text)
+        let offset = max(0, min(rawOffset, characters.count))
+        guard offset > 0, offset < characters.count else { return offset }
+        if characters[offset].isWhitespace || characters[offset - 1].isWhitespace {
+            return offset
+        }
+        var boundary = offset
+        while boundary < characters.count, !characters[boundary].isWhitespace {
+            boundary += 1
+        }
+        return boundary
+    }
+
+    private func interjectionPercent(
+        for session: Session,
+        targetType: InterjectionTargetType,
+        targetId: String,
+        anchor: Anchor
+    ) -> Int {
+        guard targetType != .item,
+              let turn = try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == targetId }) else {
+            return session.completionPercent
+        }
+        let text = generatedTurnNavigationText(for: turn)
+        return percent(for: anchor.startChar, text: text)
+    }
+
+    private func exportTurnAnchorContext(
+        for anchor: Anchor,
+        turn: ConversationTurn
+    ) -> (before: String, after: String) {
+        let text = generatedTurnNavigationText(for: turn)
+        guard !text.isEmpty else { return (anchor.anchorBefore, anchor.anchorAfter) }
+
+        // Older turn anchors stored the current sentence as `before` and only the
+        // following sentence as `after`. Their exact playhead was not persisted,
+        // but the end of the stored current-sentence span is the best recoverable
+        // split. New anchors store the playhead in `startChar` and already carry
+        // the same four-sentence shoulders as source-text anchors.
+        let storedCurrentSentence = slice(
+            text,
+            start: max(0, min(anchor.startChar, text.count)),
+            end: max(0, min(anchor.endChar, text.count))
+        )
+        let isLegacyTurnAnchor = anchor.anchorBefore == storedCurrentSentence
+        let split = isLegacyTurnAnchor ? anchor.endChar : anchor.startChar
+        return textAnchorShoulder(in: text, at: split)
+    }
+
+    private func aiJob(id: String, kind: String, session: Session, turnId: String?, status: String, messages: [String] = []) -> AIJob {
+        AIJob(
+            id: id,
+            kind: kind,
+            itemId: session.itemId,
+            sessionId: session.id,
+            turnId: turnId,
+            providerType: aiProvider.providerType,
+            model: aiProvider.model,
+            status: status,
+            attempts: 0,
+            lastError: nil,
+            messages: messages,
+            playbackMode: session.currentTargetType.rawValue
+        )
+    }
+
+    private func updateInterjection(
+        _ id: String,
+        sessionId: String? = nil,
+        mutate: (inout Interjection) -> Void
+    ) throws {
+        if let sessionId {
+            guard (try repository.loadSession(id: sessionId)) != nil,
+                  var interjection = try repository.loadInterjections(sessionId: sessionId).first(where: {
+                      $0.id == id && $0.sessionId == sessionId
+                  }) else {
+                throw SessionKitError.invalidCommandForState("updateInterjection")
+            }
+            mutate(&interjection)
+            try repository.saveInterjection(interjection)
+            lastMediaPercentageRepair = nil
+            return
+        }
+        if let memory = repository as? InMemorySessionRepository, var interjection = memory.interjections[id] {
+            mutate(&interjection)
+            try repository.saveInterjection(interjection)
+            lastMediaPercentageRepair = nil
+            return
+        }
+        guard let session = currentSession else { throw SessionKitError.invalidCommandForState("updateInterjection") }
+        var all = try repository.loadInterjections(sessionId: session.id)
+        guard var interjection = all.first(where: { $0.id == id }) else {
+            // Fixtures may use a mapless session while the current runtime session differs; preserve trace intent.
+            all = try repository.loadInterjections(sessionId: "session-pill-mapless")
+            guard var fallback = all.first(where: { $0.id == id }) else { throw SessionKitError.invalidCommandForState("updateInterjection") }
+            mutate(&fallback)
+            try repository.saveInterjection(fallback)
+            lastMediaPercentageRepair = nil
+            return
+        }
+        mutate(&interjection)
+        try repository.saveInterjection(interjection)
+        lastMediaPercentageRepair = nil
+    }
+
+    private func ensureWatchPackageRecords(_ package: WatchAudioPackage) throws {
+        if (try? repository.loadItem(id: package.itemId)) == nil {
+            let text = package.transcript.segments.map(\.text).joined(separator: " ")
+            try repository.saveItem(
+                Item(
+                    id: package.itemId,
+                    title: package.item.title,
+                    mediaType: package.item.mediaType,
+                    text: text,
+                    externalReference: package.item.externalReference,
+                    status: "ready"
+                )
+            )
+        }
+        if try repository.loadSession(id: package.sessionId) == nil {
+            let firstChapter = package.chapters.sorted { $0.startMs < $1.startMs }.first
+            try persistSession(
+                Session(
+                    id: package.sessionId,
+                    itemId: package.itemId,
+                    status: "in_progress",
+                    phase: .itemPlayback,
+                    currentTargetType: .transcriptBackedMedia,
+                    currentTargetId: package.primaryAudioAsset?.audioAssetId ?? package.id,
+                    position: Position(
+                        charOffset: package.transcript.segments.first?.startChar ?? 0,
+                        mediaTimeMs: firstChapter?.startMs ?? 0,
+                        segmentIndex: 0,
+                        chapterId: firstChapter?.id
+                    ),
+                    completionPercent: mediaPercent(firstChapter?.startMs ?? 0, package: package),
+                    playbackRate: package.settings.defaultPlaybackRate
+                )
+            )
+        }
+    }
+
+    private func importWatchInterjection(_ event: WatchSyncEvent, package: WatchAudioPackage) throws {
+        let mediaTimeMs = event.payload.mediaTimeMs ?? 0
+        let resolved = MediaTimelineAnchorResolver.resolve(
+            mediaTimeMs: mediaTimeMs,
+            timeline: package.timeline,
+            playbackRateObserved: event.payload.playbackRate ?? package.settings.defaultPlaybackRate
+        )
+        let interjectionId = watchInterjectionId(from: event)
+        if try repository.loadInterjections(sessionId: event.sessionId).contains(where: { $0.id == interjectionId }) {
+            return
+        }
+        let interjection = Interjection(
+            id: interjectionId,
+            itemId: event.itemId ?? package.itemId,
+            sessionId: event.sessionId,
+            targetType: .item,
+            targetId: event.itemId ?? package.itemId,
+            createdAt: event.createdAt,
+            roughPercent: mediaPercent(mediaTimeMs, package: package),
+            anchor: Anchor(
+                anchorType: resolved.transcriptSegmentId == nil ? .media : .transcript,
+                startChar: resolved.startChar,
+                endChar: resolved.endChar,
+                anchorBefore: resolved.anchorBefore,
+                anchorAfter: resolved.anchorAfter,
+                mediaTimeMs: resolved.mediaTimeMs,
+                playbackRateObserved: resolved.playbackRateObserved,
+                transcriptSegmentId: resolved.transcriptSegmentId
+            ),
+            audioPath: event.payload.audioFileName,
+            audioStatus: event.payload.audioFileName == nil ? "missing" : "saved",
+            transcriptionStatus: "pending",
+            transcript: nil,
+            cleanedTranscript: nil,
+            displayText: nil,
+            status: "active",
+            anchorContextStatus: resolved.transcriptSegmentId == nil ? .pending : .ready
+        )
+        try repository.saveInterjection(interjection)
+        lastMediaPercentageRepair = nil
+        try transcriber.scheduleTranscription(interjection: interjection)
+        lastScheduledTranscriptionInterjectionId = interjection.id
+        lastResolvedMediaAnchor = resolved
+        snapshot.lastInterjectionAnchorType = interjection.anchor.anchorType
+        snapshot.lastInterjectionTargetType = interjection.targetType
+        currentSession = try repository.loadSession(id: event.sessionId) ?? currentSession
+    }
+
+    private func importWatchPlaybackPosition(_ event: WatchSyncEvent, package: WatchAudioPackage) throws {
+        let mediaTimeMs = event.payload.mediaTimeMs ?? 0
+        let resolved = MediaTimelineAnchorResolver.resolve(
+            mediaTimeMs: mediaTimeMs,
+            timeline: package.timeline,
+            playbackRateObserved: event.payload.playbackRate ?? package.settings.defaultPlaybackRate
+        )
+        var session = try repository.loadSession(id: event.sessionId) ?? Session(
+            id: event.sessionId,
+            itemId: event.itemId ?? package.itemId,
+            status: "in_progress",
+            phase: .itemPlayback,
+            currentTargetType: .transcriptBackedMedia,
+            currentTargetId: package.primaryAudioAsset?.audioAssetId ?? package.id,
+            position: Position(),
+            completionPercent: 0,
+            playbackRate: package.settings.defaultPlaybackRate
+        )
+        session.currentTargetType = .transcriptBackedMedia
+        session.currentTargetId = package.primaryAudioAsset?.audioAssetId ?? package.id
+        session.position = Position(
+            charOffset: resolved.startChar,
+            mediaTimeMs: resolved.mediaTimeMs,
+            segmentIndex: package.transcript.segments.firstIndex { $0.id == resolved.transcriptSegmentId },
+            chapterId: resolved.chapterId
+        )
+        session.completionPercent = mediaPercent(mediaTimeMs, package: package)
+        session.playbackRate = event.payload.playbackRate ?? session.playbackRate
+        currentSession = session
+        lastResolvedMediaAnchor = resolved
+        try persistSession(session)
+    }
+
+    private func unimportedWatchEventCount(sessionId: String) throws -> Int {
+        var count = 0
+        for event in try repository.loadWatchSyncEvents(sessionId: sessionId) {
+            if try !repository.hasImportedWatchSyncEvent(id: event.id) {
+                count += 1
+            }
+        }
+        return count
+    }
+
+    private func watchInterjectionId(from event: WatchSyncEvent) -> String {
+        guard let audioFileName = event.payload.audioFileName, !audioFileName.isEmpty else {
+            return event.id.replacingOccurrences(of: "watch-event-", with: "watch-")
+        }
+        return audioFileName.replacingOccurrences(of: ".m4a", with: "")
+    }
+
+    private func queueWatchInterjectionEvent(audioRef: String, session: Session, package: WatchAudioPackage) throws -> WatchSyncEvent {
+        let resolved = lastResolvedMediaAnchor ?? resolveMediaAnchor(for: session)
+        let audioFileName = audioRef.split(separator: "/").last.map(String.init) ?? audioRef
+        let eventId = watchEventId(forAudioFileName: audioFileName)
+        let event = WatchSyncEvent(
+            id: eventId,
+            watchPackageId: package.id,
+            sessionId: package.sessionId,
+            itemId: package.itemId,
+            eventType: "interjection_recorded",
+            createdAt: Date(),
+            payload: WatchSyncEventPayload(
+                mediaTimeMs: resolved.mediaTimeMs,
+                chapterId: resolved.chapterId,
+                transcriptSegmentId: resolved.transcriptSegmentId,
+                playbackRate: resolved.playbackRateObserved,
+                audioFileName: audioFileName,
+                audioDurationMs: nil,
+                error: nil
+            )
+        )
+        try repository.saveWatchSyncEvent(event)
+        return event
+    }
+
+    private func watchEventId(forAudioFileName audioFileName: String) -> String {
+        let base = audioFileName.replacingOccurrences(of: ".m4a", with: "")
+        if base.hasPrefix("watch-ij-") {
+            return base.replacingOccurrences(of: "watch-ij-", with: "watch-event-ij-")
+        }
+        return "watch-event-\(base)"
+    }
+
+    private func resolveMediaAnchor(for session: Session, playbackPosition: PlaybackPosition? = nil) -> MediaResolvedAnchor {
+        let position = playbackPosition ?? self.playbackPosition(for: session)
+        if let package = currentWatchPackage {
+            return MediaTimelineAnchorResolver.resolve(
+                mediaTimeMs: position.mediaTimeMs ?? session.position.mediaTimeMs ?? 0,
+                timeline: package.timeline,
+                playbackRateObserved: position.playbackRate
+            )
+        }
+        if let timeline = sourceTranscriptTimeline(for: session), !timeline.segments.isEmpty {
+            return MediaTimelineAnchorResolver.resolve(
+                mediaTimeMs: position.mediaTimeMs ?? session.position.mediaTimeMs ?? 0,
+                timeline: timeline,
+                playbackRateObserved: position.playbackRate
+            )
+        }
+        return MediaResolvedAnchor(
+            mediaTimeMs: position.mediaTimeMs ?? session.position.mediaTimeMs ?? 0,
+            chapterId: position.chapterId ?? session.position.chapterId,
+            transcriptSegmentId: nil,
+            startChar: position.textStart ?? session.position.charOffset,
+            endChar: position.textEnd ?? position.textStart ?? session.position.charOffset,
+            anchorBefore: "",
+            anchorAfter: "",
+            playbackRateObserved: position.playbackRate
+        )
+    }
+
+    private func mediaPercent(_ mediaTimeMs: Int, package: WatchAudioPackage) -> Int {
+        guard let duration = package.primaryAudioAsset?.durationMs ?? package.timeline.durationMs,
+              duration > 0 else {
+            return 0
+        }
+        return max(0, min(100, Int((Double(mediaTimeMs) / Double(duration)) * 100)))
+    }
+
+    private func jumpToMediaChapter(chapterId: String, session: Session) throws -> SessionSnapshot {
+        if currentWatchPackage == nil,
+           let timeline = sourceTranscriptTimeline(for: session),
+           let chapter = timeline.chapters.first(where: { $0.id == chapterId }) {
+            var updated = mediaSession(session, movedTo: chapter.startMs)
+            updated.currentTargetType = .transcriptBackedMedia
+            updated.phase = .itemPlayback
+            currentSession = updated
+            try persistSession(updated)
+            protectPlaybackPosition(for: updated)
+            try playCurrentTarget(updated)
+            publishPlaybackStart(for: updated, phase: updated.phase)
+            return snapshot
+        }
+        guard let package = currentWatchPackage,
+              let chapter = package.chapters.first(where: { $0.id == chapterId }) else {
+            throw SessionKitError.invalidCommandForState("jumpToChapter")
+        }
+        var updated = session
+        let resolved = MediaTimelineAnchorResolver.resolve(
+            mediaTimeMs: chapter.startMs,
+            timeline: package.timeline,
+            playbackRateObserved: session.playbackRate
+        )
+        updated.currentTargetType = .transcriptBackedMedia
+        updated.currentTargetId = package.primaryAudioAsset?.audioAssetId ?? package.id
+        updated.phase = .itemPlayback
+        updated.position = Position(
+            charOffset: resolved.startChar,
+            mediaTimeMs: resolved.mediaTimeMs,
+            segmentIndex: package.transcript.segments.firstIndex { $0.id == resolved.transcriptSegmentId },
+            chapterId: resolved.chapterId
+        )
+        updated.completionPercent = mediaPercent(chapter.startMs, package: package)
+        currentSession = updated
+        lastResolvedMediaAnchor = resolved
+        try persistSession(updated)
+        protectPlaybackPosition(for: updated)
+        try playCurrentTarget(updated)
+        publishPlaybackStart(for: updated, phase: updated.phase)
+        return snapshot
+    }
+
+    private func skipMediaForward(session: Session, unit: String) throws -> SessionSnapshot {
+        var updated = try syncMediaPositionFromAudio(session)
+        let duration = mediaDurationMs(for: updated)
+        let playbackCompleted = audio.isPlaybackComplete(targetId: updated.currentTargetId)
+        let observedCurrent = updated.position.mediaTimeMs ?? 0
+        let current = playbackCompleted ? (duration ?? observedCurrent) : observedCurrent
+        let next: Int
+        if let package = currentWatchPackage, unit == "chapter" {
+            next = package.chapters.first(where: { $0.startMs > current })?.startMs ?? package.primaryAudioAsset?.durationMs ?? current
+        } else if let intervalMs = mediaSkipIntervalMs(for: unit) {
+            next = current + intervalMs
+        } else if unit == "chapter", let timeline = sourceTranscriptTimeline(for: session) {
+            next = timeline.chapters.first(where: { $0.startMs > current })?.startMs ?? timeline.durationMs ?? current
+        } else if let package = currentWatchPackage {
+            next = package.transcript.segments.first(where: { $0.startMs > current })?.startMs ?? package.primaryAudioAsset?.durationMs ?? current
+        } else if let timeline = sourceTranscriptTimeline(for: session), !timeline.segments.isEmpty {
+            next = timeline.segments.first(where: { $0.startMs > current })?.startMs ?? timeline.durationMs ?? current
+        } else {
+            next = current + 15_000
+        }
+        let clampedNext = duration.map { max(0, min(next, $0)) } ?? max(0, next)
+        updated = mediaSession(updated, movedTo: clampedNext)
+        let reachedEnd = duration.map { $0 > 0 && clampedNext >= $0 } ?? playbackCompleted
+        if snapshot.status == .playing, !reachedEnd {
+            // Keep the current stream/edition. Starting playback here can adopt
+            // a background download whose ad timing differs from the stream.
+            return try seekMedia(toMediaTimeMs: clampedNext)
+        }
+        protectPlaybackPosition(for: updated)
+        if reachedEnd {
+            updated = markPlaybackComplete(updated, item: item(for: updated))
+            currentSession = updated
+            try persistSession(updated)
+            if let duration {
+                try audio.seek(toMediaTimeMs: duration)
+            }
+            try audio.pause()
+            publish(status: .paused, phase: updated.phase)
+            return snapshot
+        }
+        currentSession = updated
+        try persistSession(updated)
+        if snapshot.status.isPlaybackActive {
+            try playCurrentTarget(updated)
+            publishPlaybackContinuation(for: updated)
+            return snapshot
+        }
+        publish(status: snapshot.status, phase: updated.phase)
+        return snapshot
+    }
+
+    private func skipMediaBack(session: Session, unit: String) throws -> SessionSnapshot {
+        var updated = try syncMediaPositionFromAudio(session)
+        let current = updated.position.mediaTimeMs ?? 0
+        let previous: Int
+        if let package = currentWatchPackage, unit == "chapter" {
+            previous = package.chapters.last(where: { $0.startMs < current })?.startMs ?? 0
+        } else if let intervalMs = mediaSkipIntervalMs(for: unit) {
+            previous = current - intervalMs
+        } else if unit == "chapter", let timeline = sourceTranscriptTimeline(for: session) {
+            previous = timeline.chapters.last(where: { $0.startMs < current })?.startMs ?? 0
+        } else if let package = currentWatchPackage {
+            previous = package.transcript.segments.last(where: { $0.startMs < current })?.startMs ?? 0
+        } else if let timeline = sourceTranscriptTimeline(for: session), !timeline.segments.isEmpty {
+            previous = timeline.segments.last(where: { $0.startMs < current })?.startMs ?? 0
+        } else {
+            previous = current - 15_000
+        }
+        updated = mediaSession(updated, movedTo: previous)
+        if snapshot.status == .playing {
+            return try seekMedia(toMediaTimeMs: updated.position.mediaTimeMs ?? 0)
+        }
+        currentSession = updated
+        try persistSession(updated)
+        protectPlaybackPosition(for: updated)
+        if snapshot.status.isPlaybackActive {
+            try playCurrentTarget(updated)
+            publishPlaybackContinuation(for: updated)
+            return snapshot
+        }
+        publish(status: snapshot.status, phase: updated.phase)
+        return snapshot
+    }
+
+    private func mediaSkipIntervalMs(for unit: String) -> Int? {
+        guard unit.hasPrefix("time_"), unit.hasSuffix("s") else { return nil }
+        let start = unit.index(unit.startIndex, offsetBy: "time_".count)
+        let end = unit.index(before: unit.endIndex)
+        guard let seconds = Int(unit[start..<end]), (1...300).contains(seconds) else { return nil }
+        return seconds * 1_000
+    }
+
+    private func applyMediaRollback(_ session: Session, package: WatchAudioPackage) -> Session {
+        let current = session.position.mediaTimeMs ?? 0
+        switch package.settings.rollbackUnit {
+        case "previous_segment":
+            let previous = package.transcript.segments.last(where: { $0.startMs < current })?.startMs ?? 0
+            return mediaSession(session, movedTo: previous, package: package)
+        case "time_15s":
+            return mediaSession(session, movedTo: current - 15_000, package: package)
+        case "none":
+            return mediaSession(session, movedTo: current, package: package)
+        default:
+            return mediaSession(session, movedTo: current, package: package)
+        }
+    }
+
+    private func mediaSession(_ session: Session, movedTo mediaTimeMs: Int, package: WatchAudioPackage) -> Session {
+        let duration = package.primaryAudioAsset?.durationMs ?? package.timeline.durationMs ?? mediaTimeMs
+        let clamped = max(0, min(mediaTimeMs, duration))
+        let resolved = MediaTimelineAnchorResolver.resolve(
+            mediaTimeMs: clamped,
+            timeline: package.timeline,
+            playbackRateObserved: session.playbackRate
+        )
+        var updated = session
+        updated.position = Position(
+            charOffset: resolved.startChar,
+            mediaTimeMs: resolved.mediaTimeMs,
+            segmentIndex: package.transcript.segments.firstIndex { $0.id == resolved.transcriptSegmentId },
+            chapterId: resolved.chapterId
+        )
+        updated.completionPercent = mediaPercent(clamped, package: package)
+        lastResolvedMediaAnchor = resolved
+        return updated
+    }
+
+    private func mediaSession(_ session: Session, movedTo mediaTimeMs: Int) -> Session {
+        if let package = currentWatchPackage {
+            return mediaSession(session, movedTo: mediaTimeMs, package: package)
+        }
+        let duration = mediaDurationMs(for: session) ?? mediaTimeMs
+        let clamped = max(0, min(mediaTimeMs, duration))
+        var updated = session
+        if let timeline = sourceTranscriptTimeline(for: session), !timeline.segments.isEmpty {
+            let resolved = MediaTimelineAnchorResolver.resolve(
+                mediaTimeMs: clamped,
+                timeline: timeline,
+                playbackRateObserved: session.playbackRate
+            )
+            let textStart = isGeneratedTextMedia(item(for: session)?.media)
+                ? generatedTextOffset(mediaTimeMs: clamped, timeline: timeline)
+                : resolved.startChar
+            updated.position = Position(
+                charOffset: textStart,
+                mediaTimeMs: resolved.mediaTimeMs,
+                segmentIndex: timeline.segments.firstIndex { $0.id == resolved.transcriptSegmentId },
+                chapterId: resolved.chapterId
+            )
+            updated.completionPercent = isGeneratedTextMedia(item(for: session)?.media)
+                ? generatedTextSourcePercent(for: session, textStart: textStart)
+                : mediaPercent(clamped, durationMs: duration)
+            lastResolvedMediaAnchor = resolved
+            return updated
+        }
+        updated.position.mediaTimeMs = clamped
+        updated.completionPercent = isGeneratedTextMedia(item(for: session)?.media)
+            ? generatedTextSourcePercent(for: session, textStart: updated.position.charOffset)
+            : mediaPercent(clamped, durationMs: duration)
+        return updated
+    }
+
+    private func chapterId(for charOffset: Int) -> String? {
+        currentMap?.chapters.last(where: { $0.startChar <= charOffset })?.id
+    }
+
+    private func nextChapterBoundary(after charOffset: Int, text: String) -> Int {
+        guard let chapters = currentMap?.chapters, !chapters.isEmpty else {
+            return nextBoundary(after: charOffset, unit: "paragraph", text: text)
+        }
+        if let chapter = chapters.first(where: { $0.startChar > charOffset }) {
+            return chapter.startChar
+        }
+        return text.count
+    }
+
+    private func previousChapterBoundary(before charOffset: Int) -> Int {
+        guard let chapters = currentMap?.chapters, !chapters.isEmpty else {
+            return 0
+        }
+        if let chapter = chapters.last(where: { $0.startChar < charOffset }) {
+            return chapter.startChar
+        }
+        return 0
+    }
+
+    private func playCurrentTarget(_ session: Session) throws {
+        if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
+            try audio.configureMediaContext(playbackMediaContext(for: session))
+            try audio.play(targetId: session.currentTargetId, fromMediaTimeMs: session.position.mediaTimeMs ?? 0)
+            try audio.setPlaybackRate(session.playbackRate)
+            return
+        }
+        try audio.configureMediaContext(nil)
+        let plan = try playbackPlan(for: session)
+        lastSpokenText = try audio.prepareSpeechText(plan.text)
+        try audio.play(targetId: session.currentTargetId, from: plan.audioOffset)
+        try audio.setPlaybackRate(session.playbackRate)
+    }
+
+    private func playbackMediaContext(for session: Session) -> PlaybackMediaContext? {
+        guard let item = currentItem ?? (try? repository.loadItem(id: session.itemId)) else { return nil }
+        if pinnedMediaTransport?.sessionId != session.id || pinnedMediaTransport?.targetId != session.currentTargetId {
+            pinnedMediaTransport = (session.id, session.currentTargetId, playbackURLOverrides[item.id]
+                ?? (item.media?.sourceType == .nativeMediaFile ? item.media?.url : nil))
+        }
+        let timeline = sourceTranscriptTimeline(for: session)
+        let subtitle = [item.externalReferenceType, item.externalReference]
+            .compactMap { value -> String? in
+                guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+                return value
+            }
+            .joined(separator: " ")
+        return PlaybackMediaContext(
+            itemId: item.id,
+            targetType: session.currentTargetType,
+            targetId: session.currentTargetId,
+            title: item.title,
+            subtitle: subtitle.isEmpty ? nil : subtitle,
+            sourceURL: item.media?.url ?? item.externalReference,
+            // Native media IDs name library assets; they need not be playable URLs.
+            playbackURL: pinnedMediaTransport?.playbackURL,
+            artworkURL: nil,
+            durationMs: item.media?.durationMs ?? timeline?.durationMs,
+            sourceType: item.media?.sourceType,
+            chapters: timeline?.chapters ?? []
+        )
+    }
+
+    private func syncSessionPositionFromAudio(_ session: Session, item: Item?) -> Session {
+        let playbackPosition = playbackPosition(for: session)
+        guard session.currentTargetType == .itemTextTTS,
+              let textStart = playbackPosition.textStart,
+              textStart >= 0 else {
+            return session
+        }
+        guard textStart <= (item?.text ?? "").count else { return session }
+        var updated = session
+        updated.position.charOffset = max(0, min(textStart, item?.text?.count ?? 0))
+        updated.completionPercent = percent(for: updated.position.charOffset, text: item?.text ?? "")
+        updated.position.chapterId = playbackPosition.chapterId
+        return updated
+    }
+
+    private func syncGeneratedTurnPositionFromAudio(_ session: Session) throws -> Session {
+        guard session.currentTargetType == .summaryTurnTTS || session.currentTargetType == .assistantTurnTTS,
+              externallyStreamedTurnId != session.currentTargetId,
+              let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }),
+              let textStart = playbackPosition(for: session).textStart,
+              textStart >= 0 else {
+            return session
+        }
+        let text = generatedTurnNavigationText(for: turn)
+        var updated = session
+        updated.position.charOffset = max(0, min(textStart, text.count))
+        updated.position.chapterId = turn.chapters?.last(where: { $0.startChar <= updated.position.charOffset })?.id
+        return updated
+    }
+
+    private func syncMediaPositionFromAudio(_ session: Session) throws -> Session {
+        let playbackPosition = playbackPosition(for: session)
+        guard let mediaTimeMs = playbackPosition.mediaTimeMs ?? session.position.mediaTimeMs else {
+            return session
+        }
+        var updated = session
+        updated.position.mediaTimeMs = max(0, mediaTimeMs)
+        if let package = currentWatchPackage {
+            let resolved = MediaTimelineAnchorResolver.resolve(
+                mediaTimeMs: max(0, mediaTimeMs),
+                timeline: package.timeline,
+                playbackRateObserved: playbackPosition.playbackRate
+            )
+            updated.position.chapterId = resolved.chapterId
+            updated.position.charOffset = resolved.startChar
+            updated.position.segmentIndex = package.transcript.segments.firstIndex { $0.id == resolved.transcriptSegmentId }
+            updated.completionPercent = mediaPercent(mediaTimeMs, package: package)
+            lastResolvedMediaAnchor = resolved
+        }
+        if currentWatchPackage == nil,
+           let timeline = sourceTranscriptTimeline(for: session),
+           !timeline.segments.isEmpty {
+            let resolved = MediaTimelineAnchorResolver.resolve(
+                mediaTimeMs: max(0, mediaTimeMs),
+                timeline: timeline,
+                playbackRateObserved: playbackPosition.playbackRate
+            )
+            let textStart = isGeneratedTextMedia(item(for: session)?.media)
+                ? generatedTextOffset(mediaTimeMs: mediaTimeMs, timeline: timeline)
+                : resolved.startChar
+            updated.position.chapterId = resolved.chapterId
+            updated.position.charOffset = textStart
+            updated.position.segmentIndex = timeline.segments.firstIndex { $0.id == resolved.transcriptSegmentId }
+            updated.completionPercent = isGeneratedTextMedia(item(for: session)?.media)
+                ? generatedTextSourcePercent(for: session, textStart: textStart)
+                : mediaPercent(mediaTimeMs, durationMs: mediaDurationMs(for: session, position: playbackPosition))
+            lastResolvedMediaAnchor = resolved
+        } else if currentWatchPackage == nil {
+            if let timeline = sourceTranscriptTimeline(for: session),
+               let chapter = mediaChapter(at: mediaTimeMs, timeline: timeline) {
+                updated.position.chapterId = chapter.id
+            }
+            updated.completionPercent = isGeneratedTextMedia(item(for: session)?.media)
+                ? generatedTextSourcePercent(for: session, textStart: playbackPosition.textStart)
+                : mediaPercent(mediaTimeMs, durationMs: mediaDurationMs(for: session, position: playbackPosition))
+        }
+        if !isGeneratedTextMedia(item(for: session)?.media),
+           let durationMs = mediaDurationMs(for: session, position: playbackPosition),
+           durationMs > 0 {
+            try persistObservedMediaDuration(durationMs, for: session)
+            updated = try repairMediaPercentages(updated, durationMs: durationMs)
+        }
+        return updated
+    }
+
+    private func persistObservedMediaDuration(_ durationMs: Int, for session: Session) throws {
+        guard durationMs > 0,
+              var item = item(for: session),
+              var media = item.media else {
+            return
+        }
+        // Feed duration is provisional. Persist a materially different player
+        // observation so future sessions and saved interjection percentages do
+        // not remain anchored to stale publisher metadata. Ignore sub-second
+        // container rounding to avoid rewriting the item every progress tick.
+        if let existingDurationMs = media.durationMs,
+           abs(existingDurationMs - durationMs) < 1_000 {
+            return
+        }
+        media.durationMs = durationMs
+        item.media = media
+        try repository.saveItem(item)
+        if currentItem?.id == item.id {
+            currentItem = item
+        }
+    }
+
+    private func repairMediaPercentages(_ session: Session, durationMs: Int, forceNotes: Bool = false) throws -> Session {
+        guard durationMs > 0,
+              !isGeneratedTextMedia(item(for: session)?.media) else {
+            return session
+        }
+        var updatedSession = session
+        if (session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia),
+           let mediaTimeMs = session.position.mediaTimeMs {
+            updatedSession.completionPercent = mediaPercent(mediaTimeMs, durationMs: durationMs)
+            if updatedSession.completionPercent != session.completionPercent {
+                try persistSession(updatedSession)
+            }
+        }
+        guard forceNotes || lastMediaPercentageRepair?.sessionId != session.id
+                || lastMediaPercentageRepair?.durationMs != durationMs else { return updatedSession }
+        for var interjection in try repository.loadInterjections(sessionId: session.id)
+        where interjection.targetType == .item {
+            guard let mediaTimeMs = interjection.anchor.mediaTimeMs else { continue }
+            let percent = mediaPercent(mediaTimeMs, durationMs: durationMs)
+            guard percent != interjection.roughPercent else { continue }
+            interjection.roughPercent = percent
+            try repository.saveInterjection(interjection)
+            lastMediaPercentageRepair = nil
+        }
+        lastMediaPercentageRepair = (session.id, durationMs)
+        return updatedSession
+    }
+
+    private func reconcilePendingMediaSeek(for session: inout Session) throws -> String? {
+        guard let pendingPlaybackPosition,
+              pendingPlaybackPosition.targetId == session.currentTargetId,
+              pendingPlaybackPosition.targetType == session.currentTargetType,
+              let request = pendingPlaybackPosition.mediaSeekRequest else {
+            return nil
+        }
+        let resolution = audio.mediaSeekResolution(for: request)
+        lastMediaSeekRequest = request
+        lastMediaSeekResolution = resolution
+        switch resolution {
+        case .pending:
+            return nil
+        case .accepted:
+            self.pendingPlaybackPosition = nil
+            return nil
+        case .failed(let actualMediaTimeMs, let reason):
+            self.pendingPlaybackPosition = nil
+            if let actualMediaTimeMs,
+               (session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia) {
+                session = mediaSession(session, movedTo: actualMediaTimeMs)
+                currentSession = session
+                try persistSession(session)
+            }
+            return reason
+        }
+    }
+
+    private func syncCurrentPositionFromAudio(_ session: Session) throws -> Session {
+        guard !hasPendingPlaybackPosition(for: session) else {
+            return session
+        }
+        switch session.currentTargetType {
+        case .itemTextTTS:
+            return syncSessionPositionFromAudio(session, item: currentItem)
+        case .summaryTurnTTS, .assistantTurnTTS:
+            return try syncGeneratedTurnPositionFromAudio(session)
+        case .transcriptBackedMedia, .browserOwnedMedia:
+            return try syncMediaPositionFromAudio(session)
+        }
+    }
+
+    private func protectPlaybackPosition(
+        for session: Session,
+        mediaSeekRequest: MediaSeekRequest? = nil
+    ) {
+        pendingPlaybackPosition = PendingPlaybackPosition(
+            targetId: session.currentTargetId,
+            targetType: session.currentTargetType,
+            position: session.position,
+            mediaSeekRequest: mediaSeekRequest
+        )
+    }
+
+    private func hasPendingPlaybackPosition(for session: Session) -> Bool {
+        protectedPlaybackPosition(for: session) != nil
+    }
+
+    private func protectedPlaybackPosition(for session: Session) -> Position? {
+        guard let pendingPlaybackPosition else { return nil }
+        guard pendingPlaybackPosition.targetId == session.currentTargetId,
+              pendingPlaybackPosition.targetType == session.currentTargetType else {
+            return nil
+        }
+        return pendingPlaybackPosition.position
+    }
+
+    private func markPlaybackComplete(_ session: Session, item: Item?) -> Session {
+        var updated = session
+        switch session.currentTargetType {
+        case .itemTextTTS:
+            let text = item?.text ?? ""
+            updated.position.charOffset = text.count
+            updated.position.chapterId = chapterId(for: text.count)
+            updated.completionPercent = 100
+            updated.phase = .finished
+            updated.status = "finished"
+        case .transcriptBackedMedia, .browserOwnedMedia:
+            if isPartialGeneratedTextPlayback(session) {
+                let duration = mediaDurationMs(for: session)
+                updated = mediaSession(session, movedTo: duration ?? session.position.mediaTimeMs ?? 0)
+                updated.phase = .itemPlayback
+                return updated
+            }
+            let duration = mediaDurationMs(for: session)
+            if let duration {
+                updated.position.mediaTimeMs = duration
+            }
+            if let timeline = sourceTranscriptTimeline(for: session), let last = timeline.segments.last {
+                updated.position.charOffset = last.endChar ?? updated.position.charOffset
+                updated.position.segmentIndex = max(0, timeline.segments.count - 1)
+                updated.position.chapterId = timeline.chapters.last?.id ?? updated.position.chapterId
+            }
+            updated.completionPercent = 100
+            updated.phase = .finished
+            updated.status = "finished"
+        case .summaryTurnTTS:
+            updated.phase = .summaryPlayback
+        case .assistantTurnTTS:
+            updated.phase = .aiResponsePlayback
+        }
+        return updated
+    }
+
+    private func playbackPlan(for session: Session) throws -> PlaybackPlan {
+        let text = try playbackText(for: session)
+        if session.currentTargetType == .summaryTurnTTS || session.currentTargetType == .assistantTurnTTS,
+           let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }) {
+            let startsAtBeginning = session.position.charOffset == 0 && session.position.chapterId == nil
+            return PlaybackPlan(text: text, audioOffset: startsAtBeginning ? 0 : turnAudioOffset(for: turn, responseOffset: session.position.charOffset))
+        }
+        guard session.currentTargetType == .itemTextTTS else {
+            return PlaybackPlan(text: text, audioOffset: session.position.charOffset)
+        }
+        let prefixLength = itemPlaybackPreface().count
+        let startsAtPreface = session.position.charOffset == 0 && session.position.chapterId == nil
+        let audioOffset = startsAtPreface ? 0 : prefixLength + session.position.charOffset
+        return PlaybackPlan(text: text, audioOffset: audioOffset)
+    }
+
+    private func turnAudioOffset(for turn: ConversationTurn, responseOffset: Int) -> Int {
+        let summary = turn.summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let text = turn.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !summary.isEmpty, !text.isEmpty else { return responseOffset }
+        return summary.count + 2 + responseOffset
+    }
+
+    private func turnResponseOffset(for turn: ConversationTurn, audioOffset: Int) -> Int {
+        let summary = turn.summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let text = turn.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !summary.isEmpty, !text.isEmpty else { return audioOffset }
+        return max(0, audioOffset - summary.count - 2)
+    }
+
+    private func playbackText(for session: Session) throws -> String {
+        switch session.currentTargetType {
+        case .itemTextTTS, .transcriptBackedMedia, .browserOwnedMedia:
+            if currentItem?.id != session.itemId {
+                currentItem = try repository.loadItem(id: session.itemId)
+            }
+            let itemText = currentItem?.text ?? ""
+            guard session.currentTargetType == .itemTextTTS else {
+                return itemText
+            }
+            return itemPlaybackPreface() + itemText
+        case .summaryTurnTTS, .assistantTurnTTS:
+            guard let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }) else {
+                throw SessionKitError.invalidCommandForState("playTurn")
+            }
+            return playableText(for: turn)
+        }
+    }
+
+    private func playableText(for turn: ConversationTurn) -> String {
+        let summary = turn.summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let text = turn.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !summary.isEmpty, !text.isEmpty {
+            return "\(summary)\n\n\(text)"
+        }
+        if !text.isEmpty { return text }
+        if !summary.isEmpty { return summary }
+        return turn.rawText ?? ""
+    }
+
+    private func generatedTurnNavigationText(for turn: ConversationTurn) -> String {
+        let text = turn.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !text.isEmpty { return text }
+        return playableText(for: turn)
+    }
+
+    private func itemPlaybackPreface() -> String {
+        guard let overview = currentMap?.overview.trimmingCharacters(in: .whitespacesAndNewlines),
+              !overview.isEmpty else {
+            return ""
+        }
+        return "Overview. \(overview)\n\n"
+    }
+
+    private func turnTitle(for turn: ConversationTurn) -> String {
+        switch turn.turnType {
+        case "interjection_summary":
+            return "Interjection Summary \(turnSequenceNumber(turn.id) ?? 1)"
+        case "assistant_response":
+            if let number = turnSequenceNumber(turn.id) {
+                return "AI Response \(number)"
+            }
+            return "AI Response"
+        case "user_response":
+            return "Follow-up"
+        default:
+            return turn.turnType.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    private func turnSequenceNumber(_ id: String) -> Int? {
+        guard let raw = id.split(separator: "-").last else { return nil }
+        return Int(raw)
+    }
+
+    private func itemSourceOffset(forAudioOffset audioOffset: Int) -> Int {
+        let prefixLength = itemPlaybackPreface().count
+        guard prefixLength > 0 else { return audioOffset }
+        if audioOffset <= prefixLength {
+            return 0
+        }
+        return audioOffset - prefixLength
+    }
+
+    private func generatedListeningMap(for item: Item) -> ListeningMap {
+        let text = listeningMapText(for: item)
+        let starts = generatedChapterStarts(for: text)
+        let chapters = starts.enumerated().map { index, start in
+            let end = index + 1 < starts.count ? starts[index + 1] : text.count
+            let title = generatedChapterTitle(text: text, start: start, end: end, index: index)
+            return Chapter(
+                id: "ch-generated-\(String(format: "%02d", index + 1))",
+                title: title,
+                startChar: start,
+                endChar: max(start, end),
+                percent: percent(for: start, text: text)
+            )
+        }
+        return ListeningMap(
+            id: "map-\(item.id)-generated",
+            itemId: item.id,
+            overview: generatedOverview(for: item, chapters: chapters),
+            chapters: chapters
+        )
+    }
+
+    private func listeningMapText(for item: Item) -> String {
+        if let text = item.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return text
+        }
+        guard let timeline = sourceTranscriptTimeline(itemId: item.id) else { return "" }
+        return timeline.segments
+            .sorted { $0.startMs < $1.startMs }
+            .map(\.text)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func normalizedSourceTranscriptTimeline(_ timeline: TranscriptTimeline) -> (text: String, timeline: TranscriptTimeline) {
+        let sortedSegments = timeline.segments.sorted { $0.startMs < $1.startMs }
+        var fullText = ""
+        var normalizedSegments: [MediaTimelineSegment] = []
+        for (index, segment) in sortedSegments.enumerated() {
+            let text = segment.text
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            if !fullText.isEmpty {
+                fullText.append(" ")
+            }
+            let start = fullText.count
+            fullText.append(text)
+            let end = fullText.count
+            normalizedSegments.append(MediaTimelineSegment(
+                id: segment.id.isEmpty ? "seg-\(String(format: "%04d", index + 1))" : segment.id,
+                startMs: max(0, segment.startMs),
+                endMs: max(segment.startMs + 1, segment.endMs),
+                startChar: start,
+                endChar: end,
+                text: text
+            ))
+        }
+        let duration = timeline.durationMs
+            ?? normalizedSegments.map(\.endMs).max()
+        let chapters = normalizedSourceTranscriptChapters(
+            existing: timeline.chapters,
+            segments: normalizedSegments
+        )
+        return (
+            fullText,
+            TranscriptTimeline(
+                segments: normalizedSegments,
+                chapters: chapters,
+                durationMs: duration
+            )
+        )
+    }
+
+    private func normalizedSourceTranscriptChapters(
+        existing: [MediaTimelineChapter],
+        segments: [MediaTimelineSegment]
+    ) -> [MediaTimelineChapter] {
+        guard !segments.isEmpty else { return [] }
+        let semanticChapters = existing.filter { !isSyntheticTranscriptChapter($0) }
+        if !semanticChapters.isEmpty {
+            return semanticChapters.compactMap { chapter in
+                let segment = segments.last(where: { $0.startMs <= chapter.startMs }) ?? segments.first
+                guard let segment else { return nil }
+                return MediaTimelineChapter(
+                    id: chapter.id,
+                    title: chapter.title,
+                    description: chapter.description,
+                    startMs: max(0, chapter.startMs),
+                    transcriptSegmentId: segment.id
+                )
+            }
+        }
+        return []
+    }
+
+    private func isSyntheticTranscriptChapter(_ chapter: MediaTimelineChapter) -> Bool {
+        chapter.id.hasPrefix("ch-transcript-") || chapter.id.contains("-ch-transcript-")
+    }
+
+    private func generatedChapterStarts(for text: String) -> [Int] {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [0] }
+        let sentenceStarts = sentenceStartOffsets(in: text)
+        guard sentenceStarts.count > 8 else { return sentenceStarts }
+        let targetCount = min(12, max(5, Int((Double(text.count) / 900.0).rounded(.up))))
+        let stride = max(1, Int((Double(sentenceStarts.count) / Double(targetCount)).rounded(.up)))
+        var starts = sentenceStarts.enumerated().compactMap { index, start in
+            index % stride == 0 ? start : nil
+        }
+        if starts.first != 0 { starts.insert(0, at: 0) }
+        return Array(starts.prefix(12))
+    }
+
+    private func sentenceStartOffsets(in text: String) -> [Int] {
+        let chars = Array(text)
+        var starts = [0]
+        var index = 0
+        while index < chars.count {
+            if ".!?".contains(chars[index]) {
+                let next = index + 1 + consumeSpaces(chars, from: index + 1)
+                if next < chars.count {
+                    starts.append(next)
+                }
+            }
+            index += 1
+        }
+        return Array(NSOrderedSet(array: starts)) as? [Int] ?? starts
+    }
+
+    private func generatedChapterTitle(text: String, start: Int, end: Int, index: Int) -> String {
+        let raw = slice(text, start: start, end: min(end, nextBoundary(after: start, unit: "sentence", text: text)))
+        let words = raw
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .split(separator: " ")
+            .prefix(6)
+            .joined(separator: " ")
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".!?;:,"))
+        return words.isEmpty ? "Chapter \(index + 1)" : words
+    }
+
+    private func generatedOverview(for item: Item, chapters: [Chapter]) -> String {
+        if chapters.isEmpty {
+            return "Generated Listening Map for \(item.title)."
+        }
+        return "Generated Listening Map with \(chapters.count) chapter\(chapters.count == 1 ? "" : "s") for \(item.title)."
+    }
+
+    private func percent(for charOffset: Int, text: String) -> Int {
+        guard !text.isEmpty else { return 0 }
+        return min(100, max(0, Int((Double(charOffset) / Double(text.count)) * 100)))
+    }
+
+    private func percent(offset: Int, length: Int) -> Int {
+        guard length > 0 else { return 0 }
+        return min(100, max(0, Int((Double(offset) / Double(length)) * 100)))
+    }
+
+    private func nextBoundary(after offset: Int, unit: String, text: String) -> Int {
+        guard offset < text.count else { return text.count }
+        if unit == "paragraph" {
+            return nextParagraphBoundary(after: offset, text: text)
+        }
+        if unit == "section" {
+            return min(text.count, offset + max(500, text.count / 10))
+        }
+        let chars = Array(text)
+        let boundaryCharacters: Set<Character> = [".", "?", "!"]
+        for index in min(offset + 1, chars.count)..<chars.count where boundaryCharacters.contains(chars[index]) {
+            return min(chars.count, index + 1 + consumeSpaces(chars, from: index + 1))
+        }
+        return text.count
+    }
+
+    private func previousBoundary(before offset: Int, unit: String, text: String) -> Int {
+        guard offset > 0 else { return 0 }
+        if unit == "paragraph" {
+            return previousParagraphBoundary(before: offset, text: text)
+        }
+        if unit == "section" {
+            return max(0, offset - max(500, text.count / 10))
+        }
+        let chars = Array(text)
+        let boundaryCharacters: Set<Character> = [".", "?", "!"]
+        var index = min(offset - 1, chars.count - 1)
+        while index > 0 {
+            if boundaryCharacters.contains(chars[index]) {
+                let boundary = min(chars.count, index + 1 + consumeSpaces(chars, from: index + 1))
+                if boundary < offset {
+                    return boundary
+                }
+            }
+            index -= 1
+        }
+        return 0
+    }
+
+    private func nextParagraphBoundary(after offset: Int, text: String) -> Int {
+        let chars = Array(text)
+        guard offset < chars.count else { return text.count }
+        var index = min(offset + 1, chars.count - 1)
+        while index < chars.count {
+            if chars[index] == "\n" {
+                return min(chars.count, index + 1 + consumeSpaces(chars, from: index + 1))
+            }
+            index += 1
+        }
+        return nextBoundary(after: offset, unit: "sentence", text: text)
+    }
+
+    private func previousParagraphBoundary(before offset: Int, text: String) -> Int {
+        let chars = Array(text)
+        guard offset > 0, !chars.isEmpty else { return 0 }
+        var index = min(offset - 1, chars.count - 1)
+        while index > 0 {
+            if chars[index] == "\n" {
+                let boundary = min(chars.count, index + 1 + consumeSpaces(chars, from: index + 1))
+                if boundary < offset {
+                    return boundary
+                }
+            }
+            index -= 1
+        }
+        return previousBoundary(before: offset, unit: "sentence", text: text)
+    }
+
+    private func consumeSpaces(_ chars: [Character], from start: Int) -> Int {
+        var count = 0
+        var idx = start
+        while idx < chars.count, chars[idx].isWhitespace {
+            count += 1
+            idx += 1
+        }
+        return count
+    }
+
+    private func slice(_ text: String, start: Int, end: Int) -> String {
+        let lower = text.index(text.startIndex, offsetBy: max(0, min(start, text.count)))
+        let upper = text.index(text.startIndex, offsetBy: max(0, min(end, text.count)))
+        return String(text[lower..<upper]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func extractResponseText(from raw: String) -> String {
+        if let start = raw.range(of: "<sm_response>")?.upperBound {
+            let body = raw[start...]
+            if let end = body.range(of: "</sm_response>")?.lowerBound {
+                return String(body[..<end])
+            }
+            if let malformedStart = body.range(of: "<sm_chapters_json>")?.lowerBound {
+                return String(body[..<malformedStart])
+            }
+            return String(body)
+        }
+        return raw.replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+    }
+
+    private struct ParsedAssistantResponse {
+        var summary: String?
+        var response: String
+        var chapters: [Chapter]
+    }
+
+    private func parseSectionedResponse(from raw: String) -> ParsedAssistantResponse {
+        let summary = extractTag("sm_summary", from: raw)
+        let response = extractResponseText(from: raw)
+        let chapters = extractAssistantChapters(from: raw, responseText: response)
+        return ParsedAssistantResponse(summary: summary?.isEmpty == true ? nil : summary, response: response, chapters: chapters)
+    }
+
+    private func extractTag(_ tag: String, from raw: String) -> String? {
+        guard let start = raw.range(of: "<\(tag)>")?.upperBound else { return nil }
+        let body = raw[start...]
+        guard let end = body.range(of: "</\(tag)>")?.lowerBound else {
+            return String(body).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return String(body[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func extractAssistantChapters(from raw: String, responseText: String) -> [Chapter] {
+        guard let json = extractTag("sm_chapters_json", from: raw),
+              let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["schemaVersion"] as? String == "assistant-response-map.v1",
+              let rawChapters = object["chapters"] as? [[String: Any]] else {
+            return []
+        }
+        return rawChapters.enumerated().compactMap { _, object in
+            guard let id = object["id"] as? String,
+                  let title = object["title"] as? String,
+                  let anchor = object["anchor"] as? String,
+                  let range = responseText.range(of: anchor) else {
+                return nil
+            }
+            let start = responseText.distance(from: responseText.startIndex, to: range.lowerBound)
+            let end = responseText.distance(from: responseText.startIndex, to: range.upperBound)
+            return Chapter(
+                id: id,
+                title: title,
+                startChar: start,
+                endChar: end,
+                percent: percent(for: start, text: responseText)
+            )
+        }
+    }
+
+    private func completeSentenceUnits(in text: String) -> [String] {
+        sentenceUnits(in: text, includeTrailingFragment: false)
+    }
+
+    private func persistSession(_ session: Session) throws {
+        var stamped = session
+        let timestamp = now()
+        if stamped.createdAt == nil {
+            stamped.createdAt = timestamp
+        }
+        stamped.updatedAt = timestamp
+        if stamped.status == "finished", stamped.completedAt == nil {
+            stamped.completedAt = timestamp
+        }
+        try repository.saveSession(stamped)
+        if stamped.completionPercent > 98,
+           var item = try? repository.loadItem(id: stamped.itemId),
+           item.sourceCompletedAt == nil {
+            item.sourceCompletedAt = timestamp
+            try repository.saveItem(item)
+            if currentItem?.id == item.id { currentItem = item }
+        }
+        if currentSession?.id == stamped.id {
+            currentSession = stamped
+        }
+    }
+
+    private func sentenceUnits(in text: String, includeTrailingFragment: Bool) -> [String] {
+        var units: [String] = []
+        var current = ""
+        for char in text {
+            current.append(char)
+            if [".", "?", "!"].contains(char) {
+                let unit = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !unit.isEmpty { units.append(unit) }
+                current = ""
+            }
+        }
+        if includeTrailingFragment {
+            let unit = current.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !unit.isEmpty { units.append(unit) }
+        }
+        return units
+    }
+}
+
+public struct SummaryScope: Equatable {
+    public var targetType: String?
+    public var sessionId: String?
+    public var turnId: String?
+    public var interjectionIds: [String]?
+
+    public init(targetType: String? = nil, sessionId: String? = nil, turnId: String? = nil, interjectionIds: [String]? = nil) {
+        self.targetType = targetType
+        self.sessionId = sessionId
+        self.turnId = turnId
+        self.interjectionIds = interjectionIds
+    }
+}
+
+public struct NoopAudioPlaybackClient: AudioPlaybackClient {
+    public init() {}
+    public func prepareSpeechText(_ text: String) throws -> String { SpeechTextNormalizer.normalize(text) }
+    public func play(targetId: String) throws {}
+    public func pause() throws {}
+}
+
+public struct UnsupportedLinkResolutionClient: LinkResolutionClient {
+    public init() {}
+
+    public func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
+        LinkResolutionResult(
+            requestId: request.id,
+            status: .unsupported,
+            originalLink: SourceLink(url: request.inputURL, role: "discovery"),
+            failureReason: "no_link_resolver_configured"
+        )
+    }
+}
+
+public struct NoopRecordingClient: RecordingClient {
+    public init() {}
+    public func beginRecording() throws {}
+    public func finishRecording(audioRef: String?) throws -> String { audioRef ?? "interjections/generated.m4a" }
+    public func cancelRecording() throws {}
+}
+
+public struct DeferredTranscriptionClient: TranscriptionClient {
+    public init() {}
+    public func scheduleTranscription(interjection: Interjection) throws {}
+}
+
+public struct DeterministicAIProvider: AIProviderClient {
+    public let providerType: String
+    public let model: String
+
+    public init(providerType: String = "deterministic_test", model: String = "gate1-fixture-model") {
+        self.providerType = providerType
+        self.model = model
+    }
+}
