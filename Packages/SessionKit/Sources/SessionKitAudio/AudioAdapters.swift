@@ -1696,6 +1696,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var stallDetector = PlaybackStallDetector()
     private var stallWatchdog: Timer?
     private var mediaSeekStartedUptime: TimeInterval?
+    /// Tests only: drop AVPlayer's seek completions, as happened on a stream in #166.
+    var withholdsSeekCompletionsForTesting = false
     #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
     private var postResumeEvidenceTap: MTAudioProcessingTap?
     private var postResumeEvidenceTapContext: PostResumePodcastEvidenceTapContext?
@@ -2297,6 +2299,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     private func finishMediaSeek(generation: Int, targetId: String, finished: Bool) {
+        guard !withholdsSeekCompletionsForTesting else { return }
         // AVPlayer calls the completion handler once for both completed and
         // interrupted seeks. A false result is terminal for this generation;
         // retaining it as pending forever freezes every derived progress
