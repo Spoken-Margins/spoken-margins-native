@@ -489,19 +489,316 @@ class AutomergeTests(unittest.TestCase):
                 self.assertEqual(verdict, expected)
 
 
+class MergeTests_Runner(unittest.TestCase):
+    """The runner merges what it passes (decision 3): blockers, order, retries. Git is faked here;
+    PushTests below uses real git."""
+
+    SCOPE = {'tier': 'T2', 'why': ['app UI'], 'files': [{'path': 'App/X.swift', 'category': 'app-ui'}]}
+
+    def run_auto(self, github, verdicts=('PASS',), pushes=(True,), scope=None, comments=(), moved=False):
+        events = []
+        pushes = list(pushes)
+
+        def build(tree, base, head, pr, title):
+            events.append('build')
+            return f'm{len([e for e in events if e == "build"])}' + '0' * 39, []
+
+        def push(tree, sha, base):
+            events.append(f'push {sha[:2]}')
+            ok = pushes.pop(0)
+            return ok, '' if ok else '! [rejected] (fetch first)'
+
+        original_comment = github.comment
+
+        def comment(body):
+            events.append('comment')
+            return original_comment(body)
+
+        github.comment = comment
+        if moved:
+            github.head = NEWER
+        verdicts = list(verdicts)
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.object(lane, 'build_merge_commit', side_effect=build), \
+                mock.patch.object(lane, 'push_merge', side_effect=push), \
+                mock.patch.object(lane, 'fetch_base', side_effect=lambda tree, base: NEWER), \
+                mock.patch.object(lane, 'sweep_merge_audit', side_effect=lambda tree, base: events.append('sweep')), \
+                mock.patch.object(lane, 'warm_build_folders', return_value='build folders: warm (SessionKit test)'), \
+                mock.patch.object(lane, 'diff_scope', return_value=scope or self.SCOPE), \
+                mock.patch.object(lane, 'run_automerge',
+                                  side_effect=lambda scope, evidence, **_: (verdicts.pop(0), 'x', 'host tests; builds', [])):
+            result = lane.run_auto(github, {'title': 'T'}, 5, 'next', HEAD, MERGE, Path(folder), list(comments))
+        return result, events
+
+    def test_a_pass_posts_the_merge_check_then_pushes_the_tested_commit(self):
+        github = FakeGitHub(labels=('automerge',))
+        (verdict, _, _, details), events = self.run_auto(github)
+        self.assertEqual(verdict, 'PASS')
+        self.assertEqual(events, ['build', 'comment', 'push m1', 'sweep'])  # the check is on the PR before the merge
+        self.assertTrue(github.posted[0].startswith(f'**Merge check (triage desk) on `{HEAD[:7]}`: PASS.**'))
+        import merge_audit  # the comment satisfies the merge audit's rule
+        self.assertTrue(merge_audit.has_merge_check([dict(body=github.posted[0], created_at='2026-09-29T20:00:00Z')],
+                                                    HEAD, '2026-09-29T20:00:01Z'))
+        self.assertIn('merged into next as m100000', details[-1])
+
+    def test_a_fail_or_inconclusive_never_merges(self):
+        for verdict in ('FAIL', 'INCONCLUSIVE'):
+            with self.subTest(verdict=verdict):
+                github = FakeGitHub(labels=('automerge',))
+                (got, _, _, _), events = self.run_auto(github, verdicts=(verdict,))
+                self.assertEqual((got, events, github.posted), (verdict, ['build'], []))
+
+    def test_workflow_and_lane_changes_and_unaudited_risky_changes_go_to_the_desk(self):
+        cases = {
+            '.github/workflows/lane.yml': 'docs',
+            'scripts/lane-runner.py': 'scripts',
+            'scripts/lane_sim.py': 'scripts',
+        }
+        for path, category in cases.items():
+            with self.subTest(path=path):
+                scope = {'tier': 'T1', 'why': [], 'files': [{'path': path, 'category': category}]}
+                github = FakeGitHub(labels=('automerge',))
+                (verdict, _, _, details), events = self.run_auto(github, scope=scope)
+                self.assertEqual((verdict, events), ('PASS', ['build']))
+                self.assertIn('not merged by the runner: it changes the lane or its workflows', details[-1])
+        risky = {'tier': 'T2', 'why': [], 'files': [{'path': 'Packages/SessionKit/Sources/SessionKitSharing/A.swift',
+                                                        'category': 'packet'}]}
+        (_, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=risky)
+        self.assertEqual(events, ['build'])
+        self.assertIn('it touches packets and has no "Codex audit (Astra)" comment yet', details[-1])
+        for audit in ('**Codex audit (Astra) on `aaaaaaa`**\n\nNo findings.', '## Codex audit (gpt-6-astra, high)\n\nAudited `abc`.'):
+            with self.subTest(audit=audit[:20]):
+                (_, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=risky,
+                                                           comments=[comment(audit)])
+                self.assertEqual(events, ['build', 'comment', 'push m1', 'sweep'])
+        mention = [comment('Waiting on the Codex audit (Astra) for this one.')]  # not an audit: not its first line
+        (_, _, _, _), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=risky, comments=mention)
+        self.assertEqual(events, ['build'])
+
+    def test_lane_tests_themselves_are_not_desk_only(self):
+        scope = {'tier': 'T1', 'why': [], 'files': [{'path': 'scripts/tests/test_lane_runner.py', 'category': 'scripts'}]}
+        self.assertEqual(lane.merge_blockers(scope, []), [])
+
+    def test_a_pr_that_moved_or_lost_its_label_while_tested_is_not_merged(self):
+        (_, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), moved=True)
+        self.assertEqual(events, ['build'])
+        (_, _, _, details), events = self.run_auto(FakeGitHub(labels=()))
+        self.assertEqual(events, ['build'])
+        self.assertIn('lost the automerge label', details[-1])
+
+    def test_a_refused_push_means_next_moved_so_it_tests_again_on_the_newest_next(self):
+        github = FakeGitHub(labels=('automerge',))
+        (verdict, _, _, details), events = self.run_auto(github, verdicts=('PASS', 'PASS'), pushes=(False, True))
+        self.assertEqual(events, ['build', 'comment', 'push m1', 'build', 'comment', 'push m2', 'sweep'])
+        self.assertIn('attempt 1: the push to next was refused', ' '.join(details))
+        self.assertIn('merged into next as m200000', details[-1])
+
+    def test_a_push_refused_for_another_reason_stops_at_once(self):
+        # A queued job with a lane.yml from before #382 has a read-only token: re-testing can't help.
+        github = FakeGitHub(labels=('automerge',))
+        with mock.patch.object(lane, 'next_moved', return_value=False):
+            (verdict, _, _, details), events = self.run_auto(github, pushes=(False,))
+        self.assertEqual(events, ['build', 'comment', 'push m1'])
+        self.assertIn('not merged: the push to next failed', details[-1])
+        self.assertTrue(lane.next_moved(' ! [rejected]        abc -> next (fetch first)'))
+        self.assertTrue(lane.next_moved(' ! [rejected]        abc -> next (non-fast-forward)'))
+        self.assertFalse(lane.next_moved('remote: Permission to uncomposed/x.git denied to github-actions[bot].'))
+        self.assertFalse(lane.next_moved('fatal: unable to access \'https://github.com/x.git/\': The requested URL returned error: 403'))
+
+    def test_it_gives_up_after_three_refused_pushes(self):
+        github = FakeGitHub(labels=('automerge',))
+        (verdict, _, _, details), events = self.run_auto(github, verdicts=('PASS',) * 3, pushes=(False,) * 3)
+        self.assertEqual(events.count('build'), 3)
+        self.assertIn('not merged: next kept moving (3 attempts)', details[-1])
+
+    def test_pr_code_never_sees_the_token_but_the_runner_git_does(self):
+        with mock.patch.dict('os.environ', {'GH_TOKEN': 'secret-token', 'GITHUB_TOKEN': 'other'}), \
+                tempfile.TemporaryDirectory() as folder:
+            log_path = Path(folder) / 'log'
+            with log_path.open('w') as log:
+                code = lane.run_bounded([sys.executable, '-c', 'import os; print(os.environ.get("GH_TOKEN"), '
+                                         'os.environ.get("GITHUB_TOKEN"))'], log, 30)
+            self.assertEqual((code, log_path.read_text().strip()), (0, 'None None'))
+            command = ' '.join(lane.git_with_token(Path(folder)))
+            self.assertIn('extraheader=AUTHORIZATION: basic ', command)
+            self.assertNotIn('secret-token', command)
+
+
+class WarmBuildTests(unittest.TestCase):
+    """Build folders kept warm between runner jobs, keyed by the SessionKit tree, with real git."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        root = Path(self.temporary.name)
+        self.tree, self.cache = root / 'tree', root / 'cache'
+        self.git = ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-C', str(self.tree)]
+        (self.tree / 'Packages/SessionKit/Sources').mkdir(parents=True)
+        subprocess.run(['git', 'init', '-q', str(self.tree)], check=True)
+        (self.tree / '.gitignore').write_text((SCRIPTS.parent / '.gitignore').read_text())  # the repo's own rules
+        self.commit('Packages/SessionKit/Sources/A.swift', 'struct A {}\n')
+        self.addCleanup(lane._WARM_LOCKS.clear)
+
+    def commit(self, path, text):
+        (self.tree / path).parent.mkdir(parents=True, exist_ok=True)
+        (self.tree / path).write_text(text)
+        subprocess.run(self.git + ['add', '.'], check=True)
+        subprocess.run(self.git + ['commit', '-q', '-m', path], check=True)
+
+    def warm(self, free=10**12):
+        line = lane.warm_build_folders(self.tree, root=self.cache, free=lambda path: free)
+        for held in lane._WARM_LOCKS.values():
+            held.close()
+        lane._WARM_LOCKS.clear()  # as if the job ended
+        return line
+
+    def test_the_build_folders_link_to_a_cache_that_survives_the_checkout(self):
+        self.assertIn('cold, new cache', self.warm())
+        for link in (self.tree / '.build', self.tree / 'Packages/SessionKit/.build'):
+            self.assertTrue(link.is_symlink(), link)
+        (self.tree / '.build' / 'dd').mkdir()
+        (self.tree / '.build' / 'dd' / 'product').write_text('built')
+        subprocess.run(self.git + ['clean', '-ffdxq'], check=True)  # what actions/checkout does
+        self.assertFalse((self.tree / '.build').exists())
+        self.assertIn('warm', self.warm())
+        self.assertEqual((self.tree / '.build' / 'dd' / 'product').read_text(), 'built')
+
+    def test_an_app_only_change_stays_warm_and_a_sessionkit_change_starts_a_new_cache(self):
+        first = self.warm()
+        self.commit('App/View.swift', 'struct V {}\n')
+        self.assertTrue(self.warm().startswith('build folders: warm'), 'app-only change')
+        self.commit('Packages/SessionKit/Sources/A.swift', 'struct A { var b = 1 }\n')
+        second = self.warm()
+        self.assertIn('cold, new cache', second)
+        self.assertNotEqual(first.split('SessionKit ')[1], second.split('SessionKit ')[1])
+
+    def test_it_keeps_at_most_two_caches_and_never_goes_below_the_disk_floor(self):
+        for n in range(3):
+            self.commit('Packages/SessionKit/Sources/A.swift', f'struct A{n} {{}}\n')
+            self.warm()
+            time.sleep(0.01)
+        self.assertEqual(len([d for d in self.cache.iterdir() if d.name.startswith('sk-')]), lane.WARM_KEEP)
+        self.assertIn('cold (less than 15 GB free)', self.warm(free=10**9))
+        self.assertEqual(len([d for d in self.cache.iterdir() if d.name.startswith('sk-')]), 1)  # this key's
+
+    def test_a_cache_in_use_by_another_runner_job_is_left_alone(self):
+        import fcntl
+        self.warm()
+        cache = next(d for d in self.cache.iterdir() if d.name.startswith('sk-'))
+        with open(cache / '.lock', 'a+') as other:
+            fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            (self.tree / '.build').unlink()
+            self.assertIn('in use by another runner job', self.warm())
+            self.assertFalse((self.tree / '.build').exists())  # the job builds cold in its own tree
+
+
+class BuildRunnerRoomTests(unittest.TestCase):
+    """The second runner builds only while the Mac has room (item 5)."""
+
+    def wait(self, jobs, pressures, frees, max_wait=100):
+        now = [0.0]
+        states = {'jobs': list(jobs), 'pressure': list(pressures), 'free': list(frees)}
+        take = lambda key: (states[key].pop(0) if len(states[key]) > 1 else states[key][0])
+        with open(os.devnull, 'w') as quiet:
+            return lane.wait_for_room_to_build(
+                out=quiet, max_wait=max_wait, poll=10, clock=lambda: now[0],
+                sleep=lambda seconds: now.__setitem__(0, now[0] + seconds),
+                simulator_jobs=lambda: take('jobs'), pressure=lambda: take('pressure'), free=lambda: take('free')), now[0]
+
+    def test_it_starts_at_once_when_the_mac_has_room(self):
+        self.assertEqual(self.wait([0], [1], [10**12]), (None, 0.0))
+
+    def test_it_waits_for_the_simulator_job_pressure_and_disk_to_clear(self):
+        result, waited = self.wait([1, 1, 0], [2, 2, 2, 1], [10**9, 10**12])
+        self.assertIsNone(result)
+        self.assertEqual(waited, 30.0)
+
+    def test_it_gives_up_after_its_limit_and_says_why(self):
+        result, _ = self.wait([1], [2], [10**9], max_wait=60)
+        self.assertIn('waited 1m00s for room', result)
+        for reason in ('a simulator job is running', 'memory pressure is above normal', 'less than 20 GB of disk is free'):
+            self.assertIn(reason, result)
+
+
+class PushTests(unittest.TestCase):
+    """Building and pushing the merge commit, with real git and a bare origin."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        root = Path(self.temporary.name)
+        self.origin, self.tree, self.other = root / 'origin.git', root / 'tree', root / 'other'
+        self.git = ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'init.defaultBranch=next']
+        subprocess.run(self.git + ['init', '-q', '--bare', str(self.origin)], check=True)
+        subprocess.run(self.git + ['clone', '-q', str(self.origin), str(self.other)], check=True, capture_output=True)
+        self.commit(self.other, 'shared.txt', 'one\n')
+        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:next'], check=True)
+        subprocess.run(self.git + ['clone', '-q', '-b', 'next', str(self.origin), str(self.tree)], check=True)
+        subprocess.run(self.git + ['-C', str(self.tree), 'checkout', '-q', '-b', 'pr'], check=True)
+
+    def commit(self, where, name, text):
+        (where / name).write_text(text)
+        subprocess.run(self.git + ['-C', str(where), 'add', '.'], check=True)
+        subprocess.run(self.git + ['-C', str(where), 'commit', '-q', '-m', name], check=True)
+
+    def rev(self, where, ref):
+        return subprocess.check_output(['git', '-C', str(where), 'rev-parse', ref], text=True).strip()
+
+    def test_the_merge_commit_has_next_first_and_lands_by_a_plain_push(self):
+        self.commit(self.tree, 'pr.txt', 'pr\n')
+        head = self.rev(self.tree, 'HEAD')
+        lane.fetch_base(self.tree, 'next')
+        sha, conflicts = lane.build_merge_commit(self.tree, 'next', head, 5, 'A change')
+        self.assertEqual(conflicts, [])
+        parents = subprocess.check_output(['git', '-C', str(self.tree), 'rev-list', '--parents', '-n', '1', sha],
+                                          text=True).split()[1:]
+        self.assertEqual(parents, [self.rev(self.tree, 'origin/next'), head])
+        self.assertIn('Merge pull request #5: A change',
+                      subprocess.check_output(['git', '-C', str(self.tree), 'log', '-1', '--format=%B', sha], text=True))
+        self.assertTrue(lane.push_merge(self.tree, sha, 'next')[0])
+        self.assertEqual(self.rev(self.origin, 'next'), sha)
+
+    def test_the_push_is_refused_when_next_moved_after_the_test(self):
+        self.commit(self.tree, 'pr.txt', 'pr\n')
+        head = self.rev(self.tree, 'HEAD')
+        lane.fetch_base(self.tree, 'next')
+        sha, _ = lane.build_merge_commit(self.tree, 'next', head, 5, 'A change')
+        self.commit(self.other, 'other.txt', 'someone else merged\n')
+        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:next'], check=True)
+        moved = self.rev(self.origin, 'next')
+        pushed, message = lane.push_merge(self.tree, sha, 'next')
+        self.assertFalse(pushed)
+        self.assertIn('rejected', message)
+        self.assertTrue(lane.next_moved(message), message)  # so the runner tests again
+        self.assertEqual(self.rev(self.origin, 'next'), moved)  # nothing untested landed
+
+    def test_a_conflict_names_the_files_and_leaves_the_tree_clean(self):
+        self.commit(self.tree, 'shared.txt', 'pr side\n')
+        head = self.rev(self.tree, 'HEAD')
+        self.commit(self.other, 'shared.txt', 'next side\n')
+        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:next'], check=True)
+        lane.fetch_base(self.tree, 'next')
+        self.assertEqual(lane.build_merge_commit(self.tree, 'next', head, 5, 'x'), (None, ['shared.txt']))
+        self.assertEqual(subprocess.check_output(['git', '-C', str(self.tree), 'status', '--porcelain'], text=True), '')
+
+
 class MainFlowTests(unittest.TestCase):
     def run_main(self, github, event_head=HEAD, verdict='PASS', *extra):
         with tempfile.TemporaryDirectory() as temporary, \
                 mock.patch.object(lane, 'GitHub', return_value=github), \
-                mock.patch.dict('os.environ', {'GH_REPO': 'o/r', 'SM_LANE_EVIDENCE_DIR': temporary}), \
+                mock.patch.dict('os.environ', {'GH_REPO': 'o/r', 'SM_LANE_EVIDENCE_DIR': temporary,
+                                               # set, not inherited: runner two's own .env has role=build
+                                               'SM_LANE_RUNNER_ROLE': self.role}), \
                 mock.patch.object(lane, 'run_t2', return_value=(verdict, 'simulator build (pass), device build (pass)', [])), \
                 mock.patch.object(lane, 'sweep_runner_simulators'), \
                 mock.patch.object(lane, 'fetch_base', return_value=MERGE), \
                 mock.patch.object(lane, 'merge_base_branch', return_value=self.conflicts), \
-                mock.patch.object(lane, 'link_tools'), mock.patch('builtins.print'):
+                mock.patch.object(lane, 'link_tools'), mock.patch('builtins.print'), \
+                mock.patch.object(lane, 'warm_build_folders', return_value='build folders: warm (SessionKit test)'):
             return lane.main(['--pr', '5', '--event-head', event_head, '--run-id', '42', *extra])
 
     conflicts = []
+    role = ''  # the main runner, unless a test says otherwise
 
     def test_a_queued_t2_request_is_run_reported_and_relabelled(self):
         github = FakeGitHub(comments=[comment(f'/lane T2\ncommit: {HEAD[:7]}')])
@@ -565,15 +862,18 @@ class MainFlowTests(unittest.TestCase):
 
     def test_the_workflow_fails_its_verdict_step_and_tidies_only_when_nothing_was_reported(self):
         workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/lane.yml').read_text()
+        # Both jobs check out the Git LFS models: --plan fast's contracts check reads them (#301).
+        self.assertEqual(workflow.count('lfs: true'), 2)
+        self.assertEqual(workflow.count('persist-credentials: false'), 2)
         self.assertIn("if: steps.run.outputs.reported == 'true'", workflow)
         self.assertIn('if [ "$VERDICT" != PASS ]; then', workflow)
         self.assertIn("if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'", workflow)
 
     def run_automerge_main(self, github, verdict='PASS'):
-        with mock.patch.object(lane, 'diff_scope', return_value={'tier': 'T2', 'why': ['app UI']}) as scope, \
-                mock.patch.object(lane, 'run_automerge', return_value=(verdict, 'x', 'host tests; builds', [])) as run:
+        # run_auto does real git in the runner's tree; here it is faked, so the tree is never touched.
+        with mock.patch.object(lane, 'run_auto', return_value=(verdict, 'x', 'host tests; builds', [])) as run:
             self.run_main(github)
-        return scope, run
+        return None, run
 
     def test_the_automerge_label_is_a_request_by_itself(self):
         github = FakeGitHub(labels=('automerge',))
@@ -589,13 +889,68 @@ class MainFlowTests(unittest.TestCase):
         run.assert_not_called()
         self.assertIn('tier T2', github.posted[0])
 
-    def test_an_automerge_run_already_reported_for_this_head_and_next_is_not_repeated(self):
+    def test_an_automerge_run_runs_again_even_for_the_same_head_and_next(self):
+        # Re-adding the label is how to retry a PASS that didn't merge (no audit yet, next moved).
         github = FakeGitHub(labels=('automerge',))
-        self.run_automerge_main(github, 'FAIL')
+        self.run_automerge_main(github, 'PASS')
         _, run = self.run_automerge_main(github)
-        run.assert_not_called()
-        self.assertIn('already reported (FAIL)', github.posted[-1])
+        run.assert_called_once()
+        self.assertEqual(len([b for b in github.posted if b.startswith('Lane report')]), 2)
         self.assertEqual(github.label_changes, [])
+
+    def test_a_run_without_lane_queued_or_automerge_posts_nothing(self):
+        github = FakeGitHub(labels=())
+        self.run_main(github)
+        self.assertEqual((github.posted, github.label_changes), ([], []))
+
+    def run_mode(self, github, mode, role='', no_room=None):
+        self.role = role
+        self.addCleanup(setattr, self, 'role', '')
+        with mock.patch.object(lane, 'run_auto', return_value=('PASS', 'x', 'host tests; builds', [])) as auto, \
+                mock.patch.object(lane, 'run_t3', return_value=('PASS', 'x', 'T/A', [], 'none', '')) as t3, \
+                mock.patch.object(lane, 'wait_for_room_to_build', return_value=no_room) as wait:
+            self.run_main(github, HEAD, 'PASS', '--mode', mode)
+        self.role = ''
+        return auto, t3, wait
+
+    def test_the_automerge_job_never_answers_a_lane_request(self):
+        github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[comment('/lane T3\ntests: T/A')])
+        auto, t3, _ = self.run_mode(github, 'auto')
+        auto.assert_called_once()
+        t3.assert_not_called()
+        self.assertIn('tier auto', github.posted[0])
+        self.assertEqual(github.label_changes, [])  # lane:queued stays for the lane job
+        idle = FakeGitHub(labels=('lane:queued',), comments=[comment('/lane T3\ntests: T/A')])
+        auto, t3, _ = self.run_mode(idle, 'auto')
+        auto.assert_not_called()
+        t3.assert_not_called()
+        self.assertEqual((idle.posted, idle.label_changes), ([], []))
+
+    def test_the_lane_job_never_runs_automerge(self):
+        github = FakeGitHub(labels=('automerge',))
+        auto, _, _ = self.run_mode(github, 'explicit')
+        auto.assert_not_called()
+        self.assertEqual(github.posted, [])
+
+    def test_the_build_runner_waits_for_room_and_says_so_if_it_gives_up(self):
+        github = FakeGitHub(labels=('automerge',))
+        auto, _, wait = self.run_mode(github, 'auto', role='build', no_room='the build runner waited 1h30m00s for room: '
+                                                                         'a simulator job is running')
+        wait.assert_called_once()
+        auto.assert_not_called()
+        self.assertTrue(github.posted[0].startswith('Lane report pr5-r42 — INCONCLUSIVE'))
+        self.assertIn('a simulator job is running. Push again', github.posted[0])
+        main_runner = FakeGitHub(labels=('automerge',))
+        auto, _, wait = self.run_mode(main_runner, 'auto')
+        wait.assert_not_called()  # the main runner doesn't wait
+        auto.assert_called_once()
+
+    def test_an_automerge_cleanup_leaves_the_lane_labels_alone(self):
+        github = FakeGitHub(labels=('lane:queued', 'automerge'))
+        with mock.patch.object(lane, 'sweep_runner_simulators'):
+            lane.cleanup(github, 'https://example.test/run', 'auto')
+        self.assertEqual(github.label_changes, [])
+        self.assertIn('automerge run stopped before reporting', github.posted[0])
 
     def test_requeueing_without_a_new_request_says_so_and_clears_the_label(self):
         github = FakeGitHub(comments=[comment('/lane T2')])
