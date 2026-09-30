@@ -8,11 +8,17 @@
 #
 # It runs on a GitHub-hosted runner, so it never queues behind lane jobs on the Mac, and it never
 # reverts anything: it labels and comments.
+#
+# Hourly sweep: the lane runner merges with the workflow token (decision 3), and pushes made with
+# that token start no workflow, so a scheduled run audits every PR merged in the last two hours.
+# The overlap is deliberate; flagging is idempotent (an already-labelled PR is left alone).
 name: merge-audit
 
 on:
   push:
     branches: [next]
+  schedule:
+    - cron: '23 * * * *'
 
 permissions:
   contents: read
@@ -29,9 +35,16 @@ jobs:
           sparse-checkout: scripts/merge_audit.py
           sparse-checkout-cone-mode: false
       - name: Audit the merge
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.event.after }}
         run: python3 scripts/merge_audit.py --before "$BEFORE" --after "$AFTER"
+      - name: Sweep merges made without a push run
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/merge_audit.py --sweep-hours 2
