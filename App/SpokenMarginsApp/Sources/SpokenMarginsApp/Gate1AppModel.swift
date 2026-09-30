@@ -10808,25 +10808,27 @@ final class Gate1AppModel: ObservableObject {
                         self?.updateOnDeviceSpeechGenerationProgress(progress)
                     }
                 },
-                onPreparationPlan: { itemId, sourceText, plan in
-                    // A turn is not a Library item. A source with an audible
-                    // overview also has different chunk boundaries from its
-                    // source-only offline representation; disk cache still
-                    // serves both, keyed by exact spoken text.
+                onPreparationPlan: { itemId, articleIdentity, plan in
+                    // A turn is not a Library item. The player's article chunks
+                    // share the article plan's identity with background
+                    // preparation (#312); a changed article matches nothing.
                     guard let signature = try? await signatureTask.value,
-                          let item = try? store.loadItem(id: itemId), item.text == sourceText else { return }
+                          let item = try? store.loadItem(id: itemId), let sourceText = item.text,
+                          NarrationChunkPlanner.identity(ofArticle: sourceText) == articleIdentity else { return }
                     _ = try? await coordinator.begin(itemId: itemId, sourceText: sourceText, signature: signature, plan: plan, schedulesJob: false)
                 },
-                onPreparedChunk: { itemId, sourceText, plan, audioURL, durationMs, engine in
+                onPreparedChunk: { itemId, articleIdentity, plan, audioURL, durationMs, engine in
                     guard let signature = try? await signatureTask.value,
-                          let item = try? store.loadItem(id: itemId), item.text == sourceText else { return }
+                          let item = try? store.loadItem(id: itemId), let sourceText = item.text,
+                          NarrationChunkPlanner.identity(ofArticle: sourceText) == articleIdentity else { return }
                     try? await coordinator.commit(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText, audioURL: audioURL, durationMs: durationMs, engine: engine)
                 },
                 articleText: { itemId in try? store.loadItem(id: itemId).text },
-                preparedChunkLookup: { itemId, sourceText, plan in
+                preparedChunkLookup: { itemId, articleIdentity, plan in
                     guard let signature = try? await signatureTask.value,
-                          let item = try? store.loadItem(id: itemId), item.text == sourceText else { return nil }
-                    return try? await coordinator.committedChunk(itemId: itemId, signature: signature, plan: plan)
+                          let item = try? store.loadItem(id: itemId), let sourceText = item.text,
+                          NarrationChunkPlanner.identity(ofArticle: sourceText) == articleIdentity else { return nil }
+                    return try? await coordinator.committedChunk(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText)
                 },
                 onPreparedAudio: { [weak self] itemId, prepared in
                     Task { @MainActor [weak self] in
@@ -15349,7 +15351,7 @@ final class Gate1AppModel: ObservableObject {
                 plan: plan,
                 maximumChunkCount: job.maximumChunkCount
             )
-            let completedIndexes = PreparedAudioCoordinator.completedIndexes(manifest, retryingStandInsFor: job)
+            let completedIndexes = PreparedAudioCoordinator.completedIndexes(manifest, plan: plan, sourceText: sourceText, retryingStandInsFor: job)
             let ledger = offlineStorageLedger ?? OfflineStorageLedger(repository: store, rootDirectory: support)
             offlineStorageLedger = ledger
             let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
@@ -15360,7 +15362,7 @@ final class Gate1AppModel: ObservableObject {
             guard let next = eligiblePlan.first(where: { !completedIndexes.contains($0.index) }) else {
                 // All chunks are intact but nothing is assembled (#278): assemble now, because it
                 // otherwise happens only right after the last chunk is committed.
-                if manifest.isCompleteButUnassembled, manifest.plannedChunkCount == plan.count {
+                if manifest.isCompleteButUnassembled, manifest.plannedChunkCount == plan.count, completedIndexes.count == plan.count {
                     try await finishBackgroundPreparedAudio(
                         item: item, sourceText: sourceText, voice: voice, signature: signature,
                         manifest: manifest, plan: plan, store: store, ledger: ledger,
@@ -15422,7 +15424,7 @@ final class Gate1AppModel: ObservableObject {
             recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count)])
             job.nextChunkIndex = updated.chunks.count
             job.lastFailureCode = PreparedAudioCoordinator.hasStandIns(updated) ? PreparedAudioCoordinator.standInRetried : nil
-            if updated.chunks.count == plan.count {
+            if PreparedAudioCoordinator.matchingChunks(in: updated, plan: plan, sourceText: sourceText).count == plan.count {
                 try store.saveAudioPreparationJob(job)
                 try await finishBackgroundPreparedAudio(
                     item: item,
@@ -15437,9 +15439,8 @@ final class Gate1AppModel: ObservableObject {
                     support: support
                 )
             } else if let maximumChunkCount = job.maximumChunkCount {
-                let completed = Set(updated.chunks.map(\.index))
                 let horizon = plan.prefix(min(maximumChunkCount, plan.count))
-                if horizon.allSatisfy({ completed.contains($0.index) }) {
+                if PreparedAudioCoordinator.isPrepared(Array(horizon), in: updated, sourceText: sourceText) {
                     if automaticAudioPreparationPolicy == .whileCharging {
                         job.policy = .whileCharging
                         job.maximumChunkCount = nil
@@ -15536,24 +15537,10 @@ final class Gate1AppModel: ObservableObject {
     ) async throws {
         // A stand-in (iOS voice) chunk waits for a play to retry Supertonic; don't bake it in (#363).
         guard !PreparedAudioCoordinator.hasStandIns(manifest) else { return }
-        let byIndex = Dictionary(uniqueKeysWithValues: manifest.chunks.map { ($0.index, $0) })
-        let chunks = try plan.map { entry -> SupertonicPreparedChunk in
-            guard let committed = byIndex[entry.index] else {
-                throw SessionKitError.persistenceFailed("prepared_chunk_missing")
-            }
-            let slice = RenderedSpeechChunker.sourceSlice(
-                from: SpeechTextNormalizer.normalize(sourceText),
-                startOffset: entry.startOffset,
-                maxCharacters: RenderedSpeechChunker.spokenCostBudget
-            )
-            return SupertonicPreparedChunk(
-                startOffset: entry.startOffset,
-                sourceLength: entry.sourceLength,
-                text: entry.text,
-                boundary: slice.boundary,
-                audioURL: support.appending(path: "PreparedAudio/\(committed.relativePath)")
-            )
-        }
+        let chunks = try PreparedAudioCoordinator.assemblyChunks(
+            plan: plan, manifest: manifest, sourceText: sourceText,
+            preparedRoot: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
+        )
         let assemblyReservation = try await ledger.reserve(
             ownerId: "prepared-artifact-\(manifest.id)",
             byteCount: max(1, manifest.chunks.reduce(0) { $0 + $1.byteCount })
@@ -15600,15 +15587,7 @@ final class Gate1AppModel: ObservableObject {
     private nonisolated static let preparationPlanCache = PreparedChunkPlanCache()
 
     private nonisolated static func preparedChunkPlan(for sourceText: String) -> [PreparedChunkPlan] {
-        preparationPlanCache.value(for: sourceText) {
-            let normalized = SpeechTextNormalizer.normalize(sourceText)
-            return RenderedSpeechChunker.sourceSlices(from: normalized, maxCharacters: RenderedSpeechChunker.spokenCostBudget)
-                .enumerated()
-                .map { index, planned in
-                    PreparedChunkPlan(index: index, startOffset: planned.startOffset,
-                                      sourceLength: planned.slice.sourceLength, text: planned.slice.text)
-                }
-        }
+        preparationPlanCache.value(for: sourceText) { PreparedChunkPlan.articlePlan(sourceText) }
     }
 
     nonisolated static func preparationHorizon(
