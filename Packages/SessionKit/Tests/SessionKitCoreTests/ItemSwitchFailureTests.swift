@@ -42,14 +42,36 @@ final class ItemSwitchFailureTests: XCTestCase {
         text: "Nothing wrong with this one.", externalReference: nil, status: "ready"
     )
 
+    /// A saved session on the plain article, with a written Margin on its second word.
+    private var plainSession: Session {
+        Session(
+            id: "session-plain", itemId: plainText.id, status: "in_progress", phase: .itemPlayback,
+            currentTargetType: .itemTextTTS, currentTargetId: plainText.id,
+            position: Position(charOffset: 0, chapterId: nil), completionPercent: 0, playbackRate: 1
+        )
+    }
+
+    private var plainMargin: Interjection {
+        Interjection(
+            id: "margin-plain", itemId: plainText.id, sessionId: plainSession.id,
+            targetType: .item, targetId: plainText.id, createdAt: Date(timeIntervalSince1970: 1),
+            roughPercent: 30,
+            anchor: Anchor(anchorType: .text, startChar: 8, endChar: 13, anchorBefore: "Nothing", anchorAfter: "with"),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "complete", transcript: nil,
+            cleanedTranscript: nil, displayText: "Written Margin", status: "active"
+        )
+    }
+
     private func engine(_ articles: [(item: Item, session: Session)]) -> SessionEngine {
         var items = [plainText.id: plainText]
-        var sessions: [String: Session] = [:]
+        var sessions = [plainSession.id: plainSession]
         for article in articles {
             items[article.item.id] = article.item
             sessions[article.session.id] = article.session
         }
-        return SessionEngine(profile: profile, repository: InMemorySessionRepository(items: items, sessions: sessions))
+        return SessionEngine(profile: profile, repository: InMemorySessionRepository(
+            items: items, sessions: sessions, interjections: [plainMargin.id: plainMargin]
+        ))
     }
 
     func testStartingADifferentItemDropsThePreviousItemsFailure() throws {
@@ -89,6 +111,19 @@ final class ItemSwitchFailureTests: XCTestCase {
         _ = try engine.inspectSession(sessionId: broken.session.id)
         _ = try engine.resumePlayback()
         XCTAssertEqual(try engine.startSession(itemId: broken.item.id).lastFailure, "prepared_audio_unavailable:file_missing")
+    }
+
+    /// "Play this moment" on a Margin in another item switches items too.
+    func testPlayingAMarginInADifferentItemDropsThePreviousItemsFailure() throws {
+        let broken = articleWithMissingNarration("item-broken")
+        let engine = engine([broken])
+
+        _ = try engine.inspectSession(sessionId: broken.session.id)
+        XCTAssertNotNil(try engine.resumePlayback().lastFailure)
+
+        let moment = try engine.playInterjectionAnchor(plainMargin)
+        XCTAssertEqual(moment.itemId, plainText.id)
+        XCTAssertNil(moment.lastFailure)
     }
 
     func testImportingABrowserArticleDropsThePreviousItemsFailure() throws {

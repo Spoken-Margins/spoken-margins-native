@@ -1490,6 +1490,8 @@ public final class SessionEngine {
         let previousExternallyStreamedTurnId = externallyStreamedTurnId
 
         do {
+            // Restored with the rest of the snapshot below if the jump fails.
+            forgetFailure(unlessItemIs: plan.session.itemId)
             currentSession = plan.session
             currentItem = plan.item
             currentMap = plan.map
