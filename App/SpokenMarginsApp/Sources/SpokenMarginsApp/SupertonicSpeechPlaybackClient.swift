@@ -1760,6 +1760,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 // Each player is watched from scratch: a re-seat or another item must not inherit a
                 // stall (both start at clock zero). A re-seat that doesn't help stalls again anew.
                 var watchedPlayer: ObjectIdentifier?
+                // The iOS voice is watched only once it has moved by a word or so: a voice still
+                // starting up, or one that reports its place only per utterance, isn't a stall.
+                var systemVoiceOffset: Int?
+                var systemVoiceIsArmed = false
                 let start = ContinuousClock.now
                 while !Task.isCancelled {
                     try? await Task.sleep(for: interval)
@@ -1774,9 +1778,20 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                                     target.map { self.fallback.isPlaybackComplete(targetId: $0) } ?? true)
                         }
                     }
+                    if let offset = systemVoice?.offset {
+                        if let last = systemVoiceOffset, offset != last,
+                           abs(offset - last) <= Self.systemVoiceWordStepLimit {
+                            systemVoiceIsArmed = true
+                        }
+                        systemVoiceOffset = offset
+                    } else {
+                        systemVoiceOffset = nil
+                        systemVoiceIsArmed = false
+                    }
+                    let armed = systemVoiceIsArmed
                     let sample = self.lock.withLock { () -> (active: Bool, intends: Bool, clock: Int?, player: ObjectIdentifier?) in
                         if self.fallbackIsActive {
-                            guard let systemVoice, let offset = systemVoice.offset, !systemVoice.complete else {
+                            guard armed, let systemVoice, let offset = systemVoice.offset, !systemVoice.complete else {
                                 return (self.transportIntent == .playing, false, nil, nil)
                             }
                             // One character counts as progress: the detector's unit is scaled to match.
@@ -1826,6 +1841,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             }
         }
     }
+
+    /// The most the iOS voice's place moves between two samples when it reports each word. A move
+    /// this small shows word-by-word progress; a whole utterance is at least several times longer.
+    private static let systemVoiceWordStepLimit = 120
 
     /// True while the player a stall sample saw is still the one playing. Between the sample and
     /// its handling on the main actor, the listener can switch items; the stall is then stale.

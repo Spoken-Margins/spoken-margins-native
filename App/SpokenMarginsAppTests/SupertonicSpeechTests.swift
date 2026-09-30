@@ -542,14 +542,20 @@ final class SupertonicSpeechTests: XCTestCase {
     func testASilentIOSVoiceIsRestartedAtItsPlaceThenPausedForATap() async throws {
         let log = StallEventLog()
         let fallback = RecordingFallbackAudioClient()
+        fallback.advancesPerRead = 3
         let client = try systemVoiceStallClient(log, fallback: fallback)
         _ = try client.prepareSpeechText("A long response that must remain playable when generation does not finish promptly.")
         try client.play(targetId: "silent", from: 17)
+        for _ in 0..<100 where !log.values.contains("fallback") { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(300))
+        fallback.advancesPerRead = 0
+        let silentAt = fallback.offset
         for _ in 0..<150 where !log.values.contains("supertonic.stall") { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(log.values.prefix(2), ["fallback", "supertonic.stall"], "\(log.values)")
         XCTAssertEqual(log.lastFields["recovery"], "restart_system_voice")
         XCTAssertEqual(log.lastFields["engine"], "system_voice")
-        XCTAssertEqual(fallback.playedOffsets, [17, 17], "the iOS voice speaks again from the same place")
+        XCTAssertGreaterThan(silentAt, 17, "the voice had spoken before it went silent")
+        XCTAssertEqual(fallback.playedOffsets, [17, silentAt], "the iOS voice speaks again from where it went silent")
         XCTAssertGreaterThanOrEqual(fallback.pauseCount, 1, "after a pause, as the listener's recovery did")
 
         for _ in 0..<150 where !log.values.contains("supertonic.stall_paused") { try await Task.sleep(for: .milliseconds(20)) }
@@ -559,7 +565,7 @@ final class SupertonicSpeechTests: XCTestCase {
 
         fallback.advancesPerRead = 3
         try client.play(targetId: "silent", from: 17)
-        XCTAssertEqual(fallback.playedOffsets, [17, 17, 17], "one tap speaks from the same place")
+        XCTAssertEqual(fallback.playedOffsets, [17, silentAt, 17], "one tap speaks from the place asked for")
         let stalls = log.values.filter { $0.hasPrefix("supertonic.stall") }.count
         try await Task.sleep(for: .milliseconds(900))
         XCTAssertEqual(client.playbackTransportState(targetId: "silent"), .playing)
@@ -567,15 +573,19 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
-    // #288: an iOS voice whose place moves, or that finished the article, isn't a stall.
-    func testASpeakingOrFinishedIOSVoiceIsNotAStall() async throws {
+    // #288: an iOS voice that hasn't started yet, whose place moves, or that finished the article
+    // isn't a stall.
+    func testAStartingSpeakingOrFinishedIOSVoiceIsNotAStall() async throws {
         let log = StallEventLog()
         let fallback = RecordingFallbackAudioClient()
-        fallback.advancesPerRead = 2
         let client = try systemVoiceStallClient(log, fallback: fallback)
         _ = try client.prepareSpeechText("A long response that must remain playable when generation does not finish promptly.")
         try client.play(targetId: "speaking", from: 17)
         for _ in 0..<100 where !log.values.contains("fallback") { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertEqual(log.values, ["fallback"], "a voice slow to start isn't restarted")
+
+        fallback.advancesPerRead = 2
         try await Task.sleep(for: .milliseconds(900))
         XCTAssertEqual(log.values, ["fallback"])
 
