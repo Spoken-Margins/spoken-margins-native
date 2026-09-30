@@ -10817,10 +10817,10 @@ final class Gate1AppModel: ObservableObject {
                           let item = try? store.loadItem(id: itemId), item.text == sourceText else { return }
                     _ = try? await coordinator.begin(itemId: itemId, sourceText: sourceText, signature: signature, plan: plan, schedulesJob: false)
                 },
-                onPreparedChunk: { itemId, sourceText, plan, audioURL, durationMs in
+                onPreparedChunk: { itemId, sourceText, plan, audioURL, durationMs, engine in
                     guard let signature = try? await signatureTask.value,
                           let item = try? store.loadItem(id: itemId), item.text == sourceText else { return }
-                    try? await coordinator.commit(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText, audioURL: audioURL, durationMs: durationMs)
+                    try? await coordinator.commit(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText, audioURL: audioURL, durationMs: durationMs, engine: engine)
                 },
                 articleText: { itemId in try? store.loadItem(id: itemId).text },
                 preparedChunkLookup: { itemId, sourceText, plan in
@@ -15349,7 +15349,7 @@ final class Gate1AppModel: ObservableObject {
                 plan: plan,
                 maximumChunkCount: job.maximumChunkCount
             )
-            let completedIndexes = Set(manifest.chunks.map(\.index))
+            let completedIndexes = PreparedAudioCoordinator.completedIndexes(manifest, retryingStandInsFor: job)
             let ledger = offlineStorageLedger ?? OfflineStorageLedger(repository: store, rootDirectory: support)
             offlineStorageLedger = ledger
             let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
@@ -15377,29 +15377,26 @@ final class Gate1AppModel: ObservableObject {
             let renderer = try makeSupertonicRenderer()
             // Paced per render, not through the shared lifecycle flag (#377).
             let pacedRenderer = BackgroundPreparationRenderer(base: renderer)
-            let rendered: SupertonicNarrationResult
             do {
                 try Task.checkCancellation()
                 recordDeveloperDiagnostic("preparation.render.begin", ["item": DeveloperDiagnosticRecording.token(item.id), "chunk": String(next.index)])
-                rendered = try await supertonicOutputGuard(wrapping: pacedRenderer, systemVoice: speechVoiceIdentifier).render(
-                    text: next.text,
-                    voice: voice,
-                    language: "en",
-                    speed: 1,
-                    synthesisSteps: 8
-                )
-                try Task.checkCancellation()
-                guard !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else {
-                    throw CancellationError()
+                // The render is discarded once committed (copied), or on any failure.
+                try await supertonicOutputGuard(wrapping: pacedRenderer, systemVoice: speechVoiceIdentifier).render(
+                    text: next.text, voice: voice, language: "en", speed: 1, synthesisSteps: 8
+                ) { rendered in
+                    try Task.checkCancellation()
+                    guard !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else {
+                        throw CancellationError()
+                    }
+                    try await coordinator.commit(
+                        itemId: item.id,
+                        signature: signature,
+                        plan: next,
+                        sourceText: sourceText,
+                        audioURL: rendered.audioURL,
+                        durationMs: Int((rendered.duration * 1_000).rounded()), engine: rendered.engine
+                    )
                 }
-                try await coordinator.commit(
-                    itemId: item.id,
-                    signature: signature,
-                    plan: next,
-                    sourceText: sourceText,
-                    audioURL: rendered.audioURL,
-                    durationMs: Int((rendered.duration * 1_000).rounded())
-                )
             } catch {
                 try? await ledger.release(reservationId: reservation.id)
                 throw error
@@ -15424,7 +15421,7 @@ final class Gate1AppModel: ObservableObject {
             job = (try store.loadAudioPreparationJobs()).first(where: { $0.id == job.id }) ?? job
             recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count)])
             job.nextChunkIndex = updated.chunks.count
-            job.lastFailureCode = nil
+            job.lastFailureCode = PreparedAudioCoordinator.hasStandIns(updated) ? PreparedAudioCoordinator.standInRetried : nil
             if updated.chunks.count == plan.count {
                 try store.saveAudioPreparationJob(job)
                 try await finishBackgroundPreparedAudio(
@@ -15537,6 +15534,8 @@ final class Gate1AppModel: ObservableObject {
         coordinator: PreparedAudioCoordinator,
         support: URL
     ) async throws {
+        // A stand-in (iOS voice) chunk waits for a play to retry Supertonic; don't bake it in (#363).
+        guard !PreparedAudioCoordinator.hasStandIns(manifest) else { return }
         let byIndex = Dictionary(uniqueKeysWithValues: manifest.chunks.map { ($0.index, $0) })
         let chunks = try plan.map { entry -> SupertonicPreparedChunk in
             guard let committed = byIndex[entry.index] else {

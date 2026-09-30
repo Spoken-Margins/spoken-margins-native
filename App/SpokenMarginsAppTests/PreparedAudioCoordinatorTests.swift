@@ -195,7 +195,9 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
 
     }
 
-    private func commit(_ plan: PreparedChunkPlan, data: Data, coordinator: PreparedAudioCoordinator, fixture: Fixture) async throws {
+    private func commit(
+        _ plan: PreparedChunkPlan, data: Data, coordinator: PreparedAudioCoordinator, fixture: Fixture, engine: String? = nil
+    ) async throws {
         let input = fixture.root.appending(path: "input-\(plan.index).wav")
         try data.write(to: input)
         try await coordinator.commit(
@@ -204,8 +206,44 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
             plan: plan,
             sourceText: "First chunk. Second chunk.",
             audioURL: input,
-            durationMs: 1_000
+            durationMs: 1_000,
+            engine: engine
         )
+    }
+
+    // #363 audit: a stand-in (the iOS voice) committed to prepared audio was found by every later
+    // lookup and played as if it were Supertonic, and nothing could replace it. The player now
+    // skips it and tries Supertonic again, whose chunk replaces the stand-in.
+    func testAStandInChunkIsSkippedAndReplacedBySupertonic() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let plan = plans()
+        _ = try await coordinator.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plan)
+        try await commit(plan[0], data: Data([1]), coordinator: coordinator, fixture: fixture, engine: SupertonicNarrationResult.systemVoiceEngine)
+        let standIn = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0])
+        XCTAssertNil(standIn, "the stand-in isn't played as Supertonic")
+
+        try await commit(plan[0], data: Data([7, 7]), coordinator: coordinator, fixture: fixture, engine: SupertonicNarrationResult.systemVoiceEngine)
+        try await commit(plan[0], data: Data([2, 3]), coordinator: coordinator, fixture: fixture, engine: "supertonic")
+        let replaced = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0])
+        XCTAssertEqual(replaced.flatMap { try? Data(contentsOf: $0.audioURL) }, Data([2, 3]), "Supertonic's chunk replaced it")
+        let manifest = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: "prepared-item-one"))
+        XCTAssertEqual(manifest.chunks.map(\.index), [0])
+        XCTAssertNil(manifest.chunks.first?.engine)
+        XCTAssertFalse(PreparedAudioCoordinator.hasStandIns(manifest), "nothing holds back assembly now")
+        try await commit(plan[1], data: Data([4]), coordinator: coordinator, fixture: fixture, engine: SupertonicNarrationResult.systemVoiceEngine)
+        let withStandIn = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: "prepared-item-one"))
+        XCTAssertTrue(PreparedAudioCoordinator.hasStandIns(withStandIn), "a stand-in holds back assembly")
+
+        // #363 audit: a listener's explicit request retries the stand-in with Supertonic once;
+        // automatic preparation, and a request that already retried, don't.
+        var job = AudioPreparationJob(id: "job", itemId: "item", manifestId: withStandIn.id, policy: .explicit, requestedAt: Date())
+        XCTAssertEqual(PreparedAudioCoordinator.completedIndexes(withStandIn, retryingStandInsFor: job), [0])
+        job.lastFailureCode = PreparedAudioCoordinator.standInRetried
+        XCTAssertEqual(PreparedAudioCoordinator.completedIndexes(withStandIn, retryingStandInsFor: job), [0, 1])
+        job = AudioPreparationJob(id: "job", itemId: "item", manifestId: withStandIn.id, policy: .whileCharging, requestedAt: Date())
+        XCTAssertEqual(PreparedAudioCoordinator.completedIndexes(withStandIn, retryingStandInsFor: job), [0, 1])
     }
 
     // #278: Prepare on an article whose narration the fallback detached answered "already

@@ -171,7 +171,9 @@ final class RenderedSpeechDiskCache: @unchecked Sendable {
         speed: Float,
         synthesisSteps: Int
     ) -> URL {
-        let payload = "supertonic-v1\u{1f}\(voice.rawValue)\u{1f}\(language)\u{1f}\(speed)\u{1f}\(synthesisSteps)\u{1f}\(text)"
+        // v2: v1 entries can hold iOS-voice stand-ins cached as Supertonic before #311; they now
+        // miss once and age out under the cache limit (#363 audit).
+        let payload = "supertonic-v2\u{1f}\(voice.rawValue)\u{1f}\(language)\u{1f}\(speed)\u{1f}\(synthesisSteps)\u{1f}\(text)"
         let digest = SHA256.hash(data: Data(payload.utf8))
             .map { String(format: "%02x", $0) }
             .joined()
@@ -282,7 +284,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     typealias GenerationProgressHandler = @Sendable (RenderedSpeechGenerationProgress) -> Void
     typealias PreparedAudioHandler = @Sendable (_ itemId: String, _ prepared: PreparedTextAudio) -> Void
     typealias PreparationPlanHandler = @Sendable (_ itemId: String, _ sourceText: String, _ plan: [PreparedChunkPlan]) async -> Void
-    typealias PreparedChunkHandler = @Sendable (_ itemId: String, _ sourceText: String, _ plan: PreparedChunkPlan, _ audioURL: URL, _ durationMs: Int) async -> Void
+    typealias PreparedChunkHandler = @Sendable (_ itemId: String, _ sourceText: String, _ plan: PreparedChunkPlan, _ audioURL: URL, _ durationMs: Int, _ engine: String) async -> Void
     typealias PreparedChunkLookup = @Sendable (_ itemId: String, _ sourceText: String, _ plan: PreparedChunkPlan) async -> PreparedChunkLookupResult?
     typealias InterruptionHandler = @Sendable (AudioPlaybackInterruptionEvent) -> Void
 
@@ -399,6 +401,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var generationPlan: [RenderRequest] = []
     private var generationRenderOrder: [RenderRequest] = []
     private var generationResults: [Int: SupertonicPreparedChunk] = [:]
+    /// Chunks the guard gave to the iOS voice. While any remain, the whole article isn't
+    /// assembled into the item's audio, so the next play can try Supertonic again (#363 audit).
+    private var standInOffsets: Set<Int> = []
     private var initialPlaybackOffset: Int?
     private var initialRequestedSpokenOffset: Int?
     private var failedRenderReasons: [Int: String] = [:]
@@ -890,6 +895,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
             generationResults.removeAll()
+            standInOffsets.removeAll()
             initialPlaybackOffset = nil
             initialRequestedSpokenOffset = nil
             failedRenderReasons.removeAll()
@@ -957,6 +963,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
             generationResults.removeAll()
+            standInOffsets.removeAll()
             failedRenderReasons.removeAll()
             initialPlaybackOffset = nil
             initialRequestedSpokenOffset = nil
@@ -1110,6 +1117,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
             generationResults.removeAll()
+            standInOffsets.removeAll()
             failedRenderReasons.removeAll()
             preparedAudioAssemblyStarted = false
             return (source, nextGeneration, Array(urls), renderControl)
@@ -1285,6 +1293,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 try Task.checkCancellation()
                 let result: SupertonicNarrationResult
                 var performedInference = false
+                var ownsResult = false
                 let articleChunk = self?.articleChunkPlan(for: request)
                 if let articleChunk,
                    let recovered = await self?.preparedChunkLookup?(request.targetId, articleChunk.sourceText, articleChunk.plan) {
@@ -1319,7 +1328,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         speed: 1.0,
                         synthesisSteps: 8
                     )
-                    if let cache = self?.diskCache,
+                    // Only Supertonic's own audio is cached under its key. An iOS-voice stand-in
+                    // isn't, so the next play renders Supertonic again and re-checks it (#311).
+                    if rendered.engine == SupertonicNarrationResult.supertonicEngine,
+                       let cache = self?.diskCache,
                        let retained = try? cache.store(
                             rendered,
                             text: request.text,
@@ -1335,9 +1347,15 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         result = retained
                     } else {
                         result = rendered
+                        ownsResult = true
                     }
                 }
-                try Task.checkCancellation()
+                if Task.isCancelled {
+                    // An uncached render (a stand-in, or no disk cache) belongs to nothing else: a
+                    // stop or seek during it must delete it, not leak it (#363 audit).
+                    if ownsResult { Task { await renderer.discardGeneratedAudio(at: result.audioURL) } }
+                    throw CancellationError()
+                }
                 guard !performedInference || self?.onDeviceRenderingAllowed() != false else {
                     Task { await renderer.discardGeneratedAudio(at: result.audioURL) }
                     await MainActor.run {
@@ -1398,6 +1416,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             guard generation == request.generation else { return (false, nil, nil, 0, 0, false) }
             inFlightOffsets.remove(request.startOffset)
             let cached = CachedAudio(url: result.audioURL, duration: result.duration, request: request)
+            if result.engine == SupertonicNarrationResult.supertonicEngine {
+                standInOffsets.remove(request.startOffset)
+            } else {
+                standInOffsets.insert(request.startOffset)
+            }
             generationResults[request.startOffset] = SupertonicPreparedChunk(
                 startOffset: request.startOffset,
                 sourceLength: request.sourceLength,
@@ -1456,7 +1479,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 articleChunk.sourceText,
                 articleChunk.plan,
                 result.audioURL,
-                Int((result.duration * 1_000).rounded())
+                Int((result.duration * 1_000).rounded()),
+                result.engine
             )
         }
         guard lock.withLock({ generation == request.generation }) else { return }
@@ -1550,6 +1574,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 generationPlan.removeAll()
                 generationRenderOrder.removeAll()
                 generationResults.removeAll()
+                standInOffsets.removeAll()
                 failedRenderReasons.removeAll()
                 initialPlaybackOffset = nil
                 initialRequestedSpokenOffset = nil
@@ -1846,7 +1871,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             )
         }
         guard let snapshot else { return }
-        guard let preparedAudioDirectory, let onPreparedAudio else {
+        // Every chunk is ready, but one is a stand-in: report it, without an assembled file (#363).
+        guard let preparedAudioDirectory, let onPreparedAudio, lock.withLock({ standInOffsets.isEmpty }) else {
             reportGenerationState(.ready)
             return
         }

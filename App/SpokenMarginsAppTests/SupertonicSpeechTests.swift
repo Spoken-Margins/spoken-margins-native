@@ -1,4 +1,5 @@
 import AVFoundation
+import CryptoKit
 import SessionKit
 import SessionKitAudio
 import SessionKitPersistence
@@ -222,7 +223,7 @@ final class SupertonicSpeechTests: XCTestCase {
             audioSessionActivator: {}, audioPlayerStarter: { _, _ in starts.bump() },
             observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
             onGenerationProgress: { progress.append($0.completedChunks) },
-            onPreparedChunk: { _, _, _, _, _ in await gate.commit() }
+            onPreparedChunk: { _, _, _, _, _, _ in await gate.commit() }
         )
         let text = (1...12).map { "Sentence \($0) contains enough ordinary words to keep the narration moving through several chunks." }
             .joined(separator: " ")
@@ -554,6 +555,15 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    private func guardTemplate(_ root: URL) throws -> URL {
+        let url = root.appending(path: "t.wav")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44_100)); buffer.frameLength = 44_100
+        try file.write(from: buffer)
+        return url
+    }
+
     private func crossChunkTemplate(_ root: URL) throws -> URL {
         let url = root.appending(path: "t.wav")
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
@@ -561,6 +571,145 @@ final class SupertonicSpeechTests: XCTestCase {
         let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 132_300)); buffer.frameLength = 132_300
         try file.write(from: buffer)
         return url
+    }
+
+    // #311: the guard's iOS-voice file is deleted when the player discards it.
+    func testGuardDeletesItsStandInFileOnDiscard() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "guard-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let guardRenderer = SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil)
+        let result = try await guardRenderer.render(
+            text: "Table 3 reports 91.1% 8.9% 0.0 and 7,494 tool decisions across 2,548 summaries.",
+            voice: .m2, language: "en", speed: 1, synthesisSteps: 8
+        )
+        XCTAssertTrue(result.audioURL.lastPathComponent.hasPrefix("system-voice-"), "the guard stood in")
+        XCTAssertEqual(result.engine, SupertonicNarrationResult.systemVoiceEngine)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: result.audioURL.path))
+        await guardRenderer.discardGeneratedAudio(at: result.audioURL)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: result.audioURL.path), "the stand-in file is deleted")
+    }
+
+    // #311: a stand-in isn't cached under the Supertonic key, so the next play re-checks Supertonic.
+    func testStandInIsNotCachedAsSupertonic() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "guard-cache-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let text = "Table 3 reports 91.1% 8.9% 0.0 and 7,494 tool decisions across 2,548 summaries."
+        let cache = try RenderedSpeechDiskCache(directory: root.appending(path: "cache"), limitBytes: 50_000_000)
+        let started = expectation(description: "the stand-in plays")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil),
+            voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            diskCache: cache, audioSessionActivator: {}, audioPlayerStarter: { _, _ in started.fulfill() },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient()
+        )
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "item", from: 0)
+        await fulfillment(of: [started], timeout: 10)
+        XCTAssertNil(cache.cachedAudio(text: SpeechTextNormalizer.normalize(text), voice: .m2, language: "en", speed: 1, synthesisSteps: 8),
+                     "the iOS-voice audio isn't cached as Supertonic's")
+        try client.stop()
+    }
+
+    // #363 audit: background preparation made a guard per chunk and never discarded its render, so
+    // every flagged chunk left an iOS-voice file behind. The render is discarded once kept, or on
+    // failure.
+    func testABackgroundRenderIsDiscardedOnceKeptOrOnFailure() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "guard-keep-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let guardRenderer = SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil)
+        let text = "Table 3 reports 91.1% 8.9% 0.0 and 7,494 tool decisions across 2,548 summaries."
+        var standIn: URL?
+        let kept = try await guardRenderer.render(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 8) { rendered in
+            standIn = rendered.audioURL
+            let copy = root.appending(path: "kept.wav")
+            try FileManager.default.copyItem(at: rendered.audioURL, to: copy)
+            return copy
+        }
+        XCTAssertTrue(try XCTUnwrap(standIn).lastPathComponent.hasPrefix("system-voice-"), "the guard stood in")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: kept.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(standIn).path), "the stand-in is deleted once kept")
+
+        do {
+            _ = try await guardRenderer.render(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 8) { rendered -> URL in
+                standIn = rendered.audioURL
+                throw CancellationError()
+            }
+            XCTFail("the failure is rethrown")
+        } catch is CancellationError {}
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(standIn).path), "and on failure")
+    }
+
+    // #363 audit: before #311 a stand-in could be cached under the Supertonic key. The key's
+    // version moved on, so such an entry is never found again.
+    func testAnEntryCachedUnderTheOldKeyIsNotFound() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "cache-v1-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let text = "An entry cached before the key changed."
+        let payload = "supertonic-v1\u{1f}M2\u{1f}en\u{1f}\(Float(1))\u{1f}8\u{1f}\(text)"
+        let digest = SHA256.hash(data: Data(payload.utf8)).map { String(format: "%02x", $0) }.joined()
+        let directory = root.appending(path: "cache", directoryHint: .isDirectory)
+        let cache = try RenderedSpeechDiskCache(directory: directory, limitBytes: 50_000_000)
+        try FileManager.default.copyItem(at: try guardTemplate(root), to: directory.appending(path: "\(digest).wav"))
+        XCTAssertNil(cache.cachedAudio(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 8))
+    }
+
+    // #363 audit (#311 outcome: a wrongly flagged chunk can be rendered again): after a full
+    // listen, the whole article was assembled with its iOS-voice stand-ins and attached as the
+    // item's audio, so the stand-in played forever. It isn't assembled while a stand-in remains;
+    // with Supertonic's own audio it still is.
+    func testAnArticleWithAStandInIsNotAssembledButOneWithoutIs() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "assemble-standin-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let text = "A short sentence that Supertonic reads in about three seconds."
+        for (seconds, expectsAssembly) in [(20.0, false), (4.0, true)] {
+            let assembled = expectation(description: "assembled (\(seconds) s)")
+            assembled.isInverted = !expectsAssembly
+            let ready = expectation(description: "generation reports ready (\(seconds) s)")
+            ready.assertForOverFulfill = false
+            let client = SupertonicSpeechPlaybackClient(
+                renderer: SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: seconds),
+                                                systemVoiceIdentifier: nil),
+                voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+                preparedAudioDirectory: root.appending(path: "assembled-\(Int(seconds))", directoryHint: .isDirectory),
+                audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
+                observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+                onGenerationStateChange: { if $0 == .ready { ready.fulfill() } },
+                onPreparedAudio: { _, _ in assembled.fulfill() }
+            )
+            _ = try client.prepareSpeechText(text)
+            try client.play(targetId: "item", from: 0)
+            // #363 audit: with a stand-in, generation must still end, not show "Generating" forever.
+            await fulfillment(of: [ready], timeout: 8)
+            await fulfillment(of: [assembled], timeout: expectsAssembly ? 8 : 1)
+            try client.stop()
+        }
+    }
+
+    // #363 audit: a stop during a stand-in render that ignores cancellation returned a file that
+    // nothing owned; the cancellation check threw and the file leaked.
+    func testAStopDuringAnUncachedRenderDeletesItsFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "cancel-standin-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let renderer = SlowStandInRenderer(template: try guardTemplate(root))
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient()
+        )
+        _ = try client.prepareSpeechText("A sentence the guard hands to the iOS voice.")
+        try client.play(targetId: "item", from: 0)
+        for _ in 0..<50 where renderer.made.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        try client.stop()
+        try await Task.sleep(for: .milliseconds(700))
+        let made = renderer.made
+        XCTAssertEqual(made.count, 1)
+        XCTAssertFalse(made.contains { FileManager.default.fileExists(atPath: $0.path) }, "the stand-in file was deleted")
     }
 
     private let crossChunkText = (1...12).map { "Sentence \($0) contains enough ordinary words to keep the narration moving through several chunks." }
@@ -1038,7 +1187,7 @@ final class SupertonicSpeechTests: XCTestCase {
                 let count = await renderer.renderCount
                 XCTAssertEqual(count, 0, "Rendering must wait for the manifest")
             },
-            onPreparedChunk: { _, _, plan, _, _ in
+            onPreparedChunk: { _, _, plan, _, _, _ in
                 guard plan.index == 0 else { return }
                 try? await Task.sleep(for: .milliseconds(100))
                 let count = await renderer.renderCount
@@ -2390,6 +2539,45 @@ private final class PreparedChunkCommitGate: @unchecked Sendable {
     func commit() async {
         let index = lock.withLock { commits += 1; return commits }
         if index == 2 { for await _ in stream {} }
+    }
+}
+
+/// Returns audio far too long for its text: the babble signature the guard replaces. Like the
+/// real renderer (#262), it deletes only files it generated.
+private actor BabbleSupertonicRenderer: SupertonicRendering {
+    let template: URL
+    let seconds: TimeInterval
+    private var generated: Set<URL> = []
+    init(template: URL, seconds: TimeInterval) { self.template = template; self.seconds = seconds }
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        let url = FileManager.default.temporaryDirectory.appending(path: "babble-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: template, to: url)
+        generated.insert(url)
+        return SupertonicNarrationResult(audioURL: url, duration: seconds, sampleRate: 44_100, renderDuration: 0.01, sessionLoadCount: 1)
+    }
+    func discardGeneratedAudio(at url: URL) async {
+        if generated.remove(url) != nil { try? FileManager.default.removeItem(at: url) }
+    }
+}
+
+/// Returns an iOS-voice stand-in after a delay, ignoring cancellation, like a synthesizer that
+/// doesn't check for it. Deletes only files it made.
+private final class SlowStandInRenderer: SupertonicRendering, @unchecked Sendable {
+    let template: URL
+    private let lock = NSLock()
+    private var files: [URL] = []
+    var made: [URL] { lock.withLock { files } }
+    init(template: URL) { self.template = template }
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        let url = FileManager.default.temporaryDirectory.appending(path: "system-voice-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: template, to: url)
+        lock.withLock { files.append(url) }
+        Thread.sleep(forTimeInterval: 0.3)
+        return SupertonicNarrationResult(audioURL: url, duration: 1, sampleRate: 44_100, renderDuration: 0.3, sessionLoadCount: 0,
+                                         engine: SupertonicNarrationResult.systemVoiceEngine)
+    }
+    func discardGeneratedAudio(at url: URL) async {
+        if lock.withLock({ files.contains(url) }) { try? FileManager.default.removeItem(at: url) }
     }
 }
 
