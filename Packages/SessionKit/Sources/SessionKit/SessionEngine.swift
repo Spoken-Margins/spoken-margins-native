@@ -684,7 +684,7 @@ public final class SessionEngine {
             try audio.stop()
             publish(status: .paused, phase: .itemPlayback)
         } else if snapshot.status.isPlaybackActive {
-            try playCurrentTarget(session)
+            try playCurrentTarget(session, seeking: true)
             publishPlaybackContinuation(for: session)
         } else {
             publish(status: snapshot.status, phase: session.phase)
@@ -4219,7 +4219,7 @@ public final class SessionEngine {
         return 0
     }
 
-    private func playCurrentTarget(_ session: Session) throws {
+    private func playCurrentTarget(_ session: Session, seeking: Bool = false) throws {
         if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
             try audio.configureMediaContext(playbackMediaContext(for: session))
             try audio.play(targetId: session.currentTargetId, fromMediaTimeMs: session.position.mediaTimeMs ?? 0)
@@ -4229,7 +4229,11 @@ public final class SessionEngine {
         try audio.configureMediaContext(nil)
         let plan = try playbackPlan(for: session)
         lastSpokenText = try audio.prepareSpeechText(plan.text)
-        try audio.play(targetId: session.currentTargetId, from: plan.audioOffset)
+        if seeking {
+            try audio.play(targetId: session.currentTargetId, seekingTo: plan.audioOffset)
+        } else {
+            try audio.play(targetId: session.currentTargetId, from: plan.audioOffset)
+        }
         try audio.setPlaybackRate(session.playbackRate)
     }
 

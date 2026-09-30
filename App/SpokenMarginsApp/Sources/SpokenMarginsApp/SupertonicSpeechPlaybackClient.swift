@@ -518,6 +518,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     func play(targetId: String, from charOffset: Int) throws {
+        try play(targetId: targetId, from: charOffset, isSeek: false)
+    }
+
+    /// A listener's explicit move: it moves even within `livePositionTolerance` of the live
+    /// position, which only absorbs how far a repeated play or restart trails it (#346 audit).
+    func play(targetId: String, seekingTo charOffset: Int) throws {
+        try play(targetId: targetId, from: charOffset, isSeek: true)
+    }
+
+    private func play(targetId: String, from charOffset: Int, isSeek: Bool) throws {
         try activateAudioSession(forPlayback: false)
         restoreOnDeviceRenderingIfConditionCleared(targetId: targetId)
         let usesStoppedGeneration = lock.withLock {
@@ -539,7 +549,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         let spokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
         let before = resumeDiagnostics(targetId: targetId, spokenOffset: spokenOffset)
-        let action = resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset)
+        let action = resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset, isSeek: isSeek)
         reportResumeDecision(action, before: before)
         switch action {
         case .resumePlayer(let player):
@@ -1699,7 +1709,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    private func resumeAction(targetId: String, fromSpokenOffset spokenOffset: Int) -> ResumeAction {
+    private func resumeAction(targetId: String, fromSpokenOffset spokenOffset: Int, isSeek: Bool) -> ResumeAction {
         lock.withLock {
             // A play on narration that's already playing (a rate change restarts from the synced
             // position; a second Lock Screen play) reuses the live audio like a resume does,
@@ -1720,7 +1730,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 // one by a few characters; that's the same place, not a seek.
                 // An explicit choice of this chunk: no other chunk may autoplay over it later.
                 pendingAutoplayOffset = nil
-                if abs(currentOffset - spokenOffset) <= (wasPlaying ? Self.livePositionTolerance : 1) {
+                if abs(currentOffset - spokenOffset) <= (wasPlaying && !isSeek ? Self.livePositionTolerance : 1) {
                     // The player's own clock is the position now, not an earlier request for
                     // another chunk (#346 re-audit).
                     initialRequestedSpokenOffset = nil

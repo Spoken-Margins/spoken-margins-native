@@ -4911,6 +4911,35 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(sought.phase, .itemPlayback)
     }
 
+    // #346 audit: a seek while speaking reached the client as a plain play, which a playing client
+    // treats as "keep going" when it's near the live position. It must say it's a seek; a restart
+    // (a rate change) must not.
+    func testASeekWhileSpeakingIsMarkedAsASeekButARestartIsNot() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
+        )
+        let text = "First paragraph. Second paragraph. Third paragraph."
+        let item = Item(id: "item-text-seek-mark", title: "Seekable", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: InMemorySessionRepository(items: [item.id: item]), audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.seekText(toCharOffset: 28)
+        XCTAssertEqual(audio.seekingPlays, [28])
+        audio.currentOffset = 30
+        _ = try engine.restartPlaybackFromCurrentPosition()
+        XCTAssertEqual(audio.seekingPlays, [28], "a restart is a plain play")
+    }
+
+    func testRoutedClientForwardsASeekToTheSpeechClient() throws {
+        let speech = RecordingAudioClient()
+        let routed = RoutedAudioPlaybackClient(speech: speech, media: RecordingAudioClient())
+        try routed.play(targetId: "item", seekingTo: 12)
+        XCTAssertEqual(speech.seekingPlays, [12])
+    }
+
     func testStartSessionSpeaksListeningMapOverviewBeforeItemText() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -7220,6 +7249,13 @@ private final class RecordingAudioClient: AudioPlaybackClient {
         currentMediaTimeValue = nil
         playedTargets.append(targetId)
         playedOffsets.append(charOffset)
+    }
+
+    var seekingPlays: [Int] = []
+
+    func play(targetId: String, seekingTo charOffset: Int) throws {
+        seekingPlays.append(charOffset)
+        try play(targetId: targetId, from: charOffset)
     }
 
     func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {

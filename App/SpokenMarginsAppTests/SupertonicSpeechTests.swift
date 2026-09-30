@@ -344,6 +344,38 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    // #346 audit: a seek while playing reached the client as a plain play, and anything within
+    // livePositionTolerance (about two seconds) of the live position was treated as "keep going".
+    // A seek now says so and moves; a repeated play near the live position still doesn't.
+    func testASmallSeekWhilePlayingMovesButARepeatedPlayDoesNot() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let starts = ResumeStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: TextRecordingSupertonicRenderer(template: template), voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in starts.bump(); player.volume = 0; player.playImmediately(atRate: rate) },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient()
+        )
+        let text = (1...10).map { "Sentence \($0) contains enough ordinary words to keep the narration moving through several chunks." }
+            .joined(separator: " ")
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "item", from: 0)
+        for _ in 0..<150 where starts.value < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(300))
+
+        let live = try XCTUnwrap(client.currentCharOffset())
+        try client.play(targetId: "item", from: live + 20)
+        XCTAssertLessThan(try XCTUnwrap(client.currentCharOffset()), live + 15, "a repeated play near the live position keeps going")
+        let before = try XCTUnwrap(client.currentCharOffset())
+        try client.play(targetId: "item", seekingTo: before + 20)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(client.currentCharOffset()), before + 20, "a seek moves, even this close")
+        XCTAssertEqual(starts.value, 1, "in the same player")
+        try client.stop()
+    }
+
     // #258: with a Listening Map overview, the engine speaks "Overview. …" before the article.
     // Lookups carried that whole text and chunks planned across it, so no prepared chunk ever
     // matched and a fully prepared article was rendered again. They now ask for the article's own
