@@ -145,31 +145,63 @@ public struct SourceSuggestionDecision: Codable, Equatable, Sendable, Identifiab
     }
 }
 
-/// Which Library items offer a manual Follow action (B2 M1). Articles used to get only the
-/// delayed suggestion card, so a Substack post couldn't be followed until a quarter was heard.
+/// When an item offers Follow, and what its Follow action says (B2 M1, #243, #280).
+///
+/// Follow is offered only once feed discovery has found a feed. Deciding from the item alone
+/// showed Follow for things that can't be followed: a file from the phone, a site with no feed.
+/// And the label changed when the suggestion card later named the publication.
 public enum ManualFollowPolicy {
-    public static func offersFollow(mediaType: String, sourceURL: String?, sourceReference: String?) -> Bool {
-        switch mediaType.lowercased() {
-        case "podcast", TargetType.transcriptBackedMedia.rawValue:
-            return true
-        case "text":
-            // Discovery runs on tap; an article needs an https link to discover from.
-            return [sourceURL, sourceReference].contains { value in
-                guard let value, let url = URL(string: value.trimmingCharacters(in: .whitespacesAndNewlines)) else { return false }
-                return url.scheme?.lowercased() == "https" && !(url.host ?? "").isEmpty
-            }
-        default:
+    /// Items that came from the listener's own files or from the app itself. Even when a file
+    /// names a web source (a Markdown `source:` line), the item is the file, not a feed entry.
+    static let nonFollowableReferenceTypes: Set<String> = [
+        "file", "epub", "audiobook", "manual", "guided_onboarding", "spoken_margins_package"
+    ]
+
+    /// Whether to look for a feed for this item. This never shows Follow by itself: see ``offer``.
+    public static func shouldDiscoverFeed(
+        itemId: String,
+        mediaType: String,
+        sourceURL: String?,
+        sourceReference: String?,
+        sourceReferenceType: String?
+    ) -> Bool {
+        guard ["podcast", TargetType.transcriptBackedMedia.rawValue, "text"].contains(mediaType.lowercased()) else {
             return false
+        }
+        // A Listening Edition is a prepared copy of a source, not the source (#280).
+        if itemId.hasPrefix(ListeningEdition.itemIDPrefix) { return false }
+        if let type = sourceReferenceType?.lowercased(), nonFollowableReferenceTypes.contains(type) { return false }
+        return [sourceURL, sourceReference].contains { value in
+            guard let value, let url = URL(string: value.trimmingCharacters(in: .whitespacesAndNewlines)) else { return false }
+            return url.scheme?.lowercased() == "https" && !(url.host ?? "").isEmpty
         }
     }
 
-    /// The Follow button's title and symbol. An article follows its publication's feed, not a
-    /// podcast (#243: articles read "Follow Podcast").
-    public static func buttonTitle(mediaType: String, isFollowing: Bool) -> String {
-        if mediaType.lowercased() == "text" {
-            return isFollowing ? "Following Publication…" : "Follow Publication"
-        }
-        return isFollowing ? "Following Podcast…" : "Follow Podcast"
+    /// The link to discover a feed from, or nil when the item isn't worth a lookup.
+    public static func discoveryURL(for item: Item) -> URL? {
+        guard shouldDiscoverFeed(
+            itemId: item.id, mediaType: item.mediaType, sourceURL: item.sourceURL,
+            sourceReference: item.externalReference, sourceReferenceType: item.externalReferenceType
+        ), let reference = item.sourceURL ?? item.externalReference,
+              let url = URL(string: reference), url.scheme?.lowercased() == "https" else { return nil }
+        return url
+    }
+
+    /// The Follow action for an item once discovery has run. Nil, so no Follow, when no feed was found.
+    public static func offer(itemId: String, mediaType: String, candidates: [SourceCandidateEvidence]) -> FollowOffer? {
+        guard !candidates.isEmpty else { return nil }
+        // One feed: name it exactly as the suggestion card does, so the label never changes under
+        // the listener (#280). Several feeds open a chooser, so name the kind instead.
+        let noun = mediaType.lowercased() == "text" ? "Publication" : "Podcast"
+        let label = candidates.count == 1 ? candidates[0].displayName : noun
+        return FollowOffer(
+            itemId: itemId,
+            mediaType: mediaType,
+            candidates: candidates,
+            title: "Follow \(label)",
+            followingTitle: "Following \(label)…",
+            symbol: buttonSymbol(mediaType: mediaType)
+        )
     }
 
     public static func buttonSymbol(mediaType: String) -> String {
@@ -177,10 +209,26 @@ public enum ManualFollowPolicy {
     }
 }
 
+/// A Follow action backed by at least one discovered feed.
+public struct FollowOffer: Equatable, Sendable {
+    public let itemId: String
+    public let mediaType: String
+    public let candidates: [SourceCandidateEvidence]
+    public let title: String
+    public let followingTitle: String
+    public let symbol: String
+}
+
 public extension SourceCandidateEvidence {
     /// A Substack profile's primary publication. A writer can run several, so it is an
     /// "Is this it?" candidate (I1) that the listener confirms even when it is the only one.
     static let substackProfileRelation = "substack_profile_primary"
+
+    /// How Follow names this feed: its title, or its host when the feed has no usable title.
+    var displayName: String {
+        let title = source.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return title.isEmpty ? source.host : title
+    }
 
     /// Confirm before following, even as the only candidate.
     var needsConfirmation: Bool { relation == Self.substackProfileRelation }
