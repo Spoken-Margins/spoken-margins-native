@@ -44,7 +44,7 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 - **Journeys run with an agent.** A long-lived Claude Code session on the Mac named `test-desk` picks up T4/T5 requests (polling the label with `/loop`, or woken by a message), works in its own worktree and DerivedData, drives the simulator, and posts the report.
 - **Coalesce.** If a newer commit lands on the same PR while a request is queued, test the newest only. Identical requests against the same commit run once.
 - **Order.** Gate streams (A2 `seams`, anything blocking others) first, then oldest request first.
-- **Evidence stays local.** Screenshots and logs go under `artifacts/lane/<request-id>/` (git-ignored). The PR comment carries the observations and file paths, not images.
+- **Evidence stays local.** Screenshots and logs go under `artifacts/lane/<request-id>/` (git-ignored). The request id is `pr<PR>-r<run id>`, plus `-a<N>` when a job is re-run, so a re-run never reuses a folder. The PR comment carries the observations and file paths, not images.
 
 Note for whoever builds the Test Desk: Claude Desktop's iOS Simulator pane currently doesn't work with Xcode 27 ([docs](https://code.claude.com/docs/en/desktop-ios-simulator)). This repo builds with Xcode 27, so drive the simulator through computer use from the CLI, as the journeys do today, until the pane supports Xcode 27.
 
@@ -171,6 +171,7 @@ Two self-hosted GitHub Actions runners on the owner's Mac run `.github/workflows
   - A SessionKit change starts a new cache, because stale SessionKit modules give false "does not conform" errors. An Xcode project change does too.
   - Each runner has its own caches. DerivedData and SwiftPM's state record absolute paths, and a cache shared by both runners lost Xcode's VFS overlay and the onnxruntime binary (#405).
   - A cache whose SwiftPM state lists a binary artifact that isn't on disk is emptied, and the job builds cold. Its report says which artifact was missing.
+  - The T2 simulator and device builds each have their own DerivedData (`.build/dd-simulator`, `.build/dd-device`). When they shared one, the warm simulator build after a device build failed on a missing `all-product-headers.yaml` (#405).
   - At most two caches are kept per runner. Below 15 GB of free disk the job builds cold, and its report says so.
   - If a build error disappears on a cold rebuild, delete `warm-build/` while no job runs.
 - **Merging.** An `automerge` PASS is merged by the runner itself (`scripts/lane-runner.py`, `run_auto`):
