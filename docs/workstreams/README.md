@@ -10,6 +10,17 @@ Planned 2026-09-28 from the owner's voice notes. This folder lets several agents
 
 Status never lives in these files. It lives in GitHub: one tracking issue per stream (label `stream:<id>`), plus that stream's PRs. A brief changes only when the goal changes.
 
+## Reading a brief's "Done when"
+
+A milestone's "Done when" is met through PRs, and a PR is done when it's armed: `automerge` on, plus a `/lane T3` request when the diff needs one (`AGENTS.md`, [lane-request skill](../../.claude/skills/lane-request/SKILL.md)). This rule covers every brief, so the briefs themselves don't repeat it.
+
+- **Items the agent can show** (a test that fails without the change, a measured number, a fixture, a tap count, a screenshot) are shown in the PR description before arming.
+- **Lane items** ("T2 green", "T3 green", "Lane T3 is green") are met by arming the PR. The runner merges only on PASS, so the thread doesn't wait for the report.
+- **"Lane T4" items and named journeys** run in the integration run on `next`'s merged tip ([test-lane.md](test-lane.md), Three test levels). The PR names them so that run covers them.
+- **Items marked (owner) or (Mac)** stay out, as before.
+
+The thread that armed the PR moves on to its next issue and doesn't chase the lane. A lane FAIL on the PR's own code goes to whoever is free, through the project's hourly dispatcher, and a runner fault becomes an issue labelled `ready` and `regression`.
+
 ## Ground rules
 
 These keep the rules in `AGENTS.md` and add what's needed for parallel work. The September 23–24 co-op attempt failed on the things listed here, so they aren't optional (see `docs/repo-review-2026-09-24.md`).
@@ -149,8 +160,8 @@ The reach pass (#141, #145–#149, #151) moves into B1, D3, D4 and D5.
 
 ## Branches and merging
 
-- `next` is the integration branch, created from `main`. Every stream branches `ws/<id>` from `next` and opens PRs back into `next`.
-- A PR merges into `next` when its tier's lane report is green. The owner taps merge from the phone. If that becomes the bottleneck, the owner can let T1/T2-only PRs merge themselves.
+- `next` is the integration branch, created from `main`. Every stream branches `ws/<id>-…` from `next`, one branch per PR, and opens PRs back into `next`.
+- A PR merges into `next` when its tier's lane report is green. The lane runner merges armed `automerge` PRs itself. PRs that change `.github/` or `scripts/lane*` wait for the owner, and audio, persistence and packet diffs wait for the Codex audit.
 - Streams merge `next` into their branch at least daily, and before any lane request, so reports test what will actually integrate.
 - Merge order when PRs conflict: gate streams (A2 first), then the older PR.
 - A TestFlight candidate is a commit on `next` that passed T5. Releasing still follows "Releasing a build" in `AGENTS.md`. `main` is fast-forwarded only at release, by the owner's decision.
