@@ -305,16 +305,23 @@ final class SupertonicSpeechTests: XCTestCase {
         try XCTUnwrap(value, file: file, line: line)
     }
 
-    private func stallClient(_ log: StallEventLog, template: URL, plays: Bool) -> SupertonicSpeechPlaybackClient {
+    private func stallClient(
+        _ log: StallEventLog, template: URL, plays: Bool,
+        playsFromStart: Int? = nil, onStart: (@Sendable (AVPlayer) -> Void)? = nil
+    ) -> SupertonicSpeechPlaybackClient {
         SupertonicSpeechPlaybackClient(
             renderer: CountingAudioSupertonicRenderer(templateURL: template), voice: .m2, speed: 1,
             fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             audioSessionActivator: {},
             audioPlayerStarter: { player, rate in
                 log.started()
-                if plays { player.volume = 0; player.playImmediately(atRate: rate) }
+                onStart?(player)
+                if plays || playsFromStart.map({ log.startCount >= $0 }) == true {
+                    player.volume = 0; player.playImmediately(atRate: rate)
+                }
             },
             observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            interruptionHandler: { event in log.stall("interruption.\(event)", [:]) },
             onStall: { kind, fields in log.stall(kind, fields) },
             stallThreshold: .milliseconds(400), stallSampleInterval: .milliseconds(100)
         )
@@ -340,34 +347,48 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
-    // Audit of #301: the detector reports a continuous stall once. If that one event lands inside
-    // the cooldown, nothing retried when it ended. Re-seat, brief progress, stall again within
-    // the cooldown, then a retry once it has passed.
-    func testAStallInsideTheCooldownIsRetriedWhenTheCooldownEnds() async throws {
+    // #302 Done when 3 and 5: a re-seat that doesn't bring the clock back used to leave the app
+    // showing "playing" (and retry only after 30 s). It now pauses at the listener's place, so the
+    // control shows Play, and one tap plays again in a new player whose clock advances.
+    func testAStallTheReseatDoesNotFixPausesAndOneTapPlaysAgain() async throws {
         let template = try makeTestWAV(duration: 3)
         defer { try? FileManager.default.removeItem(at: template) }
         let log = StallEventLog()
-        let client = SupertonicSpeechPlaybackClient(
-            renderer: CountingAudioSupertonicRenderer(templateURL: template), voice: .m2, speed: 1,
-            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
-            audioSessionActivator: {},
-            audioPlayerStarter: { player, rate in
-                log.started()
-                if log.startCount == 2 {
-                    player.volume = 0
-                    player.playImmediately(atRate: rate)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { player.pause() }
-                }
-            },
-            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
-            onStall: { kind, fields in log.stall(kind, fields) },
-            stallThreshold: .milliseconds(300), stallSampleInterval: .milliseconds(100),
-            stallRecoveryCooldown: .seconds(1)
-        )
+        let client = stallClient(log, template: template, plays: false, playsFromStart: 3)
         _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
-        try client.play(targetId: "retry", from: 0)
-        for _ in 0..<200 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertGreaterThanOrEqual(log.startCount, 3, "re-seated again after the cooldown: \(log.values)")
+        try client.play(targetId: "tap", from: 0)
+        for _ in 0..<150 where !log.values.contains("supertonic.stall_paused") { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.values.prefix(2), ["supertonic.stall", "supertonic.stall_paused"], "\(log.values)")
+        XCTAssertTrue(log.values.contains("interruption.began"), "the app is told playback paused")
+        XCTAssertEqual(client.playbackTransportState(targetId: "tap"), .paused, "the control shows Play, not Pause")
+        XCTAssertEqual(log.startCount, 2, "one re-seat, then a pause")
+
+        try client.play(targetId: "tap", from: 0)
+        for _ in 0..<100 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.startCount, 3, "one tap starts a new player")
+        let before = client.currentCharOffset() ?? 0
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertEqual(client.playbackTransportState(targetId: "tap"), .playing)
+        XCTAssertGreaterThan(client.currentCharOffset() ?? 0, before, "and its clock advances")
+        XCTAssertEqual(log.values.filter { $0.hasPrefix("supertonic.stall") }.count, 2, "no new stall: \(log.values)")
+        try client.stop()
+    }
+
+    // #301 audit: a stall right after resuming mid-chunk, before the initial seek lands, reads the
+    // player's clock as zero. The re-seat must keep the place asked for, not replay from the start.
+    func testAReseatBeforeTheInitialSeekLandsKeepsTheRequestedPlace() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: false) { player in
+            player.currentItem?.cancelPendingSeeks()
+            player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "mid", from: 24)
+        for _ in 0..<150 where log.startCount < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThanOrEqual(log.startCount, 2, "re-seated: \(log.values)")
+        XCTAssertGreaterThanOrEqual(client.currentRecoveryCharOffset() ?? 0, 24, "the place asked for is kept")
         try client.stop()
     }
 

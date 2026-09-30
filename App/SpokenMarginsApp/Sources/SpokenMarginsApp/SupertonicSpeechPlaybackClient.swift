@@ -1637,8 +1637,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// Watches the player's clock while playback is intended. AVPlayer can report "playing" while
     /// nothing is heard (#288); a clock that stops moving for `stallThreshold` is logged with the
-    /// session's and player's state, and the player is re-seated at the same point. A wait at a
-    /// chunk boundary (no player) isn't a stall: the render deadline covers it.
+    /// session's and player's state, and the player is re-seated at the same point. If that doesn't
+    /// bring the clock back, playback pauses at the listener's place, so the control shows Play and
+    /// one tap resumes (#302). A wait at a chunk boundary (no player) isn't a stall: the render
+    /// deadline covers it.
     private func startStallMonitorIfNeeded() {
         let interval = stallSampleInterval
         let thresholdMs = Int(stallThreshold.components.seconds * 1_000
@@ -1666,7 +1668,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         if case .stalled = event { stallOngoing = true } else { stallOngoing = false }
                         await MainActor.run { self.handleStallEvent(event) }
                     } else if stallOngoing, sample.intends {
-                        await MainActor.run { self.retryStallRecoveryIfDue() }
+                        await MainActor.run { self.pauseIfReseatDidNotHelp() }
                     }
                     if !sample.active {
                         #if DEBUG
@@ -1695,10 +1697,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         switch event {
         case .stalled(_, let forMs):
             fields["stalledMs"] = String(forMs)
-            let recovering = claimStallRecovery()
-            fields["recovery"] = recovering ? "reseat_player" : "waiting_for_cooldown"
+            // A second stall inside the cooldown means the last re-seat didn't hold.
+            guard claimStallRecovery() else { return pauseStalledPlayback(fields) }
+            fields["recovery"] = "reseat_player"
             onStall?("supertonic.stall", fields)
-            if recovering { reseatStalledPlayer() }
+            reseatStalledPlayer()
         case .ended(_, _, let stalledForMs):
             fields["stalledMs"] = String(stalledForMs)
             onStall?("supertonic.stall_ended", fields)
@@ -1714,15 +1717,31 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    /// A stall that's still going: re-seat again once the cooldown has passed.
+    /// A stall still going `stallThreshold` after its re-seat: the re-seat didn't help.
     @MainActor
-    private func retryStallRecoveryIfDue() {
-        guard claimStallRecovery() else { return }
+    private func pauseIfReseatDidNotHelp() {
+        let due = lock.withLock { lastStallRecovery.map { ContinuousClock.now - $0 >= stallThreshold } ?? true }
+        guard due else { return }
         let player = lock.withLock { self.player }
-        var fields = AudioSessionDiagnostics.fields().merging(AudioSessionDiagnostics.fields(for: player)) { first, _ in first }
-        fields["recovery"] = "reseat_player_retry"
-        onStall?("supertonic.stall", fields)
-        reseatStalledPlayer()
+        pauseStalledPlayback(AudioSessionDiagnostics.fields().merging(AudioSessionDiagnostics.fields(for: player)) { first, _ in first })
+    }
+
+    /// Stops showing "playing" for a player that makes no progress (#302). As after a media-services
+    /// reset, the player is released with the listener's place and chunk kept, and the app is told
+    /// playback paused: the control shows Play, and one tap plays the chunk from that place in a new
+    /// player with the session re-activated.
+    @MainActor
+    private func pauseStalledPlayback(_ fields: [String: String]) {
+        var fields = fields
+        fields["recovery"] = "paused_for_tap"
+        onStall?("supertonic.stall_paused", fields)
+        // The tap may land before this monitor samples the pause; it must start a fresh monitor
+        // rather than inherit this stall and pause the new player too.
+        lock.withLock {
+            stallMonitor?.cancel()
+            stallMonitor = nil
+        }
+        markMediaServicesReset()
     }
 
     /// Re-activates the session and plays the same chunk from the same point in a new player.
@@ -1734,8 +1753,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             player?.replaceCurrentItem(with: nil)
             player = nil
             let fraction = activeAudioDuration > 0 ? time / activeAudioDuration : 0
+            // A player that stalls before its initial seek lands still reads zero: keep the place
+            // asked for rather than replay text already heard (#301 audit, #235).
+            let chunk = request.startOffset..<(request.startOffset + max(1, request.sourceLength))
+            let requested = initialRequestedSpokenOffset.flatMap { chunk.contains($0) ? $0 : nil } ?? request.startOffset
             initialPlaybackOffset = request.startOffset
-            initialRequestedSpokenOffset = request.startOffset + Int((Double(request.sourceLength) * fraction).rounded(.down))
+            initialRequestedSpokenOffset = max(requested, request.startOffset + Int((Double(request.sourceLength) * fraction).rounded(.down)))
             return (url, activeAudioDuration, request, time)
         }
         guard let (url, duration, request, _) = snapshot else { return }
