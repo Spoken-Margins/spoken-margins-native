@@ -97,6 +97,8 @@ struct LibraryItemRow: Identifiable, Hashable {
     let addedAt: Date?
     let lastListenedAt: Date?
     let storageRecencyRank: Int
+    /// A PDF read through the structured-document reader (#359).
+    var usesNewReader = false
 
     var mediaSymbol: String {
         if hasNativeAudio { return "headphones" }
@@ -516,11 +518,12 @@ struct LibraryReadSnapshot: Sendable {
     let manifests: [PreparedAudioManifest]
     let jobs: [AudioPreparationJob]
     let downloads: [PodcastDownloadRecord]
+    var structuredDocumentItemIds: Set<String> = []
 
     static func read(store: SQLiteSessionStore) throws -> Self {
         try Self(items: store.listItems(includeDeleted: true), sessions: store.loadSessions(),
                  manifests: store.loadPreparedAudioManifests(), jobs: store.loadAudioPreparationJobs(),
-                 downloads: store.loadPodcastDownloads())
+                 downloads: store.loadPodcastDownloads(), structuredDocumentItemIds: store.loadStructuredDocumentItemIds())
     }
 }
 
@@ -5413,16 +5416,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func libraryContentType(for row: LibraryItemRow) -> LibraryContentTypeFilter {
-        if row.sourceReference?.lowercased().contains(".pdf") == true { return .pdf }
-        switch row.mediaType.lowercased() {
-        case "pdf": return .pdf
-        case "epub": return .epub
-        case "article", TargetType.browserOwnedMedia.rawValue: return .article
-        case "podcast", TargetType.transcriptBackedMedia.rawValue: return .podcast
-        case "audiobook": return .audiobook
-        default:
-            return row.sourceReferenceType == "url" ? .article : .text
-        }
+        LibraryRowWording.contentType(mediaType: row.mediaType, sourceReference: row.sourceReference, sourceReferenceType: row.sourceReferenceType)
     }
 
     private func compareDates(_ lhs: Date?, _ rhs: Date?) -> ComparisonResult {
@@ -11170,7 +11164,7 @@ final class Gate1AppModel: ObservableObject {
                 mediaSourceType: item.media?.sourceType,
                 podcastDownloadState: podcastDownloadsByItemId[item.id]?.state
             )
-            return LibraryItemRow(
+            var row = LibraryItemRow(
                 id: item.id,
                 title: item.title,
                 status: libraryStatusLabel(for: item),
@@ -11193,6 +11187,8 @@ final class Gate1AppModel: ObservableObject {
                 lastListenedAt: sessions.compactMap { $0.updatedAt ?? $0.createdAt }.max(),
                 storageRecencyRank: storageRank
             )
+            row.usesNewReader = data.structuredDocumentItemIds.contains(item.id)
+            return row
         }
     }
 
