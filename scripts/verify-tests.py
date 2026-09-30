@@ -423,6 +423,7 @@ class Run:
     def export_screenshots(self):
         """Export the run's screenshots to screens/, named per screen, and list them in the manifest."""
         exported = self.output / 'attachments'
+        exported.mkdir()
         self.command('export-screenshots', ['xcrun', 'xcresulttool', 'export', 'attachments',
                      '--path', str(self.output / 'tests.xcresult'), '--output-path', str(exported)], timeout=120)
         screens = self.output / 'screens'
