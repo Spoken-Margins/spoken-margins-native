@@ -348,5 +348,54 @@ class ListenerRuleTests(unittest.TestCase):
                          'open an article. Expected: a label that fits.')
 
 
+class PlanGroupingTests(unittest.TestCase):
+    """#427: two Follow PRs gave the owner the same check twice (checks 1 and 5)."""
+
+    def setUp(self):
+        self.module = load_phone_build()
+
+    @staticmethod
+    def pr(number, title, issues=(), body=''):
+        return {'number': number, 'title': title, 'url': f'https://example/pr/{number}', 'body': body,
+                'labels': {'nodes': []}, 'files': {'nodes': [{'path': 'App/SpokenMarginsApp/Sources/F.swift'}]},
+                'issues': list(issues)}
+
+    @staticmethod
+    def issue(number, check, phone=False):
+        return {'number': number, 'title': f'Issue {number}', 'url': f'https://example/issue/{number}',
+                'body': f'**Owner check:** {check}\n',
+                'labels': {'nodes': [{'name': 'found-on-phone'}] if phone else []}}
+
+    def test_prs_for_one_issue_or_one_check_are_one_entry(self):
+        follow = self.issue(80, 'Follow a site with a feed and one without.')
+        entries = self.module.plan_entries([
+            self.pr(330, 'Follow sites without a feed', [follow]),
+            self.pr(310, 'Speak the error banner', body='Owner check: trigger an error and hear it.'),
+            self.pr(300, 'Follow: show the feed name', [follow]),
+            self.pr(290, 'Error banner stays', body='Owner check: Trigger an error  and hear it.'),
+            self.pr(280, 'Library wording', [self.issue(81, 'Read the Library rows.')]),
+        ])
+        self.assertEqual([[pr['number'] for pr in entry] for entry in entries], [[330, 300], [310, 290], [280]])
+
+    def test_the_plan_lists_a_shared_check_once_with_every_pr(self):
+        follow = self.issue(80, 'Follow a site with a feed and one without.', phone=True)
+        prs = {330: self.pr(330, 'Follow sites without a feed', [follow]),
+               300: self.pr(300, 'Follow: show the feed name', [follow]),
+               280: self.pr(280, 'Library wording', [self.issue(81, 'Read the Library rows.')])}
+        module = self.module
+        module.plan_base = lambda sha: (None, 'the start')
+        module.merged_prs = lambda base, sha: {n: f'Merge pull request #{n}' for n in prs}
+        module.fetch_prs = lambda numbers: prs
+        module.latest_verdict = lambda sha: None
+        with tempfile.TemporaryDirectory() as folder:
+            plan = module.write_plan(Path(folder), 'a' * 40, 'host tests').read_text()
+        self.assertEqual(plan.count('Follow a site with a feed and one without.'), 1, plan)
+        self.assertIn('[PR #330](https://example/pr/330), [PR #300](https://example/pr/300), '
+                      '[issue #80](https://example/issue/80)', plan)
+        self.assertIn('1. **Follow sites without a feed** (found on your phone)', plan)
+        self.assertIn('2. **Library wording**', plan)
+        self.assertNotIn('3. ', plan)
+
+
 if __name__ == '__main__':
     unittest.main()
