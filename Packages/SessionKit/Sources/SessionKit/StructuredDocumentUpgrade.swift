@@ -51,10 +51,15 @@ public enum StructuredDocumentUpgrader {
         let timeline = try repository.loadTranscriptTimeline(itemId: existing.id)?.timeline
         let sessions = try repository.loadSessions(itemId: existing.id).map { session in
             // A session playing the rendered narration goes back to reading the text, at
-            // the place its media time had reached; then it moves like any other.
-            PreparedNarrationFallback.canReadText(instead: session, item: existing)
-                ? PreparedNarrationFallback.liveSpeechSession(from: session, item: existing, timeline: timeline)
-                : session
+            // the place its media time had reached; then it moves like any other. The stored
+            // timeline describes the item's current render only: a session on an older one
+            // (#277) keeps its saved character offset, as SessionEngine.readText does (#344).
+            guard PreparedNarrationFallback.canReadText(instead: session, item: existing) else { return session }
+            let timelineDescribesTarget = existing.media == nil
+                || PreparedNarrationFallback.media(existing.media, isTarget: session.currentTargetId)
+            return PreparedNarrationFallback.liveSpeechSession(
+                from: session, item: existing, timeline: timelineDescribesTarget ? timeline : nil
+            )
         }
         let margins = try sessions.flatMap { try repository.loadInterjections(sessionId: $0.id) }
             .filter { $0.itemId == existing.id }
