@@ -1914,7 +1914,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 }
             } catch {
                 if self?.lock.withLock({ self?.generation == expectedGeneration }) == true {
-                    self?.reportGenerationState(.stopped, stopReason: nil)
+                    self?.reportGenerationState(.stopped, stopReason: SpeechGenerationStopReason.assemblyFailed(error))
                 }
             }
         }
