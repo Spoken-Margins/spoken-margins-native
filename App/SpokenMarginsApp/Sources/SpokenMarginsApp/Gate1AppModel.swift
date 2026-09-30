@@ -5716,7 +5716,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func clearMarkedCompletion(id: String, markedAt: Date?) {
         guard !rejectNavigationOrSessionMutationWhileRecording("mark_item_unfinished") else { return }
-        completionUndo = nil
+        if completionUndo?.itemID == id { completionUndo = nil }
         do {
             let store = try requireStore()
             // Never a later completion, and never natural session completion.
