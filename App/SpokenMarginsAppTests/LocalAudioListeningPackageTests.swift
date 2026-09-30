@@ -70,6 +70,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         for _ in 0..<750 where model.diagnostics["localAudioSkim:\(item.id)"] != "ready" { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(model.diagnostics["localAudioSkim:\(item.id)"], "ready")
         model.startItem(id: item.id)
+        XCTAssertFalse(model.isTermsOfUsePresented, "the first-use voice choice must not hold playback (#286)")
         // Exercise the real source adapter: nativeMediaId is an asset ID, not a URL.
         for _ in 0..<150 where (sourcePlayer.currentMediaTimeMs() ?? 0) < 200 {
             try await Task.sleep(for: .milliseconds(20))
