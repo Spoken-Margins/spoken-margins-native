@@ -275,16 +275,29 @@ def listener_facing(pr: dict) -> bool:
     return touches and not NOT_LISTENER_TITLE.search(pr['title'])
 
 
+def written_checks(pr: dict) -> list[str]:
+    """Every "Owner check" line, issues first, then the PR's own."""
+    texts = [issue.get('body') or '' for issue in pr['issues']] + [pr.get('body') or '']
+    found = [re.search(r'\*\*Owner check:?\*\*:?\s*(.+)', text) or re.search(r'(?m)^Owner check:\s*(.+)', text)
+             for text in texts]
+    return [match.group(1).strip() for match in found if match]
+
+
+def says_no_check(pr: dict) -> bool:
+    """An issue or the PR says "Owner check: none" and nothing gives a real one."""
+    checks = written_checks(pr)
+    return bool(checks) and all(NO_CHECK.match(check) for check in checks)
+
+
 def owner_check(pr: dict) -> str | None:
     """The issue's "Owner check" line; else a bug report's Steps and Expected; else the PR's own.
 
     "Owner check: none" counts as no check, so it never reaches the plan as a thing to try.
     """
+    for check in written_checks(pr):
+        if not NO_CHECK.match(check):
+            return check
     texts = [issue.get('body') or '' for issue in pr['issues']] + [pr.get('body') or '']
-    for text in texts:
-        found = re.search(r'\*\*Owner check:?\*\*:?\s*(.+)', text) or re.search(r'(?m)^Owner check:\s*(.+)', text)
-        if found and not NO_CHECK.match(found.group(1).strip()):
-            return found.group(1).strip()
     for text in texts:
         steps = re.search(r'\*\*Steps:?\*\*:?\s*(.+)', text)
         expected = re.search(r'\*\*Expected:?\*\*:?\s*(.+)', text)
@@ -392,8 +405,10 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     facing.sort(key=lambda pr: (0 if any(FIRST_ON_PHONE & labels(i) for i in pr['issues']) else 1,
                                 0 if owner_check(pr) else 1))
     entries = plan_entries(facing)
-    # Only what the owner can check goes in the ten minutes: a written check, or a bug his phone found (#504).
-    checkable = [entry for entry in entries if any(map(owner_check, entry)) or found_on_phone(entry)]
+    # Only what the owner can check goes in the ten minutes: a written check, or a bug his phone found (#504),
+    # unless its issue says "Owner check: none" (#283's fix shows only in a diagnostics export).
+    checkable = [entry for entry in entries if any(map(owner_check, entry))
+                 or (found_on_phone(entry) and not all(map(says_no_check, entry)))]
     unchecked = [entry for entry in entries if entry not in checkable]
     budget = checkable[:PLAN_CHECKS]
     rest = checkable[PLAN_CHECKS:]
