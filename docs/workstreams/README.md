@@ -19,7 +19,7 @@ A milestone's "Done when" is met through PRs, and a PR is done when it's armed: 
 - **"Lane T4" items and named journeys** run in the integration run on `next`'s merged tip ([test-lane.md](test-lane.md), Three test levels). The PR names them so that run covers them.
 - **Items marked (owner) or (Mac)** stay out, as before.
 
-The thread that armed the PR moves on to its next issue and doesn't chase the lane. A lane FAIL on the PR's own code goes to whoever is free, through the project's hourly dispatcher. A runner fault gets one more run (a new `/lane T3` comment plus `lane:queued` for a T3 fault, or `automerge` removed and re-added for a host-test or build fault), and becomes an issue labelled `ready` and `regression` only if it fails the same way again.
+The thread that armed the PR moves on to its next issue and doesn't chase the lane. A lane FAIL on the PR's own code goes to whoever is free, through the project's hourly dispatcher. A runner fault gets one more run (a new `/lane T3` comment with the same `tests:` line plus `lane:queued` for an INCONCLUSIVE T3, or `automerge` removed and re-added for a host-test or build fault), and becomes an issue labelled `ready` and `regression` only if it fails the same way again.
 
 ## Ground rules
 
@@ -158,7 +158,7 @@ The reach pass (#141, #145–#149, #151) moves into B1, D3, D4 and D5.
 
 - `next` is the integration branch, created from `main`. Every stream branches `ws/<id>-…` from `next`, one branch per PR, and opens PRs back into `next`.
 - A PR merges into `next` when its tier's lane report is green. The lane runner merges armed `automerge` PRs itself. PRs that change `.github/` or `scripts/lane*` wait for the owner, and audio, persistence and packet diffs wait for a clean Codex audit of their head commit.
-- GitHub closes the issue named by "Closes #N" only when a PR merges into the default branch (`main`), so an issue whose PR merged into `next` stays open until someone closes it.
+- GitHub closes the issue named by "Closes #N" only when a PR merges into the default branch (`main`), so an issue whose PR merged into `next` stays open. The hourly dispatcher then removes `in-progress`, adds `status: needs-human-validation` and names the PR; only the owner validates it.
 - Streams merge `next` into their branch at least daily, and before any lane request, so reports test what will actually integrate.
 - Merge order when PRs conflict: gate streams (A2 first), then the older PR.
 - A TestFlight candidate is a commit on `next` that passed T5. Releasing still follows "Releasing a build" in `AGENTS.md`. `main` is fast-forwarded only at release, by the owner's decision.

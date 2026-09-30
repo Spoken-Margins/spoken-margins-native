@@ -74,7 +74,7 @@ A PR is done when it's armed (`AGENTS.md`). Never stop before that:
 - **FAIL on the PR's own code**, or a conflict with `next`: the dispatcher gives the fix to whoever is free.
 - **Runner fault** (no run starts, the runner is offline, or INCONCLUSIVE because of the lane: no simulator, XCTest never connected, a failed boot, a crash flood, low disk): the dispatcher asks for one more run, and files an issue labelled `ready` and `regression` only if it fails the same way again.
 
-A T3 fault is re-run by a new `/lane T3` comment plus `lane:queued`, because re-adding `automerge` starts only the host tests and builds. A fault in those is re-run by removing and re-adding `automerge`.
+An INCONCLUSIVE T3 is re-run by a new `/lane T3` comment with the same `tests:` line plus `lane:queued`, because re-adding `automerge` starts only the host tests and builds. A fault in those is re-run by removing and re-adding `automerge`. An identical request for the same head and `next` commit that already has a PASS or FAIL report isn't run again; the lane links the earlier report.
 
 ## 5. Read a report (the dispatcher and fix-up threads)
 
