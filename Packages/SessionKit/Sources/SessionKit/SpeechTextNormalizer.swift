@@ -102,7 +102,68 @@ public enum SpeechTextNormalizer {
             rendered = speakReferenceMarkers(in: rendered)
             rendered = speakDefangedDomains(in: rendered)
         }
-        return removeLinks(in: rendered)
+        rendered = removeLinks(in: rendered)
+        if speakIdentifiers {
+            rendered = speakLinkAndEmailFragments(in: rendered)
+        }
+        return rendered
+    }
+
+    /// Characters that can be part of one URL or address token. Brackets and quotes end it, so
+    /// "(portal/content/acl-code-ethics)" keeps its parentheses around the replacement.
+    private static let addressTokenCharacters = #"[^\s()\[\]<>"“”]"#
+
+    /// URLs and addresses that survive link removal, usually because PDF extraction dropped
+    /// their first line, were read as words ("portal content, ACL code ethics") (#358). A token
+    /// holding "@" before a letter or digit is spoken as "email"; a token with two or more "/"
+    /// and a letter (not a date like 1/2/2024) as "link". Trailing sentence punctuation stays.
+    /// Parentheses or brackets left empty by removed links are dropped.
+    private static func speakLinkAndEmailFragments(in input: [MappedCharacter]) -> [MappedCharacter] {
+        let token = addressTokenCharacters
+        var rendered = replace(pattern: "\(token)*@[A-Za-z0-9]\(token)*", in: input) { match, text, characters in
+            spokenAddress("email", match: match, text: text, characters: characters)
+        }
+        rendered = replace(pattern: "\(token)*/\(token)*/\(token)*", in: rendered) { match, text, characters in
+            guard let range = Range(match.range, in: text), looksLikeURLPath(String(text[range])) else {
+                return matchedCharacters(match, text: text, characters: characters)
+            }
+            return spokenAddress("link", match: match, text: text, characters: characters)
+        }
+        return replace(pattern: #"\(\s*\)|\[\s*\]"#, in: rendered, replacement: spaceReplacement)
+    }
+
+    /// A slash-separated token that reads as a URL, not as prose: it names a domain
+    /// ("royalsocietypublishing.org/journal/rsos") or is a lowercase path with a hyphen, dot or
+    /// underscore ("portal/content/acl-code-ethics"). Lists and units in papers stay words:
+    /// "T/NK/ILC", "p53/Mdm2/Mdmx", "Live/CD31−/CD45−", "v/cm/mm", "102905/Z/13/Z".
+    static func looksLikeURLPath(_ token: String) -> Bool {
+        let trimmed = token.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?"))
+        if trimmed.range(of: #"[A-Za-z0-9]\.[A-Za-z]{2,}"#, options: .regularExpression) != nil { return true }
+        let segments = trimmed.split(separator: "/").map(String.init)
+        guard segments.count >= 2,
+              segments.allSatisfy({ $0.range(of: #"^[a-z0-9._~%-]+$"#, options: .regularExpression) != nil }),
+              segments.contains(where: { $0.contains(where: { "-._".contains($0) }) }),
+              trimmed.contains(where: \.isLetter) else { return false }
+        return true
+    }
+
+    private static func spokenAddress(
+        _ word: String,
+        match: NSTextCheckingResult,
+        text: String,
+        characters: [MappedCharacter]
+    ) -> [MappedCharacter] {
+        let matched = matchedCharacters(match, text: text, characters: characters)
+        guard let first = matched.first else { return [] }
+        let trailing = matched.reversed().prefix { ".,;:!?".contains($0.character) }.reversed()
+        return mappedCharacters(word, sourceOffset: first.sourceOffset) + trailing
+    }
+
+    private static func matchedCharacters(_ match: NSTextCheckingResult, text: String, characters: [MappedCharacter]) -> [MappedCharacter] {
+        guard let range = Range(match.range, in: text) else { return [] }
+        let lower = text.distance(from: text.startIndex, to: range.lowerBound)
+        let upper = text.distance(from: text.startIndex, to: range.upperBound)
+        return Array(characters[lower..<upper])
     }
 
     private static func speakReferenceMarkers(in input: [MappedCharacter]) -> [MappedCharacter] {

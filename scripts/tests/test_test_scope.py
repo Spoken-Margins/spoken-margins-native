@@ -113,6 +113,28 @@ class TestScopeTests(unittest.TestCase):
         self.assertIn('SpokenMarginsAppTests/Gate1AppModelWorkflowTests', result['lane_request'])
         self.assertEqual(result['app_tests'], ['Gate1AppModelWorkflowTests'])  # the lane runner adds these (#351)
 
+    def test_ui_test_scripts_are_compile_only_and_add_nothing_to_t3(self):
+        # #445: scripted journeys run in the integration run, never as a per-PR gate. Before, a UI test file
+        # fell through to the app rules, so a name with "Playback" in it asked for a T3.
+        ui = 'App/SpokenMarginsAppUITests/'
+        for path in (ui + 'EmojiArticlePlaybackUITests.swift', ui + 'SharePacketJourneyUITests.swift',
+                     ui + 'Gate1FlowUITests.swift', ui + 'Fixtures/emoji-article-crash-regression.txt'):
+            with self.subTest(path=path):
+                result = self.classify(path)
+                self.assertEqual(result['tier'], 'T2')
+                self.assertEqual(result['why'], ['UI test scripts (compile only)'])
+                self.assertIsNone(result['lane_request'])
+                self.assertEqual(result['app_tests'], [])
+                self.assertEqual(sum('scripts/xcodebuild-lane' in c for c in result['run']), 2)
+                self.assertTrue(any('integration run' in note for note in result['notes']))
+        (self.root / ui).mkdir(parents=True)
+        (self.root / ui / 'MixedPlaybackAudioSessionJourneyUITests.swift').write_text(
+            'import XCTest\nfinal class MixedPlaybackAudioSessionJourneyUITests: XCTestCase {}\n')
+        result = self.classify(APP + 'MixedPlaybackAudioSession.swift', ui + 'MixedPlaybackAudioSessionJourneyUITests.swift')
+        self.assertEqual(result['tier'], 'T3')  # the app change still asks for its own app tests
+        self.assertEqual(result['app_tests'], ['MixedPlaybackAudioSessionTests'])
+        self.assertNotIn('UITests', result['lane_request'])
+
     def test_mixed_diff_takes_the_highest_tier_and_keeps_every_suggestion(self):
         result = self.classify('docs/testing.md', KIT + 'SessionKit/ListeningEdition.swift',
                                APP + 'ExperienceLibraryScreen.swift')
