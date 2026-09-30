@@ -62,6 +62,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
+          # The Supertonic models are Git LFS files; without them the contracts check sees pointers.
+          # The LFS cache lives in .git, which the checkout's clean keeps, so each runner downloads
+          # the models once.
+          lfs: true
       - name: Take the lane runner from the base branch
         run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
       - name: Run the request
@@ -116,6 +120,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
+          # The Supertonic models are Git LFS files; without them the contracts check sees pointers.
+          # The LFS cache lives in .git, which the checkout's clean keeps, so each runner downloads
+          # the models once.
+          lfs: true
       - name: Take the lane runner from the base branch
         run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
       - name: Run the request
