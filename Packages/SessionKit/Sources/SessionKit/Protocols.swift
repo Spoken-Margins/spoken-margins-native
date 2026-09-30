@@ -50,6 +50,9 @@ public protocol ListeningSessionRepository {
     func loadImportedCommentaryInterjections(layerId: String) throws -> [ImportedCommentaryInterjection]
     func saveImportedCommentaryLayer(_ layer: ImportedCommentaryLayer) throws
     func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws
+    /// Records the first time the listener heard this shared Margin's voice (#469). A later
+    /// call keeps the first time. Returns the stored record, or nil when there is none.
+    func markImportedCommentaryInterjectionHeard(id: String, at date: Date) throws -> ImportedCommentaryInterjection?
     func saveTurn(_ turn: ConversationTurn) throws
     func loadTurns(sessionId: String) throws -> [ConversationTurn]
     func saveAIJob(_ job: AIJob) throws

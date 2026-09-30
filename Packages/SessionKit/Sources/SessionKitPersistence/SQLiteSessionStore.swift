@@ -286,6 +286,22 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         )
     }
 
+    public func markImportedCommentaryInterjectionHeard(id: String, at date: Date) throws -> ImportedCommentaryInterjection? {
+        var result: ImportedCommentaryInterjection?
+        try withTransaction {
+            guard var interjection: ImportedCommentaryInterjection = try loadOptional(
+                kind: "imported_commentary_interjection",
+                id: id
+            ) else { return }
+            if interjection.firstHeardAt == nil {
+                interjection.firstHeardAt = date
+                try saveImportedCommentaryInterjection(interjection)
+            }
+            result = interjection
+        }
+        return result
+    }
+
     public func saveTurn(_ turn: ConversationTurn) throws {
         try save(kind: "turn", id: turn.id, sessionId: turn.sessionId, itemId: nil, value: turn)
     }

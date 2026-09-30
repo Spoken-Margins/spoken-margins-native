@@ -577,6 +577,12 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
     public let audioDurationMs: Int?
     public let podcastAnchorEvidence: [ImportedPodcastAnchorEvidence]?
     public var resolution: ImportedAnchorResolution
+    /// When this listener first heard the Margin's voice; nil while it's new to them (#469).
+    /// Local only: packets never carry it, and Build 29 ignores the key when it reads the record.
+    public var firstHeardAt: Date?
+
+    /// Not heard yet, so the Timeline and the Margins list mark it as new.
+    public var isNewToListener: Bool { firstHeardAt == nil }
 
     public init(
         id: String,
@@ -588,7 +594,8 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         audioPath: String? = nil,
         audioDurationMs: Int? = nil,
         podcastAnchorEvidence: [ImportedPodcastAnchorEvidence]? = nil,
-        resolution: ImportedAnchorResolution = .init(evidenceClass: .unresolved)
+        resolution: ImportedAnchorResolution = .init(evidenceClass: .unresolved),
+        firstHeardAt: Date? = nil
     ) {
         self.id = id
         self.layerId = layerId
@@ -600,6 +607,7 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         self.audioDurationMs = audioDurationMs
         self.podcastAnchorEvidence = podcastAnchorEvidence
         self.resolution = resolution
+        self.firstHeardAt = firstHeardAt
     }
 }
 
