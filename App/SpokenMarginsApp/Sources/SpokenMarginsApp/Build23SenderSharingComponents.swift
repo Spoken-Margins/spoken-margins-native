@@ -571,11 +571,8 @@ struct Build23BatchPreparationCard: View {
                 }
 
                 if failures > 0 {
-                    Build23StatusLabel(
-                        icon: "exclamationmark.triangle.fill",
-                        title: "\(failures) \(failures == 1 ? "Margin" : "Margins") could not be prepared. Each retains Original voice when available, or reviewed Text otherwise.",
-                        tint: AppColors.plum
-                    )
+                    FailureMessageLabel("\(failures) \(failures == 1 ? "Margin" : "Margins") could not be prepared. Each retains Original voice when available, or reviewed Text otherwise.")
+                        .font(.subheadline)
                 }
             }
         }
@@ -847,11 +844,8 @@ struct Build23AudioPreviewControls: View {
                 }
 
                 if let errorMessage = player.errorMessage {
-                    Build23StatusLabel(
-                        icon: "exclamationmark.triangle.fill",
-                        title: errorMessage,
-                        tint: AppColors.plum
-                    )
+                    FailureMessageLabel(errorMessage)
+                        .font(.subheadline)
                 }
             }
             .onDisappear { player.stop() }
