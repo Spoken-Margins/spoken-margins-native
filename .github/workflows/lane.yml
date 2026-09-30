@@ -2,7 +2,9 @@
 # docs/workstreams/test-lane.md for the request and report formats, and scripts/lane-runner.py.
 #
 # A stream asks by commenting `/lane T2` or `/lane T3` on its PR into next and adding the
-# lane:queued label.
+# lane:queued label. The automerge label asks for the checks a finished PR needs without a comment:
+# --plan fast, plus both builds when the diff reaches the app (scripts/test-scope.py), again on
+# every push while the label stays.
 #
 # Trigger: pull_request. GitHub builds these runs from the PR's merge ref, which it doesn't refresh
 # when next moves, so a PR last pushed before this file reached next gets no run (#221) until it
@@ -28,9 +30,11 @@ permissions:
 jobs:
   lane:
     if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      contains(github.event.pull_request.labels.*.name, 'lane:queued') &&
-      (github.event.action != 'labeled' || github.event.label.name == 'lane:queued')
+      github.event.pull_request.head.repo.full_name == github.repository && (
+      (contains(github.event.pull_request.labels.*.name, 'lane:queued') &&
+       (github.event.action != 'labeled' || github.event.label.name == 'lane:queued')) ||
+      (contains(github.event.pull_request.labels.*.name, 'automerge') &&
+       (github.event.action != 'labeled' || github.event.label.name == 'automerge')))
     runs-on: [self-hosted, macOS, sm-lane]
     # One runner is one lane, so runs from different PRs queue behind each other. Within a PR, a
     # newer queued run replaces one that hasn't started, so only the newest commit is tested. This
@@ -55,11 +59,24 @@ jobs:
       - name: Take the lane runner from the base branch
         run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
       - name: Run the request
+        id: run
         run: >-
           /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
           --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF"
+      # The check is green only on PASS (#184): project threads read the check mark. A FAIL or
+      # INCONCLUSIVE report fails this step, after the report is posted and the labels are set.
+      - name: Verdict
+        if: steps.run.outputs.reported == 'true'
+        env:
+          VERDICT: ${{ steps.run.outputs.verdict }}
+        run: |
+          echo "Lane verdict: $VERDICT (the report is on the PR)"
+          if [ "$VERDICT" != PASS ]; then
+            echo "::error title=Lane $VERDICT::The lane reported $VERDICT. The report on the PR says why."
+            exit 1
+          fi
       - name: Tidy up after a cancelled or failed run
-        if: failure() || cancelled()
+        if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'
         run: >-
           /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --cleanup --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
           --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF"
