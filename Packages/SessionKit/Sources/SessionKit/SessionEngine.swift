@@ -105,6 +105,7 @@ public final class SessionEngine {
     @discardableResult
     public func startSession(itemId: String) throws -> SessionSnapshot {
         try require("startSession", category: "sync", capabilities: ["canonical_persistence", "receive_prepared_packages", "browser_session_handoff"])
+        forgetFailure(unlessItemIs: itemId)
         var item = try repository.loadItem(id: itemId)
         item = try discardUnavailableGeneratedTextAudio(from: item)
         currentItem = item
@@ -165,6 +166,7 @@ public final class SessionEngine {
 
         let item = try sourceImportItem(from: candidate, result: result, request: request)
         try repository.saveItem(item)
+        forgetFailure(unlessItemIs: item.id)
         currentItem = item
         currentMap = nil
         snapshot.itemId = item.id
@@ -732,6 +734,7 @@ public final class SessionEngine {
             try repository.saveListeningMap(deterministicMap)
         }
         try saveStructuredDocument(document, itemId: item.id)
+        forgetFailure(unlessItemIs: item.id)
         currentItem = item
         currentMap = deterministicMap
         snapshot.itemId = item.id
@@ -778,6 +781,7 @@ public final class SessionEngine {
             throw SessionKitError.missingFixture("watch_package:\(watchPackageId)")
         }
         try ensureWatchPackageRecords(package)
+        forgetFailure(unlessItemIs: package.itemId)
         currentWatchPackage = package
         currentItem = try repository.loadItem(id: package.itemId)
         currentMap = nil
@@ -1182,6 +1186,7 @@ public final class SessionEngine {
         guard var session = try repository.loadSession(id: sessionId) else {
             throw SessionKitError.invalidCommandForState("inspectSession")
         }
+        forgetFailure(unlessItemIs: session.itemId)
         pendingPlaybackPosition = nil
         if (session.phase == .finished || session.status == "finished"), session.completionPercent < 100 {
             if session.phase == .finished {
@@ -3108,6 +3113,15 @@ public final class SessionEngine {
         playbackStartPendingAttemptId = nil
         playbackStartDeadline = nil
         return playbackStartStatus(for: item.id, attemptId: attemptId)
+    }
+
+    /// A failure belongs to the item it happened on. Called before a different item becomes current,
+    /// so the new item's snapshot (and the diagnostics recorded from it) doesn't carry the previous
+    /// item's failure (#283). A failure raised while the new item starts is set after this, so it stays.
+    private func forgetFailure(unlessItemIs itemId: String) {
+        if snapshot.itemId != itemId {
+            snapshot.lastFailure = nil
+        }
     }
 
     /// A saved session can still point at narration whose file has since been deleted. Move it to
