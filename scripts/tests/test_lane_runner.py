@@ -1051,7 +1051,8 @@ class MainFlowTests(unittest.TestCase):
         self.run_main(github)
         self.assertEqual(len(github.posted), 1)
         self.assertTrue(github.posted[0].startswith('Lane report pr5-r42 — PASS'))
-        self.assertEqual(github.label_changes, [('lane:queued', 'lane:running'), ('lane:running', 'lane:done')])
+        self.assertEqual(github.label_changes, [('lane:queued', 'lane:running'), ('lane:running', None),
+                                                ('lane:done', 'lane:done')])
 
     def test_every_finished_run_adds_lane_done_as_a_new_labeled_event(self):
         # The Hourly dispatch fires on lane:done's `labeled` event. #432's second T3 report (2026-09-30
@@ -1062,14 +1063,34 @@ class MainFlowTests(unittest.TestCase):
         self.assertEqual(github.labels, {'lane:done'})
         self.assertEqual(github.label_changes[0], ('lane:done', None))
 
-    def test_lane_done_stays_on_when_the_run_leaves_the_lane_labels_alone(self):
+    def test_a_run_makes_its_event_even_when_the_other_job_added_lane_done_meanwhile(self):
+        # The lane and automerge jobs run side by side: an automerge report during a T3 adds lane:done.
+        github = FakeGitHub(comments=[comment('/lane T2')])
+        def t2(evidence):
+            github.relabel(None, 'lane:done')
+            return 'PASS', 'simulator build (pass), device build (pass)', []
+        self.run_main(github, t2=t2)
+        self.assertEqual(github.labeled, ['lane:running', 'lane:done', 'lane:done'])
+
+    def test_a_waiting_test_desk_request_keeps_the_labels_as_they_were(self):
         waiting = FakeGitHub(labels=('lane:queued', 'lane:done'), comments=[comment('/lane T4\nrun: J1'),
                                                                             comment('/lane T2')])
         self.run_main(waiting)  # the Test Desk's T4 keeps lane:queued, so this run doesn't take it
-        self.assertEqual(waiting.labels, {'lane:queued', 'lane:done'})
-        automerge = FakeGitHub(labels=('automerge', 'lane:done'))
-        self.run_automerge_main(automerge)
-        self.assertEqual((automerge.labels, automerge.label_changes), ({'automerge', 'lane:done'}, []))
+        self.assertEqual((waiting.labels, waiting.labeled), ({'lane:queued', 'lane:done'}, []))
+
+    def test_an_automerge_run_that_does_not_merge_adds_lane_done_as_a_new_labeled_event(self):
+        # A FAIL, an INCONCLUSIVE, or a PASS the runner won't merge (no audit, lane files, T3 gate) is
+        # something to pick up, so it wakes the Hourly dispatch like a /lane report does.
+        github = FakeGitHub(labels=('automerge', 'lane:queued', 'lane:done'),
+                            comments=[comment('/lane T3\ntests: T/A')])
+        self.run_mode(github, 'auto')
+        self.assertEqual(github.labeled, ['lane:done'])
+        self.assertEqual(github.labels, {'automerge', 'lane:queued', 'lane:done'})  # the lane job's queue stays
+
+    def test_an_automerge_run_that_merges_leaves_the_labels_alone(self):
+        github = FakeGitHub(labels=('automerge', 'lane:done'))
+        self.run_automerge_main(github, details=['merged into next as abc1234'])
+        self.assertEqual((github.label_changes, github.labeled), ([], []))  # the PR closes
 
     def test_an_older_queued_run_defers_to_the_newest_commit(self):
         github = FakeGitHub(head=NEWER, comments=[comment('/lane T2')])
@@ -1133,9 +1154,10 @@ class MainFlowTests(unittest.TestCase):
         self.assertIn('if [ "$VERDICT" != PASS ]; then', workflow)
         self.assertIn("if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'", workflow)
 
-    def run_automerge_main(self, github, verdict='PASS'):
+    def run_automerge_main(self, github, verdict='PASS', details=()):
         # run_auto does real git in the runner's tree; here it is faked, so the tree is never touched.
-        with mock.patch.object(lane, 'run_auto', return_value=(verdict, 'x', 'host tests; builds', [])) as run:
+        with mock.patch.object(lane, 'run_auto',
+                               return_value=(verdict, 'x', 'host tests; builds', list(details))) as run:
             self.run_main(github)
         return None, run
 
@@ -1145,7 +1167,7 @@ class MainFlowTests(unittest.TestCase):
         run.assert_called_once()
         self.assertTrue(github.posted[0].startswith('Lane report pr5-r42 — PASS'), github.posted)
         self.assertIn('tier auto', github.posted[0])
-        self.assertEqual(github.label_changes, [])  # the lane:* labels belong to explicit requests
+        self.assertEqual(github.label_changes, [('lane:done', 'lane:done')])  # queued and running are the lane job's
 
     def test_an_explicit_request_goes_before_the_automerge_checks(self):
         github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[comment('/lane T2')])
@@ -1160,7 +1182,7 @@ class MainFlowTests(unittest.TestCase):
         _, run = self.run_automerge_main(github)
         run.assert_called_once()
         self.assertEqual(len([b for b in github.posted if b.startswith('Lane report')]), 2)
-        self.assertEqual(github.label_changes, [])
+        self.assertEqual(github.label_changes, [('lane:done', 'lane:done')] * 2)
 
     def test_a_run_without_lane_queued_or_automerge_posts_nothing(self):
         github = FakeGitHub(labels=())
@@ -1183,7 +1205,7 @@ class MainFlowTests(unittest.TestCase):
         auto.assert_called_once()
         t3.assert_not_called()
         self.assertIn('tier auto', github.posted[0])
-        self.assertEqual(github.label_changes, [])  # lane:queued stays for the lane job
+        self.assertEqual(github.label_changes, [('lane:done', 'lane:done')])  # lane:queued stays for the lane job
         idle = FakeGitHub(labels=('lane:queued',), comments=[comment('/lane T3\ntests: T/A')])
         auto, t3, _ = self.run_mode(idle, 'auto')
         auto.assert_not_called()

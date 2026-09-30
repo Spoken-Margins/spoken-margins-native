@@ -9,6 +9,9 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
 
 - The runner takes the newest T2/T3 request it hasn't answered yet. T4 and T5 requests belong to the
   Test Desk: while one is waiting, the runner leaves lane:queued in place so the Test Desk sees it.
+- Every report that doesn't merge the PR, from a /lane request or the automerge label, ends by removing
+  and re-adding lane:done, so each one makes a new `labeled` event: the Hourly dispatch wakes on it.
+  An automerge run leaves lane:queued and lane:running alone.
 - The newest commit wins: if the PR moved on since this run was queued, a newer run tests it.
 - A request identical to one that already has a PASS or FAIL report (same head merged into the
   same next, tier and tests) runs once. After an INCONCLUSIVE report, asking again runs again.
@@ -1003,7 +1006,7 @@ def sweep_runner_simulators() -> None:
 def cleanup(github: GitHub, run_url: str, mode: str = 'any') -> int:
     """After a failed or cancelled job: remove leftovers, say so on the PR, and free the labels."""
     sweep_runner_simulators()
-    if mode == 'auto':  # the lane:* labels belong to /lane requests
+    if mode == 'auto':  # lane:queued and lane:running belong to /lane requests
         github.comment(f'Lane: the automerge run stopped before reporting ({run_url}). Push again, or remove and '
                        f're-add automerge, to run it again.\n{NOTE}')
         return 0
@@ -1095,7 +1098,7 @@ def main(argv=None) -> int:
         request = None
     if request is None and automerge and args.mode != 'explicit':
         request = {'tier': 'auto', 'tests': [], 'commit': ''}  # the automerge label is the request
-    explicit = request is not None and request['tier'] != 'auto'  # automerge runs leave lane:* labels alone
+    explicit = request is not None and request['tier'] != 'auto'  # automerge runs leave lane:queued/running alone
     if request is None:
         if not desk_waiting and QUEUED in labels and args.mode != 'auto':
             github.comment('Lane: lane:queued is set, but there is no `/lane T2` or `/lane T3` request comment newer '
@@ -1124,7 +1127,7 @@ def main(argv=None) -> int:
     (evidence / 'request.json').write_text(json.dumps(dict(request, head=head, base=args.base, base_sha=base_sha),
                                                       indent=2))
     if explicit and not desk_waiting:  # a waiting T4/T5 keeps lane:queued so the Test Desk still sees it
-        if DONE in labels:  # adding a label the PR already has is no `labeled` event, and the dispatch waits on one
+        if DONE in labels:  # a running PR doesn't also say done
             github.relabel(DONE, None)
         github.relabel(QUEUED, RUNNING)
     link_tools(Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Documents/GitHub/spoken-margins-native'))
@@ -1169,7 +1172,12 @@ def main(argv=None) -> int:
     record_outcome(verdict)
     _, desk_waiting = pending_requests(github.comments())
     if explicit:
-        github.relabel(RUNNING, QUEUED if desk_waiting else DONE)
+        github.relabel(RUNNING, QUEUED if desk_waiting else None)
+    merged = any(line.startswith(f'merged into {args.base} as ') for line in details)  # the PR closes
+    if not merged and not (explicit and desk_waiting):
+        # Remove, then add: adding a label the PR already has is no `labeled` event, and the Hourly dispatch
+        # wakes on lane:done's. The lane and automerge jobs run side by side, so the other may have added it.
+        github.relabel(DONE, DONE)
     if not (ROOT / '.build').is_symlink():  # a cold job (disk floor, busy cache) built in the workspace
         for derived in (ROOT / '.build').glob('dd*'):
             shutil.rmtree(derived, ignore_errors=True)
