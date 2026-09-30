@@ -23,12 +23,13 @@ Work milestone by milestone. For each milestone:
    release, or taste (design, voice).
 2. Work until the milestone's "Done when" items hold, leaving out items marked (owner)
    or (Mac), and show the evidence for each one in the PR. A lane item holds once the
-   PR is armed (docs/workstreams/README.md, "Done when"). If 40 turns pass without
-   progress, or your context passes 300,000 tokens, push, hand off on the tracking
-   issue and stop.
+   PR is armed (docs/workstreams/README.md, "Done when"). Never stop mid-PR. If 40
+   turns pass without progress, stop and report on the tracking issue.
 3. When it is met: arm the PR (automerge, plus a /lane T3 request if the diff needs
-   one), comment on the tracking issue with what changed, the evidence, exact steps for
-   any (owner) items, and what is next, then stop. No timers or check-ins on the PR.
+   one), and comment on the tracking issue with what changed, the evidence, exact steps
+   for any (owner) items, and what is next. Then start the next milestone on a new
+   branch, or, above about 250,000 tokens of context, post a short note and stop so a
+   fresh session takes it. No timers or check-ins on your PRs.
 
 Use sub-agents for read-only exploration (never read Gate1AppModel.swift whole).
 Before arming the PR, have a fresh sub-agent review the diff against the brief and
@@ -55,7 +56,7 @@ Retired on 2026-09-29. A long-lived triage desk re-read a large context on every
 | Decisions, defaults the streams took, and phone candidates, for the owner | The project conversation |
 | Pace, runner queue, disk, memory, the main checkout, and the daily scorecard | The hourly `SM Mac tick` scheduled task, posting on #337 |
 | Merge finished work | The lane runner merges `automerge` PRs it passes; the Mac tick is the fallback. PRs that change `.github/` or `scripts/lane*` wait for the owner. |
-| Lane FAILs on armed PRs | The project's hourly dispatcher. A FAIL on the PR's own code goes to a fresh thread; a runner fault becomes an issue labelled `ready` and `regression`. The thread that armed the PR has already stopped. |
+| Lane FAILs on armed PRs | The project's hourly dispatcher. A FAIL on the PR's own code goes to whoever is free; a runner fault becomes an issue labelled `ready` and `regression`. The thread that armed the PR has already moved on. |
 | Codex audits of sharing, persistence and audio changes | The hourly `SM Codex audit` scheduled task |
 | Test next's tip | The hourly `SM integration run` (XCTest only, because scheduled sessions can't drive the simulator), then the journeys it lists in an attended Test Desk session |
 | Check that the scheduled tasks ran | The project's morning routine reads #337. The owner starts an ops desk session only when something is wrong. |
@@ -108,7 +109,7 @@ Other streams may add a skill when they find a workflow worth reusing, such as C
 
 ## Keeping context clean
 
-- **Fresh session per milestone.** Start each milestone in a new session with the kickoff prompt, and end it when its PR is armed. The tracking issue and git history carry state between sessions. A long session full of corrections performs worse than a fresh one with a sharper prompt.
+- **Fresh session when the context is big.** A session that arms a milestone's PR below about 250,000 tokens goes on to the next milestone; above that, a new session starts it with the kickoff prompt. The tracking issue and git history carry state between sessions. A long session full of corrections performs worse than a fresh one with a sharper prompt.
 - **Never read `Gate1AppModel.swift` whole.** Use a search or an Explore sub-agent to find the handful of functions you need.
 - **Two failed corrections means start over**: clear the session and write a better prompt with what you learned.
 

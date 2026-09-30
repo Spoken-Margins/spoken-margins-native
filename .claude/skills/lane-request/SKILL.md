@@ -1,6 +1,6 @@
 ---
 name: lane-request
-description: Pick the test tier for a Spoken Margins change and ask the Mac test lane for a T2–T5 run (app build, app-hosted XCTest, journeys) on a pushed commit, arm the PR and stop, and read a lane report when picking up a FAIL. Use before asking for any simulator or app test, before labelling a PR automerge, when picking up a lane FAIL, or when a command was blocked by the lane guard.
+description: Pick the test tier for a Spoken Margins change and ask the Mac test lane for a T2–T5 run (app build, app-hosted XCTest, journeys) on a pushed commit, arm the PR and move on, and read a lane report when picking up a FAIL. Use before asking for any simulator or app test, before labelling a PR automerge, when picking up a lane FAIL, or when a command was blocked by the lane guard.
 ---
 
 # Asking the test lane for a run
@@ -61,26 +61,26 @@ It compares your branch (uncommitted files included) with `origin/next`, prints 
 - A newer push replaces a queued request: the lane tests only the newest commit.
 - Asking again for the same commit, tier and tests after a PASS or FAIL gets a link to that report, not a rerun. After INCONCLUSIVE, asking again does run again.
 
-## 4. Arm the PR, then stop
+## 4. Arm the PR, then move on
 
-A thread is done when its PR is armed (`AGENTS.md`):
+A PR is done when it's armed (`AGENTS.md`). Never stop before that:
 
 1. Merge `origin/next` into your branch and push. GitHub builds the run from the PR's merge ref, which it doesn't refresh when `next` moves, so a branch last pushed before the lane workflow reached `next` (#221), or one that conflicts with `next`, gets no run.
 2. If the diff needs T3, post the `/lane T3` request and add `lane:queued` (section 3). Adding a label that's already on the PR triggers nothing, so if `lane:queued` was already there (a T4 waiting), remove it and add it again. The PR must target `next` from a branch in this repository.
 3. Add `automerge` once the issue's "Done when" holds, after the T3 request if there is one. The runner then runs the host tests and builds the diff needs, and runs again on every push while the label stays ([test-lane.md](../../../docs/workstreams/test-lane.md), Request format).
-4. Post a short summary on the PR and stop.
+4. Post a short summary on the PR. Then take the next `ready` issue, or, above about 250,000 tokens of context, post a short note on the issue and stop (`AGENTS.md`).
 
-**Don't retry or wait.** Once armed, don't watch for the run to start, don't re-check after a few minutes, and don't set timers, reminders or check-ins on your own PR. The runner merges on PASS. What happens otherwise is the project's hourly dispatcher's job:
-- **FAIL on the PR's own code**, or a conflict with `next`: the dispatcher gives the fix to a fresh thread.
+**Don't retry or wait.** Once armed, don't watch for the run to start, don't re-check after a few minutes, and don't set timers, reminders or check-ins on your own PRs. The runner merges on PASS. What happens otherwise is the project's hourly dispatcher's job:
+- **FAIL on the PR's own code**, or a conflict with `next`: the dispatcher gives the fix to whoever is free.
 - **Runner fault** (no run starts, the runner is offline, or INCONCLUSIVE because of the lane: no simulator, XCTest never connected, a failed boot, a crash flood, low disk): the dispatcher files an issue labelled `ready` and `regression`.
 
 ## 5. Read a report (the dispatcher and fix-up threads)
 
-The lane replies on the PR with `Lane report <id> — PASS | FAIL | INCONCLUSIVE`. The thread that armed the PR has stopped by then; this section is for the dispatcher and for the fresh thread it gives a fix to.
+The lane replies on the PR with `Lane report <id> — PASS | FAIL | INCONCLUSIVE`. The thread that armed the PR has moved on by then; this section is for the dispatcher and for the thread it gives a fix to.
 
 - **INCONCLUSIVE is not a pass.** It means no simulator, XCTest never connected, a crash flood stopped the run, or `next` didn't merge into the head (the report names the files). The report says which. A merge conflict is the PR's to fix; the rest are runner faults. Don't treat it as green.
-- **FAIL** names the step, what was expected, what was observed, and a local evidence path (`artifacts/lane/<id>/…` on the Mac). A fix-up thread fixes the first failure, pushes (the `automerge` label reruns the lane on every push), posts a new `/lane T3` request and adds `lane:queued` again if the FAIL was T3 (the runner swaps it for `lane:done` after each report), and stops.
+- **FAIL** names the step, what was expected, what was observed, and a local evidence path (`artifacts/lane/<id>/…` on the Mac). A fix-up thread fixes the first failure, pushes (the `automerge` label reruns the lane on every push), posts a new `/lane T3` request and adds `lane:queued` again if the FAIL was T3 (the runner swaps it for `lane:done` after each report). That re-arms the PR, and the thread moves on.
 - **Held for T3.** A PR with a T3 request merges only on a T3 PASS, and an automerge run that finished before the T3 report doesn't merge it later by itself. After the T3 PASS, the dispatcher removes and re-adds `automerge` (until #421 lets the runner do it).
-- **Held for the Codex audit.** The runner won't merge an audio, persistence or packet diff until a "Codex audit (Astra)" comment is on the PR. Confirmed findings go to a fresh thread like a FAIL. A clean audit: the dispatcher removes and re-adds `automerge`.
+- **Held for the Codex audit.** The runner won't merge an audio, persistence or packet diff until a "Codex audit (Astra)" comment is on the PR. Confirmed findings go to whoever is free, like a FAIL. A clean audit: the dispatcher removes and re-adds `automerge`.
 - **No run started.** Check the PR's base (`next`, from a branch in this repository), whether `next` has been merged in since the lane workflow last changed, and the runners: `gh api repos/uncomposed/spoken-margins-native/actions/runners` should show `sm-lane-mac online`.
 - **"not verified"** lists what the lane can't check (audible content, Lock Screen, Bluetooth). Those belong to the owner's T6 pass, so carry them into your milestone report.
