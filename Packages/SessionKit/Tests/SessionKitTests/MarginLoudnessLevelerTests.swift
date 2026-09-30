@@ -80,6 +80,14 @@ final class MarginLoudnessLevelerTests: XCTestCase {
         }
         let alias = folder.appendingPathComponent("./margin.wav")
         XCTAssertThrowsError(try MarginLoudnessLeveler.renderLeveledCopy(of: source, to: alias))
+        let link = folder.appendingPathComponent("link-to-margin.wav")
+        try FileManager.default.linkItem(at: source, to: link)
+        XCTAssertThrowsError(try MarginLoudnessLeveler.renderLeveledCopy(of: source, to: link), "a hard link is the same file")
+        // On the Mac's default case-insensitive disk, another spelling is the same file too.
+        let otherCase = folder.appendingPathComponent("MARGIN.wav")
+        if FileManager.default.fileExists(atPath: otherCase.path) {
+            XCTAssertThrowsError(try MarginLoudnessLeveler.renderLeveledCopy(of: source, to: otherCase))
+        }
         XCTAssertEqual(try Self.hash(source), before)
     }
 

@@ -23,8 +23,9 @@ public enum MarginLoudnessLeveler {
         case unreadable
     }
 
-    /// Margins are short; this bounds the memory a decoded file can take (about 1 GB of stereo float).
-    public static let maximumSeconds = 60.0 * 60
+    /// Margins are a few minutes at most. Measuring and rendering hold several full-length copies
+    /// of the samples, so this keeps a stray long file from using hundreds of MB.
+    public static let maximumSeconds = 10.0 * 60
 
     public static func measure(fileAt url: URL) throws -> LoudnessMeasurement {
         let decoded = try read(url)
@@ -32,7 +33,7 @@ public enum MarginLoudnessLeveler {
     }
 
     /// Writes `source` leveled to `targetLUFS` as 32-bit float PCM at the source's sample rate and
-    /// channel count. The destination's extension picks the container (.caf, .wav or .aif). The
+    /// channel count. The destination's extension picks the container (.caf or .wav). The
     /// copy is written beside the destination first and moved into place, so a failed render never
     /// leaves half a file there.
     @discardableResult
@@ -41,9 +42,7 @@ public enum MarginLoudnessLeveler {
         to destination: URL,
         targetLUFS: Double = LoudnessLeveling.defaultTargetLUFS
     ) throws -> Result {
-        guard source.standardizedFileURL.resolvingSymlinksInPath() != destination.standardizedFileURL.resolvingSymlinksInPath() else {
-            throw LevelerError.destinationIsSource
-        }
+        guard !isSameFile(source, destination) else { throw LevelerError.destinationIsSource }
         let decoded = try read(source)
         let measured = LoudnessMeter.measure(channels: decoded.channels, sampleRate: decoded.sampleRate)
         let plan = LoudnessLeveling.plan(measured, targetLUFS: targetLUFS)
@@ -54,6 +53,16 @@ public enum MarginLoudnessLeveler {
             plan: plan,
             output: LoudnessMeter.measure(channels: leveled, sampleRate: decoded.sampleRate)
         )
+    }
+
+    /// Same path, or (on a case-insensitive disk, or through another link) the same file on disk.
+    static func isSameFile(_ a: URL, _ b: URL) -> Bool {
+        if a.standardizedFileURL.resolvingSymlinksInPath() == b.standardizedFileURL.resolvingSymlinksInPath() { return true }
+        guard let first = try? a.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier,
+              let second = try? b.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier else {
+            return false
+        }
+        return first.isEqual(second)
     }
 
     static func read(_ url: URL) throws -> (channels: [[Float]], sampleRate: Double) {
