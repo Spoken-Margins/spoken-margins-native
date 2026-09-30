@@ -9125,7 +9125,7 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    private func updateOnDeviceSpeechGenerationState(_ state: RenderedSpeechGenerationState, stopReason: String?) {
+    func updateOnDeviceSpeechGenerationState(_ state: RenderedSpeechGenerationState, stopReason: String?) {
         if onDeviceSpeechGenerationStatus != state.rawValue { onDeviceSpeechGenerationStatus = state.rawValue }
         if onDeviceSpeechGenerationStopReason != stopReason { onDeviceSpeechGenerationStopReason = stopReason }
         if canPrepareLibraryAudio { startForegroundAudioPreparationIfNeeded() }

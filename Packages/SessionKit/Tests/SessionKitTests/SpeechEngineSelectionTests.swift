@@ -70,9 +70,16 @@ final class SpeechEngineSelectionTests: XCTestCase {
             SpeechGenerationStopReason.listenerExplanation(stopReason: "supertonic_render_timeout", fallbackReason: .memoryWarning),
             SpeechFallbackReason.memoryWarning.listenerExplanation
         )
-        XCTAssertEqual(
-            SpeechGenerationStopReason.listenerExplanation(stopReason: "supertonic_render_timeout", fallbackReason: nil),
-            SpeechFallbackReason.renderTooSlow.listenerExplanation
+        // A render failure the iOS voice didn't take over from arrives without a fallback reason.
+        // The line says why preparing stopped and never claims the iOS voice is playing.
+        for code in ["supertonic_render_timeout", "supertonic_resource_pressure", "supertonic_render_failed:SomeError"] {
+            let line = SpeechGenerationStopReason.listenerExplanation(stopReason: code, fallbackReason: nil)
+            XCTAssertFalse(line.contains("iOS"), "\(code): \(line)")
+            XCTAssertTrue(line.contains("Retry"), "\(code): \(line)")
+        }
+        XCTAssertTrue(
+            SpeechGenerationStopReason.listenerExplanation(stopReason: "supertonic_render_timeout", fallbackReason: nil)
+                .contains("couldn't keep up")
         )
         XCTAssertEqual(
             SpeechGenerationStopReason.listenerExplanation(stopReason: "memory_warning", fallbackReason: nil),
