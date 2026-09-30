@@ -657,15 +657,9 @@ final class Gate1AppModel: ObservableObject {
             || previous.lastFailure != snapshot.lastFailure
         guard changed || (snapshot.status.isPlaybackActive && now - lastPlaybackEventCheckpoint >= 30) else { return }
         lastPlaybackEventCheckpoint = now
-        playbackEventRecording.record("playback.state", [
-            "item": DeveloperDiagnosticRecording.token(snapshot.itemId),
-            "target": DeveloperDiagnosticRecording.token(snapshot.targetId),
-            "status": snapshot.status.rawValue,
-            "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
-            "durationMs": String(snapshot.currentPlaybackDurationMs ?? -1),
-            "failure": DeveloperDiagnosticRecording.token(snapshot.lastFailure),
-            "failureDetail": PlaybackFailureDetail.privacySafe(snapshot.lastFailure)
-        ])
+        playbackEventRecording.record("playback.state", DeveloperDiagnosticRecording.playbackStateFields(
+            snapshot, player: (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.playerDiagnostics() ?? [:]
+        ))
     }
 
     private func configureDeveloperDiagnosticRecording() {
@@ -10900,6 +10894,9 @@ final class Gate1AppModel: ObservableObject {
                         self.allowAudioPreparation(itemId: itemId)
                         self.diagnostics["supertonicFallbackRestored"] = itemId
                     }
+                },
+                onStall: { [weak self] kind, fields in
+                    Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) }
                 },
                 onResumeDecision: { [weak self] fields in
                     Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) }
