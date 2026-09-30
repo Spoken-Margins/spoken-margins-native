@@ -3734,9 +3734,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         distinct.id = "distinct"
         distinct.source.id = "distinct-source"
         distinct.source.canonicalURL = "https://example.com/other-feed"
-        XCTAssertEqual(Gate1AppModel.uniqueUnfollowedCandidates([first, duplicate, alias, distinct], subscriptions: []).map(\.id), ["first", "distinct"])
+        XCTAssertEqual(FollowedSourceMatching.uniqueUnfollowedCandidates([first, duplicate, alias, distinct], subscriptions: []).map(\.id), ["first", "distinct"])
         let followed = FeedSubscription(id: "followed", source: alias.source, state: .muted)
-        XCTAssertEqual(Gate1AppModel.uniqueUnfollowedCandidates([first, duplicate, alias, distinct], subscriptions: [followed]).map(\.id), ["distinct"])
+        XCTAssertEqual(FollowedSourceMatching.uniqueUnfollowedCandidates([first, duplicate, alias, distinct], subscriptions: [followed]).map(\.id), ["distinct"])
     }
 
     func testFollowDiscoveryRechecksSubscriptionsBeforePublishing() async throws {
@@ -3978,46 +3978,61 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(Gate1AppModel.supportedPlaybackRates.contains(0.25))
     }
 
-    func testPodcastItemExposesManualFollow() {
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
-        model.selectedItem = ItemDetailState(id: "episode", title: "An Episode", isNativeAudio: true)
-        model.libraryItems = [
-            LibraryItemRow(
-                id: "episode",
-                title: "An Episode",
-                status: "Ready",
-                canDelete: true,
-                mediaType: "podcast",
-                sourceTitle: "The Show"
-            )
-        ]
+    /// #280: Follow appears only once discovery found a feed, names it from the start, and never
+    /// shows for a file from the phone or a site with no feed. #243: never "Follow Podcast" on an article.
+    func testFollowAppearsOnlyAfterAFeedIsFound() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try model.libraryStoreForTesting()
+        addTeardownBlock { [weak model, weak store] in
+            // Never unlink an open SQLite/WAL file; see testFollowDiscoveryRechecksSubscriptionsBeforePublishing.
+            if model == nil, store == nil {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        var discovered: [String] = []
+        model.followCandidateDiscoveryHandler = { item, url in
+            discovered.append(item.id)
+            guard url.host == "www.astralcodexten.com" else { throw FollowedSourceError.noFeedCandidates }
+            let source = SourceIdentity(id: "source-acx", kind: .articleFeed, canonicalURL: "https://www.astralcodexten.com/feed", host: "www.astralcodexten.com", title: "Astral Codex Ten")
+            return [SourceCandidateEvidence(id: "candidate-acx", source: source, evidenceURL: url.absoluteString, relation: "substack_publication", confidence: 0.95)]
+        }
+        try store.saveItem(Item(id: "article", title: "The Specter of Neuralese", mediaType: "text", text: "Source text.", externalReference: "https://www.astralcodexten.com/p/the-specter-of-neuralese?utm_source=substack", status: "ready", externalReferenceType: "url"))
+        try store.saveItem(Item(id: "no-feed", title: "A page", mediaType: "text", text: "Source text.", externalReference: "https://openai.com/index/a-page", status: "ready", externalReferenceType: "url"))
+        try store.saveItem(Item(id: "phone-file", title: "Clipped", mediaType: "text", text: "Source text.", externalReference: "https://www.astralcodexten.com/p/clipped", status: "ready", externalReferenceType: "file"))
+        // Past a quarter heard, so the suggestion card would be due too.
+        try store.saveSession(Session(id: "session-phone-file", itemId: "phone-file", status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: "phone-file", position: Position(charOffset: 4), completionPercent: 40, playbackRate: 1))
+        model.openHome()
 
-        XCTAssertTrue(model.canManuallyFollowSelectedSource)
-        XCTAssertEqual(model.manualFollowButtonTitle, "Follow Podcast")
-    }
+        model.openItem(id: "article")
+        XCTAssertFalse(model.canManuallyFollowSelectedSource, "nothing is offered before a feed is found")
+        try await waitFor("feed found") { model.canManuallyFollowSelectedSource }
+        XCTAssertEqual(model.manualFollowButtonTitle, "Follow Astral Codex Ten")
+        XCTAssertEqual(model.manualFollowButtonSymbol, "newspaper")
 
-    /// B2 M1: an article from Safari (a Substack post with tracking) offers Follow right away,
-    /// not only a suggestion after a quarter is heard. Pasted text without a link doesn't.
-    func testArticleItemWithAWebLinkExposesManualFollow() {
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
-        model.selectedItem = ItemDetailState(id: "article", title: "The Specter of Neuralese", isNativeAudio: false)
-        model.libraryItems = [
-            LibraryItemRow(
-                id: "article",
-                title: "The Specter of Neuralese",
-                status: "Ready",
-                canDelete: true,
-                mediaType: "text",
-                sourceReference: "https://www.astralcodexten.com/p/the-specter-of-neuralese?utm_source=substack&utm_medium=email"
-            )
-        ]
-        XCTAssertTrue(model.canManuallyFollowSelectedSource)
-        XCTAssertEqual(model.manualFollowButtonTitle, "Follow Publication", "#243: not \"Follow Podcast\"")
-
-        model.libraryItems = [
-            LibraryItemRow(id: "article", title: "Pasted notes", status: "Ready", canDelete: true, mediaType: "text")
-        ]
+        model.openItem(id: "no-feed")
+        try await waitFor("no feed") { model.diagnostics["followOffer"]?.hasPrefix("none:") == true }
         XCTAssertFalse(model.canManuallyFollowSelectedSource)
+
+        model.openItem(id: "phone-file")
+        XCTAssertFalse(model.canManuallyFollowSelectedSource)
+        await Task.yield()
+        XCTAssertTrue(model.sourceFollowSuggestionCandidates.isEmpty)
+        XCTAssertFalse(discovered.contains("phone-file"), "a file from the phone is never looked up, by the button or the card")
+
+        // Reopening reuses the result: the label is the same and nothing is fetched again.
+        model.openItem(id: "article")
+        XCTAssertTrue(model.canManuallyFollowSelectedSource)
+        XCTAssertEqual(discovered.filter { $0 == "article" }.count, 1)
+
+        // A Safari import or Continue listening selects the item without openItem; Follow still comes.
+        try store.saveItem(Item(id: "imported", title: "Imported", mediaType: "text", text: "Source text.", externalReference: "https://www.astralcodexten.com/p/imported?r=abc", status: "ready", externalReferenceType: "url"))
+        model.selectedItem = ItemDetailState(id: "imported", title: "Imported", isNativeAudio: false)
+        try await waitFor("feed found without openItem") { model.canManuallyFollowSelectedSource }
+        XCTAssertEqual(model.manualFollowButtonTitle, "Follow Astral Codex Ten")
     }
 
     func testFollowedSourceIdentityUsesCanonicalURLInsteadOfDisplayTitle() {
@@ -4032,7 +4047,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             )
         )
 
-        XCTAssertTrue(Gate1AppModel.isSourceAlreadyFollowed(
+        XCTAssertTrue(FollowedSourceMatching.isSourceAlreadyFollowed(
             sourceURL: "https://example.com/feed.xml",
             sourceTitle: "Imported Podcast Title",
             subscriptions: [subscription]
@@ -4051,7 +4066,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             )
         )
 
-        XCTAssertFalse(Gate1AppModel.isSourceAlreadyFollowed(
+        XCTAssertFalse(FollowedSourceMatching.isSourceAlreadyFollowed(
             sourceURL: "https://example.com/feed.xml",
             sourceTitle: "The Show",
             subscriptions: [subscription]
