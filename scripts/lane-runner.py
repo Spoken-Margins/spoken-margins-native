@@ -436,6 +436,9 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
     """The automerge run: test the merge commit, and push it to <base> on PASS unless something blocks it."""
     notes: list[str] = []
     for attempt in range(1, attempts + 1):
+        # Each retry gets its own folder: verify-tests.py refuses an --output folder that exists (#404).
+        tried = evidence if attempt == 1 else evidence / f'attempt-{attempt}'
+        tried.mkdir(parents=True, exist_ok=True)
         merge_sha, conflicts = build_merge_commit(ROOT, base, head, pr, pull.get('title', ''))
         if conflicts:
             return 'INCONCLUSIVE', 'no simulator', 'nothing', notes + [
@@ -443,9 +446,9 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 f'Merge {base} into your branch and push; the automerge label runs it again.']
         warm = warm_build_folders(ROOT)
         scope = diff_scope(ROOT, base)
-        (evidence / 'scope.json').write_text(json.dumps(scope, indent=2))
+        (tried / 'scope.json').write_text(json.dumps(scope, indent=2))
         verdict, where, ran, details = run_automerge(
-            scope, evidence, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)))
+            scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)))
         details = [f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR); {warm}'] \
             + notes + details
         if verdict != 'PASS':
