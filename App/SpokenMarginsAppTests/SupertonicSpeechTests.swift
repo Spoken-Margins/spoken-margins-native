@@ -362,6 +362,7 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertTrue(log.values.contains("interruption.began"), "the app is told playback paused")
         XCTAssertEqual(client.playbackTransportState(targetId: "tap"), .paused, "the control shows Play, not Pause")
         XCTAssertEqual(log.startCount, 2, "one re-seat, then a pause")
+        XCTAssertEqual(client.debugBackgroundAudioReleaseCount, 1, "other apps' audio is no longer lowered")
 
         try client.play(targetId: "tap", from: 0)
         for _ in 0..<100 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
@@ -371,6 +372,26 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(client.playbackTransportState(targetId: "tap"), .playing)
         XCTAssertGreaterThan(client.currentCharOffset() ?? 0, before, "and its clock advances")
         XCTAssertEqual(log.values.filter { $0.hasPrefix("supertonic.stall") }.count, 2, "no new stall: \(log.values)")
+        try client.stop()
+    }
+
+    // #301 audit: the listener switches items between a stall sample and its handling. The stale
+    // stall must not re-seat or pause the new item's player.
+    func testAStallSampledBeforeAnItemSwitchLeavesTheNewItemAlone() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let client = stallClient(log, template: template, plays: false, playsFromStart: 2)
+        let switcher = ItemSwitch()
+        switcher.client = client
+        client.debugStallWillBeHandled = { switcher.run() }
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "first", from: 0)
+        for _ in 0..<150 where log.startCount < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(log.startCount, 2, "the new item started once and was never re-seated: \(log.values)")
+        XCTAssertFalse(log.values.contains { $0.hasPrefix("supertonic.stall") }, "\(log.values)")
+        XCTAssertEqual(client.playbackTransportState(targetId: "second"), .playing)
         try client.stop()
     }
 
@@ -2200,6 +2221,21 @@ private final class StallEventLog: @unchecked Sendable {
     var lastFields: [String: String] { lock.withLock { last } }
     func stall(_ kind: String, _ fields: [String: String]) { lock.withLock { kinds.append(kind); last = fields } }
     func started() { lock.withLock { starts += 1 } }
+}
+
+/// Switches to another item the first time a stall is about to be handled.
+private final class ItemSwitch: @unchecked Sendable {
+    weak var client: SupertonicSpeechPlaybackClient?
+    private let lock = NSLock()
+    private var done = false
+
+    func run() {
+        let first = lock.withLock { () -> Bool in defer { done = true }; return !done }
+        guard first, let client else { return }
+        try? client.stop()
+        _ = try? client.prepareSpeechText("A different article starts playing here instead.")
+        try? client.play(targetId: "second", from: 0)
+    }
 }
 
 private final class MonitorExitResume: @unchecked Sendable {

@@ -403,6 +403,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     #if DEBUG
     /// Runs as the stall monitor is about to stop, so a test can resume playback exactly then.
     var debugStallMonitorWillExit: (@Sendable () -> Void)?
+    /// Runs between a stall sample and its handling, so a test can switch items exactly then.
+    var debugStallWillBeHandled: (@Sendable () -> Void)?
+    /// How often the client asked to stop lowering other apps' audio.
+    private(set) var debugBackgroundAudioReleaseCount = 0
     var debugHasStallMonitor: Bool { lock.withLock { stallMonitor != nil } }
     #endif
     private let articleText: ArticleTextLookup?
@@ -1652,23 +1656,38 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 // The detector reports a continuous stall once; while it lasts, recovery is retried
                 // whenever the cooldown allows, so one skipped attempt can't leave it silent.
                 var stallOngoing = false
+                // Each player is watched from scratch: a re-seat or another item must not inherit a
+                // stall (both start at clock zero). A re-seat that doesn't help stalls again anew.
+                var watchedPlayer: ObjectIdentifier?
                 let start = ContinuousClock.now
                 while !Task.isCancelled {
                     try? await Task.sleep(for: interval)
                     guard let self else { return }
-                    let sample = self.lock.withLock { () -> (active: Bool, intends: Bool, clock: Int?) in
+                    let sample = self.lock.withLock { () -> (active: Bool, intends: Bool, clock: Int?, player: ObjectIdentifier?) in
                         let intends = self.transportIntent == .playing && !self.fallbackIsActive && self.player != nil
                         let time = self.playerTime(self.player)
-                        return (self.transportIntent == .playing, intends, self.currentStartOffset * 1_000_000 + Int(time * 1_000))
+                        return (self.transportIntent == .playing, intends, self.currentStartOffset * 1_000_000 + Int(time * 1_000),
+                                self.player.map(ObjectIdentifier.init))
+                    }
+                    if sample.player != watchedPlayer {
+                        watchedPlayer = sample.player
+                        detector.reset()
+                        stallOngoing = false
                     }
                     let elapsed = ContinuousClock.now - start
                     let uptimeMs = Int(elapsed.components.seconds * 1_000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
                     if let event = detector.observe(uptimeMs: uptimeMs, mediaTimeMs: sample.intends ? sample.clock : nil,
                                                     intendsToPlay: sample.intends) {
                         if case .stalled = event { stallOngoing = true } else { stallOngoing = false }
-                        await MainActor.run { self.handleStallEvent(event) }
+                        #if DEBUG
+                        self.debugStallWillBeHandled?()
+                        #endif
+                        await MainActor.run { self.handleStallEvent(event, sampledPlayer: sample.player) }
                     } else if stallOngoing, sample.intends {
-                        await MainActor.run { self.pauseIfReseatDidNotHelp() }
+                        #if DEBUG
+                        self.debugStallWillBeHandled?()
+                        #endif
+                        await MainActor.run { self.pauseIfReseatDidNotHelp(sampledPlayer: sample.player) }
                     }
                     if !sample.active {
                         #if DEBUG
@@ -1690,8 +1709,15 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
+    /// True while the player a stall sample saw is still the one playing. Between the sample and
+    /// its handling on the main actor, the listener can switch items; the stall is then stale.
+    private func isStillPlaying(_ sampledPlayer: ObjectIdentifier?) -> Bool {
+        lock.withLock { transportIntent == .playing && player.map(ObjectIdentifier.init) == sampledPlayer }
+    }
+
     @MainActor
-    private func handleStallEvent(_ event: PlaybackStallDetector.Event) {
+    private func handleStallEvent(_ event: PlaybackStallDetector.Event, sampledPlayer: ObjectIdentifier?) {
+        if case .stalled = event, !isStillPlaying(sampledPlayer) { return }
         let player = lock.withLock { self.player }
         var fields = AudioSessionDiagnostics.fields().merging(AudioSessionDiagnostics.fields(for: player)) { first, _ in first }
         switch event {
@@ -1719,8 +1745,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// A stall still going `stallThreshold` after its re-seat: the re-seat didn't help.
     @MainActor
-    private func pauseIfReseatDidNotHelp() {
-        let due = lock.withLock { lastStallRecovery.map { ContinuousClock.now - $0 >= stallThreshold } ?? true }
+    private func pauseIfReseatDidNotHelp(sampledPlayer: ObjectIdentifier?) {
+        guard isStillPlaying(sampledPlayer) else { return }
+        let due = lock.withLock { lastStallRecovery.map { ContinuousClock.now - $0 >= stallThreshold } ?? false }
         guard due else { return }
         let player = lock.withLock { self.player }
         pauseStalledPlayback(AudioSessionDiagnostics.fields().merging(AudioSessionDiagnostics.fields(for: player)) { first, _ in first })
@@ -1742,6 +1769,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             stallMonitor = nil
         }
         markMediaServicesReset()
+        // A media-services reset has no session to release; a watchdog pause must stop lowering
+        // other apps' audio, as a listener's pause does (#301 audit).
+        try? releaseBackgroundAudio()
     }
 
     /// Re-activates the session and plays the same chunk from the same point in a new player.
@@ -2066,6 +2096,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func releaseBackgroundAudio() throws {
+        #if DEBUG
+        lock.withLock { debugBackgroundAudioReleaseCount += 1 }
+        #endif
         guard audioSessionActivator == nil,
               lock.withLock({ mixesWithOtherAudio && lowersBackgroundAudio }) else { return }
         #if os(iOS)
