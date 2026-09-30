@@ -8,7 +8,7 @@ Replace this section when the focus changes; do not append to it.
 
 - **Baseline:** Build 29, tag `testflight/0.1-build-29` (`fcc4974`), is the last shipped build (internal TestFlight, 2026-09-25). `main` stays there; only the owner moves it.
 - **Integration:** `next` carries the Build 30 work, including the new PDF reader and the voice fixes. It goes to testers only after it passes the owner's own use: "working means not being riddled with bugs."
-- **Parallel workstreams:** streams and briefs are in [docs/workstreams/](docs/workstreams/README.md). Streams branch `ws/<id>` from `next` and open PRs into `next`. The triage desk keeps every useful session busy ("The lead session" in [kickoff.md](docs/workstreams/kickoff.md)).
+- **Parallel workstreams:** streams and briefs are in [docs/workstreams/](docs/workstreams/README.md). Streams branch `ws/<id>` from `next` and open PRs into `next`. The owner's Claude Code project hands out work, one thread per `ready` issue, and triages new issues each morning. Hourly scheduled tasks on the Mac report the machine and runner on #337, run Codex audits, and test next's tip; the lane runner merges the `automerge` PRs it passes. There is no standing triage desk ("The lead session" in [kickoff.md](docs/workstreams/kickoff.md) says who does what).
 - **Owner's standing calls (2026-09-29).** Don't ask again:
   - **Use the token allowance.** The subscriptions are paid for. Aim for roughly linear use of each weekly allowance, Claude and Codex, by its reset. Waste means little working output per token, not high spend.
   - **The design direction is not changing.** Build on the current look. Where the stream plan says a stream waits on D1, that gate is gone.
