@@ -9,8 +9,8 @@ You own stream <ID> of Spoken Margins. Read AGENTS.md, docs/workstreams/README.m
 docs/workstreams/streams/<ID>-*.md, and only the seams in docs/workstreams/interfaces.md
 that the brief names.
 
-Branch: ws/<id> from origin/next, or from origin/claude/project-planning-voice-notes-neoatx
-if next doesn't exist yet. Merge origin/next in at least daily once it exists. Cloud
+Branch: ws/<id>-<milestone> from origin/next, a new one for each PR, or from
+origin/claude/project-planning-voice-notes-neoatx if next doesn't exist yet. Merge origin/next in at least daily once it exists. Cloud
 research code and fixtures go under research/<id>/. Open a draft PR into next once it
 exists, and put lane requests on that PR.
 
@@ -22,19 +22,22 @@ Work milestone by milestone. For each milestone:
    owner's data, packet or database compatibility, money, anything public, main or a
    release, or taste (design, voice).
 2. Work until the milestone's "Done when" items hold, leaving out items marked (owner)
-   or (Mac), and show the evidence for each one. If 40 turns pass without progress,
-   stop and report on the tracking issue.
-3. When it is met: comment on the tracking issue with what changed, the evidence
-   (test output, lane report link), exact steps for any (owner) items, and what is next.
+   or (Mac), and show the evidence for each one in the PR. A lane item holds once the
+   PR is armed (docs/workstreams/README.md, "Done when"). If 40 turns pass without
+   progress, or your context passes 300,000 tokens, push, hand off on the tracking
+   issue and stop.
+3. When it is met: arm the PR (automerge, plus a /lane T3 request if the diff needs
+   one), comment on the tracking issue with what changed, the evidence, exact steps for
+   any (owner) items, and what is next, then stop. No timers or check-ins on the PR.
 
 Use sub-agents for read-only exploration (never read Gate1AppModel.swift whole).
-Before asking for a T4 lane run, have a fresh sub-agent review the diff against the
-brief and fix only real gaps.
+Before arming the PR, have a fresh sub-agent review the diff against the brief and
+fix only real gaps.
 ```
 
 Why it's shaped this way:
 
-- **`/goal` holds the agent to the endpoint.** It's a command the person who started the session types, not something the agent can run. After the agent posts its approach, send `/goal <the milestone's "Done when", minus (owner) and (Mac) items>` as the next message. After each turn, a separate evaluator checks the condition against what the agent has shown in the transcript, and the agent keeps working until it's met ([docs](https://code.claude.com/docs/en/goal)). Without it, the agent still works toward the same list; `/goal` just stops it from declaring victory early. That's why every "Done when" in the briefs is written as something the agent can *demonstrate* (a test output, a measured number, a tap count, a lane report), not something it can merely assert.
+- **`/goal` holds the agent to the endpoint.** It's a command the person who started the session types, not something the agent can run. After the agent posts its approach, send `/goal <the milestone's "Done when", minus (owner) and (Mac) items, with lane items read as "the PR is armed">` as the next message. After each turn, a separate evaluator checks the condition against what the agent has shown in the transcript, and the agent keeps working until it's met ([docs](https://code.claude.com/docs/en/goal)). Without it, the agent still works toward the same list; `/goal` just stops it from declaring victory early. That's why every "Done when" in the briefs is written as something the agent can *demonstrate* (a test output, a measured number, a tap count, an armed PR), not something it can merely assert.
 - **Items marked (owner) stay out of the goal.** Listening by ear, measurements on the owner's phone, and data only the owner has can't be demonstrated by an agent. The agent prepares them (a build, exact steps, what to look for) and the milestone waits on the owner.
 - **Stating the approach first** gives the owner a moment to redirect from the phone before hours go into the wrong idea. It isn't a request for approval; the agent continues unless redirected.
 - **Defaults instead of waits.** On 2026-09-28 about 15 owner decisions reached the owner one at a time, and several were reversible: which simulator the lane uses, C3's pause behavior, whether author names are read aloud. Streams now take a default for those and keep going. The project's morning digest lists each "Default taken" so the owner can veto in one batch.
@@ -52,6 +55,7 @@ Retired on 2026-09-29. A long-lived triage desk re-read a large context on every
 | Decisions, defaults the streams took, and phone candidates, for the owner | The project conversation |
 | Pace, runner queue, disk, memory, the main checkout, and the daily scorecard | The hourly `SM Mac tick` scheduled task, posting on #337 |
 | Merge finished work | The lane runner merges `automerge` PRs it passes; the Mac tick is the fallback. PRs that change `.github/` or `scripts/lane*` wait for the owner. |
+| Lane FAILs on armed PRs | The project's hourly dispatcher. A FAIL on the PR's own code goes to a fresh thread; a runner fault becomes an issue labelled `ready` and `regression`. The thread that armed the PR has already stopped. |
 | Codex audits of sharing, persistence and audio changes | The hourly `SM Codex audit` scheduled task |
 | Test next's tip | The hourly `SM integration run` (XCTest only, because scheduled sessions can't drive the simulator), then the journeys it lists in an attended Test Desk session |
 | Check that the scheduled tasks ran | The project's morning routine reads #337. The owner starts an ops desk session only when something is wrong. |
@@ -104,7 +108,7 @@ Other streams may add a skill when they find a workflow worth reusing, such as C
 
 ## Keeping context clean
 
-- **Fresh session per milestone.** Start each milestone in a new session with the kickoff prompt. The tracking issue and git history carry state between sessions. A long session full of corrections performs worse than a fresh one with a sharper prompt.
+- **Fresh session per milestone.** Start each milestone in a new session with the kickoff prompt, and end it when its PR is armed. The tracking issue and git history carry state between sessions. A long session full of corrections performs worse than a fresh one with a sharper prompt.
 - **Never read `Gate1AppModel.swift` whole.** Use a search or an Explore sub-agent to find the handful of functions you need.
 - **Two failed corrections means start over**: clear the session and write a better prompt with what you learned.
 
