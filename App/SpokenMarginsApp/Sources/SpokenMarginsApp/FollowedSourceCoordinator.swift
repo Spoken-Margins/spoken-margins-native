@@ -67,6 +67,16 @@ actor FollowedSourceCoordinator {
         return try await follow(candidate: candidate)
     }
 
+    /// Follows a feed link once. A feed that is already followed keeps its subscription exactly
+    /// as it is (mute state and inbox entries), so the drawer and OPML import can't duplicate it.
+    func followFeed(urlString: String) async throws -> FeedSubscription {
+        guard let candidate = try await discover(urlString: urlString).first else { throw FollowedSourceError.noFeedCandidates }
+        if let existing = try repository.loadFeedSubscriptions().first(where: { $0.source.id == candidate.source.id }) {
+            return existing
+        }
+        return try await follow(candidate: candidate)
+    }
+
     func discover(urlString: String, requiringItemMembership: Bool = false) async throws -> [SourceCandidateEvidence] {
         let link = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         lastDiscoveryTrace = []
