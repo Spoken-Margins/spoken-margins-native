@@ -723,6 +723,34 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: result.audioURL.path), "the stand-in file is deleted")
     }
 
+    // #288: a render that timed out was still checked when it finished, and a flagged chunk was
+    // written by a second speech synthesizer while the iOS voice read the article live. The live
+    // voice then went silent. A render nobody waits for is dropped instead of re-read.
+    func testACancelledRenderIsNotReadByTheIOSVoice() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "guard-cancel-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let reports = StallEventLog()
+        let guardRenderer = SupertonicOutputGuard(
+            wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil,
+            onReplacement: { reports.stall($0, [:]) }
+        )
+        let render = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await guardRenderer.render(
+                text: "Table 3 reports 91.1% 8.9% 0.0 and 7,494 tool decisions across 2,548 summaries.",
+                voice: .m2, language: "en", speed: 1, synthesisSteps: 8
+            )
+        }
+        do {
+            let result = try await render.value
+            XCTFail("a cancelled render was read by the iOS voice: \(result.audioURL.lastPathComponent)")
+            await guardRenderer.discardGeneratedAudio(at: result.audioURL)
+        } catch is CancellationError {
+        }
+        XCTAssertTrue(reports.values.isEmpty, "no stand-in was made: \(reports.values)")
+    }
+
     // #311: a stand-in isn't cached under the Supertonic key, so the next play re-checks Supertonic.
     func testStandInIsNotCachedAsSupertonic() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "guard-cache-\(UUID().uuidString)", directoryHint: .isDirectory)
