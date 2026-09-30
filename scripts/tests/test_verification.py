@@ -207,10 +207,18 @@ class VerificationTests(unittest.TestCase):
             run.command('xcode-tests', [sys.executable, '-c', script + '; raise SystemExit(65)'],
                         expected={tour, share}, tests=True, probation={share})
             step = run.manifest['steps'][-1]
-            self.assertEqual((step['errors'], step['probation']), ([], {share: 'failed'}))
+            self.assertEqual((step['errors'], step['gating'], step['probation']), ([], {tour: 'passed'}, {share: 'failed'}))
             run.command('xcode-tests-missing', [sys.executable, '-c', self.xctest_log(('TourUITests', 'testTour', 'passed'))],
                         expected={tour, share}, tests=True, probation={share})
             self.assertEqual(run.manifest['steps'][-1]['probation'], {share: 'missing'})
+            run.command('xcode-tests-skip', [sys.executable, '-c', self.xctest_log(
+                ('TourUITests', 'testTour', 'passed'), ('ShareUITests', 'testShare', 'skipped'))],
+                expected={tour, share}, tests=True, probation={share})
+            self.assertEqual(run.manifest['steps'][-1]['probation'], {share: 'skipped'})
+            # With only probation scripts listed, a run where nothing ran is still a failure, not a pass.
+            with self.assertRaisesRegex(RuntimeError, 'Process exit 65; No completed tests recorded'):
+                run.command('xcode-tests-nothing', [sys.executable, '-c', 'raise SystemExit(65)'],
+                            expected={share}, tests=True, probation={share})
             with self.assertRaisesRegex(RuntimeError, f'Process exit 65; Failed: {tour}'):
                 run.command('xcode-tests-gating', [sys.executable, '-c', self.xctest_log(
                     ('TourUITests', 'testTour', 'failed'), ('ShareUITests', 'testShare', 'passed')) + '; raise SystemExit(65)'],

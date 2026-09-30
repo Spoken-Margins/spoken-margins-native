@@ -144,7 +144,7 @@ def test_records(log):
 def reconcile(expected, records, allowed_skips=(), probation=()):
     """Errors that fail the step. A test on probation that fails or is missing is reported, not an error."""
     errors = []
-    if not records and not (expected and expected <= set(probation)):
+    if not records:
         errors.append('No completed tests recorded')
     if expected is not None:
         if missing := expected - records.keys() - set(probation):
@@ -154,7 +154,7 @@ def reconcile(expected, records, allowed_skips=(), probation=()):
     for name, result in records.items():
         if result['status'] == 'failed' and name not in probation:
             errors.append(f'Failed: {name}')
-        if result['status'] == 'skipped' and name not in allowed_skips:
+        if result['status'] == 'skipped' and name not in allowed_skips and name not in probation:
             errors.append(f'Unexpected skip: {name}')
     return errors
 
@@ -210,7 +210,7 @@ class Run:
         print(f'warning: simulator process crashed once ({process}); continuing', flush=True)
         return False
 
-    def command(self, name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=()):
+    def command(self, name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=None):
         entry = {'name': name, 'command': args, 'timeout_seconds': timeout,
                  'expected_tests': sorted(expected) if expected is not None else None}
         self.manifest['steps'].append(entry)
@@ -266,8 +266,10 @@ class Run:
             entry['tests'] = records
             entry['counts'] = {status: sum(r['status'] == status for r in records.values())
                                for status in ('passed', 'failed', 'skipped')}
-            errors = reconcile(expected, records, allowed_skips, probation)
-            if probation:
+            errors = reconcile(expected, records, allowed_skips, probation or ())
+            if probation is not None:  # scripted journeys: each listed test's result, by status
+                entry['gating'] = {test: records.get(test, {}).get('status', 'missing')
+                                   for test in sorted(set(expected or ()) - probation)}
                 entry['probation'] = {test: records.get(test, {}).get('status', 'missing') for test in sorted(probation)}
         if name == 'runner-tests':
             match = re.search(r'Ran (\d+) tests? in ', text)
@@ -320,7 +322,7 @@ class Run:
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed during fast verification')
 
-    def xcode(self, plan, device, rebuild, ios=None, only=(), probation=()):
+    def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None):
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
@@ -396,7 +398,8 @@ class Run:
                 subprocess.run(['xcrun', 'simctl', 'uninstall', chosen['udid'], bundle_id],
                                cwd=ROOT, capture_output=True, timeout=60)
             expected = {test for test in planned if not selectors or any(selected(test, s) for s in selectors)}
-            on_probation = {test for test in expected if any(selected(test, s) for s in probation)}
+            on_probation = None if probation is None else {
+                test for test in expected if any(selected(test, s) for s in probation)}
             self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
                          'test-without-building', '-parallel-testing-enabled', 'NO',
                          '-collect-test-diagnostics', 'never',
