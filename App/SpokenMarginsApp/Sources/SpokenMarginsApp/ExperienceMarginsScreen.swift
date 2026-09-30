@@ -180,9 +180,12 @@ struct ExperienceMarginsScreen: View {
             ForEach(model.visibleSharedMarginRows) { row in
                 Button { selectedSharedMargin = row } label: {
                     VStack(alignment: .leading, spacing: 7) {
-                        Label("Shared · \(row.collectionLabel)", systemImage: "person.2")
-                            .font(.caption)
-                            .foregroundStyle(AppColors.secondaryText)
+                        HStack(spacing: 8) {
+                            Label("Shared · \(row.collectionLabel)", systemImage: "person.2")
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                            if row.isNew { NewMarginBadge() }
+                        }
                         Text(row.interjection.approvedTranscript)
                             .font(.system(.body, design: .serif))
                             .foregroundStyle(AppColors.text)

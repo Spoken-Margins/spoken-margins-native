@@ -2254,6 +2254,7 @@ final class Gate1AppModel: ObservableObject {
             title: "\(row.collectionLabel)'s Margin",
             isApproximate: position.isApproximate
         )
+        marginMomentConductor?.onVoiceStarted = { [weak self] in if $0 == targetID { self?.markSharedMarginHeard(row.interjection) } }
         if !snapshot.status.isPlaybackActive { resumePlayback() }
         screen = .playback
     }
@@ -7262,6 +7263,7 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
             player.playImmediately(atRate: Float(rate))
+            markSharedMarginHeard(prompt.interjection)
         } catch {
             stopImportedCommentaryPlayback(resumeSource: false)
             reportFailure(error, context: "Shared Margin playback failed")
@@ -7304,6 +7306,13 @@ final class Gate1AppModel: ObservableObject {
             rate: importedCommentaryIsPaused ? 0 : Double(player.rate)
         )
         #endif
+    }
+
+    /// Its voice started playing, so the shared Margin is no longer new to this listener (#469).
+    private func markSharedMarginHeard(_ margin: ImportedCommentaryInterjection) {
+        guard margin.isNewToListener, let heard = try? store?.markImportedCommentaryInterjectionHeard(id: margin.id, at: Date()) else { return }
+        selectedItem.importedCommentaryInterjections = SharedMarginHearing.replacing(heard, in: selectedItem.importedCommentaryInterjections)
+        sharedMarginRows = sharedMarginRows.map { $0.interjection.id == heard.id ? SharedMarginRow(interjection: heard, layer: $0.layer, itemTitle: $0.itemTitle) : $0 }
     }
 
     private func stopImportedCommentaryPlayback(resumeSource: Bool) {
