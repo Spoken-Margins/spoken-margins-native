@@ -88,6 +88,15 @@ class RequestTests(unittest.TestCase):
         request, _ = lane.pending_requests([comment('/lane T2'), comment(f'Lane: identical …\n{lane.NOTE}')])
         self.assertIsNone(request)
 
+    def test_an_automerge_report_or_note_does_not_answer_a_lane_request(self):
+        # #368: a /lane T3 waited behind a simulator job, the automerge run reported first, and the T3 never ran.
+        auto = lane.identity('auto', HEAD, MERGE, [])
+        for answer in (runner_report('INCONCLUSIVE', auto),
+                       comment(f'Lane: the automerge run stopped before reporting (u). Push again.\n{lane.NOTE}')):
+            with self.subTest(answer=answer['body'][:30]):
+                request, _ = lane.pending_requests([comment('/lane T3\ntests: X'), answer])
+                self.assertEqual((request or {}).get('tier'), 'T3')
+
     def test_a_t4_after_a_t2_leaves_the_t2_to_the_runner_and_the_t4_waiting(self):
         request, desk = lane.pending_requests([comment('/lane T2'), comment('/lane T4\nrun: J1')])
         self.assertEqual((request['tier'], desk), ('T2', True))
@@ -504,6 +513,56 @@ class MergeTests_Runner(unittest.TestCase):
         mention = [comment('Waiting on the Codex audit (Astra) for this one.')]  # not an audit: not its first line
         (_, _, _, _), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=risky, comments=mention)
         self.assertEqual(events, ['build'])
+
+    def t3_report(self, verdict, commit=HEAD, url='https://example.test/t3'):
+        return runner_report(verdict, lane.identity('T3', commit, MERGE, ['SupertonicSpeechTests']), url=url)
+
+    T3_REQUEST = comment('/lane T3\ncommit: aaaaaaa\ntests: SupertonicSpeechTests')
+
+    def test_a_t3_fail_or_inconclusive_on_the_pr_holds_the_merge(self):
+        # #408: the T3 report said FAIL (build-for-testing exit 70, no test ran) and the automerge run
+        # merged minutes later on host tests and builds alone.
+        for verdict in ('FAIL', 'INCONCLUSIVE'):
+            with self.subTest(verdict=verdict):
+                github = FakeGitHub(labels=('automerge',), comments=[self.T3_REQUEST, self.t3_report(verdict)])
+                (got, _, _, details), events = self.run_auto(github)
+                self.assertEqual((got, events, github.posted), (verdict, ['build'], []))
+                self.assertIn(f'not merged: the newest T3 lane report on this PR is {verdict} (on {HEAD[:7]}: '
+                              'https://example.test/t3)', details[-1])
+
+    def test_a_t3_request_still_waiting_for_its_report_holds_the_merge(self):
+        old_pass = self.t3_report('PASS', commit=NEWER)
+        for comments in ([self.T3_REQUEST], [old_pass, self.T3_REQUEST],
+                         [self.T3_REQUEST, runner_report('PASS', lane.identity('auto', HEAD, MERGE, []))]):
+            with self.subTest(comments=len(comments)):
+                github = FakeGitHub(labels=('automerge',), comments=comments)
+                (got, _, _, details), events = self.run_auto(github)
+                self.assertEqual((got, events), ('INCONCLUSIVE', ['build']))
+                self.assertIn('newest /lane T3 request has no lane report yet', details[-1])
+
+    def test_a_t3_report_read_at_merge_time_counts_not_the_one_read_at_the_start(self):
+        github = FakeGitHub(labels=('automerge',), comments=[self.T3_REQUEST])
+        github._comments.append(self.t3_report('FAIL'))  # landed while the automerge checks ran
+        (got, _, _, _), events = self.run_auto(github, comments=[self.T3_REQUEST])
+        self.assertEqual((got, events), ('FAIL', ['build']))
+
+    def test_a_fail_on_an_earlier_head_holds_until_a_newer_t3_passes(self):
+        failed = [self.T3_REQUEST, self.t3_report('FAIL', commit=NEWER)]
+        (got, _, _, _), events = self.run_auto(FakeGitHub(labels=('automerge',), comments=failed))
+        self.assertEqual((got, events), ('FAIL', ['build']))
+        passed = failed + [self.T3_REQUEST, self.t3_report('PASS')]
+        (got, _, _, _), events = self.run_auto(FakeGitHub(labels=('automerge',), comments=passed))
+        self.assertEqual((got, events), ('PASS', ['build', 'comment', 'push m1', 'sweep']))
+
+    def test_a_t3_pass_or_an_identical_request_already_passed_lets_it_merge(self):
+        passed = [self.T3_REQUEST, self.t3_report('PASS')]
+        identical = passed + [self.T3_REQUEST, comment(
+            f'Lane: identical T3 request for {HEAD[:7]} already reported (PASS): https://example.test/t3\n{lane.NOTE}',
+            login='github-actions[bot]')]
+        for comments in (passed, identical, [comment('/lane T2'), runner_report('FAIL', lane.identity('T2', HEAD, MERGE, []))]):
+            with self.subTest(comments=len(comments)):
+                (got, _, _, _), events = self.run_auto(FakeGitHub(labels=('automerge',), comments=comments))
+                self.assertEqual((got, events), ('PASS', ['build', 'comment', 'push m1', 'sweep']))
 
     def test_lane_tests_themselves_are_not_desk_only(self):
         scope = {'tier': 'T1', 'why': [], 'files': [{'path': 'scripts/tests/test_lane_runner.py', 'category': 'scripts'}]}
