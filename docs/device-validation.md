@@ -1,5 +1,15 @@
 # Device Validation Checklist
 
+## The rolling phone build (#384)
+
+The newest `next` build waits on the Mac, ready for the owner's iPhone. No TestFlight, no Xcode window.
+
+- **Install:** plug the iPhone in with a cable, unlock it, and double-click **Install Spoken Margins on iPhone** on the Desktop (a copy of `scripts/install-phone-build.command`). It installs over the app, so the Library stays, and it never uninstalls. Then it opens that build's `test-plan.md`: about ten minutes of checks for what changed since the last install.
+- **Name the build in issues:** Settings > Version reads `0.1 (29) · 1a2b3c4`; the last part is the commit. Label phone-found issues `found-on-phone`.
+- **Where builds live:** `~/SpokenMargins-phone/`, one folder per build (`<date-time>-<sha7>`), a `latest` link, and `installed.txt` (the commit on the phone). The three newest builds are kept.
+- **Making builds:** `scripts/phone-build` builds `origin/next` (or `--commit <sha>`); `--if-changed` builds only when next moved. The trigger is `scripts/com.spokenmargins.phone-build.plist`, a LaunchAgent that runs it every 10 minutes. It skips while memory pressure isn't normal or free disk is under 10 GB plus 4 GB per running build, and it doesn't retry a commit that failed. A commit the lane runner didn't test itself gets host tests and a simulator build first.
+- **If signing fails:** the build prints what to click (keychain "Always Allow", Xcode > Settings > Accounts) and leaves `~/SpokenMargins-phone/last-failure.log`.
+
 Use this when installing the iOS build on a real phone and testing against the local Gemma server on the laptop.
 
 ## Goal 1: Local Gemma Provider
