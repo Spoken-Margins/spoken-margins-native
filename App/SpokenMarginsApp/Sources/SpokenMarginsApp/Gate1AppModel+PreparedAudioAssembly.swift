@@ -53,7 +53,11 @@ extension Gate1AppModel {
                   let url = assembledURL else {
                 throw SessionKitError.persistenceFailed("prepared_audio_attach_failed")
             }
-            try await coordinator.complete(itemId: item.id, signature: signature, prepared: prepared)
+            // A re-import that retired the manifest during the await leaves nothing to commit.
+            guard try await coordinator.complete(itemId: item.id, signature: signature, prepared: prepared) else {
+                await ledger.discardStaleAssembly(url, reservationId: assemblyReservation.id)
+                return
+            }
             try refreshLibraryRows(store: store)
             let values = try url.resourceValues(forKeys: [.fileSizeKey])
             let relative = String(url.standardizedFileURL.path.dropFirst(support.standardizedFileURL.path.count + 1))

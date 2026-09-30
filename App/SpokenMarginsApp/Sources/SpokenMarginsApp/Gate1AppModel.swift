@@ -10841,7 +10841,7 @@ final class Gate1AppModel: ObservableObject {
                             replaceActivePlayback: false
                         )
                         if attached {
-                            try? await coordinator.complete(itemId: itemId, signature: signature, prepared: canonical)
+                            _ = try? await coordinator.complete(itemId: itemId, signature: signature, prepared: canonical)
                         }
                         if attached, let renderer = self.supertonicRenderer {
                             Task { [weak self] in

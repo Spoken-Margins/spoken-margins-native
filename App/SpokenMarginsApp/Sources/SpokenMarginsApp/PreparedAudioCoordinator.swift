@@ -291,15 +291,17 @@ actor PreparedAudioCoordinator {
         }
     }
 
-    func complete(itemId: String, signature: TTSRenderSignature, prepared: PreparedTextAudio) throws {
+    /// False when the manifest is gone or was retired by a re-import meanwhile (#344 audit).
+    @discardableResult
+    func complete(itemId: String, signature: TTSRenderSignature, prepared: PreparedTextAudio) throws -> Bool {
         let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
         guard try repository.loadPreparedAudioManifest(id: manifestId) != nil,
               let rawURL = prepared.media.url,
               let url = URL(string: rawURL),
-              url.isFileURL else { return }
+              url.isFileURL else { return false }
         let data = try Data(contentsOf: url, options: [.mappedIfSafe])
         // Loaded after the hash, which a re-import can overtake (#344 audit).
-        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return }
+        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return false }
         manifest.artifact = PreparedAudioArtifact(
             relativePath: relativePath(url),
             byteCount: Int64(data.count),
@@ -309,8 +311,9 @@ actor PreparedAudioCoordinator {
         manifest.state = .readyOffline
         manifest.failureCode = nil
         manifest.updatedAt = Date()
-        guard try saveUnlessRetired(manifest, stillCurrent: { Self.isMade(from: $0.text ?? "", manifest) }) else { return }
+        guard try saveUnlessRetired(manifest, stillCurrent: { Self.isMade(from: $0.text ?? "", manifest) }) else { return false }
         try repository.deleteAudioPreparationJob(id: "job-\(manifestId)")
+        return true
     }
 
     /// Saves `manifest` unless a re-import retired it (#322) while this actor copied a chunk
