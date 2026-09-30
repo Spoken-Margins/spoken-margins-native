@@ -52,6 +52,7 @@ struct SpokenMarginsApp: App {
     @StateObject private var model: Gate1AppModel
     @StateObject private var sharingCoordinator: Build23SharingCoordinator
     @StateObject private var catalogDrawer: CatalogDrawerModel
+    @StateObject private var playbackStartCue: PlaybackStartCue
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -60,6 +61,9 @@ struct SpokenMarginsApp: App {
         ListeningEditionShortcutBridge.model = model
         #endif
         _model = StateObject(wrappedValue: model)
+        _playbackStartCue = StateObject(wrappedValue: PlaybackStartCue(record: { [weak model] key, value in
+            model?.diagnostics[key] = value
+        }))
         _sharingCoordinator = StateObject(
             wrappedValue: Build23SharingCoordinator(model: model)
         )
@@ -80,6 +84,7 @@ struct SpokenMarginsApp: App {
                 .environmentObject(sharingCoordinator)
                 .environmentObject(catalogDrawer)
                 .onReceive(NotificationCenter.default.publisher(for: ListeningReadyNotifications.opened)) { _ in model.openReadyListeningEdition() }
+                .onReceive(model.$snapshot) { playbackStartCue.observe($0) }
                 .onOpenURL { url in
                     model.handleIncomingURL(url)
                 }
