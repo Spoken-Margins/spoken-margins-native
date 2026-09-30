@@ -1,0 +1,47 @@
+# Can the last shipped build still open what this PR's code writes? (#317)
+#
+# On PRs into next that touch storage or sharing, on the Mac's self-hosted runner:
+# 1. The frozen packet reader in Packages/SessionKit/Tests/ShippedReader still matches the shipped
+#    tag (scripts/freeze-shipped-reader.sh --check). SharingTests reads every exported packet with it
+#    in every --plan fast run; this step makes sure nobody edited the frozen copy.
+# 2. A database written by this PR's code opens in Build 29's own persistence code
+#    (scripts/check-build29-database.sh). --plan fast doesn't run this, so it is the reason this
+#    workflow exists.
+#
+# The runner is the lane's Mac: jobs queue behind lane jobs, one at a time. It needs macOS because
+# the writer builds SessionKit's test target, which uses ShazamKit and AVFoundation. The same
+# pull_request trigger limits as lane.yml apply (GitHub builds the run from the PR's merge ref).
+name: shipped-build-compat
+
+on:
+  pull_request:
+    branches: [next]
+    paths:
+      - 'Packages/SessionKit/Sources/SessionKitPersistence/**'
+      - 'Packages/SessionKit/Sources/SessionKitSharing/**'
+      - 'Packages/SessionKit/Tests/ShippedReader/**'
+      - 'Packages/SessionKit/Tests/*/Build29DatabaseFixtureTests.swift'
+      - 'scripts/check-build29-database.sh'
+      - 'scripts/build29-db-reader/**'
+      - 'scripts/freeze-shipped-reader.sh'
+      - '.github/workflows/shipped-build-compat.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  compat:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, sm-lane]
+    concurrency:
+      group: shipped-build-compat-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The frozen packet reader matches the shipped build
+        run: scripts/freeze-shipped-reader.sh --check
+      - name: A database written by this code opens in Build 29
+        run: scripts/check-build29-database.sh

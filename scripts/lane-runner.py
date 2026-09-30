@@ -269,7 +269,8 @@ def first_errors(log: Path, limit: int = 5) -> list[str]:
     except OSError:
         return []
     lines = text.splitlines()
-    found = [line.strip() for line in lines if ' error: ' in line or line.startswith('error:') or 'errSec' in line]
+    found = [line.strip() for line in lines if ' error: ' in line or line.startswith('error:') or 'errSec' in line
+             or re.match(r'\w+(Error|Exception): ', line)]  # a Python traceback's last line
     if 'The following build commands failed:' in lines:
         for line in lines[lines.index('The following build commands failed:') + 1:]:
             if not line.strip():
@@ -282,8 +283,10 @@ def run_t2(evidence: Path, runner=run_bounded) -> tuple[str, str, list[str]]:
     results, details = [], []
     for name, args in T2_BUILDS:
         log = evidence / f't2-{name}.log'
+        # Its own DerivedData per destination (#405): after a device build in the same folder, the next warm
+        # simulator build reused its cached build plan and never rewrote the missing all-product-headers.yaml.
         command = [str(ROOT / 'scripts/xcodebuild-lane'), '-project', 'SpokenMarginsNative.xcodeproj',
-                   '-scheme', 'SpokenMarginsApp', *args]
+                   '-scheme', 'SpokenMarginsApp', '-derivedDataPath', str(ROOT / f'.build/dd-{name}'), *args]
         with log.open('w') as handle:
             code = runner(command, handle, BUILD_TIMEOUT)
         if code == 0:
@@ -578,7 +581,7 @@ def checkout_folder(tree: Path) -> str:
 def missing_binary_artifacts(cache: Path) -> list[str]:
     """Binary artifacts (onnxruntime.xcframework) that a cache's SwiftPM state lists but that aren't on disk."""
     missing = []
-    for state in (cache / 'sessionkit/workspace-state.json', cache / 'root/dd/SourcePackages/workspace-state.json'):
+    for state in [cache / 'sessionkit/workspace-state.json', *cache.glob('root/dd*/SourcePackages/workspace-state.json')]:
         try:
             artifacts = json.loads(state.read_text()).get('object', {}).get('artifacts', [])
         except (OSError, ValueError, AttributeError):
@@ -632,6 +635,7 @@ def warm_build_folders(tree: Path, root: Path | None = None, free=lambda path: s
     _WARM_LOCKS.clear()
     _WARM_LOCKS[key] = lock  # held until this job's process exits
     os.utime(wanted)
+    shutil.rmtree(wanted / 'root/dd', ignore_errors=True)  # both T2 builds' shared DerivedData before #405's split
     for link, target in ((tree / '.build', wanted / 'root'), (tree / 'Packages/SessionKit/.build', wanted / 'sessionkit')):
         if link.is_symlink():
             link.unlink()
@@ -1043,6 +1047,12 @@ def record_outcome(verdict: str) -> None:
             handle.write(f'reported=true\nverdict={verdict}\n')
 
 
+def request_name(pr: int, run_id: str, attempt: str | None) -> str:
+    """The report's name and evidence folder. A re-run of a job keeps its run id, and verify-tests.py
+    refuses an --output folder that exists (#404), so each attempt after the first gets its own."""
+    return f'pr{pr}-r{run_id}' + (f'-a{attempt}' if attempt and attempt != '1' else '')
+
+
 def link_tools(source: Path) -> None:
     for name in ('.venv', 'node_modules'):
         if not (ROOT / name).exists() and (source / name).exists():
@@ -1107,7 +1117,7 @@ def main(argv=None) -> int:
             github.relabel(QUEUED, DONE)
         record_outcome(earlier_verdict)  # a repeated FAIL stays red
         return 0
-    request_id = f'pr{args.pr}-r{args.run_id}'
+    request_id = request_name(args.pr, args.run_id, os.environ.get('GITHUB_RUN_ATTEMPT'))
     evidence = Path(os.environ.get('SM_LANE_EVIDENCE_DIR') or
                     Path.home() / 'Library/Caches/SpokenMarginsLane/evidence') / request_id
     evidence.mkdir(parents=True, exist_ok=True)
@@ -1159,7 +1169,8 @@ def main(argv=None) -> int:
     if explicit:
         github.relabel(RUNNING, QUEUED if desk_waiting else DONE)
     if not (ROOT / '.build').is_symlink():  # a cold job (disk floor, busy cache) built in the workspace
-        shutil.rmtree(ROOT / '.build/dd', ignore_errors=True)
+        for derived in (ROOT / '.build').glob('dd*'):
+            shutil.rmtree(derived, ignore_errors=True)
         shutil.rmtree(ROOT / '.build/verification', ignore_errors=True)
     return 0
 
