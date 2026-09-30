@@ -139,8 +139,9 @@ When next's tip has no integration report on #184, run one job on that tip, in t
    TestPlans/scripted-journeys.json (gating, then probation). They launch with --ui-testing,
    which resets the app's library, so they run before step 3 builds the journey library. A
    probation failure goes in the report but doesn't make it FAIL. Move a script to gating
-   after two passes, and back to probation after two flakes, in a PR into next. Until
-   verify-tests.py has a plan for them (#522), say in the report how you ran them.
+   after two passes, and back to probation after two flakes, in a PR into next. Run them
+   with scripts/verify-tests.py --plan journeys --device <udid>; its manifest's gating and
+   probation maps give each script's result.
 3. Then the journeys in docs/journeys.md. Erase the standing device again first, because the
    app tests wrote to its app data, and build a library shaped like the owner's and upgraded
    from Build 29 (lane-build29) before installing the candidate over it. Post
