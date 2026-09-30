@@ -73,21 +73,27 @@ def scripted_journey_errors(root):
         listing = json.loads((root / 'TestPlans/scripted-journeys.json').read_text())
     except (OSError, ValueError) as error:
         return [f'scripted-journeys.json: {error}']
-    if listing.get('version') != 1 or set(listing) != {'version', 'gating', 'probation'}:
+    if not (isinstance(listing, dict) and listing.get('version') == 1
+            and set(listing) == {'version', 'gating', 'probation'}
+            and all(isinstance(listing[status], list) for status in ('gating', 'probation'))):
         return ['scripted-journeys.json: expected version 1 with exactly "gating" and "probation" lists']
     available = target_tests(root, 'SpokenMarginsAppUITests')
-    errors, seen = [], {}
+    errors, seen = [], []
     for status in ('gating', 'probation'):
         for entry in listing[status]:
-            test = entry.get('test', '') if isinstance(entry, dict) else ''
-            name = test.removeprefix('SpokenMarginsAppUITests/')
-            if name == test or not any(matches(t, name) for t in available):
+            test = entry.get('test') if isinstance(entry, dict) else None
+            name = test.removeprefix('SpokenMarginsAppUITests/').removesuffix('()') if isinstance(test, str) else ''
+            if not isinstance(test, str) or name == test or not any(matches(t, name) for t in available):
                 errors.append(f'scripted-journeys.json: {status} names no SpokenMarginsAppUITests test: {test!r}')
-            if not (isinstance(entry, dict) and str(entry.get('journey', '')).strip()):
+                continue
+            if not str(entry.get('journey', '')).strip():
                 errors.append(f'scripted-journeys.json: {status} entry {test!r} names no journey')
-            if test in seen:
-                errors.append(f'scripted-journeys.json: {test!r} is listed twice ({seen[test]} and {status})')
-            seen[test] = status
+            # A class in one list and one of its methods in another would leave its status ambiguous.
+            for other, other_status in seen:
+                if matches(name, other) or matches(other, name):
+                    errors.append(f'scripted-journeys.json: {test!r} ({status}) is also listed as {other!r} '
+                                  f'({other_status})')
+            seen.append((name, status))
     return errors
 
 

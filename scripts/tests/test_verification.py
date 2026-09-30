@@ -240,7 +240,14 @@ class VerificationTests(unittest.TestCase):
             self.assertIn('names no journey', errors[2])
             write(gating=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests', 'journey': 'tour'}],
                   probation=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests', 'journey': 'tour'}])
-            self.assertIn('listed twice', inventory.scripted_journey_errors(root)[0])
+            self.assertIn('also listed', inventory.scripted_journey_errors(root)[0])
+            write(gating=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests', 'journey': 'tour'}],
+                  probation=[{'test': 'SpokenMarginsAppUITests/ScreenTourUITests/testShare()', 'journey': 'J5'}])
+            self.assertIn('also listed', inventory.scripted_journey_errors(root)[0])
+            for malformed in ([], {'version': 1, 'gating': None, 'probation': []},
+                              {'version': 1, 'gating': [{'test': 7, 'journey': 'J1'}, 'x'], 'probation': []}):
+                listing.write_text(json.dumps(malformed))
+                self.assertTrue(inventory.scripted_journey_errors(root), malformed)
             listing.write_text(json.dumps({'version': 1, 'gating': [], 'probation': [], 'passes': {}}))
             self.assertTrue(inventory.scripted_journey_errors(root))
             listing.unlink()
