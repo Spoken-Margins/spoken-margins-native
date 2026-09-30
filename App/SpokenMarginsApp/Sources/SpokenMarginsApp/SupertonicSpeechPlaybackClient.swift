@@ -22,6 +22,20 @@ protocol SupertonicRendering: Sendable {
 
 extension SupertonicNarrationRenderer: SupertonicRendering {}
 
+/// Background preparation's view of the shared renderer: every render is paced, whatever the
+/// app's state, without touching the pacing the listener's live narration gets (#377).
+struct BackgroundPreparationRenderer: SupertonicRendering {
+    let base: SupertonicNarrationRenderer
+
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        try await base.render(text: text, voice: voice, language: language, speed: speed, synthesisSteps: synthesisSteps, pacing: .always)
+    }
+
+    func discardGeneratedAudio(at url: URL) async {
+        await base.discardGeneratedAudio(at: url)
+    }
+}
+
 enum RenderedSpeechGenerationState: String, Equatable, Sendable {
     case inactive
     case rendering
