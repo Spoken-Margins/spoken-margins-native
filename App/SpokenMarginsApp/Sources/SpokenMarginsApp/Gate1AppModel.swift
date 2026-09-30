@@ -6,6 +6,7 @@ import SessionKitAudio
 import SessionKitSharing
 import SessionKitSupertonic
 import SessionKitPersistence
+import SessionKitFeeds
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -247,12 +248,6 @@ struct BatchSessionExportRow: Identifiable {
     let interjectionCount: Int
 
     var id: String { session.id }
-}
-
-struct BatchSessionExportResult: Equatable {
-    let exportedFileNames: [String]
-    let failures: [String]
-    let destinationName: String
 }
 
 enum OnboardingStep: String, CaseIterable, Identifiable, Hashable {
