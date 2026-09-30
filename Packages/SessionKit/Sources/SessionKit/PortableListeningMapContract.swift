@@ -35,6 +35,7 @@ public enum PortableListeningMapContract {
         in proposal: PortableListeningMapProposalArtifact,
         itemText: String? = nil
     ) -> [Violation] {
+        let item = itemText.flatMap { $0.isEmpty ? nil : EmbeddedText($0) }
         var result: [Violation] = []
         var previous: PortableListeningMapScene?
         for scene in proposal.scenes {
@@ -62,13 +63,22 @@ public enum PortableListeningMapContract {
                     result.append(.sceneOverlapsPrevious(sceneId: scene.id))
                 }
             }
-            if let summary = scene.summaryText, !summary.isEmpty,
-               sourceTexts(for: scene, itemText: itemText).contains(where: { sharesRun(summary, $0) }) {
+            if let summary = scene.summaryText, !summary.isEmpty, quotesSource(summary, scene: scene, item: item) {
                 result.append(.summaryQuotesSource(sceneId: scene.id))
             }
             previous = scene
         }
         return result
+    }
+
+    /// The proposals a packet can carry: ineligible summaries removed, and any proposal that still breaks
+    /// a rule left out. A proposal is optional and never activated automatically, so a bad one must not
+    /// stop the Margins travelling with it, whether the sender is this build or Build 29 (#480).
+    public static func forSharing(
+        _ proposals: [PortableListeningMapProposalArtifact],
+        itemText: String? = nil
+    ) -> [PortableListeningMapProposalArtifact] {
+        proposals.map(withoutIneligibleSummaries).filter { violations(in: $0, itemText: itemText).isEmpty }
     }
 
     /// The same proposal with summaries removed from excluded and unknown scenes. Build 29 exports the
@@ -97,35 +107,53 @@ public enum PortableListeningMapContract {
 
     /// True when `text` repeats `words` consecutive words of `source`, ignoring case and punctuation.
     public static func sharesRun(_ text: String, _ source: String, words length: Int = verbatimRunWords) -> Bool {
-        let textWords = words(text)
-        let sourceWords = words(source)
-        guard length > 0, textWords.count >= length, sourceWords.count >= length else { return false }
-        let sourceRuns = Set((0...(sourceWords.count - length)).map {
-            sourceWords[$0..<($0 + length)].joined(separator: " ")
-        })
-        return (0...(textWords.count - length)).contains {
-            sourceRuns.contains(textWords[$0..<($0 + length)].joined(separator: " "))
+        sharesRun(words(text), runs(words(source), length: length), length: length)
+    }
+
+    /// Whether a summary quotes the source text the packet carries for its scene: its anchors' quoted
+    /// text and context, and the scene's span of the embedded item text (all of it when the scene has no
+    /// character range).
+    private static func quotesSource(_ summary: String, scene: PortableListeningMapScene, item: EmbeddedText?) -> Bool {
+        let summaryWords = words(summary)
+        guard summaryWords.count >= verbatimRunWords else { return false }
+        let anchorTexts = [scene.startAnchor, scene.endAnchor].flatMap { anchor in
+            [anchor.exactText, anchor.prefix, anchor.suffix].compactMap { $0 }
+        }
+        if anchorTexts.contains(where: { sharesRun(summaryWords, runs(words($0), length: verbatimRunWords), length: verbatimRunWords) }) {
+            return true
+        }
+        guard let item else { return false }
+        let lower = scene.startAnchor.startChar ?? scene.startAnchor.endChar
+        let upper = scene.endAnchor.endChar ?? scene.endAnchor.startChar
+        if let lower, let upper, 0 <= lower, lower < upper, upper <= item.characters.count {
+            let span = String(item.characters[lower..<upper])
+            return sharesRun(summaryWords, runs(words(span), length: verbatimRunWords), length: verbatimRunWords)
+        }
+        return sharesRun(summaryWords, item.allRuns, length: verbatimRunWords)
+    }
+
+    /// Embedded item text, split once per proposal rather than once per scene.
+    private final class EmbeddedText {
+        let characters: [Character]
+        private let text: String
+        private(set) lazy var allRuns: Set<String> = runs(words(text), length: verbatimRunWords)
+
+        init(_ text: String) {
+            self.text = text
+            self.characters = Array(text)
         }
     }
 
-    /// The source text the packet carries for a scene: its anchors' quoted text and context, and the
-    /// scene's span of the embedded item text (all of it when the scene has no character range).
-    static func sourceTexts(for scene: PortableListeningMapScene, itemText: String?) -> [String] {
-        var texts = [scene.startAnchor, scene.endAnchor].flatMap { anchor in
-            [anchor.exactText, anchor.prefix, anchor.suffix].compactMap { $0 }
+    private static func runs(_ words: [String], length: Int) -> Set<String> {
+        guard length > 0, words.count >= length else { return [] }
+        return Set((0...(words.count - length)).map { words[$0..<($0 + length)].joined(separator: " ") })
+    }
+
+    private static func sharesRun(_ textWords: [String], _ sourceRuns: Set<String>, length: Int) -> Bool {
+        guard length > 0, textWords.count >= length, !sourceRuns.isEmpty else { return false }
+        return (0...(textWords.count - length)).contains {
+            sourceRuns.contains(textWords[$0..<($0 + length)].joined(separator: " "))
         }
-        if let itemText, !itemText.isEmpty {
-            let lower = scene.startAnchor.startChar ?? scene.startAnchor.endChar
-            let upper = scene.endAnchor.endChar ?? scene.endAnchor.startChar
-            if let lower, let upper, 0 <= lower, lower < upper, upper <= itemText.count {
-                let start = itemText.index(itemText.startIndex, offsetBy: lower)
-                let end = itemText.index(itemText.startIndex, offsetBy: upper)
-                texts.append(String(itemText[start..<end]))
-            } else {
-                texts.append(itemText)
-            }
-        }
-        return texts
     }
 
     private struct Position {

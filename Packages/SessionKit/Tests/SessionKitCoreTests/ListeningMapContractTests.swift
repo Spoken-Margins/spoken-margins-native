@@ -202,6 +202,21 @@ final class ListeningMapContractTests: XCTestCase {
         XCTAssertEqual(violations(withEmbedded(from: sceneStart, to: item.count)), [], "no embedded text, no anchor text")
     }
 
+    /// What a packet carries: ineligible summaries dropped, a proposal that still breaks a rule left out.
+    func testForSharingKeepsGoodMapsAndLeavesOutBrokenOnes() {
+        let labelled = proposal([
+            scene(0, .eligible, from: 0, to: 1_000),
+            scene(1, .excluded, summary: "An ad.", provenance: .modelGenerated, from: 1_000, to: 2_000),
+        ])
+        let overlapping = proposal([
+            scene(0, .eligible, from: 0, to: 1_500), scene(1, .eligible, from: 1_000, to: 2_000),
+        ])
+        let shared = PortableListeningMapContract.forSharing([labelled, overlapping])
+        XCTAssertEqual(shared, [PortableListeningMapContract.withoutIneligibleSummaries(labelled)])
+        XCTAssertNil(shared.first?.scenes[1].summaryText)
+        XCTAssertEqual(shared.first?.scenes[0].summaryText, "A short summary.")
+    }
+
     /// The map the app builds from a prepared Listening Edition meets the contract, so export keeps working.
     func testPreparedEditionMapMeetsTheContract() throws {
         let text = "First block of the source text.\n\nSecond block continues the argument.\n\nThird block concludes it."

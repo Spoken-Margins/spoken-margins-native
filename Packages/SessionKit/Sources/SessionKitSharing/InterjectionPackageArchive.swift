@@ -253,9 +253,10 @@ public enum SpokenMarginsPackageArchive {
         })
         try verifyDescriptors(manifest: manifest, artifactData: artifactData, assetData: assetData)
         let decoded = try decodeKnownArtifacts(manifest: manifest, artifactData: artifactData)
-        // Export refuses a summary on an excluded or unknown scene; Build 29 senders include one, so
-        // import drops it rather than refusing their Margins (#480).
-        let proposals = decoded.proposals.map(PortableListeningMapContract.withoutIneligibleSummaries)
+        // Export refuses a proposal that breaks the scene rules. Build 29 senders could include one (every
+        // scene of theirs carries a summary), so import leaves it out rather than refusing their Margins (#480).
+        let proposals = PortableListeningMapContract.forSharing(
+            decoded.proposals, itemText: decoded.embeddedTextItems.first?.text)
         try validateManifestBoundary(
             manifest,
             commentaryLayers: decoded.commentary,

@@ -91,11 +91,12 @@ final class ListeningMapPacketTests: XCTestCase {
             XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(prepared, to: root.appending(path: "\(name).spokenmargins"))) {
                 XCTAssertTrue("\($0)".contains(message), "\(name): \($0)")
             }
-            let oldURL = root.appending(path: "build29-\(name).spokenmargins")
-            try writeWithBuild29(prepared, to: oldURL)
-            XCTAssertThrowsError(try SpokenMarginsPackageArchive.read(from: oldURL, extractingAssetsTo: root.appending(path: name))) {
-                XCTAssertTrue("\($0)".contains(message), "\(name): \($0)")
-            }
+            try assertBuild29PacketImportsWithoutItsMap(prepared, name: name, root: root)
+
+            // The app's builder leaves such a map out instead of failing the share.
+            let built = try package(item: podcastItem, proposals: [bad])
+            _ = try exportPacket(built, to: root.appending(path: "built-\(name).spokenmargins"))
+            XCTAssertFalse(built.manifest.artifacts.contains { $0.kind == SpokenMarginsArtifactKind.listeningMapProposal }, name)
         }
     }
 
@@ -129,17 +130,19 @@ final class ListeningMapPacketTests: XCTestCase {
         }
 
         // A paraphrase travels with the embedded text; a 10-word quotation of the scene's own span doesn't.
-        let paraphrased = try package(item: item, transport: embedded, proposals: [sceneOverPassage(summary: "Officials vote to shut the ageing crossing.")])
-        _ = try exportPacket(paraphrased, to: root.appending(path: "paraphrase.spokenmargins"))
+        let paraphrase = sceneOverPassage(summary: "Officials vote to shut the ageing crossing.")
+        let paraphrased = try package(item: item, transport: embedded, proposals: [paraphrase])
+        let paraphrasedURL = root.appending(path: "paraphrase.spokenmargins")
+        _ = try exportPacket(paraphrased, to: paraphrasedURL)
+        XCTAssertEqual(try SpokenMarginsPackageArchive.read(from: paraphrasedURL, extractingAssetsTo: root.appending(path: "paraphrase")).listeningMapProposals, [paraphrase])
         let quoted = try replacingProposal(in: package(item: item, transport: embedded), with: sceneOverPassage(summary: quoting))
         XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(quoted, to: root.appending(path: "quoted.spokenmargins"))) {
             XCTAssertTrue("\($0)".contains("scene scene-1 summary quotes"), "\($0)")
         }
-        let oldURL = root.appending(path: "build29-quoted.spokenmargins")
-        try writeWithBuild29(quoted, to: oldURL)
-        XCTAssertThrowsError(try SpokenMarginsPackageArchive.read(from: oldURL, extractingAssetsTo: root.appending(path: "quoted"))) {
-            XCTAssertTrue("\($0)".contains("scene scene-1 summary quotes"), "\($0)")
-        }
+        try assertBuild29PacketImportsWithoutItsMap(quoted, name: "quoted", root: root)
+        let built = try package(item: item, transport: embedded, proposals: [sceneOverPassage(summary: quoting)])
+        _ = try exportPacket(built, to: root.appending(path: "built-quoted.spokenmargins"))
+        XCTAssertFalse(built.manifest.artifacts.contains { $0.kind == SpokenMarginsArtifactKind.listeningMapProposal })
 
         // Without embedded text, the scene's source is what its anchors quote.
         let anchored = proposal([PortableListeningMapScene(
@@ -290,6 +293,22 @@ final class ListeningMapPacketTests: XCTestCase {
         var data = prepared.artifactData
         data[descriptor.path] = try SpokenMarginsPackageArchive.encodeArtifact(proposal)
         return PreparedSpokenMarginsPackage(manifest: prepared.manifest, artifactData: data, assetFiles: prepared.assetFiles)
+    }
+
+    /// Build 29 exports a map that breaks a scene rule without complaint. This build imports the packet's
+    /// Margins and leaves the map out, so a bad optional proposal never costs the recipient the Margins.
+    private func assertBuild29PacketImportsWithoutItsMap(
+        _ prepared: PreparedSpokenMarginsPackage,
+        name: String,
+        root: URL,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let url = root.appending(path: "build29-\(name).spokenmargins")
+        try writeWithBuild29(prepared, to: url)
+        let imported = try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appending(path: "build29-\(name)"))
+        XCTAssertEqual(imported.commentaryLayers.first?.interjections.map(\.packageScopedId), ["margin-001"], name, file: file, line: line)
+        XCTAssertEqual(imported.listeningMapProposals, [], name, file: file, line: line)
     }
 
     private func writeWithBuild29(_ prepared: PreparedSpokenMarginsPackage, to url: URL) throws {

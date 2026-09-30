@@ -210,10 +210,14 @@ public enum SpokenMarginsPackageBuilder {
             path: commentaryPath,
             required: true
         )]
+        // The on-device labeller describes every scene, and a Listening Edition's summaries come from
+        // outside the app, so drop what breaks the scene rules rather than refuse the Margins (#480).
+        var embeddedItemText: String?
+        if case .embeddedText(let text, _, _) = itemTransportSelection { embeddedItemText = text }
+        let mapProposals = PortableListeningMapContract.forSharing(mapProposals, itemText: embeddedItemText)
         for (index, proposal) in mapProposals.enumerated() {
             let path = String(format: "artifacts/listening-map-proposal-%04d.json", index + 1)
-            // The on-device labeller describes every scene; only eligible scenes may carry a summary (#480).
-            artifactData[path] = try encodeArtifact(PortableListeningMapContract.withoutIneligibleSummaries(proposal))
+            artifactData[path] = try encodeArtifact(proposal)
             artifacts.append(SpokenMarginsArtifactDescriptor(
                 id: proposal.id,
                 kind: SpokenMarginsArtifactKind.listeningMapProposal,
