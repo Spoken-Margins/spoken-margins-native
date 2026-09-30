@@ -1042,7 +1042,8 @@ final class Gate1AppModel: ObservableObject {
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
     private var foregroundAudioPreparationTask: Task<Void, Never>?
     private let libraryAudioRenderGate = SerialWorkGate() // one Library item renders at a time (#281)
-    var libraryAudioPreparingItemId: String? // the item a preparation pass is working on
+    private var libraryAudioTurns = LibraryAudioPreparationTurns() // which item the two passes are on (#281, #534)
+    var libraryAudioPreparingItemId: String? { get { libraryAudioTurns.preparingItemId } set { libraryAudioTurns.preparingItemId = newValue } }
     private var foregroundAudioPreparationGeneration = 0
     private var episodeMapPreparationTask: Task<Void, Never>?
     private var episodeMapPreparationItemId: String?
@@ -1378,7 +1379,7 @@ final class Gate1AppModel: ObservableObject {
         #if canImport(BackgroundTasks) && canImport(UIKit)
         AudioPreparationBackgroundController.shared.install { [weak self] in
             await self?.performBackgroundPreparationPass() ?? .finished
-        }
+        } drainEnded: { [weak self] in self?.libraryAudioBackgroundDrainEnded() }
         #endif
     }
 
@@ -15202,6 +15203,15 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    #if canImport(BackgroundTasks) && canImport(UIKit)
+    /// The background task stopped: its item stops showing progress, and the foreground loop picks its own work again (#534).
+    private func libraryAudioBackgroundDrainEnded() {
+        libraryAudioTurns.stopped(.background)
+        if let store { try? refreshLibraryRows(store: store) }
+        if canPrepareLibraryAudio, UIApplication.shared.applicationState == .active { startForegroundAudioPreparationIfNeeded() }
+    }
+    #endif
+
     private func enqueueAutomaticAudioPreparationJobs() async {
         guard automaticAudioPreparationPolicy == .whileCharging,
               hasAcceptedCurrentTerms,
@@ -15274,46 +15284,29 @@ final class Gate1AppModel: ObservableObject {
 
     private func preparationPassInTurn(foregroundDemandOnly: Bool) async -> Bool {
         var attemptedJob: AudioPreparationJob?
+        let caller: LibraryAudioPreparationCaller = foregroundDemandOnly ? .foreground : .background
         // Live speech owns the serial renderer while the listener has active
         // demand. A stale/background job must not queue ahead of its next chunk.
-        guard canPrepareLibraryAudio else { libraryAudioPreparingItemId = nil; return false }
+        guard canPrepareLibraryAudio else { libraryAudioTurns.stopped(caller); return false }
         guard (foregroundDemandOnly || automaticAudioPreparationPolicy == .whileCharging),
               !ProcessInfo.processInfo.isLowPowerModeEnabled,
               ProcessInfo.processInfo.thermalState != .serious,
               ProcessInfo.processInfo.thermalState != .critical,
               hasAcceptedCurrentTerms,
-              let voice = ttsVoiceSelection.supertonicVoice else { libraryAudioPreparingItemId = nil; return false }
+              let voice = ttsVoiceSelection.supertonicVoice else { libraryAudioTurns.stopped(caller); return false }
         do {
             try Task.checkCancellation()
             let store = try requireStore()
             var queuedJobs = try store.loadAudioPreparationJobs()
-                .filter({ !$0.isCancelled })
-            if foregroundDemandOnly {
-                queuedJobs = queuedJobs.filter {
-                    $0.policy == .explicit || ($0.policy == .demandWindow && $0.maximumChunkCount != nil)
-                }
-            }
-            queuedJobs.sort {
-                Self.audioPreparationJobPrecedes($0, $1, activeItemId: activePlaybackItemId)
-            }
-            if queuedJobs.isEmpty, !foregroundDemandOnly {
+            if !foregroundDemandOnly, !queuedJobs.contains(where: { !$0.isCancelled }) {
                 await enqueueAutomaticAudioPreparationJobs()
                 queuedJobs = try store.loadAudioPreparationJobs()
-                    .filter { !$0.isCancelled }
-                    .sorted {
-                        Self.audioPreparationJobPrecedes($0, $1, activeItemId: activePlaybackItemId)
-                    }
             }
-            let hasMoreMatchingJobs = {
-                let remaining = try store.loadAudioPreparationJobs().filter { !$0.isCancelled }
-                return foregroundDemandOnly
-                    ? remaining.contains(where: { $0.policy == .explicit || ($0.policy == .demandWindow && $0.maximumChunkCount != nil) })
-                    : !remaining.isEmpty
-            }
-            guard var job = queuedJobs.first else { libraryAudioPreparingItemId = nil; return false }
-            if let previous = libraryAudioPreparingItemId, previous != job.itemId,
+            let hasMoreMatchingJobs = { try !LibraryAudioPreparationTurns.eligible(store.loadAudioPreparationJobs(), for: caller).isEmpty }
+            let previous = libraryAudioPreparingItemId // nil job: nothing to do, or the foreground loop waits for the background task (#534)
+            guard var job = libraryAudioTurns.select(queuedJobs, activeItemId: activePlaybackItemId, for: caller) else { libraryAudioTurns.stopped(caller); return false }
+            if let previous, previous != job.itemId,
                libraryItems.first(where: { $0.id == previous })?.startupAudioState == .preparing { updateLibraryStartupAudioState(itemId: previous, state: .waiting) }
-            libraryAudioPreparingItemId = job.itemId
             if libraryItems.first(where: { $0.id == job.itemId })?.startupAudioState == .waiting { updateLibraryStartupAudioState(itemId: job.itemId, state: .preparing) }
             guard var manifest = try store.loadPreparedAudioManifest(id: job.manifestId),
                   let item = try? store.loadItem(id: job.itemId),

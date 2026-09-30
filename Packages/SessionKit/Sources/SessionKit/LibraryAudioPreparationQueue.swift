@@ -32,6 +32,81 @@ public enum LibraryAudioPreparationQueue {
     }
 }
 
+/// Which of the app's two preparation passes is asking for work (#281).
+public enum LibraryAudioPreparationCaller: Sendable {
+    /// The in-app loop. It prepares only what the listener is waiting for: explicit
+    /// requests and opening buffers, never While Charging work.
+    case foreground
+    /// The background processing task, which runs on power and prepares everything.
+    case background
+}
+
+/// Which Library item the preparation passes are working on, so the two passes stay on
+/// one item until its target is done (#281, #534).
+///
+/// Each pass prepares one part. If the foreground loop picked its own job while the
+/// background task worked on a While Charging job the loop may not touch, the two took
+/// turns A, B, A, B. So while the background task is preparing, the foreground loop
+/// takes only the job the background task would take next, and otherwise waits. When
+/// the background task stops, the foreground loop picks its own work again, so an
+/// explicit request never waits on a background task that isn't running.
+public struct LibraryAudioPreparationTurns: Sendable {
+    /// The item a pass is working on; its Library row is the one that shows progress.
+    public var preparingItemId: String?
+    /// True from the background task's first pick until it stops or has nothing left.
+    public private(set) var backgroundIsPreparing = false
+
+    public init() {}
+
+    /// Work the foreground loop may do without power: explicit requests and opening buffers.
+    public static func isForegroundDemand(_ job: AudioPreparationJob) -> Bool {
+        job.policy == .explicit || (job.policy == .demandWindow && job.maximumChunkCount != nil)
+    }
+
+    /// The jobs `caller` may prepare, in order, ignoring cancelled ones.
+    public static func eligible(_ jobs: [AudioPreparationJob], for caller: LibraryAudioPreparationCaller) -> [AudioPreparationJob] {
+        jobs.filter { !$0.isCancelled && (caller == .background || isForegroundDemand($0)) }
+    }
+
+    /// The job `caller` prepares next, or nil when it has nothing to do or must wait for
+    /// the background task. Records the chosen item as the one being prepared.
+    public mutating func select(
+        _ jobs: [AudioPreparationJob],
+        activeItemId: String?,
+        for caller: LibraryAudioPreparationCaller
+    ) -> AudioPreparationJob? {
+        let ordered = jobs.filter { !$0.isCancelled }
+            .sorted { LibraryAudioPreparationQueue.precedes($0, $1, activeItemId: activeItemId) }
+        switch caller {
+        case .background:
+            let chosen = ordered.first
+            backgroundIsPreparing = chosen != nil
+            preparingItemId = chosen?.itemId
+            return chosen
+        case .foreground where backgroundIsPreparing:
+            // Share the background task's item, or wait for it.
+            return ordered.first.flatMap { Self.isForegroundDemand($0) ? $0 : nil }
+        case .foreground:
+            let chosen = ordered.first(where: Self.isForegroundDemand)
+            preparingItemId = chosen?.itemId
+            return chosen
+        }
+    }
+
+    /// `caller` stopped: it finished, was cancelled, expired, or is waiting. The item it was
+    /// preparing stops showing progress, unless the other pass is still working on it.
+    public mutating func stopped(_ caller: LibraryAudioPreparationCaller) {
+        switch caller {
+        case .background:
+            guard backgroundIsPreparing else { return }
+            backgroundIsPreparing = false
+            preparingItemId = nil
+        case .foreground:
+            if !backgroundIsPreparing { preparingItemId = nil }
+        }
+    }
+}
+
 /// Lets one piece of work run at a time; the rest wait their turn, first come first
 /// served. The app's two preparation passes (the foreground loop and the background
 /// task) share one, so two Library items never render at once (#281).
