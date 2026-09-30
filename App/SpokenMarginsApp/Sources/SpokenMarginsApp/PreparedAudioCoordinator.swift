@@ -337,6 +337,16 @@ actor PreparedAudioCoordinator {
         return Int64(data.count) == chunk.byteCount && SupertonicRenderIdentity.sha256(data) == chunk.checksumSHA256
     }
 
+    static let standInRetried = "stand_in_retried"
+
+    /// The chunks background preparation needn't render. A listener's explicit request renders a
+    /// stand-in chunk with Supertonic once more; if the stand-in comes back, the job records that
+    /// and doesn't try again, so it can't loop (#363 audit).
+    static func completedIndexes(_ manifest: PreparedAudioManifest, retryingStandInsFor job: AudioPreparationJob) -> Set<Int> {
+        let retries = job.policy == .explicit && job.lastFailureCode != standInRetried
+        return Set(manifest.chunks.filter { !retries || $0.engine == nil }.map(\.index))
+    }
+
     /// Whether any committed chunk is a stand-in. Such a manifest isn't assembled into the item's
     /// audio, so a wrongly flagged chunk can be rendered again on a later play (#311, #363 audit).
     static func hasStandIns(_ manifest: PreparedAudioManifest) -> Bool {

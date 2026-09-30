@@ -233,8 +233,17 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         XCTAssertNil(manifest.chunks.first?.engine)
         XCTAssertFalse(PreparedAudioCoordinator.hasStandIns(manifest), "nothing holds back assembly now")
         try await commit(plan[1], data: Data([4]), coordinator: coordinator, fixture: fixture, engine: SupertonicNarrationResult.systemVoiceEngine)
-        XCTAssertTrue(PreparedAudioCoordinator.hasStandIns(try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: "prepared-item-one"))),
-                      "a stand-in holds back assembly")
+        let withStandIn = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: "prepared-item-one"))
+        XCTAssertTrue(PreparedAudioCoordinator.hasStandIns(withStandIn), "a stand-in holds back assembly")
+
+        // #363 audit: a listener's explicit request retries the stand-in with Supertonic once;
+        // automatic preparation, and a request that already retried, don't.
+        var job = AudioPreparationJob(id: "job", itemId: "item", manifestId: withStandIn.id, policy: .explicit, requestedAt: Date())
+        XCTAssertEqual(PreparedAudioCoordinator.completedIndexes(withStandIn, retryingStandInsFor: job), [0])
+        job.lastFailureCode = PreparedAudioCoordinator.standInRetried
+        XCTAssertEqual(PreparedAudioCoordinator.completedIndexes(withStandIn, retryingStandInsFor: job), [0, 1])
+        job = AudioPreparationJob(id: "job", itemId: "item", manifestId: withStandIn.id, policy: .whileCharging, requestedAt: Date())
+        XCTAssertEqual(PreparedAudioCoordinator.completedIndexes(withStandIn, retryingStandInsFor: job), [0, 1])
     }
 
     // #278: Prepare on an article whose narration the fallback detached answered "already

@@ -1847,7 +1847,6 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                   !preparedAudioAssemblyStarted,
                   !generationPlan.isEmpty,
                   generationResults.count == generationPlan.count,
-                  standInOffsets.isEmpty,
                   let targetId = generationPlan.first?.targetId else { return nil }
             preparedAudioAssemblyStarted = true
             return (
@@ -1858,7 +1857,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             )
         }
         guard let snapshot else { return }
-        guard let preparedAudioDirectory, let onPreparedAudio else {
+        // Every chunk is ready, but one is a stand-in: report it, without an assembled file (#363).
+        guard let preparedAudioDirectory, let onPreparedAudio, lock.withLock({ standInOffsets.isEmpty }) else {
             reportGenerationState(.ready)
             return
         }

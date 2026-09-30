@@ -15349,7 +15349,7 @@ final class Gate1AppModel: ObservableObject {
                 plan: plan,
                 maximumChunkCount: job.maximumChunkCount
             )
-            let completedIndexes = Set(manifest.chunks.map(\.index))
+            let completedIndexes = PreparedAudioCoordinator.completedIndexes(manifest, retryingStandInsFor: job)
             let ledger = offlineStorageLedger ?? OfflineStorageLedger(repository: store, rootDirectory: support)
             offlineStorageLedger = ledger
             let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
@@ -15421,7 +15421,7 @@ final class Gate1AppModel: ObservableObject {
             job = (try store.loadAudioPreparationJobs()).first(where: { $0.id == job.id }) ?? job
             recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count)])
             job.nextChunkIndex = updated.chunks.count
-            job.lastFailureCode = nil
+            job.lastFailureCode = PreparedAudioCoordinator.hasStandIns(updated) ? PreparedAudioCoordinator.standInRetried : nil
             if updated.chunks.count == plan.count {
                 try store.saveAudioPreparationJob(job)
                 try await finishBackgroundPreparedAudio(

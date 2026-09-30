@@ -669,6 +669,8 @@ final class SupertonicSpeechTests: XCTestCase {
         for (seconds, expectsAssembly) in [(20.0, false), (4.0, true)] {
             let assembled = expectation(description: "assembled (\(seconds) s)")
             assembled.isInverted = !expectsAssembly
+            let ready = expectation(description: "generation reports ready (\(seconds) s)")
+            ready.assertForOverFulfill = false
             let client = SupertonicSpeechPlaybackClient(
                 renderer: SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: seconds),
                                                 systemVoiceIdentifier: nil),
@@ -676,11 +678,14 @@ final class SupertonicSpeechTests: XCTestCase {
                 preparedAudioDirectory: root.appending(path: "assembled-\(Int(seconds))", directoryHint: .isDirectory),
                 audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
                 observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+                onGenerationStateChange: { if $0 == .ready { ready.fulfill() } },
                 onPreparedAudio: { _, _ in assembled.fulfill() }
             )
             _ = try client.prepareSpeechText(text)
             try client.play(targetId: "item", from: 0)
-            await fulfillment(of: [assembled], timeout: 8)
+            // #363 audit: with a stand-in, generation must still end, not show "Generating" forever.
+            await fulfillment(of: [ready], timeout: 8)
+            await fulfillment(of: [assembled], timeout: expectsAssembly ? 8 : 1)
             try client.stop()
         }
     }
