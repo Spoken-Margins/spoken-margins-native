@@ -269,7 +269,8 @@ def first_errors(log: Path, limit: int = 5) -> list[str]:
     except OSError:
         return []
     lines = text.splitlines()
-    found = [line.strip() for line in lines if ' error: ' in line or line.startswith('error:') or 'errSec' in line]
+    found = [line.strip() for line in lines if ' error: ' in line or line.startswith('error:') or 'errSec' in line
+             or re.match(r'\w+(Error|Exception): ', line)]  # a Python traceback's last line
     if 'The following build commands failed:' in lines:
         for line in lines[lines.index('The following build commands failed:') + 1:]:
             if not line.strip():
@@ -1043,6 +1044,12 @@ def record_outcome(verdict: str) -> None:
             handle.write(f'reported=true\nverdict={verdict}\n')
 
 
+def request_name(pr: int, run_id: str, attempt: str | None) -> str:
+    """The report's name and evidence folder. A re-run of a job keeps its run id, and verify-tests.py
+    refuses an --output folder that exists (#404), so each attempt after the first gets its own."""
+    return f'pr{pr}-r{run_id}' + (f'-a{attempt}' if attempt and attempt != '1' else '')
+
+
 def link_tools(source: Path) -> None:
     for name in ('.venv', 'node_modules'):
         if not (ROOT / name).exists() and (source / name).exists():
@@ -1107,7 +1114,7 @@ def main(argv=None) -> int:
             github.relabel(QUEUED, DONE)
         record_outcome(earlier_verdict)  # a repeated FAIL stays red
         return 0
-    request_id = f'pr{args.pr}-r{args.run_id}'
+    request_id = request_name(args.pr, args.run_id, os.environ.get('GITHUB_RUN_ATTEMPT'))
     evidence = Path(os.environ.get('SM_LANE_EVIDENCE_DIR') or
                     Path.home() / 'Library/Caches/SpokenMarginsLane/evidence') / request_id
     evidence.mkdir(parents=True, exist_ok=True)

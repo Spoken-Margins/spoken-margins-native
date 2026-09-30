@@ -44,7 +44,7 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 - **Journeys run with an agent.** A long-lived Claude Code session on the Mac named `test-desk` picks up T4/T5 requests (polling the label with `/loop`, or woken by a message), works in its own worktree and DerivedData, drives the simulator, and posts the report.
 - **Coalesce.** If a newer commit lands on the same PR while a request is queued, test the newest only. Identical requests against the same commit run once.
 - **Order.** Gate streams (A2 `seams`, anything blocking others) first, then oldest request first.
-- **Evidence stays local.** Screenshots and logs go under `artifacts/lane/<request-id>/` (git-ignored). The PR comment carries the observations and file paths, not images.
+- **Evidence stays local.** Screenshots and logs go under `artifacts/lane/<request-id>/` (git-ignored). The request id is `pr<PR>-r<run id>`, plus `-a<N>` when a job is re-run, so a re-run never reuses a folder. The PR comment carries the observations and file paths, not images.
 
 Note for whoever builds the Test Desk: Claude Desktop's iOS Simulator pane currently doesn't work with Xcode 27 ([docs](https://code.claude.com/docs/en/desktop-ios-simulator)). This repo builds with Xcode 27, so drive the simulator through computer use from the CLI, as the journeys do today, until the pane supports Xcode 27.
 

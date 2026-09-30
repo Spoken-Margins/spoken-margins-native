@@ -266,6 +266,14 @@ class T3Tests(unittest.TestCase):
         self.assertIn("boot has a separate budget", details[0])
         self.assertEqual(lane.t3_verdict(summaries, statuses), 'INCONCLUSIVE')
 
+    def test_a_python_traceback_puts_its_last_line_in_the_report(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'verify-fast.log'
+            log.write_text('Traceback (most recent call last):\n  File "verify-tests.py", line 425, in main\n'
+                           '    run = Run(output.resolve(), args.plan)\n'
+                           "FileExistsError: [Errno 17] File exists: '/e/pr5-r42/fast'\n")
+            self.assertEqual(lane.first_errors(log), ["FileExistsError: [Errno 17] File exists: '/e/pr5-r42/fast'"])
+
     def test_a_step_that_stops_the_run_puts_its_first_errors_in_the_report(self):
         # #408 and #368: T3 reports said only "Process exit 70"; the log that says why stayed on the Mac.
         with tempfile.TemporaryDirectory() as folder:
@@ -977,13 +985,15 @@ class PushTests(unittest.TestCase):
 
 
 class MainFlowTests(unittest.TestCase):
-    def run_main(self, github, event_head=HEAD, verdict='PASS', *extra):
+    def run_main(self, github, event_head=HEAD, verdict='PASS', *extra, evidence=None, t2=None):
         with tempfile.TemporaryDirectory() as temporary, \
                 mock.patch.object(lane, 'GitHub', return_value=github), \
-                mock.patch.dict('os.environ', {'GH_REPO': 'o/r', 'SM_LANE_EVIDENCE_DIR': temporary,
-                                               # set, not inherited: runner two's own .env has role=build
-                                               'SM_LANE_RUNNER_ROLE': self.role}), \
-                mock.patch.object(lane, 'run_t2', return_value=(verdict, 'simulator build (pass), device build (pass)', [])), \
+                mock.patch.dict('os.environ', {'GH_REPO': 'o/r', 'SM_LANE_EVIDENCE_DIR': evidence or temporary,
+                                               # set, not inherited: runner two's own .env has role=build,
+                                               # and these tests run inside a lane job, maybe a re-run
+                                               'SM_LANE_RUNNER_ROLE': self.role, 'GITHUB_RUN_ATTEMPT': self.attempt}), \
+                mock.patch.object(lane, 'run_t2', side_effect=t2,
+                                  return_value=(verdict, 'simulator build (pass), device build (pass)', [])), \
                 mock.patch.object(lane, 'sweep_runner_simulators'), \
                 mock.patch.object(lane, 'fetch_base', return_value=MERGE), \
                 mock.patch.object(lane, 'merge_base_branch', return_value=self.conflicts), \
@@ -993,6 +1003,23 @@ class MainFlowTests(unittest.TestCase):
 
     conflicts = []
     role = ''  # the main runner, unless a test says otherwise
+    attempt = '1'
+
+    def test_a_rerun_of_a_job_gets_its_own_report_name_and_evidence_folder(self):
+        # After #419 merged, re-runs of runs 36711256675 and 36710023344 kept their run ids, so
+        # verify-tests.py found the first attempt's --output folder and stopped within seconds: exit 1,
+        # and no error line in the report.
+        def t2(evidence):
+            (evidence / 'fast').mkdir()  # verify-tests.py refuses an --output folder that exists
+            return 'PASS', 'simulator build (pass), device build (pass)', []
+        with tempfile.TemporaryDirectory() as evidence:
+            reports = []
+            for self.attempt in ('1', '2'):
+                github = FakeGitHub(comments=[comment('/lane T2')])
+                self.run_main(github, evidence=evidence, t2=t2)
+                reports.append(github.posted[0])
+        self.assertTrue(reports[0].startswith('Lane report pr5-r42 — PASS'), reports[0])
+        self.assertTrue(reports[1].startswith('Lane report pr5-r42-a2 — PASS'), reports[1])
 
     def test_a_queued_t2_request_is_run_reported_and_relabelled(self):
         github = FakeGitHub(comments=[comment(f'/lane T2\ncommit: {HEAD[:7]}')])
