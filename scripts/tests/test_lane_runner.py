@@ -425,7 +425,8 @@ class MergeTests_Runner(unittest.TestCase):
 
     SCOPE = {'tier': 'T2', 'why': ['app UI'], 'files': [{'path': 'App/X.swift', 'category': 'app-ui'}]}
 
-    def run_auto(self, github, verdicts=('PASS',), pushes=(True,), scope=None, comments=(), moved=False):
+    def run_auto(self, github, verdicts=('PASS',), pushes=(True,), scope=None, comments=(), moved=False,
+                 automerge=None):
         events = []
         pushes = list(pushes)
 
@@ -455,8 +456,8 @@ class MergeTests_Runner(unittest.TestCase):
                 mock.patch.object(lane, 'sweep_merge_audit', side_effect=lambda tree, base: events.append('sweep')), \
                 mock.patch.object(lane, 'warm_build_folders', return_value='build folders: warm (SessionKit test)'), \
                 mock.patch.object(lane, 'diff_scope', return_value=scope or self.SCOPE), \
-                mock.patch.object(lane, 'run_automerge',
-                                  side_effect=lambda scope, evidence, **_: (verdicts.pop(0), 'x', 'host tests; builds', [])):
+                mock.patch.object(lane, 'run_automerge', side_effect=automerge or (
+                    lambda scope, evidence, **_: (verdicts.pop(0), 'x', 'host tests; builds', []))):
             result = lane.run_auto(github, {'title': 'T'}, 5, 'next', HEAD, MERGE, Path(folder), list(comments))
         return result, events
 
@@ -522,6 +523,38 @@ class MergeTests_Runner(unittest.TestCase):
         self.assertEqual(events, ['build', 'comment', 'push m1', 'build', 'comment', 'push m2', 'sweep'])
         self.assertIn('attempt 1: the push to next was refused', ' '.join(details))
         self.assertIn('merged into next as m200000', details[-1])
+
+    def test_the_retry_after_a_refused_push_runs_the_host_tests_in_a_folder_of_its_own(self):
+        # #404: the retry handed verify-tests.py the first attempt's --output folder, which it refuses
+        # to reuse, so a PR whose first attempt passed was reported FAIL (#379, #363, #399).
+        outputs = []
+
+        def verify_tests(command, log, timeout):  # verify-tests.py's own start: a crash there is exit 1
+            output = Path(command[command.index('--output') + 1])
+            outputs.append(output)
+            try:
+                run = verification.Run(output, 'fast')
+            except FileExistsError as error:
+                log.write(f'FileExistsError: {error}\n')
+                return 1
+            run.manifest['status'] = 'verified'
+            run.save()
+            return 0
+
+        real_automerge = lane.run_automerge
+
+        def automerge(scope, evidence, **kwargs):
+            return real_automerge(scope, evidence, fast=lambda e: lane.run_fast(e, runner=verify_tests), **kwargs)
+
+        host_only = {'tier': 'T1', 'why': ['scripts'], 'files': [{'path': 'scripts/x.py', 'category': 'scripts'}]}
+        with mock.patch.object(verification, 'input_identity', return_value='x'):
+            (verdict, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=host_only,
+                                                             pushes=(False, True), automerge=automerge)
+        self.assertEqual((verdict, details[-1]), ('PASS', 'merged into next as m200000'), details)
+        self.assertEqual(events, ['build', 'comment', 'push m1', 'build', 'comment', 'push m2', 'sweep'])
+        first, retry = outputs
+        self.assertEqual(first.name, 'fast')  # the first attempt's evidence stays where it always was
+        self.assertEqual(retry, first.parent / 'attempt-2' / 'fast')
 
     def test_a_push_refused_for_another_reason_stops_at_once(self):
         # A queued job with a lane.yml from before #382 has a read-only token: re-testing can't help.
