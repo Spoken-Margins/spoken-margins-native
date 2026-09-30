@@ -199,56 +199,6 @@ private struct Build23RecipientSharingHost: View {
     }
 }
 
-struct UserFeedbackBanner: View {
-    @EnvironmentObject private var model: Gate1AppModel
-    let feedback: UserFeedbackEvent
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: iconName)
-                .foregroundStyle(iconColor)
-            Text(feedback.message)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(3)
-            Spacer(minLength: 8)
-        }
-        .padding(12)
-        .foregroundStyle(AppColors.text)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppColors.border))
-        .padding(.top, 44)
-        .allowsHitTesting(false)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("app.feedback.banner")
-        .task(id: feedback.id) {
-            #if canImport(UIKit)
-            UIAccessibility.post(notification: .announcement, argument: feedback.message)
-            #endif
-            do {
-                try await Task.sleep(for: .seconds(feedback.kind == .success ? 3 : 6))
-                model.dismissFeedback(id: feedback.id)
-            } catch {}
-        }
-    }
-
-    private var iconName: String {
-        switch feedback.kind {
-        case .success: "checkmark.circle.fill"
-        case .warning: "exclamationmark.triangle.fill"
-        case .error: "xmark.octagon.fill"
-        }
-    }
-
-    private var iconColor: Color {
-        switch feedback.kind {
-        case .success: .green
-        case .warning: .orange
-        case .error: .red
-        }
-    }
-}
-
 private struct LegacyLibraryResetBanner: View {
     @EnvironmentObject private var model: Gate1AppModel
     let message: String

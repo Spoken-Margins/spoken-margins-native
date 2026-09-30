@@ -151,7 +151,7 @@ def classify_path(root, path, diff_text='', build_script_paths=frozenset()):
     if path.startswith(BROWSER_PREFIXES) or path in BROWSER_FILES:
         return Finding(path, 1, 'browser', commands=['npm run test:browser-extraction'])
     if path.startswith(PERSISTENCE_FIXTURES):
-        return Finding(path, 2, 'persistence', swift_filters=['PriorBuildPersistenceTests'],
+        return Finding(path, 2, 'persistence', swift_filters=['PriorBuildPersistenceTests', 'Build29UpgradeProgressTests'],
                        commands=['.venv/bin/python scripts/validate-contracts.py'] + T2_COMMANDS)
     if path.startswith(PACKET_FIXTURES) or (path.startswith('Contracts/schemas/') and name in PACKET_SCHEMAS):
         return Finding(path, 2, 'packet', swift_filters=['SharingTests'],

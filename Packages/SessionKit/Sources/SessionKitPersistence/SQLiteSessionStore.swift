@@ -1038,6 +1038,31 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         return documents.max { $0.extraction.version < $1.extraction.version }
     }
 
+    /// The items that have a structured document, read without decoding the
+    /// documents, so the Library can mark new-reader PDFs cheaply (#359).
+    public func loadStructuredDocumentItemIds() throws -> Set<String> {
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(
+                db,
+                "SELECT DISTINCT item_id FROM records WHERE kind = ? AND item_id IS NOT NULL;",
+                -1,
+                &statement,
+                nil
+            ) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_structured_document_item_ids")
+            }
+            defer { sqlite3_finalize(statement) }
+            bind(statement, index: 1, value: Self.structuredDocumentKind)
+            var itemIds: Set<String> = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let raw = sqlite3_column_text(statement, 0) else { continue }
+                itemIds.insert(String(cString: raw))
+            }
+            return itemIds
+        }
+    }
+
     public func applyStructuredDocumentUpgrade(_ upgrade: StructuredDocumentUpgrade) throws {
         let itemId = upgrade.item.id
         try withTransaction {
