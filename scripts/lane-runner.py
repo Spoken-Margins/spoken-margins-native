@@ -643,7 +643,7 @@ def warm_build_folders(tree: Path, root: Path | None = None, free=lambda path: s
     if missing:  # SwiftPM won't fetch an artifact its state says it has, so the build fails on it (#405)
         for name in ('root', 'sessionkit'):
             shutil.rmtree(wanted / name, ignore_errors=True)
-            (wanted / name).mkdir()
+            (wanted / name).mkdir(exist_ok=True)
         return f'build folders: cold, cache reset ({", ".join(sorted(set(missing)))} was missing) (SessionKit {key})'
     return f'build folders: {"warm" if was_warm else "cold, new cache"} (SessionKit {key})'
 
