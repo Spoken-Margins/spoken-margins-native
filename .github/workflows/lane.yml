@@ -47,7 +47,9 @@ jobs:
     concurrency:
       group: lane-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: false
-    timeout-minutes: 150
+    # 150 minutes for the T3 itself (slot wait, boot and tests), plus room for the automerge run a T3
+    # PASS releases in this same job (#421): host tests and both builds, as in the automerge job.
+    timeout-minutes: 240
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -62,6 +64,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
+          # The Supertonic models are Git LFS files; without them the contracts check sees pointers.
+          # The LFS cache lives in .git, which the checkout's clean keeps, so each runner downloads
+          # the models once.
+          lfs: true
       - name: Take the lane runner from the base branch
         run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
       - name: Run the request
@@ -116,6 +122,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
+          # The Supertonic models are Git LFS files; without them the contracts check sees pointers.
+          # The LFS cache lives in .git, which the checkout's clean keeps, so each runner downloads
+          # the models once.
+          lfs: true
       - name: Take the lane runner from the base branch
         run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
       - name: Run the request

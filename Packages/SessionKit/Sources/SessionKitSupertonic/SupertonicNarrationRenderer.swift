@@ -59,19 +59,27 @@ public struct SupertonicNarrationResult: Equatable, Sendable {
     public let sampleRate: Int
     public let renderDuration: TimeInterval
     public let sessionLoadCount: Int
+    /// Which engine made the audio. The narration guard can substitute the iOS voice for a chunk
+    /// Supertonic garbled (#240), and that audio must not pass for Supertonic's (#311).
+    public let engine: String
+
+    public static let supertonicEngine = "supertonic"
+    public static let systemVoiceEngine = "system_voice"
 
     public init(
         audioURL: URL,
         duration: TimeInterval,
         sampleRate: Int,
         renderDuration: TimeInterval,
-        sessionLoadCount: Int
+        sessionLoadCount: Int,
+        engine: String = SupertonicNarrationResult.supertonicEngine
     ) {
         self.audioURL = audioURL
         self.duration = duration
         self.sampleRate = sampleRate
         self.renderDuration = renderDuration
         self.sessionLoadCount = sessionLoadCount
+        self.engine = engine
     }
 }
 
@@ -134,6 +142,15 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
     private let renderQueue = DispatchQueue(label: "com.spokenmargins.supertonic.render", qos: .userInitiated)
     private let inferencePacingLock = NSLock()
     private var backgroundInferencePacingEnabled = false
+    #if DEBUG
+    private var pacingRecords: [(pacing: SupertonicRenderPacing, delay: TimeInterval)] = []
+    /// Each inference step's pacing: who asked for the render and how long it was held back.
+    var debugPacingRecords: [(pacing: SupertonicRenderPacing, delay: TimeInterval)] {
+        inferencePacingLock.lock()
+        defer { inferencePacingLock.unlock() }
+        return pacingRecords
+    }
+    #endif
     private var runtime: Runtime?
     private var sessionLoadCount = 0
     private var generatedAudioURLs: Set<URL> = []
@@ -150,10 +167,12 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
         self.fileManager = fileManager
     }
 
-    /// Keeps full-item generation running while the app is backgrounded without
-    /// exceeding iOS's sustained CPU budget for background audio processes.
-    /// Foreground synthesis remains unthrottled so the initial two chunks start
-    /// as quickly as possible.
+    /// Whether the app is in the background: set from the app's lifecycle only. Keeps
+    /// generation running there without exceeding iOS's sustained CPU budget for background
+    /// audio processes. Foreground live synthesis stays unthrottled so the first chunks start
+    /// quickly. Background preparation asks for pacing per render instead (#377): it used to
+    /// set and clear this shared flag, which paced live narration while a Library chunk
+    /// rendered and switched pacing off in the background when a pass ended.
     public func setBackgroundInferencePacingEnabled(_ enabled: Bool) {
         inferencePacingLock.lock()
         backgroundInferencePacingEnabled = enabled
@@ -166,6 +185,18 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
         language: String = "en",
         speed: Float = 1.0,
         synthesisSteps: Int = 8
+    ) async throws -> SupertonicNarrationResult {
+        try await render(text: text, voice: voice, language: language, speed: speed,
+                         synthesisSteps: synthesisSteps, pacing: .whenAppBackgrounded)
+    }
+
+    public func render(
+        text: String,
+        voice: SupertonicVoiceID,
+        language: String,
+        speed: Float,
+        synthesisSteps: Int,
+        pacing: SupertonicRenderPacing
     ) async throws -> SupertonicNarrationResult {
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { throw SupertonicNarrationError.emptyText }
@@ -195,7 +226,7 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
                                 silenceDuration: 0.3,
                                 paceAfterInference: { [weak self] inferenceDuration in
                                     guard !cancellation.isCancelled else { throw CancellationError() }
-                                    self?.paceBackgroundInference(after: inferenceDuration)
+                                    self?.paceBackgroundInference(after: inferenceDuration, pacing: pacing)
                                     guard !cancellation.isCancelled else { throw CancellationError() }
                                 }
                             )
@@ -277,17 +308,28 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
         return loaded
     }
 
-    private func paceBackgroundInference(after inferenceDuration: TimeInterval) {
-        var remaining = SupertonicInferencePacingPolicy.delay(
-            afterInferenceDuration: inferenceDuration,
-            backgrounded: isBackgroundInferencePacingEnabled
-        )
+    private func paceBackgroundInference(after inferenceDuration: TimeInterval, pacing: SupertonicRenderPacing) {
+        var remaining = pacingDelay(afterInferenceDuration: inferenceDuration, for: pacing)
+        #if DEBUG
+        inferencePacingLock.lock()
+        pacingRecords.append((pacing, remaining))
+        inferencePacingLock.unlock()
+        #endif
         while remaining > 0 {
-            guard isBackgroundInferencePacingEnabled else { return }
+            guard isPaced(pacing) else { return }
             let interval = min(0.1, remaining)
             Thread.sleep(forTimeInterval: interval)
             remaining -= interval
         }
+    }
+
+    /// How long a render with `pacing` sleeps after `inferenceDuration` of inference, now.
+    func pacingDelay(afterInferenceDuration inferenceDuration: TimeInterval, for pacing: SupertonicRenderPacing) -> TimeInterval {
+        SupertonicInferencePacingPolicy.delay(afterInferenceDuration: inferenceDuration, backgrounded: isPaced(pacing))
+    }
+
+    private func isPaced(_ pacing: SupertonicRenderPacing) -> Bool {
+        pacing == .always || isBackgroundInferencePacingEnabled
     }
 
     private var isBackgroundInferencePacingEnabled: Bool {
@@ -295,6 +337,14 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
         defer { inferencePacingLock.unlock() }
         return backgroundInferencePacingEnabled
     }
+}
+
+/// Who a render is for, which decides whether its inference is paced (#377).
+public enum SupertonicRenderPacing: Equatable, Sendable {
+    /// The listener's live narration: paced only while the app is in the background.
+    case whenAppBackgrounded
+    /// Background preparation: always paced, so it never competes with live narration for CPU.
+    case always
 }
 
 enum SupertonicInferencePacingPolicy {

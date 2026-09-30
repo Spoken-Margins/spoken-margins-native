@@ -17,6 +17,7 @@ struct ExperienceItemDetailScreen: View {
                     hero
                     primaryActions
                     downloadRecovery
+                    ItemLastFailureCard(itemId: model.selectedItem.id)
                     if !sharingCoordinator.importedLayers.isEmpty {
                         Build23ImportedMarginPresentation(coordinator: sharingCoordinator)
                     }

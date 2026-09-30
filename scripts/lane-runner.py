@@ -9,12 +9,17 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
 
 - The runner takes the newest T2/T3 request it hasn't answered yet. T4 and T5 requests belong to the
   Test Desk: while one is waiting, the runner leaves lane:queued in place so the Test Desk sees it.
+- Every job that posts a report and doesn't merge the PR, for a /lane request or the automerge label,
+  ends by removing and re-adding lane:done, after its last report (the automerge run a T3 PASS
+  releases, #421), so each job makes a new `labeled` event: the Hourly dispatch wakes on it. An
+  automerge run leaves lane:queued and lane:running alone.
 - The newest commit wins: if the PR moved on since this run was queued, a newer run tests it.
 - A request identical to one that already has a PASS or FAIL report (same head merged into the
   same next, tier and tests) runs once. After an INCONCLUSIVE report, asking again runs again.
 - T2 builds for simulator and device (unsigned) through scripts/xcodebuild-lane.
-- T3 runs the named app-hosted tests through verify-tests.py on a fresh iOS 26 simulator, created
-  for the job and deleted afterwards. It is booted under the lane's boot rules (scripts/lane_sim.py):
+- T3 runs the named app-hosted tests, plus every app test class the base branch's test-scope.py
+  suggests for the PR's diff (#351), through verify-tests.py on a fresh iOS 26 simulator, created
+  for the job and deleted afterwards. The report lists the classes it added and how long each plan took. It is booted under the lane's boot rules (scripts/lane_sim.py):
   one boot at a time, no builds meanwhile, no retry after a failed boot, a stop at the first crash
   during boot, and a long wait for the first boot's data migration. The job holds the Mac's one
   simulator slot throughout, so it never runs alongside a Test Desk job. A crash flood stops the run.
@@ -31,15 +36,22 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   push; if next moved meanwhile, the push is refused and it tests again on the newest next (up to
   MERGE_ATTEMPTS). It won't merge a PR that changes .github/ or scripts/lane* (a PR can change the
   workflow that tests it), or an audio, persistence or packet change without a Codex audit comment:
-  those pass or fail as usual, and a person merges them.
+  those pass or fail as usual, and a person merges them. A PR someone asked T3 for merges only on a
+  T3 PASS (#410): while its newest T3 report is FAIL or INCONCLUSIVE, or its newest T3 request has
+  no report yet, the automerge run reports that verdict (INCONCLUSIVE while waiting) and doesn't merge.
+  When a T3 then passes, the lane job that reported it runs the held automerge run itself, in the
+  same job (#421): a label the runner re-added with the workflow's token would start no new run.
 - PR code (builds and tests) runs without the GitHub token in its environment, and the checkout
   keeps no credentials, so only this script's own fetch and push can use the token.
 - Build folders stay warm between jobs. The checkout wipes the workspace, so the tree's .build (the
   app's DerivedData and verify-tests' output) and Packages/SessionKit/.build (SwiftPM) link to a cache
   outside it, keyed by the SessionKit source tree under test: a DerivedData reused after SessionKit
   changes gives false "does not conform" errors (AGENTS.md), so any SessionKit change starts a new
-  cache. At most WARM_KEEP caches, never below WARM_FREE_FLOOR of free disk; otherwise the job runs
-  cold. A warm rebuild measured 6 to 10 s against 90 s cold, per build.
+  cache. So does an Xcode project change. Each checkout (each runner) has its own caches, because
+  DerivedData and SwiftPM's state record absolute paths, and a cache whose SwiftPM state lists a
+  binary artifact that isn't on disk starts again cold (#405). At most WARM_KEEP caches per checkout,
+  never below WARM_FREE_FLOOR of free disk; otherwise the job runs cold. A warm rebuild measured 6 to
+  10 s against 90 s cold, per build.
 - Two runners (item 5). lane.yml's `lane` job answers /lane requests on the main runner (the only
   one that runs simulators); its `automerge` job runs on any runner labelled sm-lane-build. --mode
   keeps each job to its own work. On the build-only runner (SM_LANE_RUNNER_ROLE=build), an
@@ -54,6 +66,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -75,6 +88,10 @@ WARM_KEEP = 2
 BUILD_RUNNER_WAIT = 90 * 60
 BUILD_RUNNER_FREE_DISK = 20 * 10**9
 WARM_FREE_FLOOR = 15 * 10**9
+PROJECT_FILE = 'SpokenMarginsNative.xcodeproj/project.pbxproj'  # its layout names Xcode's VFS folders (#405)
+# How the T3 gate's hold reads in an automerge report, now and before #421 (PRs held by an older runner).
+HELD_FOR_T3 = ('not merged: held for T3', 'after a T3 PASS, push or remove and re-add automerge to merge')
+NOT_VERIFIED = 'journeys and anything a listener notices (T4), audible content (owner)'
 MERGE_CHECK = '**Merge check (triage desk)'  # the prefix scripts/merge_audit.py requires
 AUDITS = ('**Codex audit (Astra)', '## Codex audit')  # how an audit comment starts: the hourly task's, or an older manual one
 DESK_ONLY = ('.github/', 'scripts/lane')
@@ -98,6 +115,7 @@ MARKER = re.compile(r'<!-- lane-request: (\{.*?\}) -->')
 NOTE = '<!-- lane-note -->'
 REQUEST = re.compile(r'^\s*/lane\s+(T\d)\b', re.M)
 REPORT = re.compile(r'^Lane report \S+ — (PASS|FAIL|INCONCLUSIVE)', re.M)
+IDENTICAL = re.compile(r'^Lane: identical (T\d) request for (\w+) already reported \((PASS|FAIL)\)', re.M)
 
 
 # ---- Requests -----------------------------------------------------------------------------------
@@ -128,6 +146,20 @@ def is_runner_comment(body: str) -> bool:
     return bool(MARKER.search(body)) or NOTE in body
 
 
+def report_identity(body: str) -> dict | None:
+    match = MARKER.search(body)
+    try:
+        return json.loads(match.group(1)) if match else None
+    except ValueError:
+        return None
+
+
+def is_automerge_comment(body: str) -> bool:
+    """An automerge run's report or note: the lane job never ran the /lane request before it."""
+    return (report_identity(body) or {}).get('tier') == 'auto' or \
+        (NOTE in body and body.startswith('Lane: the automerge run'))
+
+
 def pending_requests(comments: list[dict]) -> tuple[dict | None, bool]:
     """The newest T2/T3 request the runner hasn't answered, and whether a T4/T5 request is waiting.
 
@@ -138,7 +170,8 @@ def pending_requests(comments: list[dict]) -> tuple[dict | None, bool]:
     for index, comment in enumerate(comments):
         body = comment.get('body') or ''
         if is_runner_comment(body):
-            runner_answered = index
+            if not is_automerge_comment(body):  # the automerge job answers no /lane request (#410)
+                runner_answered = index
             continue
         if REPORT.search(body):
             desk_answered = index
@@ -245,12 +278,17 @@ def first_errors(log: Path, limit: int = 5) -> list[str]:
     except OSError:
         return []
     lines = text.splitlines()
-    found = [line.strip() for line in lines if ' error: ' in line or line.startswith('error:') or 'errSec' in line]
+    found = [line.strip() for line in lines if ' error: ' in line or line.startswith('error:') or 'errSec' in line
+             or re.match(r'\w+(Error|Exception): ', line)]  # a Python traceback's last line
     if 'The following build commands failed:' in lines:
         for line in lines[lines.index('The following build commands failed:') + 1:]:
             if not line.strip():
                 break
             found.append('failed: ' + line.strip())
+    if not found:
+        # simctl says why in plain lines ("An error was encountered processing the command (domain=…,
+        # code=…):" then the reason), which match none of the above: #440's report said only "Process exit 148".
+        found = [line.strip()[:300] for line in lines if line.strip()][-2:]
     return list(dict.fromkeys(found))[:limit]
 
 
@@ -258,8 +296,10 @@ def run_t2(evidence: Path, runner=run_bounded) -> tuple[str, str, list[str]]:
     results, details = [], []
     for name, args in T2_BUILDS:
         log = evidence / f't2-{name}.log'
+        # Its own DerivedData per destination (#405): after a device build in the same folder, the next warm
+        # simulator build reused its cached build plan and never rewrote the missing all-product-headers.yaml.
         command = [str(ROOT / 'scripts/xcodebuild-lane'), '-project', 'SpokenMarginsNative.xcodeproj',
-                   '-scheme', 'SpokenMarginsApp', *args]
+                   '-scheme', 'SpokenMarginsApp', '-derivedDataPath', str(ROOT / f'.build/dd-{name}'), *args]
         with log.open('w') as handle:
             code = runner(command, handle, BUILD_TIMEOUT)
         if code == 0:
@@ -315,6 +355,19 @@ def diff_scope(tree: Path, base: str) -> dict:
     return policy.classify(paths, diffs, root=tree)
 
 
+def t3_scope(tree: Path, base: str, evidence: Path) -> tuple[list[str], list[str]]:
+    """test-scope.py's app test classes for the PR's diff, and a note if it couldn't say.
+
+    A broken policy doesn't stop the run: the requested tests still run, and the report says so.
+    """
+    try:
+        scope = diff_scope(tree, base)
+    except Exception as error:  # noqa: BLE001 - the report names it
+        return [], [f'test-scope.py could not classify the diff ({error!r}), so only the requested tests ran']
+    (evidence / 'scope.json').write_text(json.dumps(scope, indent=2))
+    return scope_classes(scope), []
+
+
 def hot_file_violations(tree: Path, base: str, labels) -> list[str]:
     """next's hot-file ratchet on the tree's HEAD (none until the ratchet is on next)."""
     ratchet = base_policy(tree, base, 'scripts/hot_file_ratchet.py')
@@ -361,7 +414,38 @@ def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2,
     return verdict, 'no simulator (compile only)', f'host tests (--plan fast): passed; {builds}', details + more
 
 
-def merge_blockers(scope: dict, comments: list[dict]) -> list[str]:
+AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
+CLEAN_AUDIT = re.compile(r'no (blocking )?findings\b', re.I)  # how the audit task's verdict line opens
+
+
+def audit_blocker(comments: list[dict], head: str) -> str | None:
+    """Why the Codex audits on the PR don't clear its head, or None when the newest audit of the head is clean.
+
+    #441: any audit comment used to clear the PR, whatever commit it covered or what it found. An audit
+    counts only if its heading names the head commit (the hourly task's says "on `<sha7>`"), and it clears
+    only if its verdict, the first line after the heading, opens "No blocking findings". Anything else
+    holds, so a new audit format fails closed.
+    """
+    audits = []
+    for comment in comments:
+        body = (comment.get('body') or '').lstrip()
+        if body.startswith(AUDITS):
+            heading, _, rest = body.partition('\n')
+            verdict = next((line.strip() for line in rest.splitlines() if line.strip()), '')
+            audits.append((AUDIT_SHA.findall(heading), verdict))
+    if not audits:
+        return 'has no "Codex audit (Astra)" comment yet'
+    on_head = [verdict for shas, verdict in audits if any(head.startswith(sha) for sha in shas)]
+    if not on_head:
+        audited = next((shas[0] for shas, _ in reversed(audits) if shas), None)
+        return (f'has no Codex audit of its head: the audit is on `{audited}`, the head is `{head[:7]}`' if audited
+                else f'has no Codex audit naming its head `{head[:7]}`')
+    if not CLEAN_AUDIT.match(on_head[-1]):
+        return f'the Codex audit on the head `{head[:7]}` has blocking findings (it doesn\'t say "No blocking findings")'
+    return None
+
+
+def merge_blockers(scope: dict, comments: list[dict], head: str) -> list[str]:
     """Why the runner won't merge this PR itself even on PASS; the desk merges those."""
     reasons = []
     desk = [f['path'] for f in scope['files'] if f['path'].startswith(DESK_ONLY)]
@@ -369,9 +453,60 @@ def merge_blockers(scope: dict, comments: list[dict]) -> list[str]:
         reasons.append(f'it changes the lane or its workflows ({", ".join(desk[:5])}), and a PR can change '
                        'what tests it')
     risky = sorted({AUDITED[f['category']] for f in scope['files'] if f['category'] in AUDITED})
-    if risky and not any((c.get('body') or '').lstrip().startswith(AUDITS) for c in comments):
-        reasons.append(f'it touches {" and ".join(risky)} and has no "Codex audit (Astra)" comment yet')
+    audit = audit_blocker(comments, head) if risky else None
+    if audit:
+        reasons.append(f'it touches {" and ".join(risky)}, and {audit}' if audit.startswith('the ')
+                       else f'it touches {" and ".join(risky)} and {audit}')
     return reasons
+
+
+def t3_gate(comments: list[dict]) -> tuple[str, str] | None:
+    """(verdict, why) when the PR's T3 request stands in the way of the runner's merge, else None.
+
+    #408 merged on host tests and builds while its T3 report, minutes older, said FAIL (build-for-testing
+    broke before any test ran), and its changed tests had run nowhere. A PR with no T3 request is not
+    held. With one, the newest T3 request must have a report, and the newest T3 report must be PASS.
+    A FAIL or INCONCLUSIVE on an earlier head still holds a later head until a newer T3 passes.
+    """
+    asked, latest = -1, None
+    for index, comment in enumerate(comments):
+        body = comment.get('body') or ''
+        url = comment.get('html_url') or 'an earlier comment'
+        wanted, verdict, identical = report_identity(body), REPORT.search(body), IDENTICAL.search(body)
+        if wanted and verdict:
+            if wanted.get('tier') == 'T3':
+                latest = index, verdict.group(1), wanted.get('commit', ''), url
+        elif identical and NOTE in body:
+            if identical.group(1) == 'T3':  # "already reported": the request is answered by that report
+                latest = index, identical.group(3), identical.group(2), url
+        elif not is_runner_comment(body) and not verdict:  # a Test Desk report is no request (pending_requests)
+            request = parse_request(body)
+            if request and request['tier'] == 'T3':
+                asked = index
+    if asked < 0:
+        return None
+    again = 'the lane job that reports a T3 PASS on this head runs the merge checks again itself'
+    if latest is None or latest[0] < asked:
+        return 'INCONCLUSIVE', f'held for T3: this PR\'s newest /lane T3 request has no lane report yet; {again}'
+    _, verdict, commit, url = latest
+    if verdict != 'PASS':
+        return verdict, (f'held for T3: the newest T3 lane report on this PR is {verdict} (on {commit[:7]}: {url}), '
+                         f'and a PR asked for T3 merges only on a T3 PASS. Fix it or ask for T3 again; {again}')
+    return None
+
+
+def held_for_t3(comments: list[dict], head: str) -> bool:
+    """Whether the newest automerge report is on this head and was held by the T3 gate.
+
+    An automerge report on an older head doesn't count: the push since started a new automerge run,
+    which reads the T3 reports itself before it merges.
+    """
+    for comment in reversed(comments):
+        body = comment.get('body') or ''
+        wanted = report_identity(body)
+        if wanted and wanted.get('tier') == 'auto' and REPORT.search(body):
+            return wanted.get('commit') == head and any(held in body for held in HELD_FOR_T3)
+    return False
 
 
 def build_merge_commit(tree: Path, base: str, head: str, pr: int, title: str) -> tuple[str | None, list[str]]:
@@ -436,6 +571,9 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
     """The automerge run: test the merge commit, and push it to <base> on PASS unless something blocks it."""
     notes: list[str] = []
     for attempt in range(1, attempts + 1):
+        # Each retry gets its own folder: verify-tests.py refuses an --output folder that exists (#404).
+        tried = evidence if attempt == 1 else evidence / f'attempt-{attempt}'
+        tried.mkdir(parents=True, exist_ok=True)
         merge_sha, conflicts = build_merge_commit(ROOT, base, head, pr, pull.get('title', ''))
         if conflicts:
             return 'INCONCLUSIVE', 'no simulator', 'nothing', notes + [
@@ -443,21 +581,26 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 f'Merge {base} into your branch and push; the automerge label runs it again.']
         warm = warm_build_folders(ROOT)
         scope = diff_scope(ROOT, base)
-        (evidence / 'scope.json').write_text(json.dumps(scope, indent=2))
+        (tried / 'scope.json').write_text(json.dumps(scope, indent=2))
         verdict, where, ran, details = run_automerge(
-            scope, evidence, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)))
+            scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)))
         details = [f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR); {warm}'] \
             + notes + details
         if verdict != 'PASS':
             return verdict, where, ran, details
-        blockers = merge_blockers(scope, comments)
+        latest = github.comments()  # read now: a T3 report or an audit may have landed while this ran
+        held = t3_gate(latest)
+        if held:
+            return held[0], where, ran, details + [f'not merged: {held[1]}.']
+        blockers = merge_blockers(scope, latest, head)
         if blockers:
             return verdict, where, ran, details + [f'not merged by the runner: {b}. The desk merges it.'
                                                    for b in blockers]
         now = github.pull()
-        if now['head']['sha'] != head or AUTOMERGE not in {label['name'] for label in now.get('labels', [])}:
-            return verdict, where, ran, details + ['not merged: the PR moved on or lost the automerge label while '
-                                                   'it was tested']
+        if now['head']['sha'] != head or AUTOMERGE not in {label['name'] for label in now.get('labels', [])} \
+                or now.get('state', 'open') != 'open':  # another run merged it meanwhile, or someone closed it
+            return verdict, where, ran, details + ['not merged: the PR moved on, lost the automerge label or was '
+                                                   'closed while it was tested']
         github.comment(merge_check(head, merge_sha, base, base_sha, ran))
         pushed, message = push_merge(ROOT, merge_sha, base)
         if pushed:
@@ -473,6 +616,48 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
         f'not merged: {base} kept moving ({attempts} attempts). Remove and re-add automerge to try again.']
 
 
+def clean_tree(tree: Path) -> None:
+    """Drop changes to tracked files a test run left, so checking out another commit can't refuse."""
+    subprocess.run(['git', '-C', str(tree), 'reset', '--hard', '--quiet'], check=True, capture_output=True)
+
+
+def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evidence: Path, base_sha: str,
+                   why: str) -> str | None:
+    """After a T3 PASS on <head>: the automerge run the T3 gate held, run here in the lane job (#421).
+
+    Only for a PR that is still open on <head> with the automerge label, whose newest automerge report
+    was held by the T3 gate, and that the gate no longer holds. It runs here rather than by re-adding the
+    label: a label change made with the workflow's GITHUB_TOKEN starts no workflow run. Returns the report
+    it posted, or None when nothing was held. The lane job's own check stays the T3 verdict.
+    The automerge job calls it too, after posting a held report: a T3 PASS that landed between its T3 read
+    and that post found no held report to release (#421).
+    """
+    pull = github.pull()
+    labels = {label['name'] for label in pull.get('labels', [])}
+    comments = github.comments()
+    if pull.get('state', 'open') != 'open' or pull['head']['sha'] != head or AUTOMERGE not in labels \
+            or not held_for_t3(comments, head) or t3_gate(comments):
+        return None
+    evidence.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    started_by = [f'{why}; the automerge run on {head[:7]} was held for T3']
+    try:
+        clean_tree(ROOT)  # the T3 ran in this tree; the merge commit checks out next over it
+        base_sha = fetch_base(ROOT, base)
+        verdict, where, ran, details = run_auto(github, pull, pr, base, head, base_sha, evidence, comments, labels)
+    except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
+        verdict, where, ran = 'INCONCLUSIVE', 'lane error', 'nothing'
+        details = [f'The lane itself failed: {error!r}. evidence: {evidence}. Remove and re-add automerge to '
+                   'run it again.']
+    body = report(request_id, verdict, head, base_sha, 'auto', where, time.monotonic() - started, ran,
+                  started_by + details, 'none', str(evidence), NOT_VERIFIED, identity('auto', head, base_sha, []),
+                  base_name=base)
+    (evidence / 'report.md').write_text(body)
+    print(body)
+    github.comment(body)
+    return body
+
+
 # ---- Warm build folders -------------------------------------------------------------------------
 
 def warm_root() -> Path:
@@ -486,25 +671,56 @@ def sessionkit_key(tree: Path) -> str | None:
     return found.stdout.strip()[:12] if found.returncode == 0 and found.stdout.strip() else None
 
 
+def project_key(tree: Path) -> str:
+    """The Xcode project file in the tree under test (its git blob hash), or 'none'."""
+    found = subprocess.run(['git', '-C', str(tree), 'rev-parse', f'HEAD:{PROJECT_FILE}'], capture_output=True, text=True)
+    return found.stdout.strip()[:8] if found.returncode == 0 and found.stdout.strip() else 'none'
+
+
+def checkout_folder(tree: Path) -> str:
+    """One folder of caches per checkout path: DerivedData and SwiftPM state record absolute paths (#405)."""
+    return 'checkout-' + hashlib.sha1(str(tree.resolve()).encode()).hexdigest()[:8]
+
+
+def missing_binary_artifacts(cache: Path) -> list[str]:
+    """Binary artifacts (onnxruntime.xcframework) that a cache's SwiftPM state lists but that aren't on disk."""
+    missing = []
+    for state in [cache / 'sessionkit/workspace-state.json', *cache.glob('root/dd*/SourcePackages/workspace-state.json')]:
+        try:
+            artifacts = json.loads(state.read_text()).get('object', {}).get('artifacts', [])
+        except (OSError, ValueError, AttributeError):
+            continue
+        for artifact in artifacts if isinstance(artifacts, list) else []:
+            path = artifact.get('path') if isinstance(artifact, dict) else None
+            if path and not (state.parent / path).exists():  # absolute paths ignore state.parent
+                missing.append(Path(path).name)
+    return missing
+
+
 _WARM_LOCKS: dict = {}
 
 
 def warm_build_folders(tree: Path, root: Path | None = None, free=lambda path: shutil.disk_usage(path).free) -> str:
     """Link the tree's build folders to the cache for its SessionKit tree; returns a line for the report."""
     import fcntl
-    root = root or warm_root()
-    key = sessionkit_key(tree)
-    if not key:
+    shared = root or warm_root()
+    sk = sessionkit_key(tree)
+    if not sk:
         return 'build folders: cold (no SessionKit tree to key a cache on)'
+    key = f'{sk}-{project_key(tree)}'
+    root = shared / checkout_folder(tree)
     root.mkdir(parents=True, exist_ok=True)
     wanted = root / f'sk-{key}'
+    for old in shared.glob('sk-*'):  # caches from before #405, shared by both runners
+        if old.is_dir() and not _cache_busy(old):
+            shutil.rmtree(old, ignore_errors=True)
     others = sorted((d for d in root.iterdir() if d.is_dir() and d.name.startswith('sk-') and d != wanted),
                     key=lambda d: d.stat().st_mtime, reverse=True)
     for old in others[WARM_KEEP - 1:]:
         if not _cache_busy(old):
             shutil.rmtree(old, ignore_errors=True)
     if free(root) < WARM_FREE_FLOOR:
-        for old in others:
+        for old in [d for d in shared.glob('checkout-*/sk-*') if d.is_dir() and d != wanted]:
             if not _cache_busy(old):
                 shutil.rmtree(old, ignore_errors=True)
         if free(root) < WARM_FREE_FLOOR:
@@ -512,17 +728,21 @@ def warm_build_folders(tree: Path, root: Path | None = None, free=lambda path: s
     was_warm = (wanted / 'root').is_dir()
     for name in ('root', 'sessionkit'):
         (wanted / name).mkdir(parents=True, exist_ok=True)
-    lock = open(wanted / '.lock', 'a+')
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        lock.close()
-        return f'build folders: cold (the SessionKit {key} cache is in use by another runner job)'
+    lock = _WARM_LOCKS.get(key)  # a later attempt, or the automerge run after a T3, holds it already
+    if lock is None:
+        lock = open(wanted / '.lock', 'a+')
+        try:  # flock belongs to the open file, so a second open in this process would see it as busy
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            lock.close()
+            return f'build folders: cold (the SessionKit {key} cache is in use by another runner job)'
     for held in _WARM_LOCKS.values():  # a new key in a later attempt: this job moves to the new cache
-        held.close()
+        if held is not lock:
+            held.close()
     _WARM_LOCKS.clear()
     _WARM_LOCKS[key] = lock  # held until this job's process exits
     os.utime(wanted)
+    shutil.rmtree(wanted / 'root/dd', ignore_errors=True)  # both T2 builds' shared DerivedData before #405's split
     for link, target in ((tree / '.build', wanted / 'root'), (tree / 'Packages/SessionKit/.build', wanted / 'sessionkit')):
         if link.is_symlink():
             link.unlink()
@@ -530,6 +750,12 @@ def warm_build_folders(tree: Path, root: Path | None = None, free=lambda path: s
             shutil.rmtree(link)
         link.parent.mkdir(parents=True, exist_ok=True)
         link.symlink_to(target, target_is_directory=True)
+    missing = missing_binary_artifacts(wanted)  # read through the links: the state records the tree's paths
+    if missing:  # SwiftPM won't fetch an artifact its state says it has, so the build fails on it (#405)
+        for name in ('root', 'sessionkit'):
+            shutil.rmtree(wanted / name, ignore_errors=True)
+            (wanted / name).mkdir(exist_ok=True)
+        return f'build folders: cold, cache reset ({", ".join(sorted(set(missing)))} was missing) (SessionKit {key})'
     return f'build folders: {"warm" if was_warm else "cold, new cache"} (SessionKit {key})'
 
 
@@ -579,16 +805,49 @@ def wait_for_room_to_build(out=sys.stdout, max_wait: float = BUILD_RUNNER_WAIT, 
 
 # ---- T3 -----------------------------------------------------------------------------------------
 
+def full_selector(selector: str) -> str:
+    return selector if selector.startswith(APP_TEST_TARGET + '/') else f'{APP_TEST_TARGET}/{selector}'
+
+
+def scope_classes(scope: dict) -> list[str]:
+    """The app test classes test-scope.py suggests for the diff."""
+    if 'app_tests' in scope:
+        return list(scope['app_tests'])
+    # A test-scope.py from before #351 names them only in its suggested lane request.
+    return re.findall(rf'{APP_TEST_TARGET}/(\w+)', scope.get('lane_request') or '')
+
+
+def with_scope_classes(requested: list[str], classes: list[str]) -> tuple[list[str], list[str]]:
+    """The requested selectors plus the diff's test classes, and which classes that added.
+
+    #220 merged while a test in the class its diff touched failed on every head: each request named a
+    few methods, and the runner ran only those. A requested method inside an added class is dropped,
+    since the class runs it anyway.
+    """
+    named = {full_selector(s) for s in requested}
+    added = [c for c in dict.fromkeys(classes) if full_selector(c) not in named]
+    covered = tuple(full_selector(c) + '/' for c in added)
+    return [s for s in requested if not full_selector(s).startswith(covered)] + added, added
+
+
+def count_tests(selector: str, plans: dict[str, set]) -> int:
+    full = full_selector(selector)
+    return len({t for tests in plans.values() for t in tests if t == full or t.startswith(full + '/')})
+
+
 def plan_for_tests(selectors: list[str], plans: dict[str, set]) -> tuple[dict[str, list[str]], list[str]]:
-    """Group selectors by the plan holding them; selectors no plan holds are returned separately."""
+    """Group selectors by the plans holding them; selectors no plan holds are returned separately.
+
+    A class split across plans (SupertonicSpeechTests: one method runs only in AudioAdapters) goes to
+    each plan that runs part of it, or the rest of it would silently not run.
+    """
     grouped, unknown = {}, []
     for selector in selectors:
-        full = selector if selector.startswith(APP_TEST_TARGET + '/') else f'{APP_TEST_TARGET}/{selector}'
-        plan = next((p for p, tests in plans.items()
-                     if any(t == full or t.startswith(full + '/') for t in tests)), None)
-        if plan:
+        full = full_selector(selector)
+        holding = [p for p, tests in plans.items() if any(t == full or t.startswith(full + '/') for t in tests)]
+        for plan in holding:
             grouped.setdefault(plan, []).append(full)
-        else:
+        if not holding:
             unknown.append(selector)
     return grouped, unknown
 
@@ -616,26 +875,49 @@ def summarize_manifest(manifest: dict) -> dict:
     return summary
 
 
+def failed_step_errors(manifest: dict, output: Path, limit: int = 3) -> list[str]:
+    """The first error lines from the log of the step that stopped verify-tests.py.
+
+    Its log stays on the Mac, so without these a report says only "Process exit 70" (#410).
+    """
+    for step in manifest.get('steps', []):
+        if step.get('exit_code') and not step.get('interrupted'):
+            return first_errors(output / f'{step.get("name")}.log', limit)
+    return []
+
+
 def t3_verdict(summaries: list[dict], statuses: list[str]) -> str:
     if statuses and all(status == 'verified' for status in statuses):
         return 'PASS'
-    if any(s['failed'] or s['build_failed'] for s in summaries):
+    # A plan that lost its simulator failed for the lane's reasons (#411: exit 70 when the device vanished).
+    if any((s['failed'] or s['build_failed']) and not s.get('device_lost') for s in summaries):
         return 'FAIL'
     return 'INCONCLUSIVE'
 
 
-def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[list, list, list, list]:
-    """Run each plan's selectors; stop at the first crash flood (AGENTS.md: don't reboot in a loop)."""
+READINESS_STEPS = ('simulator-boot', 'simulator-ready')
+
+
+def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
+              device_available=lambda: True) -> tuple[list, list, list, list]:
+    """Run each plan's selectors; stop at the first crash flood (AGENTS.md: don't reboot in a loop).
+
+    Also stop when a plan ends with the simulator not ready or gone: the next plan would only fail to find
+    it (#440: exit 148 at the readiness step, then "No matching supported simulator" for the adapters plan).
+    """
     summaries, statuses, ran, details = [], [], [], []
     plans = list(grouped.items())
     for position, (plan, selectors) in enumerate(plans):
         output = evidence / f'verify-{plan}'
+        started = time.monotonic()
         manifest = run_plan(plan, selectors, output)
+        took = time.monotonic() - started
         summary = summarize_manifest(manifest)
         summaries.append(summary)
         statuses.append(manifest.get('status', 'missing'))
         ran.append(f'{", ".join(s.split("/", 1)[1] for s in selectors)} ({summary["passed"]} passed'
-                   f'{", " + str(len(summary["failed"])) + " failed" if summary["failed"] else ""})')
+                   f'{", " + str(len(summary["failed"])) + " failed" if summary["failed"] else ""}'
+                   f'; {plan} plan, build and tests, {duration(took)})')
         for test in summary['failed'][:10]:
             details.append(f'{test} — expected: passes. observed: failed. evidence: {output}/tests.xcresult')
         if summary['out_of_time']:
@@ -646,12 +928,27 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path) -> tuple[
                            'The simulator\'s boot has a separate budget and had finished before it started.')
         if manifest.get('status') != 'verified' and not summary['failed']:
             details.append(f'{plan}: {manifest.get("error") or manifest.get("status")}. evidence: {output}/manifest.json')
+            details += [f'{plan}: {line}' for line in failed_step_errors(manifest, output)]
         if summary['flood']:
             skipped = [p for p, _ in plans[position + 1:]]
             if skipped:
                 details.append(f'Stopped after the crash flood; not run: {", ".join(skipped)}.')
                 statuses.append('not run')
             break
+        if manifest.get('status') != 'verified':
+            stopped_at = next((step.get('name') for step in manifest.get('steps', []) if step.get('exit_code')),
+                              None)  # a readiness step that ran out of time counts too
+            gone = not device_available()
+            if gone or stopped_at in READINESS_STEPS:
+                summary['device_lost'] = True
+                skipped = [p for p, _ in plans[position + 1:]]
+                why = ('the fresh simulator is gone (no longer listed by `simctl list devices available`)' if gone
+                       else f'the fresh simulator was not ready (verify-tests.py `{stopped_at}`)')
+                details.append(f'{plan}: {why}, so this is the lane\'s fault, not the PR\'s'
+                               + (f'; not run: {", ".join(skipped)}.' if skipped else '.'))
+                if skipped:
+                    statuses.append('not run')
+                break
     return summaries, statuses, ran, details
 
 
@@ -669,17 +966,39 @@ def first_boot(udid: str, log) -> tuple:
     return None, info
 
 
-def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str, str, list[str], str, str]:
-    """Returns verdict, where, ran, details, crashes, cc."""
+def run_t3(tests: list[str], request_id: str, evidence: Path,
+           classes: list[str] = ()) -> tuple[str, str, str, list[str], str, str]:
+    """Returns verdict, where, ran, details, crashes, cc.
+
+    Runs the requested selectors plus `classes`, test-scope.py's app test classes for the diff.
+    """
     from test_inventory import plan_tests
-    if not tests:
-        return ('INCONCLUSIVE', 'no simulator', 'nothing', ['The T3 request names no tests. Add `tests: Class/method, …` '
-                '(scripts/test-scope.py suggests them).'], 'none', '')
+    if not tests and not classes:
+        return ('INCONCLUSIVE', 'no simulator', 'nothing', ['The T3 request names no tests, and test-scope.py suggests '
+                'no app test classes for this diff. Add `tests: Class/method, …`.'], 'none', '')
     plans = {plan: plan_tests(ROOT, name) for plan, name in PLANS.items()}
-    grouped, unknown = plan_for_tests(tests, plans)
-    if unknown:
-        return ('FAIL', 'no simulator', 'nothing', [f'Not in any app test plan: {", ".join(unknown)}. A named test '
+    _, missing = plan_for_tests(tests, plans)  # checked before an added class can absorb a misspelled method
+    if missing:
+        return ('FAIL', 'no simulator', 'nothing', [f'Not in any app test plan: {", ".join(missing)}. A named test '
                 'that does not exist is a failure (verify-tests.py rule).'], 'none', '')
+    selectors, added = with_scope_classes(tests, list(classes))
+    grouped, unknown = plan_for_tests(selectors, plans)
+    scope = []
+    running = [c for c in added if c not in unknown]
+    if running:
+        count = sum(count_tests(c, plans) for c in running)
+        scope.append(f'test-scope added for this diff: {", ".join(f"{c} ({count_tests(c, plans)})" for c in running)}; '
+                     f'{count} test{"s" if count != 1 else ""} beyond the request')
+    if len(running) < len(added):
+        scope.append(f'test-scope suggested, but no app test plan runs: {", ".join(c for c in added if c in unknown)}')
+    if not grouped:
+        return 'INCONCLUSIVE', 'no simulator', 'nothing', scope + ['Nothing to run.'], 'none', ''
+    verdict, where, ran, details, crashes, cc = _run_t3_grouped(grouped, request_id, evidence)
+    return verdict, where, ran, scope + details, crashes, cc
+
+
+def _run_t3_grouped(grouped, request_id, evidence):
+    """Take the simulator slot and run the grouped selectors on a fresh device."""
     import lane_sim
     runtime = lane_sim.newest_runtime()
     if not runtime:
@@ -699,6 +1018,14 @@ def run_t3(tests: list[str], request_id: str, evidence: Path) -> tuple[str, str,
 
 def _t3_on_fresh_device(grouped, request_id, evidence, runtime):
     """The T3 job proper; the caller holds the simulator slot throughout."""
+    claim = claim_runner_device(RUNNER_SIMULATOR_PREFIX + request_id)
+    try:
+        return _t3_on_claimed_device(grouped, request_id, evidence, runtime)
+    finally:
+        release_runner_device(claim)
+
+
+def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
     import lane_sim
     udid = lane_sim.create_temporary(RUNNER_SIMULATOR_PREFIX + request_id)
     where = f'fresh iPhone 17, {runtime.rsplit(".", 1)[-1].replace("iOS-", "iOS ").replace("-", ".")}'
@@ -730,7 +1057,8 @@ def _t3_on_fresh_device(grouped, request_id, evidence, runtime):
             return 'INCONCLUSIVE', where, 'nothing', details, 'watched during boot', ''
         lane_sim.start_watcher(udid, ROOT / 'scripts/lane-sim-boot',  # stops the device at a SpringBoard crash
                                crash_window=boot_info.get('boot_window'))
-        summaries, statuses, ran, details = run_plans(grouped, run_plan, evidence)
+        summaries, statuses, ran, details = run_plans(grouped, run_plan, evidence,
+                                                      lambda: lane_sim.is_available(udid))
         details.insert(0, f'first boot of the fresh simulator took {duration(boot_seconds)} (memory pressure at boot: '
                           f'{boot_info.get("pressure", "unknown")}, after waiting {boot_info.get("pressure_waited", 0)}s; '
                           f'{boot_info.get("period", "one-simulator")} period)')
@@ -800,12 +1128,55 @@ class GitHub:
 
 # ---- Main ---------------------------------------------------------------------------------------
 
+def runner_device_claim(name: str) -> Path:
+    from lane_slots import state_dir
+    return state_dir() / ('runner-device-' + re.sub(r'[^A-Za-z0-9._-]+', '-', name) + '.lock')
+
+
+def claim_runner_device(name: str):
+    """Lock the name of the device a T3 job is about to create, until the job has deleted it (#440).
+
+    Both runners live on this Mac, and every lane job starts by sweeping leftover runner simulators. Without
+    the claim, a job starting on the other runner deleted a T3's device mid-run: exit 148 at the readiness
+    step (#440), or xcodebuild's "Unable to find a device" (exit 70, #411). The kernel drops the lock when
+    this process exits, however it exits, so a crashed job's device is still swept.
+    """
+    import fcntl
+    path = runner_device_claim(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open('a+')
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    return handle
+
+
+def release_runner_device(handle) -> None:
+    Path(handle.name).unlink(missing_ok=True)
+    handle.close()
+
+
+def runner_device_claimed(name: str) -> bool:
+    import fcntl
+    try:
+        handle = runner_device_claim(name).open()
+    except OSError:
+        return False
+    with handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+    return False
+
+
 def sweep_runner_simulators() -> None:
-    """Delete simulators a previous runner job left behind (only this one runner makes them)."""
+    """Delete simulators earlier runner jobs left behind; a running job's claimed device stays (#440)."""
     devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', '--json'], text=True))
     for group in devices.get('devices', {}).values():
         for device in group:
             if device.get('name', '').startswith(RUNNER_SIMULATOR_PREFIX):
+                if runner_device_claimed(device['name']):
+                    print(f'Left {device["name"]} alone: a running T3 job holds it')
+                    continue
                 subprocess.run(['xcrun', 'simctl', 'shutdown', device['udid']], capture_output=True, timeout=120)
                 subprocess.run(['xcrun', 'simctl', 'delete', device['udid']], capture_output=True, timeout=120)
                 print(f'Deleted leftover simulator {device["name"]}')
@@ -814,7 +1185,7 @@ def sweep_runner_simulators() -> None:
 def cleanup(github: GitHub, run_url: str, mode: str = 'any') -> int:
     """After a failed or cancelled job: remove leftovers, say so on the PR, and free the labels."""
     sweep_runner_simulators()
-    if mode == 'auto':  # the lane:* labels belong to /lane requests
+    if mode == 'auto':  # lane:queued and lane:running belong to /lane requests
         github.comment(f'Lane: the automerge run stopped before reporting ({run_url}). Push again, or remove and '
                        f're-add automerge, to run it again.\n{NOTE}')
         return 0
@@ -856,6 +1227,16 @@ def record_outcome(verdict: str) -> None:
     if outputs:
         with open(outputs, 'a') as handle:
             handle.write(f'reported=true\nverdict={verdict}\n')
+
+
+def request_name(pr: int, run_id: str, attempt: str | None) -> str:
+    """The report's name and evidence folder. A re-run of a job keeps its run id, and verify-tests.py
+    refuses an --output folder that exists (#404), so each attempt after the first gets its own."""
+    return f'pr{pr}-r{run_id}' + (f'-a{attempt}' if attempt and attempt != '1' else '')
+
+
+def tools_source() -> Path:
+    return Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Documents/GitHub/spoken-margins-native')
 
 
 def link_tools(source: Path) -> None:
@@ -900,7 +1281,7 @@ def main(argv=None) -> int:
         request = None
     if request is None and automerge and args.mode != 'explicit':
         request = {'tier': 'auto', 'tests': [], 'commit': ''}  # the automerge label is the request
-    explicit = request is not None and request['tier'] != 'auto'  # automerge runs leave lane:* labels alone
+    explicit = request is not None and request['tier'] != 'auto'  # automerge runs leave lane:queued/running alone
     if request is None:
         if not desk_waiting and QUEUED in labels and args.mode != 'auto':
             github.comment('Lane: lane:queued is set, but there is no `/lane T2` or `/lane T3` request comment newer '
@@ -914,6 +1295,25 @@ def main(argv=None) -> int:
     # An automerge run always runs: after an earlier PASS that didn't merge (no audit yet, next moved),
     # re-adding the label is how to try again.
     done_before = earlier_report(comments, wanted) if explicit else None
+    request_id = request_name(args.pr, args.run_id, os.environ.get('GITHUB_RUN_ATTEMPT'))
+    evidence = Path(os.environ.get('SM_LANE_EVIDENCE_DIR') or
+                    Path.home() / 'Library/Caches/SpokenMarginsLane/evidence') / request_id
+
+    def after_t3_pass(why: str) -> str | None:
+        """Release a held automerge run (#421), and return its report if it posted one. Never changes this
+        job's result, which is already reported."""
+        try:
+            link_tools(tools_source())  # the identical-request path returns before the job links them
+            return merge_after_t3(github, args.pr, args.base, head, f'{request_id}-auto',
+                                  evidence.parent / f'{request_id}-auto', base_sha, why)
+        except Exception as error:  # noqa: BLE001 - reported on the PR when GitHub can be reached
+            print(f'The automerge run after the T3 PASS stopped: {error!r}')
+            try:
+                github.comment(f'Lane: the automerge run after the T3 PASS stopped before reporting ({run_url}: '
+                               f'{error!r}). Remove and re-add automerge to run it again.\n{NOTE}')
+            except Exception:  # noqa: BLE001
+                pass
+
     if done_before:
         url, earlier_verdict = done_before
         github.comment(f'Lane: identical {request["tier"]} request for {head[:7]} already reported '
@@ -921,16 +1321,17 @@ def main(argv=None) -> int:
         if explicit and not desk_waiting:
             github.relabel(QUEUED, DONE)
         record_outcome(earlier_verdict)  # a repeated FAIL stays red
+        if request['tier'] == 'T3' and earlier_verdict == 'PASS':
+            after_t3_pass(f'started by the T3 PASS ({url}) in the same lane job')
         return 0
-    request_id = f'pr{args.pr}-r{args.run_id}'
-    evidence = Path(os.environ.get('SM_LANE_EVIDENCE_DIR') or
-                    Path.home() / 'Library/Caches/SpokenMarginsLane/evidence') / request_id
     evidence.mkdir(parents=True, exist_ok=True)
     (evidence / 'request.json').write_text(json.dumps(dict(request, head=head, base=args.base, base_sha=base_sha),
                                                       indent=2))
     if explicit and not desk_waiting:  # a waiting T4/T5 keeps lane:queued so the Test Desk still sees it
+        if DONE in labels:  # a running PR doesn't also say done
+            github.relabel(DONE, None)
         github.relabel(QUEUED, RUNNING)
-    link_tools(Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Documents/GitHub/spoken-margins-native'))
+    link_tools(tools_source())
     no_room = wait_for_room_to_build() \
         if request['tier'] == 'auto' and os.environ.get('SM_LANE_RUNNER_ROLE') == 'build' else None
     started = time.monotonic()
@@ -957,23 +1358,37 @@ def main(argv=None) -> int:
             where, crashes, details = 'no simulator (compile only)', 'none', [warm] + details
         else:
             warm = warm_build_folders(ROOT)
-            verdict, where, ran, details, crashes, cc = run_t3(request['tests'], request_id, evidence)
-            details = [warm] + details
+            classes, problem = t3_scope(ROOT, args.base, evidence)
+            verdict, where, ran, details, crashes, cc = run_t3(request['tests'], request_id, evidence, classes)
+            details = [warm] + problem + details
     except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
         verdict, where, ran, crashes = 'INCONCLUSIVE', 'lane error', 'nothing', 'unknown'
         details = [f'The lane itself failed: {error!r}. evidence: {evidence}']
     body = report(request_id, verdict, head, base_sha, request['tier'], where, time.monotonic() - started,
                   ran, moved + details, crashes, str(evidence),
-                  'journeys and anything a listener notices (T4), audible content (owner)', wanted, cc, args.base)
+                  NOT_VERIFIED, wanted, cc, args.base)
     (evidence / 'report.md').write_text(body)
     print(body)
-    github.comment(body)  # if this fails, the job fails and the tidy step says so on the PR
+    t3_url = github.comment(body)  # if this fails, the job fails and the tidy step says so on the PR
     record_outcome(verdict)
     _, desk_waiting = pending_requests(github.comments())
     if explicit:
-        github.relabel(RUNNING, QUEUED if desk_waiting else DONE)
+        github.relabel(RUNNING, QUEUED if desk_waiting else None)
+    released = None
+    if explicit and request['tier'] == 'T3' and verdict == 'PASS':
+        released = after_t3_pass(f'started by the T3 PASS ({t3_url}) in the same lane job')
+    elif request['tier'] == 'auto' and verdict != 'PASS':  # a T3 PASS may have landed before this held report
+        released = after_t3_pass('started again in the same automerge job, because a T3 PASS landed while it '
+                                 'was held')
+    last = details + (released or '').splitlines()  # the job's last report: a released automerge run's, if any
+    if not any(line.startswith(f'merged into {args.base} as ') for line in last) \
+            and not (explicit and desk_waiting):  # a merged PR closes: nothing to pick up
+        # Remove, then add: adding a label the PR already has is no `labeled` event, and the Hourly dispatch
+        # wakes on lane:done's. The lane and automerge jobs run side by side, so the other may have added it.
+        github.relabel(DONE, DONE)
     if not (ROOT / '.build').is_symlink():  # a cold job (disk floor, busy cache) built in the workspace
-        shutil.rmtree(ROOT / '.build/dd', ignore_errors=True)
+        for derived in (ROOT / '.build').glob('dd*'):
+            shutil.rmtree(derived, ignore_errors=True)
         shutil.rmtree(ROOT / '.build/verification', ignore_errors=True)
     return 0
 
