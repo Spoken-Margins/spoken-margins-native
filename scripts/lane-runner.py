@@ -35,6 +35,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   those pass or fail as usual, and a person merges them. A PR someone asked T3 for merges only on a
   T3 PASS (#410): while its newest T3 report is FAIL or INCONCLUSIVE, or its newest T3 request has
   no report yet, the automerge run reports that verdict (INCONCLUSIVE while waiting) and doesn't merge.
+  When a T3 then passes, the lane job that reported it runs the held automerge run itself, in the
+  same job (#421): a label the runner re-added with the workflow's token would start no new run.
 - PR code (builds and tests) runs without the GitHub token in its environment, and the checkout
   keeps no credentials, so only this script's own fetch and push can use the token.
 - Build folders stay warm between jobs. The checkout wipes the workspace, so the tree's .build (the
@@ -83,6 +85,9 @@ BUILD_RUNNER_WAIT = 90 * 60
 BUILD_RUNNER_FREE_DISK = 20 * 10**9
 WARM_FREE_FLOOR = 15 * 10**9
 PROJECT_FILE = 'SpokenMarginsNative.xcodeproj/project.pbxproj'  # its layout names Xcode's VFS folders (#405)
+# How the T3 gate's hold reads in an automerge report, now and before #421 (PRs held by an older runner).
+HELD_FOR_T3 = ('not merged: held for T3', 'after a T3 PASS, push or remove and re-add automerge to merge')
+NOT_VERIFIED = 'journeys and anything a listener notices (T4), audible content (owner)'
 MERGE_CHECK = '**Merge check (triage desk)'  # the prefix scripts/merge_audit.py requires
 AUDITS = ('**Codex audit (Astra)', '## Codex audit')  # how an audit comment starts: the hourly task's, or an older manual one
 DESK_ONLY = ('.github/', 'scripts/lane')
@@ -476,14 +481,28 @@ def t3_gate(comments: list[dict]) -> tuple[str, str] | None:
                 asked = index
     if asked < 0:
         return None
-    again = 'after a T3 PASS, push or remove and re-add automerge to merge'
+    again = 'the lane job that reports a T3 PASS on this head runs the merge checks again itself'
     if latest is None or latest[0] < asked:
-        return 'INCONCLUSIVE', f'this PR\'s newest /lane T3 request has no lane report yet; {again}'
+        return 'INCONCLUSIVE', f'held for T3: this PR\'s newest /lane T3 request has no lane report yet; {again}'
     _, verdict, commit, url = latest
     if verdict != 'PASS':
-        return verdict, (f'the newest T3 lane report on this PR is {verdict} (on {commit[:7]}: {url}), and a PR '
-                         f'asked for T3 merges only on a T3 PASS. Fix it or ask for T3 again; {again}')
+        return verdict, (f'held for T3: the newest T3 lane report on this PR is {verdict} (on {commit[:7]}: {url}), '
+                         f'and a PR asked for T3 merges only on a T3 PASS. Fix it or ask for T3 again; {again}')
     return None
+
+
+def held_for_t3(comments: list[dict], head: str) -> bool:
+    """Whether the newest automerge report is on this head and was held by the T3 gate.
+
+    An automerge report on an older head doesn't count: the push since started a new automerge run,
+    which reads the T3 reports itself before it merges.
+    """
+    for comment in reversed(comments):
+        body = comment.get('body') or ''
+        wanted = report_identity(body)
+        if wanted and wanted.get('tier') == 'auto' and REPORT.search(body):
+            return wanted.get('commit') == head and any(held in body for held in HELD_FOR_T3)
+    return False
 
 
 def build_merge_commit(tree: Path, base: str, head: str, pr: int, title: str) -> tuple[str | None, list[str]]:
@@ -574,9 +593,10 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             return verdict, where, ran, details + [f'not merged by the runner: {b}. The desk merges it.'
                                                    for b in blockers]
         now = github.pull()
-        if now['head']['sha'] != head or AUTOMERGE not in {label['name'] for label in now.get('labels', [])}:
-            return verdict, where, ran, details + ['not merged: the PR moved on or lost the automerge label while '
-                                                   'it was tested']
+        if now['head']['sha'] != head or AUTOMERGE not in {label['name'] for label in now.get('labels', [])} \
+                or now.get('state', 'open') != 'open':  # another run merged it meanwhile, or someone closed it
+            return verdict, where, ran, details + ['not merged: the PR moved on, lost the automerge label or was '
+                                                   'closed while it was tested']
         github.comment(merge_check(head, merge_sha, base, base_sha, ran))
         pushed, message = push_merge(ROOT, merge_sha, base)
         if pushed:
@@ -590,6 +610,48 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
         base_sha = fetch_base(ROOT, base)
     return 'PASS', where, ran, details + notes[-1:] + [
         f'not merged: {base} kept moving ({attempts} attempts). Remove and re-add automerge to try again.']
+
+
+def clean_tree(tree: Path) -> None:
+    """Drop changes to tracked files a test run left, so checking out another commit can't refuse."""
+    subprocess.run(['git', '-C', str(tree), 'reset', '--hard', '--quiet'], check=True, capture_output=True)
+
+
+def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evidence: Path, base_sha: str,
+                   why: str) -> str | None:
+    """After a T3 PASS on <head>: the automerge run the T3 gate held, run here in the lane job (#421).
+
+    Only for a PR that is still open on <head> with the automerge label, whose newest automerge report
+    was held by the T3 gate, and that the gate no longer holds. It runs here rather than by re-adding the
+    label: a label change made with the workflow's GITHUB_TOKEN starts no workflow run. Returns the report
+    it posted, or None when nothing was held. The lane job's own check stays the T3 verdict.
+    The automerge job calls it too, after posting a held report: a T3 PASS that landed between its T3 read
+    and that post found no held report to release (#421).
+    """
+    pull = github.pull()
+    labels = {label['name'] for label in pull.get('labels', [])}
+    comments = github.comments()
+    if pull.get('state', 'open') != 'open' or pull['head']['sha'] != head or AUTOMERGE not in labels \
+            or not held_for_t3(comments, head) or t3_gate(comments):
+        return None
+    evidence.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    started_by = [f'{why}; the automerge run on {head[:7]} was held for T3']
+    try:
+        clean_tree(ROOT)  # the T3 ran in this tree; the merge commit checks out next over it
+        base_sha = fetch_base(ROOT, base)
+        verdict, where, ran, details = run_auto(github, pull, pr, base, head, base_sha, evidence, comments, labels)
+    except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
+        verdict, where, ran = 'INCONCLUSIVE', 'lane error', 'nothing'
+        details = [f'The lane itself failed: {error!r}. evidence: {evidence}. Remove and re-add automerge to '
+                   'run it again.']
+    body = report(request_id, verdict, head, base_sha, 'auto', where, time.monotonic() - started, ran,
+                  started_by + details, 'none', str(evidence), NOT_VERIFIED, identity('auto', head, base_sha, []),
+                  base_name=base)
+    (evidence / 'report.md').write_text(body)
+    print(body)
+    github.comment(body)
+    return body
 
 
 # ---- Warm build folders -------------------------------------------------------------------------
@@ -662,14 +724,17 @@ def warm_build_folders(tree: Path, root: Path | None = None, free=lambda path: s
     was_warm = (wanted / 'root').is_dir()
     for name in ('root', 'sessionkit'):
         (wanted / name).mkdir(parents=True, exist_ok=True)
-    lock = open(wanted / '.lock', 'a+')
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        lock.close()
-        return f'build folders: cold (the SessionKit {key} cache is in use by another runner job)'
+    lock = _WARM_LOCKS.get(key)  # a later attempt, or the automerge run after a T3, holds it already
+    if lock is None:
+        lock = open(wanted / '.lock', 'a+')
+        try:  # flock belongs to the open file, so a second open in this process would see it as busy
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            lock.close()
+            return f'build folders: cold (the SessionKit {key} cache is in use by another runner job)'
     for held in _WARM_LOCKS.values():  # a new key in a later attempt: this job moves to the new cache
-        held.close()
+        if held is not lock:
+            held.close()
     _WARM_LOCKS.clear()
     _WARM_LOCKS[key] = lock  # held until this job's process exits
     os.utime(wanted)
@@ -1166,6 +1231,10 @@ def request_name(pr: int, run_id: str, attempt: str | None) -> str:
     return f'pr{pr}-r{run_id}' + (f'-a{attempt}' if attempt and attempt != '1' else '')
 
 
+def tools_source() -> Path:
+    return Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Documents/GitHub/spoken-margins-native')
+
+
 def link_tools(source: Path) -> None:
     for name in ('.venv', 'node_modules'):
         if not (ROOT / name).exists() and (source / name).exists():
@@ -1222,6 +1291,24 @@ def main(argv=None) -> int:
     # An automerge run always runs: after an earlier PASS that didn't merge (no audit yet, next moved),
     # re-adding the label is how to try again.
     done_before = earlier_report(comments, wanted) if explicit else None
+    request_id = request_name(args.pr, args.run_id, os.environ.get('GITHUB_RUN_ATTEMPT'))
+    evidence = Path(os.environ.get('SM_LANE_EVIDENCE_DIR') or
+                    Path.home() / 'Library/Caches/SpokenMarginsLane/evidence') / request_id
+
+    def after_t3_pass(why: str) -> None:
+        """Release a held automerge run (#421). Never changes this job's result, which is already reported."""
+        try:
+            link_tools(tools_source())  # the identical-request path returns before the job links them
+            merge_after_t3(github, args.pr, args.base, head, f'{request_id}-auto',
+                           evidence.parent / f'{request_id}-auto', base_sha, why)
+        except Exception as error:  # noqa: BLE001 - reported on the PR when GitHub can be reached
+            print(f'The automerge run after the T3 PASS stopped: {error!r}')
+            try:
+                github.comment(f'Lane: the automerge run after the T3 PASS stopped before reporting ({run_url}: '
+                               f'{error!r}). Remove and re-add automerge to run it again.\n{NOTE}')
+            except Exception:  # noqa: BLE001
+                pass
+
     if done_before:
         url, earlier_verdict = done_before
         github.comment(f'Lane: identical {request["tier"]} request for {head[:7]} already reported '
@@ -1229,16 +1316,15 @@ def main(argv=None) -> int:
         if explicit and not desk_waiting:
             github.relabel(QUEUED, DONE)
         record_outcome(earlier_verdict)  # a repeated FAIL stays red
+        if request['tier'] == 'T3' and earlier_verdict == 'PASS':
+            after_t3_pass(f'started by the T3 PASS ({url}) in the same lane job')
         return 0
-    request_id = request_name(args.pr, args.run_id, os.environ.get('GITHUB_RUN_ATTEMPT'))
-    evidence = Path(os.environ.get('SM_LANE_EVIDENCE_DIR') or
-                    Path.home() / 'Library/Caches/SpokenMarginsLane/evidence') / request_id
     evidence.mkdir(parents=True, exist_ok=True)
     (evidence / 'request.json').write_text(json.dumps(dict(request, head=head, base=args.base, base_sha=base_sha),
                                                       indent=2))
     if explicit and not desk_waiting:  # a waiting T4/T5 keeps lane:queued so the Test Desk still sees it
         github.relabel(QUEUED, RUNNING)
-    link_tools(Path(os.environ.get('SM_LANE_TOOLS') or Path.home() / 'Documents/GitHub/spoken-margins-native'))
+    link_tools(tools_source())
     no_room = wait_for_room_to_build() \
         if request['tier'] == 'auto' and os.environ.get('SM_LANE_RUNNER_ROLE') == 'build' else None
     started = time.monotonic()
@@ -1273,14 +1359,18 @@ def main(argv=None) -> int:
         details = [f'The lane itself failed: {error!r}. evidence: {evidence}']
     body = report(request_id, verdict, head, base_sha, request['tier'], where, time.monotonic() - started,
                   ran, moved + details, crashes, str(evidence),
-                  'journeys and anything a listener notices (T4), audible content (owner)', wanted, cc, args.base)
+                  NOT_VERIFIED, wanted, cc, args.base)
     (evidence / 'report.md').write_text(body)
     print(body)
-    github.comment(body)  # if this fails, the job fails and the tidy step says so on the PR
+    t3_url = github.comment(body)  # if this fails, the job fails and the tidy step says so on the PR
     record_outcome(verdict)
     _, desk_waiting = pending_requests(github.comments())
     if explicit:
         github.relabel(RUNNING, QUEUED if desk_waiting else DONE)
+    if explicit and request['tier'] == 'T3' and verdict == 'PASS':
+        after_t3_pass(f'started by the T3 PASS ({t3_url}) in the same lane job')
+    elif request['tier'] == 'auto' and verdict != 'PASS':  # a T3 PASS may have landed before this held report
+        after_t3_pass('started again in the same automerge job, because a T3 PASS landed while it was held')
     if not (ROOT / '.build').is_symlink():  # a cold job (disk floor, busy cache) built in the workspace
         for derived in (ROOT / '.build').glob('dd*'):
             shutil.rmtree(derived, ignore_errors=True)
