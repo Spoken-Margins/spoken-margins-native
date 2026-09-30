@@ -241,6 +241,54 @@ public enum OPMLImportPlanner {
     }
 }
 
+/// What following the ticked feeds from an import did.
+public struct OPMLImportResult: Equatable, Sendable {
+    public struct Failure: Equatable, Sendable {
+        public var candidate: SourceCandidate
+        /// Shown on the feed's row, for example "The source did not return a supported feed."
+        public var reason: String
+    }
+
+    public var followed: [SourceCandidate] = []
+    public var failed: [Failure] = []
+    /// Ticked feeds not tried because the import was cancelled part way.
+    public var notTried: [SourceCandidate] = []
+}
+
+public enum OPMLImportRunner {
+    /// Follows the ticked feeds of `preview`, one at a time in file order, through `follow`
+    /// (the app's normal follow path). A feed that fails is recorded with its reason and the
+    /// rest still follow. Nothing else is touched: no Library item, download or preparation.
+    public static func follow(
+        _ preview: OPMLImportPreview,
+        selected: Set<String>,
+        isolation: isolated (any Actor)? = #isolation,
+        // Optional rather than defaulted closures: a closure default next to an isolated
+        // parameter crashes Swift 6.2's region checker in @MainActor callers.
+        describe: ((Error) -> String)? = nil,
+        progress: ((Int, Int) -> Void)? = nil,
+        using follow: (SourceCandidate) async throws -> Void
+    ) async -> OPMLImportResult {
+        let ticked = preview.toFollow.filter { selected.contains($0.id) }
+        var result = OPMLImportResult()
+        for (index, candidate) in ticked.enumerated() {
+            if Task.isCancelled {
+                result.notTried = Array(ticked[index...])
+                break
+            }
+            progress?(index, ticked.count)
+            do {
+                try await follow(candidate)
+                result.followed.append(candidate)
+            } catch {
+                result.failed.append(.init(candidate: candidate, reason: describe?(error) ?? error.localizedDescription))
+            }
+        }
+        progress?(ticked.count - result.notTried.count, ticked.count)
+        return result
+    }
+}
+
 public struct OPMLExport: Equatable, Sendable {
     public var data: Data
     public var exportedCount: Int

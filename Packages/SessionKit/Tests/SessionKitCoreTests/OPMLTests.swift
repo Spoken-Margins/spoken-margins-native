@@ -109,6 +109,53 @@ final class OPMLTests: XCTestCase {
         XCTAssertEqual(again.alreadyFollowed.count, 2)
     }
 
+    func testImportFollowsOnlyTickedFeedsInFileOrderAndKeepsGoingAfterAFailure() async throws {
+        let preview = OPMLImportPlanner.preview(try OPMLParser.parse(Self.fixture("pocket-casts")), existing: [])
+        XCTAssertEqual(preview.toFollow.map(\.title), ["The Daily", "Stuff You Should Know", "Science Vs", "Hidden Brain"])
+        struct Unreachable: Error {}
+        var attempts: [String] = []
+        var steps: [Int] = []
+        let result = await OPMLImportRunner.follow(
+            preview,
+            selected: Set(preview.toFollow.filter { $0.title != "Science Vs" }.map(\.id)),
+            describe: { _ in "The source did not return a supported feed." },
+            progress: { done, _ in steps.append(done) }
+        ) { candidate in
+            attempts.append(candidate.title)
+            if candidate.title == "Stuff You Should Know" { throw Unreachable() }
+        }
+        XCTAssertEqual(attempts, ["The Daily", "Stuff You Should Know", "Hidden Brain"], "one at a time, in file order, unticked skipped")
+        XCTAssertEqual(result.followed.map(\.title), ["The Daily", "Hidden Brain"])
+        XCTAssertEqual(result.failed.map(\.candidate.title), ["Stuff You Should Know"])
+        XCTAssertEqual(result.failed.first?.reason, "The source did not return a supported feed.")
+        XCTAssertTrue(result.notTried.isEmpty)
+        XCTAssertEqual(steps, [0, 1, 2, 3])
+    }
+
+    func testImportWithNothingTickedFollowsNothing() async throws {
+        let preview = OPMLImportPlanner.preview(try OPMLParser.parse(Self.fixture("castro")), existing: [])
+        var attempts = 0
+        let result = await OPMLImportRunner.follow(preview, selected: []) { _ in attempts += 1 }
+        XCTAssertEqual(attempts, 0)
+        XCTAssertEqual(result, OPMLImportResult())
+    }
+
+    func testCancelledImportStopsBeforeTheNextFeedAndListsWhatWasNotTried() async throws {
+        let preview = OPMLImportPlanner.preview(try OPMLParser.parse(Self.fixture("castro")), existing: [])
+        let task = Task { () -> (OPMLImportResult, [String]) in
+            var attempts: [String] = []
+            let result = await OPMLImportRunner.follow(preview, selected: Set(preview.toFollow.map(\.id))) { candidate in
+                attempts.append(candidate.title)
+                withUnsafeCurrentTask { $0?.cancel() }
+            }
+            return (result, attempts)
+        }
+        let (result, attempts) = await task.value
+        XCTAssertEqual(attempts, ["99% Invisible"])
+        XCTAssertEqual(result.followed.map(\.title), ["99% Invisible"])
+        XCTAssertEqual(result.notTried.map(\.title), ["Radiolab", "Darknet Diaries"])
+    }
+
     private static func subscription(_ title: String, _ url: String) -> FeedSubscription {
         let host = URLComponents(string: url)?.host ?? "unknown"
         return FeedSubscription(id: "subscription-\(title)", source: SourceIdentity(id: "source-\(title)", kind: .podcastFeed, canonicalURL: url, host: host, title: title))
