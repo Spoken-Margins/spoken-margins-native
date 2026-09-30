@@ -415,6 +415,7 @@ If transcription fails:
 - Preserve audio.
 - Mark transcription as failed.
 - Show "Audio saved. Transcript failed."
+- If the listener has Speech Recognition off, say so and how to turn it on instead. Declining is not a failure (#268).
 - Keep the interjection exportable.
 
 ## Timeline

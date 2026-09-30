@@ -2419,7 +2419,7 @@ struct InterjectionDetailView: View {
                         )
                     )
                     if current.transcriptionStatus != "complete" {
-                        LabeledContent("Transcript status", value: humanizedTurnStatus(current.transcriptionStatus))
+                        LabeledContent("Transcript status", value: TranscriptionFailureWording.marginStatus(transcriptionStatus: current.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff) ?? humanizedTurnStatus(current.transcriptionStatus))
                     }
                 }
                 Section("Transcript") {
@@ -2807,7 +2807,7 @@ private func interjectionPreview(_ interjection: Interjection) -> String {
        !transcript.isEmpty {
         return transcript
     }
-    return interjection.transcriptionStatus
+    return TranscriptionFailureWording.marginStatus(transcriptionStatus: interjection.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff) ?? interjection.transcriptionStatus
 }
 
 private func turnSequenceNumber(_ id: String) -> Int? {
