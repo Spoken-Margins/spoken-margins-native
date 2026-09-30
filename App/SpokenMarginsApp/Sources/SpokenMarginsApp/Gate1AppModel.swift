@@ -97,6 +97,8 @@ struct LibraryItemRow: Identifiable, Hashable {
     let addedAt: Date?
     let lastListenedAt: Date?
     let storageRecencyRank: Int
+    /// A PDF read through the structured-document reader (#359).
+    var usesNewReader = false
 
     var mediaSymbol: String {
         if hasNativeAudio { return "headphones" }
@@ -200,18 +202,6 @@ struct SourceLinkCandidateReviewState: Identifiable, Equatable {
     let startSession: Bool
 
     var id: String { request.id }
-}
-
-struct UserFeedbackEvent: Identifiable, Equatable {
-    enum Kind: Equatable {
-        case success
-        case warning
-        case error
-    }
-
-    let id = UUID()
-    let kind: Kind
-    let message: String
 }
 
 struct ItemDetailState {
@@ -528,11 +518,12 @@ struct LibraryReadSnapshot: Sendable {
     let manifests: [PreparedAudioManifest]
     let jobs: [AudioPreparationJob]
     let downloads: [PodcastDownloadRecord]
+    var structuredDocumentItemIds: Set<String> = []
 
     static func read(store: SQLiteSessionStore) throws -> Self {
         try Self(items: store.listItems(includeDeleted: true), sessions: store.loadSessions(),
                  manifests: store.loadPreparedAudioManifests(), jobs: store.loadAudioPreparationJobs(),
-                 downloads: store.loadPodcastDownloads())
+                 downloads: store.loadPodcastDownloads(), structuredDocumentItemIds: store.loadStructuredDocumentItemIds())
     }
 }
 
@@ -714,6 +705,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var statusMessage = "Ready."
     @Published var lastError: String?
     @Published private(set) var feedbackEvent: UserFeedbackEvent?
+    @Published private(set) var itemFailures = ItemFailureLog()
     @Published var exportPreview = ""
     @Published private(set) var exportFileURL: URL?
     @Published private(set) var exportShareCandidates: [Interjection] = []
@@ -2471,7 +2463,7 @@ final class Gate1AppModel: ObservableObject {
                     speechFallbackReason = .memoryWarning
                     let message = SpeechFallbackReason.memoryWarning.listenerExplanation
                     statusMessage = message
-                    feedbackEvent = UserFeedbackEvent(kind: .warning, message: message)
+                    presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
                 }
             } catch {
                 reportFailure(error, context: "Memory-pressure voice recovery failed")
@@ -3153,6 +3145,7 @@ final class Gate1AppModel: ObservableObject {
 
     @discardableResult
     private func importSourceLinkAsync(urlString: String, sourceSurface: String, startSession: Bool = true) async -> Bool {
+        withdrawRetryOffer("sourceLink")
         let shouldStartSession = startSession && !hasActiveSession
         guard sourceLinkResolver == nil else {
             return importSourceLink(urlString: urlString, sourceSurface: sourceSurface, startSession: shouldStartSession)
@@ -3180,7 +3173,10 @@ final class Gate1AppModel: ObservableObject {
             }
             return importResolvedSourceLink(request: request, result: result, startSession: shouldStartSession)
         } catch {
-            reportFailure(error, context: "Source link import failed")
+            reportFailure(error, context: "Source link import failed", retry: .init(key: "sourceLink") { [weak self] in
+                self?.sourceLinkURL = urlString
+                _ = self?.beginSourceLinkImportFromForm(startSession: startSession)
+            })
             return false
         }
     }
@@ -4655,7 +4651,7 @@ final class Gate1AppModel: ObservableObject {
                 try? self.store?.saveEpisodeMapPreparationJob(job)
                 self.episodeMapPreparationStatus = "Failed"
                 self.diagnostics["episodeMapPreparation:\(item.id)"] = "failed:\(error.localizedDescription)"
-                if item.id == self.activeItemId { self.reportFailure(error, context: "Episode map preparation failed") }
+                if item.id == self.activeItemId { self.reportFailure(error, context: "Episode map preparation failed", itemId: item.id) }
             }
         }
     }
@@ -5420,16 +5416,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func libraryContentType(for row: LibraryItemRow) -> LibraryContentTypeFilter {
-        if row.sourceReference?.lowercased().contains(".pdf") == true { return .pdf }
-        switch row.mediaType.lowercased() {
-        case "pdf": return .pdf
-        case "epub": return .epub
-        case "article", TargetType.browserOwnedMedia.rawValue: return .article
-        case "podcast", TargetType.transcriptBackedMedia.rawValue: return .podcast
-        case "audiobook": return .audiobook
-        default:
-            return row.sourceReferenceType == "url" ? .article : .text
-        }
+        LibraryRowWording.contentType(mediaType: row.mediaType, sourceReference: row.sourceReference, sourceReferenceType: row.sourceReferenceType)
     }
 
     private func compareDates(_ lhs: Date?, _ rhs: Date?) -> ComparisonResult {
@@ -5784,7 +5771,7 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
         } catch {
-            reportFailure(error, context: "Offline preparation failed")
+            reportFailure(error, context: "Offline preparation failed", itemId: id)
         }
     }
 
@@ -5864,6 +5851,11 @@ final class Gate1AppModel: ObservableObject {
         guard id == nil || feedbackEvent?.id == id else { return }
         feedbackEvent = nil
     }
+
+    func clearLastFailure(itemId: String) { itemFailures.clear(itemId: itemId) }
+
+    /// Trying an action again answers its Retry banner, so a stale one can't linger over the result.
+    private func withdrawRetryOffer(_ key: String) { if feedbackEvent?.retry?.key == key { feedbackEvent = nil } }
 
     func dismissLegacyLibraryResetNotice() {
         legacyLibraryResetNotice = nil
@@ -6615,6 +6607,7 @@ final class Gate1AppModel: ObservableObject {
     #endif
 
     func summarize() {
+        withdrawRetryOffer("summary")
         if !remoteProviderExperienceEnabled {
             guard localFoundationModelAvailable else {
                 diagnostics["summaryPreflight"] = "local_model_unavailable"
@@ -9119,7 +9112,7 @@ final class Gate1AppModel: ObservableObject {
                 self.diagnostics["onDeviceSpeechGeneration"] = "retry_current_target"
                 self.reportConfirmation("Retrying Supertonic at the current position.")
             } catch {
-                self.reportFailure(error, context: "Prepared audio retry failed")
+                self.reportFailure(error, context: "Prepared audio retry failed", itemId: itemId)
             }
         }
     }
@@ -10685,7 +10678,7 @@ final class Gate1AppModel: ObservableObject {
             reportSuccess("Preparing generated audio for \(item.title).")
             return true
         } catch {
-            reportFailure(error, context: "Prepare text playback failed")
+            reportFailure(error, context: "Prepare text playback failed", itemId: itemId)
             return true
         }
     }
@@ -10824,11 +10817,11 @@ final class Gate1AppModel: ObservableObject {
                           NarrationChunkPlanner.identity(ofArticle: sourceText) == articleIdentity else { return }
                     _ = try? await coordinator.begin(itemId: itemId, sourceText: sourceText, signature: signature, plan: plan, schedulesJob: false)
                 },
-                onPreparedChunk: { itemId, articleIdentity, plan, audioURL, durationMs in
+                onPreparedChunk: { itemId, articleIdentity, plan, audioURL, durationMs, engine in
                     guard let signature = try? await signatureTask.value,
                           let item = try? store.loadItem(id: itemId), let sourceText = item.text,
                           NarrationChunkPlanner.identity(ofArticle: sourceText) == articleIdentity else { return }
-                    try? await coordinator.commit(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText, audioURL: audioURL, durationMs: durationMs)
+                    try? await coordinator.commit(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText, audioURL: audioURL, durationMs: durationMs, engine: engine)
                 },
                 articleText: { itemId in try? store.loadItem(id: itemId).text },
                 preparedChunkLookup: { itemId, articleIdentity, plan in
@@ -10893,7 +10886,7 @@ final class Gate1AppModel: ObservableObject {
                         self.diagnostics["supertonicFallbackOffset"] = "\(offset)"
                         let message = fallbackReason.listenerExplanation
                         self.statusMessage = message
-                        self.feedbackEvent = UserFeedbackEvent(kind: .warning, message: message)
+                        self.presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
                     }
                 },
                 onRestore: { [weak self] itemId in
@@ -11173,7 +11166,7 @@ final class Gate1AppModel: ObservableObject {
                 mediaSourceType: item.media?.sourceType,
                 podcastDownloadState: podcastDownloadsByItemId[item.id]?.state
             )
-            return LibraryItemRow(
+            var row = LibraryItemRow(
                 id: item.id,
                 title: item.title,
                 status: libraryStatusLabel(for: item),
@@ -11196,6 +11189,8 @@ final class Gate1AppModel: ObservableObject {
                 lastListenedAt: sessions.compactMap { $0.updatedAt ?? $0.createdAt }.max(),
                 storageRecencyRank: storageRank
             )
+            row.usesNewReader = data.structuredDocumentItemIds.contains(item.id)
+            return row
         }
     }
 
@@ -11816,7 +11811,8 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["lastLocalSummaryErrorType"] = String(reflecting: type(of: error))
                 markProviderFailure(
                     String(describing: error),
-                    userMessage: "On-device summary failed: \(error.localizedDescription) Tap Retry Summary to try the model again."
+                    userMessage: "On-device summary failed: \(error.localizedDescription) Tap Retry Summary to try the model again.",
+                    retry: .init(key: "summary") { [weak self] in self?.summarize() }
                 )
             }
         }
@@ -12106,7 +12102,7 @@ final class Gate1AppModel: ObservableObject {
         """
     }
 
-    private func markProviderFailure(_ error: String, userMessage: String) {
+    private func markProviderFailure(_ error: String, userMessage: String, retry: UserFeedbackEvent.Retry? = nil) {
         do {
             if let engine {
                 snapshot = try engine.aiProviderFailed(error: error)
@@ -12117,7 +12113,7 @@ final class Gate1AppModel: ObservableObject {
         }
         providerProbeStatus = userMessage
         diagnostics["providerProbe"] = providerProbeStatus
-        reportFailure(userMessage)
+        reportFailure(userMessage, retry: retry)
     }
 
     private func latestInterjectionNeedingTranscription() -> Interjection? {
@@ -14836,7 +14832,7 @@ final class Gate1AppModel: ObservableObject {
     /// otherwise apparent from the current interface.
     private func reportConfirmation(_ message: String) {
         reportSuccess(message)
-        feedbackEvent = UserFeedbackEvent(kind: .success, message: message)
+        presentFeedback(UserFeedbackEvent(kind: .success, message: message))
     }
 
     /// Presents degraded-but-successful behavior without styling it as either a
@@ -14844,12 +14840,12 @@ final class Gate1AppModel: ObservableObject {
     private func reportWarning(_ message: String) {
         statusMessage = message
         lastError = nil
-        feedbackEvent = UserFeedbackEvent(kind: .warning, message: message)
+        presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
         diagnostics["lastStatus"] = message
         diagnostics["recentFailure"] = "none"
     }
 
-    private func reportFailure(_ error: Error, context: String? = nil) {
+    private func reportFailure(_ error: Error, context: String? = nil, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
         let message: String
         if let urlError = error as? URLError {
             message = Self.userFacingMessage(for: urlError)
@@ -14859,33 +14855,21 @@ final class Gate1AppModel: ObservableObject {
         } else {
             message = String(describing: error)
         }
-        reportFailure([context, message].compactMap { $0 }.joined(separator: ": "))
+        reportFailure([context, message].compactMap { $0 }.joined(separator: ": "), itemId: itemId, retry: retry)
     }
 
-    /// URLError's default description is a raw domain/code string, which is not useful to a listener.
-    nonisolated static func userFacingMessage(for urlError: URLError) -> String {
-        switch urlError.code {
-        case .timedOut:
-            return "The request timed out. Please try again."
-        case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed, .internationalRoamingOff:
-            return "You appear to be offline. Check your connection and try again."
-        case .badServerResponse, .fileDoesNotExist, .resourceUnavailable, .zeroByteResource:
-            return "The server couldn’t provide anything at that address. Check the link and try again."
-        case .badURL, .unsupportedURL, .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost:
-            return "That address couldn’t be reached. Check the link and try again."
-        case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate,
-             .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .clientCertificateRejected:
-            return "A secure connection to that site couldn’t be made."
-        default:
-            return "The network request failed. Please try again."
-        }
-    }
-
-    private func reportFailure(_ message: String) {
+    private func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
         statusMessage = "Error"
         lastError = message
-        feedbackEvent = UserFeedbackEvent(kind: .error, message: message)
+        presentFeedback(UserFeedbackEvent(kind: .error, message: message, retry: retry))
+        // The failure stays readable on its item: the one named, else the one on screen (#310).
+        itemFailures.record(message, itemId: itemId ?? (screen == .item ? selectedItem.id : screen == .playback ? snapshot.itemId ?? "" : ""))
         diagnostics["recentFailure"] = message
+    }
+
+    private func presentFeedback(_ event: UserFeedbackEvent) {
+        guard feedbackEvent?.mayBeReplaced(by: event) ?? true else { return }
+        feedbackEvent = event
     }
 
     private func refreshSelectedItem() {
@@ -15367,9 +15351,7 @@ final class Gate1AppModel: ObservableObject {
                 plan: plan,
                 maximumChunkCount: job.maximumChunkCount
             )
-            let completedIndexes = Set(
-                PreparedAudioCoordinator.matchingChunks(in: manifest, plan: plan, sourceText: sourceText).map(\.index)
-            )
+            let completedIndexes = PreparedAudioCoordinator.completedIndexes(manifest, plan: plan, sourceText: sourceText, retryingStandInsFor: job)
             let ledger = offlineStorageLedger ?? OfflineStorageLedger(repository: store, rootDirectory: support)
             offlineStorageLedger = ledger
             let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
@@ -15395,31 +15377,28 @@ final class Gate1AppModel: ObservableObject {
                 byteCount: 64 * 1_024 * 1_024
             )
             let renderer = try makeSupertonicRenderer()
-            renderer.setBackgroundInferencePacingEnabled(true)
-            defer { renderer.setBackgroundInferencePacingEnabled(false) }
-            let rendered: SupertonicNarrationResult
+            // Paced per render, not through the shared lifecycle flag (#377).
+            let pacedRenderer = BackgroundPreparationRenderer(base: renderer)
             do {
                 try Task.checkCancellation()
                 recordDeveloperDiagnostic("preparation.render.begin", ["item": DeveloperDiagnosticRecording.token(item.id), "chunk": String(next.index)])
-                rendered = try await supertonicOutputGuard(wrapping: renderer, systemVoice: speechVoiceIdentifier).render(
-                    text: next.text,
-                    voice: voice,
-                    language: "en",
-                    speed: 1,
-                    synthesisSteps: 8
-                )
-                try Task.checkCancellation()
-                guard !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else {
-                    throw CancellationError()
+                // The render is discarded once committed (copied), or on any failure.
+                try await supertonicOutputGuard(wrapping: pacedRenderer, systemVoice: speechVoiceIdentifier).render(
+                    text: next.text, voice: voice, language: "en", speed: 1, synthesisSteps: 8
+                ) { rendered in
+                    try Task.checkCancellation()
+                    guard !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else {
+                        throw CancellationError()
+                    }
+                    try await coordinator.commit(
+                        itemId: item.id,
+                        signature: signature,
+                        plan: next,
+                        sourceText: sourceText,
+                        audioURL: rendered.audioURL,
+                        durationMs: Int((rendered.duration * 1_000).rounded()), engine: rendered.engine
+                    )
                 }
-                try await coordinator.commit(
-                    itemId: item.id,
-                    signature: signature,
-                    plan: next,
-                    sourceText: sourceText,
-                    audioURL: rendered.audioURL,
-                    durationMs: Int((rendered.duration * 1_000).rounded())
-                )
             } catch {
                 try? await ledger.release(reservationId: reservation.id)
                 throw error
@@ -15444,7 +15423,7 @@ final class Gate1AppModel: ObservableObject {
             job = (try store.loadAudioPreparationJobs()).first(where: { $0.id == job.id }) ?? job
             recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count)])
             job.nextChunkIndex = updated.chunks.count
-            job.lastFailureCode = nil
+            job.lastFailureCode = PreparedAudioCoordinator.hasStandIns(updated) ? PreparedAudioCoordinator.standInRetried : nil
             if PreparedAudioCoordinator.matchingChunks(in: updated, plan: plan, sourceText: sourceText).count == plan.count {
                 try store.saveAudioPreparationJob(job)
                 try await finishBackgroundPreparedAudio(
@@ -15556,6 +15535,8 @@ final class Gate1AppModel: ObservableObject {
         coordinator: PreparedAudioCoordinator,
         support: URL
     ) async throws {
+        // A stand-in (iOS voice) chunk waits for a play to retry Supertonic; don't bake it in (#363).
+        guard !PreparedAudioCoordinator.hasStandIns(manifest) else { return }
         let chunks = try PreparedAudioCoordinator.assemblyChunks(
             plan: plan, manifest: manifest, sourceText: sourceText,
             preparedRoot: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)

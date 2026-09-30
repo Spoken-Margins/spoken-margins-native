@@ -22,6 +22,20 @@ protocol SupertonicRendering: Sendable {
 
 extension SupertonicNarrationRenderer: SupertonicRendering {}
 
+/// Background preparation's view of the shared renderer: every render is paced, whatever the
+/// app's state, without touching the pacing the listener's live narration gets (#377).
+struct BackgroundPreparationRenderer: SupertonicRendering {
+    let base: SupertonicNarrationRenderer
+
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        try await base.render(text: text, voice: voice, language: language, speed: speed, synthesisSteps: synthesisSteps, pacing: .always)
+    }
+
+    func discardGeneratedAudio(at url: URL) async {
+        await base.discardGeneratedAudio(at: url)
+    }
+}
+
 enum RenderedSpeechGenerationState: String, Equatable, Sendable {
     case inactive
     case rendering
@@ -157,7 +171,9 @@ final class RenderedSpeechDiskCache: @unchecked Sendable {
         speed: Float,
         synthesisSteps: Int
     ) -> URL {
-        let payload = "supertonic-v1\u{1f}\(voice.rawValue)\u{1f}\(language)\u{1f}\(speed)\u{1f}\(synthesisSteps)\u{1f}\(text)"
+        // v2: v1 entries can hold iOS-voice stand-ins cached as Supertonic before #311; they now
+        // miss once and age out under the cache limit (#363 audit).
+        let payload = "supertonic-v2\u{1f}\(voice.rawValue)\u{1f}\(language)\u{1f}\(speed)\u{1f}\(synthesisSteps)\u{1f}\(text)"
         let digest = SHA256.hash(data: Data(payload.utf8))
             .map { String(format: "%02x", $0) }
             .joined()
@@ -270,7 +286,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     // Prepared audio is matched by the article plan's identity (NarrationChunkPlanner, #312), not by
     // comparing texts: plans are in the article's own coordinates, never the spoken preface's.
     typealias PreparationPlanHandler = @Sendable (_ itemId: String, _ articleIdentity: String, _ plan: [PreparedChunkPlan]) async -> Void
-    typealias PreparedChunkHandler = @Sendable (_ itemId: String, _ articleIdentity: String, _ plan: PreparedChunkPlan, _ audioURL: URL, _ durationMs: Int) async -> Void
+    typealias PreparedChunkHandler = @Sendable (_ itemId: String, _ articleIdentity: String, _ plan: PreparedChunkPlan, _ audioURL: URL, _ durationMs: Int, _ engine: String) async -> Void
     typealias PreparedChunkLookup = @Sendable (_ itemId: String, _ articleIdentity: String, _ plan: PreparedChunkPlan) async -> PreparedChunkLookupResult?
     typealias InterruptionHandler = @Sendable (AudioPlaybackInterruptionEvent) -> Void
 
@@ -389,6 +405,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var generationPlan: [RenderRequest] = []
     private var generationRenderOrder: [RenderRequest] = []
     private var generationResults: [Int: SupertonicPreparedChunk] = [:]
+    /// Chunks the guard gave to the iOS voice. While any remain, the whole article isn't
+    /// assembled into the item's audio, so the next play can try Supertonic again (#363 audit).
+    private var standInOffsets: Set<Int> = []
     private var initialPlaybackOffset: Int?
     private var initialRequestedSpokenOffset: Int?
     private var failedRenderReasons: [Int: String] = [:]
@@ -551,6 +570,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     func play(targetId: String, from charOffset: Int) throws {
+        try play(targetId: targetId, from: charOffset, isSeek: false)
+    }
+
+    /// A listener's explicit move: it moves even within `livePositionTolerance` of the live
+    /// position, which only absorbs how far a repeated play or restart trails it (#346 audit).
+    func play(targetId: String, seekingTo charOffset: Int) throws {
+        try play(targetId: targetId, from: charOffset, isSeek: true)
+    }
+
+    private func play(targetId: String, from charOffset: Int, isSeek: Bool) throws {
         try activateAudioSession(forPlayback: false)
         restoreOnDeviceRenderingIfConditionCleared(targetId: targetId)
         let usesStoppedGeneration = lock.withLock {
@@ -572,7 +601,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         let spokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
         let before = resumeDiagnostics(targetId: targetId, spokenOffset: spokenOffset)
-        let action = resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset)
+        let action = resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset, isSeek: isSeek)
         reportResumeDecision(action, before: before)
         switch action {
         case .resumePlayer(let player):
@@ -872,6 +901,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
             generationResults.removeAll()
+            standInOffsets.removeAll()
             initialPlaybackOffset = nil
             initialRequestedSpokenOffset = nil
             failedRenderReasons.removeAll()
@@ -939,6 +969,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
             generationResults.removeAll()
+            standInOffsets.removeAll()
             failedRenderReasons.removeAll()
             initialPlaybackOffset = nil
             initialRequestedSpokenOffset = nil
@@ -990,7 +1021,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             // at the next chunk, not repeat the passage that just finished.
             currentStartOffset = nextOffset
             currentChunkLength = 0
-            let cached = renderedCache.removeValue(forKey: nextOffset)
+            let cached = cachedOrSavedChunk(containing: nextOffset)
             let finishedURL = activeAudioURL
             player?.replaceCurrentItem(with: nil)
             player = nil
@@ -1039,11 +1070,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             )
         } else {
             try? releaseBackgroundAudio()
-            lock.withLock { pendingAutoplayOffset = snapshot.0 }
+            let rendering = lock.withLock { () -> Bool in
+                pendingAutoplayOffset = snapshot.0
+                return inFlightOffsets.contains(snapshot.0)
+            }
             // A normal render gap is a wait for the selected Supertonic voice,
             // never a reason to change voices. The serial full-item generation
-            // pump will start this chunk as soon as it becomes available.
-            _ = request
+            // pump will start this chunk as soon as it becomes available. If it
+            // isn't rendering (a seek skipped past it, #346), render it now
+            // rather than wait for a render that will never come.
+            if !rendering { enqueueRender(request, shouldPlayWhenReady: false) }
         }
     }
 
@@ -1087,6 +1123,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
             generationResults.removeAll()
+            standInOffsets.removeAll()
             failedRenderReasons.removeAll()
             preparedAudioAssemblyStarted = false
             return (source, nextGeneration, Array(urls), renderControl)
@@ -1242,6 +1279,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 try Task.checkCancellation()
                 let result: SupertonicNarrationResult
                 var performedInference = false
+                var ownsResult = false
                 let articleChunk = self?.articleChunkPlan(for: request)
                 if let articleChunk,
                    let recovered = await self?.preparedChunkLookup?(request.targetId, articleChunk.identity, articleChunk.plan) {
@@ -1276,7 +1314,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         speed: 1.0,
                         synthesisSteps: 8
                     )
-                    if let cache = self?.diskCache,
+                    // Only Supertonic's own audio is cached under its key. An iOS-voice stand-in
+                    // isn't, so the next play renders Supertonic again and re-checks it (#311).
+                    if rendered.engine == SupertonicNarrationResult.supertonicEngine,
+                       let cache = self?.diskCache,
                        let retained = try? cache.store(
                             rendered,
                             text: request.text,
@@ -1292,9 +1333,15 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         result = retained
                     } else {
                         result = rendered
+                        ownsResult = true
                     }
                 }
-                try Task.checkCancellation()
+                if Task.isCancelled {
+                    // An uncached render (a stand-in, or no disk cache) belongs to nothing else: a
+                    // stop or seek during it must delete it, not leak it (#363 audit).
+                    if ownsResult { Task { await renderer.discardGeneratedAudio(at: result.audioURL) } }
+                    throw CancellationError()
+                }
                 guard !performedInference || self?.onDeviceRenderingAllowed() != false else {
                     Task { await renderer.discardGeneratedAudio(at: result.audioURL) }
                     await MainActor.run {
@@ -1355,6 +1402,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             guard generation == request.generation else { return (false, nil, nil, 0, 0, false) }
             inFlightOffsets.remove(request.startOffset)
             let cached = CachedAudio(url: result.audioURL, duration: result.duration, request: request)
+            if result.engine == SupertonicNarrationResult.supertonicEngine {
+                standInOffsets.remove(request.startOffset)
+            } else {
+                standInOffsets.insert(request.startOffset)
+            }
             generationResults[request.startOffset] = SupertonicPreparedChunk(
                 startOffset: request.startOffset,
                 sourceLength: request.sourceLength,
@@ -1413,7 +1465,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 articleChunk.identity,
                 articleChunk.plan,
                 result.audioURL,
-                Int((result.duration * 1_000).rounded())
+                Int((result.duration * 1_000).rounded()),
+                result.engine
             )
         }
         guard lock.withLock({ generation == request.generation }) else { return }
@@ -1507,6 +1560,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 generationPlan.removeAll()
                 generationRenderOrder.removeAll()
                 generationResults.removeAll()
+                standInOffsets.removeAll()
                 failedRenderReasons.removeAll()
                 initialPlaybackOffset = nil
                 initialRequestedSpokenOffset = nil
@@ -1803,7 +1857,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             )
         }
         guard let snapshot else { return }
-        guard let preparedAudioDirectory, let onPreparedAudio else {
+        // Every chunk is ready, but one is a stand-in: report it, without an assembled file (#363).
+        guard let preparedAudioDirectory, let onPreparedAudio, lock.withLock({ standInOffsets.isEmpty }) else {
             reportGenerationState(.ready)
             return
         }
@@ -1873,9 +1928,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    private func resumeAction(targetId: String, fromSpokenOffset spokenOffset: Int) -> ResumeAction {
+    private func resumeAction(targetId: String, fromSpokenOffset spokenOffset: Int, isSeek: Bool) -> ResumeAction {
         lock.withLock {
-            guard transportIntent == .paused,
+            // A play on narration that's already playing (a rate change restarts from the synced
+            // position; a second Lock Screen play) reuses the live audio like a resume does,
+            // rather than throwing it away and rendering again (#303).
+            let wasPlaying = transportIntent == .playing
+            guard transportIntent == .paused || wasPlaying,
                   currentTargetId == targetId,
                   activeSourceText == preparedSourceText else { return .none }
             let chunkEnd = currentStartOffset + max(0, currentChunkLength)
@@ -1886,19 +1945,31 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 let currentOffset = currentStartOffset + Int(
                     (Double(currentChunkLength) * max(0, min(1, playerTime(player) / max(activeAudioDuration, 0.001)))).rounded(.down)
                 )
-                if abs(currentOffset - spokenOffset) <= 1 {
+                // While playing, the requested position was sampled a moment ago and lags the live
+                // one by a few characters; that's the same place, not a seek.
+                // An explicit choice of this chunk: no other chunk may autoplay over it later.
+                pendingAutoplayOffset = nil
+                if abs(currentOffset - spokenOffset) <= (wasPlaying && !isSeek ? Self.livePositionTolerance : 1) {
+                    // The player's own clock is the position now, not an earlier request for
+                    // another chunk (#346 re-audit).
+                    initialRequestedSpokenOffset = nil
                     return .resumePlayer(player)
                 }
                 initialRequestedSpokenOffset = spokenOffset
                 let fraction = Double(spokenOffset - currentStartOffset) / Double(max(1, currentChunkLength))
                 return .seekPlayer(player, max(0, min(activeAudioDuration, activeAudioDuration * fraction)))
             }
-            if let cachedEntry = renderedCache.first(where: { entry in
-                spokenOffset >= entry.value.request.startOffset
-                    && spokenOffset < entry.value.request.startOffset + max(1, entry.value.request.sourceLength)
-            }), let cached = renderedCache.removeValue(forKey: cachedEntry.key) {
+            if wasPlaying, let player {
+                // Moving to another chunk: stop the live one first so two never play at once.
+                player.pause()
+                player.replaceCurrentItem(with: nil)
+                self.player = nil
+            }
+            if let cached = cachedOrSavedChunk(containing: spokenOffset) {
                 transportIntent = .playing
                 pendingStartTargetId = targetId
+                // The listener chose this chunk; a marker left for another must not play over it.
+                pendingAutoplayOffset = nil
                 initialPlaybackOffset = cached.request.startOffset
                 initialRequestedSpokenOffset = spokenOffset
                 return .playCached(cached)
@@ -1999,6 +2070,29 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         onResumeDecision(fields)
     }
+
+    /// The chunk covering `spokenOffset`: from the rendered cache (taking it out, as before), or
+    /// else this generation's saved result for it. Playing a cached chunk removes it from the
+    /// cache, so after a seek ahead and back, a chunk already played is found here (#346).
+    /// Call with the lock held.
+    private func cachedOrSavedChunk(containing spokenOffset: Int) -> CachedAudio? {
+        if let entry = renderedCache.first(where: { entry in
+            spokenOffset >= entry.value.request.startOffset
+                && spokenOffset < entry.value.request.startOffset + max(1, entry.value.request.sourceLength)
+        }), let cached = renderedCache.removeValue(forKey: entry.key) {
+            return cached
+        }
+        guard let planned = generationPlan.first(where: {
+            spokenOffset >= $0.startOffset && spokenOffset < $0.startOffset + max(1, $0.sourceLength)
+        }), let saved = generationResults[planned.startOffset],
+              FileManager.default.fileExists(atPath: saved.audioURL.path) else { return nil }
+        let file = try? AVAudioFile(forReading: saved.audioURL)
+        let duration = file.map { Double($0.length) / $0.processingFormat.sampleRate } ?? 0
+        return CachedAudio(url: saved.audioURL, duration: duration, request: planned)
+    }
+
+    /// About two seconds of speech: how far a sampled position can trail the live one.
+    static let livePositionTolerance = 30
 
     private func playerTime(_ player: AVPlayer?) -> TimeInterval {
         guard let seconds = player?.currentTime().seconds, seconds.isFinite else { return 0 }

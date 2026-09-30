@@ -655,7 +655,7 @@ public final class SessionEngine {
             try persistSession(turnSession)
             protectPlaybackPosition(for: turnSession)
             if wasPlaying, turnSession.position.charOffset < text.count {
-                try playCurrentTarget(turnSession)
+                try playCurrentTarget(turnSession, seeking: true)
                 publishPlaybackContinuation(for: turnSession)
             } else {
                 try audio.pause()
@@ -684,7 +684,7 @@ public final class SessionEngine {
             try audio.stop()
             publish(status: .paused, phase: .itemPlayback)
         } else if snapshot.status.isPlaybackActive {
-            try playCurrentTarget(session)
+            try playCurrentTarget(session, seeking: true)
             publishPlaybackContinuation(for: session)
         } else {
             publish(status: snapshot.status, phase: session.phase)
@@ -1019,7 +1019,7 @@ public final class SessionEngine {
         try persistSession(session)
         protectPlaybackPosition(for: session)
         if snapshot.status.isPlaybackActive, session.position.charOffset < text.count {
-            try playCurrentTarget(session)
+            try playCurrentTarget(session, seeking: true)
             publishPlaybackContinuation(for: session)
             return snapshot
         } else if session.position.charOffset >= text.count {
@@ -1061,7 +1061,7 @@ public final class SessionEngine {
         try persistSession(session)
         protectPlaybackPosition(for: session)
         if snapshot.status.isPlaybackActive {
-            try playCurrentTarget(session)
+            try playCurrentTarget(session, seeking: true)
             publishPlaybackContinuation(for: session)
             return snapshot
         }
@@ -1085,7 +1085,7 @@ public final class SessionEngine {
         try persistSession(updated)
         protectPlaybackPosition(for: updated)
         if snapshot.status.isPlaybackActive, updated.position.charOffset < text.count {
-            try playCurrentTarget(updated)
+            try playCurrentTarget(updated, seeking: true)
             publishPlaybackContinuation(for: updated)
             return snapshot
         } else if updated.position.charOffset >= text.count {
@@ -1111,7 +1111,7 @@ public final class SessionEngine {
         try persistSession(updated)
         protectPlaybackPosition(for: updated)
         if snapshot.status.isPlaybackActive {
-            try playCurrentTarget(updated)
+            try playCurrentTarget(updated, seeking: true)
             publishPlaybackContinuation(for: updated)
             return snapshot
         }
@@ -1140,7 +1140,7 @@ public final class SessionEngine {
         currentSession = session
         try persistSession(session)
         protectPlaybackPosition(for: session)
-        try playCurrentTarget(session)
+        try playCurrentTarget(session, seeking: true)
         publishPlaybackStart(for: session, phase: session.phase)
         return snapshot
     }
@@ -1168,7 +1168,7 @@ public final class SessionEngine {
         currentSession = session
         try persistSession(session)
         protectPlaybackPosition(for: session)
-        try playCurrentTarget(session)
+        try playCurrentTarget(session, seeking: true)
         publishPlaybackStart(for: session, phase: .itemPlayback)
         return snapshot
     }
@@ -4237,7 +4237,10 @@ public final class SessionEngine {
         return 0
     }
 
-    private func playCurrentTarget(_ session: Session) throws {
+    /// `seeking`: the listener moved on purpose (a seek, skip, chapter jump or restart from the
+    /// beginning), so a playing client must move even when the new position is close to the live
+    /// one. A plain play, resume or rate change isn't a seek (#346).
+    private func playCurrentTarget(_ session: Session, seeking: Bool = false) throws {
         if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
             try audio.configureMediaContext(playbackMediaContext(for: session))
             try audio.play(targetId: session.currentTargetId, fromMediaTimeMs: session.position.mediaTimeMs ?? 0)
@@ -4247,7 +4250,11 @@ public final class SessionEngine {
         try audio.configureMediaContext(nil)
         let plan = try playbackPlan(for: session)
         lastSpokenText = try audio.prepareSpeechText(plan.text)
-        try audio.play(targetId: session.currentTargetId, from: plan.audioOffset)
+        if seeking {
+            try audio.play(targetId: session.currentTargetId, seekingTo: plan.audioOffset)
+        } else {
+            try audio.play(targetId: session.currentTargetId, from: plan.audioOffset)
+        }
         try audio.setPlaybackRate(session.playbackRate)
     }
 
@@ -4965,6 +4972,7 @@ public final class SessionEngine {
         }
         try repository.saveSession(stamped)
         if stamped.completionPercent > 98,
+           completionPercentIsMeasured(stamped),
            var item = try? repository.loadItem(id: stamped.itemId),
            item.sourceCompletedAt == nil {
             item.sourceCompletedAt = timestamp
@@ -4974,6 +4982,36 @@ public final class SessionEngine {
         if currentSession?.id == stamped.id {
             currentSession = stamped
         }
+    }
+
+    /// A media percent is only as good as the length it was divided by. It completes the
+    /// item only when this item's own length is known, or when the player reported
+    /// reaching the end (phase .finished). An unknown length once made any seek read as
+    /// 100%, and Build 29 episodes were marked completed on upgrade (#293, #352).
+    /// A summary or reply keeps the item's percent while it plays, so the rule follows
+    /// the item, not what is playing.
+    private func completionPercentIsMeasured(_ session: Session) -> Bool {
+        let item = item(for: session)
+        let mediaTargetId: String?
+        switch session.currentTargetType {
+        case .transcriptBackedMedia, .browserOwnedMedia:
+            mediaTargetId = session.currentTargetId
+        case .summaryTurnTTS, .assistantTurnTTS:
+            guard let item, playbackTargetType(for: item) != .itemTextTTS else { return true }
+            mediaTargetId = item.media?.url
+        case .itemTextTTS:
+            return true
+        }
+        guard session.phase != .finished, !isGeneratedTextMedia(item?.media) else {
+            return true
+        }
+        let playerDurationMs = audio.currentPlaybackPosition().flatMap {
+            $0.targetId == mediaTargetId ? $0.durationMs : nil
+        }
+        let packageDurationMs = currentWatchPackage.flatMap {
+            $0.itemId == session.itemId ? $0.primaryAudioAsset?.durationMs ?? $0.timeline.durationMs : nil
+        }
+        return [durableMediaDurationMs(for: session), packageDurationMs, playerDurationMs].contains { ($0 ?? 0) > 0 }
     }
 
     private func sentenceUnits(in text: String, includeTrailingFragment: Bool) -> [String] {
