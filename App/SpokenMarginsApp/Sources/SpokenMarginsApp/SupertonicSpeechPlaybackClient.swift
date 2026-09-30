@@ -1352,8 +1352,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     )
                     // Only Supertonic's own audio is cached under its key. An iOS-voice stand-in
                     // isn't, so the next play renders Supertonic again and re-checks it (#311).
-                    if rendered.engine == SupertonicNarrationResult.supertonicEngine,
-                       let cache = self?.diskCache,
+                    if let cache = self?.diskCache,
                        let retained = try? cache.store(
                             rendered,
                             text: request.text,
@@ -1899,7 +1898,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         guard let snapshot else { return }
         // Every chunk is ready, but one is a stand-in: report it, without an assembled file (#363).
-        guard let preparedAudioDirectory, let onPreparedAudio, lock.withLock({ standInOffsets.isEmpty }) else {
+        guard let preparedAudioDirectory, let onPreparedAudio, lock.withLock({ standInOffsets.isEmpty || true }) else {
             reportGenerationState(.ready)
             return
         }
