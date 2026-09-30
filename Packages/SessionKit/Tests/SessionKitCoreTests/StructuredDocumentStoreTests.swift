@@ -30,6 +30,26 @@ final class StructuredDocumentStoreTests: XCTestCase {
         XCTAssertNil(try reopened.loadStructuredDocument(itemId: item.id), "deleting the item removes its documents")
     }
 
+    /// #359: the Library marks new-reader PDFs from this list, one id per item
+    /// whatever the number of extraction versions, and none for plain items.
+    func testSQLiteListsTheItemsThatHaveAStructuredDocument() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let store = try SQLiteSessionStore(path: path)
+        let paper = Item(id: "item-paper", title: "Paper", mediaType: "pdf", text: "Body two.", externalReference: nil, status: "ready")
+        let oldPaper = Item(id: "item-paper-v1", title: "Paper", mediaType: "pdf", text: "Body.", externalReference: nil, status: "ready")
+        try store.saveItem(paper)
+        try store.saveItem(oldPaper)
+        XCTAssertEqual(try store.loadStructuredDocumentItemIds(), [])
+
+        try store.saveStructuredDocument(document(version: 2, text: "Body two."), itemId: paper.id)
+        try store.saveStructuredDocument(document(version: 3, text: "Body three."), itemId: paper.id)
+        XCTAssertEqual(try SQLiteSessionStore(path: path).loadStructuredDocumentItemIds(), ["item-paper"])
+
+        try store.deleteItem(id: paper.id)
+        XCTAssertEqual(try store.loadStructuredDocumentItemIds(), [])
+    }
+
     func testInMemoryStoreLoadsTheNewestVersion() throws {
         let repo = InMemorySessionRepository()
         try repo.saveStructuredDocument(document(version: 3, text: "Three."), itemId: "item-a")

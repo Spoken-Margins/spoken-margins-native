@@ -16,6 +16,77 @@ final class SupertonicNarrationTests: XCTestCase {
         XCTAssertEqual(10 / (10 + delay), 0.65, accuracy: 0.000_001)
     }
 
+    // #377: live narration and background preparation share one renderer. Preparation used to
+    // set the shared pacing flag for its render and clear it after, so a live chunk rendered in
+    // the foreground meanwhile was paced, and a pass ending in the background switched pacing
+    // off. Pacing is now per render: preparation always, live narration only in the background.
+    func testPreparationPacingNeitherPacesLiveNarrationNorClearsBackgroundPacing() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "supertonic-pacing-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let assets = SupertonicAssetLocation(rootURL: root)
+        try FileManager.default.createDirectory(at: assets.onnxDirectoryURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: assets.voiceStylesDirectoryURL, withIntermediateDirectories: true)
+        for file in [
+            "duration_predictor.onnx", "text_encoder.onnx", "vector_estimator.onnx",
+            "vocoder.onnx", "tts.json", "unicode_indexer.json"
+        ] {
+            _ = FileManager.default.createFile(atPath: assets.onnxDirectoryURL.appending(path: file).path, contents: Data())
+        }
+        for voice in SupertonicVoiceID.allCases {
+            _ = FileManager.default.createFile(atPath: assets.voiceStyleURL(for: voice).path, contents: Data())
+        }
+        let renderer = try SupertonicNarrationRenderer(assets: assets, outputDirectory: root.appending(path: "output"))
+
+        renderer.setBackgroundInferencePacingEnabled(false)
+        XCTAssertGreaterThan(renderer.pacingDelay(afterInferenceDuration: 10, for: .always), 0,
+                             "background preparation is paced in the foreground too")
+        XCTAssertEqual(renderer.pacingDelay(afterInferenceDuration: 10, for: .whenAppBackgrounded), 0,
+                       "foreground live narration isn't, even while preparation renders")
+
+        renderer.setBackgroundInferencePacingEnabled(true)
+        XCTAssertGreaterThan(renderer.pacingDelay(afterInferenceDuration: 10, for: .always), 0)
+        XCTAssertGreaterThan(renderer.pacingDelay(afterInferenceDuration: 10, for: .whenAppBackgrounded), 0,
+                             "live narration in the background stays paced after a preparation render")
+    }
+
+    // #379 audit: the test above checks the policy, not a render. Here real renders run through the
+    // renderer: live narration in the foreground is never held back while a preparation render is
+    // in flight, and a preparation render ending in the background leaves live narration paced.
+    func testRealRendersArePacedByWhoAskedNotBySharedState() async throws {
+        let repoAssets = SupertonicAssetLocation(rootURL: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "App/SpokenMarginsApp/Resources/Supertonic", directoryHint: .isDirectory))
+        guard (try? repoAssets.validate()) != nil else { throw XCTSkip("Supertonic assets not in this checkout") }
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "supertonic-real-pacing-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root)
+        func render(_ text: String, _ pacing: SupertonicRenderPacing) async throws {
+            let result = try await renderer.render(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 5, pacing: pacing)
+            await renderer.discardGeneratedAudio(at: result.audioURL)
+        }
+
+        renderer.setBackgroundInferencePacingEnabled(false)
+        async let preparation: Void = render("Background preparation renders this chunk.", .always)
+        try await render("The listener hears this sentence now.", .whenAppBackgrounded)
+        try await preparation
+        let foreground = renderer.debugPacingRecords
+        XCTAssertTrue(foreground.contains { $0.pacing == .always && $0.delay > 0 }, "preparation is paced: \(foreground)")
+        XCTAssertTrue(foreground.contains { $0.pacing == .whenAppBackgrounded }, "the live render ran: \(foreground)")
+        XCTAssertTrue(foreground.filter { $0.pacing == .whenAppBackgrounded }.allSatisfy { $0.delay == 0 },
+                      "live narration in the foreground is never held back: \(foreground)")
+
+        renderer.setBackgroundInferencePacingEnabled(true)
+        try await render("Background preparation finishes a chunk.", .always)
+        try await render("The listener keeps hearing narration.", .whenAppBackgrounded)
+        let background = renderer.debugPacingRecords.dropFirst(foreground.count)
+        let live = background.filter { $0.pacing == .whenAppBackgrounded }
+        XCTAssertFalse(live.isEmpty)
+        XCTAssertTrue(live.allSatisfy { $0.delay > 0 }, "live narration stays paced in the background: \(Array(background))")
+    }
+
     func testCanonicalVoiceIDsRoundTripWithoutDisplayNames() throws {
         XCTAssertEqual(SupertonicVoiceID.m2.rawValue, "M2")
         XCTAssertEqual(SupertonicVoiceID.f2.rawValue, "F2")

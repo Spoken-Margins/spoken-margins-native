@@ -2895,6 +2895,13 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
         try speech.play(targetId: targetId, from: charOffset)
     }
 
+    public func play(targetId: String, seekingTo charOffset: Int) throws {
+        activeRoute = .speech
+        media.setRemoteCommandHandlingEnabled(false)
+        try media.stop()
+        try speech.play(targetId: targetId, seekingTo: charOffset)
+    }
+
     public func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
         activeRoute = .media
         try speech.stop()
