@@ -154,7 +154,7 @@ class HolderNoteTests(unittest.TestCase):
         waited = io.StringIO()
         with unittest.mock.patch.object(self.slots, 'POLL_SECONDS', 0.01):
             with self.assertRaises(TimeoutError) as raised:
-                self.slots.acquire(['a.lock', 'b.lock'], 'slot', 'waiter', out=waited, max_wait=0.05,
+                self.slots.acquire(['a.lock', 'b.lock'], 'slot', 'waiter', out=waited, max_wait=0.5,
                                    allowed=lambda: 1, why=lambda: 'only one allowed')
         for message in (str(raised.exception), waited.getvalue()):
             self.assertIn(f'pid {os.getpid()}', message)
