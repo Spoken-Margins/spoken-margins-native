@@ -637,6 +637,20 @@ final class SupertonicSpeechTests: XCTestCase {
         return url
     }
 
+    /// The guard's stand-in is real iOS speech synthesis. After an 8.5-minute simulator boot, two
+    /// tests that allowed 8 and 10 s for the whole play failed, while the two guard tests that
+    /// simply await the render passed in the same run (#417): synthesis was slow, not wrong. Wait
+    /// for the guard's own report instead, for longer than the synthesizer's 30 s limit, and check
+    /// that it stood in, so a failure says which of the two happened. The client's own render wait
+    /// must outlast that too, or after 15 s it hands the play to its fallback and drops the stand-in.
+    private let standInRenderWaitLimit: Duration = .seconds(60)
+
+    private func awaitStandIn(_ reports: GuardReports) async throws {
+        await fulfillment(of: [reports.reported], timeout: 45)
+        let report = try XCTUnwrap(reports.values.first, "the guard never reported: the iOS voice took over 45 s")
+        XCTAssertTrue(report.contains("last system_voice:"), "the iOS voice stood in; the guard reported \"\(report)\"")
+    }
+
     // #311: the guard's iOS-voice file is deleted when the player discards it.
     func testGuardDeletesItsStandInFileOnDiscard() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "guard-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -662,14 +676,18 @@ final class SupertonicSpeechTests: XCTestCase {
         let text = "Table 3 reports 91.1% 8.9% 0.0 and 7,494 tool decisions across 2,548 summaries."
         let cache = try RenderedSpeechDiskCache(directory: root.appending(path: "cache"), limitBytes: 50_000_000)
         let started = expectation(description: "the stand-in plays")
+        let reports = GuardReports()
         let client = SupertonicSpeechPlaybackClient(
-            renderer: SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil),
+            renderer: SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20),
+                                            systemVoiceIdentifier: nil, onReplacement: { reports.add($0) }),
             voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             diskCache: cache, audioSessionActivator: {}, audioPlayerStarter: { _, _ in started.fulfill() },
-            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient()
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            renderWaitLimit: standInRenderWaitLimit
         )
         _ = try client.prepareSpeechText(text)
         try client.play(targetId: "item", from: 0)
+        try await awaitStandIn(reports)
         await fulfillment(of: [started], timeout: 10)
         XCTAssertNil(cache.cachedAudio(text: SpeechTextNormalizer.normalize(text), voice: .m2, language: "en", speed: 1, synthesisSteps: 8),
                      "the iOS-voice audio isn't cached as Supertonic's")
@@ -735,18 +753,21 @@ final class SupertonicSpeechTests: XCTestCase {
             assembled.isInverted = !expectsAssembly
             let ready = expectation(description: "generation reports ready (\(seconds) s)")
             ready.assertForOverFulfill = false
+            let reports = GuardReports()
             let client = SupertonicSpeechPlaybackClient(
                 renderer: SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: seconds),
-                                                systemVoiceIdentifier: nil),
+                                                systemVoiceIdentifier: nil, onReplacement: { reports.add($0) }),
                 voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
                 preparedAudioDirectory: root.appending(path: "assembled-\(Int(seconds))", directoryHint: .isDirectory),
                 audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
                 observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
                 onGenerationStateChange: { state, _ in if state == .ready { ready.fulfill() } },
-                onPreparedAudio: { _, _ in assembled.fulfill() }
+                onPreparedAudio: { _, _ in assembled.fulfill() },
+                renderWaitLimit: standInRenderWaitLimit
             )
             _ = try client.prepareSpeechText(text)
             try client.play(targetId: "item", from: 0)
+            if !expectsAssembly { try await awaitStandIn(reports) }
             // #363 audit: with a stand-in, generation must still end, not show "Generating" forever.
             await fulfillment(of: [ready], timeout: 8)
             await fulfillment(of: [assembled], timeout: expectsAssembly ? 8 : 1)
@@ -2829,6 +2850,20 @@ private final class PreparedChunkCommitGate: @unchecked Sendable {
     func commit() async {
         let index = lock.withLock { commits += 1; return commits }
         if index == 2 { for await _ in stream {} }
+    }
+}
+
+/// Collects `SupertonicOutputGuard`'s replacement reports and fulfills `reported` on the first.
+/// `reported` isn't registered with the test, so a test that expects no stand-in needn't wait on it.
+private final class GuardReports: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [String] = []
+    let reported = XCTestExpectation(description: "the guard reports a replacement")
+    var values: [String] { lock.withLock { entries } }
+    init() { reported.assertForOverFulfill = false }
+    func add(_ report: String) {
+        lock.withLock { entries.append(report) }
+        reported.fulfill()
     }
 }
 
