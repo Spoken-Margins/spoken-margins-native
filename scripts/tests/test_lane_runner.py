@@ -515,6 +515,12 @@ class LostDeviceTests(unittest.TestCase):
                             for line in details))
         self.assertEqual(lane.t3_verdict(summaries, statuses), 'INCONCLUSIVE')
 
+    def test_a_readiness_step_that_runs_out_of_time_also_stops_the_remaining_plans(self):
+        calls, run_plan = self.plans({'status': 'failed_or_incomplete', 'steps': [
+            {'name': 'simulator-ready', 'exit_code': 124, 'interrupted': True, 'timeout_seconds': 180}]})
+        summaries, statuses, _, _ = lane.run_plans({'app': ['T/A'], 'adapters': ['T/B']}, run_plan, Path('/e'))
+        self.assertEqual((calls, lane.t3_verdict(summaries, statuses)), (['app'], 'INCONCLUSIVE'))
+
     def test_a_device_gone_mid_build_is_the_lane_s_fault_not_a_build_failure(self):
         calls, run_plan = self.plans({'status': 'failed_or_incomplete', 'error': 'Process exit 70',
                                       'steps': [{'name': 'build-for-testing', 'exit_code': 70, 'errors': ['Process exit 70']}]})

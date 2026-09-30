@@ -833,8 +833,8 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
                 statuses.append('not run')
             break
         if manifest.get('status') != 'verified':
-            stopped_at = next((step.get('name') for step in manifest.get('steps', [])
-                               if step.get('exit_code') and not step.get('interrupted')), None)
+            stopped_at = next((step.get('name') for step in manifest.get('steps', []) if step.get('exit_code')),
+                              None)  # a readiness step that ran out of time counts too
             gone = not device_available()
             if gone or stopped_at in READINESS_STEPS:
                 summary['device_lost'] = True
