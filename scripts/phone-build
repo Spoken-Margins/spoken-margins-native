@@ -56,7 +56,7 @@ import lane_slots  # noqa: E402
 
 REPO = 'uncomposed/spoken-margins-native'
 BRANCH = 'next'
-STATUS_ISSUE = 337
+REPORTS_ISSUE = 184      # where the integration run and the Test Desk post their lane reports
 DISK_FLOOR_GB = 10
 DISK_PER_BUILD_GB = 4
 PLAN_CHECKS = 8          # about a minute each, plus the install: roughly ten minutes
@@ -309,13 +309,40 @@ def labels(item: dict) -> set[str]:
     return {node['name'] for node in item.get('labels', {}).get('nodes', [])}
 
 
-def latest_verdict(sha: str) -> str | None:
-    """The newest integration-run line on #337 that names this commit, if any."""
-    raw = gh('api', f'repos/{REPO}/issues/{STATUS_ISSUE}/comments', '--paginate', '--jq',
-             f'.[] | select(.body | contains("{sha[:7]}")) | select(.body | contains("integration run")) '
-             '| .body | split("\\n")[0]')
-    lines = [line for line in (raw or '').splitlines() if line.strip()]
-    return lines[-1].replace('**', '') if lines else None
+def report_comments() -> list[str] | None:
+    """The bodies of the comments on #184, oldest first; None when gh fails (the plan says unknown)."""
+    raw = gh('api', f'repos/{REPO}/issues/{REPORTS_ISSUE}/comments', '--paginate', '--jq', '.[] | .body | @json')
+    if raw is None:
+        return None
+    bodies = []
+    for line in raw.split('\n'):  # not splitlines(): JSON leaves U+2028 and friends unescaped
+        try:
+            body = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(body, str):
+            bodies.append(body)
+    return bodies
+
+
+def report_line(bodies: list[str], kind: str, sha: str) -> str | None:
+    """The first line of the newest `Lane report <kind>-<sha7>` report, if any.
+
+    The reports are posted inside a ```text fence, so the fence and blank lines before it are skipped.
+    """
+    wanted = f'Lane report {kind}-{sha[:7]}'
+    for body in reversed(bodies):
+        lines = [line.strip().replace('**', '') for line in body.splitlines()]
+        first = next((line for line in lines if line and not line.startswith('```')), '')
+        if first.startswith(wanted) and first[len(wanted):len(wanted) + 1] in ('', ' '):
+            return first
+    return None
+
+
+def latest_verdict(sha: str, bodies: list[str] | None = None) -> str | None:
+    """The newest integration report on #184 for this commit, whoever ran it (#444)."""
+    bodies = report_comments() if bodies is None else bodies
+    return report_line(bodies, 'integration', sha) if bodies is not None else None
 
 
 def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) -> Path:
@@ -328,9 +355,15 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
              f'Built {datetime.datetime.now().strftime("%Y-%m-%d %H:%M")} from next at `{sha[:7]}`. {where}.', '',
              f'Changes since {base_why}.', '',
              f'Checks before this build: {checks}.', '']
-    verdict = latest_verdict(sha)
+    reports = report_comments()
+    verdict = latest_verdict(sha, reports) if reports is not None else None
     lines += [f'Latest integration run for this commit: {verdict}.' if verdict else
-              'No integration run has reported on this commit yet.', '']
+              'No integration run has reported on this commit yet.' if reports is not None else
+              f'GitHub could not be reached, so the integration verdict (on #{REPORTS_ISSUE}) is unknown.']
+    journeys = report_line(reports, 'journeys', sha) if reports is not None else None
+    if journeys:
+        lines.append(f'Latest journeys run for this commit: {journeys}.')
+    lines.append('')
     path = folder / 'test-plan.md'
     if prs is None:
         lines += ['GitHub could not be reached, so here are the merges by title only:', '']
