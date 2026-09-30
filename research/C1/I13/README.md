@@ -17,7 +17,7 @@
 
 ## What crosses
 
-A structured document has five parts.
+A structured document has five parts, and optionally a sixth.
 
 1. **`text`: one canonical string for the item.**
    - Every range in the document indexes into it.
@@ -35,6 +35,9 @@ A structured document has five parts.
 5. **`extraction`: which engine made this, and at what version.** The version rule below is built on it.
    - Also carries the source PDF's SHA-256, the page count, and the SHA-256 of `text`.
    - Optional `quality` holds C1 M2's pre-check verdict (`good`, `fair` or `hard`) and its reasons.
+6. **`outline` (optional): chapters with no printed heading.**
+   - An entry in the PDF's outline that no printed line matches (#355) becomes `{title, level, start}`: a chapter that starts at `start` in `text`.
+   - It has no text of its own, so it is never spoken and never moves an anchor. Absent when there are none.
 
 **Units.** Ranges count **Swift `Character`s** (extended grapheme clusters), the same unit as `Anchor.startChar`/`endChar` and `SpeechTextNormalizer`'s source offsets. A Margin anchor and a segment range compare directly, with no conversion.
 

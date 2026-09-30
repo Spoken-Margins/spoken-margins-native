@@ -6,6 +6,12 @@ filled swap (2026-09-29, #184), so:
   the whole job, not just the boot; a second job may join only while memory pressure is normal and
   the second slot hasn't been switched off (after the owner freed memory, 2026-09-29, #184).
 - Build slots: at most two xcodebuild runs at once, and only one while a simulator job runs.
+- Host-test slots: at most two heavy host test runs at once (a --plan fast run, a full `swift test`
+  through scripts/host-test-lane), and only one while a simulator job runs. Ungated, five sessions'
+  runs pushed the load to 150-420 and timing tests flaked (#350). They are separate from the build
+  slots, so a simulator test run holding the one build slot doesn't stall every merge check. A
+  host-slot holder never takes a build slot, so the two can't deadlock, and the slot passes to
+  the holder's children (SM_LANE_HOST_SLOT), so a run's own `swift test` doesn't queue again.
 - Simulator boot: one simulator boots at a time (two boots at once crash-flooded SpringBoard, #184).
 
 Each lock is an flock on a file in one per-user directory. The kernel releases a lock when its
@@ -22,6 +28,8 @@ import sys
 import time
 
 SLOTS = 2
+HOST_SLOTS = 2
+HOST_SLOT_ENV = 'SM_LANE_HOST_SLOT'
 POLL_SECONDS = 2.0
 NOTE_EVERY_SECONDS = 60.0
 SIMULATOR_SLOT = 'simulator-slot.lock'
@@ -49,13 +57,38 @@ def build_slot_names():
     return [f'xcodebuild-slot-{index}.lock' for index in range(SLOTS)]
 
 
+def _pid_running(pid):
+    """False only when no process has this pid; unreadable or foreign pids count as running."""
+    if not isinstance(pid, int) or pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:  # PermissionError: another user's process
+        return True
+    return True
+
+
 def _read_holders(names, directory=None):
+    """The holder notes of the named locks that are really held, each with 'gone' set when its pid has exited.
+
+    The flock is the truth; a note is only what the last taker wrote. A holder that dies without
+    clearing its note (the simulator watcher that inherited lane-sim-boot's slot, #395) leaves a
+    note on a free lock, so notes on free locks are skipped. A held lock whose recorded pid has
+    exited was handed to a child (lane-sim-boot gives its slot to the watcher), so it is kept and
+    marked gone.
+    """
     found = []
     for name in names:
+        path = Path(directory or state_dir()) / name
         try:
-            found.append(json.loads((Path(directory or state_dir()) / name).read_text()))
+            holder = json.loads(path.read_text())
         except (OSError, ValueError):
             continue
+        if not isinstance(holder, dict) or not _lock_held(path):
+            continue
+        found.append({**holder, 'gone': not _pid_running(holder.get('pid'))})
     return found
 
 
@@ -65,11 +98,15 @@ def holders(directory=None):
 
 
 def _describe(holder):
-    return f"pid {holder.get('pid')} in {holder.get('cwd')} ({holder.get('label')}, since {holder.get('started')})"
+    pid = f"pid {holder.get('pid')}" + (' (gone; a child still holds its lock)' if holder.get('gone') else '')
+    return f"{pid} in {holder.get('cwd')} ({holder.get('label')}, since {holder.get('started')})"
 
 
 def _held(name):
-    path = state_dir() / name
+    return _lock_held(state_dir() / name)
+
+
+def _lock_held(path):
     if not path.exists():
         return False
     with open(path, 'a+') as handle:
@@ -159,12 +196,14 @@ def acquire(names, what, label, out=sys.stderr, max_wait=None, allowed=None, why
             print(f'[lane] {what}{slot} acquired after {waited:.0f}s: {label}', file=out, flush=True)
             return handle, index, waited
         now = time.monotonic()
-        busy = '; '.join(_describe(h) for h in _read_holders(names, directory)) or 'nothing holds them'
-        if len(usable) < len(names):
-            busy += f' ({why() if why else f"only {len(usable)} of {len(names)} while a simulator job runs"})'
-        if max_wait is not None and now - started >= max_wait:
-            raise TimeoutError(f'no {what} free within {max_wait:.0f}s: {busy}')
-        if last_note is None or now - last_note >= NOTE_EVERY_SECONDS:
+        timed_out = max_wait is not None and now - started >= max_wait
+        if timed_out or last_note is None or now - last_note >= NOTE_EVERY_SECONDS:
+            # Only when saying it: reading the holders probes each lock, which shouldn't happen every poll.
+            busy = '; '.join(_describe(h) for h in _read_holders(names, directory)) or 'nothing holds them'
+            if len(usable) < len(names):
+                busy += f' ({why() if why else f"only {len(usable)} of {len(names)} while a simulator job runs"})'
+            if timed_out:
+                raise TimeoutError(f'no {what} free within {max_wait:.0f}s: {busy}')
             print(f'[lane] waiting for a {what} ({now - started:.0f}s so far): {busy}', file=out, flush=True)
             last_note = now
         time.sleep(POLL_SECONDS)
@@ -196,6 +235,30 @@ def build_slot(label, out=sys.stderr, max_wait=None):
     """
     return _hold(build_slot_names(), 'build slot', label, out, max_wait,
                  allowed=lambda: 1 if simulator_job_running() else SLOTS)
+
+
+def host_slot_names():
+    return [f'host-test-slot-{index}.lock' for index in range(HOST_SLOTS)]
+
+
+@contextlib.contextmanager
+def host_test_slot(label, out=sys.stderr, max_wait=None):
+    """Hold a host-test slot for the with-block: one of two, or the first only while a simulator job runs.
+
+    Inside a process that already holds one (SM_LANE_HOST_SLOT is set), it yields at once.
+    Yields {'slot': index or None, 'waited_seconds': seconds}.
+    """
+    if os.environ.get(HOST_SLOT_ENV):
+        yield {'slot': None, 'waited_seconds': 0, 'held_by': os.environ[HOST_SLOT_ENV]}
+        return
+    handle, index, waited = acquire(host_slot_names(), 'host-test slot', label, out, max_wait,
+                                    allowed=lambda: 1 if simulator_job_running() else HOST_SLOTS)
+    os.environ[HOST_SLOT_ENV] = label
+    try:
+        yield {'slot': index, 'waited_seconds': waited}
+    finally:
+        os.environ.pop(HOST_SLOT_ENV, None)
+        release_handle(handle)
 
 
 def build_slot_file(index, label, out=sys.stderr, max_wait=None):

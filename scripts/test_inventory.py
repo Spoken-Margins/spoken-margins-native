@@ -63,6 +63,49 @@ def plan_tests(root, name):
     return selected
 
 
+def scripted_journey_errors(root):
+    """TestPlans/scripted-journeys.json: which UI test scripts the integration run runs (#445).
+
+    Only `gating` scripts can turn the integration run red; `probation` scripts run and are reported.
+    Each entry names an existing SpokenMarginsAppUITests class or method and the journey it covers.
+    """
+    try:
+        listing = json.loads((root / 'TestPlans/scripted-journeys.json').read_text())
+    except (OSError, ValueError) as error:
+        return [f'scripted-journeys.json: {error}']
+    if not (isinstance(listing, dict) and listing.get('version') == 1
+            and set(listing) == {'version', 'gating', 'probation'}
+            and all(isinstance(listing[status], list) for status in ('gating', 'probation'))):
+        return ['scripted-journeys.json: expected version 1 with exactly "gating" and "probation" lists']
+    available = target_tests(root, 'SpokenMarginsAppUITests')
+    errors, seen = [], []
+    for status in ('gating', 'probation'):
+        for entry in listing[status]:
+            test = entry.get('test') if isinstance(entry, dict) else None
+            name = test.removeprefix('SpokenMarginsAppUITests/').removesuffix('()') if isinstance(test, str) else ''
+            if not isinstance(test, str) or name == test or not any(matches(t, name) for t in available):
+                errors.append(f'scripted-journeys.json: {status} names no SpokenMarginsAppUITests test: {test!r}')
+                continue
+            if not str(entry.get('journey', '')).strip():
+                errors.append(f'scripted-journeys.json: {status} entry {test!r} names no journey')
+            # A class in one list and one of its methods in another would leave its status ambiguous.
+            for other, other_status in seen:
+                if matches(name, other) or matches(other, name):
+                    errors.append(f'scripted-journeys.json: {test!r} ({status}) is also listed as {other!r} '
+                                  f'({other_status})')
+            seen.append((name, status))
+    return errors
+
+
+def scripted_journeys(root=ROOT):
+    """The scripted journeys the integration run runs, as {'gating': [...], 'probation': [...]} test IDs."""
+    if errors := scripted_journey_errors(root):
+        raise ValueError('; '.join(errors))
+    listing = json.loads((root / 'TestPlans/scripted-journeys.json').read_text())
+    return {status: [entry['test'].removesuffix('()') for entry in listing[status]]
+            for status in ('gating', 'probation')}
+
+
 def validate(root=ROOT):
     errors = []
     inventory = json.loads((root / 'validation/test-inventory.json').read_text())
@@ -110,6 +153,7 @@ def validate(root=ROOT):
                 errors.append(f'{plan}: non-UI test selected')
     except (ValueError, KeyError) as error:
         errors.append(str(error))
+    errors += scripted_journey_errors(root)
     return errors
 
 
