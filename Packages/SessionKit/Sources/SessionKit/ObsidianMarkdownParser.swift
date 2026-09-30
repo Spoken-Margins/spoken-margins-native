@@ -30,6 +30,9 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
     public let source: String?
     public let metadata: [String: String]
     public let headings: [ParsedMarkdownHeading]
+    /// Where a closing run of footnote definitions or a trailing "References"-style section starts,
+    /// or nil when the text doesn't end in one (#124).
+    public var notesStartChar: Int? = nil
 
     public func deterministicListeningMap(
         itemId: String,
@@ -38,10 +41,17 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
         guard !headings.isEmpty, !text.isEmpty else { return nil }
         let ordered = normalizedContentHeadings()
         guard !ordered.isEmpty else { return nil }
+        // Adaptive maps end the authored sections where the notes start and give the notes one
+        // chapter of their own, so the tail is never split into "— part N" chapters of the last
+        // section (#124). Canonical maps keep their authored headings.
+        let notesStart = policy == .adaptiveListeningSections ? notesStartChar.flatMap { start in
+            ordered.contains { $0.startChar < start } && start < text.count ? start : nil
+        } : nil
+        let contentEnd = notesStart ?? text.count
         let selected: [ParsedMarkdownHeading]
         switch policy {
         case .adaptiveListeningSections:
-            selected = headingsAtUsefulDepth(from: ordered)
+            selected = headingsAtUsefulDepth(from: ordered.filter { $0.startChar < contentEnd })
         case .canonicalHeadings:
             // Preserve a flat anthology verbatim, but project deeply nested
             // authored structure at the shallowest useful depth for listening.
@@ -76,11 +86,20 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
                 startChar: index == 0 && (policy == .adaptiveListeningSections || !hasAuthoredFrontMatter)
                     ? 0
                     : heading.startChar,
-                endChar: index + 1 < selected.count ? selected[index + 1].startChar : text.count
+                endChar: index + 1 < selected.count ? selected[index + 1].startChar : contentEnd
             )
         })
         if policy == .adaptiveListeningSections {
             normalizeChapterCountAndDuration(&drafts)
+        }
+        if let notesStart {
+            drafts.append(DraftChapter(
+                baseTitle: "Notes and references",
+                partNumber: 1,
+                level: 1,
+                startChar: notesStart,
+                endChar: text.count
+            ))
         }
         let chapters = drafts.enumerated().map { index, draft in
             return Chapter(
@@ -264,7 +283,8 @@ public enum ObsidianMarkdownParser {
             text: cleaned.text,
             source: parsed.metadata["source"].map(unquote),
             metadata: parsed.metadata,
-            headings: cleaned.headings
+            headings: cleaned.headings,
+            notesStartChar: cleaned.notesStartChar
         )
     }
 
@@ -297,9 +317,17 @@ public enum ObsidianMarkdownParser {
         return (metadata, contents)
     }
 
-    private static func cleanBody(_ body: String) -> (text: String, headings: [ParsedMarkdownHeading]) {
+    private enum NotesLine {
+        case other
+        case definition
+        case continuation
+    }
+
+    private static func cleanBody(_ body: String) -> (text: String, headings: [ParsedMarkdownHeading], notesStartChar: Int?) {
         let lines = body.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
         var output: [String] = []
+        // Parallel to `output`; nil for the blank separators.
+        var notesLines: [NotesLine?] = []
         var headings: [(level: Int, title: String, outputIndex: Int)] = []
         var skippingTimestampBlock = false
 
@@ -308,6 +336,7 @@ public enum ObsidianMarkdownParser {
             if line.isEmpty {
                 if output.last?.isEmpty == false {
                     output.append("")
+                    notesLines.append(nil)
                 }
                 skippingTimestampBlock = false
                 continue
@@ -345,9 +374,20 @@ public enum ObsidianMarkdownParser {
             line = line.replacingOccurrences(of: #"(?<!\*)\*([^*]+)\*(?!\*)"#, with: "$1", options: .regularExpression)
             line = line.replacingOccurrences(of: #"`([^`]+)`"#, with: "$1", options: .regularExpression)
             line = line.replacingOccurrences(of: #"\\([\\`*{}\[\]()#+\-.!_>])"#, with: "$1", options: .regularExpression)
+            let notesLine: NotesLine
+            if line.range(of: #"^\[\^[^\]]+\]:"#, options: .regularExpression) != nil {
+                notesLine = .definition
+            } else if rawLine.first?.isWhitespace == true,
+                      [.definition, .continuation].contains(notesLines.last(where: { $0 != nil }) ?? nil) {
+                // An indented line continues the footnote above it.
+                notesLine = .continuation
+            } else {
+                notesLine = .other
+            }
             line = SpeechTextNormalizer.normalizeImportedText(line)
             if !line.isEmpty {
                 output.append(line)
+                notesLines.append(notesLine)
             }
         }
 
@@ -361,7 +401,56 @@ public enum ObsidianMarkdownParser {
             let start = prefix.isEmpty ? 0 : prefix.count + 1
             return ParsedMarkdownHeading(level: heading.level, title: heading.title, startChar: min(start, text.count))
         }
-        return (text, resolvedHeadings)
+        let notesStart = [
+            closingFootnotesStart(notesLines).map { index -> Int in
+                let prefix = output.prefix(index).joined(separator: "\n")
+                return min(prefix.isEmpty ? 0 : prefix.count + 1, text.count)
+            },
+            closingNotesHeadingStart(resolvedHeadings)
+        ].compactMap { $0 }.min()
+        return (text, resolvedHeadings, notesStart)
+    }
+
+    /// The output line where the text's closing run of footnote definitions starts: at least three
+    /// `[^n]: …` definitions, with only their indented continuations and blank lines between them
+    /// and the end.
+    private static func closingFootnotesStart(_ lines: [NotesLine?]) -> Int? {
+        var start: Int?
+        var definitions = 0
+        for index in lines.indices.reversed() {
+            switch lines[index] {
+            case .none, .some(.continuation):
+                continue
+            case .some(.definition):
+                start = index
+                definitions += 1
+            case .some(.other):
+                return definitions >= 3 ? start : nil
+            }
+        }
+        return definitions >= 3 ? start : nil
+    }
+
+    /// The start of the text's closing "References" / "Notes" / "Bibliography" section, when every
+    /// heading from it to the end is one of those and an authored heading comes before it.
+    private static func closingNotesHeadingStart(_ headings: [ParsedMarkdownHeading]) -> Int? {
+        var start: Int?
+        for heading in headings.reversed() {
+            guard isNotesTitle(heading.title) else { break }
+            start = heading.startChar
+        }
+        guard let start, headings.contains(where: { $0.startChar < start }) else { return nil }
+        return start
+    }
+
+    private static let notesTitles: Set<String> = [
+        "notes", "references", "bibliography", "footnotes", "endnotes", "workscited", "literaturecited",
+        "citations", "notesandreferences", "referencesandnotes", "notesandsources", "sourcesandnotes"
+    ]
+
+    private static func isNotesTitle(_ title: String) -> Bool {
+        let letters = title.lowercased().replacingOccurrences(of: #"[^\p{L}]+"#, with: "", options: .regularExpression)
+        return notesTitles.contains(letters)
     }
 
     private static func markdownHeading(in line: String) -> (level: Int, title: String)? {
