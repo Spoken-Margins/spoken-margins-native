@@ -29,7 +29,9 @@ final class PDFBibliographyBuild29Tests: XCTestCase {
 
         XCTAssertEqual(try store.loadItem(id: "item-paper").documentStructure?.bibliography, bibliography)
         let payload = try storedPayload(path, kind: "item", id: "item-paper")
-        XCTAssertTrue(String(decoding: payload, as: UTF8.self).contains("10.1145/3613904.3642123"))
+        // JSONEncoder writes "/" as "\/", so look for the key and the DOI's slash-free part.
+        let stored = String(decoding: payload, as: UTF8.self)
+        XCTAssertTrue(stored.contains("\"bibliography\"") && stored.contains("3613904.3642123"), stored)
         XCTAssertEqual(try ShippedPacketReader.decodeStoredRecord(kind: "item", payload: payload), "item-paper")
     }
 
