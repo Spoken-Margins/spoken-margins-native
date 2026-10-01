@@ -74,7 +74,7 @@ Post as a PR comment. Keep it short; the Test Desk needs intent, not narrative.
 
 **A finished PR needs no request comment.** Label it `automerge` when its "Done when" is met. The runner then runs what the diff needs, by the base branch's `scripts/test-scope.py`, and runs again on every push while the label stays:
 - T0 (docs, research, the server): nothing.
-- T1: `--plan fast`.
+- T1: `--plan fast`. Besides `scripts/tests`, it runs the tests in each `ops/` folder (`ops/dial`, and `ops/codex` once it has tests), so a diff that only touches `ops/` stops here, with no app build.
 - T2 or higher: `--plan fast` and both builds.
 Simulator tests (T3) still need a request. The lane check is green only on PASS.
 
