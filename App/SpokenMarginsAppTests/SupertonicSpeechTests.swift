@@ -597,6 +597,32 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    // #432 audit: a citation list such as "[101,102,…,112]" is spoken word by word, but every word
+    // maps to the opening bracket, so the voice's place in the text stands still for seconds. Its
+    // word count still moves, so that speech isn't a stall; a voice whose words stop still is.
+    func testAnIOSVoiceSpeakingACitationListIsNotAStall() async throws {
+        let log = StallEventLog()
+        let fallback = RecordingFallbackAudioClient()
+        fallback.advancesPerRead = 3
+        fallback.spokenWords = 0
+        fallback.wordsPerRead = 1
+        let client = try systemVoiceStallClient(log, fallback: fallback)
+        _ = try client.prepareSpeechText("A long response that must remain playable when generation does not finish promptly.")
+        try client.play(targetId: "citation", from: 17)
+        for _ in 0..<100 where !log.values.contains("fallback") { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(300))
+        fallback.advancesPerRead = 0
+        let citationAt = fallback.offset
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertEqual(log.values, ["fallback"], "speaking a citation list isn't a stall")
+
+        fallback.wordsPerRead = 0
+        for _ in 0..<150 where !log.values.contains("supertonic.stall") { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.values.prefix(2), ["fallback", "supertonic.stall"], "\(log.values)")
+        XCTAssertEqual(fallback.playedOffsets, [17, citationAt], "a silent voice restarts at its place in the text")
+        try client.stop()
+    }
+
     // #432 audit: the listener pauses and plays the iOS voice again between a stall sample and its
     // handling. The stale stall must not restart or pause the voice the listener just started.
     func testAStallSampledBeforeTheListenerPlaysTheIOSVoiceAgainLeavesItAlone() async throws {
@@ -3140,7 +3166,7 @@ private final class ResourceConditionSwitch: @unchecked Sendable {
     }
 }
 
-private final class RecordingFallbackAudioClient: AudioPlaybackClient, @unchecked Sendable {
+private final class RecordingFallbackAudioClient: AudioPlaybackClient, SpokenProgressReporting, @unchecked Sendable {
     var preparedText = ""
     var playedOffsets: [Int] = []
     var playbackRates: [Double] = []
@@ -3152,6 +3178,9 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, @unchecke
     /// How far the place moves each time it is read, as a speaking voice's would.
     var advancesPerRead = 0
     var completedTargetId: String?
+    /// Words started, as the iOS voice counts them; nil for a voice that can't count them.
+    var spokenWords: Int?
+    var wordsPerRead = 0
 
     func prepareSpeechText(_ text: String) throws -> String {
         preparedText = text
@@ -3172,6 +3201,11 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, @unchecke
     func currentCharOffset() -> Int? {
         defer { offset += advancesPerRead }
         return offset
+    }
+
+    func spokenProgress() -> Int? {
+        defer { spokenWords = spokenWords.map { $0 + wordsPerRead } }
+        return spokenWords
     }
 
     func setPlaybackRate(_ rate: Double) throws {

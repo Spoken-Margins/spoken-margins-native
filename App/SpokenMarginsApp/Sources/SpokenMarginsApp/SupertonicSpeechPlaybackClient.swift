@@ -1769,36 +1769,39 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 var watched = WatchedPlayback()
                 // The iOS voice is watched only once it has moved by a word or so: a voice still
                 // starting up, or one that reports its place only per utterance, isn't a stall.
-                var systemVoiceOffset: Int?
+                var systemVoicePlace: Int?
                 var systemVoiceIsArmed = false
                 var watchedVoicePlayback: Int?
                 let start = ContinuousClock.now
                 while !Task.isCancelled {
                     try? await Task.sleep(for: interval)
                     guard let self else { return }
-                    // The iOS voice has no player clock; its place in the text is its clock (#288). It
-                    // is read on the main actor, where the synthesizer's callbacks move it.
-                    var systemVoice: (offset: Int?, complete: Bool, playback: Int)?
+                    // The iOS voice has no player clock (#288). Its clock is the count of words it has
+                    // started, which moves through a citation list that maps to one place in the
+                    // text (#432 audit); a voice that can't count words uses its place in the text.
+                    // Both are read on the main actor, where the synthesizer's callbacks move them.
+                    var systemVoice: (place: Int?, countsWords: Bool, complete: Bool, playback: Int)?
                     if self.lock.withLock({ self.transportIntent == .playing && self.fallbackIsActive }) {
-                        systemVoice = await MainActor.run { () -> (offset: Int?, complete: Bool, playback: Int) in
+                        systemVoice = await MainActor.run { () -> (place: Int?, countsWords: Bool, complete: Bool, playback: Int) in
                             let (target, playback) = self.lock.withLock { (self.currentTargetId, self.systemVoicePlayback) }
-                            return (self.fallback.currentCharOffset(),
+                            let words = (self.fallback as? SpokenProgressReporting)?.spokenProgress()
+                            return (words ?? self.fallback.currentCharOffset(), words != nil,
                                     target.map { self.fallback.isPlaybackComplete(targetId: $0) } ?? true, playback)
                         }
                     }
                     if let playback = systemVoice?.playback, playback != watchedVoicePlayback {
                         watchedVoicePlayback = playback
-                        systemVoiceOffset = nil
+                        systemVoicePlace = nil
                         systemVoiceIsArmed = false
                     }
-                    if let offset = systemVoice?.offset {
-                        if let last = systemVoiceOffset, offset != last,
-                           abs(offset - last) <= Self.systemVoiceWordStepLimit {
+                    if let systemVoice, let place = systemVoice.place {
+                        if let last = systemVoicePlace, place != last,
+                           systemVoice.countsWords || abs(place - last) <= Self.systemVoiceWordStepLimit {
                             systemVoiceIsArmed = true
                         }
-                        systemVoiceOffset = offset
+                        systemVoicePlace = place
                     } else {
-                        systemVoiceOffset = nil
+                        systemVoicePlace = nil
                         systemVoiceIsArmed = false
                     }
                     let armed = systemVoiceIsArmed
@@ -1806,11 +1809,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         if self.fallbackIsActive {
                             let voice = WatchedPlayback(systemVoicePlayback: self.systemVoicePlayback)
                             guard armed, let systemVoice, systemVoice.playback == self.systemVoicePlayback,
-                                  let offset = systemVoice.offset, !systemVoice.complete else {
+                                  let place = systemVoice.place, !systemVoice.complete else {
                                 return (self.transportIntent == .playing, false, nil, voice)
                             }
-                            // One character counts as progress: the detector's unit is scaled to match.
-                            return (self.transportIntent == .playing, self.transportIntent == .playing, offset * 1_000, voice)
+                            // One word or character counts as progress: the detector's unit is scaled to match.
+                            return (self.transportIntent == .playing, self.transportIntent == .playing, place * 1_000, voice)
                         }
                         let intends = self.transportIntent == .playing && self.player != nil
                         let time = self.playerTime(self.player)
@@ -1857,8 +1860,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    /// The most the iOS voice's place moves between two samples when it reports each word. A move
-    /// this small shows word-by-word progress; a whole utterance is at least several times longer.
+    /// The most the iOS voice's place in the text moves between two samples when it reports each
+    /// word. A move this small shows word-by-word progress; a whole utterance is several times longer.
     private static let systemVoiceWordStepLimit = 120
 
     /// What a stall sample watched: the Supertonic player, or which play of the iOS voice.
