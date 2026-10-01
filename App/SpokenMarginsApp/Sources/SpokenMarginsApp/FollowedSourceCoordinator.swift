@@ -436,7 +436,8 @@ actor FollowedSourceCoordinator {
                 author: item.author,
                 summary: item.summary,
                 publishedAt: item.publishedAt,
-                state: existing[id]?.state ?? .unseen
+                state: existing[id]?.state ?? .unseen,
+                episodeGUID: item.guid
             )
             try repository.saveFeedEntry(entry)
             saved.append(entry)

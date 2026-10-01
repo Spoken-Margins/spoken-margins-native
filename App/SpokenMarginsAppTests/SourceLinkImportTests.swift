@@ -122,7 +122,7 @@ final class SourceLinkImportTests: XCTestCase {
         let store = try SQLiteSessionStore(path: databaseURL.path)
         let subscription = FeedSubscription(id: "subscription", source: SourceIdentity(id: "source", kind: .podcastFeed, canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Actual Publisher"), lastRefreshAt: Date())
         try store.saveFeedSubscription(subscription)
-        let entry = FeedEntry(id: "entry", subscriptionId: subscription.id, canonicalURL: "https://publisher.example/episode", audioURL: audioURL, title: "Actual episode title", author: "Actual author", summary: "00:00 Opening\n02:00 Discussion")
+        let entry = FeedEntry(id: "entry", subscriptionId: subscription.id, canonicalURL: "https://publisher.example/episode", audioURL: audioURL, title: "Actual episode title", author: "Actual author", summary: "00:00 Opening\n02:00 Discussion", publishedAt: Date(timeIntervalSince1970: 1_790_675_200), episodeGUID: "episode-42")
         try store.saveFeedEntry(entry)
         model.importFollowedSourceEntry(entry)
         try await waitFor("feed entry import") { model.libraryItems.contains { $0.title == entry.title } }
@@ -132,6 +132,10 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(persisted.sourceURL, subscription.source.canonicalURL)
         XCTAssertEqual(persisted.externalReference, entry.canonicalURL)
         XCTAssertEqual(persisted.author, "Actual author")
+        // #177 audit: an episode added from a followed feed can be matched to a shared Margin by GUID.
+        XCTAssertEqual(persisted.episodeGUID, "episode-42")
+        XCTAssertEqual(persisted.showTitle, "Actual Publisher")
+        XCTAssertEqual(persisted.publishedAt, ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: 1_790_675_200)))
         XCTAssertEqual(try store.loadTranscriptTimeline(itemId: row.id)?.timeline.chapters.map(\.startMs), [0, 120_000])
         XCTAssertEqual(model.snapshot.sessionId, activeSession)
         XCTAssertEqual(model.selectedItem.id, "item-pill")

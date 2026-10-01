@@ -83,8 +83,12 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
     public var summary: String?
     public var publishedAt: Date?
     public var state: FeedEntryState
+    /// The feed's `<guid>` (or Atom/JSON Feed `id`) as written, so an episode added from a followed
+    /// feed can be matched to a shared Margin by GUID (#177). Nil for entries saved before #177
+    /// until the feed refreshes.
+    public var episodeGUID: String?
 
-    public init(id: String, subscriptionId: String, canonicalURL: String, audioURL: String? = nil, title: String, author: String? = nil, summary: String? = nil, publishedAt: Date? = nil, state: FeedEntryState = .unseen) {
+    public init(id: String, subscriptionId: String, canonicalURL: String, audioURL: String? = nil, title: String, author: String? = nil, summary: String? = nil, publishedAt: Date? = nil, state: FeedEntryState = .unseen, episodeGUID: String? = nil) {
         self.id = id
         self.subscriptionId = subscriptionId
         self.canonicalURL = canonicalURL
@@ -94,6 +98,22 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
         self.summary = summary
         self.publishedAt = publishedAt
         self.state = state
+        self.episodeGUID = episodeGUID
+    }
+
+    /// Fills the episode identity an item added from this entry is missing: the GUID, the followed
+    /// show's title and the publish date. Values the item already has are kept.
+    public func fillEpisodeIdentity(of item: inout Item, showTitle: String?) {
+        if item.episodeGUID == nil { item.episodeGUID = Self.nonEmpty(episodeGUID) }
+        if item.showTitle == nil { item.showTitle = Self.nonEmpty(showTitle) }
+        if item.publishedAt == nil, let publishedAt {
+            item.publishedAt = ISO8601DateFormatter().string(from: publishedAt)
+        }
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return trimmed
     }
 }
 
