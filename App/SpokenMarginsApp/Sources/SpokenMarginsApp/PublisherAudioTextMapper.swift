@@ -48,12 +48,7 @@ enum PublisherAudioTextMapper {
         Task {
             var updated: PublisherAudio
             do {
-                let transcript = try await transcribe(
-                    remoteURL,
-                    itemId: audio.itemId,
-                    durationMs: audio.durationMs,
-                    transcriber: transcriber
-                )
+                let transcript = try await transcribe(remoteURL, durationMs: audio.durationMs, transcriber: transcriber)
                 let alignment = await Task.detached(priority: .utility) {
                     PublisherAudioAligner.align(articleText: articleText, recognised: transcript)
                 }.value
@@ -82,7 +77,6 @@ enum PublisherAudioTextMapper {
 
     private nonisolated static func transcribe(
         _ remoteURL: URL,
-        itemId: String,
         durationMs: Int?,
         transcriber: any SourceTranscriptionClient
     ) async throws -> TranscriptTimeline {
@@ -105,6 +99,19 @@ enum PublisherAudioTextMapper {
             throw error
         }
         defer { try? FileManager.default.removeItem(at: localURL) }
-        return try await transcriber.transcribeSourceAudio(url: localURL, itemId: itemId, durationMs: durationMs)
+        // The transcriber caches the chunks it cuts from a recording under the id it is given and
+        // reuses them. A key per try stops a replacement recording from being transcribed from the
+        // old one's chunks; the chunks are removed afterwards.
+        let cacheKey = "publisher-audio-\(UUID().uuidString)"
+        defer { removeTranscriptionCaches(cacheKey) }
+        return try await transcriber.transcribeSourceAudio(url: localURL, itemId: cacheKey, durationMs: durationMs)
+    }
+
+    /// The same folders `Gate1AppModel.purgeSourceTranscriptionAudioCaches` clears for an item.
+    private nonisolated static func removeTranscriptionCaches(_ key: String) {
+        guard let caches = try? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: false) else { return }
+        for relative in ["SourceAudioTranscriptionChunksV3/\(key)", "SourceAudioTranscriptionWindows/\(key)"] {
+            try? FileManager.default.removeItem(at: caches.appending(path: relative, directoryHint: .isDirectory))
+        }
     }
 }
