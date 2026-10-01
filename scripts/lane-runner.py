@@ -36,7 +36,7 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   push; if next moved meanwhile, the push is refused and it tests again on the newest next (up to
   MERGE_ATTEMPTS), unless next's new commits touch none of the PR's files and no build inputs: then
   it re-merges onto the newest next and pushes without testing again (untested_moves). It won't merge a PR that changes .github/ or scripts/lane* (a PR can change the
-  workflow that tests it), or an audio, persistence or packet change without a Codex audit comment:
+  workflow that tests it), or an audio, persistence, packet or lane change without a Codex audit comment:
   those pass or fail as usual, and a person merges them. A PR someone asked T3 for merges only on a
   T3 PASS (#410): while its newest T3 report is FAIL or INCONCLUSIVE, or its newest T3 request has
   no report yet, the automerge run reports that verdict (INCONCLUSIVE while waiting) and doesn't merge.
@@ -461,6 +461,8 @@ def merge_blockers(scope: dict, comments: list[dict], head: str) -> list[str]:
         reasons.append(f'it changes the lane or its workflows ({", ".join(desk[:5])}), and a PR can change '
                        'what tests it')
     risky = sorted({AUDITED[f['category']] for f in scope['files'] if f['category'] in AUDITED})
+    if scope.get('lane_paths'):  # owner rule 2026-10-01: lane changes need the audit too (test-scope.py)
+        risky.append('the lane')
     audit = audit_blocker(comments, head) if risky else None
     if audit:
         reasons.append(f'it touches {" and ".join(risky)}, and {audit}' if audit.startswith('the ')
