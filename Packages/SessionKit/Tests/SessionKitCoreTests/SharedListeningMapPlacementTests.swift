@@ -1,0 +1,191 @@
+import Foundation
+import SessionKit
+import XCTest
+
+/// The decision half of placing a friend's shared map on a different edition (#481).
+/// The acoustic half runs on macOS in `SharedListeningMapResolverTests`.
+final class SharedListeningMapPlacementTests: XCTestCase {
+    private let landmarks = [20_000, 100_000, 180_000, 260_000].enumerated().map { index, start in
+        EpisodeFingerprintLandmark(
+            id: "landmark-\(index)", order: index,
+            sourceMediaStartMs: start, sourceMediaEndMs: start + 11_000, anchorMediaTimeMs: start,
+            continuityEpoch: 0, trigger: .downloadedPreparation, provenance: .downloadedSourceReference,
+            signatureAssetId: "signature-\(index)"
+        )
+    }
+
+    private func proposal(starts: [Int?]) -> PortableListeningMapProposalArtifact {
+        PortableListeningMapProposalArtifact(
+            id: "friend-map", createdAt: Date(timeIntervalSince1970: 0), generator: "test",
+            scenes: starts.enumerated().map { index, start in
+                PortableListeningMapScene(
+                    id: "scene-\(index)", order: index, title: index == 1 ? "The interview" : nil,
+                    eligibility: .eligible,
+                    startAnchor: PortableAnchorEvidence(anchorType: .transcript, mediaTimeMs: start),
+                    endAnchor: PortableAnchorEvidence(anchorType: .transcript, mediaTimeMs: (start ?? 0) + 1_000)
+                )
+            }
+        )
+    }
+
+    private func queries(_ proposal: PortableListeningMapProposalArtifact) throws -> [SharedListeningMapPlacement.SceneQuery] {
+        try SharedListeningMapPlacement.sceneQueries(proposal: proposal, landmarks: landmarks).get()
+    }
+
+    private func placed(_ ms: Int, _ evidenceClass: AnchorResolutionEvidenceClass = .fused) -> ImportedAnchorResolution {
+        ImportedAnchorResolution(evidenceClass: evidenceClass, localMediaTimeMs: ms, confidence: 0.95)
+    }
+
+    private func decide(
+        _ proposal: PortableListeningMapProposalArtifact,
+        _ resolutions: [String: ImportedAnchorResolution],
+        senderDurationMs: Int? = 300_000,
+        recipientDurationMs: Int? = 307_000
+    ) throws -> SharedListeningMapPlacement.Outcome {
+        SharedListeningMapPlacement.decide(
+            proposal: proposal, queries: try queries(proposal), resolutions: resolutions,
+            senderDurationMs: senderDurationMs, recipientDurationMs: recipientDurationMs,
+            projectionId: "shared-projection", itemId: "my-episode", recipientEditionSHA256: "my-bytes",
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+    }
+
+    func testEachSceneStartIsBracketedByTheLandmarksAroundIt() throws {
+        let queries = try queries(proposal(starts: [0, 60_000, 220_000, 300_000]))
+        XCTAssertEqual(queries.map { $0.landmarks.map(\.id) }, [
+            ["landmark-0"],
+            ["landmark-0", "landmark-1"],
+            ["landmark-2", "landmark-3"],
+            ["landmark-3"]
+        ])
+        XCTAssertEqual(queries[1].landmarks.map {
+            SharedListeningMapPlacement.anchorOffsetMs(sceneStartMs: queries[1].senderStartMs, landmark: $0)
+        }, [40_000, -40_000])
+    }
+
+    func testAMapWhoseStartsAllPlaceBecomesAProjectionOnTheRecipientsTimes() throws {
+        let map = proposal(starts: [0, 60_000, 220_000])
+        let outcome = try decide(map, [
+            "scene-0": placed(0, .acousticVerified),
+            "scene-1": placed(60_000),
+            "scene-2": placed(227_000)
+        ])
+        guard case .placed(let projection) = outcome else { return XCTFail("\(outcome)") }
+        XCTAssertEqual(projection.proposalId, "friend-map")
+        XCTAssertEqual(projection.itemId, "my-episode")
+        XCTAssertEqual(projection.recipientEditionSHA256, "my-bytes")
+        XCTAssertEqual(projection.algorithmVersion, SharedListeningMapPlacement.algorithmVersion)
+        XCTAssertEqual(projection.projectedRecipientTime(for: 0), 0)
+        XCTAssertEqual(projection.projectedRecipientTime(for: 60_000), 60_000)
+        XCTAssertEqual(projection.projectedRecipientTime(for: 220_000), 227_000)
+        XCTAssertNil(projection.projectedRecipientTime(for: 150_000), "Only scene starts are placed")
+        XCTAssertEqual(map, proposal(starts: [0, 60_000, 220_000]), "The portable proposal is never rewritten")
+    }
+
+    func testOneUnplacedSceneKeepsTheWholeMapUnused() throws {
+        let outcome = try decide(proposal(starts: [0, 60_000, 220_000]), [
+            "scene-0": placed(0),
+            "scene-1": ImportedAnchorResolution(evidenceClass: .ambiguous, isAmbiguous: true),
+            "scene-2": placed(227_000)
+        ])
+        XCTAssertEqual(outcome, .notPlaced(.init(sceneId: "scene-1", sceneLabel: "Scene 2 (The interview)", reason: .ambiguous)))
+        guard case .notPlaced(let refusal) = outcome else { return }
+        XCTAssertEqual(
+            refusal.listenerReason,
+            "Scene 2 (The interview) matched more than one place in your copy, or your copy changes inside it."
+        )
+    }
+
+    func testOnlyDirectAcousticEvidencePlacesAScene() throws {
+        for weak in [AnchorResolutionEvidenceClass.timestampFallback, .mapInterpolated, .transcriptVerified, .unresolved] {
+            let outcome = try decide(proposal(starts: [0, 60_000]), [
+                "scene-0": placed(0),
+                "scene-1": placed(60_000, weak)
+            ])
+            XCTAssertEqual(outcome, .notPlaced(.init(sceneId: "scene-1", sceneLabel: "Scene 2 (The interview)", reason: .unresolved)), "\(weak)")
+        }
+        let missing = try decide(proposal(starts: [0, 60_000]), ["scene-0": placed(0)])
+        XCTAssertEqual(missing, .notPlaced(.init(sceneId: "scene-1", sceneLabel: "Scene 2 (The interview)", reason: .unresolved)))
+    }
+
+    func testStartsThatDoNotIncreaseAreRefused() throws {
+        let outcome = try decide(proposal(starts: [0, 60_000, 220_000]), [
+            "scene-0": placed(0),
+            "scene-1": placed(230_000),
+            "scene-2": placed(227_000)
+        ])
+        XCTAssertEqual(outcome, .notPlaced(.init(sceneId: "scene-2", sceneLabel: "Scene 3", reason: .outOfOrder)))
+    }
+
+    func testScenesWithoutTimesOrEvidenceAreRefusedBeforeMatching() {
+        XCTAssertEqual(
+            SharedListeningMapPlacement.sceneQueries(proposal: proposal(starts: [0, nil]), landmarks: landmarks),
+            .failure(.init(sceneId: "scene-1", sceneLabel: "Scene 2 (The interview)", reason: .missingStartTime))
+        )
+        XCTAssertEqual(
+            SharedListeningMapPlacement.sceneQueries(proposal: proposal(starts: [0]), landmarks: []),
+            .failure(.init(sceneId: "scene-0", sceneLabel: "Scene 1", reason: .noEvidence))
+        )
+        XCTAssertEqual(
+            SharedListeningMapPlacement.sceneQueries(proposal: proposal(starts: []), landmarks: landmarks),
+            .failure(.init(sceneId: nil, sceneLabel: nil, reason: .noScenes))
+        )
+    }
+
+    func testASharedMapNeverReplacesTheListenersOwnMap() throws {
+        let outcome = try decide(proposal(starts: [0, 60_000]), ["scene-0": placed(0), "scene-1": placed(60_000)])
+        guard case .placed(let projection) = outcome else { return XCTFail("\(outcome)") }
+        XCTAssertEqual(SharedListeningMapPlacement.activation([outcome], listenerProposalIds: []).projection, projection)
+        let mine = SharedListeningMapPlacement.activation([outcome], listenerProposalIds: ["episode-map-proposal-mine"])
+        XCTAssertNil(mine.projection)
+        XCTAssertNil(mine.refusal, "The listener's own map is in use, so nothing is wrong")
+    }
+
+    func testTheFirstPlacedFriendsMapStaysAndARefusalShowsOnlyWhenNoneIsInUse() throws {
+        let placedOutcome = try decide(proposal(starts: [0, 60_000]), ["scene-0": placed(0), "scene-1": placed(60_000)])
+        let refused = try decide(proposal(starts: [0, 60_000]), ["scene-0": placed(0)])
+        let otherPlaced = SharedListeningMapPlacement.Outcome.placed(ResolvedListeningMapProjection(
+            id: "second-friend", itemId: "my-episode", proposalId: "second-map", points: [], intervals: []))
+        let both = SharedListeningMapPlacement.activation([refused, placedOutcome, otherPlaced], listenerProposalIds: [])
+        XCTAssertEqual(both.projection?.proposalId, "friend-map")
+        XCTAssertNil(both.refusal)
+        let none = SharedListeningMapPlacement.activation([refused], listenerProposalIds: [])
+        XCTAssertNil(none.projection)
+        XCTAssertEqual(none.refusal?.reason, .unresolved)
+        let nothing = SharedListeningMapPlacement.activation([], listenerProposalIds: [])
+        XCTAssertNil(nothing.projection)
+        XCTAssertNil(nothing.refusal)
+    }
+
+    /// A scene before the first or after the last landmark has one match, possibly minutes
+    /// away. A change between that landmark and the scene would go unseen, so the copy has
+    /// to be shown unchanged on the far side.
+    func testAOneSidedSceneNeedsTheCopyUnchangedBeyondItsLandmark() throws {
+        // Tail: scene 3 at 280 s after the last landmark (260 s). The copy is 7 s longer.
+        let tail = proposal(starts: [0, 60_000, 220_000, 280_000])
+        let shiftedByTheAd: [String: ImportedAnchorResolution] = [
+            "scene-0": placed(0, .acousticVerified), "scene-1": placed(60_000),
+            "scene-2": placed(227_000), "scene-3": placed(287_000, .acousticVerified)
+        ]
+        guard case .placed(let projection) = try decide(tail, shiftedByTheAd) else { return XCTFail("tail shift matches the length change") }
+        XCTAssertEqual(projection.projectedRecipientTime(for: 280_000), 287_000)
+        // The ad sits between the last landmark and scene 3: the landmark didn't move, the copy grew.
+        var adAfterLastLandmark = shiftedByTheAd
+        adAfterLastLandmark["scene-2"] = placed(220_000)
+        adAfterLastLandmark["scene-3"] = placed(280_000, .acousticVerified)
+        XCTAssertEqual(try decide(tail, adAfterLastLandmark).refusal,
+                       .init(sceneId: "scene-3", sceneLabel: "Scene 4", reason: .edgeUnconfirmed))
+        XCTAssertEqual(try decide(tail, shiftedByTheAd, recipientDurationMs: nil).refusal?.reason, .edgeUnconfirmed,
+                       "Without both lengths nothing confirms the tail")
+
+        // Head: scene 1 at 10 s before the first landmark (20 s); a 7 s pre-roll moves the landmark.
+        let head = proposal(starts: [0, 10_000, 60_000])
+        XCTAssertEqual(try decide(head, ["scene-0": placed(7_000), "scene-1": placed(17_000, .acousticVerified), "scene-2": placed(67_000)]).refusal,
+                       .init(sceneId: "scene-1", sceneLabel: "Scene 2 (The interview)", reason: .edgeUnconfirmed))
+        // The first scene at 0:00 starts at 0:00 on any copy.
+        let preRoll = try decide(proposal(starts: [0, 60_000]), ["scene-0": placed(7_000, .acousticVerified), "scene-1": placed(67_000)])
+        guard case .placed(let headProjection) = preRoll else { return XCTFail("\(preRoll)") }
+        XCTAssertEqual(headProjection.projectedRecipientTime(for: 0), 0)
+        XCTAssertEqual(headProjection.projectedRecipientTime(for: 60_000), 67_000)
+    }
+}
