@@ -26,7 +26,8 @@ final class PasteAndGoTests: XCTestCase {
 
     func testCopiedTextBecomesATextItemWithoutChangingNowPlayingOrTheTextDraft() throws {
         let model = makeModel()
-        let activeBefore = model.activeItemId
+        let snapshotBefore = model.snapshot
+        let selectedBefore = model.selectedItem.id
         model.importText = "A draft the listener was typing"
         let pasted = """
         Field notes on listening slowly to long essays in the evening
@@ -38,7 +39,8 @@ final class PasteAndGoTests: XCTestCase {
 
         let row = try XCTUnwrap(model.libraryItems.first { $0.title == "Field notes on listening slowly to long essays" })
         XCTAssertEqual(row.mediaType, "text")
-        XCTAssertEqual(model.activeItemId, activeBefore)
+        XCTAssertEqual(model.snapshot, snapshotBefore, "Now Playing is unchanged")
+        XCTAssertEqual(model.selectedItem.id, selectedBefore)
         XCTAssertEqual(model.importText, "A draft the listener was typing")
         XCTAssertNil(model.lastError)
     }
