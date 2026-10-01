@@ -720,6 +720,7 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             return verdict, where, ran, details + [f'not merged: the push to {base} failed ({message}). A job '
                                                    'whose lane.yml predates push rights (#382) can\'t push.']
         base_sha = fetch_base(ROOT, base)
+        remember_tested(base, base_sha)
         try:
             skipped, why = untested_moves(ROOT, tested_base, base_sha, head)
         except (OSError, subprocess.SubprocessError) as error:  # can't tell: test again
@@ -765,6 +766,7 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
     try:
         clean_tree(ROOT)  # the T3 ran in this tree; the merge commit checks out next over it
         base_sha = fetch_base(ROOT, base)
+        remember_tested(base, base_sha)
         verdict, where, ran, details = run_auto(github, pull, pr, base, head, base_sha, evidence, comments, labels)
     except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
         verdict, where, ran = 'INCONCLUSIVE', 'lane error', 'nothing'
@@ -1322,7 +1324,8 @@ OPS_ISSUE = 337
 AUTO_REVERT = 'Lane auto-revert'  # how both the revert comment and the could-not-revert comment on #337 start
 STOPPED = 'stopped before reporting'  # cleanup()'s note when a job died before its report
 MERGE_SUBJECT = re.compile(r'^Merge pull request #(\d+)(?::\s*(.*)| from \S+)')
-TESTED_ON = re.compile(r'\(tested merged with \S+ at ([0-9a-f]{7,40})\)')
+TESTED_ON = re.compile(r'\(tested merged with (\S+) at ([0-9a-f]{7,40})\)')
+REVERTS = re.compile(r'^This reverts commit ([0-9a-f]{40})', re.M)  # git revert's own line
 # INCONCLUSIVE reports that are the PR's or the request's own doing, not the lane's.
 NOT_LANE_FAULTS = (('does not merge cleanly', 'a merge conflict'), ('held for T3', 'held for T3'),
                    ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'))
@@ -1382,12 +1385,15 @@ def lane_report_verdict(body: str) -> tuple[bool, str] | None:
     return True, 'INCONCLUSIVE: ' + (lines[0][:200] if lines else 'no reason given')
 
 
-def lane_reports_after(tree: Path, merge: dict, comments) -> list[dict]:
+def lane_reports_after(tree: Path, merge: dict, comments, base: str = 'next') -> list[dict]:
     """The runner's lane reports on PRs from after the lane merge, oldest first, at most two.
 
-    `comments` is the repository's issue comments, oldest first. A report counts only if the next it
-    tested already had the merge in it, so a job that started before the merge landed doesn't count.
-    A stopped-job note names no next, so its time decides.
+    `comments` is the repository's issue comments, oldest first. A report counts only if it says it
+    tested <base> (not a lane-check/** branch, which tests some other lane change) at a commit that
+    already had the merge in it, so a job that started before the merge landed doesn't count. A
+    stopped-job note counts on the same terms, from the base cleanup() found recorded; one that names
+    no tested commit (the job stopped before it fetched one, or a runner from before 2026-10-01's
+    audit fix) doesn't count.
     """
     since, found = utc(merge['time']), []
     for comment in comments:
@@ -1400,13 +1406,33 @@ def lane_reports_after(tree: Path, merge: dict, comments) -> list[dict]:
         if judged is None:
             continue
         tested = TESTED_ON.search(body)
-        if tested and subprocess.run(['git', '-C', str(tree), 'merge-base', '--is-ancestor', merge['sha'],
-                                      tested.group(1)], capture_output=True).returncode != 0:
+        if not tested or tested.group(1) != base:
+            continue
+        if subprocess.run(['git', '-C', str(tree), 'merge-base', '--is-ancestor', merge['sha'], tested.group(2)],
+                          capture_output=True).returncode != 0:
             continue
         found.append({'url': comment.get('html_url'), 'fault': judged[0], 'why': judged[1]})
         if len(found) == 2:
             break
     return found
+
+
+def reverts_on_base(tree: Path, merge: dict, is_lane) -> list[str]:
+    """The lane changes on <base> before the merge that the merge's own commits revert, by git revert's
+    "This reverts commit <sha>" line, not by any title. A commit the PR branch reverted that was never
+    on <base> (a branch undoing its own first try), or a reverted commit that touched no lane path,
+    doesn't make the merge a revert of a lane change."""
+    git = ['git', '-C', str(tree)]
+    log = subprocess.check_output(git + ['log', '--format=%B%x00', f'{merge["parent"]}..{merge["sha"]}'], text=True)
+    undone = []
+    for sha in dict.fromkeys(REVERTS.findall(log)):
+        if subprocess.run(git + ['merge-base', '--is-ancestor', sha, merge['parent']],
+                          capture_output=True).returncode != 0:
+            continue
+        changed = subprocess.run(git + ['diff', '--name-only', f'{sha}^1', sha], capture_output=True, text=True)
+        if changed.returncode == 0 and any(is_lane(path) for path in changed.stdout.splitlines()):
+            undone.append(sha)
+    return undone
 
 
 def reverted_by(tree: Path, base: str, sha: str) -> str | None:
@@ -1510,9 +1536,12 @@ def auto_revert(tree: Path, base: str, repo, policy=None) -> str:
     if merge is None:
         return 'no lane change in recent merges'
     label = f'#{merge["pr"]}' if merge['pr'] else merge['sha'][:7]
-    if re.search(r'\bRevert', merge['subject']):
-        return f'the newest lane change ({label}) is itself a revert; left alone'
-    reports = lane_reports_after(tree, merge, repo.comments_since(utc(merge['time']).strftime('%Y-%m-%dT%H:%M:%SZ')))
+    undone = reverts_on_base(tree, merge, policy.is_lane_path)
+    if undone:  # reverting a revert would bring the broken change back
+        return (f'the newest lane change ({label}) is itself a revert (of '
+                f'{", ".join(sha[:7] for sha in undone)}); left alone')
+    reports = lane_reports_after(tree, merge, repo.comments_since(utc(merge['time']).strftime('%Y-%m-%dT%H:%M:%SZ')),
+                                 base)
     if len(reports) < 2 or not all(report['fault'] for report in reports):
         return f'the newest lane change ({label}) is fine so far: ' + (
             '; '.join(f'{r["url"]} {r["why"]}' for r in reports) or 'no lane report since')
@@ -1609,16 +1638,42 @@ def sweep_runner_simulators() -> None:
                 print(f'Deleted leftover simulator {device["name"]}')
 
 
+TESTED_RECORD: Path | None = None  # main() sets it to a file in this job's RUNNER_TEMP
+
+
+def remember_tested(base: str, sha: str) -> None:
+    """Note which base this job is testing, so cleanup() can name it if the job stops before its report:
+    the auto-revert counts a stopped job only against a lane change that the tested base contained."""
+    if TESTED_RECORD is None:
+        return
+    try:
+        TESTED_RECORD.write_text(json.dumps({'base': base, 'sha': sha}))
+    except OSError as error:
+        print(f'Could not note the tested base: {error!r}')
+
+
+def tested_note() -> str:
+    """' (tested merged with <base> at <sha>)' from remember_tested(), in a report's words, or ''."""
+    try:
+        tested = json.loads(TESTED_RECORD.read_text()) if TESTED_RECORD else None
+    except (OSError, ValueError):
+        tested = None
+    if not isinstance(tested, dict) or not tested.get('base') or not re.fullmatch(r'[0-9a-f]{40}', tested.get('sha') or ''):
+        return ''
+    return f' (tested merged with {tested["base"]} at {tested["sha"][:7]})'
+
+
 def cleanup(github: GitHub, run_url: str, mode: str = 'any') -> int:
     """After a failed or cancelled job: remove leftovers, say so on the PR, and free the labels."""
     sweep_runner_simulators()
+    tested = tested_note()
     if mode == 'auto':  # lane:queued and lane:running belong to /lane requests
-        github.comment(f'Lane: the automerge run stopped before reporting ({run_url}). Push again, or remove and '
-                       f're-add automerge, to run it again.\n{NOTE}')
+        github.comment(f'Lane: the automerge run stopped before reporting ({run_url}){tested}. Push again, or '
+                       f'remove and re-add automerge, to run it again.\n{NOTE}')
         return 0
     _, desk_waiting = pending_requests(github.comments())
-    github.comment(f'Lane: the runner stopped before reporting ({run_url}). If it is still needed, comment '
-                   f'the request again and add lane:queued.\n{NOTE}')
+    github.comment(f'Lane: the runner stopped before reporting ({run_url}){tested}. If it is still needed, '
+                   f'comment the request again and add lane:queued.\n{NOTE}')
     github.relabel(RUNNING, None)
     if not desk_waiting:
         github.relabel(QUEUED, None)
@@ -1673,7 +1728,7 @@ def link_tools(source: Path) -> None:
 
 
 def main(argv=None) -> int:
-    global ROOT
+    global ROOT, TESTED_RECORD
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--pr', type=int, required=True)
     parser.add_argument('--event-head', required=True, help='head SHA the triggering event saw')
@@ -1689,6 +1744,9 @@ def main(argv=None) -> int:
     repo = os.environ['GH_REPO']
     github = GitHub(repo, args.pr)
     run_url = f'{os.environ.get("GITHUB_SERVER_URL", "https://github.com")}/{repo}/actions/runs/{args.run_id}'
+    if os.environ.get('RUNNER_TEMP'):  # one job's own folder, shared by its run and its cleanup step
+        TESTED_RECORD = Path(os.environ['RUNNER_TEMP']) / \
+            f'sm-lane-tested-{args.run_id}-{os.environ.get("GITHUB_RUN_ATTEMPT") or "1"}.json'
     if args.cleanup:
         return cleanup(github, run_url, args.mode)
     if args.base == 'next':  # lane-check/** bases test lane changes; only next gets reverted
@@ -1723,6 +1781,7 @@ def main(argv=None) -> int:
         print('No unanswered T2/T3 request; nothing to do.')
         return 0
     base_sha = fetch_base(ROOT, args.base)
+    remember_tested(args.base, base_sha)
     wanted = identity(request['tier'], head, base_sha, request['tests'])
     # An automerge run always runs: after an earlier PASS that didn't merge (no audit yet, next moved),
     # re-adding the label is how to try again.
