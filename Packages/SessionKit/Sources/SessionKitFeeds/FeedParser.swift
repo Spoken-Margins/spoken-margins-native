@@ -30,6 +30,9 @@ public struct ParsedFeedItem: Equatable, Sendable {
     public var audioURL: String?
     /// Episode length from `itunes:duration`, when the feed gives one.
     public var durationMs: Int? = nil
+    /// The item's `<guid>`, Atom `id` or JSON Feed `id` as written; nil when the feed gives none
+    /// (`id` then falls back to the link).
+    public var guid: String? = nil
 }
 
 public struct ParsedFeed: Equatable, Sendable {
@@ -126,7 +129,8 @@ public final class FeedParser: @unchecked Sendable {
                 author: author.map(sanitize),
                 summary: rawSummary.map(sanitize),
                 publishedAt: item.date_published.flatMap(formatter.date(from:)),
-                audioURL: audio
+                audioURL: audio,
+                guid: item.id?.nilIfEmpty
             )
         }
         return ParsedFeed(format: .json, title: sanitize(decoded.title), homePageURL: decoded.home_page_url, feedURL: decoded.feed_url, items: items)
@@ -233,7 +237,8 @@ private struct ItemBuilder {
             summary: summary?.nilIfEmpty,
             publishedAt: published.flatMap { formatter.date(from: $0) ?? rssFormatter.date(from: $0) },
             audioURL: audioURL?.nilIfEmpty,
-            durationMs: duration.flatMap(FeedDuration.milliseconds(from:))
+            durationMs: duration.flatMap(FeedDuration.milliseconds(from:)),
+            guid: id?.nilIfEmpty
         )
     }
 }

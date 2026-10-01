@@ -106,6 +106,18 @@ final class EpisodeGUIDSharingTests: XCTestCase {
         XCTAssertEqual(try ShippedPacketReader.decodeStoredRecord(kind: "item", payload: payload), item.id)
     }
 
+    func testTheBuild29FeedEntryDecoderReadsAnEntryWithTheGUID() throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let entry = FeedEntry(
+            id: "entry", subscriptionId: "subscription", canonicalURL: "https://media.example.com/one.mp3",
+            title: "Episode One", publishedAt: Date(timeIntervalSince1970: 1_790_675_200), episodeGUID: "show-episode-0001"
+        )
+        let payload = try encoder.encode(entry)
+        XCTAssertTrue(String(decoding: payload, as: UTF8.self).contains("\"episodeGUID\""))
+        XCTAssertEqual(try ShippedPacketReader.decodeStoredRecord(kind: "feed_entry", payload: payload), "entry")
+    }
+
     func testAPacketWithTheEpisodeGUIDImportsInBuild29() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("episode-guid-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

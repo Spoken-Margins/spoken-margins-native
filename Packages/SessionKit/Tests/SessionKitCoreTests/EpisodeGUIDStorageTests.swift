@@ -78,6 +78,54 @@ final class EpisodeGUIDStorageTests: XCTestCase {
         XCTAssertEqual(try SQLiteSessionStore(path: path).loadItem(id: itemId).episodeGUID, "first-guid")
     }
 
+    // Audit on 083df78: an episode added from a followed feed keeps its identity too.
+
+    func testAFollowedFeedEntryCarriesTheRawGUID() throws {
+        let parsed = try FeedParser().parse(data: Data(feed(guid: "show-episode-0001").utf8))
+        XCTAssertEqual(parsed.items.first?.guid, "show-episode-0001")
+        let withoutGUID = try FeedParser().parse(data: Data(feed(guid: nil).utf8))
+        XCTAssertNil(withoutGUID.items.first?.guid, "the id falls back to the link, the GUID does not")
+    }
+
+    func testAnEpisodeAddedFromAFollowedFeedGetsTheEntrysIdentity() {
+        let published = Date(timeIntervalSince1970: 1_790_675_200)
+        let entry = FeedEntry(
+            id: "entry", subscriptionId: "subscription", canonicalURL: "https://media.example.com/one.mp3",
+            title: "Episode One", publishedAt: published, episodeGUID: " show-episode-0001 "
+        )
+        var item = Item(id: "item", title: "Episode One", mediaType: "transcript_backed_media", text: nil, externalReference: nil, status: "ready")
+        entry.fillEpisodeIdentity(of: &item, showTitle: "Example Show")
+        XCTAssertEqual(item.episodeGUID, "show-episode-0001")
+        XCTAssertEqual(item.showTitle, "Example Show")
+        XCTAssertEqual(item.publishedAt, ISO8601DateFormatter().string(from: published))
+    }
+
+    func testAFollowedFeedEntryKeepsTheItemsOwnIdentity() {
+        let entry = FeedEntry(
+            id: "entry", subscriptionId: "subscription", canonicalURL: "https://media.example.com/one.mp3",
+            title: "Episode One", publishedAt: Date(), episodeGUID: "entry-guid"
+        )
+        var item = Item(id: "item", title: "Episode One", mediaType: "transcript_backed_media", text: nil, externalReference: nil, status: "ready")
+        item.episodeGUID = "resolver-guid"
+        item.showTitle = "Resolver Show"
+        item.publishedAt = "Tue, 29 Sep 2026 10:00:00 GMT"
+        entry.fillEpisodeIdentity(of: &item, showTitle: "  ")
+        XCTAssertEqual(item.episodeGUID, "resolver-guid")
+        XCTAssertEqual(item.showTitle, "Resolver Show")
+        XCTAssertEqual(item.publishedAt, "Tue, 29 Sep 2026 10:00:00 GMT")
+        var bare = Item(id: "bare", title: "Episode One", mediaType: "transcript_backed_media", text: nil, externalReference: nil, status: "ready")
+        FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://e.example/1", title: "t")
+            .fillEpisodeIdentity(of: &bare, showTitle: "")
+        XCTAssertNil(bare.episodeGUID)
+        XCTAssertNil(bare.showTitle)
+        XCTAssertNil(bare.publishedAt)
+    }
+
+    func testAFeedEntrySavedBeforeTheGUIDStillDecodes() throws {
+        let legacy = Data(#"{"id":"e","subscriptionId":"s","canonicalURL":"https://e.example/1","title":"t","state":"unseen"}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(FeedEntry.self, from: legacy).episodeGUID)
+    }
+
     /// Records saved before #177 have none of the new keys and still decode.
     func testAnItemRecordWithoutTheNewFieldsStillDecodes() throws {
         let legacy = Data(#"{"id":"old","title":"Old","mediaType":"transcript_backed_media","status":"ready"}"#.utf8)

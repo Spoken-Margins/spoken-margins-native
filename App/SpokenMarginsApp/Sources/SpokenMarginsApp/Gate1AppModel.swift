@@ -3480,6 +3480,7 @@ final class Gate1AppModel: ObservableObject {
             identified.sourceURL = subscription?.source.canonicalURL ?? identified.sourceURL
             identified.externalReference = feedEntry.canonicalURL
             identified.author = feedEntry.author ?? identified.author
+            feedEntry.fillEpisodeIdentity(of: &identified, showTitle: subscription?.source.title)
             try store.saveItem(identified)
             if item.media?.url == result.selectedCandidate?.audioURL,
                try store.loadListeningMap(itemId: item.id) == nil,
