@@ -470,8 +470,11 @@ public enum PodcastAcousticAnchorResolver {
 
         /// Nil when the edition can't be signed in chunks; the resolver then keeps its single-match behaviour.
         init?(recipientAudioURL: URL, durationMs: Int?) async {
+            // Hold the asset while its track is read: a track whose asset has been released fails to sign
+            // (AVFoundation -11800 / -12780), and the probe would silently never run.
+            let asset = AVURLAsset(url: recipientAudioURL)
             guard let durationMs, durationMs > 0,
-                  let sourceTrack = try? await AVURLAsset(url: recipientAudioURL).loadTracks(withMediaType: .audio).first,
+                  let sourceTrack = try? await asset.loadTracks(withMediaType: .audio).first,
                   let chunks = try? await PodcastAcousticAnchorResolver.signedChunks(
                       of: sourceTrack,
                       durationMs: durationMs,
@@ -479,6 +482,7 @@ public enum PodcastAcousticAnchorResolver {
                       overlapMs: Self.chunkOverlapMs
                   ) else { return nil }
             self.chunks = chunks
+            withExtendedLifetime(asset) {}
         }
 
         /// The flank's matches outside the span it already matched (with a margin of the fusion spread).
