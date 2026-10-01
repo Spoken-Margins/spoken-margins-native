@@ -389,10 +389,26 @@ public final class SessionEngine {
         }
         let mediaSeekFailure = try reconcilePendingMediaSeek(for: &session)
         let positionIsPending = hasPendingPlaybackPosition(for: session)
-        let playbackCompleted = positionIsPending ? false : audio.isPlaybackComplete(targetId: session.currentTargetId)
+        var playbackCompleted = positionIsPending ? false : audio.isPlaybackComplete(targetId: session.currentTargetId)
         let transportState = audio.playbackTransportState(targetId: session.currentTargetId)
         var updated = try syncCurrentPositionFromAudio(session)
-        if snapshot.status == .starting {
+        // A start from the very end (resuming after a Margin at the last second) finds the episode
+        // already over, so it never confirms. It ended: pause there. This is checked before the
+        // start's own status, whose watchdog would otherwise call it a timeout once the deadline
+        // passes (#588). The media client clears its completion when a start begins, so this
+        // completion is the new start's own.
+        let endedBeforeStartConfirmed = snapshot.status == .starting
+            && (session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia)
+            && audio.isPlaybackComplete(targetId: session.currentTargetId)
+        if endedBeforeStartConfirmed {
+            clearPlaybackStartPending()
+            pendingPlaybackPosition = nil
+            playbackCompleted = true
+            updated = try syncCurrentPositionFromAudio(session)
+            // The client still counts itself as playing (Lock Screen included) until told.
+            try audio.pause()
+            snapshot.status = .paused
+        } else if snapshot.status == .starting {
             let startStatus = playbackStartStatus(for: session.currentTargetId, attemptId: activePlaybackStartAttemptId ?? playbackStartAttemptId)
             if let recovered = currentSession, recovered.currentTargetId != session.currentTargetId {
                 // Start recovery moved playback to another target (#237); don't persist the old one.
@@ -405,6 +421,7 @@ public final class SessionEngine {
                 // requested transport position is authoritative.
                 updated = try syncCurrentPositionFromAudio(session)
                 snapshot.status = .playing
+                forgetStartFailure()
             case .pending:
                 // Startup can remain pending while a buffered speech client is
                 // already advancing or after the user seeks. Preserve that
@@ -603,6 +620,13 @@ public final class SessionEngine {
               session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
             throw SessionKitError.invalidCommandForState("seekMedia")
         }
+        // An episode that played to its end is stopped, even if its last start never confirmed:
+        // a seek leaves it paused at the new place rather than waiting on that start (#588).
+        // This holds when progress sync already showed it paused, too: an end inferred from a
+        // player that stopped short was never a listener's pause, so the client must be told,
+        // or a seek near the end is read as the end again.
+        let endedBeforeSeek = (snapshot.status.isPlaybackActive || snapshot.status == .paused)
+            && audio.isPlaybackComplete(targetId: session.currentTargetId)
         let updated = mediaSession(session, movedTo: mediaTimeMs)
         currentSession = updated
         try persistSession(updated)
@@ -619,7 +643,10 @@ public final class SessionEngine {
         // Seeking within the active target is navigation, not a new playback
         // start. Preserve the current transport status while the matching seek
         // transaction is acknowledged by the audio client.
-        publish(status: snapshot.status, phase: updated.phase)
+        if endedBeforeSeek {
+            try audio.pause()
+        }
+        publish(status: endedBeforeSeek ? .paused : snapshot.status, phase: updated.phase)
         return snapshot
     }
 
@@ -2978,13 +3005,18 @@ public final class SessionEngine {
             // Explicit import also restores a trashed item, without rebuilding
             // it and discarding its existing media/transcript association.
             existing.deletedAt = nil
+            // Episode identity added since the item was first saved fills in only
+            // where it is missing; nothing already stored is replaced (#177).
+            if existing.episodeGUID == nil { existing.episodeGUID = Self.nonEmpty(candidate.episodeGUID) }
+            if existing.showTitle == nil { existing.showTitle = Self.nonEmpty(candidate.showTitle) }
+            if existing.publishedAt == nil { existing.publishedAt = Self.nonEmpty(candidate.publishedAt) }
             return existing
         } catch SessionKitError.missingFixture(let key) where key == "item:\(id)" || key == id {
             // A new identity gets a fresh record, never a legacy title-slug's
             // derivatives. Ambiguous old records remain available for recovery.
         }
         let title = candidate.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? (candidate.sourceLink.title ?? request.inputURL) : candidate.title
-        return Item(
+        var item = Item(
             id: id,
             title: title,
             mediaType: TargetType.transcriptBackedMedia.rawValue,
@@ -3002,6 +3034,15 @@ public final class SessionEngine {
             sourceURL: candidate.sourceLink.role == "canonical_feed" ? candidate.sourceLink.url : nil,
             createdAt: request.createdAt
         )
+        item.episodeGUID = Self.nonEmpty(candidate.episodeGUID)
+        item.showTitle = Self.nonEmpty(candidate.showTitle)
+        item.publishedAt = Self.nonEmpty(candidate.publishedAt)
+        return item
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return trimmed
     }
 
     private func resolvedSourceItemId(
@@ -3057,6 +3098,7 @@ public final class SessionEngine {
         activePlaybackStartAttemptId = playbackStartAttemptId
         switch playbackStartStatus(for: session.currentTargetId, attemptId: playbackStartAttemptId) {
         case .confirmed:
+            forgetStartFailure()
             publish(status: .playing, phase: phase)
         case .pending:
             publish(status: .starting, phase: phase)
@@ -3222,6 +3264,14 @@ public final class SessionEngine {
         } catch {
             clearPlaybackStartPending()
             return .failed("\(failure); recovery_failed:\(error.localizedDescription)")
+        }
+    }
+
+    /// A start that confirms supersedes an earlier failed one, so diagnostics stop reporting
+    /// that failure while the source plays normally (#588).
+    private func forgetStartFailure() {
+        if snapshot.lastFailure?.hasPrefix("playback_start_failed:") == true {
+            snapshot.lastFailure = nil
         }
     }
 

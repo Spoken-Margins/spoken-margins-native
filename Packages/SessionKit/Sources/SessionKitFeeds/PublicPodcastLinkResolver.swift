@@ -395,6 +395,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             showTitle: showTitle,
             durationMs: durationMs,
             publishedAt: publishedAt,
+            episodeGUID: episode["episodeGuid"] as? String,
             audioURL: audioURL,
             confidence: score
         )
@@ -665,6 +666,8 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 title: title ?? "Apple Podcasts Episode",
                 showTitle: episode["collectionName"] as? String,
                 durationMs: (episode["trackTimeMillis"] as? NSNumber)?.intValue,
+                publishedAt: episode["releaseDate"] as? String,
+                episodeGUID: episode["episodeGuid"] as? String,
                 audioURL: episodeURL,
                 publisherChapterCollections: appleDescriptionChapters(episode),
                 confidence: 0.95
@@ -720,6 +723,8 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 title: title ?? "Apple Podcasts Episode",
                 showTitle: episode["collectionName"] as? String,
                 durationMs: (episode["trackTimeMillis"] as? NSNumber)?.intValue,
+                publishedAt: episode["releaseDate"] as? String,
+                episodeGUID: episode["episodeGuid"] as? String,
                 audioURL: episodeURL,
                 publisherChapterCollections: appleDescriptionChapters(episode),
                 confidence: 0.95
@@ -821,6 +826,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             showTitle: selected.feedTitle,
             durationMs: selected.durationMs,
             publishedAt: selected.publishedAt,
+            episodeGUID: selected.guid,
             audioURL: audioURL,
             transcriptLinks: selected.transcriptLinks,
             chapterLinks: selected.chapterLinks,
@@ -860,6 +866,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             showTitle: selected.feedTitle,
             durationMs: selected.durationMs,
             publishedAt: selected.publishedAt,
+            episodeGUID: selected.guid,
             audioURL: audioURL,
             transcriptLinks: selected.transcriptLinks,
             chapterLinks: selected.chapterLinks,
@@ -998,6 +1005,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             showTitle: item.feedTitle,
             durationMs: item.durationMs,
             publishedAt: item.publishedAt,
+            episodeGUID: item.guid,
             audioURL: item.enclosureURL,
             transcriptLinks: item.transcriptLinks,
             chapterLinks: item.chapterLinks,

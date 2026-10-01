@@ -3,8 +3,16 @@
 `sm_disk_relief.py` keeps the Mac from running out of room for builds. Every 15 minutes it checks free space on `/System/Volumes/Data`. Below **35 GiB**, and only while `/Volumes/SlawBulk` is plugged in, it frees space in this order and stops as soon as free space reaches **60 GiB**:
 
 1. **Build caches in idle worktrees** of this repo: `.build/dd`, `.build/verification` (everything in `.build/` except lock files) and `Packages/SessionKit/.build`. They rebuild on the next build. A worktree is idle when no process works inside it, no `xcodebuild`, `swift-build` or `verify-tests` command names it, no live agent holds its worktree lock, and the cache hasn't changed for 30 minutes.
-2. **Old iOS DeviceSupport folders.** It keeps the newest one and the one with the highest iOS version.
-3. **Moves to the external drives.** It moves `artifacts/` folders in the main checkout untouched for 2 days, older phone builds (never `latest`, the installed one, or the newest two), and Claude and Codex session logs untouched for 3 days. Each goes to `/Volumes/SlawBulk/Codex-Offload/<date>-disk-relief/<path under your home folder>`, plus a second copy on the separate mirror disk at `/Volumes/SlawArchiveMirror/Current/SlawBulk/...`. Each copy is written under a `.partial` name and checked by size and file count. The original is deleted only after both copies match and the original hasn't changed. Without the mirror disk, moves are skipped. A `MANIFEST.txt` on each drive lists every move. Moved artifacts and phone builds also get a `MOVED-TO-SLAWBULK.txt` note in their old folder.
+2. **Scratch folders of Claude Code sessions that ended**, in `/private/tmp/claude-<uid>/<project>/<session id>/` (each session's `scratchpad/`, `tasks/` and so on). They're deleted, not moved. A session counts as ended only when all of these hold:
+   - it isn't in Claude Code's list of running sessions (`~/.claude/sessions/<pid>.json` with a live pid; read only);
+   - no running process names its session id;
+   - no process has a file, folder or working directory open inside it (`lsof` for your user; if `lsof` fails, nothing counts as ended);
+   - nothing in it changed in the last 12 hours;
+   - it isn't the session running the job.
+
+   Each folder is checked again just before it's deleted. Other files in `/private/tmp/claude-<uid>/` are left alone.
+3. **Old iOS DeviceSupport folders.** It keeps the newest one and the one with the highest iOS version.
+4. **Moves to the external drives.** It moves `artifacts/` folders in the main checkout untouched for 2 days, older phone builds (never `latest`, the installed one, or the newest two), and Claude and Codex session logs untouched for 3 days. Each goes to `/Volumes/SlawBulk/Codex-Offload/<date>-disk-relief/<path under your home folder>`, plus a second copy on the separate mirror disk at `/Volumes/SlawArchiveMirror/Current/SlawBulk/...`. Each copy is written under a `.partial` name and checked by size and file count. The original is deleted only after both copies match and the original hasn't changed. Without the mirror disk, moves are skipped. A `MANIFEST.txt` on each drive lists every move. Moved artifacts and phone builds also get a `MOVED-TO-SLAWBULK.txt` note in their old folder.
 
 It never touches the self-hosted runner folders, `~/.codex/worktrees`, simulators (CoreSimulator), app data, or the external drives' existing files. It never removes a worktree. Instead it lists stale ones (clean, already in `origin/next`, and not a standing checkout) for you to remove.
 

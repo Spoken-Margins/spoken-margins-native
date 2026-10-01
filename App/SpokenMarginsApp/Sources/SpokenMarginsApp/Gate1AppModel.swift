@@ -3465,6 +3465,7 @@ final class Gate1AppModel: ObservableObject {
             identified.sourceURL = subscription?.source.canonicalURL ?? identified.sourceURL
             identified.externalReference = feedEntry.canonicalURL
             identified.author = feedEntry.author ?? identified.author
+            feedEntry.fillEpisodeIdentity(of: &identified, showTitle: subscription?.source.title)
             try store.saveItem(identified)
             if item.media?.url == result.selectedCandidate?.audioURL,
                try store.loadListeningMap(itemId: item.id) == nil,
@@ -3487,11 +3488,7 @@ final class Gate1AppModel: ObservableObject {
         return item.id
     }
 
-    static func isRemotePDFHandoff(_ handoff: SourceLinkHandoff) -> Bool {
-        handoff.sourceSurface == "share_sheet_pdf"
-            || (URL(string: handoff.inputURL)?.isFileURL == false
-                && URL(string: handoff.inputURL)?.pathExtension.lowercased() == "pdf")
-    }
+    static func isRemotePDFHandoff(_ handoff: SourceLinkHandoff) -> Bool { handoff.isRemotePDF }
 
     private func importLocalSharedPDFInBackground(url: URL) async throws {
         #if canImport(PDFKit)
@@ -8311,33 +8308,18 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func localSharedItemIdentity(for item: Item) -> SharedItemIdentity {
-        let isPodcast = item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile
-        let external = item.externalReference.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
-        let enclosure = item.media?.url.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
-        let localAudioDigest = item.mediaType == "audiobook"
-            ? (try? store?.loadOwnedOfflineAssets())?.first(where: {
-                $0.itemId == item.id && $0.category == .audiobook && $0.integrity == .valid
-            })?.checksumSHA256 : nil
-        return SharedItemIdentity(
-            itemType: sharedItemType(for: item),
-            canonicalURL: external ?? enclosure,
-            originalURL: external,
-            title: item.title,
-            enclosureURL: enclosure,
-            durationMs: item.media?.durationMs,
-            normalizedContentSHA256: isPodcast ? nil : PortableArticleAnchorResolver.normalizedContentSHA256(item.text ?? ""),
-            exactEditionSHA256: localAudioDigest ?? (isPodcast ? nil : PortableArticleAnchorResolver.exactEditionSHA256(item.text ?? ""))
-        )
+        SharedItemIdentityBuilder.localIdentity(for: item, localAudioDigest: localAudiobookDigest(for: item))
+    }
+
+    private func localAudiobookDigest(for item: Item) -> String? {
+        guard item.mediaType == "audiobook" else { return nil }
+        return (try? store?.loadOwnedOfflineAssets())?.first(where: {
+            $0.itemId == item.id && $0.category == .audiobook && $0.integrity == .valid
+        })?.checksumSHA256
     }
 
     private func normalizedSharingURL(_ value: String?) -> String? {
-        guard let value, var components = URLComponents(string: value),
-              components.scheme?.lowercased() == "https" else { return nil }
-        components.scheme = "https"
-        components.host = components.host?.lowercased()
-        components.fragment = nil
-        while components.path.hasSuffix("/") && components.path.count > 1 { components.path.removeLast() }
-        return components.string
+        SharedItemIdentityBuilder.normalizedSharingURL(value)
     }
 
     private func durationIsCompatible(_ lhs: Int?, _ rhs: Int?) -> Bool {
@@ -13902,24 +13884,10 @@ final class Gate1AppModel: ObservableObject {
         for item: Item,
         drafts: [ShareInterjectionDraft]
     ) -> SharedItemIdentity {
-        let isPodcast = item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile
-        let external = item.externalReference.flatMap { normalizedSharingURL($0) }
-        let enclosure = item.media?.url.flatMap { URL(string: $0)?.scheme?.lowercased() == "https" ? $0 : nil }
-        let draftDigests = drafts.compactMap { $0.interjection.sourceExactEditionSHA256 }
-        let exactDigest = draftDigests.count == drafts.count && Set(draftDigests).count == 1
-            ? draftDigests.first
-            : nil
-        let articleExact = isPodcast ? nil : PortableArticleAnchorResolver.exactEditionSHA256(item.text ?? "")
-        let articleNormalized = isPodcast ? nil : PortableArticleAnchorResolver.normalizedContentSHA256(item.text ?? "")
-        return SharedItemIdentity(
-            itemType: sharedItemType(for: item),
-            canonicalURL: external ?? enclosure,
-            originalURL: external,
-            title: item.title,
-            enclosureURL: enclosure,
-            durationMs: item.media?.durationMs,
-            normalizedContentSHA256: articleNormalized,
-            exactEditionSHA256: exactDigest ?? localSharedItemIdentity(for: item).exactEditionSHA256 ?? articleExact
+        SharedItemIdentityBuilder.exportIdentity(
+            for: item,
+            draftEditionDigests: drafts.map(\.interjection.sourceExactEditionSHA256),
+            localAudioDigest: localAudiobookDigest(for: item)
         )
     }
 
@@ -13951,14 +13919,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func sharedItemType(for item: Item) -> SharedItemType {
-        if item.mediaType == "audiobook" { return .other }
-        if item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile {
-            return .podcast
-        }
-        let extensionName = URL(fileURLWithPath: item.externalReference ?? "").pathExtension.lowercased()
-        if extensionName == "pdf" { return .pdf }
-        if extensionName == "epub" { return .epub }
-        return .text
+        SharedItemIdentityBuilder.itemType(for: item)
     }
 
     private func portableAnchor(

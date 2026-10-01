@@ -79,6 +79,41 @@ class VerificationTests(unittest.TestCase):
                 run.ops_steps(root)
             self.assertIn('executed zero tests', str(raised.exception))
 
+    def host_step_calls(self, environment):
+        """(commands run, manifest, final status) for the host steps under an environment."""
+        calls = []
+        audio = next(iter(verification.CODEX_SANDBOX_AUDIO_TESTS))
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, environment, clear=False):
+            if not environment:
+                verification.os.environ.pop('CODEX_SANDBOX', None)
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                    patch.object(run, 'ops_steps'), \
+                    patch.object(verification, 'swift_tests',
+                                 side_effect=lambda folder: {audio.split('/', 1)[1], 'OtherTests/testX'}
+                                 if folder.name == 'SessionKitTests' else set()), \
+                    patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                run.host_steps()
+            return calls, run.manifest, verification.passed_status(), audio
+
+    def test_inside_codex_s_sandbox_the_fast_plan_skips_runner_tests_and_is_never_verified(self):
+        # #64's Codex run (2026-10-01): its sandbox refuses `ps`, runner-tests failed (2 failures, 12 errors),
+        # the plan stopped before the package step, and Codex gave up after 33 minutes.
+        calls, manifest, status, audio = self.host_step_calls({'CODEX_SANDBOX': 'seatbelt'})
+        names = [name for name, _ in calls]
+        self.assertNotIn('runner-tests', names)
+        self.assertIn('package', names)
+        self.assertIn('runner-tests', [step['name'] for step in manifest['steps'] if step.get('skipped')])
+        self.assertEqual(dict(calls)['package']['probation'], {audio})
+        self.assertEqual(status, 'verified_in_codex_sandbox')
+
+    def test_outside_a_sandbox_the_fast_plan_runs_everything_and_tolerates_no_audio_failure(self):
+        calls, manifest, status, _ = self.host_step_calls({})
+        self.assertEqual([name for name, _ in calls][0], 'runner-tests')
+        self.assertIsNone(dict(calls)['package']['probation'])
+        self.assertFalse([step for step in manifest['steps'] if step.get('skipped')])
+        self.assertEqual(status, 'verified')
+
     def test_ops_files_count_as_verification_inputs(self):
         with patch.object(verification, 'capture', return_value='ops/dial/dial_gate.py\n'), \
                 tempfile.TemporaryDirectory() as temporary, patch.object(verification, 'ROOT', Path(temporary)):

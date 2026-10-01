@@ -34,6 +34,9 @@ public struct ParsedFeedItem: Equatable, Sendable {
     /// `content_html`/`content_text`, kept apart from the short description so a full post can be
     /// told from show notes (#545). `summary` is unchanged: it still takes the last of these.
     public var content: String? = nil
+    /// The item's `<guid>`, Atom `id` or JSON Feed `id` as written, without the display cleanup
+    /// `id` gets; nil when the feed gives none (`id` then falls back to the link).
+    public var guid: String? = nil
 }
 
 public struct ParsedFeed: Equatable, Sendable {
@@ -132,7 +135,8 @@ public final class FeedParser: @unchecked Sendable {
                 summary: rawSummary.map(sanitize),
                 publishedAt: item.date_published.flatMap(formatter.date(from:)),
                 audioURL: audio,
-                content: rawContent.map(sanitize)?.nilIfEmpty
+                content: rawContent.map(sanitize)?.nilIfEmpty,
+                guid: item.id?.nilIfEmpty
             )
         }
         return ParsedFeed(format: .json, title: sanitize(decoded.title), homePageURL: decoded.home_page_url, feedURL: decoded.feed_url, items: items)
@@ -189,7 +193,11 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
             switch name {
             case "title": item?.title = value
             case "link": if format == .rss && item?.url == nil { item?.url = value }
-            case "guid", "id": item?.id = value
+            case "guid", "id":
+                item?.id = value
+                // Kept as written: display cleanup would turn `episode&lt;42&gt;` into `episode`,
+                // while the direct RSS import keeps `episode<42>`, and the GUIDs must match.
+                item?.guid = text.trimmingCharacters(in: .whitespacesAndNewlines)
             case "description", "summary": item?.summary = value
             case "content", "encoded":
                 item?.summary = value
@@ -218,6 +226,7 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
 
 private struct ItemBuilder {
     var id: String?
+    var guid: String?
     var title: String?
     var url: String?
     var author: String?
@@ -245,7 +254,8 @@ private struct ItemBuilder {
             publishedAt: published.flatMap { formatter.date(from: $0) ?? rssFormatter.date(from: $0) },
             audioURL: audioURL?.nilIfEmpty,
             durationMs: duration.flatMap(FeedDuration.milliseconds(from:)),
-            content: content?.nilIfEmpty
+            content: content?.nilIfEmpty,
+            guid: guid?.nilIfEmpty
         )
     }
 }

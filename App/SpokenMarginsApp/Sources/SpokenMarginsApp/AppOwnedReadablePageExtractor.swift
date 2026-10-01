@@ -8,6 +8,7 @@ enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
     case tooManyRedirects
     case missingExtractor
     case invalidResult
+    case busy
     case httpStatus(Int)
 
     var errorDescription: String? {
@@ -17,6 +18,7 @@ enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
         case .tooManyRedirects: "The article redirected more than five times."
         case .missingExtractor: "The bundled readable-page extractor is unavailable."
         case .invalidResult: "No readable article text was found."
+        case .busy: "Another article is being read. Try again in a moment."
         case .httpStatus(let status): "The site answered with HTTP \(status) instead of the article."
         }
     }
@@ -35,12 +37,28 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
     private var requestedURL: URL?
     private(set) var contactedHosts: [String] = []
     private(set) var lastExtractor: String?
+    private let queue = ReadablePageQueue()
+    /// Counts pages stopped by the time limit, so a stopped page still compiling its rules gives up.
+    private var stoppedPages = 0
 
+    /// One web view reads one page at a time. A page asked for while another loads (a shared link while the
+    /// listener adds an article) waits its turn, and a page still loading after the queue's time limit is
+    /// stopped (#579).
     func extract(url: URL) async throws -> BrowserTextHandoff {
+        try await queue.read({ [self] in
+            try await load(url: url)
+        }, stop: { [weak self] in
+            self?.stoppedPages += 1
+            self?.finish(.failure(ReadablePageTimeout(limit: ReadablePageQueue.defaultTimeLimit)))
+        })
+    }
+
+    private func load(url: URL) async throws -> BrowserTextHandoff {
         guard url.scheme?.lowercased() == "https", url.host != nil else {
             throw ReadablePageExtractionError.invalidURL
         }
-        guard continuation == nil else { throw ReadablePageExtractionError.invalidResult }
+        guard continuation == nil else { throw ReadablePageExtractionError.busy }
+        let stoppedBefore = stoppedPages
         let script = try extractorScript()
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
@@ -58,6 +76,9 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
             forIdentifier: "spoken-margins-readable-page.v1",
             encodedContentRuleList: rules
         ) else { throw ReadablePageExtractionError.missingExtractor }
+        guard stoppedPages == stoppedBefore else {
+            throw ReadablePageTimeout(limit: ReadablePageQueue.defaultTimeLimit)
+        }
         configuration.userContentController.add(ruleList)
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
@@ -119,8 +140,12 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Task { @MainActor in
+            let outcome: Result<[String: Any], Error>
+            do { outcome = .success(try await capturePayload(in: webView)) } catch { outcome = .failure(error) }
+            // A page stopped by the time limit must not answer the next page's request (#579).
+            guard self.webView === webView else { return }
             do {
-                let payload = try await capturePayload(in: webView)
+                let payload = try outcome.get()
                 lastExtractor = (payload["metadata"] as? [String: Any])?["extractor"] as? String
                 finish(.success(try Self.handoff(from: payload)))
             } catch {
