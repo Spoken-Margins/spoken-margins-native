@@ -41,6 +41,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   no report yet, the automerge run reports that verdict (INCONCLUSIVE while waiting) and doesn't merge.
   When a T3 then passes, the lane job that reported it runs the held automerge run itself, in the
   same job (#421): a label the runner re-added with the workflow's token would start no new run.
+  While the PR's T3 request for its head is still waiting, the automerge run skips its own checks
+  and reports itself held straight away: the T3 PASS's lane job runs them before it merges.
 - PR code (builds and tests) runs without the GitHub token in its environment, and the checkout
   keeps no credentials, so only this script's own fetch and push can use the token.
 - Build folders stay warm between jobs. The checkout wipes the workspace, so the tree's .build (the
@@ -507,6 +509,28 @@ def held_for_t3(comments: list[dict], head: str) -> bool:
         if wanted and wanted.get('tier') == 'auto' and REPORT.search(body):
             return wanted.get('commit') == head and any(held in body for held in HELD_FOR_T3)
     return False
+
+
+def t3_request_for_head(comments: list[dict], labels, head: str) -> str | None:
+    """The link to a /lane T3 request for <head> that the lane job has still to answer, or None.
+
+    An automerge run on such a PR can't merge: the T3 gate holds it until the T3 reports, and the lane
+    job that reports a T3 PASS runs the host tests and both builds on the merge commit itself (#421).
+    Running them here first only to be held cost 20 runs in two days. It counts only when lane:queued or
+    lane:running says a lane job will answer it, when it is the newest unanswered T2/T3 request, and when
+    its `commit:` names <head>: a request for an older head may be running on that head, and then nothing
+    else would test this one.
+    """
+    if not {QUEUED, RUNNING} & set(labels):
+        return None
+    request, _ = pending_requests(comments)
+    if not request or request['tier'] != 'T3' or not t3_gate(comments):
+        return None
+    named = (request.get('commit') or '').split()
+    commit = named[0].lower() if named else ''
+    if len(commit) < 7 or not re.fullmatch(r'[0-9a-f]+', commit) or not head.startswith(commit):
+        return None
+    return request.get('url') or 'the /lane T3 comment'
 
 
 def build_merge_commit(tree: Path, base: str, head: str, pr: int, title: str) -> tuple[str | None, list[str]]:
@@ -1332,8 +1356,10 @@ def main(argv=None) -> int:
             github.relabel(DONE, None)
         github.relabel(QUEUED, RUNNING)
     link_tools(tools_source())
+    # A pending T3 for this head: the lane job that reports its PASS runs these checks and merges.
+    t3_first = t3_request_for_head(comments, labels, head) if request['tier'] == 'auto' else None
     no_room = wait_for_room_to_build() \
-        if request['tier'] == 'auto' and os.environ.get('SM_LANE_RUNNER_ROLE') == 'build' else None
+        if request['tier'] == 'auto' and not t3_first and os.environ.get('SM_LANE_RUNNER_ROLE') == 'build' else None
     started = time.monotonic()
     requested = request.get('commit', '')
     moved = [f'requested {requested[:7]}, tested the newest commit {head[:7]}'] \
@@ -1341,7 +1367,13 @@ def main(argv=None) -> int:
     cc = ''
     try:
         conflicts = [] if request['tier'] == 'auto' else merge_base_branch(ROOT, args.base)
-        if no_room:
+        if t3_first:
+            verdict, where, ran, crashes = 'INCONCLUSIVE', 'no build', 'nothing', 'none'
+            details = [f'{HELD_FOR_T3[0]}: the /lane T3 request for this head ({t3_first}) has no lane report yet, '
+                       'so this run skipped its own host tests and builds. The lane job that reports a T3 PASS on '
+                       'this head runs them on the merge commit itself and merges on PASS; nobody needs to push or '
+                       're-label.']
+        elif no_room:
             verdict, where, ran, crashes = 'INCONCLUSIVE', 'no build', 'nothing', 'none'
             details = [f'{no_room}. Push again, or remove and re-add automerge, to try again.']
         elif request['tier'] == 'auto':
