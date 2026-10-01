@@ -568,6 +568,8 @@ final class Gate1AppModel: ObservableObject {
     @Published var requestedExperienceRoot: AppRoot?
     @Published private(set) var writtenMarginDraft: WrittenMarginDraft?
     @Published private(set) var recordingPermissionDenied = false
+    /// Why a friend's shared map couldn't be placed on this item's copy, by item id (#481).
+    @Published private(set) var sharedListeningMapRefusals: [String: String] = [:]
     @Published var marginCollectionQuery = MarginCollectionQuery()
     @Published private(set) var sharedMarginRows: [SharedMarginRow] = []
     private var pendingVoiceCaptureRequestID: UUID?
@@ -16272,7 +16274,7 @@ final class Gate1AppModel: ObservableObject {
                     return true
                 }
                 guard isCurrent else { return }
-                var resolvedWork: [(ImportedCommentaryLayer, [ImportedCommentaryInterjection], ResolvedListeningMapProjection?)] = []
+                var resolvedWork: [(ImportedCommentaryLayer, [ImportedCommentaryInterjection], SharedListeningMapPlacement.Outcome?)] = []
                 for (var layer, records) in work {
                     let queries = records.map { record in
                         let evidence = (record.podcastAnchorEvidence ?? []).compactMap { asset -> PodcastAcousticEvidenceQuery? in
@@ -16354,82 +16356,20 @@ final class Gate1AppModel: ObservableObject {
                     } else {
                         layer.sourceResolutionStatus = .contextOnly
                     }
-                    var mapProjection: ResolvedListeningMapProjection?
-                    if let spine = layer.editionFingerprintSpines?.first {
-                        let landmarkQueries = spine.landmarks.map { landmark -> PodcastPortableAnchorQuery in
-                            let evidence = layer.episodeMapEvidencePaths?[landmark.signatureAssetId]
-                                .flatMap { path in
-                                    Self.resolvedApplicationSupportAssetURL(
-                                        for: path,
-                                        applicationSupportDirectory: applicationSupportDirectory
-                                    )
-                                }
-                                .flatMap { try? Data(contentsOf: $0) }
-                                .map {
-                                    [PodcastAcousticEvidenceQuery(
-                                        id: landmark.signatureAssetId,
-                                        signatureData: $0,
-                                        anchorOffsetMs: landmark.anchorMediaTimeMs - landmark.sourceMediaStartMs
-                                    )]
-                                } ?? []
-                            return PodcastPortableAnchorQuery(
-                                packageScopedId: landmark.id,
-                                senderMediaTimeMs: landmark.anchorMediaTimeMs,
-                                evidence: evidence,
-                                evidenceWasDeclared: true
-                            )
-                        }
-                        let landmarkResolutions = try await PodcastAcousticAnchorResolver.resolve(
-                            queries: landmarkQueries,
-                            recipientAudioURL: localURL,
-                            senderExactEditionSHA256: spine.producingEditionSHA256,
-                            senderDurationMs: spine.producingEditionDurationMs,
+                    var mapOutcome: SharedListeningMapPlacement.Outcome?
+                    if let spine = layer.editionFingerprintSpines?.first, let proposal = layer.listeningMapProposals?.first {
+                        let evidencePaths = layer.episodeMapEvidencePaths ?? [:]
+                        mapOutcome = try await SharedListeningMapResolver.resolve(
+                            proposal: proposal, spine: spine,
+                            signatureData: { id in evidencePaths[id].flatMap {
+                                Self.resolvedApplicationSupportAssetURL(for: $0, applicationSupportDirectory: applicationSupportDirectory)
+                            }.flatMap { try? Data(contentsOf: $0) } },
+                            recipientAudioURL: localURL, recipientEditionSHA256: recipientDigest,
+                            itemId: itemId, projectionId: "imported-projection-\(layer.id)",
                             strongSourceIdentity: ImportedItemResolver.canRepresentSameWork(layer.itemIdentity, localItem)
                         )
-                        let sketch = layer.transcriptPhraseSketches?.first
-                        let salt = sketch.flatMap { Data(base64Encoded: $0.saltBase64) }
-                        let matches = spine.landmarks.compactMap { landmark -> FingerprintLandmarkMatch? in
-                            guard let resolution = landmarkResolutions[landmark.id],
-                                  let localTime = resolution.localMediaTimeMs,
-                                  !resolution.isAmbiguous else { return nil }
-                            var transcriptCorroborated = false
-                            if let recipientTranscript, let sketch, let salt,
-                               let sourceWindow = sketch.windows.first(where: { $0.id == landmark.transcriptSketchWindowId }) {
-                                let localText = recipientTranscript.segments
-                                    .filter { $0.endMs > localTime - 15_000 && $0.startMs < localTime + 15_000 }
-                                    .map(\.text)
-                                    .joined(separator: " ")
-                                let localHashes = TranscriptPhraseSketchBuilder.hashes(for: localText, salt: salt)
-                                let overlap = Set(localHashes).intersection(sourceWindow.hashes).count
-                                transcriptCorroborated = overlap >= 8
-                                    && TranscriptPhraseSketchBuilder.overlapScore(localHashes, sourceWindow.hashes) >= 0.2
-                            }
-                            let exact = resolution.evidenceClass == .exactEdition
-                            let direct = resolution.evidenceClass == .acousticVerified
-                                || resolution.evidenceClass == .fused
-                                || exact
-                            guard direct else { return nil }
-                            return FingerprintLandmarkMatch(
-                                id: "match-\(landmark.id)",
-                                landmarkId: landmark.id,
-                                sourceMediaTimeMs: landmark.anchorMediaTimeMs,
-                                recipientMediaTimeMs: localTime,
-                                acousticConfidence: resolution.confidence ?? (exact ? 1 : 0.9),
-                                transcriptCorroborated: transcriptCorroborated || exact,
-                                isUniqueWithinEpisode: exact || transcriptCorroborated
-                            )
-                        }
-                        mapProjection = EpisodeFingerprintAlignment.makeProjection(
-                            id: "imported-projection-\(layer.id)",
-                            itemId: itemId,
-                            proposalId: layer.listeningMapProposals?.first?.id,
-                            recipientEditionSHA256: recipientDigest,
-                            matches: matches,
-                            exactEdition: spine.producingEditionSHA256 != nil
-                                && spine.producingEditionSHA256 == recipientDigest
-                        )
                     }
-                    resolvedWork.append((layer, updated, mapProjection))
+                    resolvedWork.append((layer, updated, mapOutcome))
                 }
                 await MainActor.run {
                     guard let self,
@@ -16437,11 +16377,24 @@ final class Gate1AppModel: ObservableObject {
                           let store = self.store else { return }
                     self.transcriptAssistedResolutionItems.remove(itemId)
                     do {
-                        for (layer, records, projection) in resolvedWork {
+                        for (layer, records, _) in resolvedWork {
                             try store.saveImportedCommentaryLayer(layer)
                             for record in records { try store.saveImportedCommentaryInterjection(record) }
-                            if let projection { try store.saveResolvedListeningMapProjection(projection) }
-                            if projection != nil, let proposal = layer.listeningMapProposals?.first {
+                        }
+                        let outcomes = resolvedWork.compactMap(\.2)
+                        let activation = SharedListeningMapPlacement.activation(
+                            outcomes, listenerProposalIds: try store.loadPortableListeningMapProposals(itemId: itemId).map(\.id))
+                        let sharedProposals = resolvedWork.compactMap { $0.0.listeningMapProposals?.first }
+                        if !outcomes.isEmpty { self.sharedListeningMapRefusals[itemId] = activation.refusal?.listenerReason }
+                        if activation.refusal != nil, let stale = try store.loadResolvedListeningMapProjection(itemId: itemId),
+                           sharedProposals.contains(where: { $0.id == stale.proposalId }) {
+                            try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(
+                                id: stale.id, itemId: itemId, proposalId: stale.proposalId,
+                                recipientEditionSHA256: stale.recipientEditionSHA256, points: [], intervals: []))
+                        }
+                        if let projection = activation.projection {
+                            try store.saveResolvedListeningMapProjection(projection)
+                            if let proposal = sharedProposals.first(where: { $0.id == projection.proposalId }) {
                                 Task { @MainActor [weak self] in
                                     guard let self else { return }
                                     for scene in proposal.scenes where

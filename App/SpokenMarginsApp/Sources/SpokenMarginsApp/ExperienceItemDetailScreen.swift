@@ -430,6 +430,17 @@ struct ExperienceItemDetailScreen: View {
                     }
                     .accessibilityIdentifier("item.externalReference")
                 }
+                if let reason = model.sharedListeningMapRefusals[model.selectedItem.id] {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("A shared map couldn't be placed on your copy")
+                            .font(.subheadline.weight(.semibold))
+                        Text(reason)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("item.sharedMap.refusal")
+                }
                 if model.canGenerateListeningMap {
                     Button(model.episodeMapPreparationStatus == "Preparing" ? "Preparing Listening Map…" : "Prepare Listening Map", systemImage: "sparkles") {
                         model.generateListeningMap()
