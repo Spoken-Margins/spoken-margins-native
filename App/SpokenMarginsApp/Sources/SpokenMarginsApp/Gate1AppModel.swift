@@ -3502,12 +3502,7 @@ final class Gate1AppModel: ObservableObject {
         return item.id
     }
 
-    static func isRemotePDFHandoff(_ handoff: SourceLinkHandoff) -> Bool {
-        handoff.sourceSurface == "share_sheet_pdf"
-            || handoff.sourceSurface == SourceLinkHandoff.safariExtensionPDFSurface
-            || (URL(string: handoff.inputURL)?.isFileURL == false
-                && URL(string: handoff.inputURL)?.pathExtension.lowercased() == "pdf")
-    }
+    static func isRemotePDFHandoff(_ handoff: SourceLinkHandoff) -> Bool { handoff.isRemotePDF }
 
     private func importLocalSharedPDFInBackground(url: URL) async throws {
         #if canImport(PDFKit)
