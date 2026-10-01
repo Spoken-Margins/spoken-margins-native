@@ -9767,7 +9767,7 @@ final class Gate1AppModel: ObservableObject {
             let root = try applicationSupportDirectory().appendingPathComponent("PreparedAudio")
             while !Task.isCancelled, renderFrontierKey == key {
                 let item = try store.loadItem(id: itemID)
-                guard let text = item.text, !text.isEmpty else { return }
+                guard let text = PreparedSpeechHooks.preparedText(of: item, in: store), !text.isEmpty else { return }
                 let source = try store.loadCanonicalSource(itemId: itemID)
                 let manifest = try store.loadPreparedAudioManifests(itemId: itemID).first { $0.signature == signature }
                 let canonical = source?.segments.map(\.text).joined(separator: "\n\n") ?? ""
@@ -10268,7 +10268,7 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["textAudioPrewarm:\(itemId)"] = "skipped_existing_progress"
                 return
             }
-            guard shouldPrewarmTextAudio(for: item), let text = item.text else { return }
+            guard shouldPrewarmTextAudio(for: item), let text = item.text, PreparedSpeechHooks.preparedText(of: item, in: store) == text else { return }
             let outputDirectory = try generatedTextAudioDirectory()
             let voiceIdentifier = speechVoiceIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : speechVoiceIdentifier
             let rate = Float(speechRate)
@@ -10352,7 +10352,7 @@ final class Gate1AppModel: ObservableObject {
             let item = try store.loadItem(id: itemId)
             guard item.sourceCompletedAt == nil,
                   !Self.itemIsCompleted(try store.loadSessions(itemId: itemId)),
-                  let sourceText = item.text,
+                  let sourceText = PreparedSpeechHooks.preparedText(of: item, in: store),
                   shouldPrewarmTextAudio(for: item),
                   let voice = ttsVoiceSelection.supertonicVoice,
                   let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
@@ -10515,17 +10515,8 @@ final class Gate1AppModel: ObservableObject {
         return endChar >= prepared.normalizedText.count
     }
 
-    /// A PDF imported with extraction v2 (C1 M3) is spoken through SessionEngine's
-    /// I14 projection. Prepared (pre-rendered) text audio is rendered from Item.text,
-    /// which would read its references and tables aloud, so it isn't prepared for
-    /// these items yet; they play with live speech.
-    private func usesStructuredSpeech(_ item: Item) -> Bool {
-        item.mediaType == "pdf" && (try? store?.loadStructuredDocument(itemId: item.id)) != nil
-    }
-
     private func shouldPrewarmTextAudio(for item: Item) -> Bool {
         guard item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return false }
-        guard !usesStructuredSpeech(item) else { return false }
         if item.mediaType == TargetType.browserOwnedMedia.rawValue {
             return false
         }
@@ -10737,6 +10728,7 @@ final class Gate1AppModel: ObservableObject {
                 rootDirectory: supportDirectory.appending(path: "PreparedAudio", directoryHint: .isDirectory)
             )
             preparedAudioCoordinator = coordinator
+            let hooks = PreparedSpeechHooks(store: store, coordinator: coordinator, signatureTask: signatureTask) // #336
             Task { [weak self] in
                 guard let signature = try? await signatureTask.value,
                       let self, self.ttsVoiceSelection.supertonicVoice == voice else { return }
@@ -10783,28 +10775,10 @@ final class Gate1AppModel: ObservableObject {
                         self?.updateOnDeviceSpeechGenerationProgress(progress)
                     }
                 },
-                onPreparationPlan: { itemId, articleIdentity, plan in
-                    // A turn is not a Library item. The player's article chunks
-                    // share the article plan's identity with background
-                    // preparation (#312); a changed article matches nothing.
-                    guard let signature = try? await signatureTask.value,
-                          let item = try? store.loadItem(id: itemId), let sourceText = item.text,
-                          NarrationChunkPlanner.identity(ofArticle: sourceText) == articleIdentity else { return }
-                    _ = try? await coordinator.begin(itemId: itemId, sourceText: sourceText, signature: signature, plan: plan, schedulesJob: false)
-                },
-                onPreparedChunk: { itemId, articleIdentity, plan, audioURL, durationMs, engine in
-                    guard let signature = try? await signatureTask.value,
-                          let item = try? store.loadItem(id: itemId), let sourceText = item.text,
-                          NarrationChunkPlanner.identity(ofArticle: sourceText) == articleIdentity else { return }
-                    try? await coordinator.commit(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText, audioURL: audioURL, durationMs: durationMs, engine: engine)
-                },
-                articleText: { itemId in try? store.loadItem(id: itemId).text },
-                preparedChunkLookup: { itemId, articleIdentity, plan in
-                    guard let signature = try? await signatureTask.value,
-                          let item = try? store.loadItem(id: itemId), let sourceText = item.text,
-                          NarrationChunkPlanner.identity(ofArticle: sourceText) == articleIdentity else { return nil }
-                    return try? await coordinator.committedChunk(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText)
-                },
+                onPreparationPlan: { await hooks.planned(itemId: $0, articleIdentity: $1, plan: $2) },
+                onPreparedChunk: { await hooks.rendered(itemId: $0, articleIdentity: $1, plan: $2, audioURL: $3, durationMs: $4, engine: $5) },
+                articleText: { hooks.articleText(itemId: $0) },
+                preparedChunkLookup: { await hooks.lookup(itemId: $0, articleIdentity: $1, plan: $2) },
                 onPreparedAudio: { [weak self] itemId, prepared in
                     Task { @MainActor [weak self] in
                         guard let signature = try? await signatureTask.value, let self else { return }
@@ -15100,14 +15074,9 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func enqueueExplicitAudioPreparation(item: Item) async {
-        guard let sourceText = item.text,
+        guard let sourceText = PreparedSpeechHooks.preparedText(of: item, in: store),
               !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let voice = ttsVoiceSelection.supertonicVoice else { return }
-        guard !usesStructuredSpeech(item) else {
-            diagnostics["explicitAudioPreparation:\(item.id)"] = "skipped_structured_pdf"
-            statusMessage = "This PDF plays with live speech; preparing its audio ahead isn't available yet."
-            return
-        }
         do {
             allowAudioPreparation(itemId: item.id)
             failedStartupAudioPreparationItemIds.remove(item.id)
@@ -15218,10 +15187,9 @@ final class Gate1AppModel: ObservableObject {
             let sessionsByItemId = Dictionary(grouping: try store.loadSessions(), by: \.itemId)
             for row in libraryItems {
                 guard let item = try? store.loadItem(id: row.id),
-                      let text = item.text,
+                      let text = PreparedSpeechHooks.preparedText(of: item, in: store),
                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      !suppressedAutomaticAudioPreparationItemIds.contains(item.id),
-                      !usesStructuredSpeech(item) else { continue }
+                      !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else { continue }
                 guard item.sourceCompletedAt == nil, !Self.shouldSkipTextAudioPreparation(sessionsByItemId[item.id] ?? []) else {
                     diagnostics["automaticAudioPreparation:\(item.id)"] = "skipped_existing_progress"
                     continue
@@ -15295,7 +15263,7 @@ final class Gate1AppModel: ObservableObject {
             if libraryItems.first(where: { $0.id == job.itemId })?.startupAudioState == .waiting { updateLibraryStartupAudioState(itemId: job.itemId, state: .preparing) }
             guard var manifest = try store.loadPreparedAudioManifest(id: job.manifestId),
                   let item = try? store.loadItem(id: job.itemId),
-                  let sourceText = item.text else {
+                  let sourceText = PreparedSpeechHooks.preparedText(of: item, in: store) else {
                 try store.deleteAudioPreparationJob(id: job.id)
                 diagnostics["backgroundAudioPreparation"] = "discarded_missing_source_job"
                 return try hasMoreMatchingJobs()
@@ -15496,6 +15464,8 @@ final class Gate1AppModel: ObservableObject {
     ) async throws {
         // A stand-in (iOS voice) chunk waits for a play to retry Supertonic; don't bake it in (#363).
         guard !PreparedAudioCoordinator.hasStandIns(manifest) else { return }
+        // Narration replaces Item.text with its own, so it keeps Item.text and maps into it (#336).
+        guard let speech = PreparedSpeechHooks.texts.resolve(item: item, documents: store), speech.text == sourceText else { return }
         let chunks = try PreparedAudioCoordinator.assemblyChunks(
             plan: plan, manifest: manifest, sourceText: sourceText,
             preparedRoot: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
@@ -15507,8 +15477,8 @@ final class Gate1AppModel: ObservableObject {
         do {
             let prepared = try await SupertonicPreparedAudioAssembler.assemble(
                 itemId: item.id,
-                sourceText: sourceText,
-                projection: SpeechTextNormalizer.normalizeWithSourceOffsets(sourceText),
+                sourceText: speech.itemText,
+                projection: speech.assemblyProjection(),
                 voice: voice,
                 chunks: chunks,
                 outputDirectory: support.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory)

@@ -705,6 +705,97 @@ final class SupertonicSpeechTests: XCTestCase {
         }
     }
 
+    // #336: a PDF on the new reader is spoken from its listenable text, without references or
+    // running heads. Preparation, the player's lookups and assembly all read Item.text, so nothing
+    // matched and these PDFs were never prepared. They now share PreparedSpeechHooks' text: a
+    // prepared paper plays from its prepared chunks, and its narration's timeline stays in Item.text.
+    func testAPreparedNewReaderPDFPlaysFromItsChunksAndItsNarrationStaysInItemText() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "v2-prepared-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let template = try makeTestWAV(duration: 0.1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let store = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
+        let body = (1...6).map { "Sentence \($0) of the methods carries enough ordinary words to fill part of a chunk." }
+        let document = StructuredDocumentBuilder.build(lines: [
+            StructuredDocumentLine(text: "J Biol 12 (2020) 1-9", role: .pageHeader, pageIndex: 0),
+            StructuredDocumentLine(text: "Methods", role: .heading, pageIndex: 0, level: 2),
+        ] + body.map { StructuredDocumentLine(text: $0, role: .body, pageIndex: 0) } + [
+            StructuredDocumentLine(text: "References", role: .heading, pageIndex: 1, level: 2),
+            StructuredDocumentLine(text: "[1] A. Author. A cited title. 2019.", role: .reference, pageIndex: 1),
+            StructuredDocumentLine(text: "Appendix", role: .heading, pageIndex: 1, level: 2),
+            StructuredDocumentLine(text: "Supplementary methods are read aloud after the references.", role: .body, pageIndex: 1),
+        ], engine: "pdfkit_baseline", version: 2, pageCount: 2)
+        let item = Item(id: "item-paper", title: "Paper", mediaType: "pdf", text: document.text, externalReference: nil, status: "ready")
+        try store.saveItem(item)
+        try store.saveStructuredDocument(document, itemId: item.id)
+
+        // Background preparation, planned as the app's preparation pass plans it.
+        let text = try XCTUnwrap(PreparedSpeechHooks.preparedText(of: item, in: store))
+        XCTAssertFalse(text.contains("A cited title"), "references aren't prepared")
+        XCTAssertFalse(text.contains("J Biol"), "running heads aren't prepared")
+        let signature = TTSRenderSignature(
+            engine: "supertonic", modelRevision: "3", assetManifestHash: "assets", voiceStyleHash: "v2",
+            synthesisParametersHash: "parameters", normalizationVersion: "normalization", chunkingVersion: "chunking", digest: "v2-paper"
+        )
+        let preparedRoot = root.appending(path: "PreparedAudio", directoryHint: .isDirectory)
+        let coordinator = PreparedAudioCoordinator(repository: store, rootDirectory: preparedRoot)
+        let plan = PreparedChunkPlan.articlePlan(text)
+        XCTAssertGreaterThan(plan.count, 1)
+        _ = try await coordinator.begin(itemId: item.id, sourceText: text, signature: signature, plan: plan)
+        for chunk in plan {
+            try await coordinator.commit(itemId: item.id, signature: signature, plan: chunk, sourceText: text, audioURL: template, durationMs: 100)
+        }
+
+        // The player, wired as Gate1AppModel wires it, speaks what SessionEngine hands it.
+        let hooks = PreparedSpeechHooks(store: store, coordinator: coordinator, signatureTask: Task<TTSRenderSignature, Error> { signature })
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let hits = PreparedLookupLog()
+        let misses = PreparedLookupLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            articleText: { hooks.articleText(itemId: $0) },
+            preparedChunkLookup: { itemId, identity, chunk in
+                let found = await hooks.lookup(itemId: itemId, articleIdentity: identity, plan: chunk)
+                (found == nil ? misses : hits).add(identity, chunk)
+                return found
+            }
+        )
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: item.id, from: 0)
+        for _ in 0..<150 where Set(hits.values.map { $0.1.index }).count < plan.count {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try client.stop()
+        XCTAssertEqual(Set(hits.values.map { $0.1.index }), Set(plan.map(\.index)), "every prepared chunk is found")
+        XCTAssertTrue(misses.values.isEmpty, "\(misses.values.count) lookups found nothing")
+        let renders = await renderer.renderCount
+        XCTAssertEqual(renders, 0, "nothing renders live")
+
+        // Assembly, as finishBackgroundPreparedAudio does it: attaching the narration keeps
+        // Item.text, and each stretch of audio points at its own words there.
+        let speech = try XCTUnwrap(PreparedSpeechHooks.texts.resolve(item: item, documents: store))
+        let manifest = try XCTUnwrap(try store.loadPreparedAudioManifests(itemId: item.id).first)
+        let narration = try await SupertonicPreparedAudioAssembler.assemble(
+            itemId: item.id,
+            sourceText: speech.itemText,
+            projection: speech.assemblyProjection(),
+            voice: .m2,
+            chunks: try PreparedAudioCoordinator.assemblyChunks(plan: plan, manifest: manifest, sourceText: text, preparedRoot: preparedRoot),
+            outputDirectory: root.appending(path: "Narration", directoryHint: .isDirectory)
+        )
+        XCTAssertEqual(narration.normalizedText, item.text, "the narration keeps Item.text")
+        let itemCharacters = Array(document.text)
+        let starts = narration.timeline.segments.compactMap(\.startChar)
+        XCTAssertEqual(starts, starts.sorted(), "the narration moves forward through Item.text")
+        let appendix = try XCTUnwrap(narration.timeline.segments.first { $0.text.contains("Supplementary methods") })
+        XCTAssertTrue(String(itemCharacters[(appendix.startChar ?? 0)..<(appendix.endChar ?? 0)]).contains("Supplementary methods"),
+                      "a Margin made during the appendix opens at the appendix")
+    }
+
     // #312: a bare "<" in the Overview and a ">" in the article. Normalizing the whole spoken text
     // eats across the seam, so the spoken article no longer matches the prepared one. The player
     // used to ask for prepared chunks by position anyway, which could play another stretch's audio.
