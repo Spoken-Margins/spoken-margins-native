@@ -61,6 +61,13 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   automerge job first waits for room: no simulator job, normal memory pressure, and enough free disk.
   Trial (2026-10-01): a host-only job (T0/T1) there may start beside a simulator job while memory
   pressure reads normal and BESIDE_SIMULATOR_FREE_DISK is free; each one is logged for the owner.
+- Auto-revert of a lane change that broke the lane (owner rule 2026-10-01, auto_revert). Each job on
+  next starts by finding the newest merge into next that touched the lane (test-scope.py's lane
+  paths). If the first two lane reports on PRs after it, from jobs that tested a next with it, were
+  both runner faults (INCONCLUSIVE for a lane reason, or a job that stopped before reporting; not a
+  merge conflict, a T3 hold or a FAIL), it reverts that merge with `git revert -m 1`, pushes like a
+  merge, files a `ready` + `regression` issue to re-land it, and posts "Lane auto-revert:" on #337.
+  Once per lane change; a revert that doesn't apply cleanly is reported on #337 and left for a person.
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
 default ~/Library/Caches/SpokenMarginsLane/evidence), SM_LANE_TOOLS (a checkout whose .venv and
@@ -1309,6 +1316,243 @@ class GitHub:
             self.api('-X', 'POST', f'repos/{self.repo}/issues/{self.pr}/labels', '-f', f'labels[]={add}')
 
 
+# ---- Auto-revert of a lane change that broke the lane (owner rule 2026-10-01) ---------------------
+
+OPS_ISSUE = 337
+AUTO_REVERT = 'Lane auto-revert'  # how both the revert comment and the could-not-revert comment on #337 start
+STOPPED = 'stopped before reporting'  # cleanup()'s note when a job died before its report
+MERGE_SUBJECT = re.compile(r'^Merge pull request #(\d+)(?::\s*(.*)| from \S+)')
+TESTED_ON = re.compile(r'\(tested merged with \S+ at ([0-9a-f]{7,40})\)')
+# INCONCLUSIVE reports that are the PR's or the request's own doing, not the lane's.
+NOT_LANE_FAULTS = (('does not merge cleanly', 'a merge conflict'), ('held for T3', 'held for T3'),
+                   ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'))
+LANE_MERGE_LOOKBACK = 300
+
+
+def utc(stamp: str):
+    """A git or GitHub ISO 8601 time as an aware datetime (Python 3.9 can't read a trailing Z)."""
+    import datetime
+    return datetime.datetime.fromisoformat(stamp.replace('Z', '+00:00')).astimezone(datetime.timezone.utc)
+
+
+def lane_merge(tree: Path, base: str, is_lane, lookback: int = LANE_MERGE_LOOKBACK) -> dict | None:
+    """The newest merge into <base> (first-parent history) whose changes touch the lane, or None.
+
+    Returns {'sha', 'parent', 'time', 'pr', 'title', 'subject', 'paths'}: paths are the lane paths it
+    changed against next before it, title is None when the subject doesn't carry it (a GitHub merge).
+    """
+    log = subprocess.check_output(['git', '-C', str(tree), 'log', '--first-parent', '--merges',
+                                   '--diff-merges=first-parent', '--name-only', f'-n{lookback}',
+                                   '--format=@@%H %P|%cI|%s', f'origin/{base}'], text=True)
+    merge = None
+    for line in log.splitlines() + ['@@']:
+        if line.startswith('@@'):
+            if merge and merge['paths']:
+                return merge
+            if line == '@@':
+                return None
+            shas, stamp, subject = line[2:].split('|', 2)
+            sha, parent = shas.split()[:2]
+            pr = MERGE_SUBJECT.match(subject)
+            merge = {'sha': sha, 'parent': parent, 'time': stamp, 'subject': subject,
+                     'pr': int(pr.group(1)) if pr else None, 'title': pr.group(2) if pr else None, 'paths': []}
+        elif line.strip() and merge is not None and is_lane(line.strip()):
+            merge['paths'].append(line.strip())
+    return None
+
+
+def lane_report_verdict(body: str) -> tuple[bool, str] | None:
+    """For a runner comment: (whether it is a runner fault, why), or None if it isn't a lane report.
+
+    A runner fault is an INCONCLUSIVE report for a lane reason (a boot failure, the build runner's room
+    wait, a crash in the runner, a missing tool or runtime, a timeout), or a job that stopped before it
+    could report. A merge conflict, a T3 hold or a malformed request is not, and neither is FAIL.
+    """
+    if NOTE in body and STOPPED in body:
+        return True, 'the job stopped before it could report'
+    verdict = REPORT.search(body)
+    if not verdict or not MARKER.search(body):
+        return None
+    if verdict.group(1) != 'INCONCLUSIVE':
+        return False, verdict.group(1)
+    for text, why in NOT_LANE_FAULTS:
+        if text in body:
+            return False, f'INCONCLUSIVE ({why})'
+    lines = [line.strip() for line in body.splitlines()[3:] if line.strip() and not line.startswith('<!--')]
+    return True, 'INCONCLUSIVE: ' + (lines[0][:200] if lines else 'no reason given')
+
+
+def lane_reports_after(tree: Path, merge: dict, comments) -> list[dict]:
+    """The runner's lane reports on PRs from after the lane merge, oldest first, at most two.
+
+    `comments` is the repository's issue comments, oldest first. A report counts only if the next it
+    tested already had the merge in it, so a job that started before the merge landed doesn't count.
+    A stopped-job note names no next, so its time decides.
+    """
+    since, found = utc(merge['time']), []
+    for comment in comments:
+        body = comment.get('body') or ''
+        if (comment.get('user') or {}).get('login') not in BOT or '/pull/' not in (comment.get('html_url') or ''):
+            continue
+        if utc(comment.get('created_at') or '1970-01-01T00:00:00Z') <= since:
+            continue
+        judged = lane_report_verdict(body)
+        if judged is None:
+            continue
+        tested = TESTED_ON.search(body)
+        if tested and subprocess.run(['git', '-C', str(tree), 'merge-base', '--is-ancestor', merge['sha'],
+                                      tested.group(1)], capture_output=True).returncode != 0:
+            continue
+        found.append({'url': comment.get('html_url'), 'fault': judged[0], 'why': judged[1]})
+        if len(found) == 2:
+            break
+    return found
+
+
+def reverted_by(tree: Path, base: str, sha: str) -> str | None:
+    """The commit on <base> whose message says it reverts <sha> (git revert's own line), if any."""
+    found = subprocess.run(['git', '-C', str(tree), 'log', '--format=%H', '-n1', '--fixed-strings',
+                            f'--grep=This reverts commit {sha}', f'origin/{base}'], capture_output=True, text=True)
+    return found.stdout.strip() or None
+
+
+def revert_merge(tree: Path, base: str, merge: dict, message: str,
+                 attempts: int = MERGE_ATTEMPTS) -> tuple[str | None, str]:
+    """git revert -m 1 the merge on the newest <base> and push it the way the runner pushes merges.
+
+    Returns (the revert commit, '') or (None, why not). Leaves the tree checked out where it was.
+    """
+    git = ['git', '-C', str(tree)]
+    name, email = BOT
+    start = subprocess.check_output(git + ['rev-parse', 'HEAD'], text=True).strip()
+    try:
+        for _ in range(attempts):
+            done = reverted_by(tree, base, merge['sha'])
+            if done:
+                return None, f'{base} already reverts it ({done[:7]})'
+            subprocess.run(git + ['checkout', '--quiet', '--force', '--detach', f'origin/{base}'], check=True,
+                           capture_output=True)
+            undone = subprocess.run(git + ['revert', '--no-commit', '-m', '1', merge['sha']], capture_output=True,
+                                    text=True)
+            if undone.returncode != 0:
+                conflicts = subprocess.run(git + ['diff', '--name-only', '--diff-filter=U'], capture_output=True,
+                                           text=True).stdout.split()
+                subprocess.run(git + ['revert', '--abort'], capture_output=True)
+                return None, ('git revert -m 1 does not apply cleanly on the newest '
+                              f'{base} ({", ".join(conflicts[:10]) or undone.stderr.strip()[:200]})')
+            if subprocess.run(git + ['diff', '--cached', '--quiet'], capture_output=True).returncode == 0:
+                subprocess.run(git + ['revert', '--abort'], capture_output=True)
+                return None, f'reverting it changes nothing: {base} already undoes it'
+            subprocess.run(git + ['-c', f'user.name={name}', '-c', f'user.email={email}', 'commit', '--quiet',
+                                  '-m', message], check=True, capture_output=True)
+            sha = subprocess.check_output(git + ['rev-parse', 'HEAD'], text=True).strip()
+            pushed, why = push_merge(tree, sha, base)
+            if pushed:
+                return sha, ''
+            if not next_moved(why):
+                return None, f'the push to {base} failed ({why})'
+            fetch_base(tree, base)
+        return None, f'{base} kept moving ({attempts} attempts)'
+    finally:
+        subprocess.run(git + ['checkout', '--quiet', '--force', '--detach', start], capture_output=True)
+
+
+class Repo:
+    """The repository-wide GitHub calls the auto-revert needs (GitHub above is one PR's)."""
+
+    def __init__(self, repo: str):
+        self.repo = repo
+
+    def api(self, *args: str) -> str:
+        return subprocess.check_output(['gh', 'api', *args], text=True)
+
+    def comments_since(self, since: str):
+        """Every issue and PR comment created since <since>, oldest first, a page at a time."""
+        page = 1
+        while True:
+            batch = json.loads(self.api(f'repos/{self.repo}/issues/comments?since={since}&sort=created'
+                                        f'&direction=asc&per_page=100&page={page}'))
+            yield from batch
+            if len(batch) < 100:
+                return
+            page += 1
+
+    def issue_comments(self, number: int) -> list[dict]:
+        lines = self.api('--paginate', '--jq', '.[] | @json', f'repos/{self.repo}/issues/{number}/comments')
+        return [json.loads(line) for line in lines.splitlines() if line.strip()]
+
+    def comment(self, number: int, body: str) -> str:
+        return json.loads(self.api(f'repos/{self.repo}/issues/{number}/comments', '-f', f'body={body}'))['html_url']
+
+    def title(self, number: int) -> str:
+        return json.loads(self.api(f'repos/{self.repo}/pulls/{number}')).get('title', '')
+
+    def open_issue(self, title: str, body: str, labels: list[str]) -> str:
+        args = [f'repos/{self.repo}/issues', '-f', f'title={title}', '-f', f'body={body}']
+        for label in labels:
+            args += ['-f', f'labels[]={label}']
+        return json.loads(self.api(*args))['html_url']
+
+
+def auto_revert(tree: Path, base: str, repo, policy=None) -> str:
+    """At the start of a lane job: revert the newest lane change on <base> if the two lane reports after
+    it were both runner faults (owner rule 2026-10-01). Returns what it did, for the job log.
+
+    Only a merge that touched the lane (test-scope.py's lane paths) is ever reverted, and each only once:
+    a revert already on <base>, or an earlier "Lane auto-revert" comment on #337 naming it, stops it.
+    A revert that doesn't apply cleanly is reported on #337 and left for a person.
+    """
+    fetch_base(tree, base)
+    policy = policy or base_policy(tree, base, 'scripts/test-scope.py')
+    if policy is None or not hasattr(policy, 'is_lane_path'):
+        return 'no lane path list on the base yet'
+    merge = lane_merge(tree, base, policy.is_lane_path)
+    if merge is None:
+        return 'no lane change in recent merges'
+    label = f'#{merge["pr"]}' if merge['pr'] else merge['sha'][:7]
+    if re.search(r'\bRevert', merge['subject']):
+        return f'the newest lane change ({label}) is itself a revert; left alone'
+    reports = lane_reports_after(tree, merge, repo.comments_since(utc(merge['time']).strftime('%Y-%m-%dT%H:%M:%SZ')))
+    if len(reports) < 2 or not all(report['fault'] for report in reports):
+        return f'the newest lane change ({label}) is fine so far: ' + (
+            '; '.join(f'{r["url"]} {r["why"]}' for r in reports) or 'no lane report since')
+    done = reverted_by(tree, base, merge['sha'])
+    if done:
+        return f'{label} was already reverted ({done[:7]})'
+    if any((c.get('body') or '').startswith(AUTO_REVERT) and merge['sha'][:7] in (c.get('body') or '')
+           for c in repo.issue_comments(OPS_ISSUE)):
+        return f'{label} was already handled (#{OPS_ISSUE})'
+    title = merge['title'] or (repo.title(merge['pr']) if merge['pr'] else merge['subject'])
+    evidence = '\n'.join(f'{n}. {r["url"]}: {r["why"]}' for n, r in enumerate(reports, 1))
+    message = (f'Revert {label}: {title} (lane auto-revert)\n\n'
+               f'The two lane reports after this lane change were both runner faults:\n{evidence}\n\n'
+               'Reverted by the lane runner (owner rule 2026-10-01).\n\n'
+               f'This reverts commit {merge["sha"]}, reversing\nchanges made to {merge["parent"]}.')
+    sha, problem = revert_merge(tree, base, merge, message)
+    if not sha:
+        repo.comment(OPS_ISSUE, f'{AUTO_REVERT} failed: {label} (`{merge["sha"][:7]}`, a lane change) was not '
+                                f'reverted on {base}: {problem}. The two lane reports after it were both runner '
+                                f'faults:\n{evidence}\nNothing was pushed. A person needs to look; the runner won\'t '
+                                f'try this change again.\n_Posted by the lane runner (scripts/lane-runner.py)._')
+        return f'could not revert {label}: {problem}'
+    issue = ''
+    try:
+        issue = repo.open_issue(
+            f'Re-land {label} after a lane auto-revert: {title}',
+            f'The lane runner reverted {label} on {base} as `{sha[:7]}` (owner rule 2026-10-01), because the two '
+            f'lane reports after it were both runner faults:\n{evidence}\n\n'
+            f'**Done when:** the change lands again in a new PR into {base}, with the cause of those faults '
+            'fixed, and the two lane reports after it are not both runner faults.\n\n'
+            '**Must not break:** the lane jobs of other PRs while the re-land is tested.\n\n'
+            '_Filed by the lane runner (scripts/lane-runner.py)._', ['ready', 'regression'])
+    except Exception as error:  # noqa: BLE001 - the #337 comment still says what happened
+        issue = f'not filed ({error!r})'
+    repo.comment(OPS_ISSUE, f'{AUTO_REVERT}: reverted {label} (`{merge["sha"][:7]}`, a lane change) on {base} as '
+                            f'`{sha[:7]}`. The two lane reports after it were both runner faults:\n{evidence}\n'
+                            f'Re-land issue: {issue}\n_Posted by the lane runner (scripts/lane-runner.py)._')
+    return f'reverted {label} as {sha[:7]}'
+
+
 # ---- Main ---------------------------------------------------------------------------------------
 
 def runner_device_claim(name: str) -> Path:
@@ -1447,6 +1691,11 @@ def main(argv=None) -> int:
     run_url = f'{os.environ.get("GITHUB_SERVER_URL", "https://github.com")}/{repo}/actions/runs/{args.run_id}'
     if args.cleanup:
         return cleanup(github, run_url, args.mode)
+    if args.base == 'next':  # lane-check/** bases test lane changes; only next gets reverted
+        try:
+            print(f'Lane auto-revert check: {auto_revert(ROOT, args.base, Repo(repo))}')
+        except Exception as error:  # noqa: BLE001 - the check must never stop the job it runs in
+            print(f'Lane auto-revert check skipped: {error!r}')
     sweep_runner_simulators()
     pull = github.pull()
     head = pull['head']['sha']
