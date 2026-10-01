@@ -214,6 +214,18 @@ enum PDFStructuredTextExtractor {
         )
     }
 
+    /// The paper's DOI or arXiv id from its first two pages, with the metadata's authors,
+    /// year and title, so a Margin note can be matched in Zotero (#206). Nil without an id.
+    static func bibliography(for document: PDFDocument) -> PDFBibliography? {
+        let attributes = document.documentAttributes
+        return BibliographicReferenceExtractor.extract(
+            pageTexts: (0..<min(2, document.pageCount)).compactMap { document.page(at: $0)?.string },
+            metadataTitle: attributes?[PDFDocumentAttribute.titleAttribute] as? String,
+            metadataAuthor: attributes?[PDFDocumentAttribute.authorAttribute] as? String,
+            metadataCreationDate: attributes?[PDFDocumentAttribute.creationDateAttribute] as? Date
+        )
+    }
+
     /// The item title v1 gave a PDF: its metadata title, else its first level-1
     /// heading (ObsidianMarkdownParser took the first "# " line). The same title
     /// gives a re-imported PDF the same item id, so the edition guard applies.
@@ -316,6 +328,7 @@ enum PDFStructuredTextExtractor {
                 }
             )
             let titlePage = pageIndex < 2 ? titlePageRoles(in: pageLines, isFirstPage: pageIndex == 0, bodySize: bodySize, pageBox: page.bounds(for: .mediaBox)) : [:]
+            let footnotes = footnoteLineIndices(in: pageLines, bodySize: bodySize, pageBox: page.bounds(for: .mediaBox))
             // The line each outline entry names on its page is a heading, even where a
             // running head would sit (#347): one line, or two when the heading wraps
             // (#355). A running head that repeats the title takes it only when no other
@@ -364,6 +377,8 @@ enum PDFStructuredTextExtractor {
                     result.append(StructuredDocumentLine(text: line.text, role: .frontMatter, pageIndex: pageIndex))
                 } else if let role = titlePage[lineIndex] {
                     result.append(StructuredDocumentLine(text: line.text, role: role, pageIndex: pageIndex))
+                } else if footnotes.contains(lineIndex) {
+                    result.append(StructuredDocumentLine(text: line.text, role: .footnote, pageIndex: pageIndex))
                 } else if tableLines.contains(lineIndex) {
                     result.append(StructuredDocumentLine(text: line.text, role: .table, pageIndex: pageIndex))
                 } else if figureLines.contains(lineIndex) {
@@ -707,6 +722,72 @@ enum PDFStructuredTextExtractor {
             }
         }
         return roles
+    }
+
+    /// Footnotes at the foot of a page (#250): a block in small type in the bottom 40%
+    /// of the page, starting on a line that opens with a note marker ("1 ", "†", "2https")
+    /// which the page's body text also sets as a superscript, plus the block's wrapped
+    /// lines at the same size. The first line must read as a sentence or a link, so
+    /// small math is left alone. A table note or figure legend in the same place has no
+    /// matching body superscript, or runs on from small print just above it without
+    /// the gap a footnote rule leaves. Emulated with PyMuPDF over the C1 corpus, it
+    /// takes no body, caption or table text.
+    private static func footnoteLineIndices(in lines: [TextLine], bodySize: CGFloat, pageBox: CGRect) -> Set<Int> {
+        let superscriptDigits: [Character: Character] = ["⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4",
+                                                         "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9"]
+        func digits(_ text: String) -> String {
+            String(text.map { superscriptDigits[$0] ?? $0 })
+        }
+        // Markers the body sets as superscripts on this page: "1", "12", "†", "a".
+        var bodyMarkers = Set<String>()
+        for line in lines where abs(line.pointSize - bodySize) < 0.6 {
+            let characters = Array(line.text)
+            for range in line.superscripts where range.lowerBound >= 0 && range.upperBound <= characters.count {
+                let label = digits(String(characters[range]))
+                for piece in label.split(whereSeparator: { ",–- ".contains($0) }) where !piece.isEmpty {
+                    bodyMarkers.insert(String(piece))
+                }
+            }
+        }
+        guard !bodyMarkers.isEmpty else { return [] }
+        let bottom = pageBox.minY + pageBox.height * 0.4
+        let continuationBottom = pageBox.minY + pageBox.height * 0.45
+        func isSmall(_ line: TextLine) -> Bool {
+            line.pointSize > 0 && line.pointSize < bodySize - 0.5
+        }
+        var result = Set<Int>()
+        var index = 0
+        while index < lines.count {
+            let line = lines[index]
+            let text = digits(line.text)
+            guard isSmall(line), let bounds = line.bounds, bounds.midY < bottom,
+                  let match = text.range(of: #"^([0-9]{1,3}|[*†‡§¶#]|[a-z])(?=\s|\p{Lu}|\(|https?:|www\.)"#,
+                                         options: .regularExpression) else {
+                index += 1
+                continue
+            }
+            let marker = String(text[match]).trimmingCharacters(in: .whitespaces)
+            let rest = String(text[match.upperBound...])
+            let letters = rest.filter(\.isLetter).count
+            let isLink = rest.range(of: #"https?:|www\."#, options: .regularExpression) != nil
+            let readsAsNote = letters >= 15 && (rest.split(separator: " ").count >= 3 || isLink)
+            // A new block: after other type, after a gap (the footnote rule), or up a column.
+            var startsBlock = true
+            if index > 0, let previous = lines[index - 1].bounds, abs(lines[index - 1].pointSize - line.pointSize) < 0.3 {
+                startsBlock = previous.midY - bounds.midY > line.pointSize * 1.8 || bounds.midY > previous.midY
+            }
+            guard bodyMarkers.contains(marker), readsAsNote, startsBlock else {
+                index += 1
+                continue
+            }
+            let size = line.pointSize
+            while index < lines.count, abs(lines[index].pointSize - size) < 0.3,
+                  let next = lines[index].bounds, next.midY < continuationBottom {
+                result.insert(index)
+                index += 1
+            }
+        }
+        return result
     }
 
     /// A sentence, not an affiliation: eight or more words, mostly lower case.

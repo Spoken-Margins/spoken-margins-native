@@ -1938,6 +1938,28 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.visibleLibraryItems.contains { $0.id == "item-pill" })
     }
 
+    // #273: once the 10-second undo banner was gone, nothing could mark an item unfinished again.
+    func testItemMarkedCompleteByHandCanBeMarkedUnfinishedAfterTheUndoBannerIsGone() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        model.startItem(id: "item-pill")
+        let history = model.selectedItem.sessions
+        model.markItemCompleted(id: "item-pill")
+        model.completionUndo = nil
+        XCTAssertTrue(try XCTUnwrap(model.libraryItems.first { $0.id == "item-pill" }).canMarkUnfinished)
+
+        model.markItemUnfinished(id: "item-pill")
+
+        let row = try XCTUnwrap(model.libraryItems.first { $0.id == "item-pill" })
+        XCTAssertFalse(row.isCompleted)
+        XCTAssertFalse(row.canMarkUnfinished)
+        model.libraryQuery.listeningState = .unfinished
+        XCTAssertTrue(model.visibleLibraryItems.contains { $0.id == "item-pill" })
+        model.openItem(id: "item-pill")
+        XCTAssertEqual(model.selectedItem.sessions, history, "the listening position is unchanged")
+    }
+
     func testUnplayedItemCanBeMarkedCompletedWithoutStartingPlayback() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

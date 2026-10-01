@@ -67,6 +67,7 @@ struct ExperienceLibraryScreen: View {
                         onOpen: { model.openItem(id: continueItem.id) },
                         onPlay: { model.startItem(id: continueItem.id) },
                         onComplete: { model.markItemCompleted(id: continueItem.id) },
+                        onMarkUnfinished: { model.markItemUnfinished(id: continueItem.id) },
                         onPrepareOffline: { model.prioritizeOfflinePreparation(id: continueItem.id) },
                         onDelete: { model.moveItemToTrash(id: continueItem.id) }
                     )
@@ -373,6 +374,7 @@ struct ExperienceLibraryScreen: View {
                     onOpen: { model.openItem(id: row.id) },
                     onPlay: { model.startItem(id: row.id) },
                     onComplete: { model.markItemCompleted(id: row.id) },
+                    onMarkUnfinished: { model.markItemUnfinished(id: row.id) },
                     onPrepareOffline: { model.prioritizeOfflinePreparation(id: row.id) },
                     onDelete: { model.moveItemToTrash(id: row.id) }
                 )
@@ -394,6 +396,7 @@ private struct ExperienceLibraryCompactRow: View {
     let onOpen: () -> Void
     let onPlay: () -> Void
     let onComplete: () -> Void
+    let onMarkUnfinished: () -> Void
     let onPrepareOffline: () -> Void
     let onDelete: () -> Void
 
@@ -476,6 +479,8 @@ private struct ExperienceLibraryCompactRow: View {
             Button(playActionTitle, systemImage: "play", action: onPlay)
             if !row.isCompleted {
                 Button("Mark Complete", systemImage: "checkmark.circle", action: onComplete)
+            } else if row.canMarkUnfinished {
+                Button("Mark Unfinished", systemImage: "arrow.uturn.backward.circle", action: onMarkUnfinished)
             }
             if row.offlineState != .readyOffline {
                 Button("Prepare Offline", systemImage: "arrow.down.circle", action: onPrepareOffline)
@@ -484,11 +489,16 @@ private struct ExperienceLibraryCompactRow: View {
                 Button("Move to Recently Deleted", systemImage: "trash", role: .destructive, action: onDelete)
             }
         }
-        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+        // A full swipe completed items by accident while opening them (#273): it takes a tap now.
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
             if !row.isCompleted {
                 Button(action: onComplete) { Label("Complete", systemImage: "checkmark.circle.fill") }
                     .tint(AppColors.evergreen)
                     .accessibilityIdentifier("library.complete.\(row.id)")
+            } else if row.canMarkUnfinished {
+                Button(action: onMarkUnfinished) { Label("Unfinished", systemImage: "arrow.uturn.backward.circle.fill") }
+                    .tint(AppColors.ochre)
+                    .accessibilityIdentifier("library.unfinished.\(row.id)")
             }
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -501,7 +511,13 @@ private struct ExperienceLibraryCompactRow: View {
             }
         }
         .accessibilityAction(named: playActionTitle, onPlay)
-        .accessibilityAction(named: "Mark Complete", onComplete)
+        .accessibilityActions {
+            if !row.isCompleted {
+                Button("Mark Complete", action: onComplete)
+            } else if row.canMarkUnfinished {
+                Button("Mark Unfinished", action: onMarkUnfinished)
+            }
+        }
         .accessibilityAction(named: "Prepare Offline", onPrepareOffline)
         .accessibilityAction(named: "Move to Recently Deleted", onDelete)
     }

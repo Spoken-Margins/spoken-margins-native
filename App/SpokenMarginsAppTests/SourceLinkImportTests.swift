@@ -64,11 +64,47 @@ final class SourceLinkImportTests: XCTestCase {
 
     private var temporaryDirectories: [URL] = []
 
+    // On a fresh simulator the first-use voice choice is still pending, and
+    // start() and resumeSession() wait for it. A full run only passed because
+    // earlier classes had made that choice, so a targeted T3 of this class
+    // failed (#446). Every test starts with the choice made: the iOS voice.
+    private static let firstUseVoiceKeys = [
+        "supertonicTTSMigrationV1",
+        "supertonicVoicePendingTermsV1",
+        "ttsMode",
+        "ttsVoiceSelection",
+        SpokenMarginsTerms.acceptanceVersionKey,
+        SpokenMarginsTerms.acceptanceDateKey
+    ]
+    private var priorFirstUseVoiceDefaults: [String: Any] = [:]
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        let defaults = UserDefaults.standard
+        priorFirstUseVoiceDefaults = [:]
+        for key in Self.firstUseVoiceKeys {
+            priorFirstUseVoiceDefaults[key] = defaults.object(forKey: key)
+            defaults.removeObject(forKey: key)
+        }
+        // What declineCurrentTerms() leaves behind after the pre-1.0 migration.
+        defaults.set(true, forKey: "supertonicTTSMigrationV1")
+        defaults.set(AppTTSVoiceSelection.system.rawValue, forKey: "ttsVoiceSelection")
+        defaults.set("systemImmediate", forKey: "ttsMode")
+    }
+
     override func tearDownWithError() throws {
         for directory in temporaryDirectories {
             try? FileManager.default.removeItem(at: directory)
         }
         temporaryDirectories.removeAll()
+        let defaults = UserDefaults.standard
+        for key in Self.firstUseVoiceKeys {
+            if let value = priorFirstUseVoiceDefaults[key] {
+                defaults.set(value, forKey: key)
+            } else {
+                defaults.removeObject(forKey: key)
+            }
+        }
         try super.tearDownWithError()
     }
 

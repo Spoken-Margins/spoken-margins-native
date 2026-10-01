@@ -577,6 +577,9 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
     public let audioDurationMs: Int?
     public let podcastAnchorEvidence: [ImportedPodcastAnchorEvidence]?
     public var resolution: ImportedAnchorResolution
+    /// The Margins this one answers, from the packet's conversation artifact (#472). Nil for an
+    /// ordinary Margin; more than one link is a fork. Build 29 ignores it.
+    public let replyLinks: [MarginReplyLink]?
 
     public init(
         id: String,
@@ -588,7 +591,8 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         audioPath: String? = nil,
         audioDurationMs: Int? = nil,
         podcastAnchorEvidence: [ImportedPodcastAnchorEvidence]? = nil,
-        resolution: ImportedAnchorResolution = .init(evidenceClass: .unresolved)
+        resolution: ImportedAnchorResolution = .init(evidenceClass: .unresolved),
+        replyLinks: [MarginReplyLink]? = nil
     ) {
         self.id = id
         self.layerId = layerId
@@ -600,6 +604,7 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         self.audioDurationMs = audioDurationMs
         self.podcastAnchorEvidence = podcastAnchorEvidence
         self.resolution = resolution
+        self.replyLinks = replyLinks
     }
 }
 
@@ -814,6 +819,7 @@ public enum SpokenMarginsArtifactKind {
     public static let editionFingerprintSpine = "edition_fingerprint_spine"
     public static let transcriptPhraseSketch = "transcript_phrase_sketch"
     public static let embeddedTextItem = "embedded_text_item"
+    public static let conversation = "conversation"
 }
 
 public struct SpokenMarginsArtifactDescriptor: Codable, Equatable, Sendable, Identifiable {

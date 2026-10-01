@@ -71,6 +71,9 @@ public final class SessionEngine {
 
     /// The I14 projection of the current item's I13 document, cached by item.
     private var listenableCache: (itemId: String, textLength: Int, projection: NormalizedSpeechText?)?
+    /// The structured document a paper's Margin pages come from (#206), cached by item, so
+    /// the notes-folder gatherer decodes it once per paper rather than once per Margin.
+    private var exportPageDocumentCache: (itemId: String, text: String?, document: StructuredDocument?)?
 
     private struct PlaybackProgress {
         var sourcePercent: Int
@@ -771,6 +774,7 @@ public final class SessionEngine {
         try store.saveStructuredDocument(document, itemId: itemId)
         // The cache may hold "no document" for this item's text (#220 audit 5).
         if listenableCache?.itemId == itemId { listenableCache = nil }
+        if exportPageDocumentCache?.itemId == itemId { exportPageDocumentCache = nil }
     }
 
     @discardableResult
@@ -2395,6 +2399,12 @@ public final class SessionEngine {
             : nil
         let interjections = options.includeInterjections ? scopedExportInterjections(options: options, session: session, interjections: allInterjections) : []
         let turns = options.includeTurns ? scopedExportTurns(options: options, turns: allTurns, interjections: interjections) : []
+        // The page goes with a paper's citation (#206), so the structured document is only
+        // read for an item that has one. Margins anchor into Item.text, so the page is only
+        // known when the document's text is exactly that text.
+        let pageDocument = interjections.contains { $0.targetType == .item } && item.documentStructure?.bibliography != nil
+            ? exportPageDocument(for: item)
+            : nil
         let export = SessionExport(
             item: ExportItem(
                 id: item.id,
@@ -2405,7 +2415,8 @@ public final class SessionEngine {
                 includedFullText: exposesFullSourceText,
                 text: exposesFullSourceText ? item.text : nil,
                 sourceTranscript: sourceTranscript,
-                author: item.author.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
+                author: item.author.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 },
+                bibliography: options.includeReference ? item.documentStructure?.bibliography : nil
             ),
             session: ExportSession(id: session.id, status: session.status, completionPercent: session.completionPercent),
             listeningMap: options.includeListeningMap ? try repository.loadListeningMap(itemId: item.id) : nil,
@@ -2457,12 +2468,26 @@ public final class SessionEngine {
                         ? interjection.transcript
                         : interjection.cleanedTranscript ?? interjection.transcript,
                     audioPath: nil,
-                    captureKind: interjection.captureKind
+                    captureKind: interjection.captureKind,
+                    page: interjection.targetType == .item
+                        ? pageDocument?.pageNumber(atCharacter: interjection.anchor.startChar)
+                        : nil
                 )
             }
         )
         lastExport = export
         return export
+    }
+
+    private func exportPageDocument(for item: Item) -> StructuredDocument? {
+        if let cache = exportPageDocumentCache, cache.itemId == item.id, cache.text == item.text {
+            return cache.document
+        }
+        let document = (repository as? StructuredDocumentRepository)
+            .flatMap { try? $0.loadStructuredDocument(itemId: item.id) }
+            .flatMap { $0.text == item.text ? $0 : nil }
+        exportPageDocumentCache = (item.id, item.text, document)
+        return document
     }
 
     private func isNativeAudioSource(_ item: Item) -> Bool {

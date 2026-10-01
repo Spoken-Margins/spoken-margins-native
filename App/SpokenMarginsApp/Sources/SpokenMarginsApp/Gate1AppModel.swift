@@ -100,6 +100,8 @@ struct LibraryItemRow: Identifiable, Hashable {
     let storageRecencyRank: Int
     /// A PDF read through the structured-document reader (#359).
     var usesNewReader = false
+    /// Marked complete by hand, not finished by listening, so Mark Unfinished can clear it (#273).
+    var canMarkUnfinished = false
 
     var mediaSymbol: String {
         if hasNativeAudio { return "headphones" }
@@ -860,6 +862,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var isImportingReadLater = false
     private var automaticMarginOutputTask: Task<Void, Never>?
     private var automaticMarginWriter: AutomaticMarginWriter?
+    let readwiseHighlightSync = ReadwiseHighlightSync()
     private var isDeliveringMargins = false
     @Published var listeningMapJSON = ""
     @Published var isGeneratingListeningMap = false
@@ -1779,8 +1782,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameInactiveOrBackground() {
-        automaticMarginOutputTask?.cancel()
-        automaticMarginOutputTask = nil
+        automaticMarginOutputTask?.cancel(); automaticMarginOutputTask = nil; readwiseHighlightSync.stop()
         supertonicRenderer?.setBackgroundInferencePacingEnabled(true)
         if snapshot.status == .starting,
            let supertonic = speechPlaybackClient as? SupertonicSpeechPlaybackClient,
@@ -1989,7 +1991,7 @@ final class Gate1AppModel: ObservableObject {
 
     func handleAppBecameActive() {
         openReadyListeningEdition()
-        startAutomaticMarginOutput()
+        startAutomaticMarginOutput(); readwiseHighlightSync.start { [weak self] in self?.store }
         supertonicRenderer?.setBackgroundInferencePacingEnabled(false)
         let refreshedAvailability = localFoundationModelClient.availability()
         if refreshedAvailability != localFoundationModelAvailability {
@@ -4517,14 +4519,14 @@ final class Gate1AppModel: ObservableObject {
                         .filter { $0.endMs > draft.startMs && $0.startMs < draft.endMs }
                         .map(\.text)
                         .joined(separator: " ")
-                    var label: LocalListeningMapLabel?
+                    var label: ListeningMapSummaryValidator.SceneLabel?
                     if self.localFoundationModelClient.availability().isAvailable, !text.isEmpty {
                         for _ in 0..<2 where label == nil {
                             if let candidate = try? await self.localFoundationModelClient.labelListeningMapChapter(
                                 text: text,
                                 chapterNumber: draft.order + 1
                             ) {
-                                label = try? LocalListeningMapOutputValidator.validate(label: candidate, sourceText: text)
+                                label = try? ListeningMapSummaryValidator.validate(candidate, sourceText: text)
                             }
                         }
                     }
@@ -4537,9 +4539,9 @@ final class Gate1AppModel: ObservableObject {
                         id: draft.id,
                         order: draft.order,
                         title: label?.title ?? draft.publisherTitle,
-                        summaryText: label?.description,
+                        summaryText: ListeningMapSummaryValidator.storedSummary(for: label).text,
                         summaryAssetId: nil,
-                        summaryProvenance: label == nil ? nil : .modelGenerated,
+                        summaryProvenance: ListeningMapSummaryValidator.storedSummary(for: label).provenance,
                         eligibility: eligibility,
                         eligibilityReason: label?.eligibilityReason,
                         startAnchor: PortableAnchorEvidence(
@@ -4605,9 +4607,7 @@ final class Gate1AppModel: ObservableObject {
                 ))
                 for asset in try store.loadOwnedOfflineAssets() where
                     asset.itemId == item.id && asset.category == .fingerprintMap {
-                    var updated = asset
-                    updated.protections.remove(.activeEpisodeMapPreparation)
-                    try store.saveOwnedOfflineAsset(updated)
+                    try store.updateOwnedOfflineAsset(id: asset.id) { $0.protections.remove(.activeEpisodeMapPreparation) }
                 }
                 try self.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
                 job.stage = .completed
@@ -5007,14 +5007,13 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func protectSummaryBridgeAsset(_ assetID: String, protected: Bool) {
-        guard let store,
-              var asset = (try? store.loadOwnedOfflineAssets())?.first(where: { $0.id == assetID }) else { return }
-        if protected {
-            asset.protections.insert(.activeSummaryBridge)
-        } else {
-            asset.protections.remove(.activeSummaryBridge)
+        _ = try? store?.updateOwnedOfflineAsset(id: assetID) { asset in
+            if protected {
+                asset.protections.insert(.activeSummaryBridge)
+            } else {
+                asset.protections.remove(.activeSummaryBridge)
+            }
         }
-        try? store.saveOwnedOfflineAsset(asset)
     }
 
     private func purgeTransientEpisodeTranscriptionCaches(itemId: String) throws {
@@ -5674,17 +5673,11 @@ final class Gate1AppModel: ObservableObject {
         guard !rejectNavigationOrSessionMutationWhileRecording("mark_item_completed") else { return }
         do {
             let store = try requireStore()
-            var item = try store.loadItem(id: id)
             // Completion is an item-level fact, not fabricated listening history.
-            guard item.sourceCompletedAt == nil else { return }
-            let markedAt = Date()
-            item.sourceCompletedAt = markedAt
-            try store.saveItem(item)
+            guard let item = try ManualItemCompletion.markComplete(itemId: id, in: store) else { return }
             try refreshLibraryRows(store: store)
-            if selectedItem.id == id {
-                selectedItem = try loadItemDetail(id: id, store: store)
-            }
-            completionUndo = (id, item.title, try store.loadItem(id: id).sourceCompletedAt ?? markedAt)
+            if selectedItem.id == id { selectedItem = try loadItemDetail(id: id, store: store) }
+            completionUndo = (id, item.title, item.sourceCompletedAt ?? Date())
             let completion = completionUndo
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(10))
@@ -5698,23 +5691,24 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func undoMarkedCompletion() {
-        guard let undo = completionUndo,
-              !rejectNavigationOrSessionMutationWhileRecording("undo_mark_item_completed") else { return }
+        guard let undo = completionUndo else { return }
+        clearMarkedCompletion(id: undo.itemID, markedAt: undo.markedAt)
+    }
+
+    /// Any time after the undo banner is gone (#273). Only a completion set by hand.
+    func markItemUnfinished(id: String) { clearMarkedCompletion(id: id, markedAt: nil) }
+
+    private func clearMarkedCompletion(id: String, markedAt: Date?) {
+        guard !rejectNavigationOrSessionMutationWhileRecording("mark_item_unfinished") else { return }
+        if completionUndo?.itemID == id { completionUndo = nil }
         do {
             let store = try requireStore()
-            var item = try store.loadItem(id: undo.itemID)
-            // Do not overwrite a later completion or rewrite natural session completion.
-            guard item.sourceCompletedAt == undo.markedAt else {
-                completionUndo = nil
-                return
-            }
-            item.sourceCompletedAt = nil
-            try store.saveItem(item)
+            // Never a later completion, and never natural session completion.
+            guard let item = try ManualItemCompletion.markUnfinished(itemId: id, markedAt: markedAt, in: store) else { return }
             try refreshLibraryRows(store: store)
-            if selectedItem.id == item.id { selectedItem = try loadItemDetail(id: item.id, store: store) }
-            completionUndo = nil
-            reportConfirmation("Undid Mark Complete for \(item.title).")
-        } catch { reportFailure(error, context: "Undo completion failed") }
+            if selectedItem.id == id { selectedItem = try loadItemDetail(id: id, store: store) }
+            reportConfirmation(markedAt == nil ? "Marked \(item.title) unfinished." : "Undid Mark Complete for \(item.title).")
+        } catch { reportFailure(error, context: "Mark unfinished failed") }
     }
 
     func prioritizeOfflinePreparation(id: String) {
@@ -11164,6 +11158,7 @@ final class Gate1AppModel: ObservableObject {
                 storageRecencyRank: storageRank
             )
             row.usesNewReader = data.structuredDocumentItemIds.contains(item.id)
+            row.canMarkUnfinished = item.sourceCompletedAt != nil && !Self.itemIsCompleted(sessions)
             return row
         }
     }
@@ -15548,9 +15543,8 @@ final class Gate1AppModel: ObservableObject {
                     isReproducible: true
                 )
             )
-            for var asset in try store.loadOwnedOfflineAssets() where asset.itemId == item.id && asset.category == .preparedChunk {
-                asset.isRedundant = true
-                try store.saveOwnedOfflineAsset(asset)
+            for asset in try store.loadOwnedOfflineAssets() where asset.itemId == item.id && asset.category == .preparedChunk {
+                try store.updateOwnedOfflineAsset(id: asset.id) { $0.isRedundant = true }
             }
         } catch {
             try? await ledger.release(reservationId: assemblyReservation.id)

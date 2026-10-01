@@ -19,7 +19,17 @@
         "includedFullText": { "type": "boolean" },
         "text": { "type": ["string", "null"] },
         "sourceTranscript": { "type": ["string", "null"] },
-        "author": { "type": ["string", "null"] }
+        "author": { "type": ["string", "null"] },
+        "bibliography": {
+          "type": ["object", "null"],
+          "properties": {
+            "doi": { "type": ["string", "null"] },
+            "arxivId": { "type": ["string", "null"] },
+            "authors": { "type": "array", "items": { "type": "string" } },
+            "year": { "type": ["integer", "null"] },
+            "title": { "type": ["string", "null"] }
+          }
+        }
       }
     },
     "session": {
@@ -60,7 +70,8 @@
           "transcriptionStatus": { "type": "string" },
           "transcript": { "type": ["string", "null"] },
           "audioPath": { "type": ["string", "null"] },
-          "captureKind": { "type": ["string", "null"], "enum": ["audio", "written", null] }
+          "captureKind": { "type": ["string", "null"], "enum": ["audio", "written", null] },
+          "page": { "type": ["integer", "null"], "minimum": 1 }
         }
       }
     }
