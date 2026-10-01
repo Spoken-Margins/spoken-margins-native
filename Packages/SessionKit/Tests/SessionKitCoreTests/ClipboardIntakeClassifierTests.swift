@@ -23,6 +23,23 @@ final class ClipboardIntakeClassifierTests: XCTestCase {
     func testALinkWrappedInPunctuationOrBracketsIsStillTheLink() {
         XCTAssertEqual(ClipboardIntakeClassifier.classify("<https://example.com/post>"), link("https://example.com/post"))
         XCTAssertEqual(ClipboardIntakeClassifier.classify("\"https://example.com/post\"."), link("https://example.com/post"))
+        XCTAssertEqual(ClipboardIntakeClassifier.classify("(https://example.com/post)"), link("https://example.com/post"))
+    }
+
+    func testALinkThatEndsInItsOwnBracketKeepsIt() {
+        XCTAssertEqual(
+            ClipboardIntakeClassifier.classify("https://en.wikipedia.org/wiki/Mercury_(planet)"),
+            link("https://en.wikipedia.org/wiki/Mercury_(planet)")
+        )
+        XCTAssertEqual(
+            ClipboardIntakeClassifier.classify("See (https://en.wikipedia.org/wiki/Mercury_(planet))."),
+            link("https://en.wikipedia.org/wiki/Mercury_(planet)")
+        )
+    }
+
+    func testAFileOrProductNameAloneIsTextNotASite() {
+        XCTAssertEqual(ClipboardIntakeClassifier.classify("notes.txt"), .text(title: "notes.txt", body: "notes.txt"))
+        XCTAssertEqual(ClipboardIntakeClassifier.classify("Node.js"), .text(title: "Node.js", body: "Node.js"))
     }
 
     func testAShareSheetLineWithATitleAndOneLinkIsTheLink() {

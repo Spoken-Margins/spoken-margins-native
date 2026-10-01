@@ -32,6 +32,11 @@ public enum ClipboardIntakeClassifier {
     /// A share sheet often copies "Episode title https://…" on one line; treat a short single line with one link as that link.
     public static let shortLinkLineLimit = 280
 
+    /// "notes.txt" or "Node.js" on its own is a file or product name, not a site.
+    private static let fileExtensions: Set<String> = [
+        "js", "ts", "txt", "md", "html", "htm", "json", "xml", "csv", "pdf", "epub", "doc", "docx",
+        "swift", "py", "rb", "png", "jpg", "jpeg", "gif", "heic", "mp3", "m4a", "m4b", "wav", "mov", "mp4", "zip",
+    ]
     private static let subscriptionSchemes: Set<String> = ["feed", "itpc", "pcast", "podcast", "podcasts"]
 
     public static func classify(_ content: String?) -> ClipboardIntake {
@@ -107,7 +112,8 @@ public enum ClipboardIntakeClassifier {
         guard !token.contains("@") else { return false }
         let hostPart = token.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? token
         let labels = hostPart.split(separator: ".", omittingEmptySubsequences: false)
-        guard labels.count >= 2, let tld = labels.last, tld.count >= 2, tld.allSatisfy({ $0.isASCII && $0.isLetter }) else { return false }
+        guard labels.count >= 2, let tld = labels.last, tld.count >= 2, tld.allSatisfy({ $0.isASCII && $0.isLetter }),
+              !fileExtensions.contains(tld.lowercased()) else { return false }
         return labels.allSatisfy { label in
             !label.isEmpty && label.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
         }
@@ -117,9 +123,14 @@ public enum ClipboardIntakeClassifier {
     private static func stripWrapping(_ token: String) -> String {
         let leading: Set<Character> = ["<", "(", "[", "\"", "'", "“", "‘", "«"]
         let trailing: Set<Character> = [">", ")", "]", "\"", "'", "”", "’", "»", ".", ",", ";", ":", "!", "?"]
+        let pairs: [Character: Character] = [")": "(", "]": "["]
         var result = Substring(token)
         while let first = result.first, leading.contains(first) { result = result.dropFirst() }
-        while let last = result.last, trailing.contains(last) { result = result.dropLast() }
+        while let last = result.last, trailing.contains(last) {
+            // Keep a bracket the link itself opened, as in "…/wiki/Mercury_(planet)".
+            if let opener = pairs[last], result.filter({ $0 == last }).count <= result.filter({ $0 == opener }).count { break }
+            result = result.dropLast()
+        }
         return String(result)
     }
 }
