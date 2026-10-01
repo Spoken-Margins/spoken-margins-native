@@ -1218,7 +1218,7 @@ def merge_base_branch(tree: Path, base: str) -> list[str]:
 
 
 def record_outcome(verdict: str) -> None:
-    """Hand the verdict to the workflow, whose last step makes the check red unless it is PASS (#184).
+    """Hand the verdict to the workflow, whose Verdict step makes the check red on FAIL (#184).
 
     The script itself exits 0 once it has reported, so a lane.yml from before this change (on a PR that
     hasn't merged next) stays green on FAIL, as before, instead of posting "stopped before reporting".

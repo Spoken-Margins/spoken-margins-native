@@ -76,7 +76,7 @@ Post as a PR comment. Keep it short; the Test Desk needs intent, not narrative.
 - T0 (docs, research, the server): nothing.
 - T1: `--plan fast`.
 - T2 or higher: `--plan fast` and both builds.
-Simulator tests (T3) still need a request. The lane check is green only on PASS.
+Simulator tests (T3) still need a request. The lane check is red only on FAIL, so a project thread wakes for a failure in its own code. INCONCLUSIVE leaves the check green with a warning: read the report, not the check mark. A job that stops before it reports is red too.
 
 Every lane job that posts a report and doesn't merge the PR, T2, T3 or automerge, ends by removing and re-adding `lane:done`, after its last report (the released automerge run's, when a T3 PASS starts one). Each job then makes a new `labeled` event, which is what the Hourly dispatch wakes on. An automerge run leaves `lane:queued` and `lane:running` alone.
 
