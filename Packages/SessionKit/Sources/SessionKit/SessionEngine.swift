@@ -4689,12 +4689,8 @@ public final class SessionEngine {
         if let cache = listenableCache, cache.itemId == item.id, cache.textLength == text.count {
             return cache.projection
         }
-        var projection: NormalizedSpeechText?
-        if let store = repository as? StructuredDocumentRepository,
-           let document = try? store.loadStructuredDocument(itemId: item.id),
-           document.text == text {
-            projection = StructuredDocumentSpeech.listenableText(document)
-        }
+        let document = try? (repository as? StructuredDocumentRepository)?.loadStructuredDocument(itemId: item.id)
+        let projection = StructuredDocumentSpeech.listenableProjection(item: item, document: document)
         listenableCache = (item.id, text.count, projection)
         return projection
     }

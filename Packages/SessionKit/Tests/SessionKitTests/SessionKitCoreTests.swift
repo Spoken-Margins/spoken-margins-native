@@ -721,6 +721,8 @@ final class SessionKitCoreTests: XCTestCase {
 
         _ = try engine.startSession(itemId: item.id)
         let spoken = try XCTUnwrap(audio.preparedTexts.last)
+        // #336: prepared audio is planned from exactly what the player speaks after any preface.
+        XCTAssertTrue(spoken.hasSuffix(try XCTUnwrap(PreparedSpeechText(item: item, document: document)).text))
         XCTAssertTrue(spoken.contains("References skipped."))
         XCTAssertTrue(spoken.contains("Table not read."))
         for unheard in ["A cited title", "P1 14", "J Biol", "[12]"] {
