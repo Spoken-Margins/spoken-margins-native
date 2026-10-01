@@ -53,9 +53,24 @@ struct SpokenMarginsApp: App {
     @StateObject private var sharingCoordinator: Build23SharingCoordinator
     @StateObject private var catalogDrawer: CatalogDrawerModel
     @Environment(\.scenePhase) private var scenePhase
+    private let memoryFootprint: MemoryFootprintRecorder
+    #if canImport(MetricKit)
+    private let memoryExits: MemoryExitMetricsSubscriber
+    #endif
 
     init() {
         let model = Gate1AppModel.makeApplicationModel()
+        // Memory use and memory kills, in Diagnostics (#122). Unit tests keep nothing on disk.
+        let runningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        let memoryFootprint = MemoryFootprintRecorder(diagnostics: model.runtimeDiagnostics,
+                                                      fileURL: runningTests ? nil : MemoryFootprintRecorder.defaultFileURL)
+        memoryFootprint.start(observing: model)
+        self.memoryFootprint = memoryFootprint
+        #if canImport(MetricKit)
+        let memoryExits = MemoryExitMetricsSubscriber()
+        memoryExits.start { [weak model] line in model?.diagnostics[MemoryExitMetricsSubscriber.diagnosticsKey] = line }
+        self.memoryExits = memoryExits
+        #endif
         #if !SPOKEN_MARGINS_LEGACY
         ListeningEditionShortcutBridge.model = model
         #endif
