@@ -135,7 +135,7 @@ Add a section:
 
 ## 8. Where the code lives
 
-`research/B4/server/` is a Go module using the standard library only, so there is no dependency supply chain to audit:
+`research/B4/server/` is a Go module using the standard library only, so there is no dependency supply chain to audit. That includes the AI provider call in `internal/maps`, which is one plain HTTPS request:
 
 - `internal/appattest`: the App Attest verifier, plus `fakeattest`, a test CA in Apple's certificate shape.
 - `internal/cbor`: a minimal CBOR codec.
@@ -143,6 +143,7 @@ Add a section:
 - `internal/store`: install records and the block list.
 - `internal/config`: the kill switch.
 - `internal/manifest`: the I3 gate.
+- `internal/maps`: listening maps made from uploaded transcripts (§10).
 - `cmd/smserver`: serve plus the admin CLI, including `publish-manifest`.
 - `cmd/smclient`: the test client.
 - `scripts/demo.sh`: runs the whole M1 path locally.
@@ -156,3 +157,17 @@ It's deployed from `research/B4/` today. Before M2 adds the watcher, I suggest m
 3. **How new sites get bridged:** the owner approves each one (the brief's recommendation, and the design above assumes it).
 4. **Privacy page and label:** approve the draft text in §7 and the Device ID declaration. They publish before any attested feature ships, and they're not needed for a bridge that only reads.
 5. **Unlinkable submissions:** confirm §3 (tokens, blocking at issuance) as the rule E3 and F1 inherit, rather than linking submissions to install keys.
+
+## 10. Listening maps (#551)
+
+An opted-in phone uploads one episode's transcript to `POST /api/v1/maps/transcripts`. The server asks an AI provider for a map of the episode's scenes, keeps the map, and deletes the transcript. Anyone can fetch the map at `GET /api/v1/maps/<episodeKey>`. The `maps` switch in `config.json` is off until the owner turns it on.
+
+- **The upload carries no install key.** Per §3, it reveals what the listener plays, so it is not an attested request. Abuse is bounded by 30 uploads per client address per hour (in memory, like §5), at most 4 uploads at once, at most 50 transcripts waiting, and the spending cap.
+- **Transcripts are never served or kept.** The worker deletes each one as soon as its map is made or dropped. A sweep every hour deletes any older than 23 hours, so none outlives a day. Only maps are kept.
+- **First upload wins.** An episode that has a map gets no new work. `smserver takedown-map KEY` deletes a map at once and withdraws the key, so phones that play the episode again don't bring it back. Deleting `/var/lib/smserver/maps/withdrawn/KEY` allows a new map.
+- **Checked answers.** One call per episode asks for 3 to 40 scenes. The server checks that every scene names a real segment, that starts increase, that titles fit 80 characters and summaries 300, and that no title or summary copies 10 or more words in a row from the transcript. A failing answer gets one retry, then the transcript is dropped.
+- **Hard monthly cap.** After each call the server adds its cost (tokens times the per-token prices set by `-maps-input-usd-per-mtok` and `-maps-output-usd-per-mtok`) to `/var/lib/smserver/maps/ledger.json`. Before each call it adds a deliberately high estimate of that call's cost to the month's spend. If the total would pass `-maps-cap-usd` (default 10), it makes no call, and uploads get `503 {"reason":"monthly_cap"}` until the next UTC month. A ledger that can't be read or written stops all calls. These settings are flags in `smserver.service`, never in `config.json`.
+- **The API key** is read from `/etc/smserver/maps.env` (root, 0600) through `EnvironmentFile=`, removed from the environment once read, and never logged, even when the provider echoes it in an error. Without it the server starts, serves stored maps and refuses uploads.
+- **Logs** name the route `/api/v1/maps/*`, never an episode key. The worker's log lines say what failed (an HTTP status, a check that didn't pass), never which episode.
+- **Cost:** with Claude Haiku 4.5 at $1 and $5 per million input and output tokens, an hour-long episode is about 13,000 tokens in and 2,000 out, about 2 cents.
+- **Known limit:** because uploads are anonymous, the first uploader of an episode decides its map, and a bad actor could upload a misleading transcript first. The checks keep a map short and in the provider's own words; takedown is the remedy. If this happens in practice, the next step is §3's unlinkable tokens.

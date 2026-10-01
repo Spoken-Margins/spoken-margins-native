@@ -14,3 +14,5 @@ research/B4/deploy/deploy.sh --dry-run root@<vps>           # from the Mac: show
 ```
 
 `deploy/deploy.sh` without `--dry-run` deploys; the owner approves the dry-run diff first. Admin on the box runs as the service user, e.g. `runuser -u smserver -- smserver switch -public /srv/www/spokenmargins-server attest off`.
+
+Listening maps (#551, DESIGN.md §10) stay off until the owner, on the box: puts `ANTHROPIC_API_KEY=...` in `/etc/smserver/maps.env` (owner root, mode 0600), restarts the service, and runs `smserver switch ... maps on`. `smserver takedown-map -state /var/lib/smserver KEY` removes one map at once.
