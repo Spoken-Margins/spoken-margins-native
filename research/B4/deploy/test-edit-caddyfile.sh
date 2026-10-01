@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# Tests edit-caddyfile.sh against a stand-in for the VPS Caddyfile (made up
+# here; the real one holds a basic-auth hash and never leaves the box).
+#   CADDY=/path/to/caddy research/B4/deploy/test-edit-caddyfile.sh
+# With CADDY set it also runs `caddy validate` on every candidate and serves
+# the candidate locally in front of a real smserver to check the routes.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+work="$(mktemp -d)"
+trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "${work}"' EXIT
+pass=0
+ok() { echo "ok   $*"; pass=$((pass + 1)); }
+die() { echo "FAIL $*" >&2; exit 1; }
+
+cat >"${work}/live" <<'CADDY'
+# stand-in for /etc/caddy/Caddyfile
+proximitytoprogress.com {
+	route {
+		handle /private/* {
+			basic_auth {
+				owner $2a$14$notARealHashJustAPlaceholderForTheTestXXXXXXXXXXXXXXXXXX
+			}
+			respond "private"
+		}
+		handle {
+			respond "home"
+		}
+	}
+}
+
+spokenmargins.proximitytoprogress.com {
+  root * /srv/www/spokenmargins
+  encode gzip
+  file_server
+}
+
+other.proximitytoprogress.com {
+	reverse_proxy 127.0.0.1:8787
+}
+CADDY
+
+edit() { "${here}/edit-caddyfile.sh" "$1" "$2" 8795 /srv/www/spokenmargins-server; }
+validate() {
+  [[ -n "${CADDY:-}" ]] || return 0
+  "${CADDY}" validate --adapter caddyfile --config "$1" >"${work}/validate.log" 2>&1 || { cat "${work}/validate.log"; die "caddy validate $1"; }
+}
+
+edit "${work}/live" "${work}/c1" || die "plain block refused"
+grep -q '^{$' <(head -1 "${work}/c1") || die "global block not first"
+grep -q 'wrap json' "${work}/c1" || die "log filter missing"
+grep -q 'reverse_proxy 127.0.0.1:8795' "${work}/c1" || die "port not rendered"
+grep -q 'root \* /srv/www/spokenmargins-server' "${work}/c1" || die "server root not rendered"
+# Everything outside the two managed blocks is byte-for-byte unchanged.
+diff <(sed -n '/^proximitytoprogress.com {/,/^}/p;/^other.proximitytoprogress.com {/,/^}/p' "${work}/live") \
+  <(sed -n '/^proximitytoprogress.com {/,/^}/p;/^other.proximitytoprogress.com {/,/^}/p' "${work}/c1") >/dev/null ||
+  die "other site blocks changed"
+validate "${work}/c1"
+ok "plain site block becomes the managed one; other sites untouched"
+
+edit "${work}/c1" "${work}/c2" || die "rerun refused"
+cmp -s "${work}/c1" "${work}/c2" || { diff -u "${work}/c1" "${work}/c2"; die "rerun is not idempotent"; }
+ok "rerun on its own output changes nothing"
+
+"${here}/edit-caddyfile.sh" "${work}/c1" "${work}/c3" 8796 /srv/www/spokenmargins-server
+grep -q '127.0.0.1:8796' "${work}/c3" && ! grep -q '127.0.0.1:8795' "${work}/c3" || die "port change not applied"
+ok "rerun with another port replaces the managed blocks"
+
+expect_refusal() {
+  local name="$1" file="$2"
+  if edit "${file}" "${work}/out" 2>"${work}/err"; then die "${name}: not refused"; fi
+  [[ ! -s "${work}/out" ]] || [[ ! -e "${work}/out" ]] || true
+  ok "refuses: ${name} ($(sed 's/^edit-caddyfile: refusing: //' "${work}/err"))"
+}
+sed 's|^  file_server$|  file_server\n  header X-Extra 1|' "${work}/live" >"${work}/extra"
+expect_refusal "site block with an extra directive" "${work}/extra"
+{ printf '{\n\temail owner@example.com\n}\n\n'; cat "${work}/live"; } >"${work}/global"
+expect_refusal "an existing global block it didn't write" "${work}/global"
+grep -v '^spokenmargins' "${work}/live" | sed '/^  root \* \/srv\/www\/spokenmargins$/,/^}$/d' >"${work}/nosite"
+expect_refusal "no site block" "${work}/nosite"
+{ cat "${work}/live"; printf '\nspokenmargins.proximitytoprogress.com {\n  file_server\n}\n'; } >"${work}/twice"
+expect_refusal "two site blocks" "${work}/twice"
+if "${here}/edit-caddyfile.sh" "${work}/live" "${work}/out" '8795; rm -rf /' /srv/x 2>/dev/null; then die "bad port accepted"; fi
+ok "refuses: a port that isn't a number"
+
+if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
+  # Serve the candidate on loopback: same blocks, site address swapped.
+  root="${work}/server-root" site="${work}/site"
+  mkdir -p "${site}"
+  echo "site index" >"${site}/index.html"
+  "${SMSERVER}" switch -public "${root}" attest on >/dev/null
+  sed -e 's|^spokenmargins.proximitytoprogress.com {|http://127.0.0.1:18443 {|' \
+    -e "s|/srv/www/spokenmargins-server|${root}|" -e "s|root \* /srv/www/spokenmargins\$|root * ${site}|" \
+    -e 's|^proximitytoprogress.com {|http://127.0.0.1:18444 {|' -e 's|^other.proximitytoprogress.com {|http://127.0.0.1:18445 {|' \
+    -e 's|^{$|{\n\tadmin off|' "${work}/c1" >"${work}/local"
+  "${CADDY}" run --adapter caddyfile --config "${work}/local" >"${work}/caddy.log" 2>&1 &
+  sleep 1.5
+  code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+  [[ "$(code http://127.0.0.1:18443/api/v1/config.json)" == 200 ]] || die "config.json not served while smserver is down"
+  [[ "$(code http://127.0.0.1:18443/)" == 200 ]] || die "site root not served"
+  curl -s -X POST -H 'X-SM-Key-Id: SECRETKEYID' http://127.0.0.1:18443/api/v1/ping >/dev/null
+  [[ "$(code http://127.0.0.1:18443/api/v1/health)" == 502 ]] || die "api should 502 with smserver down"
+  "${SMSERVER}" serve -listen 127.0.0.1:8795 -state "${work}/state" -public "${root}" >/dev/null 2>&1 &
+  sleep 0.5
+  [[ "$(curl -s http://127.0.0.1:18443/api/v1/health)" == *'"status":"ok"'* ]] || die "health not proxied to smserver"
+  sleep 0.5
+  grep -q 'http.log.error' "${work}/caddy.log" || die "expected a 502 error line to inspect"
+  ! grep -qE 'SECRETKEYID|remote_ip|client_ip|"headers"' "${work}/caddy.log" || die "Caddy error log leaked IP or headers"
+  grep 'http.log.error' "${work}/caddy.log" | head -1 | grep -q '^{' || die "error log is not JSON"
+  ok "served locally: config.json with smserver down, site, /api proxied, error log JSON without IP or headers"
+fi
+echo "${pass} checks passed"

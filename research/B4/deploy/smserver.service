@@ -1,0 +1,48 @@
+# Rendered and installed by research/B4/deploy/deploy.sh (@PORT@ and
+# @SERVER_ROOT@ are filled in there). Admin, on the box:
+#   runuser -u smserver -- smserver block -state /var/lib/smserver TAG
+#   runuser -u smserver -- smserver switch -public @SERVER_ROOT@ attest off
+#   runuser -u smserver -- smserver publish-manifest -public @SERVER_ROOT@ FILE
+[Unit]
+Description=Spoken Margins server (bridge and attestation)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=smserver
+Group=smserver
+ExecStart=/usr/local/bin/smserver serve -listen 127.0.0.1:@PORT@ -state /var/lib/smserver -public @SERVER_ROOT@ -behind-proxy
+StateDirectory=smserver
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+
+# The hourly request summary goes to its own journal namespace, so its
+# retention (journald@smserver.conf) doesn't touch the rest of the box.
+LogNamespace=smserver
+
+# Keep a small service small, and contained if it is ever compromised. The
+# public root is read-only to the service: config.json is created at install
+# and changed only by the admin CLI running as smserver outside this sandbox.
+MemoryMax=128M
+CPUQuota=50%
+TasksMax=64
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/smserver
+ReadOnlyPaths=@SERVER_ROOT@
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
