@@ -272,10 +272,10 @@ actor FollowedSourceCoordinator {
         do {
             let parsed = try await fetch(url: URL(string: subscription.source.canonicalURL)!, subscription: subscription)
             // Mute and the new-item choice may have changed during the fetch; the latest ones win.
-            if let current = try repository.loadFeedSubscriptions().first(where: { $0.id == subscription.id }) {
-                subscription.state = current.state
-                subscription.newItemPolicy = current.newItemPolicy
-            }
+            // An unfollow during the fetch wins too: nothing is saved or added.
+            guard let current = try repository.loadFeedSubscriptions().first(where: { $0.id == subscription.id }) else { return [] }
+            subscription.state = current.state
+            subscription.newItemPolicy = current.newItemPolicy
             let saved = try save(entries: parsed.items, subscription: subscription)
             // A muted feed adds nothing on its own.
             toAdd = FeedNewItemPolicy.entriesToAdd(
