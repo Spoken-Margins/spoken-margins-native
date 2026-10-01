@@ -1,0 +1,352 @@
+#!/usr/bin/env python3
+"""Dial gate (#589): decide, at no Claude cost, whether to wake the Spoken Margins project.
+
+Runs on the VPS every 15 minutes (systemd timer). It reads Cole's tick boxes on the Dial
+issue, the latest Claude usage the Mac tick posted on #337, the ready queue, and the
+coordinator's acknowledgement comment. Only when work is allowed and useful does it POST
+to the "Dial relay" routine's /fire endpoint; that routine posts into the project
+conversation, which wakes the coordinator (verified 2026-09-30 in a test project).
+
+Safety rules (owner, 2026-10-01):
+- Every slip fails toward spending less: two ticks in a group take the more cautious one;
+  an empty or muddled Mode reads Off.
+- Paced mode needs a usage reading under 3 hours old; with the Mac offline it doesn't fire.
+- At most one fire outstanding: no new fire until the coordinator acknowledges the last
+  one (or 3 hours pass), so fires can't pile up while the plan limit is hit.
+- Machines never edit the issue body. The gate keeps one status comment, edited in place.
+
+Stdlib only, Python 3.9+. `--dry-run` prints the decision and writes nothing.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+REPO = os.environ.get('SM_DIAL_REPO', 'uncomposed/spoken-margins-native')
+DIAL_ISSUE = int(os.environ.get('SM_DIAL_ISSUE', '589'))
+STATUS_ISSUE = int(os.environ.get('SM_DIAL_STATUS_ISSUE', '337'))
+CONFIG_DIR = Path(os.environ.get('SM_DIAL_CONFIG', '/etc/sm-dial'))
+STATE_FILE = Path(os.environ.get('SM_DIAL_STATE', '/var/lib/sm-dial/state.json'))
+
+MARGIN = 3                      # points below the stop line where new work holds
+TREND_SLACK = 5                 # Paced may run this many points ahead of the trend line
+RESET_WEEKDAY = int(os.environ.get('SM_DIAL_RESET_WEEKDAY', '5'))   # Saturday (Mon=0)
+RESET_HOUR_UTC = int(os.environ.get('SM_DIAL_RESET_HOUR', '11'))    # 07:00 EDT
+FINISH_BY = {'reset': 0, 'fri noon': 19, 'fri 7': 24}             # hours before the reset
+USAGE_MAX_AGE = dt.timedelta(hours=3)
+REFILL_EVERY = dt.timedelta(minutes=60)
+FULL_RECHECK = dt.timedelta(hours=3)
+ACK_TIMEOUT = dt.timedelta(hours=3)
+STATUS_REFRESH = dt.timedelta(minutes=60)
+
+STATUS_MARK = '<!-- dial-gate-status -->'
+ACK_MARK = '<!-- dial-coordinator -->'
+
+MODES = ('off', 'paced', 'cloud max')
+
+
+# ---------- parsing (pure) ----------
+
+def parse_dial(body: str) -> dict:
+    """Read the tick boxes. Returns mode, threads, stop and a list of plain-word problems."""
+    groups: dict[str, list[str]] = {}
+    current = None
+    for line in body.splitlines():
+        heading = re.match(r'\s*\*\*(.+?)\*\*', line)
+        if heading and not line.lstrip().startswith('-'):
+            current = heading.group(1).strip().lower()
+            groups.setdefault(current, [])
+            continue
+        if line.strip() == '---':
+            current = None
+            continue
+        box = re.match(r'\s*[-*]\s*\[([ xX])\]\s*(.+)', line)
+        if box and current and box.group(1).lower() == 'x':
+            groups[current].append(box.group(2).strip().lower())
+
+    problems = []
+    mode_ticks = {m for m in MODES for t in groups.get('mode', []) if t.startswith(m)}
+    if not mode_ticks:
+        mode = 'off'
+        problems.append('no Mode box is ticked, so it reads Off')
+    elif 'off' in mode_ticks:
+        mode = 'off'
+        if len(mode_ticks) > 1:
+            problems.append('Off and another Mode are both ticked, so it reads Off')
+    elif mode_ticks == {'paced', 'cloud max'}:
+        mode = 'paced'
+        problems.append('Paced and Cloud max are both ticked, so it reads Paced (the cautious one)')
+    else:
+        mode = mode_ticks.pop()
+
+    def numbers(group: str) -> list[int]:
+        out = []
+        for t in groups.get(group, []):
+            m = re.match(r'(\d+)', t)
+            if m:
+                out.append(int(m.group(1)))
+        return out
+
+    threads_ticked = numbers('threads')
+    threads = min(threads_ticked) if threads_ticked else 0
+    if len(threads_ticked) > 1:
+        problems.append(f'{len(threads_ticked)} Threads boxes are ticked, so it uses the lowest, {threads}')
+    if not threads_ticked and mode != 'off':
+        problems.append('no Threads box is ticked, so nothing new starts')
+
+    stop_group = next((g for g in groups if g.startswith('stop line')), None)
+    stops = numbers(stop_group) if stop_group else []
+    stop = min(stops) if stops else None
+    if len(stops) > 1:
+        problems.append(f'{len(stops)} Stop line boxes are ticked, so it uses the lowest, {stop}%')
+    if stop is None and mode == 'paced':
+        problems.append('no Stop line box is ticked, so Paced starts nothing')
+    finish_group = next((g for g in groups if g.startswith('finish by')), None)
+    early = [h for t in groups.get(finish_group, []) for key, h in FINISH_BY.items() if key in t]
+    hours_early = min(early) if early else 0   # two ticks: the later deadline spends slower
+    if len(early) > 1:
+        problems.append('two Finish by boxes are ticked, so it uses the later one')
+    return {'mode': mode, 'threads': threads, 'stop': stop, 'hours_early': hours_early, 'problems': problems}
+
+
+def parse_usage(comments: list[dict]) -> dict:
+    """Latest Claude weekly usage and breaker state from the Mac tick's comments on #337."""
+    usage = None
+    halted = False
+    for c in comments:  # oldest first
+        body = c.get('body') or ''
+        m = re.search(r'Claude (\d+)% used', body)
+        if m:
+            usage = {'percent': int(m.group(1)), 'at': parse_time(c['created_at'])}
+        if '(Mac tick' in body:
+            first = body.splitlines()[0] if body else ''
+            if 'HALT (usage breaker)' in first:
+                halted = True
+            elif 'RESUMED (usage breaker)' in first:
+                halted = False
+    return {'usage': usage, 'halted': halted}
+
+
+def parse_ack(comments: list[dict]) -> dict | None:
+    """The coordinator's acknowledgement: `Ack fire-<id> · running N`."""
+    for c in reversed(comments):
+        body = c.get('body') or ''
+        if ACK_MARK in body:
+            fire = re.search(r'Ack (fire-[0-9TZ]+)', body)
+            running = re.search(r'running (\d+)', body)
+            return {
+                'fire': fire.group(1) if fire else None,
+                'running': int(running.group(1)) if running else None,
+                'at': parse_time(c.get('updated_at') or c['created_at']),
+                'id': c['id'],
+            }
+    return None
+
+
+def parse_time(s: str) -> dt.datetime:
+    return dt.datetime.strptime(s, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=dt.timezone.utc)
+
+
+def next_reset(now: dt.datetime) -> dt.datetime:
+    days = (RESET_WEEKDAY - now.weekday()) % 7
+    reset = (now + dt.timedelta(days=days)).replace(hour=RESET_HOUR_UTC, minute=0, second=0, microsecond=0)
+    return reset if reset > now else reset + dt.timedelta(days=7)
+
+
+def trend_line(now: dt.datetime, stop: int, hours_early: int) -> float:
+    """Where weekly usage should be by now: 0% at the week's start, rising straight to the
+    stop line at the finish-by time."""
+    reset = next_reset(now)
+    start = reset - dt.timedelta(days=7)
+    finish = reset - dt.timedelta(hours=hours_early)
+    share = (now - start) / (finish - start)
+    return stop * max(0.0, min(1.0, share))
+
+
+# ---------- decision (pure) ----------
+
+def decide(now, dial, usage_info, ready_count, ack, state) -> dict:
+    """Return {'fire': bool, 'why': str, 'hold': str|None}."""
+    mode, threads, stop = dial['mode'], dial['threads'], dial['stop']
+    if mode == 'off' or threads == 0:
+        return {'fire': False, 'why': 'Off: nothing new starts.', 'hold': None}
+
+    hold = None
+    if mode == 'paced':
+        u = usage_info['usage']
+        if stop is None:
+            return {'fire': False, 'why': 'Paced, but no stop line is ticked.', 'hold': None}
+        if usage_info['halted']:
+            hold = 'the Mac tick says HALT (usage breaker)'
+        elif u is None:
+            hold = 'no usage report from the Mac found'
+        elif now - u['at'] > USAGE_MAX_AGE:
+            hold = f"the Mac's usage report is {hours(now - u['at'])} old (Mac offline?), so Paced waits"
+        elif u['percent'] >= stop - MARGIN:
+            hold = f"usage {u['percent']}% has reached the hold line {stop - MARGIN}% (stop line {stop}% minus {MARGIN})"
+        elif u['percent'] > trend_line(now, stop, dial.get('hours_early', 0)) + TREND_SLACK:
+            line = trend_line(now, stop, dial.get('hours_early', 0))
+            hold = (f"usage {u['percent']}% is more than {TREND_SLACK} points ahead of the trend "
+                    f"({line:.0f}% by now), so Paced waits for the line to catch up")
+        if hold:
+            return {'fire': False, 'why': f'Holding: {hold}.', 'hold': hold}
+
+    if ready_count == 0:
+        return {'fire': False, 'why': 'Nothing in the ready queue.', 'hold': None}
+
+    last_fire = state.get('last_fire')
+    last_at = parse_time(state['last_fire_at']) if state.get('last_fire_at') else None
+    if last_fire and (not ack or ack['fire'] != last_fire):
+        if last_at and now - last_at < ACK_TIMEOUT:
+            return {'fire': False, 'why': f'Waiting for the coordinator to acknowledge {last_fire} '
+                                          f'(sent {hours(now - last_at)} ago).', 'hold': None}
+    if last_at and now - last_at < REFILL_EVERY:
+        return {'fire': False, 'why': f'Last wake-up was {hours(now - last_at)} ago; next one after an hour.', 'hold': None}
+    if ack and ack['fire'] == last_fire and ack['running'] is not None and ack['running'] >= threads \
+            and last_at and now - last_at < FULL_RECHECK:
+        return {'fire': False, 'why': f"All {threads} threads were running at the last wake-up; "
+                                      f"checking again after 3 hours.", 'hold': None}
+    return {'fire': True, 'why': f'Waking the project: keep up to {threads} threads going.', 'hold': None}
+
+
+def hours(delta: dt.timedelta) -> str:
+    minutes = int(delta.total_seconds() // 60)
+    return f'{minutes} min' if minutes < 90 else f'{minutes / 60:.1f} h'
+
+
+def status_text(now, dial, usage_info, ready_count, ack, state, decision) -> str:
+    eastern = dt.timezone(dt.timedelta(hours=-4))  # EDT; the gate only reports times
+    t = lambda d: d.astimezone(eastern).strftime('%a %H:%M')
+    u = usage_info['usage']
+    lines = [STATUS_MARK, f"**Dial gate**, read {t(now)} (Eastern)", '']
+    stop = f"stop line {dial['stop']}% (holds at {dial['stop'] - MARGIN}%)" if dial['stop'] else 'no stop line'
+    lines.append(f"- I read: **{dial['mode'].capitalize()}**, {dial['threads']} threads, {stop}.")
+    for p in dial['problems']:
+        lines.append(f'- Note: {p}.')
+    lines.append(f"- Usage: {u['percent']}% from the Mac at {t(u['at'])}." if u else '- Usage: no report from the Mac.')
+    if dial['mode'] == 'paced' and dial['stop'] and u:
+        line = trend_line(now, dial['stop'], dial.get('hours_early', 0))
+        finish = next_reset(now) - dt.timedelta(hours=dial.get('hours_early', 0))
+        gap = u['percent'] - line
+        lines.append(f"- Trend: about {line:.0f}% by now, reaching {dial['stop']}% by {t(finish)}; "
+                     f"usage is {abs(gap):.0f} points {'ahead' if gap >= 0 else 'behind'} "
+                     f"(Paced holds if more than {TREND_SLACK} ahead).")
+    lines.append(f'- Ready issues: {ready_count}.')
+    if state.get('last_fire'):
+        acked = 'acknowledged' if ack and ack['fire'] == state['last_fire'] else 'not acknowledged yet'
+        if acked == 'acknowledged' and ack.get('via') == 'claims':
+            n = ack['started']
+            acked = f"acknowledged by {n} issue claim{'' if n == 1 else 's'} since"
+        running = f", {ack['running']} running" if ack and ack['running'] is not None and acked == 'acknowledged' else ''
+        lines.append(f"- Last wake-up: {t(parse_time(state['last_fire_at']))}, {acked}{running}.")
+    lines.append(f"- Now: {decision['why']}")
+    return '\n'.join(lines)
+
+
+# ---------- I/O ----------
+
+def gh(method: str, path: str, token: str, body: dict | None = None):
+    req = urllib.request.Request(
+        f'https://api.github.com/{path}', method=method,
+        data=json.dumps(body).encode() if body is not None else None,
+        headers={'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json',
+                 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'sm-dial-gate'})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read() or b'null')
+
+
+def fire_relay(url: str, token: str, text: str) -> dict:
+    req = urllib.request.Request(
+        url, method='POST', data=json.dumps({'text': text}).encode(),
+        headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json',
+                 'anthropic-beta': 'experimental-cc-routine-2026-04-01',
+                 'anthropic-version': '2023-06-01', 'User-Agent': 'sm-dial-gate'})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read() or b'null')
+
+
+def load_state() -> dict:
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(state: dict) -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_FILE.with_suffix('.tmp')
+    tmp.write_text(json.dumps(state, indent=2))
+    tmp.replace(STATE_FILE)
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument('--dry-run', action='store_true', help='print the decision; write and fire nothing')
+    args = ap.parse_args(argv)
+
+    token = os.environ.get('SM_DIAL_GITHUB_TOKEN') or (CONFIG_DIR / 'github-token').read_text().strip()
+    now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+    state = load_state()
+
+    dial_body = gh('GET', f'repos/{REPO}/issues/{DIAL_ISSUE}', token)['body'] or ''
+    dial = parse_dial(dial_body)
+    since = (now - dt.timedelta(hours=12)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    tick_comments = gh('GET', f'repos/{REPO}/issues/{STATUS_ISSUE}/comments?since={since}&per_page=100', token)
+    usage_info = parse_usage(tick_comments)
+    ready = gh('GET', f'search/issues?q=repo:{REPO}+is:issue+is:open+label:ready&per_page=1', token)['total_count']
+    dial_comments = gh('GET', f'repos/{REPO}/issues/{DIAL_ISSUE}/comments?per_page=100', token)
+    ack = parse_ack(dial_comments)
+    # The coordinator's own comment can be blocked by its permission check (seen
+    # 2026-10-01), so a thread claiming an issue after the fire also counts as the
+    # acknowledgement: a claim labels the issue in-progress within minutes.
+    if state.get('last_fire') and not (ack and ack['fire'] == state['last_fire']):
+        claimed = gh('GET', f"search/issues?q=repo:{REPO}+is:issue+is:open+label:in-progress"
+                            f"+updated:>={state['last_fire_at']}&per_page=1", token)['total_count']
+        if claimed:
+            ack = {'fire': state['last_fire'], 'running': None, 'started': claimed,
+                   'at': now, 'id': None, 'via': 'claims'}
+
+    decision = decide(now, dial, usage_info, ready, ack, state)
+
+    if decision['fire'] and not args.dry_run:
+        fire_id = 'fire-' + now.strftime('%Y%m%dT%H%MZ')
+        text = (f'Dial {fire_id}: Cole\'s Dial (#{DIAL_ISSUE}) allows up to {dial["threads"]} threads. '
+                f'Keep that many going from the ready queue, then update your Dial ack comment on #{DIAL_ISSUE}.')
+        url = (CONFIG_DIR / 'relay-url').read_text().strip()
+        try:
+            fire_relay(url, (CONFIG_DIR / 'relay-token').read_text().strip(), text)
+            state.update(last_fire=fire_id, last_fire_at=now.strftime('%Y-%m-%dT%H:%M:%SZ'))
+        except urllib.error.URLError as e:
+            decision = {**decision, 'fire': False, 'why': f'Tried to wake the project, but the relay failed ({e}).'}
+
+    text = status_text(now, dial, usage_info, ready, ack, state, decision)
+    if args.dry_run:
+        print(text)
+        print(f"\n(dry run: fire={decision['fire']}; nothing written)")
+        return 0
+
+    # Edit the one status comment only when what it says changed, or hourly so its
+    # "read at" time shows the gate is alive. Edits don't notify anyone.
+    existing = next((c for c in dial_comments if STATUS_MARK in (c.get('body') or '')), None)
+    material = text.split('\n', 2)[2]  # everything after the "read at" line
+    changed = material != state.get('status_material')
+    stale = not state.get('status_at') or now - parse_time(state['status_at']) >= STATUS_REFRESH
+    if existing is None:
+        gh('POST', f'repos/{REPO}/issues/{DIAL_ISSUE}/comments', token, {'body': text})
+    elif changed or stale:
+        gh('PATCH', f"repos/{REPO}/issues/comments/{existing['id']}", token, {'body': text})
+    if existing is None or changed or stale:
+        state.update(status_material=material, status_at=now.strftime('%Y-%m-%dT%H:%M:%SZ'))
+    save_state(state)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
