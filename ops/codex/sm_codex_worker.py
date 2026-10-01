@@ -73,6 +73,13 @@ HOST_HINT_RE = re.compile(
     r'|\bhost[- ]?test|--plan fast|\bswift test\b',
     re.I)
 OUT_DIR_NAME = '.codex-out'
+# Codex's workspace-write sandbox writes only the worktree and temp folders. The fast plan also takes a
+# Mac-wide host-test slot in the lane's folder (as scripts/lane_slots.state_dir()), and swift test writes
+# the clang module cache. Without these, #64's run (2026-10-01) failed before any test ran.
+SANDBOX_WRITABLE_ROOTS = [
+    Path(os.environ.get('SM_LANE_STATE_DIR') or Path.home() / 'Library' / 'Caches' / 'SpokenMarginsLane'),
+    Path.home() / '.cache' / 'clang',
+]
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +365,19 @@ def build_prompt(number: int, title: str, body: str) -> str:
         '- Keep the change small and host-testable. Put logic in Packages/SessionKit first; '
         'do not grow App/SpokenMarginsApp/Gate1AppModel.swift.',
         '- Write a regression test that fails without the fix, and check that it does.',
-        '- Run `.venv/bin/python scripts/verify-tests.py --plan fast` and make it pass.',
+        '- Your sandbox cannot run `ps`, has no network, and cannot encode, play or speak real audio. '
+        'SessionKit\'s dependencies are already resolved. Run SessionKit tests directly with '
+        '`swift test --disable-sandbox --filter <Name>` in Packages/SessionKit (SwiftPM cannot start '
+        'its own sandbox inside yours).',
+        '- Run `.venv/bin/python scripts/verify-tests.py --plan fast` and make every step it runs pass. '
+        'In your sandbox it skips `runner-tests` (the lane boot tests need `ps`), reports the known '
+        'real-audio tests without failing on them, and ends with status `verified_in_codex_sandbox`. '
+        'If you change anything under scripts/, also run that file\'s tests: '
+        '`.venv/bin/python -m unittest discover -s scripts/tests -p \'test_<name>.py\'`.',
+        '- After you finish, the wrapper runs the full fast plan itself, outside your sandbox, before any '
+        'PR opens; that run is the gate. A failure caused only by the sandbox (no `ps`, no network, no '
+        'real audio, no writes outside the worktree and temp folders) is not a reason to give up or to '
+        'build shims or wrappers: finish the change and name the failure in pr-body.md.',
         '- Do not boot simulators or run xcodebuild.',
         '- Do not commit, branch, stash or run any other git command that changes state. '
         'Leave your changes uncommitted in the working tree.',
@@ -407,8 +426,11 @@ def kill_tree(proc: subprocess.Popen) -> None:
 
 
 def default_run(cmd: list, cwd: Optional[Path] = None, timeout: Optional[float] = 300) -> Result:
-    """Run a command in its own process group; on timeout kill the group and return 124."""
-    proc = subprocess.Popen([str(c) for c in cmd], cwd=str(cwd) if cwd else None,
+    """Run a command in its own process group; on timeout kill the group and return 124.
+
+    Never with CODEX_SANDBOX: with it, verify-tests skips runner-tests, and this runs the gate."""
+    env = {k: v for k, v in os.environ.items() if k != 'CODEX_SANDBOX'}
+    proc = subprocess.Popen([str(c) for c in cmd], cwd=str(cwd) if cwd else None, env=env,
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, start_new_session=True)
     try:
@@ -420,9 +442,15 @@ def default_run(cmd: list, cwd: Optional[Path] = None, timeout: Optional[float] 
     return Result(proc.returncode, out, err)
 
 
+def codex_command(worktree: Path, answer: Path, prompt: str) -> list:
+    roots = json.dumps([str(p) for p in SANDBOX_WRITABLE_ROOTS])  # a JSON string list is a TOML array
+    return [CODEX, 'exec', '-m', MODEL, '-c', f'model_reasoning_effort="{EFFORT}"',
+            '-s', 'workspace-write', '-c', f'sandbox_workspace_write.writable_roots={roots}',
+            '-C', str(worktree), '-o', str(answer), prompt]
+
+
 def default_codex(worktree: Path, answer: Path, prompt: str, transcript: Path) -> tuple[bool, str]:
-    cmd = [CODEX, 'exec', '-m', MODEL, '-c', f'model_reasoning_effort="{EFFORT}"',
-           '-s', 'workspace-write', '-C', str(worktree), '-o', str(answer), prompt]
+    cmd = codex_command(worktree, answer, prompt)
     with open(os.devnull, 'rb') as devnull, open(transcript, 'wb') as tfh:
         proc = subprocess.Popen(cmd, stdin=devnull, stdout=tfh, stderr=subprocess.STDOUT,
                                 start_new_session=True)
@@ -703,6 +731,8 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
                  cwd=ops.repo_root, timeout=600)
         wt_added = True
         ops.must(['scripts/setup-worktree.sh'], cwd=wt)
+        # Codex's sandbox has no network, so SwiftPM there can't clone SessionKit's dependencies.
+        ops.must(['swift', 'package', '--package-path', 'Packages/SessionKit', 'resolve'], cwd=wt, timeout=600)
         out = wt / OUT_DIR_NAME
         out.mkdir(exist_ok=True)
 
