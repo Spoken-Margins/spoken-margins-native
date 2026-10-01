@@ -78,6 +78,12 @@ final class PreparedSpeechTextTests: XCTestCase {
         XCTAssertEqual(first.text, StructuredDocumentSpeech.listenableText(document).text)
         XCTAssertEqual(cache.resolve(item: item, documents: nil), first, "the same text reuses the entry")
 
+        let later = Item(id: "item-later", title: "Later", mediaType: "pdf", text: document.text, externalReference: nil, status: "ready")
+        try store.saveItem(later)
+        XCTAssertEqual(cache.resolve(item: later, documents: store)?.text, document.text, "no document yet: Item.text")
+        try store.saveStructuredDocument(document, itemId: later.id)
+        XCTAssertEqual(cache.resolve(item: later, documents: store)?.text, first.text, "a document saved later is used")
+
         let changed = paper(text: "A re-imported text with no document of its own.")
         XCTAssertEqual(cache.resolve(item: changed, documents: store)?.text, changed.text, "a changed Item.text isn't served the old entry")
         XCTAssertNil(cache.resolve(item: paper(text: nil).withoutText, documents: store))

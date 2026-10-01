@@ -50,6 +50,8 @@ public final class PreparedSpeechTextCache: @unchecked Sendable {
         if let cached, cached.itemText == text { return cached }
         let document = try? documents?.loadStructuredDocument(itemId: item.id)
         guard let resolved = PreparedSpeechText(item: item, document: document) else { return nil }
+        // A PDF without a document yet isn't remembered, so one saved later is found.
+        guard resolved.listenable != nil else { return resolved }
         lock.lock()
         if entries.count >= 8 { entries.removeAll() }
         entries[item.id] = resolved
