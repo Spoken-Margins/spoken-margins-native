@@ -11,6 +11,8 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     private static let sessionScopedRecordKinds: Set<String> = ["interjection", "turn", "ai_job"]
     private var db: OpaquePointer?
     private let connectionLock = NSRecursiveLock()
+    /// How many `withTransaction` calls are open on this connection. Guarded by `connectionLock`.
+    private var transactionDepth = 0
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
@@ -535,6 +537,16 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
 
     public func deleteOwnedOfflineAsset(id: String) throws { try deleteRecord(kind: "owned_offline_asset", id: id) }
 
+    @discardableResult
+    public func updateOwnedOfflineAsset(id: String, _ change: (inout OwnedOfflineAsset) -> Void) throws -> OwnedOfflineAsset? {
+        try withTransaction {
+            guard var asset: OwnedOfflineAsset = try loadOptional(kind: "owned_offline_asset", id: id) else { return nil }
+            change(&asset)
+            try saveOwnedOfflineAsset(asset)
+            return asset
+        }
+    }
+
     public func saveOfflineStorageReservation(_ reservation: OfflineStorageReservation) throws {
         try save(kind: "offline_storage_reservation", id: reservation.id, sessionId: nil, itemId: nil, value: reservation)
     }
@@ -962,9 +974,16 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         }
     }
 
+    /// Runs `operation` in one transaction. A call made inside another joins the open transaction, because
+    /// SQLite can't nest them: a read inside `updateOwnedOfflineAsset` that meets a malformed row quarantines
+    /// it in the update's transaction (#529 audit). If anything in the outer transaction throws, all of it
+    /// rolls back, the quarantine included, and the next read quarantines the row again.
     private func withTransaction<T>(_ operation: () throws -> T) throws -> T {
         try withConnectionLock {
+            guard transactionDepth == 0 else { return try operation() }
             try execute("BEGIN IMMEDIATE TRANSACTION;")
+            transactionDepth += 1
+            defer { transactionDepth -= 1 }
             do {
                 let result = try operation()
                 try execute("COMMIT;")

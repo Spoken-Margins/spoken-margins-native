@@ -4620,9 +4620,7 @@ final class Gate1AppModel: ObservableObject {
                 ))
                 for asset in try store.loadOwnedOfflineAssets() where
                     asset.itemId == item.id && asset.category == .fingerprintMap {
-                    var updated = asset
-                    updated.protections.remove(.activeEpisodeMapPreparation)
-                    try store.saveOwnedOfflineAsset(updated)
+                    try store.updateOwnedOfflineAsset(id: asset.id) { $0.protections.remove(.activeEpisodeMapPreparation) }
                 }
                 try self.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
                 job.stage = .completed
@@ -5022,14 +5020,13 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func protectSummaryBridgeAsset(_ assetID: String, protected: Bool) {
-        guard let store,
-              var asset = (try? store.loadOwnedOfflineAssets())?.first(where: { $0.id == assetID }) else { return }
-        if protected {
-            asset.protections.insert(.activeSummaryBridge)
-        } else {
-            asset.protections.remove(.activeSummaryBridge)
+        _ = try? store?.updateOwnedOfflineAsset(id: assetID) { asset in
+            if protected {
+                asset.protections.insert(.activeSummaryBridge)
+            } else {
+                asset.protections.remove(.activeSummaryBridge)
+            }
         }
-        try? store.saveOwnedOfflineAsset(asset)
     }
 
     private func purgeTransientEpisodeTranscriptionCaches(itemId: String) throws {
@@ -15559,9 +15556,8 @@ final class Gate1AppModel: ObservableObject {
                     isReproducible: true
                 )
             )
-            for var asset in try store.loadOwnedOfflineAssets() where asset.itemId == item.id && asset.category == .preparedChunk {
-                asset.isRedundant = true
-                try store.saveOwnedOfflineAsset(asset)
+            for asset in try store.loadOwnedOfflineAssets() where asset.itemId == item.id && asset.category == .preparedChunk {
+                try store.updateOwnedOfflineAsset(id: asset.id) { $0.isRedundant = true }
             }
         } catch {
             try? await ledger.release(reservationId: assemblyReservation.id)
