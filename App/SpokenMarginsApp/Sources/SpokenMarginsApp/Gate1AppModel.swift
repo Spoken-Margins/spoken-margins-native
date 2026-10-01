@@ -11678,7 +11678,7 @@ final class Gate1AppModel: ObservableObject {
                 do {
                     var completed = false
                     let stream = openAIResponsesClient.stream(
-                        apiKey: providerAPIKey,
+                        credentials: .apiKey(providerAPIKey),
                         model: selectedModel,
                         instructions: systemPromptForAIJob(kind: kind),
                         messages: messages
@@ -11847,7 +11847,7 @@ final class Gate1AppModel: ObservableObject {
         do {
             let messages = [assistantChapterPrompt(responseText: text)]
             let response = try await openAIResponsesClient.complete(
-                apiKey: providerAPIKey,
+                credentials: .apiKey(providerAPIKey),
                 model: model,
                 instructions: "Return only strict JSON for assistant response chapters. Do not use Markdown.",
                 messages: messages
@@ -11917,7 +11917,7 @@ final class Gate1AppModel: ObservableObject {
         var responseText = ""
         var completed = false
         for try await event in openAIResponsesClient.stream(
-            apiKey: providerAPIKey,
+            credentials: .apiKey(providerAPIKey),
             model: model,
             instructions: systemPrompt,
             messages: messages
