@@ -70,6 +70,7 @@ REASONS = {
     'app-tests': 'app-hosted tests',
     'ui-tests': 'UI test scripts (compile only)',
     'app-other': 'app target files',
+    'ops': 'VPS and Mac ops tools, with their own Python tests',
     'unknown': 'unclassified path, defaulting to a compile',
 }
 
@@ -153,6 +154,11 @@ def classify_path(root, path, diff_text='', build_script_paths=frozenset()):
             return Finding(path, 2, 'build-script', commands=T2_COMMANDS)
         runner = ['.venv/bin/python -m unittest discover -s scripts/tests']
         return Finding(path, 1, 'guard' if name == 'lane_guard.py' else 'scripts', commands=runner)
+    if path.startswith('ops/'):
+        # VPS and Mac ops tools (the Dial gate, the Codex audit): nothing reaches the app, and --plan fast
+        # runs each ops folder's own tests (verify-tests.py, ops_steps).
+        folder = '/'.join(Path(path).parts[:2]) if len(Path(path).parts) > 2 else 'ops'
+        return Finding(path, 1, 'ops', commands=[f'.venv/bin/python -m unittest discover -s {folder}'])
     if path.startswith(BROWSER_PREFIXES) or path in BROWSER_FILES:
         return Finding(path, 1, 'browser', commands=['npm run test:browser-extraction'])
     if path.startswith(PERSISTENCE_FIXTURES):

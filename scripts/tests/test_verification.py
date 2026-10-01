@@ -56,6 +56,38 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(step['simulator_crash_report'], crashes[-1])
             self.assertEqual(step['exit_code'], 124)
 
+    def test_the_host_plan_runs_each_ops_folder_s_own_tests(self):
+        # ops/dial and ops/codex carry their own Python tests, which no lane plan ran.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            for folder, body in (('dial', 'self.assertTrue(True)'), ('codex', 'self.assertEqual(1, 1)')):
+                (root / 'ops' / folder).mkdir(parents=True)
+                (root / 'ops' / folder / f'test_{folder}.py').write_text(
+                    f'import unittest\nclass T(unittest.TestCase):\n    def test_it(self):\n        {body}\n')
+            (root / 'ops' / 'notes').mkdir()
+            (root / 'ops' / 'notes' / 'README.md').write_text('no tests here\n')
+            self.assertEqual([p.relative_to(root).as_posix() for p in verification.ops_test_folders(root)],
+                             ['ops/codex', 'ops/dial'])
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            run.ops_steps(root)
+            steps = {step['name']: step for step in run.manifest['steps']}
+            self.assertEqual(sorted(steps), ['ops-codex', 'ops-dial'])
+            self.assertTrue(all(step['executed_count'] == 1 and not step['errors'] for step in steps.values()), steps)
+            (root / 'ops' / 'dial' / 'test_dial.py').write_text('import unittest\n')  # a folder whose tests vanished
+            run = verification.Run(Path(temporary) / 'run-2', 'fast')
+            with self.assertRaises(RuntimeError) as raised:
+                run.ops_steps(root)
+            self.assertIn('executed zero tests', str(raised.exception))
+
+    def test_ops_files_count_as_verification_inputs(self):
+        with patch.object(verification, 'capture', return_value='ops/dial/dial_gate.py\n'), \
+                tempfile.TemporaryDirectory() as temporary, patch.object(verification, 'ROOT', Path(temporary)):
+            (Path(temporary) / 'ops/dial').mkdir(parents=True)
+            (Path(temporary) / 'ops/dial/dial_gate.py').write_text('one\n')
+            before = verification.input_identity()
+            (Path(temporary) / 'ops/dial/dial_gate.py').write_text('two\n')
+            self.assertNotEqual(before, verification.input_identity())
+
     def test_a_failed_step_names_its_first_errors_not_just_the_exit_code(self):
         # #411: T3 reports on #368 and #408 said only "Process exit 70"; the log that says why stayed on the Mac.
         script = ('import sys; print("Command line invocation: xcodebuild build-for-testing"); '
