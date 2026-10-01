@@ -9,14 +9,14 @@ import XCTest
 /// 7 s ad the friend's didn't (#481). Scenes after the ad move by its length; an ad inside the
 /// stretch a scene start is matched across refuses the whole map instead of guessing.
 final class SharedListeningMapResolverTests: XCTestCase {
-    private static let sceneStarts = [0, 60_000, 220_000, 265_000]
+    private static let sceneStarts = [0, 25_000, 185_000, 265_000]
     private static let landmarkStarts = [20_000, 100_000, 180_000, 260_000]
     private static let gateMs = 1_500
 
     func testAMapPlacesOnACopyWithAnAdBetweenScenes() async throws {
         let outcome = try await resolveOnCopy(adInsertedAtMs: 140_000)
         guard case .placed(let projection) = outcome else { return XCTFail("Expected a placed map, got \(outcome)") }
-        let expected = [0, 60_000, 227_000, 272_000]
+        let expected = [0, 25_000, 192_000, 272_000]
         for (start, recipient) in zip(Self.sceneStarts, expected) {
             let placed = try XCTUnwrap(projection.projectedRecipientTime(for: start), "scene at \(start) ms")
             XCTAssertLessThanOrEqual(abs(placed - recipient), Self.gateMs, "scene at \(start) ms placed at \(placed) ms")

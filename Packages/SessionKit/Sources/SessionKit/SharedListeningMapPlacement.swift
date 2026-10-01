@@ -31,8 +31,8 @@ public enum SharedListeningMapPlacement {
         case unresolved
         case ambiguous
         case outOfOrder = "out_of_order"
-        /// Matched on one side only, and nothing confirms the copy is unchanged on the other.
-        case edgeUnconfirmed = "edge_unconfirmed"
+        /// No landmark's audio covers the scene start, so nothing confirms where it starts.
+        case uncovered
     }
 
     public struct Refusal: Error, Equatable, Sendable {
@@ -60,7 +60,7 @@ public enum SharedListeningMapPlacement {
             case .unresolved: return "\(scene) wasn't found in your copy."
             case .ambiguous: return "\(scene) matched more than one place in your copy, or your copy changes inside it."
             case .outOfOrder: return "\(scene) landed before the scene ahead of it."
-            case .edgeUnconfirmed: return "Your copy changes near \(scene.lowercasedFirst), and nothing confirms where it starts."
+            case .uncovered: return "The shared map has no audio at the start of \(scene.lowercasedFirst), so nothing confirms where it starts in your copy."
             }
         }
     }
@@ -122,12 +122,10 @@ public enum SharedListeningMapPlacement {
     /// Accepts the resolver's answers only when every scene start was placed by
     /// direct evidence and the starts increase; otherwise names the first failure.
     ///
-    /// A start with landmarks on both sides is checked by the resolver: a change between
-    /// them makes the two matches disagree. A start before the first or after the last
-    /// landmark has one match and nothing to check it against, and the landmark can be
-    /// minutes away, so it is placed only when that landmark's own audio covers the start.
-    /// Nothing else (an unmoved landmark, an equal length) rules out an insertion and an
-    /// equal cut in between. A first scene that starts at 0:00 starts at 0:00 on any copy.
+    /// On a different edition a scene start is placed only when a matched landmark's own
+    /// audio covers it. Matches away from the start, even on both sides, can't rule out an
+    /// insertion and an equal cut between them that moves the start and neither landmark.
+    /// A first scene that starts at 0:00 starts at 0:00 on any copy.
     public static func decide(
         proposal: PortableListeningMapProposalArtifact,
         queries: [SceneQuery],
@@ -151,13 +149,13 @@ public enum SharedListeningMapPlacement {
                     ? .ambiguous : .unresolved
                 return .notPlaced(Refusal(sceneId: query.sceneId, sceneLabel: sceneLabel, reason: reason))
             }
-            if resolution.evidenceClass != .exactEdition, query.landmarks.count == 1, let landmark = query.landmarks.first {
+            if resolution.evidenceClass != .exactEdition {
                 if query.senderStartMs == 0 {
                     placed = 0
-                } else {
-                    guard (landmark.sourceMediaStartMs...landmark.sourceMediaEndMs).contains(query.senderStartMs) else {
-                        return .notPlaced(Refusal(sceneId: query.sceneId, sceneLabel: sceneLabel, reason: .edgeUnconfirmed))
-                    }
+                } else if !query.landmarks.contains(where: {
+                    ($0.sourceMediaStartMs...$0.sourceMediaEndMs).contains(query.senderStartMs)
+                }) {
+                    return .notPlaced(Refusal(sceneId: query.sceneId, sceneLabel: sceneLabel, reason: .uncovered))
                 }
             }
             if let previousStart, placed <= previousStart {

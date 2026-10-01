@@ -61,11 +61,11 @@ final class SharedListeningMapPlacementTests: XCTestCase {
     }
 
     func testAMapWhoseStartsAllPlaceBecomesAProjectionOnTheRecipientsTimes() throws {
-        let map = proposal(starts: [0, 60_000, 220_000])
+        let map = proposal(starts: [0, 25_000, 185_000])
         let outcome = try decide(map, [
             "scene-0": placed(0, .acousticVerified),
-            "scene-1": placed(60_000),
-            "scene-2": placed(227_000)
+            "scene-1": placed(25_000),
+            "scene-2": placed(192_000)
         ])
         guard case .placed(let projection) = outcome else { return XCTFail("\(outcome)") }
         XCTAssertEqual(projection.proposalId, "friend-map")
@@ -73,17 +73,17 @@ final class SharedListeningMapPlacementTests: XCTestCase {
         XCTAssertEqual(projection.recipientEditionSHA256, "my-bytes")
         XCTAssertEqual(projection.algorithmVersion, SharedListeningMapPlacement.algorithmVersion)
         XCTAssertEqual(projection.projectedRecipientTime(for: 0), 0)
-        XCTAssertEqual(projection.projectedRecipientTime(for: 60_000), 60_000)
-        XCTAssertEqual(projection.projectedRecipientTime(for: 220_000), 227_000)
+        XCTAssertEqual(projection.projectedRecipientTime(for: 25_000), 25_000)
+        XCTAssertEqual(projection.projectedRecipientTime(for: 185_000), 192_000)
         XCTAssertNil(projection.projectedRecipientTime(for: 150_000), "Only scene starts are placed")
-        XCTAssertEqual(map, proposal(starts: [0, 60_000, 220_000]), "The portable proposal is never rewritten")
+        XCTAssertEqual(map, proposal(starts: [0, 25_000, 185_000]), "The portable proposal is never rewritten")
     }
 
     func testOneUnplacedSceneKeepsTheWholeMapUnused() throws {
-        let outcome = try decide(proposal(starts: [0, 60_000, 220_000]), [
+        let outcome = try decide(proposal(starts: [0, 25_000, 185_000]), [
             "scene-0": placed(0),
             "scene-1": ImportedAnchorResolution(evidenceClass: .ambiguous, isAmbiguous: true),
-            "scene-2": placed(227_000)
+            "scene-2": placed(192_000)
         ])
         XCTAssertEqual(outcome, .notPlaced(.init(sceneId: "scene-1", sceneLabel: "Scene 2 (The interview)", reason: .ambiguous)))
         guard case .notPlaced(let refusal) = outcome else { return }
@@ -95,21 +95,21 @@ final class SharedListeningMapPlacementTests: XCTestCase {
 
     func testOnlyDirectAcousticEvidencePlacesAScene() throws {
         for weak in [AnchorResolutionEvidenceClass.timestampFallback, .mapInterpolated, .transcriptVerified, .unresolved] {
-            let outcome = try decide(proposal(starts: [0, 60_000]), [
+            let outcome = try decide(proposal(starts: [0, 25_000]), [
                 "scene-0": placed(0),
-                "scene-1": placed(60_000, weak)
+                "scene-1": placed(25_000, weak)
             ])
             XCTAssertEqual(outcome, .notPlaced(.init(sceneId: "scene-1", sceneLabel: "Scene 2 (The interview)", reason: .unresolved)), "\(weak)")
         }
-        let missing = try decide(proposal(starts: [0, 60_000]), ["scene-0": placed(0)])
+        let missing = try decide(proposal(starts: [0, 25_000]), ["scene-0": placed(0)])
         XCTAssertEqual(missing, .notPlaced(.init(sceneId: "scene-1", sceneLabel: "Scene 2 (The interview)", reason: .unresolved)))
     }
 
     func testStartsThatDoNotIncreaseAreRefused() throws {
-        let outcome = try decide(proposal(starts: [0, 60_000, 220_000]), [
+        let outcome = try decide(proposal(starts: [0, 25_000, 185_000]), [
             "scene-0": placed(0),
-            "scene-1": placed(230_000),
-            "scene-2": placed(227_000)
+            "scene-1": placed(195_000),
+            "scene-2": placed(192_000)
         ])
         XCTAssertEqual(outcome, .notPlaced(.init(sceneId: "scene-2", sceneLabel: "Scene 3", reason: .outOfOrder)))
     }
@@ -130,7 +130,7 @@ final class SharedListeningMapPlacementTests: XCTestCase {
     }
 
     func testASharedMapNeverReplacesTheListenersOwnMap() throws {
-        let outcome = try decide(proposal(starts: [0, 60_000]), ["scene-0": placed(0), "scene-1": placed(60_000)])
+        let outcome = try decide(proposal(starts: [0, 25_000]), ["scene-0": placed(0), "scene-1": placed(25_000)])
         guard case .placed(let projection) = outcome else { return XCTFail("\(outcome)") }
         XCTAssertEqual(SharedListeningMapPlacement.activation([outcome], listenerProposalIds: []).projection, projection)
         let mine = SharedListeningMapPlacement.activation([outcome], listenerProposalIds: ["episode-map-proposal-mine"])
@@ -139,8 +139,8 @@ final class SharedListeningMapPlacementTests: XCTestCase {
     }
 
     func testTheFirstPlacedFriendsMapStaysAndARefusalShowsOnlyWhenNoneIsInUse() throws {
-        let placedOutcome = try decide(proposal(starts: [0, 60_000]), ["scene-0": placed(0), "scene-1": placed(60_000)])
-        let refused = try decide(proposal(starts: [0, 60_000]), ["scene-0": placed(0)])
+        let placedOutcome = try decide(proposal(starts: [0, 25_000]), ["scene-0": placed(0), "scene-1": placed(25_000)])
+        let refused = try decide(proposal(starts: [0, 25_000]), ["scene-0": placed(0)])
         let otherPlaced = SharedListeningMapPlacement.Outcome.placed(ResolvedListeningMapProjection(
             id: "second-friend", itemId: "my-episode", proposalId: "second-map", points: [], intervals: []))
         let both = SharedListeningMapPlacement.activation([refused, placedOutcome, otherPlaced], listenerProposalIds: [])
@@ -157,31 +157,37 @@ final class SharedListeningMapPlacementTests: XCTestCase {
         XCTAssertEqual(inUse.projection?.proposalId, "second-map", "The map in use stays while it still places")
     }
 
-    /// A scene before the first or after the last landmark has one match, possibly minutes
-    /// away. A change between that landmark and the scene would go unseen, so the scene is
-    /// placed only when the landmark's own audio (20-31 s, 100-111 s, 180-191 s, 260-271 s) covers it.
-    func testAOneSidedSceneIsPlacedOnlyInsideItsLandmarksAudio() throws {
-        // Tail: scene 3 at 265 s sits inside the last landmark's audio.
-        let covered = try decide(proposal(starts: [0, 60_000, 220_000, 265_000]), [
-            "scene-0": placed(0, .acousticVerified), "scene-1": placed(60_000),
-            "scene-2": placed(227_000), "scene-3": placed(272_000, .acousticVerified)
+    /// The landmarks' audio covers 20-31 s, 100-111 s, 180-191 s and 260-271 s. A scene start
+    /// outside all of them is refused even when both neighbouring landmarks matched and agree.
+    func testASceneStartIsPlacedOnlyInsideALandmarksAudio() throws {
+        // Codex audit on babc304: insert 7 s at 40 s and cut 7 s at 80-87 s. Both landmarks
+        // around a scene at 60 s stay put and agree, but the scene now starts at 67 s.
+        XCTAssertEqual(try decide(proposal(starts: [0, 60_000]), [
+            "scene-0": placed(0, .acousticVerified), "scene-1": placed(60_000)
+        ]).refusal, .init(sceneId: "scene-1", sceneLabel: "Scene 2 (The interview)", reason: .uncovered))
+        // Tail: inside the last landmark's audio is placed, past it is refused.
+        let covered = try decide(proposal(starts: [0, 25_000, 185_000, 265_000]), [
+            "scene-0": placed(0, .acousticVerified), "scene-1": placed(25_000),
+            "scene-2": placed(192_000), "scene-3": placed(272_000, .acousticVerified)
         ])
         guard case .placed(let projection) = covered else { return XCTFail("\(covered)") }
         XCTAssertEqual(projection.projectedRecipientTime(for: 265_000), 272_000)
-        // Tail: scene 3 at 280 s is past the landmark's audio; even a plausible match is refused.
-        XCTAssertEqual(try decide(proposal(starts: [0, 60_000, 220_000, 280_000]), [
-            "scene-0": placed(0, .acousticVerified), "scene-1": placed(60_000),
-            "scene-2": placed(227_000), "scene-3": placed(287_000, .acousticVerified)
-        ]).refusal, .init(sceneId: "scene-3", sceneLabel: "Scene 4", reason: .edgeUnconfirmed))
-
-        // Head: scene 1 at 10 s is before the first landmark's audio.
-        XCTAssertEqual(try decide(proposal(starts: [0, 10_000, 60_000]), [
-            "scene-0": placed(7_000), "scene-1": placed(17_000, .acousticVerified), "scene-2": placed(67_000)
-        ]).refusal, .init(sceneId: "scene-1", sceneLabel: "Scene 2 (The interview)", reason: .edgeUnconfirmed))
+        XCTAssertEqual(try decide(proposal(starts: [0, 25_000, 185_000, 280_000]), [
+            "scene-0": placed(0, .acousticVerified), "scene-1": placed(25_000),
+            "scene-2": placed(192_000), "scene-3": placed(287_000, .acousticVerified)
+        ]).refusal, .init(sceneId: "scene-3", sceneLabel: "Scene 4", reason: .uncovered))
+        // Head: before the first landmark's audio is refused.
+        XCTAssertEqual(try decide(proposal(starts: [0, 10_000, 25_000]), [
+            "scene-0": placed(7_000), "scene-1": placed(17_000, .acousticVerified), "scene-2": placed(32_000)
+        ]).refusal, .init(sceneId: "scene-1", sceneLabel: "Scene 2 (The interview)", reason: .uncovered))
         // The first scene at 0:00 starts at 0:00 on any copy.
-        let preRoll = try decide(proposal(starts: [0, 60_000]), ["scene-0": placed(7_000, .acousticVerified), "scene-1": placed(67_000)])
+        let preRoll = try decide(proposal(starts: [0, 25_000]), ["scene-0": placed(7_000, .acousticVerified), "scene-1": placed(32_000)])
         guard case .placed(let headProjection) = preRoll else { return XCTFail("\(preRoll)") }
         XCTAssertEqual(headProjection.projectedRecipientTime(for: 0), 0)
-        XCTAssertEqual(headProjection.projectedRecipientTime(for: 60_000), 67_000)
+        XCTAssertEqual(headProjection.projectedRecipientTime(for: 25_000), 32_000)
+        // An exact edition needs no coverage: every byte is the sender's.
+        guard case .placed = try decide(proposal(starts: [0, 60_000]), [
+            "scene-0": placed(0, .exactEdition), "scene-1": placed(60_000, .exactEdition)
+        ]) else { return XCTFail("exact edition") }
     }
 }
