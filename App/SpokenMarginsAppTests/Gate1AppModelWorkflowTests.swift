@@ -2819,11 +2819,14 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// #142: a spoken recap Margin at the end saves at the end and returns to the finished state.
     func testSpokenMarginOnAFinishedItemSavesAtTheEndAndStaysFinished() throws {
         let audio = WorkflowCompletionAudioClient()
+        // A finished speech player reports offset 0, the position #142 saved the Margin at.
+        audio.reportsZeroOffsetAfterCompletion = true
         let model = Gate1AppModel(audioPlaybackClient: audio, recordingClient: NoopRecordingClient())
         model.resetAndSeed()
         model.startItem(id: "item-pill")
         let sessionID = try XCTUnwrap(model.snapshot.sessionId)
         audio.completeCurrentTarget()
+        XCTAssertEqual(audio.currentCharOffset(), 0)
         model.syncPlaybackProgressForLifecycle()
         XCTAssertEqual(model.snapshot.phase, .finished)
         let marginIDsBefore = Set(model.selectedItem.interjections.map(\.id))
@@ -2841,6 +2844,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(model.lastError)
         let margin = try XCTUnwrap(model.selectedItem.interjections.first { !marginIDsBefore.contains($0.id) })
         XCTAssertEqual(margin.sessionId, sessionID)
+        XCTAssertEqual(margin.anchor.startChar, model.selectedItem.text.count, "saved at the end, not at the stopped player's 0")
+        XCTAssertEqual(margin.roughPercent, 100)
         XCTAssertEqual(model.selectedItem.sessions.first { $0.id == sessionID }?.status, "finished")
     }
 
@@ -4442,6 +4447,8 @@ private final class WorkflowCompletionAudioClient: AudioPlaybackClient {
     private var completedTargetId: String?
     private var currentOffset = 0
     private(set) var playCount = 0
+    /// Like a real speech player, report offset 0 once the target has finished.
+    var reportsZeroOffsetAfterCompletion = false
 
     func prepareSpeechText(_ text: String) throws -> String {
         let normalized = SpeechTextNormalizer.normalize(text)
@@ -4489,7 +4496,7 @@ private final class WorkflowCompletionAudioClient: AudioPlaybackClient {
 
     func completeCurrentTarget() {
         lock.lock()
-        currentOffset = preparedText.count
+        currentOffset = reportsZeroOffsetAfterCompletion ? 0 : preparedText.count
         completedTargetId = activeTargetId
         lock.unlock()
     }
