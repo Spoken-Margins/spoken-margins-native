@@ -1,9 +1,9 @@
 {
  "schemaVersion": "source-catalog.v1",
  "catalogId": "onboarding-top-podcasts",
- "contentVersion": 1,
+ "contentVersion": 2,
  "title": "Popular podcasts",
- "generatedAt": "2026-09-28T12:19:05Z",
+ "generatedAt": "2026-10-01T13:00:00Z",
  "locale": "en-US",
  "provenance": [
   {
@@ -120,6 +120,12 @@
    "url": "https://itunes.apple.com/lookup",
    "country": "us",
    "fetchedAt": "2026-09-28T12:19:05Z"
+  },
+  {
+   "id": "hand-picked-writers",
+   "kind": "hand_curated",
+   "fetchedAt": "2026-10-01T13:00:00Z",
+   "note": "Substack publications for the Writers row (#470). A starting list: edit it freely."
   }
  ],
  "subjects": [
@@ -182,6 +188,10 @@
    "id": "arts",
    "title": "Arts",
    "appleGenreId": 1301
+  },
+  {
+   "id": "writers",
+   "title": "Writers"
   }
  ],
  "starterRows": [
@@ -328,6 +338,21 @@
     "apple-1649630933"
    ],
    "curatedBy": "chart-seed"
+  },
+  {
+   "subjectId": "writers",
+   "title": "Start with Writers",
+   "entryIds": [
+    "substack-oneusefulthing",
+    "substack-experimental-history",
+    "substack-construction-physics",
+    "substack-honest-broker",
+    "substack-noahpinion",
+    "substack-astralcodexten",
+    "substack-yourlocalepidemiologist",
+    "substack-lennysnewsletter"
+   ],
+   "curatedBy": "hand-picked"
   }
  ],
  "entries": [
@@ -5410,6 +5435,150 @@
    "provenanceIds": [
     "apple-top-us-arts",
     "itunes-lookup"
+   ]
+  },
+  {
+   "id": "substack-oneusefulthing",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "One Useful Thing",
+   "author": "Ethan Mollick",
+   "feedURL": "https://www.oneusefulthing.org/feed",
+   "artworkURL": "https://substackcdn.com/image/fetch/$s_!hyZZ!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2Fcd2ee4f7-3e71-42f0-92eb-4d3018127e08_1024x1024.png",
+   "websiteURL": "https://www.oneusefulthing.org",
+   "summary": "Trying to understand the implications of AI for work, education, and life.",
+   "subjects": [
+    "writers"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-writers"
+   ]
+  },
+  {
+   "id": "substack-experimental-history",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "Experimental History",
+   "author": "Adam Mastroianni",
+   "feedURL": "https://www.experimental-history.com/feed",
+   "artworkURL": "https://substackcdn.com/image/fetch/$s_!VtWA!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2Fe1a1b3b4-5f35-4876-a0d5-449398201e1f_1171x1171.png",
+   "websiteURL": "https://www.experimental-history.com",
+   "summary": "Find what's true and make it useful.",
+   "subjects": [
+    "writers"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-writers"
+   ]
+  },
+  {
+   "id": "substack-construction-physics",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "Construction Physics",
+   "author": "Brian Potter",
+   "feedURL": "https://www.construction-physics.com/feed",
+   "artworkURL": "https://substackcdn.com/image/fetch/$s_!pMIM!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F2c663799-8d26-4456-8c14-8283b618f705_590x590.png",
+   "websiteURL": "https://www.construction-physics.com",
+   "summary": "Essays about buildings, infrastructure, and industrial technology.",
+   "subjects": [
+    "writers"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-writers"
+   ]
+  },
+  {
+   "id": "substack-honest-broker",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "The Honest Broker",
+   "author": "Ted Gioia",
+   "feedURL": "https://www.honest-broker.com/feed",
+   "artworkURL": "https://substackcdn.com/image/fetch/$s_!Vsem!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2F4b9b1c6d-1d25-4039-8b7e-dd5f2858bdee_600x600.png",
+   "websiteURL": "https://www.honest-broker.com",
+   "summary": "A guide to music, books, arts, media and culture.",
+   "subjects": [
+    "writers"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-writers"
+   ]
+  },
+  {
+   "id": "substack-noahpinion",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "Noahpinion",
+   "author": "Noah Smith",
+   "feedURL": "https://www.noahpinion.blog/feed",
+   "artworkURL": "https://substackcdn.com/image/fetch/$s_!l14h!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2F04281755-2cd6-42e5-a496-e69153abebb2_281x281.png",
+   "websiteURL": "https://www.noahpinion.blog",
+   "summary": "Economics and other interesting stuff.",
+   "subjects": [
+    "writers"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-writers"
+   ]
+  },
+  {
+   "id": "substack-astralcodexten",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "Astral Codex Ten",
+   "author": "Scott Alexander",
+   "feedURL": "https://www.astralcodexten.com/feed",
+   "artworkURL": "https://substackcdn.com/image/fetch/$s_!bGN2!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2F430241cb-ade5-4316-b1c9-6e3fe6e63e5e_256x256.png",
+   "websiteURL": "https://www.astralcodexten.com",
+   "summary": "Essays on science, medicine, psychiatry and society.",
+   "subjects": [
+    "writers"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-writers"
+   ]
+  },
+  {
+   "id": "substack-yourlocalepidemiologist",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "Your Local Epidemiologist",
+   "author": "Katelyn Jetelina",
+   "feedURL": "https://yourlocalepidemiologist.substack.com/feed",
+   "artworkURL": "https://substackcdn.com/image/fetch/$s_!UGSL!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F8cff4be5-3861-4e8d-b7ed-a3f1ee5acc12_256x256.png",
+   "websiteURL": "https://yourlocalepidemiologist.substack.com",
+   "summary": "Public health science, translated.",
+   "subjects": [
+    "writers"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-writers"
+   ]
+  },
+  {
+   "id": "substack-lennysnewsletter",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "Lenny's Newsletter",
+   "author": "Lenny Rachitsky",
+   "feedURL": "https://www.lennysnewsletter.com/feed",
+   "artworkURL": "https://substackcdn.com/image/fetch/$s_!8MSN!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F441213db-4824-4e48-9d28-a3a18952cbfc_592x592.png",
+   "websiteURL": "https://www.lennysnewsletter.com",
+   "summary": "Product, growth and career advice.",
+   "subjects": [
+    "writers"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-writers"
    ]
   }
  ]
