@@ -35,7 +35,8 @@ final class ReadwiseHighlightSync: ObservableObject {
 
     func enabledChanged() {
         UserDefaults.standard.set(enabled, forKey: "readwiseHighlightsEnabled")
-        if enabled, let storeProvider { start(store: storeProvider) }
+        // Turning it back on retries a rejected token once, so the reason shows again under the toggle.
+        if enabled, let storeProvider { rejectedTokenDigest = nil; start(store: storeProvider) }
         else { stop(); status = enabled ? "" : "Sending is off. Highlights already in Readwise stay there." }
     }
 
@@ -58,14 +59,18 @@ final class ReadwiseHighlightSync: ObservableObject {
                 guard let http = response as? HTTPURLResponse else { throw ReadwiseHighlightError.httpStatus(0) }
                 return (data, http)
             }
-            let sent = try await Task.detached(priority: .utility) {
+            let work = Task.detached(priority: .utility) {
                 let highlights = try ReadwiseHighlightGatherer.highlights(
                     sessions: store.loadSessions(), repository: store, skipping: ledger.sentKeys()
                 )
                 return try await ReadwiseHighlightSyncPass.run(highlights, token: token, client: client, ledger: ledger)
-            }.value
+            }
+            // stop() cancels the loop; this carries that into the detached pass so no further batch goes out.
+            let sent = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
             rejectedTokenDigest = nil
             status = "\(sent) new Margins sent. Last checked \(Date().formatted(date: .omitted, time: .shortened))."
+        } catch is CancellationError {
+            return
         } catch ReadwiseHighlightError.tokenRejected {
             rejectedTokenDigest = tokenDigest
             status = ReadwiseHighlightError.tokenRejected.errorDescription ?? ""
