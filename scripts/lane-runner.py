@@ -35,9 +35,11 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   comment (the prefix scripts/merge_audit.py looks for) and pushes that commit to next with a plain
   push; if next moved meanwhile, the push is refused and it tests again on the newest next (up to
   MERGE_ATTEMPTS), unless next's new commits touch none of the PR's files and no build inputs: then
-  it re-merges onto the newest next and pushes without testing again (untested_moves). It won't merge a PR that changes .github/ or scripts/lane* (a PR can change the
-  workflow that tests it), or an audio, persistence or packet change without a Codex audit comment:
-  those pass or fail as usual, and a person merges them. A PR someone asked T3 for merges only on a
+  it re-merges onto the newest next and pushes without testing again (untested_moves). It won't merge an audio, persistence, packet or lane change
+  (test-scope.py's lane_paths) until a Codex audit of its head says "No blocking findings": those pass
+  or fail as usual, and the audit script re-arms automerge after a clean audit. Lane changes no longer
+  wait for a person (owner rule 2026-10-01); the audit checks them, because a lane PR's own run uses
+  its own workflow and helpers. A PR someone asked T3 for merges only on a
   T3 PASS (#410): while its newest T3 report is FAIL or INCONCLUSIVE, or its newest T3 request has
   no report yet, the automerge run reports that verdict (INCONCLUSIVE while waiting) and doesn't merge.
   When a T3 then passes, the lane job that reported it runs the held automerge run itself, in the
@@ -71,6 +73,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import functools
 import hashlib
 import json
 import os
@@ -95,6 +98,8 @@ BUILD_RUNNER_FREE_DISK = 20 * 10**9
 # Trial (2026-10-01): host-only jobs on the build runner may run beside a simulator job, with this much disk.
 BESIDE_SIMULATOR_FREE_DISK = 30 * 2**30
 BESIDE_SIMULATOR_LOG = 'beside-simulator.log'  # in the lane state folder: one line per job, to count crashes against
+# Read by the tree's lane_slots.py (spelled here so this runner never needs a name from that copy, lane_slots_helper).
+BUILD_NEEDS_ROOM_ENV = 'SM_LANE_BUILD_NEEDS_ROOM'
 WARM_FREE_FLOOR = 15 * 10**9
 PROJECT_FILE = 'SpokenMarginsNative.xcodeproj/project.pbxproj'  # its layout names Xcode's VFS folders (#405)
 # How the T3 gate's hold reads in an automerge report, now and before #421 (PRs held by an older runner).
@@ -102,7 +107,6 @@ HELD_FOR_T3 = ('not merged: held for T3', 'after a T3 PASS, push or remove and r
 NOT_VERIFIED = 'journeys and anything a listener notices (T4), audible content (owner)'
 MERGE_CHECK = '**Merge check (triage desk)'  # the prefix scripts/merge_audit.py requires
 AUDITS = ('**Codex audit (Astra)', '## Codex audit')  # how an audit comment starts: the hourly task's, or an older manual one
-DESK_ONLY = ('.github/', 'scripts/lane')
 AUDITED = {'audio': 'the audio session', 'persistence': 'persistence', 'packet': 'packets'}
 BOT = ('github-actions[bot]', '41898282+github-actions[bot]@users.noreply.github.com')
 RUNNER_TIERS = ('T2', 'T3')
@@ -242,8 +246,19 @@ def report(request_id: str, verdict: str, head: str, base: str, tier: str, where
 
 def pr_code_env() -> dict:
     """The environment for the PR's own code (builds, tests): without the GitHub token, so nothing the
-    PR changes can use the lane's write access."""
-    return {name: value for name, value in os.environ.items() if name not in ('GH_TOKEN', 'GITHUB_TOKEN')}
+    PR changes can use the lane's write access. Nor BUILD_NEEDS_ROOM_ENV: that is for the T2 builds alone
+    (pr_build_env), and host tests that take build slots or test lane_slots mustn't inherit it."""
+    return {name: value for name, value in os.environ.items()
+            if name not in ('GH_TOKEN', 'GITHUB_TOKEN', BUILD_NEEDS_ROOM_ENV)}
+
+
+def pr_build_env() -> dict:
+    """pr_code_env for the T2 builds. On the build runner it sets BUILD_NEEDS_ROOM_ENV, so each xcodebuild-lane
+    checks the build runner's rules again as it takes its build slot (lane_slots.py)."""
+    env = pr_code_env()
+    if os.environ.get('SM_LANE_RUNNER_ROLE') == 'build':
+        env[BUILD_NEEDS_ROOM_ENV] = '1'
+    return env
 
 
 def git_with_token(tree: Path) -> list[str]:
@@ -256,7 +271,7 @@ def git_with_token(tree: Path) -> list[str]:
     return ['git', '-C', str(tree), '-c', f'http.https://github.com/.extraheader=AUTHORIZATION: basic {basic}']
 
 
-def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUPT_GRACE) -> int | None:
+def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUPT_GRACE, env=None) -> int | None:
     """Run in a new process group and return its exit code, or None if it timed out.
 
     On timeout the whole group gets SIGINT first, so verify-tests.py and xcodebuild-lane stop their
@@ -265,7 +280,7 @@ def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUP
     # The child gets default SIGINT handling even if this process was started with it ignored (as
     # background jobs are), or the interrupt below would be silently ignored all the way down.
     process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
-                               env=pr_code_env(), preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+                               env=env or pr_code_env(), preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
     try:
         return process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -300,7 +315,8 @@ def first_errors(log: Path, limit: int = 5) -> list[str]:
     return list(dict.fromkeys(found))[:limit]
 
 
-def run_t2(evidence: Path, runner=run_bounded) -> tuple[str, str, list[str]]:
+def run_t2(evidence: Path, runner=None) -> tuple[str, str, list[str]]:
+    runner = runner or (lambda command, log, timeout: run_bounded(command, log, timeout, env=pr_build_env()))
     results, details = [], []
     for name, args in T2_BUILDS:
         log = evidence / f't2-{name}.log'
@@ -454,13 +470,13 @@ def audit_blocker(comments: list[dict], head: str) -> str | None:
 
 
 def merge_blockers(scope: dict, comments: list[dict], head: str) -> list[str]:
-    """Why the runner won't merge this PR itself even on PASS; the desk merges those."""
+    """Why the runner won't merge this PR yet even on PASS: an audited kind of change without a clean Codex
+    audit of its head. Lane changes are one of those kinds; they no longer wait for a person (owner rule
+    2026-10-01). The audit script re-arms automerge after a clean audit, and that run merges."""
     reasons = []
-    desk = [f['path'] for f in scope['files'] if f['path'].startswith(DESK_ONLY)]
-    if desk:
-        reasons.append(f'it changes the lane or its workflows ({", ".join(desk[:5])}), and a PR can change '
-                       'what tests it')
     risky = sorted({AUDITED[f['category']] for f in scope['files'] if f['category'] in AUDITED})
+    if scope.get('lane_paths'):  # owner rule 2026-10-01: lane changes need the audit too (test-scope.py)
+        risky.append('the lane')
     audit = audit_blocker(comments, head) if risky else None
     if audit:
         reasons.append(f'it touches {" and ".join(risky)}, and {audit}' if audit.startswith('the ')
@@ -694,8 +710,8 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             return held[0], where, ran, details + [f'not merged: {held[1]}.']
         blockers = merge_blockers(scope, latest, head)
         if blockers:
-            return verdict, where, ran, details + [f'not merged by the runner: {b}. The desk merges it.'
-                                                   for b in blockers]
+            return verdict, where, ran, details + [f'not merged by the runner: {b}. It merges once a Codex audit '
+                                                   'of its head says "No blocking findings".' for b in blockers]
         now = github.pull()
         if now['head']['sha'] != head or AUTOMERGE not in {label['name'] for label in now.get('labels', [])} \
                 or now.get('state', 'open') != 'open':  # another run merged it meanwhile, or someone closed it
@@ -888,31 +904,37 @@ def _cache_busy(cache: Path) -> bool:
 
 def wait_for_room_to_build(out=sys.stdout, max_wait: float = BUILD_RUNNER_WAIT, poll: float = 30,
                            clock=time.monotonic, sleep=time.sleep, simulator_jobs=None, pressure=None,
-                           free=lambda: shutil.disk_usage(Path.home()).free) -> str | None:
-    """The second runner builds only while the Mac has room: no simulator job, normal memory pressure,
-    and BUILD_RUNNER_FREE_DISK free. Returns None when there's room, or why it gave up waiting."""
-    if simulator_jobs is None or pressure is None:
-        from lane_slots import memory_pressure_level, simulator_jobs_running
-        simulator_jobs = simulator_jobs or simulator_jobs_running
-        pressure = pressure or memory_pressure_level
-    started, last_note = clock(), None
-    while True:
-        busy = []
-        if simulator_jobs():
-            busy.append('a simulator job is running')
-        if pressure() not in (1, None):
-            busy.append('memory pressure is above normal')
-        if free() < BUILD_RUNNER_FREE_DISK:
-            busy.append(f'less than {BUILD_RUNNER_FREE_DISK // 10**9} GB of disk is free')
-        if not busy:
-            return None
-        waited = clock() - started
-        if waited >= max_wait:
-            return f'the build runner waited {duration(waited)} for room: {"; ".join(busy)}'
-        if last_note is None or clock() - last_note >= 300:
-            print(f'[lane] build runner waiting ({duration(waited)} so far): {"; ".join(busy)}', file=out, flush=True)
-            last_note = clock()
-        sleep(poll)
+                           free=lambda: shutil.disk_usage(Path.home()).free, builds=None, note=None) -> str | None:
+    """The second runner builds only while the Mac has room: normal memory pressure and BUILD_RUNNER_FREE_DISK
+    free. Returns None when there's room, or why it gave up waiting.
+
+    Trial, extended 2026-10-01: sm-lane-mac-2 spent 6.9 of its 12.7 busy hours in a day waiting here for a
+    simulator job (mostly the Test Desk's) while the Mac was ~60% idle, and the host-only trial covered few
+    jobs because most automerge jobs build. A build may now start beside one simulator job on the host-only
+    terms (pressure read as normal now, BESIDE_SIMULATOR_FREE_DISK free) while the one build slot lane_slots
+    leaves during a simulator job is free; note(text) is called when it does. Never beside two. This is the
+    check when the job starts; each build checks again as it takes its slot (BUILD_NEEDS_ROOM_ENV).
+    """
+    from lane_slots import memory_pressure_level, simulator_jobs_running
+    builds = builds or lane_slots_helper('build_jobs_running', lambda: None)
+    problem, beside = wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs or simulator_jobs_running,
+                                    pressure or memory_pressure_level, free, builds)
+    if beside and note:
+        note(beside)
+    return problem
+
+
+def lane_slots_helper(name: str, fallback):
+    """lane_slots.<name>, or fallback when the tree's copy of lane_slots.py predates it.
+
+    The workflow runs next's lane-runner.py, but lane_slots comes from the PR's checkout (main() puts the
+    tree's scripts/ first on sys.path, and the module stays loaded after the merge commit is checked out).
+    A branch that hasn't merged next since a helper landed lacks it, and a plain import raised ImportError
+    before the job could report (#656 audit). Every lane_slots name newer than #656 is looked up here, with
+    a fallback that keeps the older, more careful behaviour.
+    """
+    import lane_slots
+    return getattr(lane_slots, name, fallback)
 
 
 def pressure_is_normal(level) -> bool:
@@ -929,12 +951,17 @@ def wait_for_room_to_test_on_host(out=sys.stdout, max_wait: float = BUILD_RUNNER
     Trial (2026-10-01): the build runner sat idle whenever any simulator job ran, the Test Desk's included
     (394 minutes in a day). A host-only job may now start beside one while the kernel reads memory pressure
     as normal and more than BESIDE_SIMULATOR_FREE_DISK is free. With no simulator job, the build runner's
-    usual rules hold. Builds still wait in wait_for_room_to_build.
+    usual rules hold. Builds wait in wait_for_room_to_build.
     """
-    if simulator_jobs is None or pressure is None:
-        from lane_slots import memory_pressure_level, simulator_jobs_running
-        simulator_jobs = simulator_jobs or simulator_jobs_running
-        pressure = pressure or memory_pressure_level
+    from lane_slots import memory_pressure_level, simulator_jobs_running
+    return wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs or simulator_jobs_running,
+                         pressure or memory_pressure_level, free)
+
+
+def wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs, pressure, free, builds=None) -> tuple:
+    """(None or why it gave up, a note when there's room beside a simulator job). builds, for a job that builds:
+    how many build slots are held (None: can't tell, so it doesn't build beside a simulator job); beside a
+    simulator job, it needs the one slot left then, and one simulator."""
     started, last_note = clock(), None
     while True:
         jobs, level, room = simulator_jobs(), pressure(), free()
@@ -946,14 +973,22 @@ def wait_for_room_to_test_on_host(out=sys.stdout, max_wait: float = BUILD_RUNNER
             if room < BESIDE_SIMULATOR_FREE_DISK:
                 busy.append(f'a simulator job is running and less than {BESIDE_SIMULATOR_FREE_DISK // 2**30} GiB '
                             'of disk is free')
+            held = builds() if builds and jobs == 1 else 0
+            if builds and jobs > 1:
+                busy.append('two simulator jobs are running')
+            elif held is None:
+                busy.append('a simulator job is running, and this checkout\'s lane_slots.py can\'t count build '
+                            'slots (merge next into the branch to build beside one)')
+            elif held:
+                busy.append('a simulator job is running and the one build slot it leaves is taken')
         else:
             if level not in (1, None):
                 busy.append('memory pressure is above normal')
             if room < BUILD_RUNNER_FREE_DISK:
                 busy.append(f'less than {BUILD_RUNNER_FREE_DISK // 10**9} GB of disk is free')
         if not busy:
-            return None, (f'ran beside a simulator job (trial): memory pressure normal, {room // 2**30} GiB free'
-                          if jobs else None)
+            return None, (f'{"built" if builds else "ran"} beside a simulator job (trial): memory pressure normal, '
+                          f'{room // 2**30} GiB free' if jobs else None)
         waited = clock() - started
         if waited >= max_wait:
             return f'the build runner waited {duration(waited)} for room: {"; ".join(busy)}', None
@@ -1517,14 +1552,17 @@ def main(argv=None) -> int:
     t3_first = t3_request_for_head(comments, labels, head) if request['tier'] == 'auto' else None
     no_room, beside, room_for_builds = None, None, None
     if request['tier'] == 'auto' and not t3_first and os.environ.get('SM_LANE_RUNNER_ROLE') == 'build':
-        if host_only_scope(ROOT, args.base):  # the trial: host-only work may run beside a simulator job
+        if host_only_scope(ROOT, args.base):  # the trial: work may run beside a simulator job, builds too
             no_room, beside = wait_for_room_to_test_on_host()
-            room_for_builds = wait_for_room_to_build
-            if beside:
-                print(f'[lane] {beside}', flush=True)
-                note_beside_simulator(request_id, args.pr, beside)
+            room_for_builds = functools.partial(wait_for_room_to_build, note=lambda text: (
+                print(f'[lane] {text}', flush=True), note_beside_simulator(request_id, args.pr, text)))
         else:
-            no_room = wait_for_room_to_build()
+            noted = []
+            no_room = wait_for_room_to_build(note=noted.append)
+            beside = noted[0] if noted else None
+        if beside:
+            print(f'[lane] {beside}', flush=True)
+            note_beside_simulator(request_id, args.pr, beside)
     started = time.monotonic()
     requested = request.get('commit', '')
     moved = [f'requested {requested[:7]}, tested the newest commit {head[:7]}'] \

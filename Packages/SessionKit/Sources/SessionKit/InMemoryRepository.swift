@@ -139,7 +139,8 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     }
 
     public func loadInterjections(sessionId: String) throws -> [Interjection] {
-        interjections.values.filter { $0.sessionId == sessionId }.sorted { $0.createdAt < $1.createdAt }
+        interjections.values.filter { $0.sessionId == sessionId }
+            .sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
     }
 
     public func saveInterjectionShareRevision(_ revision: InterjectionShareRevision) throws {
