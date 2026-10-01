@@ -24,6 +24,11 @@ BODY = """Tap one box in each group.
 - [ ] 80%
 - [x] 97%
 
+**Finish by**
+- [ ] Sat 7 AM (the weekly reset)
+- [x] Fri noon
+- [ ] Fri 7 AM
+
 ---
 - [x] a stray ticked box after the rule is ignored
 """
@@ -43,7 +48,15 @@ def tick(percent, at, extra=''):
 class ParseDial(unittest.TestCase):
     def test_reads_the_ticked_boxes(self):
         d = g.parse_dial(BODY)
-        self.assertEqual((d['mode'], d['threads'], d['stop'], d['problems']), ('paced', 3, 97, []))
+        self.assertEqual((d['mode'], d['threads'], d['stop'], d['hours_early'], d['problems']),
+                         ('paced', 3, 97, 19, []))
+
+    def test_two_finish_by_ticks_take_the_later_deadline(self):
+        d = g.parse_dial(BODY.replace('- [ ] Sat 7 AM', '- [x] Sat 7 AM'))
+        self.assertEqual(d['hours_early'], 0)
+
+    def test_no_finish_by_means_the_reset(self):
+        self.assertEqual(g.parse_dial(BODY.replace('- [x] Fri noon', '- [ ] Fri noon'))['hours_early'], 0)
 
     def test_two_threads_ticked_takes_the_lower(self):
         d = g.parse_dial(BODY.replace('- [ ] 1', '- [x] 1'))
@@ -127,6 +140,21 @@ class Decide(unittest.TestCase):
         state = {'last_fire': 'fire-x', 'last_fire_at': ts(NOW - dt.timedelta(hours=2))}
         ack = {'fire': 'fire-x', 'running': 3, 'at': NOW, 'id': 1}
         self.assertFalse(self.decide(state=state, ack=ack)['fire'])
+
+    def test_trend_line_runs_from_week_start_to_the_stop_line(self):
+        # Week: Sat 2026-09-26 11:00Z to Sat 10-03 11:00Z; Fri noon EDT = 19 h early = Fri 16:00Z.
+        self.assertAlmostEqual(g.trend_line(dt.datetime(2026, 10, 2, 16, 0, tzinfo=dt.timezone.utc), 97, 19), 97)
+        self.assertAlmostEqual(g.trend_line(dt.datetime(2026, 9, 26, 11, 0, tzinfo=dt.timezone.utc), 97, 19), 0)
+        self.assertAlmostEqual(g.trend_line(NOW, 97, 19), 97 * 122 / 149, places=3)
+
+    def test_paced_holds_when_far_ahead_of_trend(self):
+        dial = g.parse_dial(BODY.replace('- [x] Fri noon', '- [ ] Fri noon'))  # finish at the reset: line ~70% now
+        r = self.decide(dial=dial)  # usage 82% is 12 points ahead
+        self.assertFalse(r['fire'])
+        self.assertIn('ahead of the trend', r['why'])
+
+    def test_paced_fires_when_within_slack_of_trend(self):
+        self.assertTrue(self.decide()['fire'])  # Fri noon: line ~79%, usage 82%
 
     def test_empty_ready_queue_does_nothing(self):
         self.assertFalse(self.decide(ready_count=0)['fire'])

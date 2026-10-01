@@ -36,6 +36,10 @@ CONFIG_DIR = Path(os.environ.get('SM_DIAL_CONFIG', '/etc/sm-dial'))
 STATE_FILE = Path(os.environ.get('SM_DIAL_STATE', '/var/lib/sm-dial/state.json'))
 
 MARGIN = 3                      # points below the stop line where new work holds
+TREND_SLACK = 5                 # Paced may run this many points ahead of the trend line
+RESET_WEEKDAY = int(os.environ.get('SM_DIAL_RESET_WEEKDAY', '5'))   # Saturday (Mon=0)
+RESET_HOUR_UTC = int(os.environ.get('SM_DIAL_RESET_HOUR', '11'))    # 07:00 EDT
+FINISH_BY = {'reset': 0, 'fri noon': 19, 'fri 7': 24}             # hours before the reset
 USAGE_MAX_AGE = dt.timedelta(hours=3)
 REFILL_EVERY = dt.timedelta(minutes=60)
 FULL_RECHECK = dt.timedelta(hours=3)
@@ -104,7 +108,12 @@ def parse_dial(body: str) -> dict:
         problems.append(f'{len(stops)} Stop line boxes are ticked, so it uses the lowest, {stop}%')
     if stop is None and mode == 'paced':
         problems.append('no Stop line box is ticked, so Paced starts nothing')
-    return {'mode': mode, 'threads': threads, 'stop': stop, 'problems': problems}
+    finish_group = next((g for g in groups if g.startswith('finish by')), None)
+    early = [h for t in groups.get(finish_group, []) for key, h in FINISH_BY.items() if key in t]
+    hours_early = min(early) if early else 0   # two ticks: the later deadline spends slower
+    if len(early) > 1:
+        problems.append('two Finish by boxes are ticked, so it uses the later one')
+    return {'mode': mode, 'threads': threads, 'stop': stop, 'hours_early': hours_early, 'problems': problems}
 
 
 def parse_usage(comments: list[dict]) -> dict:
@@ -145,6 +154,22 @@ def parse_time(s: str) -> dt.datetime:
     return dt.datetime.strptime(s, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=dt.timezone.utc)
 
 
+def next_reset(now: dt.datetime) -> dt.datetime:
+    days = (RESET_WEEKDAY - now.weekday()) % 7
+    reset = (now + dt.timedelta(days=days)).replace(hour=RESET_HOUR_UTC, minute=0, second=0, microsecond=0)
+    return reset if reset > now else reset + dt.timedelta(days=7)
+
+
+def trend_line(now: dt.datetime, stop: int, hours_early: int) -> float:
+    """Where weekly usage should be by now: 0% at the week's start, rising straight to the
+    stop line at the finish-by time."""
+    reset = next_reset(now)
+    start = reset - dt.timedelta(days=7)
+    finish = reset - dt.timedelta(hours=hours_early)
+    share = (now - start) / (finish - start)
+    return stop * max(0.0, min(1.0, share))
+
+
 # ---------- decision (pure) ----------
 
 def decide(now, dial, usage_info, ready_count, ack, state) -> dict:
@@ -166,6 +191,10 @@ def decide(now, dial, usage_info, ready_count, ack, state) -> dict:
             hold = f"the Mac's usage report is {hours(now - u['at'])} old (Mac offline?), so Paced waits"
         elif u['percent'] >= stop - MARGIN:
             hold = f"usage {u['percent']}% has reached the hold line {stop - MARGIN}% (stop line {stop}% minus {MARGIN})"
+        elif u['percent'] > trend_line(now, stop, dial.get('hours_early', 0)) + TREND_SLACK:
+            line = trend_line(now, stop, dial.get('hours_early', 0))
+            hold = (f"usage {u['percent']}% is more than {TREND_SLACK} points ahead of the trend "
+                    f"({line:.0f}% by now), so Paced waits for the line to catch up")
         if hold:
             return {'fire': False, 'why': f'Holding: {hold}.', 'hold': hold}
 
@@ -202,6 +231,13 @@ def status_text(now, dial, usage_info, ready_count, ack, state, decision) -> str
     for p in dial['problems']:
         lines.append(f'- Note: {p}.')
     lines.append(f"- Usage: {u['percent']}% from the Mac at {t(u['at'])}." if u else '- Usage: no report from the Mac.')
+    if dial['mode'] == 'paced' and dial['stop'] and u:
+        line = trend_line(now, dial['stop'], dial.get('hours_early', 0))
+        finish = next_reset(now) - dt.timedelta(hours=dial.get('hours_early', 0))
+        gap = u['percent'] - line
+        lines.append(f"- Trend: about {line:.0f}% by now, reaching {dial['stop']}% by {t(finish)}; "
+                     f"usage is {abs(gap):.0f} points {'ahead' if gap >= 0 else 'behind'} "
+                     f"(Paced holds if more than {TREND_SLACK} ahead).")
     lines.append(f'- Ready issues: {ready_count}.')
     if state.get('last_fire'):
         acked = 'acknowledged' if ack and ack['fire'] == state['last_fire'] else 'not acknowledged yet'
