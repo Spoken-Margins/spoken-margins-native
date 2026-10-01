@@ -391,6 +391,13 @@ private struct ManageFeedsScreen: View {
                             }
                             Spacer()
                             Menu {
+                                Picker("New items", selection: Binding(
+                                    get: { subscription.newItemPolicy ?? .letMePick },
+                                    set: { model.setFeedNewItemPolicy(id: subscription.id, policy: $0) }
+                                )) {
+                                    Text("Let me pick").tag(FeedNewItemPolicy.letMePick)
+                                    Text("Add every new item").tag(FeedNewItemPolicy.addEveryNewItem)
+                                }
                                 Button(subscription.state == .muted ? "Unmute" : "Mute") {
                                     model.toggleMuteSource(id: subscription.id)
                                 }

@@ -992,10 +992,10 @@ final class Gate1AppModel: ObservableObject {
     private var requestedPodcastTransportReplacements: Set<String> = []
     private var offlineStorageLedger: OfflineStorageLedger?
     private var localSourceImporter: LocalSourceImporter?
-    private var followedSourceCoordinator: FollowedSourceCoordinator?
+    private(set) var followedSourceCoordinator: FollowedSourceCoordinator?
     /// A fresh install: the Library was empty before the welcome sample was added (B1 drawer).
     private(set) var libraryWasEmptyAtLaunch = false
-    private let readablePageExtractor = AppOwnedReadablePageExtractor()
+    var readablePageExtractor: any ReadablePageExtracting = AppOwnedReadablePageExtractor() // tests replace it (#223)
     private var sourceSuggestionChecks: Set<String> = []
     private var followDiscoveries: [String: Task<[SourceCandidateEvidence], Error>] = [:]
     @Published private var followOffers: [String: FollowOffer] = [:]
@@ -3166,8 +3166,8 @@ final class Gate1AppModel: ObservableObject {
         )
         do {
             let result = try await PublicPodcastLinkResolver().resolveAsync(request)
-            if result.foundNoAudio, let imported = await importLinkAsReadableArticle(url, startSession: shouldStartSession) {
-                return imported
+            if let article = try? await LinkArticleFallback.article(for: url, after: result, startSession: shouldStartSession, using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }) {
+                return importBrowserText(article)
             }
             return importResolvedSourceLink(request: request, result: result, startSession: shouldStartSession)
         } catch {
@@ -3176,22 +3176,6 @@ final class Gate1AppModel: ObservableObject {
                 _ = self?.beginSourceLinkImportFromForm(startSession: startSession)
             })
             return false
-        }
-    }
-
-    /// The Link field promises web articles too (#144). When a page has no audio, read it with the same
-    /// app-owned extractor that followed article feeds use. Returns nil when that fails, so the caller shows the
-    /// original "no audio" result.
-    private func importLinkAsReadableArticle(_ url: URL, startSession: Bool) async -> Bool? {
-        guard url.scheme?.lowercased() == "https" else { return nil }
-        do {
-            var handoff = try await readablePageExtractor.extract(url: url)
-            handoff.requestedContinuation.startSession = startSession
-            diagnostics["lastSourceLinkArticleFallback"] = readablePageExtractor.lastExtractor ?? "extracted"
-            return importBrowserText(handoff)
-        } catch {
-            diagnostics["lastSourceLinkArticleFallback"] = "failed:\(error.localizedDescription)"
-            return nil
         }
     }
 
@@ -3463,6 +3447,9 @@ final class Gate1AppModel: ObservableObject {
             result = try await PublicPodcastLinkResolver().resolveAsync(request)
         }
         guard result.status == .playable else {
+            if feedEntry == nil, let article = try await LinkArticleFallback.article(for: url, after: result, startSession: false, using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }) {
+                try importBrowserTextInBackground(article); return nil
+            }
             let provider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
             diagnostics["lastSourceLinkFailureCategory"] = result.failureReason
                 ?? result.status.rawValue
@@ -16049,7 +16036,7 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             let coordinator = followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
             followedSourceCoordinator = coordinator
-            await coordinator.refreshStale(force: force)
+            for entry in await coordinator.refreshStale(force: force) { importFollowedSourceEntry(entry) } // "Add every new item" (#466)
             feedSubscriptions = try store.loadFeedSubscriptions()
             followedSourceEntries = try await coordinator.entries()
             diagnostics["followedSourceCount"] = "\(feedSubscriptions.count)"
@@ -16119,15 +16106,6 @@ final class Gate1AppModel: ObservableObject {
         guard let coordinator = followedSourceCoordinator else { return }
         Task { [weak self] in
             try? await coordinator.unfollow(subscriptionId: id)
-            await self?.refreshFollowedSources(force: false)
-        }
-    }
-
-    func toggleMuteSource(id: String) {
-        guard let coordinator = followedSourceCoordinator,
-              let subscription = feedSubscriptions.first(where: { $0.id == id }) else { return }
-        Task { [weak self] in
-            try? await coordinator.setMuted(subscriptionId: id, muted: subscription.state != .muted)
             await self?.refreshFollowedSources(force: false)
         }
     }

@@ -489,8 +489,9 @@ private struct ExperienceLibraryCompactRow: View {
                 Button("Move to Recently Deleted", systemImage: "trash", role: .destructive, action: onDelete)
             }
         }
-        // A full swipe completed items by accident while opening them (#273): it takes a tap now.
-        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+        // One long swipe completes again (#584): Undo and Mark Unfinished (#273) recover a stray one.
+        // Mark Unfinished on a completed row still takes a tap.
+        .swipeActions(edge: .leading, allowsFullSwipe: !row.isCompleted) {
             if !row.isCompleted {
                 Button(action: onComplete) { Label("Complete", systemImage: "checkmark.circle.fill") }
                     .tint(AppColors.evergreen)

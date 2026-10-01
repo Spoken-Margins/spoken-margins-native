@@ -153,6 +153,25 @@ final class ReadwiseHighlightTests: XCTestCase {
         XCTAssertEqual(sent4, 0)
     }
 
+    /// #624: a spoken Margin stored before the fix holds a counter (seconds after 1970). It goes to
+    /// Readwise dated by its session's start plus the counter, not in 1970; real dates pass unchanged.
+    func testMarginStoredWithACounterDateIsSentWithItsSessionDate() async throws {
+        let item = article()
+        var old = margin(item: item, id: "m1")
+        old.createdAt = Date(timeIntervalSince1970: 2)
+        let current = margin(item: item, id: "m2")
+        let repo = repository([(item, old), (item, current)])
+        let sessionStart = Date(timeIntervalSince1970: 1_790_000_000)
+        repo.sessions["session-item-article"]?.createdAt = sessionStart
+        let highlights = try ReadwiseHighlightGatherer.highlights(sessions: Array(repo.sessions.values), repository: repo)
+            .sorted { $0.marginKey < $1.marginKey }
+
+        XCTAssertEqual(highlights.map(\.highlightedAt), [sessionStart.addingTimeInterval(2), createdAt])
+        let transport = RecordingTransport()
+        try await ReadwiseHighlightClient(transport: transport.send).send(highlights, token: "t")
+        XCTAssertEqual(transport.highlights.first?.first?["highlighted_at"], "2026-09-21T14:13:22Z")
+    }
+
     // MARK: - Errors
 
     func testRejectedTokenAndRateLimitAreTypedAndRecordNothing() async throws {
