@@ -115,8 +115,12 @@ public enum SessionExportMarkdownRenderer {
         let position = note.mediaTimeMs.map { "\($0) ms" } ?? "\(note.roughPercent)%"
         lines += [(onSource ? "Position: " : "Position in AI reply: ") + position, ""]
         lines += [note.captureKind == .written ? "## Written Margin" : "## Listener Margin", "", note.transcript ?? "", ""]
-        if !note.anchorBefore.isEmpty { lines += ["## Context before", "", note.anchorBefore, ""] }
-        if !note.anchorAfter.isEmpty { lines += ["## Context after", "", note.anchorAfter, ""] }
+        // Context captured from an item imported before #560 can hold link titles; the
+        // stored anchor keeps them, the note shows the text as read.
+        let before = SpeechTextNormalizer.removingLinkTitleRemnants(from: note.anchorBefore)
+        let after = SpeechTextNormalizer.removingLinkTitleRemnants(from: note.anchorAfter)
+        if !before.isEmpty { lines += ["## Context before", "", before, ""] }
+        if !after.isEmpty { lines += ["## Context after", "", after, ""] }
         return lines.joined(separator: "\n")
     }
 

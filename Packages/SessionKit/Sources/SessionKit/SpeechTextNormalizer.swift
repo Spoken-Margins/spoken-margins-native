@@ -372,18 +372,7 @@ public enum SpeechTextNormalizer {
     }
 
     private static func removeLinks(in input: [MappedCharacter]) -> [MappedCharacter] {
-        var rendered = input
-
-        let markdownPattern = #"\[([^\]]+)\]\((https?://[^)\s]+|www\.[^)\s]+|[^)\s]+\.[^)\s]+)\)"#
-        rendered = replace(pattern: markdownPattern, in: rendered) { match, text, characters in
-            guard match.numberOfRanges > 1,
-                  let range = Range(match.range(at: 1), in: text) else {
-                return []
-            }
-            let lower = text.distance(from: text.startIndex, to: range.lowerBound)
-            let upper = text.distance(from: text.startIndex, to: range.upperBound)
-            return Array(characters[lower..<upper])
-        }
+        var rendered = removeMarkdownLinks(in: input, onlyEmptyDestinations: false)
 
         let rawURLPattern = #"(?i)\b(?:https?://|www\.)[^\s<>()]+"#
         rendered = replace(pattern: rawURLPattern, in: rendered) { _, _, _ in [] }
@@ -395,6 +384,43 @@ public enum SpeechTextNormalizer {
         rendered = replace(pattern: bareDomainPattern, in: rendered) { _, _, _ in [] }
 
         return rendered
+    }
+
+    /// Removes the links that imports before #560 left in an item's text with their title and no
+    /// URL, `[book]( "Book")`. Display text such as a Margin note's context runs through this;
+    /// nothing else in the text changes, so notes without those links stay byte-for-byte the same.
+    /// The other remnant, `margins "Margin (typography)")` from a URL with parentheses, can't be
+    /// told apart from a quoted title in prose, so it stays until the article is shared again.
+    static func removingLinkTitleRemnants(from text: String) -> String {
+        let mapped = text.enumerated().map { MappedCharacter(character: $0.element, sourceOffset: $0.offset) }
+        return String(removeMarkdownLinks(in: mapped, onlyEmptyDestinations: true).map(\.character))
+    }
+
+    /// A Markdown link keeps only its text. The destination may hold parentheses
+    /// (`https://en.wikipedia.org/wiki/Margin_(typography)`) and may be followed by a title
+    /// (`[book](https://en.wikipedia.org/wiki/Book "Book")`), which Wikipedia gives nearly every
+    /// link; the title was read aloud after the link text (#560). A destination that doesn't look
+    /// like a link (`[1](2)`) is left as written, unless it is empty and has a title: that is a
+    /// link whose URL an earlier import already removed.
+    private static func removeMarkdownLinks(in input: [MappedCharacter], onlyEmptyDestinations: Bool) -> [MappedCharacter] {
+        let destination = #"(?:[^()\s"]|\([^()\s"]*\)|\()*"#
+        let title = #"\s+(?:"[^"\n]*"|'[^'\n]*')"#
+        let pattern = #"\[([^\]]+)\]\(\s*("# + destination + #")("# + title + #")?\s*\)"#
+        return replace(pattern: pattern, in: input) { match, text, characters in
+            guard let textRange = Range(match.range(at: 1), in: text),
+                  let destinationRange = Range(match.range(at: 2), in: text) else {
+                return matchedCharacters(match, text: text, characters: characters)
+            }
+            let target = text[destinationRange]
+            let hasTitle = match.range(at: 3).location != NSNotFound
+            let isLink = target.isEmpty
+                ? hasTitle
+                : !onlyEmptyDestinations && target.range(of: #"^(?:https?://|www\.)\S|\S\.\S"#, options: .regularExpression) != nil
+            guard isLink else { return matchedCharacters(match, text: text, characters: characters) }
+            let lower = text.distance(from: text.startIndex, to: textRange.lowerBound)
+            let upper = text.distance(from: text.startIndex, to: textRange.upperBound)
+            return Array(characters[lower..<upper])
+        }
     }
 
     private static func finish(_ input: [MappedCharacter], sourceLength: Int) -> NormalizedSpeechText {
