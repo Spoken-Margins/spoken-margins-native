@@ -386,7 +386,7 @@ public final class SessionEngine {
         }
         let mediaSeekFailure = try reconcilePendingMediaSeek(for: &session)
         let positionIsPending = hasPendingPlaybackPosition(for: session)
-        let playbackCompleted = positionIsPending ? false : audio.isPlaybackComplete(targetId: session.currentTargetId)
+        var playbackCompleted = positionIsPending ? false : audio.isPlaybackComplete(targetId: session.currentTargetId)
         let transportState = audio.playbackTransportState(targetId: session.currentTargetId)
         var updated = try syncCurrentPositionFromAudio(session)
         if snapshot.status == .starting {
@@ -402,6 +402,20 @@ public final class SessionEngine {
                 // requested transport position is authoritative.
                 updated = try syncCurrentPositionFromAudio(session)
                 snapshot.status = .playing
+                forgetStartFailure()
+            case .pending where (session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia)
+                && audio.isPlaybackComplete(targetId: session.currentTargetId):
+                // A start from the very end (resuming after a Margin at the last second) finds the
+                // episode already over, so it never confirms. It ended: pause there rather than
+                // wait for the start watchdog to call it a failure (#588). The media client clears
+                // its completion when a start begins, so this completion is the new start's own.
+                clearPlaybackStartPending()
+                pendingPlaybackPosition = nil
+                playbackCompleted = true
+                updated = try syncCurrentPositionFromAudio(session)
+                // The client still counts itself as playing (Lock Screen included) until told.
+                try audio.pause()
+                snapshot.status = .paused
             case .pending:
                 // Startup can remain pending while a buffered speech client is
                 // already advancing or after the user seeks. Preserve that
@@ -600,6 +614,9 @@ public final class SessionEngine {
               session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
             throw SessionKitError.invalidCommandForState("seekMedia")
         }
+        // An episode that played to its end is stopped, even if its last start never confirmed:
+        // a seek leaves it paused at the new place rather than waiting on that start (#588).
+        let endedBeforeSeek = snapshot.status.isPlaybackActive && audio.isPlaybackComplete(targetId: session.currentTargetId)
         let updated = mediaSession(session, movedTo: mediaTimeMs)
         currentSession = updated
         try persistSession(updated)
@@ -616,7 +633,10 @@ public final class SessionEngine {
         // Seeking within the active target is navigation, not a new playback
         // start. Preserve the current transport status while the matching seek
         // transaction is acknowledged by the audio client.
-        publish(status: snapshot.status, phase: updated.phase)
+        if endedBeforeSeek {
+            try audio.pause()
+        }
+        publish(status: endedBeforeSeek ? .paused : snapshot.status, phase: updated.phase)
         return snapshot
     }
 
@@ -3032,6 +3052,7 @@ public final class SessionEngine {
         activePlaybackStartAttemptId = playbackStartAttemptId
         switch playbackStartStatus(for: session.currentTargetId, attemptId: playbackStartAttemptId) {
         case .confirmed:
+            forgetStartFailure()
             publish(status: .playing, phase: phase)
         case .pending:
             publish(status: .starting, phase: phase)
@@ -3197,6 +3218,14 @@ public final class SessionEngine {
         } catch {
             clearPlaybackStartPending()
             return .failed("\(failure); recovery_failed:\(error.localizedDescription)")
+        }
+    }
+
+    /// A start that confirms supersedes an earlier failed one, so diagnostics stop reporting
+    /// that failure while the source plays normally (#588).
+    private func forgetStartFailure() {
+        if snapshot.lastFailure?.hasPrefix("playback_start_failed:") == true {
+            snapshot.lastFailure = nil
         }
     }
 
