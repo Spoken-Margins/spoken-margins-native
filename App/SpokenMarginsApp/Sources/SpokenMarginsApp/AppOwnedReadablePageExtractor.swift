@@ -8,6 +8,7 @@ enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
     case tooManyRedirects
     case missingExtractor
     case invalidResult
+    case httpStatus(Int)
 
     var errorDescription: String? {
         switch self {
@@ -16,6 +17,7 @@ enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
         case .tooManyRedirects: "The article redirected more than five times."
         case .missingExtractor: "The bundled readable-page extractor is unavailable."
         case .invalidResult: "No readable article text was found."
+        case .httpStatus(let status): "The site answered with HTTP \(status) instead of the article."
         }
     }
 }
@@ -79,6 +81,11 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate {
             finish(.failure(ReadablePageExtractionError.oversizedHTML))
             return .cancel
         }
+        // A sign-in wall, bot check or missing page still renders text, which would be read as the article (#145).
+        if navigationResponse.isForMainFrame, let status = Self.failingHTTPStatus(navigationResponse.response) {
+            finish(.failure(ReadablePageExtractionError.httpStatus(status)))
+            return .cancel
+        }
         return .allow
     }
 
@@ -103,6 +110,11 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate {
             }
         }
         return .allow
+    }
+
+    nonisolated static func failingHTTPStatus(_ response: URLResponse) -> Int? {
+        guard let status = (response as? HTTPURLResponse)?.statusCode, status >= 400 else { return nil }
+        return status
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
