@@ -21,13 +21,16 @@ const (
 	Version = 1
 
 	// Attest gates every attested call: challenge, register and any feature
-	// endpoint. Bridge gates use of the bridge manifest in the app.
+	// endpoint. Bridge gates use of the bridge manifest in the app. Maps
+	// gates listening-map uploads and fetches (#551); it is off until the
+	// owner switches it on, because Default leaves it out.
 	ServiceAttest = "attest"
 	ServiceBridge = "bridge"
+	ServiceMaps   = "maps"
 )
 
 // KnownServices are the switches the owner can flip.
-var KnownServices = []string{ServiceAttest, ServiceBridge}
+var KnownServices = []string{ServiceAttest, ServiceBridge, ServiceMaps}
 
 type Service struct {
 	Enabled bool `json:"enabled"`

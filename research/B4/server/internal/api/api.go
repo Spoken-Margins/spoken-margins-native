@@ -35,6 +35,7 @@ import (
 
 	"spokenmargins.dev/bridge/internal/appattest"
 	"spokenmargins.dev/bridge/internal/config"
+	"spokenmargins.dev/bridge/internal/maps"
 	"spokenmargins.dev/bridge/internal/store"
 )
 
@@ -52,10 +53,19 @@ const (
 	maxChallenges    = 10000
 	maxRegisterBody  = 32 << 10
 	maxAttestedBody  = 64 << 10
+	// maxConcurrentUploads keeps a burst of 2 MB transcript uploads inside
+	// the service's 128 MB memory limit.
+	maxConcurrentUploads = 4
 
 	// Public paths, relative to both the URL root and PublicDir.
 	PathConfig   = "/api/v1/config.json"
 	PathManifest = "/bridge/v1/manifest.json"
+
+	PathMapTranscripts = "/api/v1/maps/transcripts"
+	pathMapsPrefix     = "/api/v1/maps/"
+	// routeMaps is how the request log names every map fetch, so an
+	// episode key is never written to disk.
+	routeMaps = "/api/v1/maps/*"
 )
 
 // ClientData is what the app signs for an attested request. It binds the
@@ -79,15 +89,24 @@ type Server struct {
 	TrustForwardedFor bool
 	Now               func() time.Time
 
+	// MapStore serves listening maps; Maps accepts transcripts and makes
+	// them. Either may be nil (Maps is nil when the server has no API key),
+	// and the endpoint it backs then answers 503 like a switched-off one.
+	MapStore *maps.Store
+	Maps     *maps.Service
+
 	// Per-hour limits. Zero means the defaults below.
 	ChallengesPerIPPerHour  int
 	RequestsPerInstallPerHr int
+	MapUploadsPerIPPerHour  int
 
 	once          sync.Once
 	ipSecret      []byte
 	mu            sync.Mutex
 	challenges    map[string]time.Time
 	ipWindow      window
+	mapWindow     window
+	uploadSlots   chan struct{}
 	keyWindow     window
 	logMu         sync.Mutex
 	requestCounts map[logKey]int
@@ -110,6 +129,10 @@ func (s *Server) init() {
 		if s.RequestsPerInstallPerHr == 0 {
 			s.RequestsPerInstallPerHr = 120
 		}
+		if s.MapUploadsPerIPPerHour == 0 {
+			s.MapUploadsPerIPPerHour = 30
+		}
+		s.uploadSlots = make(chan struct{}, maxConcurrentUploads)
 	})
 }
 
@@ -140,6 +163,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/attest/challenge", s.challenge)
 	mux.HandleFunc("POST /api/v1/attest/register", s.register)
 	mux.HandleFunc("POST /api/v1/ping", s.attested(s.ping))
+	mux.HandleFunc("POST "+PathMapTranscripts, s.uploadTranscript)
+	mux.HandleFunc("GET "+pathMapsPrefix+"{key}", s.getMap)
 	return s.logRequests(mux)
 }
 
@@ -148,6 +173,19 @@ func (s *Server) Handler() http.Handler {
 var loggedRoutes = map[string]bool{
 	"/api/v1/health": true, PathConfig: true, PathManifest: true,
 	"/api/v1/attest/challenge": true, "/api/v1/attest/register": true, "/api/v1/ping": true,
+	PathMapTranscripts: true,
+}
+
+// logRoute is the route name the request log may record for path.
+func logRoute(path string) string {
+	switch {
+	case loggedRoutes[path]:
+		return path
+	case strings.HasPrefix(path, pathMapsPrefix):
+		return routeMaps
+	default:
+		return "other"
+	}
 }
 
 type statusRecorder struct {
@@ -223,10 +261,7 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		route := r.URL.Path
-		if !loggedRoutes[route] {
-			route = "other"
-		}
+		route := logRoute(r.URL.Path)
 		method := r.Method
 		if method != http.MethodGet && method != http.MethodPost {
 			method = "other"
@@ -493,4 +528,84 @@ func (s *Server) attested(h func(http.ResponseWriter, *http.Request, []byte)) ht
 // its key is registered and the channel works. It carries no content.
 func (s *Server) ping(w http.ResponseWriter, r *http.Request, body []byte) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) mapsOn(w http.ResponseWriter, ready bool) bool {
+	doc, err := s.Config.Current()
+	if err != nil || !doc.Enabled(config.ServiceMaps) || !ready {
+		fail(w, http.StatusServiceUnavailable, "disabled")
+		return false
+	}
+	return true
+}
+
+// untilNextMonth is how long until the spending cap resets.
+func untilNextMonth(now time.Time) time.Duration {
+	now = now.UTC()
+	return time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC).Sub(now)
+}
+
+// uploadTranscript takes one episode transcript from a phone that opted in.
+// It answers 202 when the transcript is queued, 200 when the episode already
+// has a map (or was taken down), and never echoes the transcript back.
+func (s *Server) uploadTranscript(w http.ResponseWriter, r *http.Request) {
+	if !s.mapsOn(w, s.Maps != nil) {
+		return
+	}
+	if !s.mapWindow.hit(s.clientKey(r), s.Now(), s.MapUploadsPerIPPerHour) {
+		fail(w, http.StatusTooManyRequests, "rate_limited")
+		return
+	}
+	select {
+	case s.uploadSlots <- struct{}{}:
+		defer func() { <-s.uploadSlots }()
+	default:
+		fail(w, http.StatusServiceUnavailable, "busy")
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maps.MaxTranscriptBytes))
+	if err != nil {
+		fail(w, http.StatusBadRequest, "too_large")
+		return
+	}
+	t, err := maps.ParseTranscript(body)
+	if err != nil {
+		fail(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	outcome, err := s.Maps.Submit(t)
+	switch {
+	case err != nil:
+		fail(w, http.StatusInternalServerError, "internal")
+	case outcome == maps.CapReached:
+		w.Header().Set("Retry-After", strconv.Itoa(int(untilNextMonth(s.Now()).Seconds())+1))
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "unavailable", "reason": "monthly_cap"})
+	case outcome == maps.Busy:
+		fail(w, http.StatusServiceUnavailable, "busy")
+	case outcome == maps.AlreadyMapped:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "mapped"})
+	case outcome == maps.Withdrawn:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "withdrawn"})
+	default:
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+	}
+}
+
+// getMap serves one episode's map. Maps are the same for everyone, so like
+// the config they can be cached briefly; a takedown shows within minutes.
+func (s *Server) getMap(w http.ResponseWriter, r *http.Request) {
+	if !s.mapsOn(w, s.MapStore != nil) {
+		return
+	}
+	data, err := s.MapStore.MapBytes(r.PathValue("key"))
+	switch {
+	case errors.Is(err, maps.ErrNotFound):
+		fail(w, http.StatusNotFound, "not_found")
+	case err != nil:
+		fail(w, http.StatusInternalServerError, "internal")
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		w.Write(data)
+	}
 }

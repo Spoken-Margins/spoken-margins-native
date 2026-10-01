@@ -3,6 +3,14 @@
 #   runuser -u smserver -- smserver block -state /var/lib/smserver TAG
 #   runuser -u smserver -- smserver switch -public @SERVER_ROOT@ attest off
 #   runuser -u smserver -- smserver publish-manifest -public @SERVER_ROOT@ FILE
+#   runuser -u smserver -- smserver takedown-map -state /var/lib/smserver EPISODEKEY
+#
+# Listening maps (#551) need an AI provider key. Put one line,
+# ANTHROPIC_API_KEY=..., in /etc/smserver/maps.env, owned by root with mode
+# 0600: systemd reads it as root and hands only the variable to the service.
+# Without the file the service still starts and refuses map uploads. The
+# monthly spending cap and prices are the -maps-* flags below; they are
+# private and never in config.json.
 [Unit]
 Description=Spoken Margins server (bridge and attestation)
 After=network-online.target
@@ -11,7 +19,8 @@ Wants=network-online.target
 [Service]
 User=smserver
 Group=smserver
-ExecStart=/usr/local/bin/smserver serve -listen 127.0.0.1:@PORT@ -state /var/lib/smserver -public @SERVER_ROOT@ -behind-proxy
+ExecStart=/usr/local/bin/smserver serve -listen 127.0.0.1:@PORT@ -state /var/lib/smserver -public @SERVER_ROOT@ -behind-proxy -maps-cap-usd 10 -maps-model claude-haiku-4-5 -maps-input-usd-per-mtok 1 -maps-output-usd-per-mtok 5
+EnvironmentFile=-/etc/smserver/maps.env
 StateDirectory=smserver
 StateDirectoryMode=0700
 Restart=on-failure

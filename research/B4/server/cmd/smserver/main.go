@@ -7,6 +7,7 @@
 //	smserver purge   -state DIR [-idle-days 90]
 //	smserver validate-manifest FILE
 //	smserver publish-manifest -public DIR FILE   the only way the manifest should change
+//	smserver takedown-map -state DIR EPISODEKEY   delete a listening map at once and keep it down
 //	smserver make-test-ca DIR            a fake Apple CA for local testing
 //
 // Admin is CLI-only, on the box: there is no remote admin endpoint to attack.
@@ -31,6 +32,7 @@ import (
 	"spokenmargins.dev/bridge/internal/appattest/fakeattest"
 	"spokenmargins.dev/bridge/internal/config"
 	"spokenmargins.dev/bridge/internal/manifest"
+	"spokenmargins.dev/bridge/internal/maps"
 	"spokenmargins.dev/bridge/internal/store"
 )
 
@@ -61,6 +63,8 @@ func main() {
 		err = publishManifest(args)
 	case "make-test-ca":
 		err = makeTestCA(args)
+	case "takedown-map":
+		err = takedownMap(args)
 	default:
 		usage()
 	}
@@ -71,7 +75,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca [flags]")
+	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown-map [flags]")
 	os.Exit(2)
 }
 
@@ -89,6 +93,8 @@ func serve(args []string) error {
 	allowDev := fs.Bool("allow-development", false, "accept App Attest development-environment keys (debug builds)")
 	behindProxy := fs.Bool("behind-proxy", false, "take the client address from X-Forwarded-For when the peer is loopback")
 	idleDays := fs.Int("idle-days", 90, "delete install records unused for this many days")
+	var mf mapsFlags
+	mf.register(fs)
 	fs.Parse(args)
 
 	rootPEM := appattest.AppleRootPEM()
@@ -116,6 +122,14 @@ func serve(args []string) error {
 		log.Printf("wrote default config to %s", cfgPath)
 	}
 
+	// The key comes from the service's environment file and is removed from
+	// the environment once read.
+	apiKey := os.Getenv(mapsKeyEnv)
+	os.Unsetenv(mapsKeyEnv)
+	mapStore, mapService, err := setupMaps(*stateDir, mf, apiKey, log.Printf)
+	if err != nil {
+		return err
+	}
 	srv := &api.Server{
 		Verifier:          &appattest.Verifier{Roots: pool, AppID: *appID, AllowDevelopment: *allowDev},
 		Store:             st,
@@ -124,6 +138,8 @@ func serve(args []string) error {
 		RequestLog:        os.Stdout,
 		AbuseLog:          appendFile(filepath.Join(*stateDir, "abuse.log")),
 		TrustForwardedFor: *behindProxy,
+		MapStore:          mapStore,
+		Maps:              mapService,
 	}
 	httpServer := &http.Server{
 		Addr:              *listen,
@@ -139,6 +155,17 @@ func serve(args []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	sweepTranscripts := func() {
+		if n, err := mapStore.Sweep(time.Now(), maps.TranscriptMaxAge); err != nil {
+			log.Printf("maps: transcript sweep failed: %v", err)
+		} else if n > 0 {
+			log.Printf("maps: swept %d old transcripts", n)
+		}
+	}
+	sweepTranscripts()
+	if mapService != nil {
+		go mapService.Run(ctx)
+	}
 	go func() {
 		purgeOnce := func() {
 			if n, err := st.Purge(time.Now(), *idleDays); err != nil {
@@ -174,6 +201,8 @@ func serve(args []string) error {
 				if err := srv.Flush(); err != nil {
 					log.Printf("hourly flush failed: %v", err)
 				}
+				// Hourly, with a 23-hour limit, so no transcript outlives a day.
+				sweepTranscripts()
 			}
 		}
 	}()
@@ -309,5 +338,28 @@ func makeTestCA(args []string) error {
 		return err
 	}
 	fmt.Printf("wrote %s/test-root.pem (start serve with -attest-root) and %s/test-ca.pem (for smclient)\n", args[0], args[0])
+	return nil
+}
+
+func takedownMap(args []string) error {
+	fs := flag.NewFlagSet("takedown-map", flag.ExitOnError)
+	stateDir := fs.String("state", "state", "state directory")
+	fs.Parse(args)
+	if fs.NArg() != 1 {
+		return errors.New("usage: smserver takedown-map -state DIR EPISODEKEY")
+	}
+	ms, err := maps.OpenStore(filepath.Join(*stateDir, "maps"))
+	if err != nil {
+		return err
+	}
+	deleted, err := ms.Takedown(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if deleted {
+		fmt.Println("map deleted; no new map will be made for this episode")
+	} else {
+		fmt.Println("no map was stored; no map will be made for this episode")
+	}
 	return nil
 }
