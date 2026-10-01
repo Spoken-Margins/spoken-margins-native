@@ -1,10 +1,6 @@
 import Foundation
 import SessionKit
 
-#if canImport(AVFoundation)
-import AVFoundation
-#endif
-
 /// Places a shared Listening Map's scene starts on the recipient's own copy of an
 /// episode with the same acoustic resolver that places shared Margins. The decision
 /// rules (every start placed by direct evidence, in order) are in
@@ -58,7 +54,9 @@ public enum SharedListeningMapResolver {
                 evidenceWasDeclared: true
             )
         }
-        if let missing = queries.first(where: { $0.evidence.isEmpty }) {
+        // Every bracketing landmark must be usable: with one flank missing, a change
+        // between the scene and that landmark would go unseen.
+        if let missing = zip(queries, sceneQueries).first(where: { $0.evidence.count != $1.landmarks.count })?.0 {
             let scene = proposal.scenes.first { $0.id == missing.packageScopedId }
             return .notPlaced(SharedListeningMapPlacement.Refusal(
                 sceneId: missing.packageScopedId,
@@ -73,26 +71,13 @@ public enum SharedListeningMapResolver {
             senderDurationMs: spine.producingEditionDurationMs,
             strongSourceIdentity: strongSourceIdentity
         )
-        let recipientDurationMs = await durationMs(of: recipientAudioURL)
         return SharedListeningMapPlacement.decide(
             proposal: proposal,
             queries: sceneQueries,
             resolutions: resolutions,
-            senderDurationMs: spine.producingEditionDurationMs,
-            recipientDurationMs: recipientDurationMs,
             projectionId: projectionId,
             itemId: itemId,
             recipientEditionSHA256: recipientEditionSHA256
         )
-    }
-
-    private static func durationMs(of url: URL) async -> Int? {
-        #if canImport(AVFoundation)
-        guard let duration = try? await AVURLAsset(url: url).load(.duration) else { return nil }
-        let seconds = CMTimeGetSeconds(duration)
-        return seconds.isFinite && seconds > 0 ? Int((seconds * 1_000).rounded()) : nil
-        #else
-        return nil
-        #endif
     }
 }

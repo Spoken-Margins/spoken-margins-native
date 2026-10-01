@@ -16357,7 +16357,9 @@ final class Gate1AppModel: ObservableObject {
                         layer.sourceResolutionStatus = .contextOnly
                     }
                     var mapOutcome: SharedListeningMapPlacement.Outcome?
-                    if let spine = layer.editionFingerprintSpines?.first, let proposal = layer.listeningMapProposals?.first {
+                    if layer.listeningMapProposals?.first != nil, layer.editionFingerprintSpines?.first == nil {
+                        mapOutcome = .notPlaced(.init(sceneId: nil, sceneLabel: nil, reason: .noEvidence))
+                    } else if let spine = layer.editionFingerprintSpines?.first, let proposal = layer.listeningMapProposals?.first {
                         let evidencePaths = layer.episodeMapEvidencePaths ?? [:]
                         mapOutcome = try await SharedListeningMapResolver.resolve(
                             proposal: proposal, spine: spine,
@@ -16381,12 +16383,14 @@ final class Gate1AppModel: ObservableObject {
                             try store.saveImportedCommentaryLayer(layer)
                             for record in records { try store.saveImportedCommentaryInterjection(record) }
                         }
-                        let outcomes = resolvedWork.compactMap(\.2)
+                        let outcomes = resolvedWork.sorted { $0.0.importedAt < $1.0.importedAt }.compactMap(\.2)
+                        let current = try store.loadResolvedListeningMapProjection(itemId: itemId)
                         let activation = SharedListeningMapPlacement.activation(
-                            outcomes, listenerProposalIds: try store.loadPortableListeningMapProposals(itemId: itemId).map(\.id))
+                            outcomes, listenerProposalIds: try store.loadPortableListeningMapProposals(itemId: itemId).map(\.id),
+                            activeProposalId: current?.proposalId)
                         let sharedProposals = resolvedWork.compactMap { $0.0.listeningMapProposals?.first }
                         if !outcomes.isEmpty { self.sharedListeningMapRefusals[itemId] = activation.refusal?.listenerReason }
-                        if activation.refusal != nil, let stale = try store.loadResolvedListeningMapProjection(itemId: itemId),
+                        if activation.refusal != nil, let stale = current,
                            sharedProposals.contains(where: { $0.id == stale.proposalId }) {
                             try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(
                                 id: stale.id, itemId: itemId, proposalId: stale.proposalId,

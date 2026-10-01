@@ -10,8 +10,6 @@ import Foundation
 /// times live only in the returned projection.
 public enum SharedListeningMapPlacement {
     public static let algorithmVersion = "shared-map-scene-starts.v1"
-    /// The acoustic resolver's fusion spread: offsets closer than this agree.
-    public static let toleranceMs = 1_500
 
     /// One scene start and the sender's fingerprint landmarks that bracket it.
     public struct SceneQuery: Equatable, Sendable {
@@ -55,7 +53,10 @@ public enum SharedListeningMapPlacement {
             switch reason {
             case .noScenes: return "The shared map has no scenes."
             case .missingStartTime: return "\(scene) has no start time."
-            case .noEvidence: return "The shared map has no audio to match near \(scene.lowercasedFirst)."
+            case .noEvidence:
+                return sceneLabel == nil
+                    ? "The shared map came without the audio needed to match it to your copy."
+                    : "The shared map has no audio to match near \(scene.lowercasedFirst)."
             case .unresolved: return "\(scene) wasn't found in your copy."
             case .ambiguous: return "\(scene) matched more than one place in your copy, or your copy changes inside it."
             case .outOfOrder: return "\(scene) landed before the scene ahead of it."
@@ -124,16 +125,13 @@ public enum SharedListeningMapPlacement {
     /// A start with landmarks on both sides is checked by the resolver: a change between
     /// them makes the two matches disagree. A start before the first or after the last
     /// landmark has one match and nothing to check it against, and the landmark can be
-    /// minutes away, so it needs other confirmation that the copy is unchanged on its far
-    /// side: at the head, the landmark sits where the sender's did; at the tail, the
-    /// landmark's shift equals the difference in length between the two copies. A first
-    /// scene that starts at 0:00 starts at 0:00 on any copy.
+    /// minutes away, so it is placed only when that landmark's own audio covers the start.
+    /// Nothing else (an unmoved landmark, an equal length) rules out an insertion and an
+    /// equal cut in between. A first scene that starts at 0:00 starts at 0:00 on any copy.
     public static func decide(
         proposal: PortableListeningMapProposalArtifact,
         queries: [SceneQuery],
         resolutions: [String: ImportedAnchorResolution],
-        senderDurationMs: Int?,
-        recipientDurationMs: Int?,
         projectionId: String,
         itemId: String,
         recipientEditionSHA256: String?,
@@ -154,18 +152,12 @@ public enum SharedListeningMapPlacement {
                 return .notPlaced(Refusal(sceneId: query.sceneId, sceneLabel: sceneLabel, reason: reason))
             }
             if resolution.evidenceClass != .exactEdition, query.landmarks.count == 1, let landmark = query.landmarks.first {
-                let offset = placed - query.senderStartMs
-                let confirmed: Bool
-                if landmark.sourceMediaStartMs > query.senderStartMs {
-                    confirmed = abs(offset) <= toleranceMs || query.senderStartMs == 0
-                    if query.senderStartMs == 0 { placed = 0 }
-                } else if let senderDurationMs, let recipientDurationMs {
-                    confirmed = abs(offset - (recipientDurationMs - senderDurationMs)) <= toleranceMs
+                if query.senderStartMs == 0 {
+                    placed = 0
                 } else {
-                    confirmed = false
-                }
-                guard confirmed else {
-                    return .notPlaced(Refusal(sceneId: query.sceneId, sceneLabel: sceneLabel, reason: .edgeUnconfirmed))
+                    guard (landmark.sourceMediaStartMs...landmark.sourceMediaEndMs).contains(query.senderStartMs) else {
+                        return .notPlaced(Refusal(sceneId: query.sceneId, sceneLabel: sceneLabel, reason: .edgeUnconfirmed))
+                    }
                 }
             }
             if let previousStart, placed <= previousStart {
@@ -199,12 +191,24 @@ public enum SharedListeningMapPlacement {
 
     /// What to save after resolving every friend's map on an item. A shared map never
     /// replaces one the listener already has (a map they prepared or imported for their
-    /// own copy is stored as a committed proposal). Among friends' maps, the first one
-    /// placed wins, so a later packet doesn't swap the map under the listener. A refusal
+    /// own copy is stored as a committed proposal). Among friends' maps, the one in use
+    /// stays while it still places; otherwise the earliest imported that places wins, so
+    /// a later packet doesn't swap the map under the listener. A refusal
     /// is reported only when no shared map is in use.
-    public static func activation(_ outcomes: [Outcome], listenerProposalIds: [String]) -> Activation {
+    /// - Parameters:
+    ///   - outcomes: one per friend's map, in the order the packets were imported.
+    ///   - activeProposalId: the shared map in use now, which stays while it still places.
+    public static func activation(
+        _ outcomes: [Outcome],
+        listenerProposalIds: [String],
+        activeProposalId: String? = nil
+    ) -> Activation {
         guard listenerProposalIds.isEmpty else { return Activation(projection: nil, refusal: nil) }
-        for case .placed(let projection) in outcomes {
+        let placed = outcomes.compactMap { outcome -> ResolvedListeningMapProjection? in
+            if case .placed(let projection) = outcome { return projection }
+            return nil
+        }
+        if let projection = placed.first(where: { $0.proposalId == activeProposalId }) ?? placed.first {
             return Activation(projection: projection, refusal: nil)
         }
         return Activation(projection: nil, refusal: outcomes.lazy.compactMap(\.refusal).first)

@@ -38,13 +38,10 @@ final class SharedListeningMapPlacementTests: XCTestCase {
 
     private func decide(
         _ proposal: PortableListeningMapProposalArtifact,
-        _ resolutions: [String: ImportedAnchorResolution],
-        senderDurationMs: Int? = 300_000,
-        recipientDurationMs: Int? = 307_000
+        _ resolutions: [String: ImportedAnchorResolution]
     ) throws -> SharedListeningMapPlacement.Outcome {
         SharedListeningMapPlacement.decide(
             proposal: proposal, queries: try queries(proposal), resolutions: resolutions,
-            senderDurationMs: senderDurationMs, recipientDurationMs: recipientDurationMs,
             projectionId: "shared-projection", itemId: "my-episode", recipientEditionSHA256: "my-bytes",
             createdAt: Date(timeIntervalSince1970: 0)
         )
@@ -155,33 +152,32 @@ final class SharedListeningMapPlacementTests: XCTestCase {
         let nothing = SharedListeningMapPlacement.activation([], listenerProposalIds: [])
         XCTAssertNil(nothing.projection)
         XCTAssertNil(nothing.refusal)
+        let inUse = SharedListeningMapPlacement.activation(
+            [placedOutcome, otherPlaced], listenerProposalIds: [], activeProposalId: "second-map")
+        XCTAssertEqual(inUse.projection?.proposalId, "second-map", "The map in use stays while it still places")
     }
 
     /// A scene before the first or after the last landmark has one match, possibly minutes
-    /// away. A change between that landmark and the scene would go unseen, so the copy has
-    /// to be shown unchanged on the far side.
-    func testAOneSidedSceneNeedsTheCopyUnchangedBeyondItsLandmark() throws {
-        // Tail: scene 3 at 280 s after the last landmark (260 s). The copy is 7 s longer.
-        let tail = proposal(starts: [0, 60_000, 220_000, 280_000])
-        let shiftedByTheAd: [String: ImportedAnchorResolution] = [
+    /// away. A change between that landmark and the scene would go unseen, so the scene is
+    /// placed only when the landmark's own audio (20-31 s, 100-111 s, 180-191 s, 260-271 s) covers it.
+    func testAOneSidedSceneIsPlacedOnlyInsideItsLandmarksAudio() throws {
+        // Tail: scene 3 at 265 s sits inside the last landmark's audio.
+        let covered = try decide(proposal(starts: [0, 60_000, 220_000, 265_000]), [
+            "scene-0": placed(0, .acousticVerified), "scene-1": placed(60_000),
+            "scene-2": placed(227_000), "scene-3": placed(272_000, .acousticVerified)
+        ])
+        guard case .placed(let projection) = covered else { return XCTFail("\(covered)") }
+        XCTAssertEqual(projection.projectedRecipientTime(for: 265_000), 272_000)
+        // Tail: scene 3 at 280 s is past the landmark's audio; even a plausible match is refused.
+        XCTAssertEqual(try decide(proposal(starts: [0, 60_000, 220_000, 280_000]), [
             "scene-0": placed(0, .acousticVerified), "scene-1": placed(60_000),
             "scene-2": placed(227_000), "scene-3": placed(287_000, .acousticVerified)
-        ]
-        guard case .placed(let projection) = try decide(tail, shiftedByTheAd) else { return XCTFail("tail shift matches the length change") }
-        XCTAssertEqual(projection.projectedRecipientTime(for: 280_000), 287_000)
-        // The ad sits between the last landmark and scene 3: the landmark didn't move, the copy grew.
-        var adAfterLastLandmark = shiftedByTheAd
-        adAfterLastLandmark["scene-2"] = placed(220_000)
-        adAfterLastLandmark["scene-3"] = placed(280_000, .acousticVerified)
-        XCTAssertEqual(try decide(tail, adAfterLastLandmark).refusal,
-                       .init(sceneId: "scene-3", sceneLabel: "Scene 4", reason: .edgeUnconfirmed))
-        XCTAssertEqual(try decide(tail, shiftedByTheAd, recipientDurationMs: nil).refusal?.reason, .edgeUnconfirmed,
-                       "Without both lengths nothing confirms the tail")
+        ]).refusal, .init(sceneId: "scene-3", sceneLabel: "Scene 4", reason: .edgeUnconfirmed))
 
-        // Head: scene 1 at 10 s before the first landmark (20 s); a 7 s pre-roll moves the landmark.
-        let head = proposal(starts: [0, 10_000, 60_000])
-        XCTAssertEqual(try decide(head, ["scene-0": placed(7_000), "scene-1": placed(17_000, .acousticVerified), "scene-2": placed(67_000)]).refusal,
-                       .init(sceneId: "scene-1", sceneLabel: "Scene 2 (The interview)", reason: .edgeUnconfirmed))
+        // Head: scene 1 at 10 s is before the first landmark's audio.
+        XCTAssertEqual(try decide(proposal(starts: [0, 10_000, 60_000]), [
+            "scene-0": placed(7_000), "scene-1": placed(17_000, .acousticVerified), "scene-2": placed(67_000)
+        ]).refusal, .init(sceneId: "scene-1", sceneLabel: "Scene 2 (The interview)", reason: .edgeUnconfirmed))
         // The first scene at 0:00 starts at 0:00 on any copy.
         let preRoll = try decide(proposal(starts: [0, 60_000]), ["scene-0": placed(7_000, .acousticVerified), "scene-1": placed(67_000)])
         guard case .placed(let headProjection) = preRoll else { return XCTFail("\(preRoll)") }
