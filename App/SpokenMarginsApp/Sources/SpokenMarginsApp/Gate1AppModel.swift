@@ -16391,19 +16391,18 @@ final class Gate1AppModel: ObservableObject {
                         let activation = SharedListeningMapPlacement.activation(
                             outcomes, listenerProposalIds: try store.loadPortableListeningMapProposals(itemId: itemId).map(\.id),
                             activeProjectionId: current?.id)
-                        func sharedProposal(for projectionId: String) -> PortableListeningMapProposalArtifact? {
-                            resolvedWork.first { SharedListeningMapPlacement.projectionId(layerId: $0.0.id) == projectionId }?
-                                .0.listeningMapProposals?.first
-                        }
+                        let sharedProposals = Dictionary(resolvedWork.compactMap { work in
+                            work.0.listeningMapProposals?.first.map { (SharedListeningMapPlacement.projectionId(layerId: work.0.id), $0) }
+                        }, uniquingKeysWith: { first, _ in first })
                         if !outcomes.isEmpty { self.sharedListeningMapRefusals[itemId] = activation.refusal?.listenerReason }
-                        if activation.refusal != nil, let stale = current, sharedProposal(for: stale.id) != nil {
+                        if activation.refusal != nil, let stale = current, sharedProposals[stale.id] != nil {
                             try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(
                                 id: stale.id, itemId: itemId, proposalId: stale.proposalId,
                                 recipientEditionSHA256: stale.recipientEditionSHA256, points: [], intervals: []))
                         }
                         if let projection = activation.projection {
                             try store.saveResolvedListeningMapProjection(projection)
-                            if let proposal = sharedProposal(for: projection.id) {
+                            if let proposal = sharedProposals[projection.id] {
                                 Task { @MainActor [weak self] in
                                     guard let self else { return }
                                     for scene in proposal.scenes where
