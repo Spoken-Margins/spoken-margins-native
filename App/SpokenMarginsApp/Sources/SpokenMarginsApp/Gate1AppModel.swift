@@ -2150,6 +2150,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Opens the Margin a notes-folder link names (#171).
     func openMargin(_ link: MarginDeepLink) {
+        bootstrapLibraryIfNeeded() // A cold launch from the link can arrive before the root view loads the Library.
         let matches = { (row: MarginRow) in row.interjection.sessionId == link.sessionId && row.interjection.id == link.marginId }
         if !marginRows.contains(where: matches) { refreshMarginRows() }
         guard let row = marginRows.first(where: matches) else { return reportFailure("This Margin is no longer in your Library.") }
