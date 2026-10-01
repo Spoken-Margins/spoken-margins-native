@@ -196,3 +196,42 @@ Copy that reads as internal, for the listing pass rather than an issue: `A/Setti
 ## 5. Download size input for #175
 
 The bundled Supertonic 3 INT8 voice is **148,064,378 bytes (148.1 MB, 141.2 MiB)** across 22 files. The four ONNX models are 144,508,203 bytes of that. Source: the sum of `bytes` in `App/SpokenMarginsApp/Resources/Supertonic/asset-manifest.json`. The onnxruntime framework comes on top of that. The real download and install sizes come from App Store Connect's size report for a TestFlight build.
+
+## 6. Licenses and the EULA (#449 item 7)
+
+Checked on `next` at `c951fdb` (2026-10-01). Paths are shortened: `L/` is `App/SpokenMarginsApp/Resources/Supertonic/licenses/`.
+
+### The listing's license text
+
+`docs/legal/spoken-margins-terms.md` already settles the structure: the App Store listing uses **Apple's Standard EULA**, with no custom EULA in App Store Connect. The versioned Spoken Margins Terms of Use supplement it.
+
+- Bundled copy: `App/SpokenMarginsApp/Resources/Legal/SPOKEN_MARGINS_TERMS_OF_USE.txt`.
+- Public copy: `https://spokenmargins.proximitytoprogress.com/terms/` (`Site/terms/index.html`).
+- The Terms carry the Open RAIL-M paragraph 5 and Attachment A restrictions as an enforceable provision (`SPOKEN_MARGINS_TERMS_OF_USE.txt:18-20`), as paragraph 4(a) requires.
+- The app asks the listener to accept the Terms before James or Lily speaks, and checks acceptance again where it renders speech.
+
+The Standard EULA field can't carry extra text, so the listing points to the restrictions in two places:
+
+1. **Last line of the description, DRAFT:**
+   > DRAFT. The on-device voices are licensed under the Open RAIL-M License, whose use restrictions are part of the Spoken Margins Terms of Use: https://spokenmargins.proximitytoprogress.com/terms/
+2. **App Review notes:** the "Voices" paragraph in section 2 already says the voices require accepting the Terms, which supplement Apple's Standard EULA.
+
+**Q3, for the attorney (#455).** Is a supplement the listener accepts before the voice speaks enough for paragraph 4(a)? The alternative is a custom EULA in App Store Connect: Apple's Standard EULA terms plus the Terms of Use. My pick is to keep the Standard EULA with the supplement, as built. It already gates the only use of the model, and a custom EULA adds one more document to keep in step with the Terms.
+
+### Every bundled third-party license
+
+| Component | Where it ships | License | App Store distribution | What it asks of us | Met? |
+|---|---|---|---|---|---|
+| Supertonic 3 model and preset voices (Supertone) | App, `Resources/Supertonic` | BigScience Open RAIL-M (`L/SUPERTONIC_MODEL_OPENRAIL-M.txt`) | Allowed. Paragraph 4 permits distribution "in any medium", subject to 4(a)–(d) | 4(a) restrictions as an enforceable provision and notice to users; 4(b) a copy of the license; 4(c) notices on modified files; 4(d) keep attribution | Yes. 4(a): the Terms and the voice gate. 4(b): the license is bundled and shown in Settings > Support & Privacy > Legal > On-Device Voice (`A/SupertonicLegalView.swift:20-24`). 4(c): `L/THIRD_PARTY_NOTICES.txt` says the INT8 graphs are modified, quantized derivatives that were renamed. 4(d): the same notice |
+| Supertonic Swift inference code (Supertone) | App | MIT (`L/SUPERTONIC_CODE_MIT.txt`) | Allowed | Keep the copyright and permission notice | Yes, bundled and linked from the same screen |
+| INT8 model conversion (k2-fsa sherpa-onnx) | App (the converted graphs) | Apache-2.0 (`L/SHERPA_ONNX_APACHE-2.0.txt`) | Allowed | Section 4: a copy of the license, notice of changes, and any NOTICE file | Yes. The license is bundled and linked, and the change is described in `L/THIRD_PARTY_NOTICES.txt` |
+| ONNX Runtime 1.24.2 (Microsoft), via `onnxruntime-swift-package-manager` | App, linked framework | MIT (`L/ONNXRUNTIME_MIT.txt`) | Allowed | Keep the notice | Yes, bundled and linked |
+| ONNX Runtime's own third-party components | Inside the framework | Listed in `L/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt`: MIT, BSD, Apache-2.0, zlib, Boost, ISC, public domain (SQLite), the Intel Simplified Software License, and MPL-2.0 (Eigen) | Allowed. None is GPL or LGPL; the only copyleft is Eigen's MPL-2.0, which is file-level | Keep the notices. MPL-2.0 §3.2 also asks that recipients be told where Eigen's source is | Yes. The file is bundled and linked unchanged. Microsoft's notice gives its source-request address, and Eigen is unmodified and public at gitlab.com/libeigen/eigen |
+| ZIPFoundation 0.9.20 (Thomas Zoechling) | App, Swift package | MIT (`App/SpokenMarginsApp/Resources/Legal/ZIPFoundation-LICENSE.txt`) | Allowed | Keep the notice "in all copies" | The file is in the app bundle, but no screen shows it. Fine for MIT; adding it to the Legal screen is good practice (#630) |
+| Defuddle 0.19.1 (Steph Ango) | App, Safari extension and Share extension, compiled into `browserTextCapture.js` and `SourceLinkPreprocessor.js` | MIT (`App/SharedResources/Defuddle-LICENSE.txt`, and a copy in the Share extension) | Allowed | Keep the notice | The file is bundled beside each script but not shown in the app |
+| Defuddle's bundled dependencies: turndown, temml, mathml-to-latex, @xmldom/xmldom | The same two scripts | MIT (per `package-lock.json`) | Allowed | Keep each notice | **No.** `Tools/BrowserExtraction/build.mjs` builds with `legalComments: "none"` and copies only Defuddle's LICENSE, so these notices ship nowhere: #630 |
+| Swift packages | — | — | — | — | Only onnxruntime and ZIPFoundation (`Packages/SessionKit/Package.swift:21-30`, `Package.resolved`). `swift-crypto` is Linux-only (`Package.swift:139-142`) and never ships |
+
+No bundled license forbids App Store distribution or conflicts with Apple's Standard EULA. None is GPL or LGPL, and the only copyleft is Eigen's file-level MPL-2.0, satisfied by the source pointer above.
+
+Follow-up issue: #630, ship the notices for Defuddle's bundled dependencies, and show ZIPFoundation and Defuddle on the Legal screen.
