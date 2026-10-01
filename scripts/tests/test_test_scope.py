@@ -145,6 +145,16 @@ class TestScopeTests(unittest.TestCase):
         self.assertEqual(self.classify('scripts/test-scope.py')['tier'], 'T1')
         self.assertEqual(self.classify('scripts/normalize-embedded-framework-minimum-os.sh')['tier'], 'T2')
 
+    def test_ops_tools_get_their_own_host_tests_not_a_compile(self):
+        # ops/ (the VPS Dial gate, the Mac's Codex audit) fell to "unclassified" and a simulator and device build.
+        result = self.classify('ops/dial/dial_gate.py', 'ops/dial/deploy.sh', 'ops/codex/audit.py')
+        self.assertEqual(result['tier'], 'T1')
+        self.assertEqual(result['why'], ['VPS and Mac ops tools, with their own Python tests'])
+        self.assertIn('.venv/bin/python -m unittest discover -s ops/dial', result['run'])
+        self.assertIn('.venv/bin/python -m unittest discover -s ops/codex', result['run'])
+        self.assertFalse(any('xcodebuild' in command for command in result['run']))
+        self.assertEqual(self.classify('ops/README.md')['tier'], 'T0')
+
     def test_unknown_paths_default_to_a_compile(self):
         self.assertEqual(self.classify('NewTopLevel/thing.swift')['tier'], 'T2')
 

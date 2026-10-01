@@ -69,22 +69,20 @@ final class PasteAndGoTests: XCTestCase {
 
     func testARecordedArticlePageBecomesATextItem() async throws {
         let model = makeModel()
-        var extracted: [URL] = []
-        model.sourceLinkArticleExtractor = { url in
-            extracted.append(url)
-            return BrowserTextHandoff(
-                itemId: "item-browser-paste-and-go-article",
-                captureMode: .readablePage,
-                source: BrowserTextSource(url: url.absoluteString, title: "A recorded article"),
-                text: "# A recorded article\n\nThe article's first paragraph.",
-                contentFormat: .markdown
-            )
-        }
+        let articleURL = try XCTUnwrap(URL(string: PasteAndGoURLProtocol.articleURL))
+        let extractor = PasteAndGoPageExtractor(.success(BrowserTextHandoff(
+            itemId: "item-browser-paste-and-go-article",
+            captureMode: .readablePage,
+            source: BrowserTextSource(url: articleURL.absoluteString, title: "A recorded article"),
+            text: "# A recorded article\n\nThe article's first paragraph.",
+            contentFormat: .markdown
+        )))
+        model.readablePageExtractor = extractor
 
         XCTAssertEqual(model.pasteAndGo(PasteAndGoURLProtocol.articleURL), .resolvingLink)
         try await waitFor("article link import") { model.sourceLinkImportState != "resolving" }
 
-        XCTAssertEqual(extracted, [URL(string: PasteAndGoURLProtocol.articleURL)!], "an article page goes to the article fallback")
+        XCTAssertEqual(extractor.requested, [articleURL], "an article page goes to the article fallback")
         XCTAssertEqual(model.sourceLinkImportState, "success", model.sourceLinkImportMessage ?? "")
         let row = try XCTUnwrap(model.libraryItems.first { $0.title == "A recorded article" })
         XCTAssertEqual(row.mediaType, "text")
@@ -93,7 +91,7 @@ final class PasteAndGoTests: XCTestCase {
     func testAnArticlePageThatAnswers403OffersSafariAndCreatesNothing() async throws {
         let model = makeModel()
         let before = model.libraryItems.map(\.id)
-        model.sourceLinkArticleExtractor = { _ in throw ReadablePageExtractionError.httpStatus(403) }
+        model.readablePageExtractor = PasteAndGoPageExtractor(.failure(ReadablePageExtractionError.httpStatus(403)))
 
         XCTAssertEqual(model.pasteAndGo(PasteAndGoURLProtocol.articleURL), .resolvingLink)
         try await waitFor("article fallback failure") { model.sourceLinkImportState != "resolving" }
@@ -149,6 +147,26 @@ final class PasteAndGoTests: XCTestCase {
             elapsed += interval
         }
         XCTFail("Timed out waiting for \(description).")
+    }
+}
+
+/// Stands in for the WebKit extractor, which tests can't drive.
+private final class PasteAndGoPageExtractor: ReadablePageExtracting {
+    private let outcome: Result<BrowserTextHandoff, Error>
+    private(set) var requested: [URL] = []
+    private(set) var lastExtractor: String?
+    private(set) var contactedHosts: [String] = []
+
+    init(_ outcome: Result<BrowserTextHandoff, Error>) {
+        self.outcome = outcome
+    }
+
+    func extract(url: URL) async throws -> BrowserTextHandoff {
+        requested.append(url)
+        contactedHosts = [url.host ?? ""]
+        let handoff = try outcome.get()
+        lastExtractor = "recorded"
+        return handoff
     }
 }
 

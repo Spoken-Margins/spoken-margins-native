@@ -26,7 +26,7 @@ enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
 /// subresources are blocked; only the app-bundled, pinned Defuddle capture
 /// script executes after the top-level document finishes loading.
 @MainActor
-final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate {
+final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, ReadablePageExtracting {
     private static let maximumHTMLBytes: Int64 = 1 * 1_024 * 1_024
     private static let maximumRedirects = 5
     private var webView: WKWebView?

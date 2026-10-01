@@ -237,6 +237,7 @@ public enum PodcastAnchorEvidenceGenerator {
 public enum PodcastAcousticAnchorResolver {
     public static let maximumFusionSpreadMs = 1_500
     public static let minimumPartialFlankConfidence = 0.9
+    public static let minimumRepeatConfidenceRatio = 0.5
 
     public static func resolve(
         queries: [PodcastPortableAnchorQuery],
@@ -289,9 +290,12 @@ public enum PodcastAcousticAnchorResolver {
         }
 
         var resolutions: [String: ImportedAnchorResolution] = [:]
+        var repeatProbe: RepeatedAudioProbe?
+        var repeatProbeTried = false
         for query in queries {
             var candidates: [(timeMs: Int, confidence: Double)] = []
             var matchedAnchorOffsets: [Int] = []
+            var matchedRepeatedAudio = false
             for evidence in query.evidence {
                 let signature: SHSignature
                 do {
@@ -303,13 +307,22 @@ public enum PodcastAcousticAnchorResolver {
                 switch await session.result(from: signature) {
                 case .match(let match):
                     guard let item = match.mediaItems.first else { continue }
-                    let chunkStartMs = (item[referenceChunkStartKey] as? NSNumber)?.intValue ?? 0
-                    let matchedStartMs = chunkStartMs + Int((item.matchOffset * 1_000).rounded())
-                    let confidence: Double
-                    if #available(iOS 18.4, macOS 15.4, *) {
-                        confidence = Double(item.confidence)
-                    } else {
-                        confidence = 0.9
+                    let matchedStartMs = absoluteStartMs(of: item)
+                    let confidence = matchConfidence(of: item)
+                    // A flank whose audio also plays elsewhere in this edition (a theme, sting or bumper) can match
+                    // the wrong copy, and two flanks can agree on it (#331). Look for another copy before trusting it.
+                    if !matchedRepeatedAudio {
+                        if !repeatProbeTried {
+                            repeatProbeTried = true
+                            repeatProbe = await RepeatedAudioProbe(
+                                recipientAudioURL: recipientAudioURL,
+                                durationMs: recipientDurationMs
+                            )
+                        }
+                        let probed = await repeatProbe?.otherMatches(of: signature, matchedStartMs: matchedStartMs) ?? []
+                        matchedRepeatedAudio = (Array(match.mediaItems.dropFirst()) + probed).contains {
+                            isAnotherCopy($0, matchedStartMs: matchedStartMs, matchedConfidence: confidence)
+                        }
                     }
                     candidates.append((matchedStartMs + evidence.anchorOffsetMs, confidence))
                     matchedAnchorOffsets.append(evidence.anchorOffsetMs)
@@ -324,7 +337,8 @@ public enum PodcastAcousticAnchorResolver {
                 recipientDurationMs: recipientDurationMs,
                 strongSourceIdentity: strongSourceIdentity,
                 exactDigestContradiction: senderExactEditionSHA256 != nil,
-                matchedAnchorOffsets: matchedAnchorOffsets
+                matchedAnchorOffsets: matchedAnchorOffsets,
+                matchedRepeatedAudio: matchedRepeatedAudio
             )
         }
         return corroboratePartialFlanks(queries: queries, resolutions: resolutions)
@@ -365,9 +379,34 @@ public enum PodcastAcousticAnchorResolver {
                 throw PodcastAnchorEvidenceError.referenceGenerationFailed
             }
         }
+        for chunk in try await signedChunks(
+            of: sourceTrack,
+            durationMs: durationMs,
+            chunkMs: referenceChunkMs,
+            overlapMs: referenceChunkOverlapMs
+        ) {
+            do {
+                try catalog.addReferenceSignature(chunk.signature, representing: [SHMediaItem(properties: [
+                    .title: "Spoken Margins recipient edition", referenceChunkStartKey: NSNumber(value: chunk.startMs)
+                ])])
+            } catch {
+                throw PodcastAnchorEvidenceError.referenceGenerationFailed
+            }
+        }
+        return catalog
+    }
+
+    /// Signs the edition in overlapping chunks, so that any span no longer than `overlapMs` lies wholly inside one.
+    static func signedChunks(
+        of sourceTrack: AVAssetTrack,
+        durationMs: Int,
+        chunkMs: Int,
+        overlapMs: Int
+    ) async throws -> [(startMs: Int, lengthMs: Int, signature: SHSignature)] {
+        var chunks: [(startMs: Int, lengthMs: Int, signature: SHSignature)] = []
         var startMs = 0
         while startMs < durationMs {
-            let lengthMs = min(referenceChunkMs, durationMs - startMs)
+            let lengthMs = min(chunkMs, durationMs - startMs)
             let composition = AVMutableComposition()
             guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
                 throw PodcastAnchorEvidenceError.referenceGenerationFailed
@@ -381,17 +420,93 @@ public enum PodcastAcousticAnchorResolver {
                     of: sourceTrack,
                     at: .zero
                 )
-                let reference = try await SHSignatureGenerator.signature(from: composition)
-                try catalog.addReferenceSignature(reference, representing: [SHMediaItem(properties: [
-                    .title: "Spoken Margins recipient edition", referenceChunkStartKey: NSNumber(value: startMs)
-                ])])
+                let signature = try await SHSignatureGenerator.signature(from: composition)
+                chunks.append((startMs, lengthMs, signature))
             } catch {
                 throw PodcastAnchorEvidenceError.referenceGenerationFailed
             }
             if startMs + lengthMs >= durationMs { break }
-            startMs += referenceChunkMs - referenceChunkOverlapMs
+            startMs += chunkMs - overlapMs
         }
-        return catalog
+        return chunks
+    }
+
+    static func absoluteStartMs(of item: SHMatchedMediaItem) -> Int {
+        let chunkStartMs = (item[referenceChunkStartKey] as? NSNumber)?.intValue ?? 0
+        return chunkStartMs + Int((item.matchOffset * 1_000).rounded())
+    }
+
+    static func matchConfidence(of item: SHMatchedMediaItem) -> Double {
+        if #available(iOS 18.4, macOS 15.4, *) {
+            return Double(item.confidence)
+        }
+        return 0.9
+    }
+
+    /// A match elsewhere counts as another copy only when it is at least half as strong as the matched one. A
+    /// wrong copy can only win the first match when the real one is about as strong, so a much weaker match
+    /// elsewhere is incidental likeness, not a repeat.
+    static func isAnotherCopy(_ item: SHMatchedMediaItem, matchedStartMs: Int, matchedConfidence: Double) -> Bool {
+        abs(absoluteStartMs(of: item) - matchedStartMs) > maximumFusionSpreadMs
+            && matchConfidence(of: item) >= matchedConfidence * minimumRepeatConfidenceRatio
+    }
+
+    /// Finds whether a flank's audio plays a second time in the recipient edition (#331).
+    ///
+    /// ShazamKit reports one match per reference, so the main catalog can't show a second copy inside the same
+    /// 15-minute chunk. The probe signs the edition again in short chunks, then asks the flank once more against
+    /// only the chunks that don't touch the span it already matched. A strong enough match there is another
+    /// copy (`isAnotherCopy`).
+    ///
+    /// Built once per resolve, and only when some flank matched. A copy within about one probe chunk of the
+    /// matched span can be excluded with it and go unseen. When the probe can't be built, only the main
+    /// catalog's extra matches are checked, as before.
+    struct RepeatedAudioProbe {
+        static let chunkMs = 40_000
+        /// At least one flank (11 s) plus room for frame rounding, so every flank fits wholly inside one chunk.
+        static let chunkOverlapMs = 13_000
+
+        let chunks: [(startMs: Int, lengthMs: Int, signature: SHSignature)]
+
+        /// Nil when the edition can't be signed in chunks; the resolver then keeps its single-match behaviour.
+        init?(recipientAudioURL: URL, durationMs: Int?) async {
+            // Hold the asset while its track is read: a track whose asset has been released fails to sign
+            // (AVFoundation -11800 / -12780), and the probe would silently never run.
+            let asset = AVURLAsset(url: recipientAudioURL)
+            guard let durationMs, durationMs > 0,
+                  let sourceTrack = try? await asset.loadTracks(withMediaType: .audio).first,
+                  let chunks = try? await PodcastAcousticAnchorResolver.signedChunks(
+                      of: sourceTrack,
+                      durationMs: durationMs,
+                      chunkMs: Self.chunkMs,
+                      overlapMs: Self.chunkOverlapMs
+                  ) else { return nil }
+            self.chunks = chunks
+            withExtendedLifetime(asset) {}
+        }
+
+        /// The flank's matches outside the span it already matched (with a margin of the fusion spread).
+        func otherMatches(of signature: SHSignature, matchedStartMs: Int) async -> [SHMatchedMediaItem] {
+            let spread = PodcastAcousticAnchorResolver.maximumFusionSpreadMs
+            let excludedStartMs = matchedStartMs - spread
+            let excludedEndMs = matchedStartMs + Int((signature.duration * 1_000).rounded()) + spread
+            let catalog = SHCustomCatalog()
+            var added = 0
+            for chunk in chunks where chunk.startMs >= excludedEndMs || chunk.startMs + chunk.lengthMs <= excludedStartMs {
+                do {
+                    try catalog.addReferenceSignature(chunk.signature, representing: [SHMediaItem(properties: [
+                        .title: "Spoken Margins repeat probe",
+                        PodcastAcousticAnchorResolver.referenceChunkStartKey: NSNumber(value: chunk.startMs)
+                    ])])
+                    added += 1
+                } catch {
+                    continue
+                }
+            }
+            guard added > 0,
+                  case .match(let match) = await SHSession(catalog: catalog).result(from: signature) else { return [] }
+            return match.mediaItems
+        }
     }
     #endif
 
@@ -402,7 +517,8 @@ public enum PodcastAcousticAnchorResolver {
         recipientDurationMs: Int?,
         strongSourceIdentity: Bool,
         exactDigestContradiction: Bool,
-        matchedAnchorOffsets: [Int] = []
+        matchedAnchorOffsets: [Int] = [],
+        matchedRepeatedAudio: Bool = false
     ) -> ImportedAnchorResolution {
         guard !candidates.isEmpty else {
             if !query.evidenceWasDeclared {
@@ -417,6 +533,15 @@ public enum PodcastAcousticAnchorResolver {
             return ImportedAnchorResolution(
                 evidenceClass: .unresolved,
                 algorithmVersion: "podcast-anchor.v1"
+            )
+        }
+        // A flank that also matches another copy of its audio may have matched the wrong one, and the other
+        // flank can't overrule it: both may sit in the repeat. Ask the listener to confirm instead (#331).
+        guard !matchedRepeatedAudio else {
+            return ImportedAnchorResolution(
+                evidenceClass: .ambiguous,
+                isAmbiguous: true,
+                algorithmVersion: "podcast-anchor-repeated-audio.v1"
             )
         }
         // Redundant signature variants need not all match, but both temporal

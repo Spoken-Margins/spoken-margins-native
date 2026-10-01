@@ -40,6 +40,19 @@ extension Gate1AppModel {
         }
     }
 
+    /// The Link field's article fallback (#144, #223) for a page with no audio. When the page can't be read,
+    /// offers Safari and returns nil, so the caller still shows the resolver's own "no audio" result.
+    func readLinkAsArticleOrOfferSafari(_ url: URL, after result: LinkResolutionResult, startSession: Bool) async -> BrowserTextHandoff? {
+        do {
+            return try await LinkArticleFallback.article(for: url, after: result, startSession: startSession, using: readablePageExtractor) {
+                diagnostics["lastSourceLinkArticleFallback"] = $0
+            }
+        } catch {
+            offerSafariIfUnreadable(url, error: (error as? LinkArticleFallbackError)?.extractorError ?? error)
+            return nil
+        }
+    }
+
     /// Offers Safari when an https page refused the app or couldn't be read as an article. Offline and
     /// timeout failures don't get the offer: Safari wouldn't do better, and the retry banner covers them.
     func offerSafariIfUnreadable(_ url: URL, error: Error) {

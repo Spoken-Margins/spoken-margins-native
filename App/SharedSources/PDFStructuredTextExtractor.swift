@@ -37,6 +37,9 @@ enum PDFStructuredTextExtractor {
         var pointSize: CGFloat
         var isBold: Bool
         var bounds: CGRect?
+        /// The size most of the line's visible characters are set in. `pointSize` is the
+        /// first character's, which a leading marker or subscript skews (#592).
+        var mainPointSize: CGFloat = 0
         /// Character ranges of `text` set as superscripts (v2 only).
         var superscripts: [Range<Int>] = []
     }
@@ -740,7 +743,7 @@ enum PDFStructuredTextExtractor {
         }
         // Markers the body sets as superscripts on this page: "1", "12", "†", "a".
         var bodyMarkers = Set<String>()
-        for line in lines where abs(line.pointSize - bodySize) < 0.6 {
+        for line in lines where abs(line.mainPointSize - bodySize) < 0.6 {
             let characters = Array(line.text)
             for range in line.superscripts where range.lowerBound >= 0 && range.upperBound <= characters.count {
                 let label = digits(String(characters[range]))
@@ -753,7 +756,7 @@ enum PDFStructuredTextExtractor {
         let bottom = pageBox.minY + pageBox.height * 0.4
         let continuationBottom = pageBox.minY + pageBox.height * 0.45
         func isSmall(_ line: TextLine) -> Bool {
-            line.pointSize > 0 && line.pointSize < bodySize - 0.5
+            line.mainPointSize > 0 && line.mainPointSize < bodySize - 0.5
         }
         var result = Set<Int>()
         var index = 0
@@ -773,15 +776,15 @@ enum PDFStructuredTextExtractor {
             let readsAsNote = letters >= 15 && (rest.split(separator: " ").count >= 3 || isLink)
             // A new block: after other type, after a gap (the footnote rule), or up a column.
             var startsBlock = true
-            if index > 0, let previous = lines[index - 1].bounds, abs(lines[index - 1].pointSize - line.pointSize) < 0.3 {
-                startsBlock = previous.midY - bounds.midY > line.pointSize * 1.8 || bounds.midY > previous.midY
+            if index > 0, let previous = lines[index - 1].bounds, abs(lines[index - 1].mainPointSize - line.mainPointSize) < 0.3 {
+                startsBlock = previous.midY - bounds.midY > line.mainPointSize * 1.8 || bounds.midY > previous.midY
             }
             guard bodyMarkers.contains(marker), readsAsNote, startsBlock else {
                 index += 1
                 continue
             }
-            let size = line.pointSize
-            while index < lines.count, abs(lines[index].pointSize - size) < 0.3,
+            let size = line.mainPointSize
+            while index < lines.count, abs(lines[index].mainPointSize - size) < 0.3,
                   let next = lines[index].bounds, next.midY < continuationBottom {
                 result.insert(index)
                 index += 1
@@ -899,6 +902,7 @@ enum PDFStructuredTextExtractor {
                     pointSize: font?.pointSize ?? 0,
                     isBold: font?.fontDescriptor.symbolicTraits.contains(.traitBold) == true,
                     bounds: bounds,
+                    mainPointSize: mainPointSize(in: attributed, range: range) ?? font?.pointSize ?? 0,
                     superscripts: detectSuperscripts
                         ? superscriptRanges(in: attributed, lineRange: range, page: page, lineBounds: bounds, cleanedText: text)
                         : []
@@ -999,6 +1003,24 @@ enum PDFStructuredTextExtractor {
         let overlap = expandedRegion.intersection(lineBounds)
         guard !overlap.isNull else { return false }
         return (overlap.width * overlap.height) / (lineBounds.width * lineBounds.height) >= 0.65
+    }
+
+    /// The point size with the most visible characters in `range`; the larger on a tie.
+    private static func mainPointSize(in attributed: NSAttributedString, range: NSRange) -> CGFloat? {
+        let source = attributed.string as NSString
+        var countBySize: [CGFloat: Int] = [:]
+        attributed.enumerateAttribute(.font, in: range) { value, run, _ in
+            guard let size = (value as? UIFont)?.pointSize, size > 0 else { return }
+            var visible = 0
+            for location in run.location..<NSMaxRange(run) {
+                if let scalar = UnicodeScalar(source.character(at: location)),
+                   !CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                    visible += 1
+                }
+            }
+            if visible > 0 { countBySize[size, default: 0] += visible }
+        }
+        return countBySize.max { lhs, rhs in lhs.value == rhs.value ? lhs.key < rhs.key : lhs.value < rhs.value }?.key
     }
 
     private static func firstVisibleLocation(in source: NSString, range: NSRange) -> Int {

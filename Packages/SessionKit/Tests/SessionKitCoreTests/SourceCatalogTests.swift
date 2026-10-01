@@ -26,10 +26,14 @@ final class SourceCatalogTests: XCTestCase {
         let followable = catalog.entries.filter(\.isFollowable)
         let raw = try JSONDecoder().decode(SourceCatalog.self, from: Data(contentsOf: Self.path(Self.publishedCatalog)))
         XCTAssertEqual(catalog.entries.count, raw.entries.count, "validation must not drop any published entry")
-        XCTAssertGreaterThanOrEqual(followable.count, 100)
+        XCTAssertGreaterThanOrEqual(followable.filter { $0.kind == .podcastFeed }.count, 100)
         XCTAssertGreaterThanOrEqual(catalog.visibleSubjects.count, 8)
         XCTAssertTrue(followable.allSatisfy { $0.artworkURL?.hasPrefix("https://") == true }, "every drawer tile needs artwork")
-        XCTAssertTrue(followable.allSatisfy { $0.kind == .podcastFeed && $0.contentKind == .podcast })
+        // Podcasts, plus the hand-picked Writers row of newsletters (#470).
+        XCTAssertTrue(followable.allSatisfy {
+            ($0.kind == .podcastFeed && $0.contentKind == .podcast)
+                || ($0.kind == .articleFeed && $0.contentKind == .newsletter && $0.subjects == ["writers"])
+        })
         let provenance = Set(catalog.provenance.map(\.id))
         XCTAssertTrue(followable.allSatisfy { Set($0.provenanceIds).isSubset(of: provenance) }, "every entry says where it came from")
         for subject in catalog.visibleSubjects {
