@@ -1981,6 +1981,34 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.last, "First ".count)
     }
 
+    /// #624: spoken Margins were stamped one second after 1970 per Margin, which Readwise and the
+    /// notes folder took as the real date. They now carry the engine's clock, like written Margins.
+    func testSpokenMarginCarriesTheTimeItWasRecorded() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "interjection": ["record_audio", "capture_text_anchor"]
+            ]
+        )
+        let item = Item(id: "item-text", title: "Text", mediaType: "text", text: "First sentence.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let recordedAt = Date(timeIntervalSince1970: 1_790_000_000)
+        let engine = SessionEngine(
+            profile: profile, repository: repo, audio: RecordingAudioClient(),
+            transcriber: RecordingTranscriptionClient(), now: { recordedAt }
+        )
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/text.m4a")
+
+        let margin = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
+        XCTAssertEqual(margin.createdAt, recordedAt)
+    }
+
     func testNativeTextInterjectionsResumeAtExactBoundaryWithoutAccumulatingDrift() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
