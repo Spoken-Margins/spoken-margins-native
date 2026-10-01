@@ -275,10 +275,20 @@ public enum ImportedItemResolver {
            let packageGUID = packageItem.episodeGUID,
            let localGUID = localItem.episodeGUID {
             return packageGUID == localGUID
+                && guidDurationsAreCompatible(packageItem.durationMs, localItem.durationMs)
         }
         guard let packageURL = packageItem.canonicalURL,
               let localURL = localItem.canonicalURL else { return false }
         return normalizedURL(packageURL) == normalizedURL(localURL)
+    }
+
+    /// A GUID names an episode, but some feeds reuse one for a trailer or a different cut (#177).
+    /// Dynamically inserted ads change an episode's length by minutes, so only a length more than
+    /// 20% apart rejects the match; placement inside the episode is the audio evidence's job.
+    /// An unknown length on either side keeps the GUID match.
+    static func guidDurationsAreCompatible(_ lhs: Int?, _ rhs: Int?) -> Bool {
+        guard let lhs, let rhs, lhs > 0, rhs > 0 else { return true }
+        return Double(abs(lhs - rhs)) <= 0.2 * Double(max(lhs, rhs))
     }
 
     private static func normalizedURL(_ value: String) -> String {
