@@ -43,6 +43,23 @@ final class EpisodeEndSeekTests: XCTestCase {
         XCTAssertNil(later.lastFailure)
     }
 
+    func testAnEpisodeThatPlayedToItsEndStaysPausedAtTheScrubbedPlace() throws {
+        let (engine, audio) = try engine(startingAt: 170_000)
+        audio.startStatus = .confirmed
+        XCTAssertEqual(try engine.syncPlaybackProgress().status, .playing)
+
+        audio.mediaTimeMs = durationMs
+        audio.ended = true
+        XCTAssertEqual(try engine.syncPlaybackProgress().status, .paused)
+
+        XCTAssertEqual(try engine.seekMedia(toMediaTimeMs: 0).status, .paused)
+        now += 10
+        let later = try engine.syncPlaybackProgress()
+        XCTAssertEqual(later.status, .paused)
+        XCTAssertEqual(later.currentMediaTimeMs, 0, "the scrub isn't undone by the old end")
+        XCTAssertNil(later.lastFailure)
+    }
+
     func testASeekWhilePlayingKeepsPlaying() throws {
         let (engine, audio) = try engine(startingAt: 60_000)
         audio.startStatus = .confirmed
@@ -131,7 +148,8 @@ final class EpisodeEndSeekTests: XCTestCase {
 }
 
 /// A media player as AVPlayer behaves at an episode's end: a start there reaches the end at once
-/// and never reports playing, a start or seek clears the completion, and a seek doesn't play.
+/// and never reports playing, a start or a seek away from the end clears the completion, and a
+/// seek doesn't play.
 private final class EpisodeAudioClient: AudioPlaybackClient {
     let durationMs: Int
     let endsWhenStartedAtTheEnd: Bool
@@ -163,7 +181,8 @@ private final class EpisodeAudioClient: AudioPlaybackClient {
 
     func seek(toMediaTimeMs mediaTimeMs: Int) throws {
         self.mediaTimeMs = mediaTimeMs
-        ended = false
+        // As AVPlayerStreamPlaybackClient.requestMediaSeek: only a seek away from the end clears it.
+        if durationMs - mediaTimeMs > 1_500 { ended = false }
     }
 
     func pause() throws { pauses += 1 }

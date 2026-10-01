@@ -1688,6 +1688,13 @@ struct MediaPlaybackCompletionPolicy {
         let remainingMs = max(0, durationMs - currentMediaTimeMs)
         return currentMediaTimeMs > 0 && remainingMs <= terminalToleranceMs
     }
+
+    /// Whether a seek to `mediaTimeMs` takes an ended episode back from its end, so its
+    /// end-of-item notification no longer holds (#588). Without a known length, any seek does.
+    static func seekLeavesEnd(toMediaTimeMs mediaTimeMs: Int, durationMs: Int?) -> Bool {
+        guard let durationMs, durationMs > 0 else { return true }
+        return durationMs - mediaTimeMs > terminalToleranceMs
+    }
 }
 
 public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked Sendable {
@@ -1942,6 +1949,15 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         lastRequestedMediaTimeMs = max(0, mediaTimeMs)
         guard let player, let activeTargetId else {
             throw SessionKitError.invalidCommandForState("media_seek_player_unavailable")
+        }
+        // Scrubbing back from the end leaves the episode paused at the new place, not ended:
+        // a kept completion flag would move it straight back to the end (#588).
+        if playbackComplete,
+           MediaPlaybackCompletionPolicy.seekLeavesEnd(
+               toMediaTimeMs: lastRequestedMediaTimeMs, durationMs: durationMs(for: activeTargetId)
+           ) {
+            playbackComplete = false
+            completedTargetId = nil
         }
         let seekGeneration = beginMediaSeek(
             targetId: activeTargetId,

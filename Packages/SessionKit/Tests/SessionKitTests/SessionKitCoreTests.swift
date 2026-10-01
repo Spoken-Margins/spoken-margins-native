@@ -23,6 +23,16 @@ final class SessionKitCoreTests: XCTestCase {
         ))
     }
 
+    func testASeekBackFromTheEndLeavesTheEndedState() {
+        // #588: a scrub back from the end must clear the end-of-item notification, or the
+        // engine moves the episode straight back to its end.
+        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 0, durationMs: 178_808))
+        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 177_000, durationMs: 178_808))
+        XCTAssertFalse(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 178_000, durationMs: 178_808))
+        XCTAssertFalse(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 178_808, durationMs: 178_808))
+        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 178_000, durationMs: nil))
+    }
+
     func testMediaCompletionDoesNotMistakeUserPauseOrPendingSeekForCompletion() {
         XCTAssertFalse(MediaPlaybackCompletionPolicy.reachedEffectiveEnd(
             completionNotificationObserved: false,
