@@ -16085,7 +16085,7 @@ final class Gate1AppModel: ObservableObject {
                         imported = self.importBrowserText(handoff)
                     } else {
                         let itemId = try self.importBrowserTextInBackground(handoff)
-                        if let audio = PublisherAudioDetector.publisherAudio(for: entry, itemId: itemId) { try store.savePublisherAudio(audio); PublisherAudioTextMapper.start(audio, store: store, transcriber: self.sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(itemId): \($0)" } }
+                        if let audio = try PublisherAudioDetector.publisherAudio(for: entry, itemId: itemId)?.keepingTextMap(of: store.loadPublisherAudio(itemId: itemId)) { try store.savePublisherAudio(audio); PublisherAudioTextMapper.start(audio, store: store, transcriber: self.sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(itemId): \($0)" } }
                         if openWhenFinished { self.openItem(id: itemId) }
                         imported = true
                     }

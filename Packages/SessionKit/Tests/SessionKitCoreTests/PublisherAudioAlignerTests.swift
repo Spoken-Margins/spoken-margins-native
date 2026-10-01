@@ -333,6 +333,28 @@ final class PublisherAudioAlignerTests: XCTestCase {
         XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)
     }
 
+    func testReimportingTheSameArticleKeepsItsMap() {
+        // Codex audit on #636: a second feed carrying the same post reuses the article's item id,
+        // and saving a fresh record there threw the finished map away.
+        let fresh = PublisherAudio(itemId: "item-1", audioURL: "https://example.com/a.mp3", durationMs: 60_000, detectedFrom: "feed_enclosure")
+        let alignment = PublisherAudioAligner.align(articleText: Self.article, recognised: Self.spoken(Self.article).transcript)
+        let mapped = fresh.recordingTextMap(alignment)
+        XCTAssertNotNil(mapped.textMap)
+
+        let reimported = fresh.keepingTextMap(of: mapped)
+        XCTAssertEqual(reimported.textMap, mapped.textMap)
+        XCTAssertEqual(reimported.textMapStatus, mapped.textMapStatus)
+
+        let failed = fresh.recordingTextMapFailure("failed: offline")
+        XCTAssertEqual(fresh.keepingTextMap(of: failed).textMapStatus, "failed: offline", "a finished try isn't repeated")
+
+        var otherRecording = fresh
+        otherRecording.audioURL = "https://example.com/b.mp3"
+        XCTAssertNil(otherRecording.keepingTextMap(of: mapped).textMap, "a different recording starts over")
+        XCTAssertNil(otherRecording.keepingTextMap(of: mapped).textMapStatus)
+        XCTAssertEqual(fresh.keepingTextMap(of: nil), fresh)
+    }
+
     func testSentencesKeepTheirArticleOffsetsInCharacters() {
         let text = "Caf\u{E9} society, she said. \u{201C}Don\u{2019}t go!\u{201D} Then nothing.\nA new line."
         let characters = Array(text)

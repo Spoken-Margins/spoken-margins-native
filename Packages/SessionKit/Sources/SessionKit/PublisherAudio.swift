@@ -36,6 +36,18 @@ public struct PublisherAudio: Codable, Equatable, Sendable {
         return updated
     }
 
+    /// The record to save when the same article is imported again, e.g. from a second feed that
+    /// carries the same post: an existing record for the same recording keeps its map and status,
+    /// so the map isn't thrown away and the recording isn't transcribed again. A different
+    /// recording starts over.
+    public func keepingTextMap(of existing: PublisherAudio?) -> PublisherAudio {
+        guard let existing, existing.itemId == itemId, existing.audioURL == audioURL else { return self }
+        var updated = self
+        updated.textMap = existing.textMap
+        updated.textMapStatus = existing.textMapStatus
+        return updated
+    }
+
     /// The record after a try that never reached alignment, such as a failed download.
     public func recordingTextMapFailure(_ reason: String) -> PublisherAudio {
         var updated = self
