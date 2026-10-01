@@ -47,7 +47,7 @@ final class MemoryFootprintRecorder {
     static let defaultFileURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
         .appendingPathComponent("DeveloperDiagnostics/memory-footprint.json")
 
-    static func readCurrent() -> Reading? {
+    nonisolated static func readCurrent() -> Reading? {
         guard let footprint = MemoryFootprintReader.footprintBytes() else { return nil }
         return Reading(footprintBytes: footprint, availableBytes: MemoryFootprintReader.availableBytes())
     }
