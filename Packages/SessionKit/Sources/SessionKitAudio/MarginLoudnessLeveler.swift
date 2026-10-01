@@ -19,13 +19,33 @@ public enum MarginLoudnessLeveler {
     public enum LevelerError: Error, Equatable {
         /// The copy would overwrite the recording.
         case destinationIsSource
-        case tooLong(seconds: Double)
+        /// Leveling would need more working memory than `maximumWorkingBytes`.
+        case tooLarge(estimatedBytes: Int64)
+        /// Only mono and stereo: BS.1770 weights other layouts by speaker (and leaves out the LFE),
+        /// which a plain channel count can't tell.
+        case unsupportedChannelCount(Int)
         case unreadable
     }
 
-    /// Margins are a few minutes at most. Measuring and rendering hold several full-length copies
-    /// of the samples, so this keeps a stray long file from using hundreds of MB.
-    public static let maximumSeconds = 10.0 * 60
+    /// Measuring and rendering hold the whole recording several times over: the decoded and leveled
+    /// samples as Float, and the K-weighted signal, oversampled peaks and limiter gains as Double.
+    /// `estimatedWorkingBytes` counts that generously, and anything over this budget is refused
+    /// before a sample is decoded. A mono Margin at 44.1 kHz fits about 3 minutes.
+    public static let maximumWorkingBytes: Int64 = 512 * 1024 * 1024
+
+    /// About 48 bytes per frame for the Double working arrays, plus 16 per channel for the Float
+    /// copies and the per-channel K-weighted and oversampled arrays.
+    public static func estimatedWorkingBytes(frames: Int64, channels: Int) -> Int64 {
+        let (bytes, overflow) = frames.multipliedReportingOverflow(by: 48 + 16 * Int64(max(1, channels)))
+        return overflow ? .max : bytes
+    }
+
+    /// Throws unless a recording of this shape can be leveled; called before anything is allocated.
+    public static func checkCanLevel(frames: Int64, channels: Int) throws {
+        guard (1...2).contains(channels) else { throw LevelerError.unsupportedChannelCount(channels) }
+        let bytes = estimatedWorkingBytes(frames: frames, channels: channels)
+        guard bytes <= maximumWorkingBytes else { throw LevelerError.tooLarge(estimatedBytes: bytes) }
+    }
 
     public static func measure(fileAt url: URL) throws -> LoudnessMeasurement {
         let decoded = try read(url)
@@ -68,8 +88,7 @@ public enum MarginLoudnessLeveler {
     static func read(_ url: URL) throws -> (channels: [[Float]], sampleRate: Double) {
         let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
         let format = file.processingFormat
-        let seconds = Double(file.length) / format.sampleRate
-        guard seconds <= maximumSeconds else { throw LevelerError.tooLong(seconds: seconds) }
+        try checkCanLevel(frames: file.length, channels: Int(format.channelCount))
         guard file.length > 0 else { return (Array(repeating: [], count: Int(format.channelCount)), format.sampleRate) }
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(file.length)) else {
             throw LevelerError.unreadable

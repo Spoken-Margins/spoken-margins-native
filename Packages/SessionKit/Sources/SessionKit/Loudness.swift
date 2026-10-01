@@ -35,6 +35,8 @@ public enum LoudnessMeter {
     /// - Parameter channels: one array of samples per channel, all the same length, full scale ±1.
     ///   Mono and stereo weigh every channel 1.0; channels past the third are treated as
     ///   surrounds (1.41), as BS.1770 does for 5.1 in L, R, C, Ls, Rs order without the LFE.
+    ///   The caller must pass channels in that order with the LFE removed; this can't tell a
+    ///   layout from a channel count. `MarginLoudnessLeveler` only accepts mono and stereo files.
     public static func measure(channels: [[Float]], sampleRate: Double) -> LoudnessMeasurement {
         LoudnessMeasurement(
             integratedLUFS: integratedLoudness(channels: channels, sampleRate: sampleRate),

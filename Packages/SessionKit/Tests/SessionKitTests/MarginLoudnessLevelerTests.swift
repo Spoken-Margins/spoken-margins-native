@@ -93,6 +93,41 @@ final class MarginLoudnessLevelerTests: XCTestCase {
         XCTAssertEqual(try Self.hash(source), before)
     }
 
+    func testOnlyMonoAndStereoWithinTheMemoryBudgetAreLeveled() throws {
+        XCTAssertNoThrow(try MarginLoudnessLeveler.checkCanLevel(frames: 44_100 * 120, channels: 1))
+        XCTAssertNoThrow(try MarginLoudnessLeveler.checkCanLevel(frames: 48_000 * 60, channels: 2))
+        for channels in [0, 3, 6] {
+            XCTAssertThrowsError(try MarginLoudnessLeveler.checkCanLevel(frames: 48_000, channels: channels)) { error in
+                XCTAssertEqual(error as? MarginLoudnessLeveler.LevelerError, .unsupportedChannelCount(channels))
+            }
+        }
+        // The audit's case: ten minutes of stereo at 192 kHz.
+        XCTAssertThrowsError(try MarginLoudnessLeveler.checkCanLevel(frames: 192_000 * 600, channels: 2))
+        XCTAssertThrowsError(try MarginLoudnessLeveler.checkCanLevel(frames: 44_100 * 600, channels: 1))
+        XCTAssertEqual(MarginLoudnessLeveler.estimatedWorkingBytes(frames: .max, channels: 2), .max)
+    }
+
+    func testARecordingOverTheBudgetIsRefusedBeforeItIsDecoded() throws {
+        // 200 s of mono 44.1 kHz silence, written 10 s at a time as 16-bit PCM (about 18 MB).
+        let url = folder.appendingPathComponent("long.wav")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+        let settings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 44_100.0, AVNumberOfChannelsKey: 1,
+                                       AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false]
+        let file = try AVAudioFile(forWriting: url, settings: settings)
+        let chunk = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 441_000))
+        chunk.frameLength = 441_000
+        chunk.floatChannelData![0].update(repeating: 0, count: 441_000)
+        for _ in 0..<20 { try file.write(from: chunk) }
+        file.close()
+
+        XCTAssertThrowsError(try MarginLoudnessLeveler.measure(fileAt: url)) { error in
+            guard case .tooLarge? = error as? MarginLoudnessLeveler.LevelerError else { return XCTFail("\(error)") }
+        }
+        let destination = folder.appendingPathComponent("long-leveled.caf")
+        XCTAssertThrowsError(try MarginLoudnessLeveler.renderLeveledCopy(of: url, to: destination))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
     // MARK: Helpers
 
     private static func hash(_ url: URL) throws -> String {
