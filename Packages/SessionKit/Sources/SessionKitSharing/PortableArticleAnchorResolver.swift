@@ -275,6 +275,7 @@ public enum ImportedItemResolver {
            let packageGUID = packageItem.episodeGUID,
            let localGUID = localItem.episodeGUID {
             return packageGUID == localGUID
+                && guidShowsAreCompatible(packageItem.showTitle, localItem.showTitle)
                 && guidDurationsAreCompatible(packageItem.durationMs, localItem.durationMs)
         }
         guard let packageURL = packageItem.canonicalURL,
@@ -286,6 +287,18 @@ public enum ImportedItemResolver {
     /// Dynamically inserted ads change an episode's length by minutes, so only a length more than
     /// 20% apart rejects the match; placement inside the episode is the audio evidence's job.
     /// An unknown length on either side keeps the GUID match.
+    /// GUIDs are unique only within a feed; some feeds use short ones like "42". When both sides
+    /// know the show, a different show rules the match out.
+    static func guidShowsAreCompatible(_ lhs: String?, _ rhs: String?) -> Bool {
+        func folded(_ value: String?) -> String? {
+            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            return trimmed?.isEmpty == false ? trimmed : nil
+        }
+        guard let lhs = folded(lhs), let rhs = folded(rhs) else { return true }
+        return lhs == rhs
+    }
+
     static func guidDurationsAreCompatible(_ lhs: Int?, _ rhs: Int?) -> Bool {
         guard let lhs, let rhs, lhs > 0, rhs > 0 else { return true }
         return Double(abs(lhs - rhs)) <= 0.2 * Double(max(lhs, rhs))

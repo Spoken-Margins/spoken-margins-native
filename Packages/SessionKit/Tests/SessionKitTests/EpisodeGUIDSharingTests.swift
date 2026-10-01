@@ -84,6 +84,17 @@ final class EpisodeGUIDSharingTests: XCTestCase {
             for: episode(audioURL: recipientLink, guid: "show-episode-0001", durationMs: nil))))
     }
 
+    func testAShortGUIDFromAnotherShowDoesNotMatch() {
+        let sender = SharedItemIdentityBuilder.exportIdentity(
+            for: episode(audioURL: senderLink, guid: "42", durationMs: 3_600_000), draftEditionDigests: [nil])
+        var otherShow = episode(audioURL: recipientLink, guid: "42", durationMs: 3_600_000)
+        otherShow.showTitle = "A Different Show"
+        XCTAssertFalse(ImportedItemResolver.canRepresentSameWork(sender, SharedItemIdentityBuilder.localIdentity(for: otherShow)))
+        var sameShow = otherShow
+        sameShow.showTitle = " example show "
+        XCTAssertTrue(ImportedItemResolver.canRepresentSameWork(sender, SharedItemIdentityBuilder.localIdentity(for: sameShow)))
+    }
+
     // MARK: Done when 2 and 6: Build 29 reads the new item record and the packet
 
     func testTheBuild29ItemDecoderReadsARecordWithTheNewFields() throws {
