@@ -176,7 +176,7 @@ public enum ReadwiseHighlightGatherer {
                     includeInterjections: true, includeTurns: false,
                     scope: "selected_interjections", interjectionIds: [margin.id]
                 ))
-                if let highlight = ReadwiseHighlight(export: export, createdAt: margin.createdAt) {
+                if let highlight = ReadwiseHighlight(export: export, createdAt: margin.recordedAt(in: session)) {
                     highlights.append(highlight)
                 }
             }
