@@ -134,13 +134,98 @@ final class MarginNoteFrontmatterTests: XCTestCase {
         """)
     }
 
+    // MARK: - A paper's citation (#206)
+
+    func testPaperMarginCarriesDOIAuthorsYearAndThePageItSitsOn() throws {
+        let (item, document) = paper(bibliography: PDFBibliography(
+            doi: "10.1145/3613904.3642123", arxivId: "2607.28282",
+            authors: ["Ada Lovelace", "Babbage, \"Charles\""], year: 2024, title: "Listening"
+        ))
+        let onPageTwo = margin(item: item, kind: .written, mediaTimeMs: nil, startChar: 20)
+        let note = try renderNote(item: item, margin: onPageTwo, document: document)
+        let properties = try FrontmatterParser.parse(note)
+
+        XCTAssertEqual(properties["title"], .string("A Paper"))
+        XCTAssertEqual(properties["doi"], .string("10.1145/3613904.3642123"))
+        XCTAssertEqual(properties["arxiv_id"], .string("2607.28282"))
+        XCTAssertEqual(properties["authors"], .strings(["Ada Lovelace", "Babbage, \"Charles\""]))
+        XCTAssertEqual(properties["year"], .plain("2024"))
+        XCTAssertEqual(properties["page"], .plain("2"))
+        // Imported from Files, so the paper's DOI page is its source.
+        XCTAssertEqual(properties["source"], .string("https://doi.org/10.1145/3613904.3642123"))
+        XCTAssertEqual(Array(properties.keys).sorted(), [
+            "arxiv_id", "authors", "created", "doi", "item_id", "margin_id", "margin_kind", "page", "source", "tags",
+            "target", "title", "year",
+        ])
+
+        let onPageOne = try renderNote(item: item, margin: margin(item: item, kind: .written, mediaTimeMs: nil, startChar: 7), document: document)
+        XCTAssertEqual(try FrontmatterParser.parse(onPageOne)["page"], .plain("1"))
+    }
+
+    func testArXivPaperWithoutMetadataLinksToItsAbstractPage() throws {
+        let (item, document) = paper(bibliography: PDFBibliography(arxivId: "hep-th/9901001"))
+        let note = try renderNote(item: item, margin: margin(item: item, kind: .written, mediaTimeMs: nil, startChar: 0), document: document)
+        let properties = try FrontmatterParser.parse(note)
+
+        XCTAssertEqual(properties["source"], .string("https://arxiv.org/abs/hep-th/9901001"))
+        XCTAssertNil(properties["doi"])
+        XCTAssertNil(properties["authors"])
+        XCTAssertNil(properties["year"])
+        XCTAssertEqual(properties["page"], .plain("1"))
+    }
+
+    func testPaperWithoutABibliographyKeepsTheNoteItHadBefore() throws {
+        let (item, document) = paper(bibliography: nil)
+        let note = try renderNote(item: item, margin: margin(item: item, kind: .written, mediaTimeMs: nil, startChar: 20), document: document)
+        XCTAssertTrue(note.hasPrefix("""
+        ---
+        title: "A Paper"
+        created: 2026-04-24T03:06:40Z
+        item_id: "item-paper"
+        margin_id: "margin"
+        margin_kind: written
+        target: source
+        tags: [spoken-margins]
+        ---
+
+        # A Paper
+
+        """), note)
+        let export = try buildExport(item: item, margin: margin(item: item, kind: .written, mediaTimeMs: nil, startChar: 20), document: document)
+        let json = String(decoding: try JSONEncoder().encode(export), as: UTF8.self)
+        XCTAssertFalse(json.contains("bibliography"), json)
+        XCTAssertFalse(json.contains("\"page\""), json)
+    }
+
     // MARK: - Fixtures
 
-    private func margin(item: Item, kind: InterjectionCaptureKind?, mediaTimeMs: Int?) -> Interjection {
+    private func paper(bibliography: PDFBibliography?) -> (Item, StructuredDocument) {
+        let document = StructuredDocument(
+            extraction: .init(engine: "pdfkit", version: 2, sourceSHA256: nil, pageCount: 2, textSHA256: nil),
+            text: "A Paper\nFirst page.\nSecond page.",
+            segments: [
+                .init(id: "s0", role: .title, range: .init(start: 0, length: 7), pageIndex: 0),
+                .init(id: "s1", role: .body, range: .init(start: 8, length: 11), pageIndex: 0),
+                .init(id: "s2", role: .body, range: .init(start: 20, length: 12), pageIndex: 1),
+            ],
+            markers: []
+        )
+        let item = Item(
+            id: "item-paper", title: "A Paper", mediaType: "pdf", text: document.text,
+            externalReference: "a-paper.pdf", status: "ready", externalReferenceType: "file",
+            documentStructure: PDFDocumentStructure(
+                extractionEngine: .pdfKit, analysisStatus: .partial, pageCount: 2, analyzedPageCount: 0,
+                bibliography: bibliography
+            )
+        )
+        return (item, document)
+    }
+
+    private func margin(item: Item, kind: InterjectionCaptureKind?, mediaTimeMs: Int?, startChar: Int = 0) -> Interjection {
         Interjection(
             id: "margin", itemId: item.id, sessionId: "session-" + item.id, targetType: .item, targetId: item.id,
             createdAt: createdAt, roughPercent: 0,
-            anchor: Anchor(anchorType: mediaTimeMs == nil ? .text : .media, startChar: 0, endChar: 7,
+            anchor: Anchor(anchorType: mediaTimeMs == nil ? .text : .media, startChar: startChar, endChar: startChar + 7,
                            anchorBefore: "Before.", anchorAfter: "After.", mediaTimeMs: mediaTimeMs),
             audioPath: nil, audioStatus: kind == .written ? "discarded" : "saved",
             transcriptionStatus: "transcribed", transcript: "A thought.", cleanedTranscript: nil,
@@ -148,13 +233,14 @@ final class MarginNoteFrontmatterTests: XCTestCase {
         )
     }
 
-    private func buildExport(item: Item, margin: Interjection) throws -> SessionExport {
+    private func buildExport(item: Item, margin: Interjection, document: StructuredDocument? = nil) throws -> SessionExport {
         let session = Session(id: margin.sessionId, itemId: item.id, status: "in_progress", phase: .itemPlayback,
                               currentTargetType: .itemTextTTS, currentTargetId: item.id,
                               position: Position(), completionPercent: 0, playbackRate: 1)
         let repository = InMemorySessionRepository(
             items: [item.id: item], sessions: [session.id: session], interjections: [margin.id: margin]
         )
+        if let document { try repository.saveStructuredDocument(document, itemId: item.id) }
         let engine = SessionEngine(
             profile: RuntimeCapabilityProfile(id: "margin-output", displayName: "Margin output", capabilities: [:]),
             repository: repository
@@ -168,18 +254,19 @@ final class MarginNoteFrontmatterTests: XCTestCase {
         ))
     }
 
-    private func renderNote(item: Item, margin: Interjection) throws -> String {
-        let note = SessionExportMarkdownRenderer.renderMargin(try buildExport(item: item, margin: margin), createdAt: createdAt)
+    private func renderNote(item: Item, margin: Interjection, document: StructuredDocument? = nil) throws -> String {
+        let note = SessionExportMarkdownRenderer.renderMargin(try buildExport(item: item, margin: margin, document: document), createdAt: createdAt)
         XCTAssertFalse(note.isEmpty)
         return note
     }
 }
 
 /// A strict reader for the subset of YAML the note writes: `---`, then `key: value` lines where the
-/// value is a double-quoted scalar, a `[a, b]` flow list of plain words, or a plain word, then `---`.
-/// Anything else fails the test, so a stray line break or unescaped quote can't pass unnoticed.
+/// value is a double-quoted scalar, a `[a, b]` flow list of plain words or of double-quoted scalars,
+/// or a plain word, then `---`. Anything else fails the test, so a stray line break or unescaped
+/// quote can't pass unnoticed.
 enum FrontmatterParser {
-    enum Value: Equatable { case string(String), plain(String), list([String]) }
+    enum Value: Equatable { case string(String), plain(String), list([String]), strings([String]) }
     struct Failure: Error, CustomStringConvertible { let description: String }
 
     static func parse(_ note: String) throws -> [String: Value] {
@@ -204,6 +291,7 @@ enum FrontmatterParser {
 
     private static func value(_ raw: String) throws -> Value {
         if raw.hasPrefix("\"") { return .string(try unquote(raw)) }
+        if raw.hasPrefix("[\""), raw.hasSuffix("]") { return .strings(try quotedList(raw)) }
         if raw.hasPrefix("["), raw.hasSuffix("]") {
             let words = raw.dropFirst().dropLast().components(separatedBy: ", ")
             guard words.allSatisfy(isPlain) else { throw Failure(description: "Bad list: \(raw)") }
@@ -215,6 +303,25 @@ enum FrontmatterParser {
 
     private static func isPlain(_ word: String) -> Bool {
         word.range(of: "^[A-Za-z0-9][A-Za-z0-9_:.-]*$", options: .regularExpression) != nil
+    }
+
+    /// `["a", "b, c"]`: each item is a double-quoted scalar, items separated by `, `.
+    private static func quotedList(_ raw: String) throws -> [String] {
+        var rest = Substring(raw.dropFirst())
+        var items: [String] = []
+        while true {
+            guard rest.hasPrefix("\"") else { throw Failure(description: "Bad list item in: \(raw)") }
+            var end = rest.index(after: rest.startIndex)
+            while end < rest.endIndex, rest[end] != "\"" {
+                end = rest[end] == "\\" ? rest.index(end, offsetBy: 2, limitedBy: rest.endIndex) ?? rest.endIndex : rest.index(after: end)
+            }
+            guard end < rest.endIndex else { throw Failure(description: "Unterminated list item in: \(raw)") }
+            items.append(try unquote(String(rest[...end])))
+            rest = rest[rest.index(after: end)...]
+            if rest == "]" { return items }
+            guard rest.hasPrefix(", ") else { throw Failure(description: "Bad list separator in: \(raw)") }
+            rest = rest.dropFirst(2)
+        }
     }
 
     private static func unquote(_ raw: String) throws -> String {

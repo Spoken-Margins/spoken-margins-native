@@ -20,6 +20,8 @@ public struct ExportItem: Codable, Equatable {
     public var text: String?
     public var sourceTranscript: String? = nil
     public var author: String? = nil
+    /// A paper's DOI or arXiv id, authors and year, when its PDF carried one (#206).
+    public var bibliography: PDFBibliography? = nil
 }
 
 public struct ExportSession: Codable, Equatable {
@@ -53,6 +55,9 @@ public struct ExportInterjection: Codable, Equatable {
     /// Nil retains the legacy audio-recording interpretation for exports created
     /// before written Margins were introduced.
     public var captureKind: InterjectionCaptureKind? = nil
+    /// The 1-based PDF page the Margin's anchor sits on, when the item's structured
+    /// document knows it (#206).
+    public var page: Int? = nil
 }
 
 public struct ExportOptions: Equatable {
