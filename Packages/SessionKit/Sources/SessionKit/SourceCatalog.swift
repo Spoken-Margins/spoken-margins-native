@@ -138,6 +138,11 @@ public struct SourceCatalogEntry: Codable, Equatable, Hashable, Sendable, Identi
 
     /// True when this build's follow path can follow the entry.
     public var isFollowable: Bool { kind.identityKind == .podcastFeed || kind.identityKind == .articleFeed }
+
+    /// True when the first-run drawer offers the entry: followable and not marked explicit (#544,
+    /// owner 2026-09-30, to keep the App Store age rating low). A show with no flag stays in.
+    /// Listeners can still follow any feed themselves, and Following still finds its catalog tags.
+    public var isOfferedAsStarter: Bool { isFollowable && explicit != true }
 }
 
 public struct SourceCatalog: Codable, Equatable, Sendable {
@@ -154,16 +159,17 @@ public struct SourceCatalog: Codable, Equatable, Sendable {
     public var starterRows: [SourceCatalogStarterRow]?
     public var entries: [SourceCatalogEntry]
 
-    /// Subjects that have at least one followable entry, in catalog order.
+    /// Subjects that have at least one entry the drawer offers, in catalog order.
     public var visibleSubjects: [SourceCatalogSubject] {
-        let used = Set(entries.filter(\.isFollowable).flatMap(\.subjects))
+        let used = Set(entries.filter(\.isOfferedAsStarter).flatMap(\.subjects))
         return subjects.filter { used.contains($0.id) }
     }
 
     /// Entries for one subject chip (nil = all): the subject's starter row first,
-    /// in the owner's order, then the rest by best chart rank. Only followable entries.
+    /// in the owner's order, then the rest by best chart rank. Only entries the drawer offers:
+    /// followable and not marked explicit.
     public func entries(forSubject subjectId: String?) -> [SourceCatalogEntry] {
-        let followable = entries.filter(\.isFollowable)
+        let followable = entries.filter(\.isOfferedAsStarter)
         guard let subjectId else {
             return followable.enumerated().sorted { lhs, rhs in
                 (lhs.element.bestRank, lhs.offset) < (rhs.element.bestRank, rhs.offset)

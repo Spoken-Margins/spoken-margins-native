@@ -35,7 +35,7 @@ enum AutomaticMarginNoteGatherer {
                         includeInterjections: true, includeTurns: false,
                         scope: "selected_interjections", interjectionIds: [margin.id]
                     ))
-                    let markdown = SessionExportMarkdownRenderer.renderMargin(export, createdAt: margin.createdAt)
+                    let markdown = SessionExportMarkdownRenderer.renderMargin(export, createdAt: margin.recordedAt(in: session))
                     guard !markdown.isEmpty else { continue }
                     notes.append(.init(id: session.id + ":" + margin.id, markdown: markdown))
                 }

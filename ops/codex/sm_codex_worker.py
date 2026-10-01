@@ -438,7 +438,7 @@ def default_codex(worktree: Path, answer: Path, prompt: str, transcript: Path) -
 
 
 def read_codex_limits(timeout: float = LIMITS_TIMEOUT_S) -> Optional[dict]:
-    """`account/rateLimits/read` over `codex app-server` (as artifacts/tools/codex_limits.py). None on failure."""
+    """`account/rateLimits/read` over `codex app-server` (as ops/codex/codex_limits.py). None on failure."""
     try:
         p = subprocess.Popen([CODEX, 'app-server'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.DEVNULL, text=True, start_new_session=True)
@@ -656,6 +656,17 @@ def pick_branch(ops: Ops, number: int, title: str) -> str:
     raise RuntimeError(f'no free branch name for {base}')
 
 
+def save_diff(ops: Ops, wt: Path, dest: Path) -> None:
+    """Save everything Codex changed, new files included, before the worktree is removed.
+
+    Plain `git diff` leaves out untracked files, so a give-up or failed run lost every file Codex
+    created (#64). Staging first is safe: the commit step stages the same paths again.
+    """
+    ops.run(['git', 'add', '-A', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt)
+    diff = ops.run(['git', 'diff', '--cached', '--binary'], cwd=wt).stdout
+    dest.write_text(diff or '')
+
+
 def run_child(ops: Ops, slot: int, number: int) -> str:
     """Claim, run Codex, verify, and open the PR or stop. Returns the outcome word."""
     lock = ops.home / f'slot-{slot}.lock'
@@ -713,8 +724,7 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
 
         changes = ops.run(['git', 'status', '--porcelain', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt).stdout
         if changes.strip():
-            diff = ops.run(['git', 'diff'], cwd=wt).stdout
-            (run_dir / 'codex.diff').write_text(diff or '')
+            save_diff(ops, wt, run_dir / 'codex.diff')
         give_up = out / 'give-up.txt'
         if give_up.exists():
             reason = (give_up.read_text(errors='replace').strip().splitlines() or ['Codex gave up'])[0]

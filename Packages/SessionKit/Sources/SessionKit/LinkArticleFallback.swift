@@ -24,16 +24,23 @@ public enum LinkArticleFallback {
             return handoff
         } catch {
             record("failed:\(error.localizedDescription)")
-            throw LinkArticleFallbackError(extractorFailure: error.localizedDescription)
+            throw LinkArticleFallbackError(extractorFailure: error.localizedDescription, extractorError: error)
         }
     }
 }
 
 public struct LinkArticleFallbackError: LocalizedError, Equatable, Sendable {
     public let extractorFailure: String
+    /// The extractor's own error, so a caller can tell a refused page (HTTP 403) from one with no article text.
+    public let extractorError: (any Error)?
 
-    public init(extractorFailure: String) {
+    public init(extractorFailure: String, extractorError: (any Error)? = nil) {
         self.extractorFailure = extractorFailure
+        self.extractorError = extractorError
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.extractorFailure == rhs.extractorFailure
     }
 
     public var errorDescription: String? {
