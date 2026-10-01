@@ -76,6 +76,7 @@ public enum ShippedPacketReader {
         decoder.dateDecodingStrategy = .iso8601
         do {
             switch kind {
+            case "item": return try decoder.decode(Item.self, from: payload).id
             case "interjection": return try decoder.decode(Interjection.self, from: payload).id
             case "imported_commentary_layer": return try decoder.decode(ImportedCommentaryLayer.self, from: payload).id
             case "imported_commentary_interjection":

@@ -570,6 +570,9 @@ public struct PDFDocumentStructure: Codable, Equatable, Sendable {
     public var analyzedPageCount: Int
     public var tables: [PDFDocumentTable]
     public var pageTitles: [PDFDocumentPageTitle]
+    /// The paper's identifier for reference managers (#206). Optional and left out when
+    /// nil, so items saved before it existed decode and Build 29 ignores it.
+    public var bibliography: PDFBibliography?
 
     public init(
         schemaVersion: String = "pdf-document-structure.v1",
@@ -578,7 +581,8 @@ public struct PDFDocumentStructure: Codable, Equatable, Sendable {
         pageCount: Int,
         analyzedPageCount: Int,
         tables: [PDFDocumentTable] = [],
-        pageTitles: [PDFDocumentPageTitle] = []
+        pageTitles: [PDFDocumentPageTitle] = [],
+        bibliography: PDFBibliography? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.extractionEngine = extractionEngine
@@ -587,6 +591,25 @@ public struct PDFDocumentStructure: Codable, Equatable, Sendable {
         self.analyzedPageCount = analyzedPageCount
         self.tables = tables
         self.pageTitles = pageTitles
+        self.bibliography = bibliography
+    }
+}
+
+/// What Zotero or a citation plugin needs to match a paper to its library entry (#206):
+/// a DOI or arXiv id from the first pages, and the PDF metadata's authors, year and title.
+public struct PDFBibliography: Codable, Equatable, Sendable {
+    public var doi: String?
+    public var arxivId: String?
+    public var authors: [String]
+    public var year: Int?
+    public var title: String?
+
+    public init(doi: String? = nil, arxivId: String? = nil, authors: [String] = [], year: Int? = nil, title: String? = nil) {
+        self.doi = doi
+        self.arxivId = arxivId
+        self.authors = authors
+        self.year = year
+        self.title = title
     }
 }
 

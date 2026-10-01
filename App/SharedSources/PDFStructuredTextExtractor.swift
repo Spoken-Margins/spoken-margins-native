@@ -214,6 +214,18 @@ enum PDFStructuredTextExtractor {
         )
     }
 
+    /// The paper's DOI or arXiv id from its first two pages, with the metadata's authors,
+    /// year and title, so a Margin note can be matched in Zotero (#206). Nil without an id.
+    static func bibliography(for document: PDFDocument) -> PDFBibliography? {
+        let attributes = document.documentAttributes
+        return BibliographicReferenceExtractor.extract(
+            pageTexts: (0..<min(2, document.pageCount)).compactMap { document.page(at: $0)?.string },
+            metadataTitle: attributes?[PDFDocumentAttribute.titleAttribute] as? String,
+            metadataAuthor: attributes?[PDFDocumentAttribute.authorAttribute] as? String,
+            metadataCreationDate: attributes?[PDFDocumentAttribute.creationDateAttribute] as? Date
+        )
+    }
+
     /// The item title v1 gave a PDF: its metadata title, else its first level-1
     /// heading (ObsidianMarkdownParser took the first "# " line). The same title
     /// gives a re-imported PDF the same item id, so the edition guard applies.
