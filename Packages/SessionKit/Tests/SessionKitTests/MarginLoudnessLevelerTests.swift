@@ -41,8 +41,10 @@ final class MarginLoudnessLevelerTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(result.input.integratedLUFS), -36, accuracy: 0.1)
         XCTAssertEqual(result.plan.gainDB, LoudnessLeveling.maximumBoostDB, accuracy: 0.01)
         let written = try MarginLoudnessLeveler.measure(fileAt: destination)
-        // 20 dB under with the 18 dB cap lands 2 LU short; allow for rounding.
-        XCTAssertEqual(try XCTUnwrap(written.integratedLUFS), -16, accuracy: 2.01)
+        // 20 dB under with the 18 dB cap lands 2 LU short of -16, at -18. The limiter may shave a few
+        // hundredths off the loudest syllables, so check against that point, not the edge of a band
+        // around -16 (it read -18.02 on the Mac).
+        XCTAssertEqual(try XCTUnwrap(written.integratedLUFS), -36 + LoudnessLeveling.maximumBoostDB, accuracy: 0.5)
         XCTAssertLessThanOrEqual(written.truePeakDBTP, LoudnessLeveling.truePeakCeilingDBTP)
     }
 
