@@ -619,7 +619,11 @@ public final class SessionEngine {
         }
         // An episode that played to its end is stopped, even if its last start never confirmed:
         // a seek leaves it paused at the new place rather than waiting on that start (#588).
-        let endedBeforeSeek = snapshot.status.isPlaybackActive && audio.isPlaybackComplete(targetId: session.currentTargetId)
+        // This holds when progress sync already showed it paused, too: an end inferred from a
+        // player that stopped short was never a listener's pause, so the client must be told,
+        // or a seek near the end is read as the end again.
+        let endedBeforeSeek = (snapshot.status.isPlaybackActive || snapshot.status == .paused)
+            && audio.isPlaybackComplete(targetId: session.currentTargetId)
         let updated = mediaSession(session, movedTo: mediaTimeMs)
         currentSession = updated
         try persistSession(updated)

@@ -85,6 +85,26 @@ final class EpisodeEndSeekTests: XCTestCase {
         XCTAssertEqual(audio.mediaPlays.last, oneSecondBack, "Play starts where the listener scrubbed to")
     }
 
+    func testScrubbingNearTheEndAfterThePlayerStoppedShortKeepsThatPlace() throws {
+        // AVPlayer can stop a few hundred milliseconds short of the end without its end
+        // notification; the adapter infers the end from the stopped position instead.
+        let (engine, audio) = try engine(startingAt: 170_000)
+        audio.startStatus = .confirmed
+        XCTAssertEqual(try engine.syncPlaybackProgress().status, .playing)
+        audio.mediaTimeMs = durationMs - 950
+        audio.stoppedShortOfTheEnd = true
+        XCTAssertEqual(try engine.syncPlaybackProgress().status, .paused)
+
+        let nearTheEnd = durationMs - 1_000
+        XCTAssertEqual(try engine.seekMedia(toMediaTimeMs: nearTheEnd).status, .paused)
+        let later = try engine.syncPlaybackProgress()
+        XCTAssertEqual(later.status, .paused)
+        XCTAssertEqual(audio.pauses, 1, "the player is told it's paused, so the end isn't inferred again")
+
+        _ = try engine.resumePlayback()
+        XCTAssertEqual(audio.mediaPlays.last, nearTheEnd, "the scrub isn't undone by the inferred end")
+    }
+
     func testASeekWhilePlayingKeepsPlaying() throws {
         let (engine, audio) = try engine(startingAt: 60_000)
         audio.startStatus = .confirmed
@@ -182,6 +202,10 @@ private final class EpisodeAudioClient: AudioPlaybackClient {
     var activeTargetId: String?
     var mediaTimeMs: Int?
     var ended = false
+    /// The player paused itself just short of the end; the adapter infers the end from the
+    /// position unless the listener paused (MediaPlaybackCompletionPolicy.reachedEffectiveEnd).
+    var stoppedShortOfTheEnd = false
+    var listenerPaused = false
     var mediaPlays: [Int] = []
     var pauses = 0
 
@@ -201,6 +225,8 @@ private final class EpisodeAudioClient: AudioPlaybackClient {
         activeTargetId = targetId
         self.mediaTimeMs = mediaTimeMs
         mediaPlays.append(mediaTimeMs)
+        listenerPaused = false
+        stoppedShortOfTheEnd = false
         ended = endsWhenStartedAtTheEnd && durationMs - mediaTimeMs <= 1_500
     }
 
@@ -210,7 +236,10 @@ private final class EpisodeAudioClient: AudioPlaybackClient {
         if mediaTimeMs < durationMs { ended = false }
     }
 
-    func pause() throws { pauses += 1 }
+    func pause() throws {
+        pauses += 1
+        listenerPaused = true
+    }
 
     func currentPlaybackPosition() -> PlaybackPosition? {
         mediaTimeMs.map {
@@ -218,6 +247,12 @@ private final class EpisodeAudioClient: AudioPlaybackClient {
         }
     }
 
-    func isPlaybackComplete(targetId: String) -> Bool { ended && targetId == activeTargetId }
-    func playbackStartStatus(targetId: String) -> PlaybackStartStatus { ended ? .pending : startStatus }
+    func isPlaybackComplete(targetId: String) -> Bool { isOver && targetId == activeTargetId }
+    func playbackStartStatus(targetId: String) -> PlaybackStartStatus { isOver ? .pending : startStatus }
+
+    private var isOver: Bool {
+        if ended { return true }
+        guard stoppedShortOfTheEnd, !listenerPaused, let mediaTimeMs, mediaTimeMs > 0 else { return false }
+        return durationMs - mediaTimeMs <= 1_500
+    }
 }
