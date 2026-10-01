@@ -17,8 +17,11 @@ final class CatalogDrawerModel: ObservableObject {
     static let followedSourcesKey = "catalogDrawerFollowedSourcesV1"
 
     @Published var isPresented = false
-    @Published var selectedSubject: String?
-    @Published private(set) var catalog: SourceCatalog?
+    @Published var selectedSubject: String? { didSet { refreshEntries() } }
+    @Published private(set) var catalog: SourceCatalog? { didSet { refreshEntries() } }
+    /// The rows for the selected subject, refiltered only when the catalog or subject changes
+    /// (#246: it was refiltered on every render, including one per Follow tap).
+    @Published private(set) var entries: [SourceCatalogEntry] = []
     @Published private(set) var loadError: String?
     @Published private(set) var followStates: [String: FollowState] = [:]
 
@@ -62,7 +65,6 @@ final class CatalogDrawerModel: ObservableObject {
         }
     }
 
-    var entries: [SourceCatalogEntry] { catalog?.entries(forSubject: selectedSubject) ?? [] }
     var subjects: [SourceCatalogSubject] { catalog?.visibleSubjects ?? [] }
     var followedCount: Int { followStates.values.filter { $0 == .followed }.count }
 
@@ -109,19 +111,29 @@ final class CatalogDrawerModel: ObservableObject {
         if catalog == nil { catalog = snapshot }
     }
 
-    func state(for entry: SourceCatalogEntry) -> FollowState? {
-        if let state = followStates[entry.id] { return state }
-        guard let catalog else { return nil }
-        let recorded = (defaults.dictionary(forKey: Self.followedSourcesKey) as? [String: String])?[entry.id]
-        return CatalogFollowState.isFollowed(entry, in: catalog, recordedSourceId: recorded, subscriptions: subscriptions())
-            ? .followed : nil
+    private func refreshEntries() {
+        entries = catalog?.entries(forSubject: selectedSubject) ?? []
     }
 
-    /// Follow state for every row in one pass (#246); rows without a state are left out.
+    func state(for entry: SourceCatalogEntry) -> FollowState? {
+        followStates(for: [entry])[entry.id]
+    }
+
+    /// Follow state for every row in one pass (#246); rows without a state are left out. The list
+    /// asks once per render, so the recorded follows and the subscriptions are read once, not
+    /// twice per row. Subscriptions aren't cached: they change in Following without telling
+    /// the drawer.
     func followStates(for entries: [SourceCatalogEntry]) -> [String: FollowState] {
         var states: [String: FollowState] = [:]
+        if let catalog, entries.contains(where: { followStates[$0.id] == nil }) {
+            let recorded = defaults.dictionary(forKey: Self.followedSourcesKey) as? [String: String] ?? [:]
+            let followed = CatalogFollowState.followedEntryIds(in: catalog, recordedSourceIds: recorded, subscriptions: subscriptions())
+            for entry in entries where followed.contains(entry.id) {
+                states[entry.id] = .followed
+            }
+        }
         for entry in entries {
-            if let state = state(for: entry) { states[entry.id] = state }
+            if let state = followStates[entry.id] { states[entry.id] = state }
         }
         return states
     }
@@ -213,10 +225,12 @@ struct CatalogDrawerView: View {
         } else if drawer.catalog == nil {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
+            let states = drawer.followStates(for: drawer.entries)
             List {
                 Section {
                     ForEach(drawer.entries) { entry in
-                        CatalogDrawerRow(entry: entry)
+                        CatalogDrawerRow(entry: entry, state: states[entry.id]) { drawer.toggleFollow(entry) }
+                            .equatable()
                     }
                 } header: {
                     Text("New episodes show up in Following. Nothing downloads until you choose it.")
@@ -239,27 +253,30 @@ struct CatalogDrawerView: View {
     }
 }
 
-private struct CatalogDrawerRow: View {
-    @EnvironmentObject private var drawer: CatalogDrawerModel
+/// One drawer row. It gets its follow state from the list's single pass instead of observing the
+/// drawer, so a Follow tap re-renders only the row whose state changed (#246).
+private struct CatalogDrawerRow: View, Equatable {
     let entry: SourceCatalogEntry
+    let state: CatalogDrawerModel.FollowState?
+    let toggleFollow: () -> Void
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.entry == rhs.entry && lhs.state == rhs.state
+    }
 
     var body: some View {
         HStack(spacing: 12) {
-            AsyncImage(url: entry.artworkURL.flatMap(URL.init(string:))) { image in
-                image.resizable().scaledToFill()
-            } placeholder: {
-                AppColors.panel.overlay { Image(systemName: "headphones").foregroundStyle(AppColors.secondaryText) }
-            }
-            .frame(width: 56, height: 56)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .accessibilityHidden(true)
+            ArtworkThumbnail(url: entry.artworkURL.flatMap(URL.init(string:)))
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.title).font(.headline).lineLimit(2)
                 if let author = entry.author {
                     Text(author).font(.caption).foregroundStyle(AppColors.secondaryText).lineLimit(1)
                 }
-                if case .failed(let message) = drawer.state(for: entry) {
+                if case .failed(let message) = state {
                     Text(message).font(.caption).foregroundStyle(AppColors.secondaryText).lineLimit(2)
                 }
             }
@@ -272,7 +289,7 @@ private struct CatalogDrawerRow: View {
 
     @ViewBuilder
     private var followButton: some View {
-        switch drawer.state(for: entry) {
+        switch state {
         case .following:
             ProgressView().frame(minWidth: 96, minHeight: 44)
         case .followed:
@@ -281,12 +298,12 @@ private struct CatalogDrawerRow: View {
                 .frame(minWidth: 96, minHeight: 44)
                 .accessibilityIdentifier("catalog.followed.\(entry.id)")
         case .failed:
-            Button("Retry") { drawer.toggleFollow(entry) }
+            Button("Retry", action: toggleFollow)
                 .buttonStyle(.bordered)
                 .frame(minWidth: 96, minHeight: 44)
                 .accessibilityIdentifier("catalog.follow.\(entry.id)")
         case nil:
-            Button("Follow") { drawer.toggleFollow(entry) }
+            Button("Follow", action: toggleFollow)
                 .buttonStyle(.borderedProminent)
                 .tint(AppColors.evergreen)
                 .frame(minWidth: 96, minHeight: 44)
