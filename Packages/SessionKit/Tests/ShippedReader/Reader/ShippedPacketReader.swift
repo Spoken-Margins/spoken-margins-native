@@ -35,4 +35,103 @@ public enum ShippedPacketReader {
             throw Rejected(description: "\(build) could not import \(packetURL.lastPathComponent): \(error)")
         }
     }
+
+    /// A Margin as the shipped build saved it on import.
+    public struct ImportedMargin: Equatable, Sendable {
+        public let packageScopedId: String
+        public let approvedTranscript: String
+
+        public init(packageScopedId: String, approvedTranscript: String) {
+            self.packageScopedId = packageScopedId
+            self.approvedTranscript = approvedTranscript
+        }
+    }
+
+    /// Imports a packet as `importPacket(at:)` does, then reads back the Margins the shipped build saved.
+    public static func importedMargins(at packetURL: URL) throws -> [ImportedMargin] {
+        let scratch = FileManager.default.temporaryDirectory
+            .appending(path: "shipped-reader-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        do {
+            try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+            let contents = try SpokenMarginsPackageArchive.read(from: packetURL, extractingAssetsTo: scratch)
+            let repository = InMemorySessionRepository()
+            guard case .imported(let layerId, _) = try SpokenMarginsPackageImporter.importPackage(
+                contents, repository: repository) else {
+                throw Rejected(description: "not imported")
+            }
+            return try repository.loadImportedCommentaryInterjections(layerId: layerId).map {
+                ImportedMargin(packageScopedId: $0.packageScopedId, approvedTranscript: $0.approvedTranscript)
+            }
+        } catch {
+            throw Rejected(description: "\(build) could not import \(packetURL.lastPathComponent): \(error)")
+        }
+    }
+
+    /// Decodes a saved record payload with the shipped build's types and date format, as its
+    /// SQLite store does on load. `kind` is the store's record kind. Returns the record's id.
+    @discardableResult
+    public static func decodeStoredRecord(kind: String, payload: Data) throws -> String {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        do {
+            switch kind {
+            case "interjection": return try decoder.decode(Interjection.self, from: payload).id
+            case "imported_commentary_layer": return try decoder.decode(ImportedCommentaryLayer.self, from: payload).id
+            case "imported_commentary_interjection":
+                return try decoder.decode(ImportedCommentaryInterjection.self, from: payload).id
+            default: throw Rejected(description: "no shipped type for record kind \(kind)")
+            }
+        } catch let error as Rejected {
+            throw error
+        } catch {
+            throw Rejected(description: "\(build) could not decode a saved \(kind): \(error)")
+        }
+    }
+
+    /// One written Margin for `writeTextPacket`.
+    public struct TextMargin: Sendable {
+        public let packageScopedId: String
+        public let transcript: String
+        public let exactText: String
+
+        public init(packageScopedId: String, transcript: String, exactText: String) {
+            self.packageScopedId = packageScopedId
+            self.transcript = transcript
+            self.exactText = exactText
+        }
+    }
+
+    /// Writes a text-only packet about a public article with the shipped build's own builder and
+    /// archive writer, so a test can compare the current build's output with it byte for byte.
+    public static func writeTextPacket(
+        to url: URL,
+        packageId: String,
+        createdAt: Date,
+        title: String,
+        canonicalURL: String,
+        senderDisplayLabel: String?,
+        margins: [TextMargin]
+    ) throws {
+        let selections = margins.map { margin in
+            ReviewedInterjectionSelection(
+                packageScopedId: margin.packageScopedId,
+                revision: InterjectionShareRevision(
+                    id: "revision-\(margin.packageScopedId)", interjectionId: margin.packageScopedId,
+                    itemId: "item", sessionId: "session", createdAt: createdAt,
+                    approvedTranscript: margin.transcript, anchorBefore: "", anchorAfter: "",
+                    status: .senderApproved
+                ),
+                anchor: PortableAnchorEvidence(anchorType: .text, exactText: margin.exactText),
+                representation: .textOnly
+            )
+        }
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: packageId, createdAt: createdAt,
+            item: SharedItemIdentity(itemType: .text, canonicalURL: canonicalURL, title: title),
+            itemTransportSelection: .reference, selections: selections,
+            senderDisplayLabel: senderDisplayLabel, suggestedRevealMode: .companion
+        )
+        _ = try SpokenMarginsPackageArchive.write(prepared, to: url)
+    }
 }

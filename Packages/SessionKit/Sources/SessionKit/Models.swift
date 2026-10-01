@@ -1249,6 +1249,10 @@ public struct Interjection: Codable, Equatable, Sendable {
     public var privateSharingNote: String? = nil
     /// Missing values predate written Margins and retain audio-recording semantics.
     public var captureKind: InterjectionCaptureKind? = nil
+    /// Set when this Margin answers someone's shared Margin (#472). Build 29 ignores it.
+    public var replyTo: MarginReplyLink? = nil
+    /// The packets this Margin went out in, so replies that come back link to it. Never exported.
+    public var sharedAs: [MarginPacketIdentity]? = nil
 
     public init(
         id: String,
@@ -1274,7 +1278,9 @@ public struct Interjection: Codable, Equatable, Sendable {
         podcastAnchorEvidenceFailureReason: String? = nil,
         isStarredForSharing: Bool? = nil,
         privateSharingNote: String? = nil,
-        captureKind: InterjectionCaptureKind? = nil
+        captureKind: InterjectionCaptureKind? = nil,
+        replyTo: MarginReplyLink? = nil,
+        sharedAs: [MarginPacketIdentity]? = nil
     ) {
         self.id = id
         self.itemId = itemId
@@ -1300,6 +1306,8 @@ public struct Interjection: Codable, Equatable, Sendable {
         self.isStarredForSharing = isStarredForSharing
         self.privateSharingNote = privateSharingNote
         self.captureKind = captureKind
+        self.replyTo = replyTo
+        self.sharedAs = sharedAs
     }
 }
 

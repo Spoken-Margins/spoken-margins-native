@@ -1,3 +1,4 @@
+import SessionKit
 import SwiftUI
 
 struct ExperienceSourcesScreen: View {
@@ -13,6 +14,10 @@ struct ExperienceSourcesScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var filter: Filter = .all
+    /// Kind chip and subject menu (#485); subjects hidden on this device live in its preferences.
+    @State private var kind: SourceContentKind?
+    @State private var subject: String?
+    @AppStorage("following.hiddenSubjects") private var hiddenSubjectsStorage = ""
     @State private var pendingUnfollowID: String?
     @FocusState private var feedURLIsFocused: Bool
 
@@ -74,6 +79,8 @@ struct ExperienceSourcesScreen: View {
                 Text("Items already in your Library will be kept.")
             }
             .task { model.refreshQuickAddFeed(force: false) }
+            // The catalog tags followed shows with a kind and subjects (I2).
+            .task { await catalogDrawer.loadSnapshot() }
         }
     }
 
@@ -140,12 +147,58 @@ struct ExperienceSourcesScreen: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(Filter.allCases) { option in
-                    Button { filter = option } label: {
-                        ExperienceFilterChip(isActive: filter == option) { Text(option.rawValue) }
+                    Button {
+                        filter = option
+                        if option == .all { kind = nil; subject = nil }
+                    } label: {
+                        ExperienceFilterChip(isActive: filter == option && (option != .all || !isNarrowed)) { Text(option.rawValue) }
                     }
                     .buttonStyle(.plain)
                 }
+                ForEach(FollowingFilter.kinds(in: inboxCategories), id: \.self) { option in
+                    Button { kind = kind == option ? nil : option } label: {
+                        ExperienceFilterChip(isActive: kind == option) { Text(Self.title(of: option)) }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("sources.filter.kind.\(option.rawValue)")
+                }
+                subjectMenu
             }
+        }
+    }
+
+    @ViewBuilder
+    private var subjectMenu: some View {
+        let subjects = FollowingFilter.subjects(in: inboxCategories, catalog: catalogDrawer.catalog)
+        if !subjects.isEmpty || !hiddenSubjects.isEmpty {
+            Menu {
+                Picker("Subject", selection: $subject) {
+                    Text("All subjects").tag(String?.none)
+                    ForEach(subjects) { option in
+                        Text(option.title).tag(Optional(option.id))
+                    }
+                }
+                let hideable = subjects.filter { !hiddenSubjects.contains($0.id) }
+                if !hideable.isEmpty {
+                    Menu("Hide a subject") {
+                        ForEach(hideable) { option in
+                            Button(option.title) { setHidden(option.id, true) }
+                        }
+                    }
+                }
+                if !hiddenSubjects.isEmpty {
+                    Section("Hidden") {
+                        ForEach(hiddenSubjects.sorted(), id: \.self) { id in
+                            Button("Show \(subjectTitle(id))") { setHidden(id, false) }
+                        }
+                    }
+                }
+            } label: {
+                ExperienceFilterChip(isActive: subject != nil) {
+                    Label(subject.map(subjectTitle) ?? "Subject", systemImage: "line.3.horizontal.decrease")
+                }
+            }
+            .accessibilityIdentifier("sources.filter.subject")
         }
     }
 
@@ -235,16 +288,65 @@ struct ExperienceSourcesScreen: View {
     }
 
     private var filteredCandidates: [QuickAddCandidate] {
-        model.quickAddCandidates.filter { candidate in
+        let narrowing = FollowingFilter(kind: kind, subject: subject, hiddenSubjects: hiddenSubjects)
+        let categories = subscriptionCategories
+        return model.quickAddCandidates.filter { candidate in
             switch (filter, candidate) {
-            case (.all, _), (.feeds, .followedSource), (.folder, .localFile): true
+            case (.all, _), (.feeds, .followedSource), (.folder, .localFile): narrowing.includes(category(of: candidate, in: categories))
             default: false
             }
         }
     }
 
+    private var isNarrowed: Bool { kind != nil || subject != nil }
+
+    private var hiddenSubjects: Set<String> {
+        Set(hiddenSubjectsStorage.split(separator: "\n").map(String.init))
+    }
+
+    private func setHidden(_ id: String, _ hidden: Bool) {
+        var ids = hiddenSubjects
+        if hidden { ids.insert(id) } else { ids.remove(id) }
+        hiddenSubjectsStorage = ids.sorted().joined(separator: "\n")
+        if hidden, subject == id { subject = nil }
+    }
+
+    /// Categories of the inbox's followed-feed entries, for the chips and menu.
+    private var inboxCategories: [FollowedSourceCategory] {
+        let categories = subscriptionCategories
+        return model.quickAddCandidates.compactMap { category(of: $0, in: categories) }
+    }
+
+    /// One lookup per followed feed, not per inbox entry: feeds keep up to 200 entries each.
+    private var subscriptionCategories: [String: FollowedSourceCategory] {
+        FollowedSourceCategory.bySubscription(model.feedSubscriptions, catalog: catalogDrawer.catalog)
+    }
+
+    /// nil for a Quick Folder file. A feed entry whose subscription is gone is classed by its audio.
+    private func category(of candidate: QuickAddCandidate, in categories: [String: FollowedSourceCategory]) -> FollowedSourceCategory? {
+        guard case .followedSource(let entry) = candidate else { return nil }
+        return categories[entry.subscriptionId] ?? FollowedSourceCategory(contentKind: entry.audioURL == nil ? .article : .podcast)
+    }
+
+    private func subjectTitle(_ id: String) -> String {
+        catalogDrawer.catalog?.subjects.first { $0.id == id }?.title ?? id
+    }
+
+    private static func title(of kind: SourceContentKind) -> String {
+        switch kind {
+        case .podcast: "Podcasts"
+        case .article: "Articles"
+        case .newsletter: "Newsletters"
+        case .paper: "Papers"
+        case .news: "News"
+        case .video: "Videos"
+        default: kind.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
     private var emptyDetail: String {
-        switch filter {
+        if isNarrowed { return "Nothing new matches this filter." }
+        return switch filter {
         case .all: "Follow a feed or connect a Quick Folder. New entries will wait for an explicit choice."
         case .feeds: "No new entries from followed feeds."
         case .folder: "No new eligible files in your Quick Folder."
