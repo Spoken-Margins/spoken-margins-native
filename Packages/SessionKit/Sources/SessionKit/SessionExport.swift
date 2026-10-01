@@ -19,6 +19,9 @@ public struct ExportItem: Codable, Equatable {
     public var includedFullText: Bool
     public var text: String?
     public var sourceTranscript: String? = nil
+    public var author: String? = nil
+    /// A paper's DOI or arXiv id, authors and year, when its PDF carried one (#206).
+    public var bibliography: PDFBibliography? = nil
 }
 
 public struct ExportSession: Codable, Equatable {
@@ -52,6 +55,9 @@ public struct ExportInterjection: Codable, Equatable {
     /// Nil retains the legacy audio-recording interpretation for exports created
     /// before written Margins were introduced.
     public var captureKind: InterjectionCaptureKind? = nil
+    /// The 1-based PDF page the Margin's anchor sits on, when the item's structured
+    /// document knows it (#206).
+    public var page: Int? = nil
 }
 
 public struct ExportOptions: Equatable {
@@ -94,12 +100,20 @@ public struct ExportOptions: Equatable {
 public enum SessionExportMarkdownRenderer {
     /// Stable single-note export: session progress must not rewrite a vault note
     /// every playback tick. The canonical export already scopes/bounds context.
+    /// The YAML properties block lets Obsidian and other Markdown tools search the note
+    /// without Spoken Margins (#491); the body below it is unchanged from Build 29, so
+    /// the notes-folder writer rewrites its own unedited notes once and edited ones never.
     public static func renderMargin(_ export: SessionExport, createdAt: Date) -> String {
         guard let note = export.interjections.first, export.interjections.count == 1 else { return "" }
-        var lines = ["# " + export.item.title, "", "Created: " + ISO8601DateFormatter().string(from: createdAt)]
+        let onSource = note.targetType == InterjectionTargetType.item.rawValue
+        let created = ISO8601DateFormatter().string(from: createdAt)
+        var lines = MarginNoteFrontmatter(export: export, margin: note, created: created).lines
+        lines += ["# " + export.item.title, "", "Created: " + created]
         if let reference = export.item.externalReference { lines += ["Source: " + reference] }
         lines += ["Target: \(note.targetType) / \(note.targetId)", "Session: \(note.sessionId)", "Margin: \(note.id)"]
-        lines += ["Position: " + (note.mediaTimeMs.map { "\($0) ms" } ?? "\(note.roughPercent)%"), ""]
+        // A Margin on an AI reply sits in the reply, not in the source (#112).
+        let position = note.mediaTimeMs.map { "\($0) ms" } ?? "\(note.roughPercent)%"
+        lines += [(onSource ? "Position: " : "Position in AI reply: ") + position, ""]
         lines += [note.captureKind == .written ? "## Written Margin" : "## Listener Margin", "", note.transcript ?? "", ""]
         if !note.anchorBefore.isEmpty { lines += ["## Context before", "", note.anchorBefore, ""] }
         if !note.anchorAfter.isEmpty { lines += ["## Context after", "", note.anchorAfter, ""] }

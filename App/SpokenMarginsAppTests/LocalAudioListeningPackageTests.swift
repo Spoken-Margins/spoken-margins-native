@@ -19,7 +19,9 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let routed = RoutedAudioPlaybackClient(speech: NoopAudioPlaybackClient(), media: sourcePlayer)
         let model = Gate1AppModel(audioPlaybackClient: routed, databaseURLOverride: db)
         model.resetAndSeed()
-        model.ttsVoiceSelection = .system
+        // A fresh simulator parks the improved voice as a pending first-use choice, and startItem
+        // waits for it. Earlier classes used to make that choice for this one (#286).
+        model.declineCurrentTerms()
         // The offline ledger is rooted at Application Support and reconciles
         // rows against disk, so the owned file lives where production puts it.
         let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -70,6 +72,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         for _ in 0..<750 where model.diagnostics["localAudioSkim:\(item.id)"] != "ready" { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(model.diagnostics["localAudioSkim:\(item.id)"], "ready")
         model.startItem(id: item.id)
+        XCTAssertFalse(model.isTermsOfUsePresented, "the first-use voice choice must not hold playback (#286)")
         // Exercise the real source adapter: nativeMediaId is an asset ID, not a URL.
         for _ in 0..<150 where (sourcePlayer.currentMediaTimeMs() ?? 0) < 200 {
             try await Task.sleep(for: .milliseconds(20))

@@ -797,7 +797,14 @@ enum SpeechPlaybackPlanner {
     }
 }
 
-public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unchecked Sendable {
+/// A voice that can say it is still moving through its words where its place in the source text
+/// stands still, as it does while speaking a citation list expanded from one bracket (#432 audit).
+public protocol SpokenProgressReporting: AnyObject {
+    /// Grows each time the voice starts another word; nil when the voice can't tell.
+    func spokenProgress() -> Int?
+}
+
+public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, SpokenProgressReporting, @unchecked Sendable {
     #if canImport(AVFoundation)
     private var synthesizer = AVSpeechSynthesizer()
     #endif
@@ -807,6 +814,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
     private var lastStartOffset = 0
     private var currentOffset: Int?
     private var currentRangeLength = 0
+    private var spokenRanges = 0
     private var completedTargetId: String?
     private var playbackComplete = false
     private var pendingStartTargetId: String?
@@ -1052,6 +1060,10 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         currentOffset
     }
 
+    public func spokenProgress() -> Int? {
+        spokenRanges
+    }
+
     public func currentPlaybackPosition() -> PlaybackPosition? {
         guard let currentOffset else { return nil }
         let end = min(preparedSourceText.count, currentOffset + max(1, currentRangeLength))
@@ -1268,6 +1280,7 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         let end = chunk.sourceOffset(atSpokenUTF16Offset: markerStart + markerLength)
         currentOffset = start
         currentRangeLength = max(0, end - start)
+        spokenRanges += 1
     }
 
     public func speechSynthesizer(

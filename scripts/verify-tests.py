@@ -131,7 +131,7 @@ def input_identity():
     for relative in sorted(set(paths)):
         if not (relative.startswith(('App/', 'Packages/', 'Contracts/', 'Config/', 'TestPlans/',
                                      'SpokenMarginsNative.xcodeproj/', 'scripts/', 'validation/',
-                                     'Tools/', 'schemas/'))
+                                     'Tools/', 'schemas/', 'ops/'))
                 or relative in ('project.yml', 'package.json', 'package-lock.json')):
             continue
         path = ROOT / relative
@@ -191,6 +191,12 @@ def log_errors(text, limit=3, width=300):
                 break
             found.append('failed: ' + line.strip())
     return [line[:width] for line in dict.fromkeys(found)][:limit]
+
+
+def ops_test_folders(root=None):
+    """Each folder under ops/ that holds its own Python tests (test_*.py), e.g. ops/dial."""
+    base = Path(root or ROOT)
+    return sorted({path.parent for path in (base / 'ops').rglob('test_*.py')})
 
 
 class Run:
@@ -289,11 +295,12 @@ class Run:
                 entry['gating'] = {test: records.get(test, {}).get('status', 'missing')
                                    for test in sorted(set(expected or ()) - probation)}
                 entry['probation'] = {test: records.get(test, {}).get('status', 'missing') for test in sorted(probation)}
-        if name == 'runner-tests':
+        if name == 'runner-tests' or name.startswith('ops-'):
             match = re.search(r'Ran (\d+) tests? in ', text)
             entry['executed_count'] = int(match[1]) if match else 0
             if not entry['executed_count']:
-                errors.append('Infrastructure runner executed zero tests')
+                errors.append('Infrastructure runner executed zero tests' if name == 'runner-tests'
+                              else f'{name} executed zero tests')
         if name == 'browser':
             match = re.search(r'^# tests (\d+)$', text, re.M)
             entry['executed_count'] = int(match[1]) if match else 0
@@ -324,6 +331,7 @@ class Run:
 
     def host_steps(self):
         self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'])
+        self.ops_steps()
         self.command('contracts', [sys.executable, 'scripts/validate-contracts.py'])
         self.command('surfaces', [sys.executable, 'scripts/validate-surface-contracts.py'])
         self.command('inventory', [sys.executable, 'scripts/test_inventory.py'])
@@ -339,6 +347,14 @@ class Run:
 
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed during fast verification')
+
+    def ops_steps(self, root=None):
+        """The ops tools' own tests (ops/dial, ops/codex), one step per folder: each folder imports its
+        module from beside its tests, so each is its own discovery top level."""
+        base = Path(root or ROOT)
+        for folder in ops_test_folders(base):
+            name = 'ops-' + '-'.join(folder.relative_to(base).parts[1:]) if folder != base / 'ops' else 'ops'
+            self.command(name, [sys.executable, '-m', 'unittest', 'discover', '-s', str(folder), '-t', str(folder)])
 
     def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None):
         if input_identity() != self.manifest['input_sha256']:
@@ -456,7 +472,7 @@ def main():
     if args.list:
         print('\n'.join(f'{t} ({status})' for status, tests in journeys.items() for t in tests) if journeys
               else '\n'.join(sorted(plan_tests(ROOT, PLANS[args.plan][1]))) if args.plan in PLANS
-              else 'runner-tests, contracts, surfaces, inventory, browser, all SessionKit tests')
+              else 'runner-tests, ops tests, contracts, surfaces, inventory, browser, all SessionKit tests')
         return 0
     if journeys is not None and not any(journeys.values()):
         print('No scripted journeys are listed in TestPlans/scripted-journeys.json; nothing to run.')

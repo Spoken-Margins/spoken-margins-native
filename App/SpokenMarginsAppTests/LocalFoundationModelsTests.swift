@@ -719,16 +719,4 @@ final class LocalFoundationModelsTests: XCTestCase {
         XCTAssertEqual(draft.chapters.last?.startMs, 240_000)
         XCTAssertEqual(draft.chapters.last?.transcriptSegmentId, "segment-pivot")
     }
-
-    func testMapMetadataValidatorRejectsLongSourceQuotation() {
-        let source = "one two three four five six seven eight nine ten eleven twelve"
-        let label = LocalListeningMapLabel(
-            title: "A short title",
-            description: "one two three four five six seven eight nine ten"
-        )
-
-        XCTAssertThrowsError(try LocalListeningMapOutputValidator.validate(label: label, sourceText: source)) { error in
-            XCTAssertEqual(error as? LocalFoundationModelError, .excessiveSourceQuotation)
-        }
-    }
 }

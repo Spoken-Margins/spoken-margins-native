@@ -102,6 +102,13 @@ final class CatalogDrawerModel: ObservableObject {
         }
     }
 
+    /// The stored catalog for Following's kind and subject tags (#485): no refresh, and it
+    /// doesn't count as the drawer's load, so opening the drawer still refreshes it.
+    func loadSnapshot() async {
+        guard catalog == nil, let store, let snapshot = try? await store.current() else { return }
+        if catalog == nil { catalog = snapshot }
+    }
+
     func state(for entry: SourceCatalogEntry) -> FollowState? {
         if let state = followStates[entry.id] { return state }
         guard let catalog else { return nil }
@@ -147,7 +154,7 @@ struct CatalogDrawerView: View {
                 list
             }
             .background(AppColors.bone)
-            .navigationTitle("Follow a few podcasts")
+            .navigationTitle("Follow a few favourites")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -203,7 +210,7 @@ struct CatalogDrawerView: View {
                         CatalogDrawerRow(entry: entry)
                     }
                 } header: {
-                    Text("New episodes show up in Following. Nothing downloads until you choose it.")
+                    Text("New episodes and posts show up in Following. Nothing downloads until you choose it.")
                         .font(.footnote)
                         .textCase(nil)
                 }

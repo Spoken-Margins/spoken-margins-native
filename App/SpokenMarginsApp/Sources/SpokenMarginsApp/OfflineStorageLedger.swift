@@ -113,9 +113,9 @@ actor OfflineStorageLedger {
     }
 
     func protect(assetId: String, reason: OfflineProtectionReason, enabled: Bool) throws {
-        guard var asset = try repository.loadOwnedOfflineAssets().first(where: { $0.id == assetId }) else { return }
-        if enabled { asset.protections.insert(reason) } else { asset.protections.remove(reason) }
-        try repository.saveOwnedOfflineAsset(asset)
+        try repository.updateOwnedOfflineAsset(id: assetId) { asset in
+            if enabled { asset.protections.insert(reason) } else { asset.protections.remove(reason) }
+        }
     }
 
     func categoryUsage() throws -> [OfflineAssetCategory: Int64] {
@@ -182,7 +182,8 @@ actor OfflineStorageLedger {
     /// from disk, and rows naming one file become one. Never deletes a file.
     @discardableResult
     func reconcileWithDisk() throws -> OfflineLedgerReconciliation {
-        let plan = OfflineLedgerReconciliation.plan(assets: try repository.loadOwnedOfflineAssets()) { relative in
+        let recorded = try repository.loadOwnedOfflineAssets()
+        let plan = OfflineLedgerReconciliation.plan(assets: recorded) { relative in
             let url = rootDirectory.appending(path: relative)
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return .missing }
@@ -191,7 +192,15 @@ actor OfflineStorageLedger {
             return .file(byteCount: Int64(size))
         }
         for id in plan.removedAssetIds { try repository.deleteOwnedOfflineAsset(id: id) }
-        for asset in plan.updatedAssets { try repository.saveOwnedOfflineAsset(asset) }
+        // The app toggles protections on these rows outside this actor while the files are checked,
+        // so each row is re-read and only the plan's own changes are written (#287).
+        let recordedById = Dictionary(recorded.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for planned in plan.updatedAssets {
+            guard let before = recordedById[planned.id] else { continue }
+            try repository.updateOwnedOfflineAsset(id: planned.id) {
+                OfflineLedgerReconciliation.apply(recorded: before, planned: planned, to: &$0)
+            }
+        }
         lastReconciliation = plan
         return plan
     }
