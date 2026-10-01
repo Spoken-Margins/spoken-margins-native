@@ -35,9 +35,11 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   comment (the prefix scripts/merge_audit.py looks for) and pushes that commit to next with a plain
   push; if next moved meanwhile, the push is refused and it tests again on the newest next (up to
   MERGE_ATTEMPTS), unless next's new commits touch none of the PR's files and no build inputs: then
-  it re-merges onto the newest next and pushes without testing again (untested_moves). It won't merge a PR that changes .github/ or scripts/lane* (a PR can change the
-  workflow that tests it), or an audio, persistence, packet or lane change without a Codex audit comment:
-  those pass or fail as usual, and a person merges them. A PR someone asked T3 for merges only on a
+  it re-merges onto the newest next and pushes without testing again (untested_moves). It won't merge an audio, persistence, packet or lane change
+  (test-scope.py's lane_paths) until a Codex audit of its head says "No blocking findings": those pass
+  or fail as usual, and the audit script re-arms automerge after a clean audit. Lane changes no longer
+  wait for a person (owner rule 2026-10-01); the audit checks them, because a lane PR's own run uses
+  its own workflow and helpers. A PR someone asked T3 for merges only on a
   T3 PASS (#410): while its newest T3 report is FAIL or INCONCLUSIVE, or its newest T3 request has
   no report yet, the automerge run reports that verdict (INCONCLUSIVE while waiting) and doesn't merge.
   When a T3 then passes, the lane job that reported it runs the held automerge run itself, in the
@@ -103,7 +105,6 @@ HELD_FOR_T3 = ('not merged: held for T3', 'after a T3 PASS, push or remove and r
 NOT_VERIFIED = 'journeys and anything a listener notices (T4), audible content (owner)'
 MERGE_CHECK = '**Merge check (triage desk)'  # the prefix scripts/merge_audit.py requires
 AUDITS = ('**Codex audit (Astra)', '## Codex audit')  # how an audit comment starts: the hourly task's, or an older manual one
-DESK_ONLY = ('.github/', 'scripts/lane')
 AUDITED = {'audio': 'the audio session', 'persistence': 'persistence', 'packet': 'packets'}
 BOT = ('github-actions[bot]', '41898282+github-actions[bot]@users.noreply.github.com')
 RUNNER_TIERS = ('T2', 'T3')
@@ -455,12 +456,10 @@ def audit_blocker(comments: list[dict], head: str) -> str | None:
 
 
 def merge_blockers(scope: dict, comments: list[dict], head: str) -> list[str]:
-    """Why the runner won't merge this PR itself even on PASS; the desk merges those."""
+    """Why the runner won't merge this PR yet even on PASS: an audited kind of change without a clean Codex
+    audit of its head. Lane changes are one of those kinds; they no longer wait for a person (owner rule
+    2026-10-01). The audit script re-arms automerge after a clean audit, and that run merges."""
     reasons = []
-    desk = [f['path'] for f in scope['files'] if f['path'].startswith(DESK_ONLY)]
-    if desk:
-        reasons.append(f'it changes the lane or its workflows ({", ".join(desk[:5])}), and a PR can change '
-                       'what tests it')
     risky = sorted({AUDITED[f['category']] for f in scope['files'] if f['category'] in AUDITED})
     if scope.get('lane_paths'):  # owner rule 2026-10-01: lane changes need the audit too (test-scope.py)
         risky.append('the lane')
@@ -697,8 +696,8 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             return held[0], where, ran, details + [f'not merged: {held[1]}.']
         blockers = merge_blockers(scope, latest, head)
         if blockers:
-            return verdict, where, ran, details + [f'not merged by the runner: {b}. The desk merges it.'
-                                                   for b in blockers]
+            return verdict, where, ran, details + [f'not merged by the runner: {b}. It merges once a Codex audit '
+                                                   'of its head says "No blocking findings".' for b in blockers]
         now = github.pull()
         if now['head']['sha'] != head or AUTOMERGE not in {label['name'] for label in now.get('labels', [])} \
                 or now.get('state', 'open') != 'open':  # another run merged it meanwhile, or someone closed it

@@ -756,19 +756,28 @@ class MergeTests_Runner(unittest.TestCase):
                 (got, _, _, _), events = self.run_auto(github, verdicts=(verdict,))
                 self.assertEqual((got, events, github.posted), (verdict, ['build'], []))
 
-    def test_workflow_and_lane_changes_and_unaudited_risky_changes_go_to_the_desk(self):
+    def test_lane_changes_merge_on_pass_plus_a_clean_audit_of_the_head(self):
+        # Owner rule 2026-10-01: lane PRs no longer wait for the owner. They wait for the audit, then merge.
         cases = {
             '.github/workflows/lane.yml': 'docs',
             'scripts/lane-runner.py': 'scripts',
             'scripts/lane_sim.py': 'scripts',
         }
+        clean = comment('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.')
         for path, category in cases.items():
             with self.subTest(path=path):
-                scope = {'tier': 'T1', 'why': [], 'files': [{'path': path, 'category': category}]}
-                github = FakeGitHub(labels=('automerge',))
-                (verdict, _, _, details), events = self.run_auto(github, scope=scope)
+                scope = {'tier': 'T1', 'why': [], 'lane_paths': [path], 'files': [{'path': path, 'category': category}]}
+                (verdict, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=scope)
                 self.assertEqual((verdict, events), ('PASS', ['build']))
-                self.assertIn('not merged by the runner: it changes the lane or its workflows', details[-1])
+                self.assertEqual(details[-1], 'not merged by the runner: it touches the lane and has no "Codex audit '
+                                              '(Astra)" comment yet. It merges once a Codex audit of its head says '
+                                              '"No blocking findings".')
+                (verdict, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',), comments=[clean]),
+                                                                 scope=scope)
+                self.assertEqual(events, ['build', 'comment', 'push m1', 'sweep'])
+                self.assertIn('merged into next as m100000', details[-1])
+
+    def test_unaudited_risky_changes_wait_for_the_audit(self):
         risky = {'tier': 'T2', 'why': [], 'files': [{'path': 'Packages/SessionKit/Sources/SessionKitSharing/A.swift',
                                                         'category': 'packet'}]}
         (_, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=risky)

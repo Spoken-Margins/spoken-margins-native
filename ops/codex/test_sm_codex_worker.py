@@ -1,6 +1,6 @@
 """Host tests for the Codex worker. Run: python3 -m unittest ops/codex/test_sm_codex_worker.py
 
-No network, no real Codex, no real gh or git: every side effect goes through a fake.
+No network, no real Codex, no real gh: every side effect goes through a fake. Git is faked too,\nexcept SaveDiffTests, which runs it in a throwaway repo.
 """
 import datetime as dt
 import json
@@ -339,6 +339,21 @@ class ChildTests(unittest.TestCase):
         self.assertFalse(run.has('git', 'push'))
         self.assert_cleaned(run)
 
+    def test_give_up_saves_new_files_in_the_diff(self):
+        # #64: plain `git diff` skipped untracked files, so new files were lost on give-up.
+        run = FakeRun(self, status=' M x.swift\n?? NewGate.swift\n')
+        self.assertEqual(self.child(run, fake_codex({'give-up.txt': 'stuck'})), 'give-up')
+        idx = lambda pred: next(i for i, c in enumerate(run.calls) if pred(c))
+        add = idx(lambda c: c[:3] == ['git', 'add', '-A'])
+        self.assertIn(':(exclude).codex-out', run.calls[add])
+        diff = idx(lambda c: c[:2] == ['git', 'diff'])
+        self.assertLess(add, diff)
+        self.assertIn('--cached', run.calls[diff])
+        self.assertIn('--binary', run.calls[diff])
+        saved = list((self.home / 'runs').glob('42-*/codex.diff'))
+        self.assertEqual([p.read_text() for p in saved], ['diff --git a/x b/x\n'])
+        self.assert_cleaned(run)
+
     def test_empty_diff(self):
         run = FakeRun(self, status='')
         self.assertEqual(self.child(run, fake_codex({'commit-msg.txt': 'x'})), 'empty')
@@ -424,6 +439,35 @@ class ChildTests(unittest.TestCase):
         self.child(run, fake_codex())
         add = next(c for c in run.calls if c[:3] == ['git', 'worktree', 'add'])
         self.assertEqual(add[-3], 'ws/42-codex-fix-the-thing-2')
+
+
+class SaveDiffTests(unittest.TestCase):
+    """The one test that runs real git, in a throwaway repo: the bug was git's own behaviour."""
+
+    def test_saved_diff_has_new_files_and_skips_codex_out(self):
+        if not shutil.which('git'):
+            self.skipTest('git not installed')
+        tmp = Path(tempfile.mkdtemp(prefix='cw-git-'))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        wt = tmp / 'wt'
+        wt.mkdir()
+        git = lambda *a: w.default_run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', *a], cwd=wt)
+        git('init', '--quiet')
+        (wt / 'old.swift').write_text('let a = 1\n')
+        git('add', '-A')
+        git('commit', '--quiet', '-m', 'base')
+        (wt / 'old.swift').write_text('let a = 2\n')
+        (wt / 'Sources').mkdir()
+        (wt / 'Sources' / 'PreparationChunkGate.swift').write_text('struct Gate {}\n')
+        (wt / w.OUT_DIR_NAME).mkdir()
+        (wt / w.OUT_DIR_NAME / 'give-up.txt').write_text('stuck\n')
+        ops = w.Ops(home=tmp, repo_root=tmp, now=lambda: NOW, alive=lambda pid: False, echo=False)
+        w.save_diff(ops, wt, tmp / 'codex.diff')
+        diff = (tmp / 'codex.diff').read_text()
+        self.assertIn('+let a = 2', diff)
+        self.assertIn('b/Sources/PreparationChunkGate.swift', diff)
+        self.assertIn('+struct Gate {}', diff)
+        self.assertNotIn('give-up.txt', diff)
 
 
 # ---------------------------------------------------------------------------
