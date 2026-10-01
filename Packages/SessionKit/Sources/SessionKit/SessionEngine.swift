@@ -389,7 +389,23 @@ public final class SessionEngine {
         var playbackCompleted = positionIsPending ? false : audio.isPlaybackComplete(targetId: session.currentTargetId)
         let transportState = audio.playbackTransportState(targetId: session.currentTargetId)
         var updated = try syncCurrentPositionFromAudio(session)
-        if snapshot.status == .starting {
+        // A start from the very end (resuming after a Margin at the last second) finds the episode
+        // already over, so it never confirms. It ended: pause there. This is checked before the
+        // start's own status, whose watchdog would otherwise call it a timeout once the deadline
+        // passes (#588). The media client clears its completion when a start begins, so this
+        // completion is the new start's own.
+        let endedBeforeStartConfirmed = snapshot.status == .starting
+            && (session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia)
+            && audio.isPlaybackComplete(targetId: session.currentTargetId)
+        if endedBeforeStartConfirmed {
+            clearPlaybackStartPending()
+            pendingPlaybackPosition = nil
+            playbackCompleted = true
+            updated = try syncCurrentPositionFromAudio(session)
+            // The client still counts itself as playing (Lock Screen included) until told.
+            try audio.pause()
+            snapshot.status = .paused
+        } else if snapshot.status == .starting {
             let startStatus = playbackStartStatus(for: session.currentTargetId, attemptId: activePlaybackStartAttemptId ?? playbackStartAttemptId)
             if let recovered = currentSession, recovered.currentTargetId != session.currentTargetId {
                 // Start recovery moved playback to another target (#237); don't persist the old one.
@@ -403,19 +419,6 @@ public final class SessionEngine {
                 updated = try syncCurrentPositionFromAudio(session)
                 snapshot.status = .playing
                 forgetStartFailure()
-            case .pending where (session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia)
-                && audio.isPlaybackComplete(targetId: session.currentTargetId):
-                // A start from the very end (resuming after a Margin at the last second) finds the
-                // episode already over, so it never confirms. It ended: pause there rather than
-                // wait for the start watchdog to call it a failure (#588). The media client clears
-                // its completion when a start begins, so this completion is the new start's own.
-                clearPlaybackStartPending()
-                pendingPlaybackPosition = nil
-                playbackCompleted = true
-                updated = try syncCurrentPositionFromAudio(session)
-                // The client still counts itself as playing (Lock Screen included) until told.
-                try audio.pause()
-                snapshot.status = .paused
             case .pending:
                 // Startup can remain pending while a buffered speech client is
                 // already advancing or after the user seeks. Preserve that

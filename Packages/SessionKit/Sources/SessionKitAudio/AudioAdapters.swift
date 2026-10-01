@@ -1690,10 +1690,12 @@ struct MediaPlaybackCompletionPolicy {
     }
 
     /// Whether a seek to `mediaTimeMs` takes an ended episode back from its end, so its
-    /// end-of-item notification no longer holds (#588). Without a known length, any seek does.
+    /// end-of-item notification no longer holds (#588). Any destination before the end does,
+    /// even one inside the terminal tolerance: that tolerance is for a player that stopped on
+    /// its own, not for a place the listener chose. Without a known length, any seek does.
     static func seekLeavesEnd(toMediaTimeMs mediaTimeMs: Int, durationMs: Int?) -> Bool {
         guard let durationMs, durationMs > 0 else { return true }
-        return durationMs - mediaTimeMs > terminalToleranceMs
+        return mediaTimeMs < durationMs
     }
 }
 

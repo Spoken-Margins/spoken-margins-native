@@ -60,6 +60,31 @@ final class EpisodeEndSeekTests: XCTestCase {
         XCTAssertNil(later.lastFailure)
     }
 
+    func testAnEndedStartFirstSeenAfterTheWatchdogDeadlineStillPauses() throws {
+        let (engine, _) = try engineResumingAtTheEnd()
+        now += 10
+
+        let ended = try engine.syncPlaybackProgress()
+        XCTAssertEqual(ended.status, .paused, "an ended episode is not a start timeout")
+        XCTAssertNil(ended.lastFailure)
+    }
+
+    func testScrubbingBackOneSecondFromTheEndKeepsThatPlaceForTheNextPlay() throws {
+        let (engine, audio) = try engine(startingAt: 170_000)
+        audio.startStatus = .confirmed
+        _ = try engine.syncPlaybackProgress()
+        audio.mediaTimeMs = durationMs
+        audio.ended = true
+        XCTAssertEqual(try engine.syncPlaybackProgress().status, .paused)
+
+        let oneSecondBack = durationMs - 1_000
+        XCTAssertEqual(try engine.seekMedia(toMediaTimeMs: oneSecondBack).status, .paused)
+        XCTAssertEqual(try engine.syncPlaybackProgress().currentMediaTimeMs, oneSecondBack)
+
+        _ = try engine.resumePlayback()
+        XCTAssertEqual(audio.mediaPlays.last, oneSecondBack, "Play starts where the listener scrubbed to")
+    }
+
     func testASeekWhilePlayingKeepsPlaying() throws {
         let (engine, audio) = try engine(startingAt: 60_000)
         audio.startStatus = .confirmed
@@ -181,8 +206,8 @@ private final class EpisodeAudioClient: AudioPlaybackClient {
 
     func seek(toMediaTimeMs mediaTimeMs: Int) throws {
         self.mediaTimeMs = mediaTimeMs
-        // As AVPlayerStreamPlaybackClient.requestMediaSeek: only a seek away from the end clears it.
-        if durationMs - mediaTimeMs > 1_500 { ended = false }
+        // As AVPlayerStreamPlaybackClient.requestMediaSeek: any seek before the end clears it.
+        if mediaTimeMs < durationMs { ended = false }
     }
 
     func pause() throws { pauses += 1 }
