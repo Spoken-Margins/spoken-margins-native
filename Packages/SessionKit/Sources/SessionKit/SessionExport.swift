@@ -101,8 +101,8 @@ public enum SessionExportMarkdownRenderer {
     /// Stable single-note export: session progress must not rewrite a vault note
     /// every playback tick. The canonical export already scopes/bounds context.
     /// The YAML properties block lets Obsidian and other Markdown tools search the note
-    /// without Spoken Margins (#491); the body below it is unchanged from Build 29, so
-    /// the notes-folder writer rewrites its own unedited notes once and edited ones never.
+    /// without Spoken Margins (#491). The notes-folder writer rewrites its own unedited
+    /// notes when this body changes, and edited ones never.
     public static func renderMargin(_ export: SessionExport, createdAt: Date) -> String {
         guard let note = export.interjections.first, export.interjections.count == 1 else { return "" }
         let onSource = note.targetType == InterjectionTargetType.item.rawValue
@@ -112,12 +112,30 @@ public enum SessionExportMarkdownRenderer {
         if let reference = export.item.externalReference { lines += ["Source: " + reference] }
         lines += ["Target: \(note.targetType) / \(note.targetId)", "Session: \(note.sessionId)", "Margin: \(note.id)"]
         // A Margin on an AI reply sits in the reply, not in the source (#112).
-        let position = note.mediaTimeMs.map { "\($0) ms" } ?? "\(note.roughPercent)%"
-        lines += [(onSource ? "Position: " : "Position in AI reply: ") + position, ""]
-        lines += [note.captureKind == .written ? "## Written Margin" : "## Listener Margin", "", note.transcript ?? "", ""]
+        let position = note.mediaTimeMs.map(MarginDeepLink.clockPosition(ms:)) ?? "\(note.roughPercent)%"
+        lines += [(onSource ? "Position: " : "Position in AI reply: ") + position]
+        // The way back to the moment (#171).
+        let link = MarginDeepLink(sessionId: note.sessionId, marginId: note.id).url.absoluteString
+        lines += ["[Open this Margin in Spoken Margins](\(link))", ""]
+        lines += [note.captureKind == .written ? "## Written Margin" : "## Listener Margin", "", marginText(note), ""]
         if !note.anchorBefore.isEmpty { lines += ["## Context before", "", note.anchorBefore, ""] }
         if !note.anchorAfter.isEmpty { lines += ["## Context after", "", note.anchorAfter, ""] }
         return lines.joined(separator: "\n")
+    }
+
+    public static let transcriptNotAvailableYet = "Transcript not available yet."
+
+    /// Whether a Margin gets a note in the notes folder (#171). A spoken Margin always does, so a failed or
+    /// unfinished transcription still reaches the folder; its note is rewritten when the transcript arrives.
+    /// A written Margin with no words has nothing to say.
+    public static func writesMarginNote(captureKind: InterjectionCaptureKind?, text: String?) -> Bool {
+        captureKind != .written || !(text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func marginText(_ note: ExportInterjection) -> String {
+        let text = note.transcript ?? ""
+        guard note.captureKind != .written, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
+        return transcriptNotAvailableYet
     }
 
     public static func render(_ export: SessionExport) -> String {
