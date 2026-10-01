@@ -47,6 +47,46 @@ final class FirstRunCatalogDrawerTests: XCTestCase {
                       "a show followed another way still matches by feed URL")
     }
 
+    /// #246: the drawer works out every row's follow state in one pass. It must agree with the
+    /// per-row answer for each entry: recorded follows, URL matches, and a recorded follow that
+    /// was since unfollowed.
+    func testOnePassFollowedIdsMatchThePerRowAnswer() throws {
+        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.bundledSnapshot))
+        let entries = catalog.entries(forSubject: nil)
+        XCTAssertGreaterThanOrEqual(entries.count, 6)
+        let moved = FeedSubscription(
+            id: "subscription-moved",
+            source: SourceIdentity(id: "source-moved", kind: .podcastFeed, canonicalURL: "https://feeds.example.net/moved/feed.xml", host: "feeds.example.net")
+        )
+        // Same feed, different spelling: upper-case host, http, trailing slash.
+        var spelled = try XCTUnwrap(URLComponents(string: entries[1].feedURL))
+        spelled.scheme = "http"
+        spelled.host = spelled.host?.uppercased()
+        spelled.path += "/"
+        let direct = FeedSubscription(
+            id: "subscription-direct",
+            source: SourceIdentity(id: "source-direct", kind: .podcastFeed, canonicalURL: try XCTUnwrap(spelled.string), host: "example")
+        )
+        let elsewhere = FeedSubscription(
+            id: "subscription-elsewhere",
+            source: SourceIdentity(id: "source-elsewhere", kind: .podcastFeed, canonicalURL: "https://feeds.example.org/not-in-catalog.xml", host: "feeds.example.org")
+        )
+        let subscriptions = [moved, direct, elsewhere]
+        let recorded = [entries[0].id: "source-moved", entries[2].id: "source-unfollowed-since"]
+
+        let followed = CatalogFollowState.followedEntryIds(in: catalog, recordedSourceIds: recorded, subscriptions: subscriptions)
+
+        XCTAssertEqual(followed, [entries[0].id, entries[1].id])
+        for entry in catalog.entries {
+            XCTAssertEqual(
+                followed.contains(entry.id),
+                CatalogFollowState.isFollowed(entry, in: catalog, recordedSourceId: recorded[entry.id], subscriptions: subscriptions),
+                entry.id
+            )
+        }
+        XCTAssertTrue(CatalogFollowState.followedEntryIds(in: catalog, recordedSourceIds: recorded, subscriptions: []).isEmpty)
+    }
+
     func testDrawerOpensByItselfOnlyOnAFreshInstallAndOnlyOnce() {
         XCTAssertTrue(FirstRunCatalogDrawerPolicy.opensAutomatically(libraryWasEmptyAtLaunch: true, hasSeenDrawer: false, followedSourceCount: 0))
         XCTAssertFalse(FirstRunCatalogDrawerPolicy.opensAutomatically(libraryWasEmptyAtLaunch: true, hasSeenDrawer: true, followedSourceCount: 0), "once")
