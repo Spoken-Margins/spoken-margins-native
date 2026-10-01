@@ -19,6 +19,9 @@ public enum SharedListeningMapResolver {
         strongSourceIdentity: Bool
     ) async throws -> SharedListeningMapPlacement.Outcome {
         if let producing = spine.producingEditionSHA256, producing == recipientEditionSHA256 {
+            if let refusal = SharedListeningMapPlacement.startsRefusal(proposal: proposal) {
+                return .notPlaced(refusal)
+            }
             return .placed(EpisodeFingerprintAlignment.makeProjection(
                 id: projectionId,
                 itemId: itemId,

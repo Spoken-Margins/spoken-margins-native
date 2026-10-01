@@ -153,8 +153,34 @@ final class SharedListeningMapPlacementTests: XCTestCase {
         XCTAssertNil(nothing.projection)
         XCTAssertNil(nothing.refusal)
         let inUse = SharedListeningMapPlacement.activation(
-            [placedOutcome, otherPlaced], listenerProposalIds: [], activeProposalId: "second-map")
+            [placedOutcome, otherPlaced], listenerProposalIds: [], activeProjectionId: "second-friend")
         XCTAssertEqual(inUse.projection?.proposalId, "second-map", "The map in use stays while it still places")
+        // Codex audit on ebd2f49: two friends' packets for one episode can carry the same proposal id.
+        // The packet's projection id tells them apart.
+        let friendA = SharedListeningMapPlacement.Outcome.placed(ResolvedListeningMapProjection(
+            id: SharedListeningMapPlacement.projectionId(layerId: "layer-a"), itemId: "my-episode",
+            proposalId: "episode-map-proposal", points: [], intervals: []))
+        let friendB = SharedListeningMapPlacement.Outcome.placed(ResolvedListeningMapProjection(
+            id: SharedListeningMapPlacement.projectionId(layerId: "layer-b"), itemId: "my-episode",
+            proposalId: "episode-map-proposal", points: [], intervals: []))
+        let keptB = SharedListeningMapPlacement.activation(
+            [friendA, friendB], listenerProposalIds: [],
+            activeProjectionId: SharedListeningMapPlacement.projectionId(layerId: "layer-b"))
+        XCTAssertEqual(keptB.projection?.id, SharedListeningMapPlacement.projectionId(layerId: "layer-b"))
+        XCTAssertTrue(SharedListeningMapPlacement.isSharedProjection(id: SharedListeningMapPlacement.projectionId(layerId: "layer-b")))
+        XCTAssertFalse(SharedListeningMapPlacement.isSharedProjection(id: "episode-projection-my-episode"))
+    }
+
+    /// Codex audit on ebd2f49: an exact edition is placed without matching, but its scene
+    /// starts still have to be present and increase, or Skim would skip a scene.
+    func testScenesStartsMustIncreaseEvenOnAnExactEdition() {
+        XCTAssertEqual(SharedListeningMapPlacement.startsRefusal(proposal: proposal(starts: [0, 20_000, 10_000])),
+                       .init(sceneId: "scene-2", sceneLabel: "Scene 3", reason: .outOfOrder))
+        XCTAssertEqual(SharedListeningMapPlacement.startsRefusal(proposal: proposal(starts: [0, nil])),
+                       .init(sceneId: "scene-1", sceneLabel: "Scene 2 (The interview)", reason: .missingStartTime))
+        XCTAssertEqual(SharedListeningMapPlacement.startsRefusal(proposal: proposal(starts: [])),
+                       .init(sceneId: nil, sceneLabel: nil, reason: .noScenes))
+        XCTAssertNil(SharedListeningMapPlacement.startsRefusal(proposal: proposal(starts: [0, 10_000, 20_000])))
     }
 
     /// The landmarks' audio covers 20-31 s, 100-111 s, 180-191 s and 260-271 s. A scene start

@@ -11,6 +11,37 @@ import Foundation
 public enum SharedListeningMapPlacement {
     public static let algorithmVersion = "shared-map-scene-starts.v1"
 
+    /// The projection id for a friend's map, one per imported packet. Friends sharing the
+    /// same episode can send proposals with the same id, so the packet's layer is what
+    /// tells their maps (and their summaries) apart.
+    public static func projectionId(layerId: String) -> String {
+        "imported-projection-\(layerId)"
+    }
+
+    /// Whether a stored projection places a friend's map. Its summaries are keyed by the
+    /// projection id for the same reason the projection is.
+    public static func isSharedProjection(id: String) -> Bool {
+        id.hasPrefix(projectionId(layerId: ""))
+    }
+
+    /// The sender's scene starts must be present and increase even on an exact edition,
+    /// where nothing is matched: Skim walks them in order.
+    public static func startsRefusal(proposal: PortableListeningMapProposalArtifact) -> Refusal? {
+        let scenes = proposal.scenes.sorted { $0.order < $1.order }
+        guard !scenes.isEmpty else { return Refusal(sceneId: nil, sceneLabel: nil, reason: .noScenes) }
+        var previous: Int?
+        for scene in scenes {
+            guard let start = scene.startAnchor.mediaTimeMs, start >= 0 else {
+                return Refusal(sceneId: scene.id, sceneLabel: label(for: scene), reason: .missingStartTime)
+            }
+            if let previous, start <= previous {
+                return Refusal(sceneId: scene.id, sceneLabel: label(for: scene), reason: .outOfOrder)
+            }
+            previous = start
+        }
+        return nil
+    }
+
     /// One scene start and the sender's fingerprint landmarks that bracket it.
     public struct SceneQuery: Equatable, Sendable {
         public let sceneId: String
@@ -199,23 +230,24 @@ public enum SharedListeningMapPlacement {
     /// What to save after resolving every friend's map on an item. A shared map never
     /// replaces one the listener already has (a map they prepared or imported for their
     /// own copy is stored as a committed proposal). Among friends' maps, the one in use
-    /// stays while it still places; otherwise the earliest imported that places wins, so
+    /// stays while it still places (matched by projection id, since friends' proposal ids can
+    /// collide); otherwise the earliest imported that places wins, so
     /// a later packet doesn't swap the map under the listener. A refusal
     /// is reported only when no shared map is in use.
     /// - Parameters:
     ///   - outcomes: one per friend's map, in the order the packets were imported.
-    ///   - activeProposalId: the shared map in use now, which stays while it still places.
+    ///   - activeProjectionId: the projection in use now, which stays while it still places.
     public static func activation(
         _ outcomes: [Outcome],
         listenerProposalIds: [String],
-        activeProposalId: String? = nil
+        activeProjectionId: String? = nil
     ) -> Activation {
         guard listenerProposalIds.isEmpty else { return Activation(projection: nil, refusal: nil) }
         let placed = outcomes.compactMap { outcome -> ResolvedListeningMapProjection? in
             if case .placed(let projection) = outcome { return projection }
             return nil
         }
-        if let projection = placed.first(where: { $0.proposalId == activeProposalId }) ?? placed.first {
+        if let projection = placed.first(where: { $0.id == activeProjectionId }) ?? placed.first {
             return Activation(projection: projection, refusal: nil)
         }
         return Activation(projection: nil, refusal: outcomes.lazy.compactMap(\.refusal).first)

@@ -4794,12 +4794,15 @@ final class Gate1AppModel: ObservableObject {
             skimResourceLoadCount += 1
             #endif
             let committed = (try? store.loadPortableListeningMapProposals(itemId: activeItemId)) ?? []
-            let imported = ((try? store.loadImportedCommentaryLayers(itemId: activeItemId)) ?? [])
-                .flatMap { $0.listeningMapProposals ?? [] }
+            let layers = (try? store.loadImportedCommentaryLayers(itemId: activeItemId)) ?? []
+            let projection = try? store.loadResolvedListeningMapProjection(itemId: activeItemId)
+            // A friend's map is found by its packet's projection id: friends' proposal ids can collide (#481).
+            let shared = layers.first { SharedListeningMapPlacement.projectionId(layerId: $0.id) == projection?.id }?
+                .listeningMapProposals?.first
             skimResourceContext = SkimResourceContext(
                 itemId: activeItemId,
-                projection: try? store.loadResolvedListeningMapProjection(itemId: activeItemId),
-                proposals: committed + imported,
+                projection: projection,
+                proposals: (shared.map { [$0] } ?? []) + committed + layers.flatMap { $0.listeningMapProposals ?? [] },
                 assets: (try? store.loadOwnedOfflineAssets()) ?? []
             )
         }
@@ -4855,7 +4858,7 @@ final class Gate1AppModel: ObservableObject {
         }
         let assetID = summaryBridgeAssetID(
             itemId: activeItemId,
-            proposalId: proposal.id,
+            proposalId: SharedListeningMapPlacement.isSharedProjection(id: projection.id) ? projection.id : proposal.id,
             sceneId: summaryScene.id,
             suppliedAssetId: summaryScene.summaryAssetId
         )
@@ -16367,7 +16370,7 @@ final class Gate1AppModel: ObservableObject {
                                 Self.resolvedApplicationSupportAssetURL(for: $0, applicationSupportDirectory: applicationSupportDirectory)
                             }.flatMap { try? Data(contentsOf: $0) } },
                             recipientAudioURL: localURL, recipientEditionSHA256: recipientDigest,
-                            itemId: itemId, projectionId: "imported-projection-\(layer.id)",
+                            itemId: itemId, projectionId: SharedListeningMapPlacement.projectionId(layerId: layer.id),
                             strongSourceIdentity: ImportedItemResolver.canRepresentSameWork(layer.itemIdentity, localItem)
                         )
                     }
@@ -16387,25 +16390,27 @@ final class Gate1AppModel: ObservableObject {
                         let current = try store.loadResolvedListeningMapProjection(itemId: itemId)
                         let activation = SharedListeningMapPlacement.activation(
                             outcomes, listenerProposalIds: try store.loadPortableListeningMapProposals(itemId: itemId).map(\.id),
-                            activeProposalId: current?.proposalId)
-                        let sharedProposals = resolvedWork.compactMap { $0.0.listeningMapProposals?.first }
+                            activeProjectionId: current?.id)
+                        func sharedProposal(for projectionId: String) -> PortableListeningMapProposalArtifact? {
+                            resolvedWork.first { SharedListeningMapPlacement.projectionId(layerId: $0.0.id) == projectionId }?
+                                .0.listeningMapProposals?.first
+                        }
                         if !outcomes.isEmpty { self.sharedListeningMapRefusals[itemId] = activation.refusal?.listenerReason }
-                        if activation.refusal != nil, let stale = current,
-                           sharedProposals.contains(where: { $0.id == stale.proposalId }) {
+                        if activation.refusal != nil, let stale = current, sharedProposal(for: stale.id) != nil {
                             try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(
                                 id: stale.id, itemId: itemId, proposalId: stale.proposalId,
                                 recipientEditionSHA256: stale.recipientEditionSHA256, points: [], intervals: []))
                         }
                         if let projection = activation.projection {
                             try store.saveResolvedListeningMapProjection(projection)
-                            if let proposal = sharedProposals.first(where: { $0.id == projection.proposalId }) {
+                            if let proposal = sharedProposal(for: projection.id) {
                                 Task { @MainActor [weak self] in
                                     guard let self else { return }
                                     for scene in proposal.scenes where
                                         scene.eligibility == .eligible && scene.summaryText?.isEmpty == false {
                                         _ = try? await self.prepareSummaryBridgeAsset(
                                             itemId: itemId,
-                                            proposalId: proposal.id,
+                                            proposalId: projection.id,
                                             scene: scene,
                                             store: store
                                         )
