@@ -193,6 +193,42 @@ def log_errors(text, limit=3, width=300):
     return [line[:width] for line in dict.fromkeys(found)][:limit]
 
 
+# Codex runs its shell commands under macOS seatbelt and sets CODEX_SANDBOX there. That sandbox refuses
+# to run `ps`, which the lane's own boot tests in scripts/tests need, so runner-tests can't pass inside it
+# (#64's Codex run, 2026-10-01: 2 failures and 12 errors, and the plan stopped before the package step).
+# Inside it the plan skips runner-tests and ends as verified_in_codex_sandbox, which no gate accepts;
+# the Codex worker's own run, outside the sandbox, is the full plan.
+CODEX_SANDBOX_SKIPS = {'runner-tests': 'Codex sandbox: `ps` cannot run here, so the lane boot tests cannot'}
+# SessionKit tests that encode, play or speak real audio fail in that sandbox and pass outside it
+# (AVFoundation 'fmt?' errors, players that never start, speech that never renders; 2026-10-01).
+# Inside the sandbox their results are reported but don't fail the package step.
+CODEX_SANDBOX_AUDIO_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
+    'PodcastEvidenceSignatureLengthTests/testEvidenceFromStereo48kHzAudioStaysQueryableAndPlacesTheMargin',
+    'PodcastLateAnchorPlacementTests/testMarginLateInALongEpisodeIsPlaced',
+    'RealPlayerMarginMomentTests/testMarginPlaysWhenPlaybackReachesItAndTheEpisodeResumesAfterwards',
+    'RealPlayerPodcastEvidenceTests/testContinuousTapCapturesThePreWindowFromAStreamedEpisode',
+    'RealPlayerPodcastEvidenceTests/testContinuousTapInstallsOnceTracksLoadAndCapturesThePreWindow',
+    'RealPlayerPodcastEvidenceTests/testTapKeepsTheHeardAudioAroundAStreamedMarginForTranscription',
+    'SharingTests/testAcousticPauseDetectionFindsEdgesAndProtectsAlignedSpeech',
+    'SharingTests/testAcousticResolverDeclinesConflictingSyntheticMatchesAcrossInsertedAd',
+    'SharingTests/testAcousticResolverDoesNotPlaceMarginsNextToRepeatedAudio',
+    'SharingTests/testAcousticResolverPlacesAMarginAfterAnInsertedAdByTheAdsLength',
+    'SharingTests/testBuilderIncludesOnlyExplicitlySelectedOriginalOrCleanedVoice',
+    'SharingTests/testPortableListeningMapProposalAndPodcastEvidenceImportWithoutActivatingMap',
+    'SharingTests/testSpeechAwarePauseDetectionRemovesAHighEnergyGapWithoutTouchingWords',
+    'SupertonicChunkingTests/testSystemVoiceReadsAFlaggedChunkInSupertonicsFormat',
+    'SystemNarrationRateTests/testNarrationIsHeardAtTheChosenSpeed',
+))
+
+
+def in_codex_sandbox():
+    return bool(os.environ.get('CODEX_SANDBOX'))
+
+
+def passed_status():
+    return 'verified_in_codex_sandbox' if in_codex_sandbox() else 'verified'
+
+
 def ops_test_folders(root=None):
     """Each folder under ops/ that holds its own Python tests (test_*.py), e.g. ops/dial."""
     base = Path(root or ROOT)
@@ -330,7 +366,10 @@ class Run:
             self.host_steps()
 
     def host_steps(self):
-        self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'])
+        if in_codex_sandbox():
+            self.skip('runner-tests')
+        else:
+            self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'])
         self.ops_steps()
         self.command('contracts', [sys.executable, 'scripts/validate-contracts.py'])
         self.command('surfaces', [sys.executable, 'scripts/validate-surface-contracts.py'])
@@ -343,10 +382,17 @@ class Run:
             expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))
         self.command('package', ['bash', 'scripts/run-sessionkit-tests.sh'], timeout=300,
                      expected=expected, tests=True,
-                     allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus'})
+                     allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus'},
+                     probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
 
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed during fast verification')
+
+    def skip(self, name):
+        reason = CODEX_SANDBOX_SKIPS[name]
+        self.manifest['steps'].append({'name': name, 'skipped': reason})
+        self.save()
+        print(f'{name}: skipped ({reason})', flush=True)
 
     def ops_steps(self, root=None):
         """The ops tools' own tests (ops/dial, ops/codex), one step per folder: each folder imports its
@@ -495,7 +541,7 @@ def main():
                     run.xcode(args.plan, args.device, args.rebuild, args.ios, args.only_testing)
             if input_identity() != run.manifest['input_sha256']:
                 raise RuntimeError('Inputs changed during verification; rerun on a stable source state')
-            run.manifest['status'] = 'verified'
+            run.manifest['status'] = passed_status()
             return 0
         except (RuntimeError, subprocess.SubprocessError, OSError, KeyboardInterrupt) as error:
             run.manifest.update(status='failed_or_incomplete', error=str(error) or repr(error))

@@ -482,6 +482,50 @@ class SaveDiffTests(unittest.TestCase):
 # Tick
 # ---------------------------------------------------------------------------
 
+class SandboxTests(unittest.TestCase):
+    """#64 (2026-10-01): Codex gave up after 33 min because its sandbox couldn't run the fast plan."""
+
+    def test_codex_may_write_the_lane_slots_and_the_clang_module_cache(self):
+        cmd = w.codex_command(Path('/wt'), Path('/answer.md'), 'the prompt')
+        self.assertEqual(cmd[cmd.index('-s') + 1], 'workspace-write')
+        roots = next(c for c in cmd if c.startswith('sandbox_workspace_write.writable_roots='))
+        roots = json.loads(roots.split('=', 1)[1])
+        lane = os.environ.get('SM_LANE_STATE_DIR') or str(Path.home() / 'Library/Caches/SpokenMarginsLane')
+        self.assertIn(str(Path(lane)), roots)
+        self.assertIn(str(Path.home() / '.cache/clang'), roots)
+        self.assertEqual(cmd[-1], 'the prompt')
+
+    def test_the_wrapper_s_own_fast_plan_never_runs_in_sandbox_mode(self):
+        # verify-tests skips runner-tests when CODEX_SANDBOX is set; the wrapper's run is the gate.
+        from unittest import mock
+        with mock.patch.dict(os.environ, {'CODEX_SANDBOX': 'seatbelt'}):
+            res = w.default_run([sys.executable, '-c', 'import os; print(os.environ.get("CODEX_SANDBOX"))'])
+        self.assertEqual(res.stdout.strip(), 'None')
+
+    def test_prompt_names_the_sandbox_limits_and_the_wrapper_s_gate(self):
+        prompt = w.build_prompt(64, 'Prepared audio', 'body')
+        for text in ('cannot run `ps`', 'swift test --disable-sandbox', 'verified_in_codex_sandbox',
+                     'outside your sandbox', 'not a reason to give up'):
+            self.assertIn(text, prompt)
+        self.assertNotIn('and make it pass', prompt)
+
+    def test_sessionkit_dependencies_are_resolved_before_codex_starts(self):
+        # The sandbox has no network, so SwiftPM there couldn't clone onnxruntime.
+        run = FakeRun(self, status=' M x.swift\n')
+        seen = {}
+
+        def codex(wt, answer, prompt, transcript):
+            seen['calls'] = list(run.calls)
+            return True, 'ok'
+        home = Path(tempfile.mkdtemp(prefix='cw-'))
+        self.addCleanup(shutil.rmtree, home, True)
+        w.write_lock(home, 1, {'pid': os.getpid(), 'issue': 42})
+        ops = w.Ops(home=home, repo_root=home, run=run, codex=codex, now=lambda: NOW,
+                    alive=lambda pid: False, echo=False)
+        w.run_child(ops, 1, 42)
+        self.assertIn(['swift', 'package', '--package-path', 'Packages/SessionKit', 'resolve'], seen['calls'])
+
+
 class TickTests(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix='cw-'))

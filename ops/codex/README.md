@@ -15,7 +15,7 @@ If a slot is free and nothing holds, it picks one issue and starts one detached 
 
 **Issue choice:** open, labelled `ready`, and not labelled `in-progress`, `where:mac`, `regression` or `blocked`. No `Claimed by project thread "` comment in the last 24 hours. Issues labelled `priority` go first; within that, issues that name SessionKit paths or host tests go first, then oldest first. The child checks again just before it claims.
 
-**The child** claims the issue (label `in-progress` and a claim comment as "Codex worker N"). It makes the worktree `codex-worker/wt-N` on `ws/<issue>-codex-<slug>` from fresh `origin/next`, then runs `codex exec` (workspace-write, 60-minute cap). Then:
+**The child** claims the issue (label `in-progress` and a claim comment as "Codex worker N"). It makes the worktree `codex-worker/wt-N` on `ws/<issue>-codex-<slug>` from fresh `origin/next`, resolves SessionKit's packages (the sandbox has no network), then runs `codex exec` (workspace-write, 60-minute cap). The sandbox may also write the lane's slot folder and the clang module cache. Codex sets `CODEX_SANDBOX` there, and `verify-tests.py --plan fast` then skips `runner-tests` (the sandbox refuses `ps`), reports the known real-audio SessionKit tests without failing on them, and ends as `verified_in_codex_sandbox`, which no gate accepts. Then:
 
 - Codex gave up, failed, or changed nothing: it posts a stop note and removes `in-progress`.
 - Otherwise the wrapper runs `--plan fast` itself:
