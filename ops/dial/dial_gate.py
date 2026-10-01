@@ -49,6 +49,7 @@ USAGE_MAX_AGE = dt.timedelta(hours=3)
 MIN_SPACING = dt.timedelta(minutes=15)   # between wake-ups
 FALLBACK = dt.timedelta(hours=3)         # wake-up even when every slot looks full
 THREAD_QUIET = dt.timedelta(hours=2)     # no stop note and nothing on GitHub: count it gone
+THREAD_WINDOW = dt.timedelta(hours=24)   # how far back the gate reads claim and stop notes
 QUIET_SHOWN = dt.timedelta(hours=6)      # the status comment lists stopped/quiet threads this long
 ACK_TIMEOUT = dt.timedelta(hours=3)
 STATUS_REFRESH = dt.timedelta(minutes=60)
@@ -192,7 +193,7 @@ def parse_threads(comments: list[dict], events: list[dict], now: dt.datetime) ->
             continue
         m = STOP_RE.match(body)
         if m and m.group(1) in threads:
-            threads[m.group(1)].update(stopped_at=at, stop_text=m.group(2).strip().splitlines()[0][:200])
+            threads[m.group(1)].update(stopped_at=at, stop_text=m.group(2).strip().splitlines()[0][:80])
 
     for t in threads.values():
         named = f'"{t["title"]}"'
@@ -407,9 +408,12 @@ def main(argv=None) -> int:
     ready = gh('GET', f'search/issues?q=repo:{REPO}+is:issue+is:open+label:ready&per_page=1', token)['total_count']
     dial_comments = gh('GET', f'repos/{REPO}/issues/{DIAL_ISSUE}/comments?per_page=100', token)
     ack = parse_ack(dial_comments)
-    week_start = (next_reset(now) - dt.timedelta(days=7)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    all_comments = gh_pages(f'repos/{REPO}/issues/comments?since={week_start}&sort=created'
-                            f'&direction=asc&per_page=100', token)
+    # Newest first, then reversed: the repo gets over 2,000 comments a week (2026-10-01), so
+    # an oldest-first read hit the page cap before the latest notes. A thread is quiet after
+    # 2 hours without a sign of life, so 24 hours (inside the week) is plenty.
+    since = max(next_reset(now) - dt.timedelta(days=7), now - THREAD_WINDOW).strftime('%Y-%m-%dT%H:%M:%SZ')
+    all_comments = gh_pages(f'repos/{REPO}/issues/comments?since={since}&sort=created'
+                            f'&direction=desc&per_page=100', token)[::-1]
     events = gh_pages(f'repos/{REPO}/events?per_page=100', token, max_pages=3)
     threads = parse_threads(all_comments, events, now)
     # The coordinator's own comment can be blocked by its permission check (seen
