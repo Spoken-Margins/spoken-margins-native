@@ -10,12 +10,38 @@ public struct PublisherAudio: Codable, Equatable, Sendable {
     public var durationMs: Int?
     /// Where the recording was found, e.g. `feed_enclosure` for a followed feed entry's enclosure.
     public var detectedFrom: String
+    /// The recording's text-to-time map (#546): article sentences with their times in the
+    /// recording. Kept here rather than as a `source_transcript_timeline` record, so Build 29
+    /// never treats the article as transcript-backed. Nil until made, or when making it failed.
+    public var textMap: TranscriptTimeline?
+    /// Why the map exists or doesn't, e.g. `aligned(47 of 50 sentences)` or `no_match(…)`.
+    /// Nil until the app has tried once.
+    public var textMapStatus: String?
 
-    public init(itemId: String, audioURL: String, durationMs: Int? = nil, detectedFrom: String) {
+    public init(itemId: String, audioURL: String, durationMs: Int? = nil, detectedFrom: String, textMap: TranscriptTimeline? = nil, textMapStatus: String? = nil) {
         self.itemId = itemId
         self.audioURL = audioURL
         self.durationMs = durationMs
         self.detectedFrom = detectedFrom
+        self.textMap = textMap
+        self.textMapStatus = textMapStatus
+    }
+
+    /// The record after one try at making its map: the map is kept only when the alignment
+    /// placed enough of the article (`PublisherAudioAligner.minimumPlacedFraction`).
+    public func recordingTextMap(_ alignment: PublisherAudioAlignment) -> PublisherAudio {
+        var updated = self
+        updated.textMap = alignment.timeline
+        updated.textMapStatus = alignment.status
+        return updated
+    }
+
+    /// The record after a try that never reached alignment, such as a failed download.
+    public func recordingTextMapFailure(_ reason: String) -> PublisherAudio {
+        var updated = self
+        updated.textMap = nil
+        updated.textMapStatus = reason
+        return updated
     }
 }
 
