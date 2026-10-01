@@ -145,7 +145,8 @@ class BuildRoomTests(unittest.TestCase):
 
     def test_with_real_locks_a_simulator_job_leaves_one_build_and_the_runner_sees_it(self):
         with tempfile.TemporaryDirectory() as folder, \
-                mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': folder, 'SM_LANE_MEMORY_PRESSURE': '1'}), \
+                mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': folder, 'SM_LANE_MEMORY_PRESSURE': '1',
+                                             lane.BUILD_NEEDS_ROOM_ENV: ''}), \
                 mock.patch.object(lane_slots, 'POLL_SECONDS', 0.05), \
                 open(os.devnull, 'w') as quiet, contextlib.ExitStack() as held:
             room = lambda: lane.wait_for_room_to_build(out=quiet, max_wait=0, free=lambda: 40 * GIB)  # noqa: E731
@@ -204,7 +205,8 @@ class BuildSlotRecheckTests(unittest.TestCase):
         self.quiet = open(os.devnull, 'w')
         self.addCleanup(self.quiet.close)
         self.env = mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': self.folder.name, 'SM_LANE_MEMORY_PRESSURE': '1',
-                                                'SM_LANE_RUNNER_ROLE': 'build', 'SM_LANE_XCODEBUILD': '/usr/bin/true'})
+                                                'SM_LANE_RUNNER_ROLE': 'build', 'SM_LANE_XCODEBUILD': '/usr/bin/true',
+                                                lane.BUILD_NEEDS_ROOM_ENV: ''})  # only pr_build_env sets it
         self.env.start()
         self.addCleanup(self.env.stop)
         self.held = contextlib.ExitStack()
@@ -224,7 +226,7 @@ class BuildSlotRecheckTests(unittest.TestCase):
                                                       note=noted.append))  # the job starts beside one
         self.assertEqual(len(noted), 1)
         self.held.enter_context(lane_slots.simulator_slot('a second T4, during host tests', out=self.quiet))
-        verdict, builds, _, logs = self.build(timeout=4)  # the real xcodebuild-lane, xcodebuild stubbed by `true`
+        verdict, builds, _, logs = self.build(timeout=1.5)  # the real xcodebuild-lane, xcodebuild stubbed by `true`
         self.assertEqual(verdict, 'INCONCLUSIVE', builds)
         self.assertIn('timed out', builds)
         self.assertIn('2 simulator jobs are running', logs)
@@ -234,7 +236,7 @@ class BuildSlotRecheckTests(unittest.TestCase):
         self.held.enter_context(lane_slots.simulator_slot('a T4', out=self.quiet))
         self.assertIsNone(lane.wait_for_room_to_build(out=self.quiet, max_wait=0, free=lambda: 40 * GIB))
         with mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '2'}):
-            verdict, builds, _, logs = self.build(timeout=4)
+            verdict, builds, _, logs = self.build(timeout=1.5)
         self.assertEqual(verdict, 'INCONCLUSIVE', builds)
         self.assertIn('memory pressure is warn', logs)
 
@@ -244,10 +246,13 @@ class BuildSlotRecheckTests(unittest.TestCase):
         self.assertEqual(verdict, 'PASS', details)
         self.assertEqual(logs.count('build slot 1/2 acquired'), 2)
 
-    def test_the_check_is_only_for_the_build_runner(self):
-        self.assertEqual(lane.pr_code_env().get(lane.BUILD_NEEDS_ROOM_ENV), '1')
+    def test_only_the_build_runner_s_builds_get_the_check_and_its_host_tests_never_do(self):
+        variable = lane.BUILD_NEEDS_ROOM_ENV
+        with mock.patch.dict(os.environ, {variable: '1'}):  # even if the runner's own environment had it
+            self.assertNotIn(variable, lane.pr_code_env())  # --plan fast and its lane_slots tests
+            self.assertEqual(lane.pr_build_env().get(variable), '1')
         with mock.patch.dict(os.environ, {'SM_LANE_RUNNER_ROLE': ''}):
-            self.assertNotIn(lane.BUILD_NEEDS_ROOM_ENV, lane.pr_code_env())
+            self.assertNotIn(variable, lane.pr_build_env())
             self.held.enter_context(lane_slots.simulator_slot('a T4', out=self.quiet))
             self.held.enter_context(lane_slots.simulator_slot('a second T4', out=self.quiet))
             with lane_slots.build_slot('a session build', out=self.quiet, max_wait=1):  # as before: one beside two
@@ -266,6 +271,24 @@ class BuildSlotRecheckTests(unittest.TestCase):
             finally:
                 timer.join()
         self.assertGreaterEqual(waited, 0.4)
+
+
+class BuildRunnerEnvironmentTests(unittest.TestCase):
+    """#656 re-audit: on the build runner, --plan fast runs these tests with SM_LANE_RUNNER_ROLE=build, and
+    pr_code_env() once passed SM_LANE_BUILD_NEEDS_ROOM=1 to them too; a test that cleared only the role went
+    red. The lane tests that take build slots must pass with both set."""
+
+    @unittest.skipIf(os.environ.get('SM_LANE_TESTS_IN_RUNNER_ENV'), 'this is the run it starts')
+    def test_the_lane_tests_pass_in_the_build_runner_s_environment(self):
+        env = dict(os.environ, SM_LANE_RUNNER_ROLE='build', SM_LANE_TESTS_IN_RUNNER_ENV='1',
+                   **{lane.BUILD_NEEDS_ROOM_ENV: '1'})
+        # The tests that take build slots or build the runner's environment; whole files would push runner-tests
+        # past --plan fast's 180 s limit (it already takes ~130 s).
+        done = subprocess.run([sys.executable, '-m', 'unittest', 'test_lane_beside_simulator.BuildRoomTests',
+                               'test_lane_beside_simulator.BuildSlotRecheckTests',
+                               'test_lane_sim.LaneSimTests.test_builds_get_one_slot_while_a_simulator_job_runs'],
+                              cwd=Path(__file__).resolve().parent, env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr[-4000:])
 
 
 class BuildRunnerJobTests(unittest.TestCase):

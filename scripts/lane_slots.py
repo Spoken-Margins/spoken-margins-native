@@ -249,7 +249,7 @@ def build_slot(label, out=sys.stderr, max_wait=None):
     """
     if os.environ.get(BUILD_NEEDS_ROOM_ENV):
         return _hold(build_slot_names(), 'build slot', label, out, max_wait, allowed=_room_to_build,
-                     why=lambda: _no_room_to_build() or 'only 1 while a simulator job runs',
+                     why=lambda: _no_room_to_build() or f'only 1 of {SLOTS} while a simulator job runs',
                      decide=SIMULATOR_DECISION)
     return _hold(build_slot_names(), 'build slot', label, out, max_wait,
                  allowed=lambda: 1 if simulator_job_running() else SLOTS)

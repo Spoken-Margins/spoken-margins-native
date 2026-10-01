@@ -246,9 +246,16 @@ def report(request_id: str, verdict: str, head: str, base: str, tier: str, where
 
 def pr_code_env() -> dict:
     """The environment for the PR's own code (builds, tests): without the GitHub token, so nothing the
-    PR changes can use the lane's write access. On the build runner it also sets BUILD_NEEDS_ROOM_ENV, so
-    each xcodebuild-lane checks the build runner's rules again as it takes its build slot (lane_slots.py)."""
-    env = {name: value for name, value in os.environ.items() if name not in ('GH_TOKEN', 'GITHUB_TOKEN')}
+    PR changes can use the lane's write access. Nor BUILD_NEEDS_ROOM_ENV: that is for the T2 builds alone
+    (pr_build_env), and host tests that take build slots or test lane_slots mustn't inherit it."""
+    return {name: value for name, value in os.environ.items()
+            if name not in ('GH_TOKEN', 'GITHUB_TOKEN', BUILD_NEEDS_ROOM_ENV)}
+
+
+def pr_build_env() -> dict:
+    """pr_code_env for the T2 builds. On the build runner it sets BUILD_NEEDS_ROOM_ENV, so each xcodebuild-lane
+    checks the build runner's rules again as it takes its build slot (lane_slots.py)."""
+    env = pr_code_env()
     if os.environ.get('SM_LANE_RUNNER_ROLE') == 'build':
         env[BUILD_NEEDS_ROOM_ENV] = '1'
     return env
@@ -264,7 +271,7 @@ def git_with_token(tree: Path) -> list[str]:
     return ['git', '-C', str(tree), '-c', f'http.https://github.com/.extraheader=AUTHORIZATION: basic {basic}']
 
 
-def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUPT_GRACE) -> int | None:
+def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUPT_GRACE, env=None) -> int | None:
     """Run in a new process group and return its exit code, or None if it timed out.
 
     On timeout the whole group gets SIGINT first, so verify-tests.py and xcodebuild-lane stop their
@@ -273,7 +280,7 @@ def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUP
     # The child gets default SIGINT handling even if this process was started with it ignored (as
     # background jobs are), or the interrupt below would be silently ignored all the way down.
     process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
-                               env=pr_code_env(), preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+                               env=env or pr_code_env(), preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
     try:
         return process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -308,7 +315,8 @@ def first_errors(log: Path, limit: int = 5) -> list[str]:
     return list(dict.fromkeys(found))[:limit]
 
 
-def run_t2(evidence: Path, runner=run_bounded) -> tuple[str, str, list[str]]:
+def run_t2(evidence: Path, runner=None) -> tuple[str, str, list[str]]:
+    runner = runner or (lambda command, log, timeout: run_bounded(command, log, timeout, env=pr_build_env()))
     results, details = [], []
     for name, args in T2_BUILDS:
         log = evidence / f't2-{name}.log'
