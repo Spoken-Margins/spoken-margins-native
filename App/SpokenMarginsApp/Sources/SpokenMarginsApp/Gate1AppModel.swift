@@ -861,10 +861,17 @@ final class Gate1AppModel: ObservableObject {
     @Published var automaticMarginOutputEnabled = UserDefaults.standard.bool(forKey: "automaticMarginOutputEnabled")
     @Published var marginOutputStatus = "Choose a folder and send a test note before enabling automatic delivery."
     @Published private(set) var isImportingReadLater = false
-    private var automaticMarginOutputTask: Task<Void, Never>?
-    private var automaticMarginWriter: AutomaticMarginWriter?
     let readwiseHighlightSync = ReadwiseHighlightSync()
-    private var isDeliveringMargins = false
+    private(set) lazy var marginNotesDelivery = MarginNotesDelivery(
+        isEnabled: { [weak self] in self?.automaticMarginOutputEnabled == true && self?.store != nil },
+        isRecording: { [weak self] in self?.snapshot.isRecording == true },
+        target: { [weak self] in
+            guard let self else { throw CancellationError() }
+            return try self.marginNotesTarget()
+        },
+        report: { [weak self] in self?.marginOutputStatus = $0 },
+        recordGather: { [weak self] in self?.recordAutomaticMarginGather(ms: $0, sessions: $1, notes: $2) }
+    )
     @Published var listeningMapJSON = ""
     @Published var isGeneratingListeningMap = false
     @Published private(set) var localFoundationModelAvailability: LocalFoundationModelAvailability = .unavailable("Checking availability")
@@ -1783,7 +1790,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameInactiveOrBackground() {
-        automaticMarginOutputTask?.cancel(); automaticMarginOutputTask = nil; readwiseHighlightSync.stop()
+        marginNotesDelivery.finishBeforeBackground(); readwiseHighlightSync.stop()
         supertonicRenderer?.setBackgroundInferencePacingEnabled(true)
         if snapshot.status == .starting,
            let supertonic = speechPlaybackClient as? SupertonicSpeechPlaybackClient,
@@ -1992,7 +1999,7 @@ final class Gate1AppModel: ObservableObject {
 
     func handleAppBecameActive() {
         openReadyListeningEdition()
-        startAutomaticMarginOutput(); readwiseHighlightSync.start { [weak self] in self?.store }
+        marginNotesDelivery.start(); readwiseHighlightSync.start { [weak self] in self?.store }
         supertonicRenderer?.setBackgroundInferencePacingEnabled(false)
         let refreshedAvailability = localFoundationModelClient.availability()
         if refreshedAvailability != localFoundationModelAvailability {
@@ -2103,6 +2110,7 @@ final class Gate1AppModel: ObservableObject {
                 }
                 return lhs.id < rhs.id
             }
+            marginNotesDelivery.deliverSoon() // A Margin or its transcript may be new (#171).
         } catch {
             diagnostics["marginRefresh"] = "failed:\(String(describing: type(of: error)))"
         }
@@ -2139,6 +2147,15 @@ final class Gate1AppModel: ObservableObject {
             .compactMap { $0 }.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         guard !parts.isEmpty else { return nil }
         return String(parts.joined(separator: " … ").prefix(600))
+    }
+
+    /// Opens the Margin a notes-folder link names (#171).
+    func openMargin(_ link: MarginDeepLink) {
+        bootstrapLibraryIfNeeded() // A cold launch from the link can arrive before the root view loads the Library.
+        let matches = { (row: MarginRow) in row.interjection.sessionId == link.sessionId && row.interjection.id == link.marginId }
+        if !marginRows.contains(where: matches) { refreshMarginRows() }
+        guard let row = marginRows.first(where: matches) else { return reportFailure("This Margin is no longer in your Library.") }
+        openMarginInTimeline(row)
     }
 
     func openMarginInTimeline(_ row: MarginRow) {
@@ -8327,6 +8344,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleIncomingURL(_ url: URL) {
+        if let marginLink = MarginDeepLink(url: url) { openMargin(marginLink); return }
         if url.isFileURL, url.pathExtension.lowercased() == "json" {
             importListeningEditionFile(url); return
         }
@@ -9854,28 +9872,15 @@ final class Gate1AppModel: ObservableObject {
 
     func automaticMarginOutputChanged() {
         UserDefaults.standard.set(automaticMarginOutputEnabled, forKey: "automaticMarginOutputEnabled")
-        if automaticMarginOutputEnabled { startAutomaticMarginOutput() }
-        else { automaticMarginOutputTask?.cancel(); automaticMarginOutputTask = nil; marginOutputStatus = "Automatic delivery is off. Exported files remain in your folder." }
-    }
-
-    func startAutomaticMarginOutput() {
-        guard automaticMarginOutputEnabled, automaticMarginOutputTask == nil else { return }
-        automaticMarginOutputTask = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                await self.deliverAutomaticMargins()
-                do { try await Task.sleep(for: .seconds(60)) } catch { break }
-            }
-        }
+        if automaticMarginOutputEnabled { marginNotesDelivery.start() }
+        else { marginNotesDelivery.stop(); marginOutputStatus = "Automatic delivery is off. Exported files remain in your folder." }
     }
 
     func testMarginOutput() {
         Task {
             do {
                 guard let folder = resolvedBatchExportFolderURL() else { throw EditionError.invalid("Choose an output folder first.") }
-                let writer = try marginWriter()
-                _ = try await writer.deliver([.init(id: "sample-margin", markdown: "# Spoken Margins test\n\nYour thoughts will arrive here as Markdown, with source context and anchors.\n")], to: folder, destinationID: marginOutputDestinationID)
-                marginOutputStatus = "Test note saved. Open Margin-\(ListeningEdition.digest("sample-margin")).md in your notes app."
+                marginOutputStatus = try await marginNotesDelivery.sendTestNote(to: folder, destinationID: marginOutputDestinationID)
             } catch { marginOutputStatus = error.localizedDescription }
         }
     }
@@ -9883,11 +9888,9 @@ final class Gate1AppModel: ObservableObject {
     private var marginOutputDestinationID: String {
         UserDefaults.standard.string(forKey: "marginOutputDestinationID") ?? "initial"
     }
-    private func marginWriter() throws -> AutomaticMarginWriter {
-        if let automaticMarginWriter { return automaticMarginWriter }
-        let writer = AutomaticMarginWriter(journalURL: try applicationSupportDirectory().appendingPathComponent("SpokenMargins/MarginOutputJournal.json"))
-        automaticMarginWriter = writer
-        return writer
+    private func marginNotesTarget() throws -> MarginNotesDelivery.Target {
+        guard let store, let folder = resolvedBatchExportFolderURL() else { throw EditionError.invalid("Choose or reselect an output folder. Your Margins remain safely in the Library.") }
+        return .init(store: store, folder: folder, destinationID: marginOutputDestinationID)
     }
     private var automaticMarginGatherMaxMs = 0
 
@@ -9901,20 +9904,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func deliverAutomaticMargins() async {
-        guard automaticMarginOutputEnabled, !isDeliveringMargins, !snapshot.isRecording, let store else { return }
-        isDeliveringMargins = true
-        defer { isDeliveringMargins = false }
-        do {
-            guard let folder = resolvedBatchExportFolderURL() else { throw EditionError.invalid("Choose or reselect an output folder. Your Margins remain safely in the Library.") }
-            // Built on a background task (#161); the main actor only waits.
-            let gathered = try await AutomaticMarginNoteGatherer.gather(store: store)
-            let notes = gathered.notes
-            recordAutomaticMarginGather(ms: gathered.elapsedMs, sessions: gathered.sessionCount, notes: notes.count)
-            let count = try await marginWriter().deliver(notes, to: folder, destinationID: marginOutputDestinationID)
-            marginOutputStatus = "\(count) Margins saved to \(folder.lastPathComponent). Last checked \(Date().formatted(date: .omitted, time: .shortened))."
-        } catch { marginOutputStatus = "Delivery needs attention: \(error.localizedDescription)" }
-    }
+    func deliverAutomaticMargins() async { await marginNotesDelivery.pass() }
 
     private func run(_ operation: (SessionEngine) throws -> Void) {
         if engine == nil {
