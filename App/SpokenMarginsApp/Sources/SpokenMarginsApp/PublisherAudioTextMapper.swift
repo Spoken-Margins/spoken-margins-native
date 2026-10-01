@@ -46,7 +46,6 @@ enum PublisherAudioTextMapper {
         report("transcribing")
         running.insert(audio.itemId)
         Task {
-            defer { running.remove(audio.itemId) }
             var updated: PublisherAudio
             do {
                 let transcript = try await transcribe(
@@ -62,11 +61,19 @@ enum PublisherAudioTextMapper {
             } catch {
                 updated = audio.recordingTextMapFailure("failed: \(String(describing: error))")
             }
+            running.remove(audio.itemId)
             do {
                 // The item may have been deleted meanwhile; its record went with it.
-                guard try store.loadPublisherAudio(itemId: audio.itemId) != nil else { return report("item removed") }
-                try store.savePublisherAudio(updated)
-                report(updated.textMapStatus ?? "unknown")
+                guard let current = try store.loadPublisherAudio(itemId: audio.itemId) else { return report("item removed") }
+                // A reimport may have replaced the recording meanwhile. This map is for the old
+                // one, so drop it and map the new one instead.
+                guard current.isSameRecording(as: audio) else {
+                    report("recording replaced during mapping")
+                    return start(current, store: store, transcriber: transcriber, report: report)
+                }
+                let saved = current.keepingTextMap(of: updated)
+                try store.savePublisherAudio(saved)
+                report(saved.textMapStatus ?? "unknown")
             } catch {
                 report("save failed: \(String(describing: error))")
             }

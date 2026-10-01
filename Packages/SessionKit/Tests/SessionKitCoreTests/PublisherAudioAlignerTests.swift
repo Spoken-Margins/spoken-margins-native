@@ -372,6 +372,31 @@ final class PublisherAudioAlignerTests: XCTestCase {
         XCTAssertEqual(fresh.keepingTextMap(of: nil), fresh)
     }
 
+    func testAMapFinishedForAReplacedRecordingIsNotSavedOverTheNewOne() {
+        // Codex audit on #636: recording A is still being mapped when a reimport replaces the
+        // record with recording B. A's finished map must not land on B's record, so the mapper
+        // saves `current.keepingTextMap(of: finished)` only when `isSameRecording` holds.
+        let recordingA = PublisherAudio(itemId: "item-1", audioURL: "https://example.com/a.mp3", durationMs: 60_000, detectedFrom: "feed_enclosure")
+        var recordingB = recordingA
+        recordingB.audioURL = "https://example.com/b.mp3"
+        let finishedA = recordingA.recordingTextMap(
+            PublisherAudioAligner.align(articleText: Self.article, recognised: Self.spoken(Self.article).transcript)
+        )
+        XCTAssertFalse(recordingB.isSameRecording(as: recordingA))
+        XCTAssertFalse(recordingB.isSameRecording(as: nil))
+        XCTAssertEqual(recordingB.keepingTextMap(of: finishedA), recordingB, "B keeps no status, so it is mapped next")
+
+        // The same recording, reimported with a corrected length meanwhile: the map lands on the
+        // stored record without undoing the reimport.
+        var reimportedA = recordingA
+        reimportedA.durationMs = 61_000
+        XCTAssertTrue(reimportedA.isSameRecording(as: recordingA))
+        let saved = reimportedA.keepingTextMap(of: finishedA)
+        XCTAssertEqual(saved.durationMs, 61_000)
+        XCTAssertEqual(saved.textMap, finishedA.textMap)
+        XCTAssertEqual(saved.textMapStatus, finishedA.textMapStatus)
+    }
+
     func testSentencesKeepTheirArticleOffsetsInCharacters() {
         let text = "Caf\u{E9} society, she said. \u{201C}Don\u{2019}t go!\u{201D} Then nothing.\nA new line."
         let characters = Array(text)

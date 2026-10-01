@@ -41,11 +41,18 @@ public struct PublisherAudio: Codable, Equatable, Sendable {
     /// so the map isn't thrown away and the recording isn't transcribed again. A different
     /// recording starts over.
     public func keepingTextMap(of existing: PublisherAudio?) -> PublisherAudio {
-        guard let existing, existing.itemId == itemId, existing.audioURL == audioURL else { return self }
+        guard let existing, isSameRecording(as: existing) else { return self }
         var updated = self
         updated.textMap = existing.textMap
         updated.textMapStatus = existing.textMapStatus
         return updated
+    }
+
+    /// Whether `other` is this item's record for the same recording. A map made from one
+    /// recording must not be saved over a record that now points at another.
+    public func isSameRecording(as other: PublisherAudio?) -> Bool {
+        guard let other else { return false }
+        return other.itemId == itemId && other.audioURL == audioURL
     }
 
     /// The record after a try that never reached alignment, such as a failed download.
