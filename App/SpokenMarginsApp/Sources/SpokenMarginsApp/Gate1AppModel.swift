@@ -992,7 +992,7 @@ final class Gate1AppModel: ObservableObject {
     private var requestedPodcastTransportReplacements: Set<String> = []
     private var offlineStorageLedger: OfflineStorageLedger?
     private var localSourceImporter: LocalSourceImporter?
-    private var followedSourceCoordinator: FollowedSourceCoordinator?
+    private(set) var followedSourceCoordinator: FollowedSourceCoordinator?
     /// A fresh install: the Library was empty before the welcome sample was added (B1 drawer).
     private(set) var libraryWasEmptyAtLaunch = false
     private let readablePageExtractor = AppOwnedReadablePageExtractor()
@@ -16049,7 +16049,7 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             let coordinator = followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
             followedSourceCoordinator = coordinator
-            await coordinator.refreshStale(force: force)
+            for entry in await coordinator.refreshStale(force: force) { importFollowedSourceEntry(entry) } // "Add every new item" (#466)
             feedSubscriptions = try store.loadFeedSubscriptions()
             followedSourceEntries = try await coordinator.entries()
             diagnostics["followedSourceCount"] = "\(feedSubscriptions.count)"
@@ -16119,15 +16119,6 @@ final class Gate1AppModel: ObservableObject {
         guard let coordinator = followedSourceCoordinator else { return }
         Task { [weak self] in
             try? await coordinator.unfollow(subscriptionId: id)
-            await self?.refreshFollowedSources(force: false)
-        }
-    }
-
-    func toggleMuteSource(id: String) {
-        guard let coordinator = followedSourceCoordinator,
-              let subscription = feedSubscriptions.first(where: { $0.id == id }) else { return }
-        Task { [weak self] in
-            try? await coordinator.setMuted(subscriptionId: id, muted: subscription.state != .muted)
             await self?.refreshFollowedSources(force: false)
         }
     }
