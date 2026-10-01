@@ -55,6 +55,38 @@ final class PlaybackTitleFitTests: XCTestCase {
         XCTAssertEqual(longFit, .init(style: .title2, lineLimit: 3), "steps down to Small and clips at three lines")
     }
 
+    /// Height SwiftUI's own Text takes at the phone width, as Now Playing draws it.
+    private func renderedHeight(_ title: String, _ style: Font.TextStyle, lineLimit: Int?) -> CGFloat {
+        let text = Text(title)
+            .font(.system(style, design: .serif).weight(.medium))
+            .lineLimit(lineLimit)
+            .fixedSize(horizontal: false, vertical: true)
+            .environment(\.dynamicTypeSize, .large)
+        return UIHostingController(rootView: text)
+            .sizeThatFits(in: CGSize(width: phoneWidth, height: .greatestFiniteMagnitude)).height
+    }
+
+    /// The rule measures with TextKit; this checks the choice against what SwiftUI really draws:
+    /// at the chosen size nothing is clipped, and each larger size would have been.
+    func testChosenSizeMatchesWhatSwiftUIDraws() {
+        for title in [short, testDesk] {
+            let fit = PlaybackTitleFit.choose(title, width: phoneWidth, dynamicTypeSize: .large)
+            XCTAssertEqual(
+                renderedHeight(title, fit.style, lineLimit: nil),
+                renderedHeight(title, fit.style, lineLimit: fit.lineLimit),
+                accuracy: 0.5,
+                "\(title): whole at the chosen size"
+            )
+            for larger in PlaybackTitleFit.steps.prefix(while: { $0 != fit.style }) {
+                XCTAssertGreaterThan(
+                    renderedHeight(title, larger, lineLimit: nil),
+                    renderedHeight(title, larger, lineLimit: fit.lineLimit) + 0.5,
+                    "\(title): a larger size would have been clipped"
+                )
+            }
+        }
+    }
+
     func testAccessibilitySizesClipAtFourLinesWithoutShrinking() {
         let fit = PlaybackTitleFit.choose(madeUpLong, width: phoneWidth, dynamicTypeSize: .accessibility3)
         XCTAssertEqual(fit, .init(style: .largeTitle, lineLimit: 4))

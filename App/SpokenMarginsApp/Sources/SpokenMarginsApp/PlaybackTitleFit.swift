@@ -49,17 +49,20 @@ enum PlaybackTitleFit {
 
     /// The UIKit twin of `.system(style, design: .serif).weight(.medium)`, for measuring.
     static func font(for style: Font.TextStyle, category: UIContentSizeCategory) -> UIFont {
+        // Size from the text style; weight set on a system font, since a text-style descriptor
+        // can ignore an added weight trait and measure Regular while SwiftUI draws Medium.
         let traits = UITraitCollection(preferredContentSizeCategory: category)
-        let base = UIFontDescriptor.preferredFontDescriptor(withTextStyle: uiTextStyle(style), compatibleWith: traits)
-        let serif = base.withDesign(.serif) ?? base
-        let medium = serif.addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: UIFont.Weight.medium]])
-        return UIFont(descriptor: medium, size: 0)
+        let size = UIFont.preferredFont(forTextStyle: uiTextStyle(style), compatibleWith: traits).pointSize
+        let medium = UIFont.systemFont(ofSize: size, weight: .medium).fontDescriptor
+        return UIFont(descriptor: medium.withDesign(.serif) ?? medium, size: size)
     }
 
     /// Lines the text wraps to at this width, laid out with TextKit as SwiftUI's Text does.
     static func lineCount(of text: String, font: UIFont, width: CGFloat) -> Int {
         guard !text.isEmpty else { return 0 }
-        let storage = NSTextStorage(string: text, attributes: [.font: font])
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakStrategy = .standard // like Text: avoids a lone last word
+        let storage = NSTextStorage(string: text, attributes: [.font: font, .paragraphStyle: paragraph])
         let layout = NSLayoutManager()
         let container = NSTextContainer(size: CGSize(width: width, height: .greatestFiniteMagnitude))
         container.lineFragmentPadding = 0
