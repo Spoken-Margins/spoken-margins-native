@@ -438,7 +438,8 @@ class SandboxTests(unittest.TestCase):
         self.assertEqual(cmd[cmd.index('-s') + 1], 'workspace-write')
         roots = next(c for c in cmd if c.startswith('sandbox_workspace_write.writable_roots='))
         roots = json.loads(roots.split('=', 1)[1])
-        self.assertIn(str(Path.home() / 'Library/Caches/SpokenMarginsLane'), roots)
+        lane = os.environ.get('SM_LANE_STATE_DIR') or str(Path.home() / 'Library/Caches/SpokenMarginsLane')
+        self.assertIn(str(Path(lane)), roots)
         self.assertIn(str(Path.home() / '.cache/clang'), roots)
         self.assertEqual(cmd[-1], 'the prompt')
 
