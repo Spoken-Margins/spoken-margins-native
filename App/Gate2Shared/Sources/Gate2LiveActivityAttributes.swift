@@ -1,5 +1,30 @@
 import Foundation
 
+/// Skim's destination as the playback screen and the Lock Screen both say it (#115).
+public enum SkimDestinationLabel {
+    /// "18:42", or "1:05:09" past an hour.
+    public static func time(_ destinationMs: Int) -> String {
+        let seconds = max(0, destinationMs / 1_000)
+        return seconds >= 3600
+            ? String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
+            : String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    /// The playback screen's button title: "Skim to 18:42" / "Back to 12:05".
+    public static func title(destinationMs: Int?, backward: Bool) -> String {
+        guard let destinationMs else { return backward ? "Skim Back" : "Skim Forward" }
+        return (backward ? "Back to " : "Skim to ") + time(destinationMs)
+    }
+
+    /// What VoiceOver reads for a Lock Screen Skim button.
+    public static func accessibilityLabel(destinationMs: Int?, backward: Bool) -> String {
+        guard let destinationMs else {
+            return backward ? "Skim backward by scene summary" : "Skim forward by scene summary"
+        }
+        return (backward ? "Skim back to " : "Skim forward to ") + time(destinationMs)
+    }
+}
+
 #if canImport(ActivityKit)
 import ActivityKit
 
@@ -21,6 +46,9 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
         public var isRecording: Bool
         public var availableCommands: [String]
         public var sharedMarginSenderLabel: String?
+        /// Where the Skim buttons land (#115); nil when that Skim isn't offered.
+        public var skimForwardDestinationMs: Int?
+        public var skimBackwardDestinationMs: Int?
 
         private enum CodingKeys: String, CodingKey {
             case title
@@ -34,6 +62,8 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             case isRecording
             case availableCommands
             case sharedMarginSenderLabel
+            case skimForwardDestinationMs
+            case skimBackwardDestinationMs
         }
 
         public init(
@@ -47,7 +77,9 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             progressPercent: Int,
             isRecording: Bool,
             availableCommands: [String] = [],
-            sharedMarginSenderLabel: String? = nil
+            sharedMarginSenderLabel: String? = nil,
+            skimForwardDestinationMs: Int? = nil,
+            skimBackwardDestinationMs: Int? = nil
         ) {
             self.title = title
             self.chapterTitle = chapterTitle
@@ -60,6 +92,8 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             self.isRecording = isRecording
             self.availableCommands = availableCommands
             self.sharedMarginSenderLabel = sharedMarginSenderLabel
+            self.skimForwardDestinationMs = skimForwardDestinationMs
+            self.skimBackwardDestinationMs = skimBackwardDestinationMs
         }
 
         public init(from decoder: Decoder) throws {
@@ -75,6 +109,8 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             isRecording = try container.decode(Bool.self, forKey: .isRecording)
             availableCommands = try container.decodeIfPresent([String].self, forKey: .availableCommands) ?? []
             sharedMarginSenderLabel = try container.decodeIfPresent(String.self, forKey: .sharedMarginSenderLabel)
+            skimForwardDestinationMs = try container.decodeIfPresent(Int.self, forKey: .skimForwardDestinationMs)
+            skimBackwardDestinationMs = try container.decodeIfPresent(Int.self, forKey: .skimBackwardDestinationMs)
         }
     }
 

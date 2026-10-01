@@ -9251,9 +9251,8 @@ final class Gate1AppModel: ObservableObject {
             )
         }
         gate2CompactControls.update(
-            snapshot: snapshot,
-            sharedMarginPrompt: sharedMarginPrompt,
-            upcomingSharedMargins: liveActivitySharedMarginNavigationEntries()
+            snapshot: snapshot, sharedMarginPrompt: sharedMarginPrompt, upcomingSharedMargins: liveActivitySharedMarginNavigationEntries(),
+            skimForwardDestinationMs: skimForwardDestinationMs, skimBackwardDestinationMs: skimBackwardDestinationMs // #115
         )
         let compactSnapshot = gate2CompactControls.snapshot
         if gate2CompactSnapshot != compactSnapshot {
