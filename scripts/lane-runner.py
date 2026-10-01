@@ -98,6 +98,8 @@ BUILD_RUNNER_FREE_DISK = 20 * 10**9
 # Trial (2026-10-01): host-only jobs on the build runner may run beside a simulator job, with this much disk.
 BESIDE_SIMULATOR_FREE_DISK = 30 * 2**30
 BESIDE_SIMULATOR_LOG = 'beside-simulator.log'  # in the lane state folder: one line per job, to count crashes against
+# Read by the tree's lane_slots.py (spelled here so this runner never needs a name from that copy, lane_slots_helper).
+BUILD_NEEDS_ROOM_ENV = 'SM_LANE_BUILD_NEEDS_ROOM'
 WARM_FREE_FLOOR = 15 * 10**9
 PROJECT_FILE = 'SpokenMarginsNative.xcodeproj/project.pbxproj'  # its layout names Xcode's VFS folders (#405)
 # How the T3 gate's hold reads in an automerge report, now and before #421 (PRs held by an older runner).
@@ -244,8 +246,12 @@ def report(request_id: str, verdict: str, head: str, base: str, tier: str, where
 
 def pr_code_env() -> dict:
     """The environment for the PR's own code (builds, tests): without the GitHub token, so nothing the
-    PR changes can use the lane's write access."""
-    return {name: value for name, value in os.environ.items() if name not in ('GH_TOKEN', 'GITHUB_TOKEN')}
+    PR changes can use the lane's write access. On the build runner it also sets BUILD_NEEDS_ROOM_ENV, so
+    each xcodebuild-lane checks the build runner's rules again as it takes its build slot (lane_slots.py)."""
+    env = {name: value for name, value in os.environ.items() if name not in ('GH_TOKEN', 'GITHUB_TOKEN')}
+    if os.environ.get('SM_LANE_RUNNER_ROLE') == 'build':
+        env[BUILD_NEEDS_ROOM_ENV] = '1'
+    return env
 
 
 def git_with_token(tree: Path) -> list[str]:
@@ -898,14 +904,29 @@ def wait_for_room_to_build(out=sys.stdout, max_wait: float = BUILD_RUNNER_WAIT, 
     simulator job (mostly the Test Desk's) while the Mac was ~60% idle, and the host-only trial covered few
     jobs because most automerge jobs build. A build may now start beside one simulator job on the host-only
     terms (pressure read as normal now, BESIDE_SIMULATOR_FREE_DISK free) while the one build slot lane_slots
-    leaves during a simulator job is free; note(text) is called when it does. Never beside two.
+    leaves during a simulator job is free; note(text) is called when it does. Never beside two. This is the
+    check when the job starts; each build checks again as it takes its slot (BUILD_NEEDS_ROOM_ENV).
     """
-    from lane_slots import build_jobs_running, memory_pressure_level, simulator_jobs_running
+    from lane_slots import memory_pressure_level, simulator_jobs_running
+    builds = builds or lane_slots_helper('build_jobs_running', lambda: None)
     problem, beside = wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs or simulator_jobs_running,
-                                    pressure or memory_pressure_level, free, builds or build_jobs_running)
+                                    pressure or memory_pressure_level, free, builds)
     if beside and note:
         note(beside)
     return problem
+
+
+def lane_slots_helper(name: str, fallback):
+    """lane_slots.<name>, or fallback when the tree's copy of lane_slots.py predates it.
+
+    The workflow runs next's lane-runner.py, but lane_slots comes from the PR's checkout (main() puts the
+    tree's scripts/ first on sys.path, and the module stays loaded after the merge commit is checked out).
+    A branch that hasn't merged next since a helper landed lacks it, and a plain import raised ImportError
+    before the job could report (#656 audit). Every lane_slots name newer than #656 is looked up here, with
+    a fallback that keeps the older, more careful behaviour.
+    """
+    import lane_slots
+    return getattr(lane_slots, name, fallback)
 
 
 def pressure_is_normal(level) -> bool:
@@ -931,7 +952,8 @@ def wait_for_room_to_test_on_host(out=sys.stdout, max_wait: float = BUILD_RUNNER
 
 def wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs, pressure, free, builds=None) -> tuple:
     """(None or why it gave up, a note when there's room beside a simulator job). builds, for a job that builds:
-    how many build slots are held; beside a simulator job, it needs the one slot left then, and one simulator."""
+    how many build slots are held (None: can't tell, so it doesn't build beside a simulator job); beside a
+    simulator job, it needs the one slot left then, and one simulator."""
     started, last_note = clock(), None
     while True:
         jobs, level, room = simulator_jobs(), pressure(), free()
@@ -943,9 +965,13 @@ def wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs, pressure, f
             if room < BESIDE_SIMULATOR_FREE_DISK:
                 busy.append(f'a simulator job is running and less than {BESIDE_SIMULATOR_FREE_DISK // 2**30} GiB '
                             'of disk is free')
+            held = builds() if builds and jobs == 1 else 0
             if builds and jobs > 1:
                 busy.append('two simulator jobs are running')
-            elif builds and builds():
+            elif held is None:
+                busy.append('a simulator job is running, and this checkout\'s lane_slots.py can\'t count build '
+                            'slots (merge next into the branch to build beside one)')
+            elif held:
                 busy.append('a simulator job is running and the one build slot it leaves is taken')
         else:
             if level not in (1, None):

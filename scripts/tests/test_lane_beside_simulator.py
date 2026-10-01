@@ -6,11 +6,14 @@ no simulator. Most automerge jobs build, so it still spent 6.9 of 12.7 busy hour
 may now start beside one simulator job too, on the same terms, while the one build slot left is free.
 """
 import contextlib
+import fcntl
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -154,6 +157,115 @@ class BuildRoomTests(unittest.TestCase):
             with self.assertRaises(TimeoutError):  # lane_slots still caps it at one build
                 with lane_slots.build_slot('a second build', out=quiet, max_wait=0.2):
                     self.fail('took a second build slot during a simulator job')
+
+
+class OlderBranchLaneSlotsTests(unittest.TestCase):
+    """#656 audit: the workflow runs next's lane-runner.py, but lane_slots comes from the PR's checkout. A branch
+    that hasn't merged next since build_jobs_running landed must not crash the runner before it reports."""
+
+    def test_the_runner_s_import_path_works_with_a_lane_slots_that_lacks_build_jobs_running(self):
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(Path(folder) / 'state'),
+                                             'SM_LANE_MEMORY_PRESSURE': '1'}), \
+                open(os.devnull, 'w') as quiet, lane_slots.simulator_slot('a T4', out=quiet):
+            runner_temp, tree = Path(folder) / 'runner-temp', Path(folder) / 'tree/scripts'
+            runner_temp.mkdir()
+            tree.mkdir(parents=True)
+            # As the workflow does: the runner copied out of the base branch, apart from the checkout.
+            (runner_temp / 'lane-runner.py').write_text((Path(lane.__file__)).read_text())
+            source = (Path(lane_slots.__file__)).read_text() + '\ndel build_jobs_running  # an older branch\n'
+            (tree / 'lane_slots.py').write_text(source)
+            code = (f'import importlib.util, sys; sys.path.insert(0, {str(tree)!r}); '
+                    f'spec = importlib.util.spec_from_file_location("l", {str(runner_temp / "lane-runner.py")!r}); '
+                    'l = importlib.util.module_from_spec(spec); spec.loader.exec_module(l); '
+                    'import lane_slots; assert not hasattr(lane_slots, "build_jobs_running"), lane_slots.__file__; '
+                    f'print("RESULT", l.wait_for_room_to_build(max_wait=0, free=lambda: {40 * GIB}))')
+            done = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        result = next(line for line in done.stdout.splitlines() if line.startswith('RESULT'))
+        # It can't count build slots, so it doesn't build beside the simulator job: it says why instead.
+        self.assertIn("can't count build slots", result)
+        self.assertIn('merge next into the branch', result)
+
+    def test_without_a_simulator_job_an_older_lane_slots_still_builds(self):
+        with open(os.devnull, 'w') as quiet:
+            problem = lane.wait_for_room(quiet, 0, 10, lambda: 0.0, lambda _: None, lambda: 0, lambda: 1,
+                                         lambda: 40 * GIB, lambda: None)
+        self.assertEqual(problem, (None, None))
+
+
+class BuildSlotRecheckTests(unittest.TestCase):
+    """#656 audit: the room check ran only when the job started. A second simulator job could start during the
+    host tests, and the build then took the one build slot beside two. Each build checks again as it takes it."""
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.quiet = open(os.devnull, 'w')
+        self.addCleanup(self.quiet.close)
+        self.env = mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': self.folder.name, 'SM_LANE_MEMORY_PRESSURE': '1',
+                                                'SM_LANE_RUNNER_ROLE': 'build', 'SM_LANE_XCODEBUILD': '/usr/bin/true'})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.held = contextlib.ExitStack()
+        self.addCleanup(self.held.close)
+
+    def build(self, timeout):
+        with tempfile.TemporaryDirectory() as evidence, \
+                mock.patch.object(lane, 'BUILD_TIMEOUT', timeout), mock.patch.object(lane, 'INTERRUPT_GRACE', 5):
+            verdict, builds, details = lane.run_t2(Path(evidence))
+            logs = ''.join(log.read_text() for log in sorted(Path(evidence).glob('t2-*.log')))
+        return verdict, builds, details, logs
+
+    def test_a_second_simulator_job_that_starts_during_host_tests_holds_the_build(self):
+        self.held.enter_context(lane_slots.simulator_slot('a T4', out=self.quiet))
+        noted = []
+        self.assertIsNone(lane.wait_for_room_to_build(out=self.quiet, max_wait=0, free=lambda: 40 * GIB,
+                                                      note=noted.append))  # the job starts beside one
+        self.assertEqual(len(noted), 1)
+        self.held.enter_context(lane_slots.simulator_slot('a second T4, during host tests', out=self.quiet))
+        verdict, builds, _, logs = self.build(timeout=4)  # the real xcodebuild-lane, xcodebuild stubbed by `true`
+        self.assertEqual(verdict, 'INCONCLUSIVE', builds)
+        self.assertIn('timed out', builds)
+        self.assertIn('2 simulator jobs are running', logs)
+        self.assertNotIn('build slot 1/2 acquired', logs)
+
+    def test_memory_pressure_that_rises_during_host_tests_holds_the_build(self):
+        self.held.enter_context(lane_slots.simulator_slot('a T4', out=self.quiet))
+        self.assertIsNone(lane.wait_for_room_to_build(out=self.quiet, max_wait=0, free=lambda: 40 * GIB))
+        with mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '2'}):
+            verdict, builds, _, logs = self.build(timeout=4)
+        self.assertEqual(verdict, 'INCONCLUSIVE', builds)
+        self.assertIn('memory pressure is warn', logs)
+
+    def test_beside_one_simulator_job_at_normal_pressure_the_builds_run(self):
+        self.held.enter_context(lane_slots.simulator_slot('a T4', out=self.quiet))
+        verdict, builds, details, logs = self.build(timeout=60)
+        self.assertEqual(verdict, 'PASS', details)
+        self.assertEqual(logs.count('build slot 1/2 acquired'), 2)
+
+    def test_the_check_is_only_for_the_build_runner(self):
+        self.assertEqual(lane.pr_code_env().get(lane.BUILD_NEEDS_ROOM_ENV), '1')
+        with mock.patch.dict(os.environ, {'SM_LANE_RUNNER_ROLE': ''}):
+            self.assertNotIn(lane.BUILD_NEEDS_ROOM_ENV, lane.pr_code_env())
+            self.held.enter_context(lane_slots.simulator_slot('a T4', out=self.quiet))
+            self.held.enter_context(lane_slots.simulator_slot('a second T4', out=self.quiet))
+            with lane_slots.build_slot('a session build', out=self.quiet, max_wait=1):  # as before: one beside two
+                pass
+
+    def test_the_check_and_the_take_happen_under_the_simulator_slot_decision_lock(self):
+        with mock.patch.dict(os.environ, {lane_slots.BUILD_NEEDS_ROOM_ENV: '1'}), \
+                open(Path(self.folder.name) / lane_slots.SIMULATOR_DECISION, 'a+') as decision:
+            fcntl.flock(decision, fcntl.LOCK_EX)  # a simulator job deciding whether to take its slot
+            timer = threading.Timer(0.5, lambda: fcntl.flock(decision, fcntl.LOCK_UN))
+            timer.start()
+            started = time.monotonic()
+            try:
+                with lane_slots.build_slot('a build', out=self.quiet, max_wait=5):
+                    waited = time.monotonic() - started
+            finally:
+                timer.join()
+        self.assertGreaterEqual(waited, 0.4)
 
 
 class BuildRunnerJobTests(unittest.TestCase):
