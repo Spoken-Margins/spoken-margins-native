@@ -1,0 +1,911 @@
+#!/usr/bin/env python3
+"""Disk relief: free space on the Mac's data volume before it limits the work.
+
+Owner, 2026-10-01: "I really hope we are not limiting ourselves because of disk space."
+
+When free space on /System/Volumes/Data drops below 35 GiB and the external drive
+/Volumes/SlawBulk is plugged in, this frees space in order, stopping as soon as free space
+reaches 60 GiB:
+
+1. Regenerable build caches in idle worktrees of this repo: `.build/dd`, `.build/verification`
+   (and anything else in `.build/` except lock files) and `Packages/SessionKit/.build`.
+   Idle means no process has its working directory inside the worktree, no xcodebuild,
+   swift-build or verify-tests command names it, no live agent holds its worktree lock, and
+   nothing under the cache changed in the last 30 minutes.
+2. iOS DeviceSupport folders except the newest one.
+3. Moves to /Volumes/SlawBulk/Codex-Offload/<date>-disk-relief/<path relative to home>, with a
+   second copy on the separate mirror disk (/Volumes/SlawArchiveMirror/Current/SlawBulk/...),
+   each copied under a `.partial` name and checked by size and file count before the source is
+   deleted: `artifacts/` folders in the main checkout untouched for 2 days, older phone builds in
+   ~/SpokenMargins-phone (never `latest`, the installed one, or the newest two), and Claude and
+   Codex session logs untouched for 3 days. Without the mirror disk, moves are skipped.
+
+It never touches the self-hosted runner folders, ~/.codex/worktrees, CoreSimulator, or app data.
+It never removes a worktree; stale ones (clean, HEAD already in origin/next) are listed for the
+owner instead. One run at a time (a lock file); every action goes to
+~/SpokenMarginsOps/disk-relief/log.txt; a notification appears only when it acted.
+
+Stdlib only, Python 3.9+. `--dry-run` lists what it would do, with sizes, and changes nothing.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import fcntl
+import glob
+import os
+import plistlib
+import re
+import shutil
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, Iterable, List, Optional, Tuple
+
+GiB = 1024 ** 3
+HOME = Path.home()
+
+CACHE_IDLE_SECONDS = 30 * 60
+ARTIFACT_AGE_SECONDS = 2 * 86400
+SESSION_LOG_AGE_SECONDS = 3 * 86400
+PHONE_KEEP_NEWEST = 2
+BUSY_COMMAND_WORDS = ('xcodebuild', 'swift-build', 'verify-tests')
+PHONE_BUILD_NAME = re.compile(r'^\d{8}-\d{6}-[0-9a-f]{7}$')
+
+
+# ---------- configuration ----------
+
+@dataclass
+class Config:
+    home: Path = HOME
+    repo: Path = HOME / 'Documents/GitHub/spoken-margins-native'
+    checkout_glob: str = str(HOME / 'Documents/GitHub/spoken-margins-native*')
+    data_volume: Path = Path('/System/Volumes/Data')
+    drive: Path = Path('/Volumes/SlawBulk')
+    offload_dir: str = 'Codex-Offload'
+    # The second copy, on a separate physical disk (need-space README): SlawBulk shares its disk
+    # with Time Machine. slaw-sync mirrors SlawBulk into Current/SlawBulk there.
+    mirror: Path = Path('/Volumes/SlawArchiveMirror')
+    mirror_subdir: str = 'Current/SlawBulk'
+    require_mirror: bool = True
+    ops_dir: Path = HOME / 'SpokenMarginsOps/disk-relief'
+    phone_dir: Path = HOME / 'SpokenMargins-phone'
+    device_support: Path = HOME / 'Library/Developer/Xcode/iOS DeviceSupport'
+    launch_agents: Path = HOME / 'Library/LaunchAgents'
+    claude_projects: Path = HOME / '.claude/projects'
+    codex_sessions: Path = HOME / '.codex/sessions'
+    trigger_bytes: int = 35 * GiB
+    target_bytes: int = 60 * GiB
+    extra_protected: List[Path] = field(default_factory=list)
+
+    @property
+    def log_file(self) -> Path:
+        return self.ops_dir / 'log.txt'
+
+    @property
+    def lock_file(self) -> Path:
+        return self.ops_dir / '.lock'
+
+    def protected(self) -> List[Path]:
+        """Paths no action may touch, or contain."""
+        paths = [
+            self.home / '.codex/worktrees',
+            self.home / 'Library/Developer/CoreSimulator',
+            self.home / 'Library/Containers',
+            self.home / 'Library/Group Containers',
+            self.home / 'Library/Application Support',
+            self.home / 'Library/Mobile Documents',
+            self.drive,
+            self.mirror,
+        ]
+        paths += runner_dirs(self.launch_agents)
+        paths += self.extra_protected
+        return [real(p) for p in paths]
+
+
+def real(path) -> Path:
+    return Path(os.path.realpath(str(path)))
+
+
+def inside(path: Path, root: Path) -> bool:
+    """True when path is root or below it (both already real paths)."""
+    return path == root or str(path).startswith(str(root).rstrip('/') + '/')
+
+
+def runner_dirs(launch_agents: Path) -> List[Path]:
+    """The self-hosted runners' folders, from their LaunchAgent plists."""
+    found = []
+    for plist in sorted(launch_agents.glob('actions.runner.*.plist')):
+        try:
+            data = plistlib.loads(plist.read_bytes())
+        except (OSError, plistlib.InvalidFileException, ValueError):
+            continue
+        if data.get('WorkingDirectory'):
+            found.append(Path(data['WorkingDirectory']))
+        for arg in data.get('ProgramArguments', [])[:1]:
+            found.append(Path(arg).parent)
+    return found
+
+
+def is_protected(path: Path, protected: Iterable[Path]) -> bool:
+    """A path is off limits if it is inside a protected path or contains one."""
+    path = real(path)
+    return any(inside(path, p) or inside(p, path) for p in protected)
+
+
+# ---------- measuring ----------
+
+@dataclass
+class TreeStats:
+    disk_bytes: int = 0       # blocks on disk: what deleting it frees
+    apparent_bytes: int = 0   # file sizes: what a copy must match
+    files: int = 0            # regular files and symlinks
+    newest_mtime: float = 0.0
+
+
+def tree_stats(path: Path, stop_if_newer_than: Optional[float] = None) -> TreeStats:
+    """Walk without following symlinks. With stop_if_newer_than, return early once a newer
+    mtime is seen (the caller only wants to know the tree is busy)."""
+    stats = TreeStats()
+
+    def add(st, is_file):
+        stats.disk_bytes += getattr(st, 'st_blocks', 0) * 512
+        if is_file:
+            stats.apparent_bytes += st.st_size
+            stats.files += 1
+        stats.newest_mtime = max(stats.newest_mtime, st.st_mtime)
+
+    try:
+        top = os.lstat(path)
+    except OSError:
+        return stats
+    if not os.path.isdir(path) or os.path.islink(path):
+        add(top, True)
+        return stats
+    add(top, False)
+    stack = [str(path)]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(os.scandir(current))
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                st = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            is_dir = entry.is_dir(follow_symlinks=False)
+            add(st, not is_dir)
+            if stop_if_newer_than is not None and st.st_mtime > stop_if_newer_than:
+                return stats
+            if is_dir:
+                stack.append(entry.path)
+    return stats
+
+
+def gib(n: float) -> str:
+    return f'{n / GiB:.1f} GiB'
+
+
+def size_text(n: int) -> str:
+    if n >= GiB:
+        return gib(n)
+    return f'{n / 1024 ** 2:.0f} MiB'
+
+
+# ---------- the machine (the boundary tests replace) ----------
+
+@dataclass
+class Proc:
+    pid: int
+    cwd: Optional[str]
+    command: str
+
+
+class Machine:
+    def now(self) -> float:
+        return time.time()
+
+    def free_bytes(self, path: Path) -> int:
+        st = os.statvfs(str(path))
+        return st.f_bavail * st.f_frsize
+
+    def is_mounted(self, path: Path) -> bool:
+        return os.path.ismount(str(path))
+
+    def processes(self) -> List[Proc]:
+        procs = {}
+        ps = run_quiet(['ps', '-axww', '-o', 'pid=,command='])
+        for line in ps.splitlines():
+            parts = line.strip().split(None, 1)
+            if parts and parts[0].isdigit():
+                procs[int(parts[0])] = Proc(int(parts[0]), None, parts[1] if len(parts) > 1 else '')
+        pid = None
+        for line in run_quiet(['lsof', '-nP', '-a', '-d', 'cwd', '-Fpn'], timeout=120).splitlines():
+            if line.startswith('p') and line[1:].isdigit():
+                pid = int(line[1:])
+            elif line.startswith('n') and pid is not None:
+                procs.setdefault(pid, Proc(pid, None, '')).cwd = line[1:]
+        return list(procs.values())
+
+    def pid_alive(self, pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    def git(self, cwd: Path, *args) -> Tuple[int, str]:
+        try:
+            done = subprocess.run(['git', '-C', str(cwd), *args], capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            return 1, ''
+        return done.returncode, done.stdout
+
+    def copy(self, src: Path, dst: Path) -> bool:
+        """rsync -a, a folder's contents into dst/ or a file to dst."""
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        source = str(src) + ('/' if src.is_dir() and not src.is_symlink() else '')
+        target = str(dst) + ('/' if src.is_dir() and not src.is_symlink() else '')
+        try:
+            done = subprocess.run(['/usr/bin/rsync', '-a', source, target], capture_output=True, text=True,
+                                  timeout=6 * 3600)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return done.returncode == 0
+
+    def remove(self, path: Path) -> None:
+        if path.is_dir() and not path.is_symlink():
+            def retry_writable(func, p, _exc):
+                try:
+                    os.chmod(p, 0o700)
+                    func(p)
+                except OSError:
+                    pass
+            shutil.rmtree(path, onerror=retry_writable)
+        else:
+            path.unlink()
+
+    def notify(self, title: str, message: str) -> None:
+        command = os.environ.get('SM_DISK_NOTIFY', 'osascript')
+        if command == 'off':
+            return
+        script = ['-e', 'on run argv', '-e',
+                  'display notification (item 1 of argv) with title (item 2 of argv)', '-e', 'end run']
+        try:
+            subprocess.run([*command.split(), *script, message, title], capture_output=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
+def run_quiet(command: List[str], timeout: int = 60) -> str:
+    try:
+        return subprocess.run(command, capture_output=True, text=True, timeout=timeout).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ''
+
+
+# ---------- worktrees and busy paths ----------
+
+@dataclass
+class Worktree:
+    path: Path
+    locked: Optional[str] = None
+
+
+def parse_worktrees(porcelain: str) -> List[Worktree]:
+    trees: List[Worktree] = []
+    for line in porcelain.splitlines():
+        if line.startswith('worktree '):
+            trees.append(Worktree(Path(line[len('worktree '):])))
+        elif trees and line.startswith('locked'):
+            trees[-1].locked = line[len('locked'):].strip() or 'locked'
+    return trees
+
+
+def list_worktrees(cfg: Config, machine: Machine) -> List[Worktree]:
+    """Every worktree of the main checkout, plus any spoken-margins-native* checkouts and theirs."""
+    roots = [cfg.repo] + [Path(p) for p in sorted(glob.glob(cfg.checkout_glob))]
+    seen = {}
+    for root in roots:
+        if not (root / '.git').exists():
+            continue
+        code, out = machine.git(root, 'worktree', 'list', '--porcelain')
+        found = parse_worktrees(out) if code == 0 else []
+        if not found:
+            found = [Worktree(root)]
+        for tree in found:
+            key = real(tree.path)
+            if key not in seen and tree.path.exists():
+                seen[key] = Worktree(key, tree.locked)
+    return list(seen.values())
+
+
+def owner_of(path: str, roots: List[Path]) -> Optional[Path]:
+    """The deepest worktree root holding this path (a nested worktree owns its own files)."""
+    p = real(path)
+    best = None
+    for root in roots:
+        if inside(p, root) and (best is None or len(str(root)) > len(str(best))):
+            best = root
+    return best
+
+
+def path_words(command: str) -> List[str]:
+    words = []
+    for word in command.split():
+        word = word.strip('\'"')
+        if '=' in word:
+            word = word.split('=', 1)[1]
+        if word.startswith('/'):
+            words.append(word)
+    return words
+
+
+def lock_pid_alive(locked: Optional[str], machine: Machine) -> bool:
+    """`git worktree lock` reasons written by Claude agents name a pid; a live one means in use."""
+    if not locked:
+        return False
+    match = re.search(r'\bpid (\d+)', locked)
+    return bool(match) and machine.pid_alive(int(match.group(1)))
+
+
+def busy_worktrees(trees: List[Worktree], procs: List[Proc], machine: Machine) -> dict:
+    """Map each busy worktree root to the reason it is busy."""
+    roots = [t.path for t in trees]
+    busy = {}
+    for proc in procs:
+        if proc.cwd:
+            owner = owner_of(proc.cwd, roots)
+            if owner is not None:
+                busy.setdefault(owner, f'process {proc.pid} works there')
+        if any(word in proc.command for word in BUSY_COMMAND_WORDS):
+            for word in path_words(proc.command):
+                owner = owner_of(word, roots)
+                if owner is not None:
+                    busy.setdefault(owner, f'process {proc.pid} builds or tests there')
+    for tree in trees:
+        if lock_pid_alive(tree.locked, machine):
+            busy.setdefault(tree.path, 'a live agent holds its lock')
+    return busy
+
+
+def busy_paths(paths: List[Path], procs: List[Proc]) -> set:
+    """Which of these (non-worktree) paths a process works in or a build command names."""
+    roots = [real(p) for p in paths]
+    hit = set()
+    for proc in procs:
+        words = ([proc.cwd] if proc.cwd else []) + path_words(proc.command)
+        for word in words:
+            owner = owner_of(word, roots)
+            if owner is not None:
+                hit.add(owner)
+    return hit
+
+
+# ---------- planning ----------
+
+@dataclass
+class Candidate:
+    step: str            # 'cache', 'device-support' or 'move'
+    path: Path
+    size: int            # bytes on disk it frees
+    why: str
+
+
+@dataclass
+class Plan:
+    candidates: List[Candidate] = field(default_factory=list)
+    skipped: List[str] = field(default_factory=list)
+    stale_worktrees: List[Path] = field(default_factory=list)
+
+
+def cache_dirs(worktree: Path) -> List[Path]:
+    found = []
+    build = worktree / '.build'
+    if build.is_dir():
+        for child in sorted(build.iterdir()):
+            if child.name.endswith('.lock') or child.is_symlink():
+                continue
+            if child.is_dir():
+                found.append(child)
+    swiftpm = worktree / 'Packages/SessionKit/.build'
+    if swiftpm.is_dir() and not swiftpm.is_symlink():
+        found.append(swiftpm)
+    return found
+
+
+def plan_caches(cfg: Config, machine: Machine, trees: List[Worktree], busy: dict,
+                protected: List[Path], plan: Plan) -> None:
+    idle_since = machine.now() - CACHE_IDLE_SECONDS
+    found = []
+    for tree in trees:
+        if is_protected(tree.path, protected):
+            continue
+        dirs = cache_dirs(tree.path)
+        if not dirs:
+            continue
+        if tree.path in busy:
+            plan.skipped.append(f'caches in {tree.path}: {busy[tree.path]}')
+            continue
+        for d in dirs:
+            if is_protected(d, protected):
+                continue
+            recent = tree_stats(d, stop_if_newer_than=idle_since)
+            if recent.newest_mtime > idle_since:
+                plan.skipped.append(f'{d}: changed in the last 30 minutes')
+                continue
+            stats = tree_stats(d)
+            if stats.disk_bytes:
+                found.append(Candidate('cache', d, stats.disk_bytes, 'build cache in an idle worktree'))
+    plan.candidates += sorted(found, key=lambda c: -c.size)
+
+
+def plan_device_support(cfg: Config, procs: List[Proc], protected: List[Path], plan: Plan) -> None:
+    if not cfg.device_support.is_dir():
+        return
+    folders = [p for p in cfg.device_support.iterdir() if p.is_dir() and not p.is_symlink()]
+    if len(folders) < 2:
+        return
+    # Keep the newest by date and the highest iOS version: the phone runs the newest iOS, and
+    # the need-space README says keep the version the phone runs now.
+    keep = {max(folders, key=lambda p: p.stat().st_mtime), max(folders, key=ios_version)}
+    busy = busy_paths(folders, procs)
+    found = []
+    for folder in folders:
+        if folder in keep or is_protected(folder, protected):
+            continue
+        if real(folder) in busy:
+            plan.skipped.append(f'{folder}: in use')
+            continue
+        found.append(Candidate('device-support', folder, tree_stats(folder).disk_bytes,
+                               'older than ' + ' and '.join(sorted(k.name for k in keep))))
+    plan.candidates += sorted(found, key=lambda c: -c.size)
+
+
+def ios_version(folder: Path) -> Tuple[int, ...]:
+    """'iPhone18,1 27.0.1 (24A437)' -> (27, 0, 1); folders without one sort first."""
+    match = re.search(r'(?:^|\s)(\d+(?:\.\d+)+)(?:\s|$)', folder.name)
+    return tuple(int(n) for n in match.group(1).split('.')) if match else ()
+
+
+def artifact_folders(artifacts: Path, older_than: float) -> List[Path]:
+    """Folders in artifacts/ untouched since older_than. A folder that changed recently but holds
+    old run folders (artifacts/lane) is looked into one level down."""
+    picked = []
+    if not artifacts.is_dir():
+        return picked
+    for child in sorted(artifacts.iterdir()):
+        if not child.is_dir() or child.is_symlink():
+            continue
+        if tree_stats(child, stop_if_newer_than=older_than).newest_mtime <= older_than:
+            picked.append(child)
+            continue
+        for grandchild in sorted(child.iterdir()):
+            if grandchild.is_dir() and not grandchild.is_symlink() and \
+                    tree_stats(grandchild, stop_if_newer_than=older_than).newest_mtime <= older_than:
+                picked.append(grandchild)
+    return picked
+
+
+def installed_sha(phone_dir: Path) -> Optional[str]:
+    try:
+        words = (phone_dir / 'installed.txt').read_text().split()
+    except OSError:
+        return None
+    return words[0] if words and re.fullmatch(r'[0-9a-f]{7,40}', words[0]) else None
+
+
+def phone_builds_to_move(phone_dir: Path) -> List[Path]:
+    """Every stamped build except latest's target, the installed one and the newest two."""
+    if not phone_dir.is_dir():
+        return []
+    builds = sorted(p for p in phone_dir.iterdir()
+                    if p.is_dir() and not p.is_symlink() and PHONE_BUILD_NAME.match(p.name))
+    keep = {p.name for p in builds[-PHONE_KEEP_NEWEST:]}
+    link = phone_dir / 'latest'
+    if link.is_symlink() or link.exists():
+        keep.add(real(link).name)
+    sha = installed_sha(phone_dir)
+    if sha:
+        keep.update(p.name for p in builds if p.name[-7:] == sha[:7])
+    return [p for p in builds if p.name not in keep]
+
+
+def session_logs(cfg: Config, older_than: float) -> List[Path]:
+    files = []
+    if cfg.claude_projects.is_dir():
+        files += [Path(p) for p in glob.glob(str(cfg.claude_projects / '*' / '*.jsonl'))]
+    if cfg.codex_sessions.is_dir():
+        for dirpath, _dirs, names in os.walk(cfg.codex_sessions):
+            files += [Path(dirpath) / n for n in names]
+    picked = []
+    for f in sorted(files):
+        try:
+            st = f.lstat()
+        except OSError:
+            continue
+        if f.is_file() and not f.is_symlink() and st.st_mtime <= older_than:
+            picked.append(f)
+    return picked
+
+
+def plan_moves(cfg: Config, machine: Machine, procs: List[Proc], protected: List[Path], plan: Plan) -> None:
+    now = machine.now()
+    groups = [
+        ('artifacts folder untouched for 2 days', artifact_folders(cfg.repo / 'artifacts', now - ARTIFACT_AGE_SECONDS)),
+        ('older phone build', phone_builds_to_move(cfg.phone_dir)),
+        ('session log untouched for 3 days', session_logs(cfg, now - SESSION_LOG_AGE_SECONDS)),
+    ]
+    for why, paths in groups:
+        busy = busy_paths(paths, procs) if paths and paths[0].is_dir() else set()
+        found = []
+        for p in paths:
+            if is_protected(p, protected):
+                continue
+            if real(p) in busy:
+                plan.skipped.append(f'{p}: in use')
+                continue
+            found.append(Candidate('move', p, tree_stats(p).disk_bytes, why))
+        plan.candidates += sorted(found, key=lambda c: -c.size) if why != 'session log untouched for 3 days' else found
+
+
+def stale_worktrees(cfg: Config, machine: Machine, trees: List[Worktree], protected: List[Path],
+                    busy: dict) -> List[Path]:
+    """Clean worktrees whose HEAD is already in origin/next: the owner may remove them. Not the
+    standing checkouts (the main one, -test-desk, -finisher) and not one in use."""
+    stale = []
+    standing = {real(cfg.repo)} | {real(p) for p in glob.glob(cfg.checkout_glob)}
+    for tree in trees:
+        if tree.path in standing or tree.path in busy or is_protected(tree.path, protected):
+            continue
+        code, status = machine.git(tree.path, 'status', '--porcelain')
+        if code != 0 or status.strip():
+            continue
+        code, _ = machine.git(tree.path, 'merge-base', '--is-ancestor', 'HEAD', 'origin/next')
+        if code == 0:
+            stale.append(tree.path)
+    return stale
+
+
+def make_plan(cfg: Config, machine: Machine) -> Plan:
+    plan = Plan()
+    protected = cfg.protected()
+    procs = machine.processes()
+    trees = list_worktrees(cfg, machine)
+    busy = busy_worktrees(trees, procs, machine)
+    plan_caches(cfg, machine, trees, busy, protected, plan)
+    plan_device_support(cfg, procs, protected, plan)
+    plan_moves(cfg, machine, procs, protected, plan)
+    plan.stale_worktrees = stale_worktrees(cfg, machine, trees, protected, busy)
+    return plan
+
+
+# ---------- acting ----------
+
+def should_run(free: int, cfg: Config) -> bool:
+    return free < cfg.trigger_bytes
+
+
+def volume_ready(machine: Machine, volume: Path, folder: Path, write_probe: bool) -> Optional[str]:
+    """None when the volume is mounted and folder on it is writable, else the reason."""
+    if not machine.is_mounted(volume):
+        return f'{volume} is not mounted'
+    if not write_probe:
+        return None if os.access(str(folder if folder.exists() else volume), os.W_OK) else f'{volume} is not writable'
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        probe = folder / f'.disk-relief-probe-{os.getpid()}'
+        probe.write_text('ok')
+        probe.unlink()
+    except OSError as error:
+        return f'{volume} is not writable ({error})'
+    return None
+
+
+def drive_ready(cfg: Config, machine: Machine, write_probe: bool) -> Optional[str]:
+    return volume_ready(machine, cfg.drive, cfg.drive / cfg.offload_dir, write_probe)
+
+
+def mirror_ready(cfg: Config, machine: Machine, write_probe: bool) -> Optional[str]:
+    return volume_ready(machine, cfg.mirror, cfg.mirror / cfg.mirror_subdir / cfg.offload_dir, write_probe)
+
+
+def relative_to_home(cfg: Config, src: Path) -> Path:
+    source = real(src)
+    try:
+        return source.relative_to(real(cfg.home))
+    except ValueError:
+        return Path(str(source).lstrip('/'))
+
+
+def run_folder(cfg: Config, day: str) -> Path:
+    """<date>-disk-relief, relative to SlawBulk (and to Current/SlawBulk on the mirror)."""
+    return Path(cfg.offload_dir) / f'{day}-disk-relief'
+
+
+def free_name(roots: List[Path], rel: Path) -> Path:
+    """rel, or rel~2, rel~3 … so nothing already on either drive is overwritten."""
+    candidate, n = rel, 2
+    while any((r / candidate).exists() or (r / candidate).is_symlink() or
+              (r / (str(candidate) + '.partial')).exists() for r in roots):
+        candidate = rel.parent / f'{rel.name}~{n}'
+        n += 1
+    return candidate
+
+
+def copy_checked(machine: Machine, src: Path, dst: Path, want: TreeStats) -> Optional[str]:
+    """Copy to dst.partial (an unfinished copy is obvious), check size and file count, then
+    rename to dst. None on success, else what went wrong."""
+    partial = Path(str(dst) + '.partial')
+    if not machine.copy(src, partial):
+        return f'copy to {partial} failed'
+    got = tree_stats(partial)
+    if (got.apparent_bytes, got.files) != (want.apparent_bytes, want.files):
+        return (f'copy at {partial} does not match ({got.files} files, {got.apparent_bytes} bytes; '
+                f'source {want.files} files, {want.apparent_bytes} bytes)')
+    os.replace(partial, dst)
+    return None
+
+
+def move_verified(cfg: Config, machine: Machine, src: Path, day: str, mirror: bool) -> Tuple[bool, str]:
+    """Copy to SlawBulk (and the mirror disk when asked), check each copy's size and file count,
+    check the source didn't change meanwhile, and only then delete the source."""
+    before = tree_stats(src)
+    folder = run_folder(cfg, day)
+    roots = [cfg.drive / folder] + ([cfg.mirror / cfg.mirror_subdir / folder] if mirror else [])
+    rel = free_name(roots, relative_to_home(cfg, src))
+    copies = []
+    for root in roots:
+        dst = root / rel
+        problem = copy_checked(machine, src, dst, before)
+        if problem:
+            return False, f'{problem}; kept the source'
+        copies.append(dst)
+    after = tree_stats(src)
+    if (after.apparent_bytes, after.files, after.newest_mtime) != (before.apparent_bytes, before.files, before.newest_mtime):
+        return False, f'{src} changed during the copy; kept the source (copies left at {", ".join(map(str, copies))})'
+    machine.remove(src)
+    note = f'{day} {src} -> {" and ".join(map(str, copies))}\n'
+    for root in roots:
+        append(root / 'MANIFEST.txt', note)
+    if not inside(real(src.parent), real(cfg.claude_projects)) and not inside(real(src.parent), real(cfg.codex_sessions)):
+        # A pointer where the owner would look for it (need-space README). Not in the Claude
+        # and Codex session folders, which those tools own.
+        append(src.parent / 'MOVED-TO-SLAWBULK.txt', note)
+    return True, 'moved to ' + ' and '.join(map(str, copies))
+
+
+def append(path: Path, text: str) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('a') as f:
+            f.write(text)
+    except OSError:
+        pass
+
+
+class Log:
+    def __init__(self, path: Optional[Path], echo: bool = True):
+        self.path = path
+        self.echo = echo
+        self.lines: List[str] = []
+
+    def __call__(self, message: str) -> None:
+        self.lines.append(message)
+        if self.echo:
+            print(message, flush=True)
+        if self.path:
+            append(self.path, f'{dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} {message}\n')
+
+
+@dataclass
+class Result:
+    acted: bool = False
+    freed: int = 0
+    actions: List[str] = field(default_factory=list)
+    failures: List[str] = field(default_factory=list)
+    reason: str = ''
+
+
+class PhoneBuildLock:
+    """Hold scripts/phone-build's lock while moving phone builds, so it can't prune or point
+    `latest` at the same time. If a build is running, phone moves are skipped this run."""
+
+    def __init__(self, phone_dir: Path):
+        self.path = phone_dir / '.phone-build.lock'
+        self.handle = None
+
+    def acquire(self) -> bool:
+        if self.handle is not None:
+            return True
+        if not self.path.parent.is_dir():
+            return False
+        try:
+            self.handle = open(self.path, 'a+')
+            fcntl.flock(self.handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            if self.handle:
+                self.handle.close()
+            self.handle = None
+            return False
+
+    def release(self) -> None:
+        if self.handle:
+            fcntl.flock(self.handle, fcntl.LOCK_UN)
+            self.handle.close()
+            self.handle = None
+
+
+def reached_target(cfg: Config, start: int, measured: int, freed: int) -> bool:
+    """Stop at the target by what the volume reports or by what this run deleted, whichever is
+    higher: a Time Machine local snapshot can hold deleted files, and then the measured number
+    doesn't move and the run would otherwise clear everything (need-space README, 2026-09-28)."""
+    return measured >= cfg.target_bytes or start + freed >= cfg.target_bytes
+
+
+def execute(cfg: Config, machine: Machine, plan: Plan, log: Log, start: int) -> Result:
+    result = Result()
+    day = dt.datetime.fromtimestamp(machine.now()).strftime('%Y-%m-%d')
+    protected = cfg.protected()
+    phone_lock = PhoneBuildLock(cfg.phone_dir)
+    phone_root = real(cfg.phone_dir)
+    mirror_problem = mirror_ready(cfg, machine, write_probe=True)
+    use_mirror = mirror_problem is None
+    if mirror_problem and cfg.require_mirror:
+        log(f'moves skipped this run: {mirror_problem}; moved files need a second copy on another disk')
+    try:
+        for c in plan.candidates:
+            free = machine.free_bytes(cfg.data_volume)
+            if reached_target(cfg, start, free, result.freed):
+                log(f'stop: {gib(free)} free measured, {size_text(result.freed)} cleared this run; target {gib(cfg.target_bytes)}')
+                break
+            if is_protected(c.path, protected):
+                log(f'refused (protected): {c.path}')
+                continue
+            if not (c.path.exists() or c.path.is_symlink()):
+                continue
+            if c.step == 'move':
+                if mirror_problem and cfg.require_mirror:
+                    continue
+                if inside(real(c.path), phone_root) and not phone_lock.acquire():
+                    log(f'skip {c.path}: a phone build is running')
+                    continue
+                short = [(v, machine.free_bytes(v)) for v in [cfg.drive] + ([cfg.mirror] if use_mirror else [])]
+                short = [(v, f) for v, f in short if f <= 2 * c.size]
+                if short:
+                    v, f = short[0]
+                    log(f'skip {c.path}: {v} has {size_text(f)} free, needs more than twice {size_text(c.size)}')
+                    continue
+                ok, message = move_verified(cfg, machine, c.path, day, mirror=use_mirror)
+            else:
+                try:
+                    machine.remove(c.path)
+                    ok, message = True, 'deleted (regenerable)'
+                except OSError as error:
+                    ok, message = False, f'delete failed: {error}'
+            if ok:
+                after = machine.free_bytes(cfg.data_volume)
+                result.acted = True
+                result.freed += c.size
+                result.actions.append(f'{c.step} {c.path} ({size_text(c.size)})')
+                log(f'{c.step}: {c.path} {size_text(c.size)} {message}; free now {gib(after)}')
+            else:
+                result.failures.append(f'{c.path}: {message}')
+                log(f'FAILED {c.step}: {c.path}: {message}')
+    finally:
+        phone_lock.release()
+    return result
+
+
+def run(cfg: Config, machine: Machine, log: Log) -> Result:
+    """One scheduled run. Assumes the caller holds the run lock."""
+    free = machine.free_bytes(cfg.data_volume)
+    if not should_run(free, cfg):
+        return Result(reason=f'{gib(free)} free; acts below {gib(cfg.trigger_bytes)}')
+    reason = drive_ready(cfg, machine, write_probe=True)
+    if reason:
+        log(f'{gib(free)} free, below {gib(cfg.trigger_bytes)}, but {reason}: did nothing')
+        return Result(reason=reason)
+    log(f'start: {gib(free)} free, below {gib(cfg.trigger_bytes)}; freeing to {gib(cfg.target_bytes)}')
+    plan = make_plan(cfg, machine)
+    for line in plan.skipped:
+        log(f'skip {line}')
+    result = execute(cfg, machine, plan, log, free)
+    end = machine.free_bytes(cfg.data_volume)
+    log(f'done: cleared {size_text(result.freed)} in {len(result.actions)} actions, '
+        f'{len(result.failures)} failures; {gib(end)} free')
+    held = result.freed > 0 and end - free < result.freed // 2
+    if held:
+        log('free space rose by less than half of what was cleared: a Time Machine local snapshot may hold it '
+            '(tmutil listlocalsnapshots /). Deleting a snapshot is the owner\'s call.')
+    for tree in plan.stale_worktrees:
+        log(f'stale worktree (clean, already in origin/next; yours to remove): {tree}')
+    if result.acted or result.failures:
+        message = f'Cleared {size_text(result.freed)}; {gib(end)} free now.'
+        if held:
+            message += ' Free space lags: a local snapshot may hold it.'
+        if result.failures:
+            message += f' {len(result.failures)} item(s) kept after a failed check.'
+        if plan.stale_worktrees:
+            message += f' {len(plan.stale_worktrees)} stale worktree(s) listed in the log.'
+        machine.notify('Disk relief', message)
+    return result
+
+
+def dry_run(cfg: Config, machine: Machine, pretend_free: Optional[int]) -> List[str]:
+    out = []
+    free = pretend_free if pretend_free is not None else machine.free_bytes(cfg.data_volume)
+    triggered = should_run(free, cfg)
+    out.append(f'Free on {cfg.data_volume}: {gib(free)}' + (' (pretend)' if pretend_free is not None else '')
+               + f'. Acts below {gib(cfg.trigger_bytes)}, stops at {gib(cfg.target_bytes)}.')
+    reason = drive_ready(cfg, machine, write_probe=False)
+    out.append(f'Drive: {reason}' if reason else f'Drive: {cfg.drive} mounted, {gib(machine.free_bytes(cfg.drive))} free')
+    mirror_problem = mirror_ready(cfg, machine, write_probe=False)
+    out.append(f'Mirror: {mirror_problem}; moves would be skipped' if mirror_problem and cfg.require_mirror else
+               f'Mirror: {cfg.mirror} mounted, {gib(machine.free_bytes(cfg.mirror))} free')
+    plan = make_plan(cfg, machine)
+    start = free if triggered else cfg.trigger_bytes
+    out.append('Would act now.' if triggered and not reason else
+               f'Would not act now. Below, the order it would take starting from {gib(start)} free:')
+    running = 0
+    stopped = False
+    for i, c in enumerate(plan.candidates, 1):
+        if not stopped and start + running >= cfg.target_bytes:
+            out.append(f'  --- stops here: {gib(start + running)} free reaches the target ---')
+            stopped = True
+        running += c.size
+        out.append(f'  {i:3}. {c.step:14} {size_text(c.size):>9}  total {size_text(running):>9}  {c.path}  ({c.why})')
+    by_step = {}
+    for c in plan.candidates:
+        by_step[c.step] = by_step.get(c.step, 0) + c.size
+    out.append('Totals: ' + ', '.join(f'{k} {size_text(v)}' for k, v in by_step.items()) +
+               f'; all {size_text(running)} ({len(plan.candidates)} items).')
+    for line in plan.skipped:
+        out.append(f'Skipped: {line}')
+    for tree in plan.stale_worktrees:
+        out.append(f'Stale worktree (clean, in origin/next; not removed): {tree}')
+    return out
+
+
+def locked_run(cfg: Config, machine: Machine, log: Log) -> Result:
+    """run() under the lock file, so two runs never overlap; a second one exits at once."""
+    cfg.ops_dir.mkdir(parents=True, exist_ok=True)
+    with open(cfg.lock_file, 'a+') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return Result(reason='another disk relief run holds the lock')
+        try:
+            return run(cfg, machine, log)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+    parser.add_argument('--dry-run', action='store_true', help='list what it would do, with sizes; change nothing')
+    parser.add_argument('--free-gib', type=float, help='with --dry-run: pretend this much is free')
+    args = parser.parse_args(argv)
+    cfg = Config()
+    machine = Machine()
+    if args.dry_run:
+        pretend = int(args.free_gib * GiB) if args.free_gib is not None else None
+        for line in dry_run(cfg, machine, pretend):
+            print(line)
+        return 0
+    if args.free_gib is not None:
+        parser.error('--free-gib only works with --dry-run')
+    # Quiet when there's nothing to do: launchd runs this every 15 minutes.
+    locked_run(cfg, machine, Log(cfg.log_file))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
