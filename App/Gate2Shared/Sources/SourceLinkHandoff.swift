@@ -13,6 +13,9 @@ public enum SourceLinkShareRepresentation {
 }
 
 public struct SourceLinkHandoff: Codable, Equatable, Sendable {
+    /// A PDF sent from the Safari extension's toolbar button (#658).
+    public static let safariExtensionPDFSurface = "safari_extension_pdf"
+
     public var id: String
     public var schemaVersion: String
     public var inputURL: String

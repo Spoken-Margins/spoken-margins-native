@@ -3585,6 +3585,12 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             startSession: false
         )))
         XCTAssertTrue(Gate1AppModel.isRemotePDFHandoff(SourceLinkHandoff(
+            id: "safari-extension",
+            inputURL: "https://arxiv.org/pdf/2609.31218v1",
+            sourceSurface: SourceLinkHandoff.safariExtensionPDFSurface,
+            startSession: true
+        )))
+        XCTAssertTrue(Gate1AppModel.isRemotePDFHandoff(SourceLinkHandoff(
             id: "extension",
             inputURL: "https://example.com/card.pdf",
             sourceSurface: "share_sheet",

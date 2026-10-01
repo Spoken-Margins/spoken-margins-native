@@ -3504,6 +3504,7 @@ final class Gate1AppModel: ObservableObject {
 
     static func isRemotePDFHandoff(_ handoff: SourceLinkHandoff) -> Bool {
         handoff.sourceSurface == "share_sheet_pdf"
+            || handoff.sourceSurface == SourceLinkHandoff.safariExtensionPDFSurface
             || (URL(string: handoff.inputURL)?.isFileURL == false
                 && URL(string: handoff.inputURL)?.pathExtension.lowercased() == "pdf")
     }
