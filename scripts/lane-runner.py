@@ -59,6 +59,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   one that runs simulators); its `automerge` job runs on any runner labelled sm-lane-build. --mode
   keeps each job to its own work. On the build-only runner (SM_LANE_RUNNER_ROLE=build), an
   automerge job first waits for room: no simulator job, normal memory pressure, and enough free disk.
+  Trial (2026-10-01): a host-only job (T0/T1) there may start beside a simulator job while memory
+  pressure reads normal and BESIDE_SIMULATOR_FREE_DISK is free; each one is logged for the owner.
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
 default ~/Library/Caches/SpokenMarginsLane/evidence), SM_LANE_TOOLS (a checkout whose .venv and
@@ -90,6 +92,9 @@ MERGE_ATTEMPTS = 3
 WARM_KEEP = 2
 BUILD_RUNNER_WAIT = 90 * 60
 BUILD_RUNNER_FREE_DISK = 20 * 10**9
+# Trial (2026-10-01): host-only jobs on the build runner may run beside a simulator job, with this much disk.
+BESIDE_SIMULATOR_FREE_DISK = 30 * 2**30
+BESIDE_SIMULATOR_LOG = 'beside-simulator.log'  # in the lane state folder: one line per job, to count crashes against
 WARM_FREE_FLOOR = 15 * 10**9
 PROJECT_FILE = 'SpokenMarginsNative.xcodeproj/project.pbxproj'  # its layout names Xcode's VFS folders (#405)
 # How the T3 gate's hold reads in an automerge report, now and before #421 (PRs held by an older runner).
@@ -650,8 +655,13 @@ def merge_check(head: str, merge_sha: str, base: str, base_sha: str, ran: str) -
 
 
 def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, evidence: Path,
-             comments: list[dict], labels=(), attempts: int = MERGE_ATTEMPTS) -> tuple[str, str, str, list[str]]:
-    """The automerge run: test the merge commit, and push it to <base> on PASS unless something blocks it."""
+             comments: list[dict], labels=(), attempts: int = MERGE_ATTEMPTS,
+             room_for_builds=None) -> tuple[str, str, str, list[str]]:
+    """The automerge run: test the merge commit, and push it to <base> on PASS unless something blocks it.
+
+    room_for_builds: for a job that started as host-only beside a simulator job. If the merge commit needs
+    the app builds after all, they wait for it first.
+    """
     notes: list[str] = []
     tested_base, skipped = None, None  # the next the last test ran on; next's commits since, when they can't matter
     for attempt in range(1, attempts + 1):
@@ -667,6 +677,10 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             warm = warm_build_folders(ROOT)
             scope = diff_scope(ROOT, base)
             (tried / 'scope.json').write_text(json.dumps(scope, indent=2))
+            no_room = room_for_builds() if room_for_builds and int(scope['tier'][1:]) >= 2 else None
+            if no_room:
+                return 'INCONCLUSIVE', 'no build', 'nothing', notes + [
+                    f'{no_room}. Push again, or remove and re-add automerge, to try again.']
             verdict, where, ran, checks = run_automerge(
                 scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)))
             tested = f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR); {warm}'
@@ -899,6 +913,75 @@ def wait_for_room_to_build(out=sys.stdout, max_wait: float = BUILD_RUNNER_WAIT, 
             print(f'[lane] build runner waiting ({duration(waited)} so far): {"; ".join(busy)}', file=out, flush=True)
             last_note = clock()
         sleep(poll)
+
+
+def pressure_is_normal(level) -> bool:
+    """Only a level read as normal (1) counts: running beside a simulator needs to know, not guess."""
+    return level == 1
+
+
+def wait_for_room_to_test_on_host(out=sys.stdout, max_wait: float = BUILD_RUNNER_WAIT, poll: float = 30,
+                                  clock=time.monotonic, sleep=time.sleep, simulator_jobs=None, pressure=None,
+                                  free=lambda: shutil.disk_usage(Path.home()).free) -> tuple:
+    """Room for a host-only job (T0/T1: no xcodebuild, no simulator) on the build runner: (None or why it gave
+    up, a note when it runs beside a simulator job).
+
+    Trial (2026-10-01): the build runner sat idle whenever any simulator job ran, the Test Desk's included
+    (394 minutes in a day). A host-only job may now start beside one while the kernel reads memory pressure
+    as normal and more than BESIDE_SIMULATOR_FREE_DISK is free. With no simulator job, the build runner's
+    usual rules hold. Builds still wait in wait_for_room_to_build.
+    """
+    if simulator_jobs is None or pressure is None:
+        from lane_slots import memory_pressure_level, simulator_jobs_running
+        simulator_jobs = simulator_jobs or simulator_jobs_running
+        pressure = pressure or memory_pressure_level
+    started, last_note = clock(), None
+    while True:
+        jobs, level, room = simulator_jobs(), pressure(), free()
+        busy = []
+        if jobs:
+            if not pressure_is_normal(level):
+                busy.append('a simulator job is running and memory pressure is '
+                            + ('unreadable' if level is None else 'above normal'))
+            if room < BESIDE_SIMULATOR_FREE_DISK:
+                busy.append(f'a simulator job is running and less than {BESIDE_SIMULATOR_FREE_DISK // 2**30} GiB '
+                            'of disk is free')
+        else:
+            if level not in (1, None):
+                busy.append('memory pressure is above normal')
+            if room < BUILD_RUNNER_FREE_DISK:
+                busy.append(f'less than {BUILD_RUNNER_FREE_DISK // 10**9} GB of disk is free')
+        if not busy:
+            return None, (f'ran beside a simulator job (trial): memory pressure normal, {room // 2**30} GiB free'
+                          if jobs else None)
+        waited = clock() - started
+        if waited >= max_wait:
+            return f'the build runner waited {duration(waited)} for room: {"; ".join(busy)}', None
+        if last_note is None or clock() - last_note >= 300:
+            print(f'[lane] build runner waiting ({duration(waited)} so far): {"; ".join(busy)}', file=out, flush=True)
+            last_note = clock()
+        sleep(poll)
+
+
+def host_only_scope(tree: Path, base: str) -> bool:
+    """Whether the PR's diff needs no app build (T0 or T1), by the base branch's policy. Unsure means no."""
+    try:
+        return int(diff_scope(tree, base)['tier'][1:]) <= 1
+    except Exception:  # noqa: BLE001 - a job that can't tell waits like a build
+        return False
+
+
+def note_beside_simulator(request_id: str, pr: int, note: str) -> None:
+    """One line per job that ran beside a simulator job, so the trial can be judged against crash reports."""
+    import datetime
+    from lane_slots import state_dir
+    try:
+        state_dir().mkdir(parents=True, exist_ok=True)
+        with (state_dir() / BESIDE_SIMULATOR_LOG).open('a') as log:
+            log.write(f'{datetime.datetime.now().astimezone().isoformat(timespec="seconds")}\t{request_id}\t'
+                      f'PR #{pr}\t{note}\n')
+    except OSError as error:
+        print(f'[lane] could not note the trial in {BESIDE_SIMULATOR_LOG}: {error!r}')
 
 
 # ---- T3 -----------------------------------------------------------------------------------------
@@ -1432,8 +1515,16 @@ def main(argv=None) -> int:
     link_tools(tools_source())
     # A pending T3 for this head: the lane job that reports its PASS runs these checks and merges.
     t3_first = t3_request_for_head(comments, labels, head) if request['tier'] == 'auto' else None
-    no_room = wait_for_room_to_build() \
-        if request['tier'] == 'auto' and not t3_first and os.environ.get('SM_LANE_RUNNER_ROLE') == 'build' else None
+    no_room, beside, room_for_builds = None, None, None
+    if request['tier'] == 'auto' and not t3_first and os.environ.get('SM_LANE_RUNNER_ROLE') == 'build':
+        if host_only_scope(ROOT, args.base):  # the trial: host-only work may run beside a simulator job
+            no_room, beside = wait_for_room_to_test_on_host()
+            room_for_builds = wait_for_room_to_build
+            if beside:
+                print(f'[lane] {beside}', flush=True)
+                note_beside_simulator(request_id, args.pr, beside)
+        else:
+            no_room = wait_for_room_to_build()
     started = time.monotonic()
     requested = request.get('commit', '')
     moved = [f'requested {requested[:7]}, tested the newest commit {head[:7]}'] \
@@ -1452,7 +1543,8 @@ def main(argv=None) -> int:
             details = [f'{no_room}. Push again, or remove and re-add automerge, to try again.']
         elif request['tier'] == 'auto':
             verdict, where, ran, details = run_auto(github, pull, args.pr, args.base, head, base_sha, evidence,
-                                                    comments, labels)
+                                                    comments, labels, room_for_builds=room_for_builds)
+            details = ([beside] if beside else []) + details
             crashes = 'none'
         elif conflicts:
             verdict, where, ran, crashes = 'INCONCLUSIVE', 'no simulator', 'nothing', 'none'
