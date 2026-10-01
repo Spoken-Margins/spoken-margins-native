@@ -37,9 +37,9 @@ public enum PublisherAudioAlignment: Equatable, Sendable {
 /// Words are matched in two passes. First, word triples that occur exactly once in the article
 /// and once in the transcript, kept only where they run in the same order (a longest increasing
 /// subsequence), so repeated phrases can't pull the map back or forward. Then the short stretches
-/// between those anchors are matched word by word, and a sentence is placed only when most of its
-/// words matched, so a skipped paragraph, a spoken intro or ad, or a different article isn't
-/// placed on common words like "the" and "and".
+/// between those anchors are matched word by word, and a sentence is placed only when half of its
+/// words, and half of its uncommon words, matched, so a skipped paragraph, a spoken intro or ad,
+/// or a different article isn't placed on common words like "the" and "and".
 public enum PublisherAudioAligner {
     /// The share of sentences that must be placed for the map to be kept (#546).
     public static let minimumPlacedFraction = 0.8
@@ -64,8 +64,8 @@ public enum PublisherAudioAligner {
         for (index, sentence) in sentences.enumerated() {
             let wordRange = sentence.wordRange
             let matched = wordRange.compactMap { word in matches[word].map { (word, $0) } }
-            let needed = max(1, Int((Double(wordRange.count) * sentenceMatchFraction).rounded(.up)))
-            guard let first = matched.first, let last = matched.last, matched.count >= needed else { continue }
+            guard let first = matched.first, let last = matched.last,
+                  isPlaced(wordRange, matched: matched.count, words: articleWords, matches: matches) else { continue }
 
             // Unmatched words at either end of the sentence are usually misrecognised, so take the
             // recognised words that sit in their place, without crossing into another match.
@@ -106,6 +106,32 @@ public enum PublisherAudioAligner {
             totalSentences: sentences.count
         )
     }
+
+    /// A sentence is placed when half its words matched and, if it has any words that aren't
+    /// common ones, half of those matched too. "The sky was dark." read in place of "The sea was
+    /// calm." matches "the" and "was", which is half the sentence but no sign it was read.
+    static func isPlaced(_ wordRange: Range<Int>, matched: Int, words: [ArticleWord], matches: [Int?]) -> Bool {
+        func enough(_ found: Int, of total: Int) -> Bool {
+            found >= max(1, Int((Double(total) * sentenceMatchFraction).rounded(.up)))
+        }
+        guard enough(matched, of: wordRange.count) else { return false }
+        let distinctive = wordRange.filter { !commonWords.contains(words[$0].normalized) }
+        guard !distinctive.isEmpty else { return true }
+        return enough(distinctive.filter { matches[$0] != nil }.count, of: distinctive.count)
+    }
+
+    /// English function words, which match almost anywhere.
+    static let commonWords: Set<String> = [
+        "a", "an", "the", "and", "or", "but", "nor", "so", "yet", "if", "then", "than", "that", "this",
+        "these", "those", "there", "here", "of", "to", "in", "on", "at", "by", "for", "with", "from",
+        "into", "onto", "up", "down", "out", "off", "over", "under", "about", "as", "is", "are", "was",
+        "were", "be", "been", "being", "am", "do", "does", "did", "have", "has", "had", "will", "would",
+        "can", "could", "shall", "should", "may", "might", "must", "not", "no", "it", "its", "i", "me",
+        "my", "we", "us", "our", "you", "your", "he", "him", "his", "she", "her", "they", "them",
+        "their", "who", "whom", "whose", "which", "what", "when", "where", "why", "how", "all", "any",
+        "some", "each", "every", "one", "very", "just", "also", "too", "only", "more", "most", "such",
+        "own", "same", "other", "again", "still", "now", "s", "dont", "thats",
+    ]
 
     // MARK: - Words and sentences
 

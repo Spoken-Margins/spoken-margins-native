@@ -255,6 +255,23 @@ final class PublisherAudioAlignerTests: XCTestCase {
         XCTAssertEqual(total - placed, 4, alignment.status)
     }
 
+    func testASkippedSentenceIsNotPlacedOnItsCommonWords() throws {
+        // Codex audit on #636: the narrator says "The sky was dark." instead of "The sea was
+        // calm." Matching only "the" and "was" is half the sentence, but no evidence it was read.
+        let text = "Red birds fly north. The sea was calm. Green boats cross rivers. Blue flowers bloom early. Tall trees shade paths."
+        let spoken = ["Red birds fly north.", "The sky was dark.", "Green boats cross rivers.", "Blue flowers bloom early.", "Tall trees shade paths."]
+        let segments = spoken.enumerated().map { index, phrase in
+            MediaTimelineSegment(id: "s\(index)", startMs: index * 2_000, endMs: index * 2_000 + 1_800, text: phrase)
+        }
+        let alignment = PublisherAudioAligner.align(
+            articleText: text,
+            recognised: TranscriptTimeline(segments: segments, chapters: [], durationMs: 10_000)
+        )
+        let timeline = try XCTUnwrap(alignment.timeline, alignment.status)
+        XCTAssertEqual(timeline.segments.map(\.text), ["Red birds fly north.", "Green boats cross rivers.", "Blue flowers bloom early.", "Tall trees shade paths."])
+        XCTAssertEqual(timeline.segments.map(\.startMs), [0, 4_000, 6_000, 8_000])
+    }
+
     func testAParagraphReadOutOfOrderCostsOnlyThatParagraph() throws {
         // The narrator reads the opening paragraph last. Matching in article order alone would
         // place it and lose everything after it.
