@@ -407,7 +407,9 @@ actor FollowedSourceCoordinator {
                 author: item.author,
                 summary: item.summary,
                 publishedAt: item.publishedAt,
-                state: existing[id]?.state ?? .unseen
+                state: existing[id]?.state ?? .unseen,
+                bodyWordCount: PublisherAudioDetector.bodyWordCount(of: item),
+                audioDurationMs: item.durationMs
             ))
         }
 

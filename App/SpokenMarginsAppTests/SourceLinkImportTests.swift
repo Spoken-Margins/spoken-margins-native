@@ -2,6 +2,7 @@ import XCTest
 import SessionKit
 import SessionKitPersistence
 import SessionKitAudio
+import SessionKitFeeds
 @testable import SpokenMarginsApp
 #if canImport(UIKit)
 import UIKit
@@ -163,6 +164,29 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(candidates.first?.source.canonicalURL, "https://example.com/canonical-feed")
         let subscription = try await coordinator.follow(urlString: "https://example.com/rss")
         XCTAssertEqual(subscription.source.id, candidates.first?.source.id)
+    }
+
+    /// #545: a Substack post with a voiceover was saved like an episode, so adding it made a podcast
+    /// item with no text. Following the feed now records each entry's body length and duration, and
+    /// the voiceover entry is the only one that imports as an article with publisher audio.
+    func testFollowingAPublicationWithVoiceoversMarksOnlyThePostsWithAFullBody() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [VoiceoverFeedURLProtocol.self]
+        let repository = InMemorySessionRepository()
+        let coordinator = FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration))
+
+        let subscription = try await coordinator.follow(urlString: "https://voiceovers.example/feed")
+
+        XCTAssertEqual(subscription.source.kind, .podcastFeed, "a feed with audio is still followed as it was")
+        let entries = try repository.loadFeedEntries(subscriptionId: subscription.id)
+        let post = try XCTUnwrap(entries.first { $0.title == "A post with a voiceover" })
+        let episode = try XCTUnwrap(entries.first { $0.title == "An episode" })
+        XCTAssertGreaterThanOrEqual(post.bodyWordCount ?? 0, 700)
+        XCTAssertEqual(post.audioDurationMs, 1_312_000)
+        XCTAssertTrue(post.hasPublisherAudio)
+        XCTAssertEqual(PublisherAudioDetector.publisherAudio(for: post, itemId: "item")?.audioURL, "https://cdn.voiceovers.example/post.mp3")
+        XCTAssertFalse(episode.hasPublisherAudio, "an episode with short notes imports as audio, as before")
+        XCTAssertNil(PublisherAudioDetector.publisherAudio(for: episode, itemId: "item"))
     }
 
     func testFollowedSourceAcceptsLargeFeedAndRetainsOnlyNewestTwentyFiveSuggestions() async throws {
@@ -1484,6 +1508,43 @@ private struct StaticAppLinkResolver: LinkResolutionClient {
             failureReason: result.failureReason
         )
     }
+}
+
+private final class VoiceoverFeedURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let feedData = Data("""
+    <?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+    <channel><title>Voiceovers</title><link>https://voiceovers.example</link>
+    <item><title>A post with a voiceover</title><link>https://voiceovers.example/p/post</link><guid>post</guid>
+    <description>Subtitle.</description><enclosure url="https://cdn.voiceovers.example/post.mp3" type="audio/mpeg"/>
+    <itunes:duration>1312</itunes:duration>
+    <content:encoded><![CDATA[<p>\(String(repeating: "Listening in the margins. ", count: 180))</p>]]></content:encoded></item>
+    <item><title>An episode</title><link>https://voiceovers.example/p/episode</link><guid>episode</guid>
+    <description>Subtitle.</description><enclosure url="https://cdn.voiceovers.example/episode.mp3" type="audio/mpeg"/>
+    <content:encoded><![CDATA[<p>Show notes for the episode.</p>]]></content:encoded></item>
+    </channel></rss>
+    """.utf8)
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "voiceovers.example"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/rss+xml"]) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Self.feedData)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
 
 private final class LargePodcastFeedURLProtocol: URLProtocol, @unchecked Sendable {

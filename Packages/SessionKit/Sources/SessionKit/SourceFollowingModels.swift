@@ -150,6 +150,11 @@ public struct SourceSuggestionDecision: Codable, Equatable, Sendable, Identifiab
         self.suppressUntil = suppressUntil
         self.lastPromptAt = lastPromptAt
     }
+
+    /// One decision per source, so its id comes from the source id.
+    public init(sourceId: String, decision: SourceSuggestionDecisionKind, decidedAt: Date = Date(), suppressUntil: Date? = nil, lastPromptAt: Date? = nil) {
+        self.init(id: "suggestion-\(sourceId)", sourceId: sourceId, decision: decision, decidedAt: decidedAt, suppressUntil: suppressUntil, lastPromptAt: lastPromptAt)
+    }
 }
 
 /// When an item offers Follow, and what its Follow action says (B2 M1, #243, #280).
