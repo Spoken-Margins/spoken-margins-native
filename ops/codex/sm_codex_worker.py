@@ -303,8 +303,9 @@ def host_testable(issue: dict) -> bool:
 
 
 def order_issues(issues: list) -> list:
-    """Host-testable (SessionKit) first, then oldest first."""
-    return sorted(issues, key=lambda i: (not host_testable(i), i.get('createdAt') or '', i.get('number') or 0))
+    """Labelled `priority` first, then host-testable (SessionKit), then oldest first."""
+    return sorted(issues, key=lambda i: ('priority' not in label_names(i), not host_testable(i),
+                                         i.get('createdAt') or '', i.get('number') or 0))
 
 
 def choose_issue(issues: list, comments_for: Callable[[int], list], now: dt.datetime,
