@@ -20,14 +20,14 @@ final class MemoryFootprintRecorder {
     static let diagnosticsKey = "memoryFootprint"
 
     private(set) var log: MemoryFootprintLog
-    private let diagnostics: RuntimeDiagnostics
+    private let diagnostics: PinnedDiagnostics
     private let fileURL: URL?
     private let read: () -> Reading?
     private let now: () -> Date
     private var subscriptions: Set<AnyCancellable> = []
 
     init(
-        diagnostics: RuntimeDiagnostics,
+        diagnostics: PinnedDiagnostics,
         fileURL: URL?,
         read: @escaping () -> Reading? = MemoryFootprintRecorder.readCurrent,
         now: @escaping () -> Date = Date.init
@@ -85,7 +85,7 @@ final class MemoryFootprintRecorder {
         guard let reading = read() else { return }
         log.record(event, mediaType: mediaType, footprintBytes: reading.footprintBytes,
                    availableBytes: reading.availableBytes, at: now())
-        diagnostics.values[Self.diagnosticsKey] = log.diagnosticsLine
+        diagnostics.set(Self.diagnosticsKey, log.diagnosticsLine)
         save()
     }
 
@@ -94,5 +94,33 @@ final class MemoryFootprintRecorder {
         guard let fileURL, let data = try? JSONEncoder().encode(log) else { return }
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: fileURL, options: .atomic)
+    }
+}
+
+/// Diagnostics lines that stay put when the dictionary is replaced: Refresh Diagnostics
+/// (`refreshDiagnostics()`) and `resetAndSeed()` assign a whole new one. A missing or changed
+/// pinned line is put back on the next main-queue turn, after the replacement is stored.
+@MainActor
+final class PinnedDiagnostics {
+    let diagnostics: RuntimeDiagnostics
+    private var pinned: [String: String] = [:]
+    private var subscription: AnyCancellable?
+
+    init(diagnostics: RuntimeDiagnostics) {
+        self.diagnostics = diagnostics
+        subscription = diagnostics.$values
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.restore() }
+    }
+
+    func set(_ key: String, _ value: String) {
+        pinned[key] = value
+        diagnostics.values[key] = value
+    }
+
+    private func restore() {
+        for (key, value) in pinned where diagnostics.values[key] != value {
+            diagnostics.values[key] = value
+        }
     }
 }

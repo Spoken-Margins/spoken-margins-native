@@ -22,7 +22,7 @@ final class MemoryFootprintRecorderTests: XCTestCase {
 
     private func makeRecorder(diagnostics: RuntimeDiagnostics) -> MemoryFootprintRecorder {
         MemoryFootprintRecorder(
-            diagnostics: diagnostics,
+            diagnostics: PinnedDiagnostics(diagnostics: diagnostics),
             fileURL: fileURL,
             read: { [unowned self] in .init(footprintBytes: self.footprintMB * 1_048_576, availableBytes: nil) },
             now: { [unowned self] in self.clock }
@@ -79,6 +79,27 @@ final class MemoryFootprintRecorderTests: XCTestCase {
         XCTAssertNotNil(MemoryFootprintRecorder.readCurrent()?.footprintBytes, "the real reader works on this device")
     }
 
+    func testRefreshDiagnosticsDoesNotDropTheMemoryLines() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let pinned = PinnedDiagnostics(diagnostics: model.runtimeDiagnostics)
+        let recorder = MemoryFootprintRecorder(
+            diagnostics: pinned, fileURL: nil,
+            read: { .init(footprintBytes: 300 * 1_048_576, availableBytes: nil) },
+            now: { [unowned self] in self.clock }
+        )
+        recorder.record(.launch, mediaType: nil)
+        pinned.set("memoryExits", "foreground 1 · background 0 · background system pressure 0")
+
+        model.refreshDiagnostics() // the Settings button: replaces the whole dictionary
+        let restored = expectation(description: "pinned lines put back on the next main-queue turn")
+        DispatchQueue.main.async { DispatchQueue.main.async { restored.fulfill() } }
+        wait(for: [restored], timeout: 2)
+
+        XCTAssertEqual(model.diagnostics["memoryFootprint"], "09-21 14:13:20Z launch none 300MB")
+        XCTAssertEqual(model.diagnostics["memoryExits"], "foreground 1 · background 0 · background system pressure 0")
+    }
+
     func testMemoryExitsLineComesFromTheNewestReportWithExitData() {
         let older = Data(#"{"applicationExitMetrics":{"foregroundExitData":{"cumulativeMemoryResourceLimitExitCount":2}}}"#.utf8)
         let newer = Data(#"{"applicationExitMetrics":{"foregroundExitData":{"cumulativeMemoryResourceLimitExitCount":0},"backgroundExitData":{"cumulativeMemoryResourceLimitExitCount":1,"cumulativeMemoryPressureExitCount":0}}}"#.utf8)
@@ -86,5 +107,12 @@ final class MemoryFootprintRecorderTests: XCTestCase {
         XCTAssertEqual(MemoryExitMetricsSubscriber.diagnosticsLine(forPayloadJSON: [older, newer, withoutExits]),
                        "foreground 0 · background 1 · background system pressure 0")
         XCTAssertNil(MemoryExitMetricsSubscriber.diagnosticsLine(forPayloadJSON: []))
+
+        let dated = { (end: String, count: Int) in
+            Data(#"{"timeStampBegin":"\#(end) 00:00:00 +0000","timeStampEnd":"\#(end) 23:59:00 +0000","applicationExitMetrics":{"foregroundExitData":{"cumulativeMemoryResourceLimitExitCount":\#(count)}}}"#.utf8)
+        }
+        XCTAssertEqual(MemoryExitMetricsSubscriber.diagnosticsLine(forPayloadJSON: [dated("2026-09-30", 3), dated("2026-09-29", 1)]),
+                       "foreground 3 · background not reported · background system pressure not reported · 2026-09-30 to 2026-09-30",
+                       "the latest period wins whatever the order")
     }
 }

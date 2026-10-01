@@ -29,9 +29,15 @@ final class MemoryExitMetricsSubscriber: NSObject, MXMetricManagerSubscriber, @u
         Task { @MainActor in publish(line) }
     }
 
-    /// The line for the newest report that has an app-exit section; reports arrive oldest first.
+    /// The line for the newest report that has an app-exit section: the latest period end, and on a tie
+    /// (or no dates) the later one in the list, since MetricKit doesn't promise an order.
     static func diagnosticsLine(forPayloadJSON payloads: [Data]) -> String? {
-        payloads.lazy.reversed().compactMap(MemoryExitCounts.init(metricPayloadJSON:)).first?.diagnosticsLine
+        payloads.compactMap(MemoryExitCounts.init(metricPayloadJSON:))
+            .reduce(nil as MemoryExitCounts?) { newest, counts in
+                guard let newest, (newest.periodEnd ?? "") > (counts.periodEnd ?? "") else { return counts }
+                return newest
+            }?
+            .diagnosticsLine
     }
 }
 #endif
