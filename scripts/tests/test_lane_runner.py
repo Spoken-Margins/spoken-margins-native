@@ -889,6 +889,26 @@ class MergeTests_Runner(unittest.TestCase):
                 (got, _, _, _), events = self.run_auto(FakeGitHub(labels=('automerge',), comments=comments))
                 self.assertEqual((got, events), ('PASS', ['build', 'comment', 'push m1', 'sweep']))
 
+    def test_a_lane_change_is_held_for_a_codex_audit_of_its_head(self):
+        # Owner rule 2026-10-01: lane PRs get the same audit hold as audio, persistence and packet PRs. The
+        # audit script picks a PR up from this hold line ("not merged by the runner: … has no "Codex audit").
+        scope = {'tier': 'T1', 'why': [], 'lane_paths': ['scripts/lane_sim.py'],
+                 'files': [{'path': 'scripts/lane_sim.py', 'category': 'scripts'}]}
+        held = lane.merge_blockers(scope, [], HEAD)
+        self.assertIn('it touches the lane and has no "Codex audit (Astra)" comment yet', held)
+        findings = [comment('**Codex audit (Astra) on `aaaaaaa`**\n\n### Blocking findings\n1. The slot leaks.')]
+        self.assertTrue(any('has blocking findings' in reason for reason in lane.merge_blockers(scope, findings, HEAD)))
+        clean = [comment('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.')]
+        self.assertFalse(any('Codex audit' in reason for reason in lane.merge_blockers(scope, clean, HEAD)))
+        packet_too = dict(scope, files=scope['files'] + [{'path': 'A/Share.swift', 'category': 'packet'}])
+        self.assertIn('it touches packets and the lane and has no "Codex audit (Astra)" comment yet',
+                      lane.merge_blockers(packet_too, [], HEAD))
+
+    def test_an_ordinary_pr_is_not_held_for_an_audit(self):
+        scope = {'tier': 'T2', 'why': [], 'lane_paths': [], 'files': [{'path': 'App/X.swift', 'category': 'app-ui'}]}
+        self.assertEqual(lane.merge_blockers(scope, [], HEAD), [])
+        self.assertEqual(lane.merge_blockers(self.SCOPE, [], HEAD), [])  # a policy from before lane_paths
+
     def test_lane_tests_themselves_are_not_desk_only(self):
         scope = {'tier': 'T1', 'why': [], 'files': [{'path': 'scripts/tests/test_lane_runner.py', 'category': 'scripts'}]}
         self.assertEqual(lane.merge_blockers(scope, [], HEAD), [])
@@ -1402,7 +1422,8 @@ class MainFlowTests(unittest.TestCase):
         self.addCleanup(setattr, self, 'role', '')
         with mock.patch.object(lane, 'run_auto', return_value=('PASS', 'x', 'host tests; builds', [])) as auto, \
                 mock.patch.object(lane, 'run_t3', return_value=('PASS', 'x', 'T/A', [], 'none', '')) as t3, \
-                mock.patch.object(lane, 'wait_for_room_to_build', return_value=no_room) as wait:
+                mock.patch.object(lane, 'wait_for_room_to_build', return_value=no_room) as wait, \
+                mock.patch.object(lane, 'host_only_scope', return_value=False):  # a job that builds, whatever this tree's diff
             self.run_main(github, HEAD, 'PASS', '--mode', mode)
         self.role = ''
         return auto, t3, wait

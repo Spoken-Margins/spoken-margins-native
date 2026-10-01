@@ -51,8 +51,10 @@ public struct FeedSubscription: Codable, Equatable, Sendable, Identifiable {
     public var lastModified: String?
     public var lastRefreshAt: Date?
     public var createdAt: Date
+    /// Nil (every subscription saved before #466) means `.letMePick`. Build 29 ignores the key.
+    public var newItemPolicy: FeedNewItemPolicy?
 
-    public init(id: String, source: SourceIdentity, state: FeedSubscriptionState = .active, etag: String? = nil, lastModified: String? = nil, lastRefreshAt: Date? = nil, createdAt: Date = Date()) {
+    public init(id: String, source: SourceIdentity, state: FeedSubscriptionState = .active, etag: String? = nil, lastModified: String? = nil, lastRefreshAt: Date? = nil, createdAt: Date = Date(), newItemPolicy: FeedNewItemPolicy? = nil) {
         self.id = id
         self.source = source
         self.state = state
@@ -60,6 +62,7 @@ public struct FeedSubscription: Codable, Equatable, Sendable, Identifiable {
         self.lastModified = lastModified
         self.lastRefreshAt = lastRefreshAt
         self.createdAt = createdAt
+        self.newItemPolicy = newItemPolicy
     }
 }
 

@@ -1570,7 +1570,7 @@ public final class SessionEngine {
             sessionId: session.id,
             targetType: targetType,
             targetId: targetId,
-            createdAt: Date(timeIntervalSince1970: Double(count)),
+            createdAt: now(),
             roughPercent: interjectionPercent(
                 for: session,
                 targetType: targetType,
