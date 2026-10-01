@@ -862,6 +862,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var isImportingReadLater = false
     private var automaticMarginOutputTask: Task<Void, Never>?
     private var automaticMarginWriter: AutomaticMarginWriter?
+    let readwiseHighlightSync = ReadwiseHighlightSync()
     private var isDeliveringMargins = false
     @Published var listeningMapJSON = ""
     @Published var isGeneratingListeningMap = false
@@ -1781,8 +1782,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameInactiveOrBackground() {
-        automaticMarginOutputTask?.cancel()
-        automaticMarginOutputTask = nil
+        automaticMarginOutputTask?.cancel(); automaticMarginOutputTask = nil; readwiseHighlightSync.stop()
         supertonicRenderer?.setBackgroundInferencePacingEnabled(true)
         if snapshot.status == .starting,
            let supertonic = speechPlaybackClient as? SupertonicSpeechPlaybackClient,
@@ -1991,7 +1991,7 @@ final class Gate1AppModel: ObservableObject {
 
     func handleAppBecameActive() {
         openReadyListeningEdition()
-        startAutomaticMarginOutput()
+        startAutomaticMarginOutput(); readwiseHighlightSync.start { [weak self] in self?.store }
         supertonicRenderer?.setBackgroundInferencePacingEnabled(false)
         let refreshedAvailability = localFoundationModelClient.availability()
         if refreshedAvailability != localFoundationModelAvailability {
