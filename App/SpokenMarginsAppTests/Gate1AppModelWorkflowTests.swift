@@ -2816,6 +2816,34 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         )
     }
 
+    /// #142: a spoken recap Margin at the end saves at the end and returns to the finished state.
+    func testSpokenMarginOnAFinishedItemSavesAtTheEndAndStaysFinished() throws {
+        let audio = WorkflowCompletionAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio, recordingClient: NoopRecordingClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId)
+        audio.completeCurrentTarget()
+        model.syncPlaybackProgressForLifecycle()
+        XCTAssertEqual(model.snapshot.phase, .finished)
+        let marginIDsBefore = Set(model.selectedItem.interjections.map(\.id))
+        let playsBefore = audio.playCount
+
+        model.beginInterjection()
+        XCTAssertTrue(model.snapshot.isRecording)
+        model.finishInterjection()
+
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertEqual(model.snapshot.phase, .finished)
+        XCTAssertEqual(model.snapshot.sessionId, sessionID)
+        XCTAssertFalse(model.snapshot.status.isPlaybackActive)
+        XCTAssertEqual(audio.playCount, playsBefore, "the source must not restart")
+        XCTAssertNil(model.lastError)
+        let margin = try XCTUnwrap(model.selectedItem.interjections.first { !marginIDsBefore.contains($0.id) })
+        XCTAssertEqual(margin.sessionId, sessionID)
+        XCTAssertEqual(model.selectedItem.sessions.first { $0.id == sessionID }?.status, "finished")
+    }
+
     func testItemReplayStartsANewSessionAndPreservesTheCompletedSession() throws {
         let audio = WorkflowCompletionAudioClient()
         let model = Gate1AppModel(audioPlaybackClient: audio)
@@ -4413,6 +4441,7 @@ private final class WorkflowCompletionAudioClient: AudioPlaybackClient {
     private var activeTargetId: String?
     private var completedTargetId: String?
     private var currentOffset = 0
+    private(set) var playCount = 0
 
     func prepareSpeechText(_ text: String) throws -> String {
         let normalized = SpeechTextNormalizer.normalize(text)
@@ -4431,6 +4460,7 @@ private final class WorkflowCompletionAudioClient: AudioPlaybackClient {
         activeTargetId = targetId
         completedTargetId = nil
         currentOffset = charOffset
+        playCount += 1
         lock.unlock()
     }
 
