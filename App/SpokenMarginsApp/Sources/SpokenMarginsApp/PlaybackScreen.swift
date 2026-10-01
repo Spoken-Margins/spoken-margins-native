@@ -609,10 +609,7 @@ struct PlaybackScreen: View {
     private var playbackHeader: some View {
         VStack(alignment: .leading, spacing: 12) {
             Button(action: model.openCurrentPlaybackItem) {
-                Text(model.playbackItemHeaderTitle)
-                    .font(.system(.largeTitle, design: .serif).weight(.medium))
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                PlaybackHeaderTitle(title: model.playbackItemHeaderTitle)
                     .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
