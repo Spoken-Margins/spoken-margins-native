@@ -223,21 +223,34 @@ enum TruePeakOversampler {
         let taps = tapsPerPhase
         let coefficients = phases.flatMap { $0 }
         var peaks = [Double](repeating: 0, count: count + taps)
-        samples.withUnsafeBufferPointer { x in
-            coefficients.withUnsafeBufferPointer { h in
-                peaks.withUnsafeMutableBufferPointer { out in
-                    for n in 0..<(count + taps) {
-                        let low = max(0, n - count + 1)
-                        let high = min(taps - 1, n)
-                        guard low <= high else { continue }
+        // Plain while loops and pointer arithmetic: the package's tests run unoptimized, where
+        // ranges, generic max/abs and buffer subscripts cost a call each, and this loop runs
+        // 48 times per sample (#465's tests went past the lane's host-test time limit).
+        samples.withUnsafeBufferPointer { xBuffer in
+            coefficients.withUnsafeBufferPointer { hBuffer in
+                peaks.withUnsafeMutableBufferPointer { outBuffer in
+                    guard let x = xBuffer.baseAddress, let h = hBuffer.baseAddress, let out = outBuffer.baseAddress else { return }
+                    var n = 0
+                    let end = count + taps
+                    while n < end {
+                        let low = n - count + 1 > 0 ? n - count + 1 : 0
+                        let high = n < taps - 1 ? n : taps - 1
                         var peak = 0.0
-                        for phase in 0..<factor {
+                        var phase = 0
+                        while phase < factor {
                             var value = 0.0
-                            let base = phase * taps
-                            for m in low...high { value += h[base + m] * Double(x[n - m]) }
-                            peak = max(peak, abs(value))
+                            let row = h + phase * taps
+                            var m = low
+                            while m <= high {
+                                value += row[m] * Double(x[n - m])
+                                m += 1
+                            }
+                            let magnitude = value < 0 ? -value : value
+                            if magnitude > peak { peak = magnitude }
+                            phase += 1
                         }
                         out[n] = peak
+                        n += 1
                     }
                 }
             }
