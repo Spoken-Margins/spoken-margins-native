@@ -5542,7 +5542,7 @@ final class Gate1AppModel: ObservableObject {
             activeItemId = id
             selectedItem = try loadItemDetail(id: id, store: store)
             prepareImportedLocalAudioBridges(itemId: id)
-            scheduleTextAudioPrewarmIfNeeded(itemId: id)
+            scheduleTextAudioPrewarmIfNeeded(itemId: id); PublisherAudioTextMapper.resume(itemId: id, store: store, transcriber: sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(id): \($0)" }
             listeningMapJSON = ""
             screen = .item
             discoverFollowOfferIfEligible(itemId: id, store: store)

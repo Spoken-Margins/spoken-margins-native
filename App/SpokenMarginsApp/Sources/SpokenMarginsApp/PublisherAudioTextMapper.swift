@@ -9,15 +9,31 @@ import SessionKitPersistence
 /// (`PublisherAudioAligner`), deletes the download, and saves the result in the item's
 /// `publisher_audio` record. A map is kept only when enough of the article was placed; otherwise
 /// the article keeps on-device speech, and the record and diagnostics say why.
+///
+/// A try that never finished (Speech Recognition not yet allowed, or the app was closed during
+/// it) leaves the record without a status, and opening the item tries again.
 @MainActor
 enum PublisherAudioTextMapper {
+    private static var running = Set<String>()
+
+    /// Tries again for an item whose record has no map status yet.
+    static func resume(
+        itemId: String,
+        store: SQLiteSessionStore,
+        transcriber: any SourceTranscriptionClient,
+        report: @escaping @MainActor (String) -> Void
+    ) {
+        guard let audio = try? store.loadPublisherAudio(itemId: itemId) else { return }
+        start(audio, store: store, transcriber: transcriber, report: report)
+    }
+
     static func start(
         _ audio: PublisherAudio,
         store: SQLiteSessionStore,
         transcriber: any SourceTranscriptionClient,
         report: @escaping @MainActor (String) -> Void
     ) {
-        guard audio.textMapStatus == nil else { return }
+        guard audio.textMapStatus == nil, !running.contains(audio.itemId) else { return }
         // Never prompt for Speech Recognition from an import: wait until the listener has allowed it.
         guard SFSpeechRecognizer.authorizationStatus() == .authorized else {
             return report("waiting_for_speech_recognition")
@@ -28,7 +44,9 @@ enum PublisherAudioTextMapper {
             return report("skipped: no article text or audio URL")
         }
         report("transcribing")
+        running.insert(audio.itemId)
         Task {
+            defer { running.remove(audio.itemId) }
             var updated: PublisherAudio
             do {
                 let transcript = try await transcribe(
@@ -67,12 +85,18 @@ enum PublisherAudioTextMapper {
             try? FileManager.default.removeItem(at: downloadedURL)
             throw URLError(.badServerResponse, userInfo: [NSLocalizedDescriptionKey: "HTTP \(status)"])
         }
-        let directory = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            .appending(path: "PublisherAudioTextMaps", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let pathExtension = remoteURL.pathExtension.isEmpty ? "mp3" : remoteURL.pathExtension
-        let localURL = directory.appending(path: "\(UUID().uuidString).\(pathExtension)")
-        try FileManager.default.moveItem(at: downloadedURL, to: localURL)
+        let localURL: URL
+        do {
+            let directory = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+                .appending(path: "PublisherAudioTextMaps", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            localURL = directory.appending(path: "\(UUID().uuidString).\(pathExtension)")
+            try FileManager.default.moveItem(at: downloadedURL, to: localURL)
+        } catch {
+            try? FileManager.default.removeItem(at: downloadedURL)
+            throw error
+        }
         defer { try? FileManager.default.removeItem(at: localURL) }
         return try await transcriber.transcribeSourceAudio(url: localURL, itemId: itemId, durationMs: durationMs)
     }
