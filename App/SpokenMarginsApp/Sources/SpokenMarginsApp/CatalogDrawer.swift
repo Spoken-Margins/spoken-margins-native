@@ -117,6 +117,15 @@ final class CatalogDrawerModel: ObservableObject {
             ? .followed : nil
     }
 
+    /// Follow state for every row in one pass (#246); rows without a state are left out.
+    func followStates(for entries: [SourceCatalogEntry]) -> [String: FollowState] {
+        var states: [String: FollowState] = [:]
+        for entry in entries {
+            if let state = state(for: entry) { states[entry.id] = state }
+        }
+        return states
+    }
+
     private func recordFollowedSource(_ sourceId: String, for entry: SourceCatalogEntry) {
         var recorded = defaults.dictionary(forKey: Self.followedSourcesKey) as? [String: String] ?? [:]
         recorded[entry.id] = sourceId
