@@ -34,13 +34,16 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   merge commit, with next as its first parent. On PASS it posts a "Merge check (triage desk)"
   comment (the prefix scripts/merge_audit.py looks for) and pushes that commit to next with a plain
   push; if next moved meanwhile, the push is refused and it tests again on the newest next (up to
-  MERGE_ATTEMPTS). It won't merge a PR that changes .github/ or scripts/lane* (a PR can change the
+  MERGE_ATTEMPTS), unless next's new commits touch none of the PR's files and no build inputs: then
+  it re-merges onto the newest next and pushes without testing again (untested_moves). It won't merge a PR that changes .github/ or scripts/lane* (a PR can change the
   workflow that tests it), or an audio, persistence or packet change without a Codex audit comment:
   those pass or fail as usual, and a person merges them. A PR someone asked T3 for merges only on a
   T3 PASS (#410): while its newest T3 report is FAIL or INCONCLUSIVE, or its newest T3 request has
   no report yet, the automerge run reports that verdict (INCONCLUSIVE while waiting) and doesn't merge.
   When a T3 then passes, the lane job that reported it runs the held automerge run itself, in the
   same job (#421): a label the runner re-added with the workflow's token would start no new run.
+  While the PR's T3 request for its head is still waiting, the automerge run skips its own checks
+  and reports itself held straight away: the T3 PASS's lane job runs them before it merges.
 - PR code (builds and tests) runs without the GitHub token in its environment, and the checkout
   keeps no credentials, so only this script's own fetch and push can use the token.
 - Build folders stay warm between jobs. The checkout wipes the workspace, so the tree's .build (the
@@ -514,6 +517,28 @@ def held_for_t3(comments: list[dict], head: str) -> bool:
     return False
 
 
+def t3_request_for_head(comments: list[dict], labels, head: str) -> str | None:
+    """The link to a /lane T3 request for <head> that the lane job has still to answer, or None.
+
+    An automerge run on such a PR can't merge: the T3 gate holds it until the T3 reports, and the lane
+    job that reports a T3 PASS runs the host tests and both builds on the merge commit itself (#421).
+    Running them here first only to be held cost 20 runs in two days. It counts only when lane:queued or
+    lane:running says a lane job will answer it, when it is the newest unanswered T2/T3 request, and when
+    its `commit:` names <head>: a request for an older head may be running on that head, and then nothing
+    else would test this one.
+    """
+    if not {QUEUED, RUNNING} & set(labels):
+        return None
+    request, _ = pending_requests(comments)
+    if not request or request['tier'] != 'T3' or not t3_gate(comments):
+        return None
+    named = (request.get('commit') or '').split()
+    commit = named[0].lower() if named else ''
+    if len(commit) < 7 or not re.fullmatch(r'[0-9a-f]+', commit) or not head.startswith(commit):
+        return None
+    return request.get('url') or 'the /lane T3 comment'
+
+
 def build_merge_commit(tree: Path, base: str, head: str, pr: int, title: str) -> tuple[str | None, list[str]]:
     """The exact commit that would land: origin/<base> as first parent, the PR head as second.
 
@@ -562,12 +587,70 @@ def next_moved(push_message: str) -> bool:
         reason in push_message for reason in ('fetch first', 'non-fast-forward', 'stale info'))
 
 
+# What a change on next can't touch for the runner to land a tested PR on it without testing again: the
+# build and the project (any .xcodeproj, xcconfig, package manifest or lock), the workflows, every script
+# (the build's phases and the lane's own test drivers), the contract schemas the validators read, and the
+# browser tests' packages.
+BUILD_INPUT_PREFIXES = ('project.yml', 'Config/', '.github/', 'scripts/', 'Contracts/schemas/')
+BUILD_INPUT_NAMES = {'Package.swift', 'Package.resolved', 'package.json', 'package-lock.json'}
+SKIPPED_SHOWN = 10
+
+
+def is_build_input(path: str) -> bool:
+    return path.startswith(BUILD_INPUT_PREFIXES) or Path(path).name in BUILD_INPUT_NAMES \
+        or '.xcodeproj/' in path or '.xcworkspace/' in path or path.endswith('.xcconfig')
+
+
+def untested_moves(tree: Path, tested_base: str, new_base: str, head: str) -> tuple[list[str] | None, str]:
+    """(next's commits since <tested_base>, '') when they can't change what the PR's test showed, else (None, why).
+
+    They can't when they touch none of the PR's files and no build input. Each first-parent commit counts
+    with everything it brought in, so a merge of another PR counts with that PR's files.
+    """
+    git = ['git', '-C', str(tree)]
+    if subprocess.run(git + ['merge-base', '--is-ancestor', tested_base, new_base], capture_output=True).returncode:
+        return None, f'it no longer contains the tested commit {tested_base[:7]}'
+    merge_base = subprocess.check_output(git + ['merge-base', tested_base, head], text=True).strip()
+    mine = set(subprocess.check_output(git + ['diff', '--name-only', merge_base, head], text=True).split())
+    log = subprocess.check_output(git + ['log', '--first-parent', '-m', '--name-only', '--format=%x00%h %s',
+                                         f'{tested_base}..{new_base}'], text=True)
+    commits, touched = [], set()
+    for line in log.splitlines():
+        if line.startswith('\0'):
+            commits.append(line[1:])
+        elif line.strip():
+            touched.add(line.strip())
+    shared = sorted(touched & mine)
+    if shared:
+        return None, f'its commits touch this PR\'s files ({", ".join(shared[:5])})'
+    inputs = sorted(p for p in touched if is_build_input(p))
+    if inputs:
+        return None, f'its commits touch build inputs ({", ".join(inputs[:5])})'
+    return commits, ''
+
+
+def merge_check_untested(head: str, merge_sha: str, base: str, base_sha: str, tested_base: str, ran: str,
+                         commits: list[str]) -> str:
+    """The merge check for a re-merge pushed without testing again. It never says "Pushing `<sha7>`":
+    scripts/phone-build reads that as "the runner tested this exact commit"."""
+    shown = ', '.join(f'`{c}`' for c in commits[:SKIPPED_SHOWN]) + \
+        (f' and {len(commits) - SKIPPED_SHOWN} more' if len(commits) > SKIPPED_SHOWN else '')
+    return (f'{MERGE_CHECK} on `{head[:7]}`: PASS, re-merged onto the newest {base} without re-testing.**\n'
+            f'- Tested this PR merged with {base} at `{tested_base[:7]}`. Ran: {ran}.\n'
+            f'- {base} has since moved to `{base_sha[:7]}`, and its commits touch none of this PR\'s files and no '
+            f'build inputs: {shown}.\n'
+            f'- So the re-merge `{merge_sha[:7]}` goes to {base} not re-tested. The Test Desk tests {base}\'s merged '
+            'tip end to end.\n'
+            '_Posted by the lane runner (scripts/lane-runner.py)._')
+
+
 def merge_check(head: str, merge_sha: str, base: str, base_sha: str, ran: str) -> str:
     return (f'{MERGE_CHECK} on `{head[:7]}`: PASS.**\n'
             f'- Tested the merge commit `{merge_sha[:7]}`: {base} at `{base_sha[:7]}` first, then this PR.\n'
             f'- Ran: {ran}.\n'
             f'- Pushing `{merge_sha[:7]}` to {base} now. If {base} moved meanwhile, the push is refused and the '
-            'runner tests again on the newest one.\n'
+            'runner tests again on the newest one, unless the new commits touch none of this PR\'s files and no '
+            'build inputs.\n'
             '_Posted by the lane runner (scripts/lane-runner.py)._')
 
 
@@ -580,28 +663,31 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
     the app builds after all, they wait for it first.
     """
     notes: list[str] = []
+    tested_base, skipped = None, None  # the next the last test ran on; next's commits since, when they can't matter
     for attempt in range(1, attempts + 1):
         # Each retry gets its own folder: verify-tests.py refuses an --output folder that exists (#404).
         tried = evidence if attempt == 1 else evidence / f'attempt-{attempt}'
-        tried.mkdir(parents=True, exist_ok=True)
         merge_sha, conflicts = build_merge_commit(ROOT, base, head, pr, pull.get('title', ''))
         if conflicts:
             return 'INCONCLUSIVE', 'no simulator', 'nothing', notes + [
                 f'The PR does not merge cleanly into {base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
                 f'Merge {base} into your branch and push; the automerge label runs it again.']
-        warm = warm_build_folders(ROOT)
-        scope = diff_scope(ROOT, base)
-        (tried / 'scope.json').write_text(json.dumps(scope, indent=2))
-        no_room = room_for_builds() if room_for_builds and int(scope['tier'][1:]) >= 2 else None
-        if no_room:
-            return 'INCONCLUSIVE', 'no build', 'nothing', notes + [
-                f'{no_room}. Push again, or remove and re-add automerge, to try again.']
-        verdict, where, ran, details = run_automerge(
-            scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)))
-        details = [f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR); {warm}'] \
-            + notes + details
-        if verdict != 'PASS':
-            return verdict, where, ran, details
+        if skipped is None:
+            tried.mkdir(parents=True, exist_ok=True)
+            warm = warm_build_folders(ROOT)
+            scope = diff_scope(ROOT, base)
+            (tried / 'scope.json').write_text(json.dumps(scope, indent=2))
+            no_room = room_for_builds() if room_for_builds and int(scope['tier'][1:]) >= 2 else None
+            if no_room:
+                return 'INCONCLUSIVE', 'no build', 'nothing', notes + [
+                    f'{no_room}. Push again, or remove and re-add automerge, to try again.']
+            verdict, where, ran, checks = run_automerge(
+                scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)))
+            tested = f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR); {warm}'
+            if verdict != 'PASS':
+                return verdict, where, ran, [tested] + notes + checks
+            tested_base = base_sha
+        details = [tested] + notes + checks
         latest = github.comments()  # read now: a T3 report or an audit may have landed while this ran
         held = t3_gate(latest)
         if held:
@@ -615,7 +701,8 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 or now.get('state', 'open') != 'open':  # another run merged it meanwhile, or someone closed it
             return verdict, where, ran, details + ['not merged: the PR moved on, lost the automerge label or was '
                                                    'closed while it was tested']
-        github.comment(merge_check(head, merge_sha, base, base_sha, ran))
+        github.comment(merge_check(head, merge_sha, base, base_sha, ran) if skipped is None else
+                       merge_check_untested(head, merge_sha, base, base_sha, tested_base, ran, skipped))
         pushed, message = push_merge(ROOT, merge_sha, base)
         if pushed:
             sweep_merge_audit(ROOT, base)
@@ -623,9 +710,20 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
         if not next_moved(message):  # no permission, network: testing again wouldn't help
             return verdict, where, ran, details + [f'not merged: the push to {base} failed ({message}). A job '
                                                    'whose lane.yml predates push rights (#382) can\'t push.']
-        notes.append(f'attempt {attempt}: the push to {base} was refused ({message}), so {base} moved; '
-                     'tested again on the newest one')
         base_sha = fetch_base(ROOT, base)
+        try:
+            skipped, why = untested_moves(ROOT, tested_base, base_sha, head)
+        except (OSError, subprocess.SubprocessError) as error:  # can't tell: test again
+            skipped, why = None, f'the runner could not compare the commits ({error!r})'
+        refused = f'attempt {attempt}: the push to {base} was refused ({message}), so {base} moved to {base_sha[:7]}'
+        if skipped is None:
+            notes.append(f'{refused}; tested again on the newest one, because {why}')
+        else:
+            shown = ', '.join(skipped[:SKIPPED_SHOWN]) + \
+                (f' and {len(skipped) - SKIPPED_SHOWN} more' if len(skipped) > SKIPPED_SHOWN else '')
+            notes.append(f'{refused}; not re-tested: {base}\'s {len(skipped)} commit{"s" if len(skipped) != 1 else ""} '
+                         f'since the tested {tested_base[:7]} touch none of this PR\'s files and no build inputs, so '
+                         f'the re-merge onto {base_sha[:7]} goes without testing again (skipped: {shown})')
     return 'PASS', where, ran, details + notes[-1:] + [
         f'not merged: {base} kept moving ({attempts} attempts). Remove and re-add automerge to try again.']
 
@@ -1415,8 +1513,10 @@ def main(argv=None) -> int:
             github.relabel(DONE, None)
         github.relabel(QUEUED, RUNNING)
     link_tools(tools_source())
+    # A pending T3 for this head: the lane job that reports its PASS runs these checks and merges.
+    t3_first = t3_request_for_head(comments, labels, head) if request['tier'] == 'auto' else None
     no_room, beside, room_for_builds = None, None, None
-    if request['tier'] == 'auto' and os.environ.get('SM_LANE_RUNNER_ROLE') == 'build':
+    if request['tier'] == 'auto' and not t3_first and os.environ.get('SM_LANE_RUNNER_ROLE') == 'build':
         if host_only_scope(ROOT, args.base):  # the trial: host-only work may run beside a simulator job
             no_room, beside = wait_for_room_to_test_on_host()
             room_for_builds = wait_for_room_to_build
@@ -1432,7 +1532,13 @@ def main(argv=None) -> int:
     cc = ''
     try:
         conflicts = [] if request['tier'] == 'auto' else merge_base_branch(ROOT, args.base)
-        if no_room:
+        if t3_first:
+            verdict, where, ran, crashes = 'INCONCLUSIVE', 'no build', 'nothing', 'none'
+            details = [f'{HELD_FOR_T3[0]}: the /lane T3 request for this head ({t3_first}) has no lane report yet, '
+                       'so this run skipped its own host tests and builds. The lane job that reports a T3 PASS on '
+                       'this head runs them on the merge commit itself and merges on PASS; nobody needs to push or '
+                       're-label.']
+        elif no_room:
             verdict, where, ran, crashes = 'INCONCLUSIVE', 'no build', 'nothing', 'none'
             details = [f'{no_room}. Push again, or remove and re-add automerge, to try again.']
         elif request['tier'] == 'auto':
