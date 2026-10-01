@@ -922,8 +922,8 @@ final class SharingTests: XCTestCase {
     /// the resolver declines to place it. An ad inserted between the flanks does exactly this: the "pre"
     /// flank (anchor offset +11.5 s) still lands at 42 s, the "post" flank (−0.5 s) after the 7 s ad.
     ///
-    /// Two flanks that agree on the same wrong place look like agreement and are fused. The resolver
-    /// can't tell that apart from a real match; repeated theme music can cause it (C4 benchmark, #296).
+    /// Two flanks that agree on the same wrong place look like agreement here. Repeated audio can cause it
+    /// (#296), so `resolve` first looks for another copy of each flank's audio (#331; see the repeated-theme test).
     func testAcousticResolverDeclinesFlanksThatDisagreeByMoreThanTheFusionSpread() {
         let query = PodcastPortableAnchorQuery(
             packageScopedId: "margin-at-an-inserted-ad",
@@ -979,6 +979,31 @@ final class SharingTests: XCTestCase {
         #else
         throw XCTSkip("AVFoundation is required")
         #endif
+    }
+
+    /// A flank that also matches elsewhere in the edition declines the Margin, whatever the flanks agree on.
+    func testAcousticResolverDeclinesAMarginWhoseFlankRepeatsElsewhere() {
+        let query = PodcastPortableAnchorQuery(
+            packageScopedId: "margin-next-to-a-theme",
+            senderMediaTimeMs: 49_000,
+            evidence: [
+                PodcastAcousticEvidenceQuery(id: "pre", signatureData: Data([1]), anchorOffsetMs: 11_500),
+                PodcastAcousticEvidenceQuery(id: "post", signatureData: Data([2]), anchorOffsetMs: -500)
+            ]
+        )
+        let declined = PodcastAcousticAnchorResolver.resolveCandidates(
+            [(72_000, 0.97), (72_002, 0.96)],
+            query: query,
+            senderDurationMs: 120_000,
+            recipientDurationMs: 120_000,
+            strongSourceIdentity: true,
+            exactDigestContradiction: false,
+            matchedAnchorOffsets: [11_500, -500],
+            matchedRepeatedAudio: true
+        )
+        XCTAssertEqual(declined.evidenceClass, .ambiguous)
+        XCTAssertTrue(declined.isAmbiguous)
+        XCTAssertNil(declined.localMediaTimeMs)
     }
 
     /// Repeated audio end to end (#331): a 15 s theme opens the edition and comes back to close it. A Margin
