@@ -266,6 +266,21 @@ final class MarginNoteFrontmatterTests: XCTestCase {
         return (item, document)
     }
 
+    /// #560: a Margin on a Wikipedia article imported before the fix captured link titles in its
+    /// context; the note shows the context as read (the stored anchor isn't touched).
+    func testNoteContextFromAnEarlierWikipediaImportDropsLinkTitles() throws {
+        let stored = LinkTitleSpeechTests.storedBeforeFix
+        let item = Item(id: "item-wiki", title: "Marginalia", mediaType: "text", text: stored + " Next sentence.",
+                        externalReference: "https://en.wikipedia.org/wiki/Marginalia", status: "ready")
+        var onWiki = margin(item: item, kind: .written, mediaTimeMs: nil)
+        onWiki.anchor.anchorBefore = stored
+        onWiki.anchor.anchorAfter = "of a [book]( \"Book\") or other document."
+        let note = try renderNote(item: item, margin: onWiki)
+
+        XCTAssertTrue(note.contains("## Context before\n\n" + LinkTitleSpeechTests.storedAsNowRead + "\n"), note)
+        XCTAssertTrue(note.contains("## Context after\n\nof a book or other document.\n"), note)
+    }
+
     private func margin(item: Item, kind: InterjectionCaptureKind?, mediaTimeMs: Int?, startChar: Int = 0) -> Interjection {
         Interjection(
             id: "margin", itemId: item.id, sessionId: "session-" + item.id, targetType: .item, targetId: item.id,

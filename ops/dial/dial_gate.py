@@ -3,7 +3,8 @@
 
 Runs on the VPS every 15 minutes (systemd timer). It reads Cole's tick boxes on the Dial
 issue, the latest Claude usage the Mac tick posted on #337, the ready queue, and the
-coordinator's acknowledgement comment. Only when work is allowed and useful does it POST
+threads' fixed-format claim and stop notes. Only when work is allowed and a thread slot is
+open (or the 3-hour fallback is due) does it POST
 to the "Dial relay" routine's /fire endpoint; that routine posts into the project
 conversation, which wakes the coordinator (verified 2026-09-30 in a test project).
 
@@ -11,8 +12,12 @@ Safety rules (owner, 2026-10-01):
 - Every slip fails toward spending less: two ticks in a group take the more cautious one;
   an empty or muddled Mode reads Off.
 - Paced mode needs a usage reading under 3 hours old; with the Mac offline it doesn't fire.
-- At most one fire outstanding: no new fire until the coordinator acknowledges the last
+- At most one fire outstanding: no new fire until a thread claims an issue after the last
   one (or 3 hours pass), so fires can't pile up while the plan limit is hit.
+- Active threads (owner, 2026-10-01): a thread is active from its claim note until its stop
+  note, or until it shows nothing on GitHub for 2 hours (a crashed thread leaves no note).
+  If threads skip stop notes the gate under-fires; the 2-hour limit and the 3-hour fallback
+  wake-up bound that.
 - Machines never edit the issue body. The gate keeps one status comment, edited in place.
 
 Stdlib only, Python 3.9+. `--dry-run` prints the decision and writes nothing.
@@ -41,13 +46,20 @@ RESET_WEEKDAY = int(os.environ.get('SM_DIAL_RESET_WEEKDAY', '5'))   # Saturday (
 RESET_HOUR_UTC = int(os.environ.get('SM_DIAL_RESET_HOUR', '11'))    # 07:00 EDT
 FINISH_BY = {'reset': 0, 'fri noon': 19, 'fri 7': 24}             # hours before the reset
 USAGE_MAX_AGE = dt.timedelta(hours=3)
-REFILL_EVERY = dt.timedelta(minutes=60)
-FULL_RECHECK = dt.timedelta(hours=3)
+MIN_SPACING = dt.timedelta(minutes=15)   # between wake-ups
+FALLBACK = dt.timedelta(hours=3)         # wake-up even when every slot looks full
+THREAD_QUIET = dt.timedelta(hours=2)     # no stop note and nothing on GitHub: count it gone
+THREAD_WINDOW = dt.timedelta(hours=24)   # how far back the gate reads claim and stop notes
+QUIET_SHOWN = dt.timedelta(hours=6)      # the status comment lists stopped/quiet threads this long
 ACK_TIMEOUT = dt.timedelta(hours=3)
 STATUS_REFRESH = dt.timedelta(minutes=60)
 
 STATUS_MARK = '<!-- dial-gate-status -->'
 ACK_MARK = '<!-- dial-coordinator -->'
+# The notes Cole put in the project instructions (2026-10-01). They must open the comment,
+# so a quoted example inside other text doesn't count.
+CLAIM_RE = re.compile(r'[*_\s]*Claimed by project thread "([^"]+)"')
+STOP_RE = re.compile(r'[*_\s]*Thread "([^"]+)" stopping:\s*(.*)')
 
 MODES = ('off', 'paced', 'cloud max')
 
@@ -108,12 +120,26 @@ def parse_dial(body: str) -> dict:
         problems.append(f'{len(stops)} Stop line boxes are ticked, so it uses the lowest, {stop}%')
     if stop is None and mode == 'paced':
         problems.append('no Stop line box is ticked, so Paced starts nothing')
+    refill_group = next((g for g in groups if g.startswith('refill when')), None)
+    refills = []
+    for t in groups.get(refill_group, []):
+        if t.startswith('any'):
+            refills.append(None)
+        elif t.startswith('no '):
+            refills.append(0)
+        elif re.match(r'\d+', t):
+            refills.append(int(re.match(r'\d+', t).group(0)))
+    numeric = [r for r in refills if r is not None]
+    refill_at = min(numeric) if numeric else None   # two ticks: the one that wakes less
+    if len(refills) > 1:
+        problems.append('two Refill when boxes are ticked, so it uses the one that wakes the project less')
     finish_group = next((g for g in groups if g.startswith('finish by')), None)
     early = [h for t in groups.get(finish_group, []) for key, h in FINISH_BY.items() if key in t]
     hours_early = min(early) if early else 0   # two ticks: the later deadline spends slower
     if len(early) > 1:
         problems.append('two Finish by boxes are ticked, so it uses the later one')
-    return {'mode': mode, 'threads': threads, 'stop': stop, 'hours_early': hours_early, 'problems': problems}
+    return {'mode': mode, 'threads': threads, 'stop': stop, 'hours_early': hours_early,
+            'refill_at': refill_at, 'problems': problems}
 
 
 def parse_usage(comments: list[dict]) -> dict:
@@ -150,6 +176,82 @@ def parse_ack(comments: list[dict]) -> dict | None:
     return None
 
 
+def issue_number(c: dict) -> int | None:
+    m = re.search(r'/issues/(\d+)$', c.get('issue_url') or '')
+    return int(m.group(1)) if m else None
+
+
+def parse_threads(comments: list[dict], events: list[dict], now: dt.datetime) -> list[dict]:
+    """Project threads from their claim and stop notes (repo-wide issue comments, oldest
+    first) plus signs of life: a comment that names the thread in quotes, or a push to the
+    `ws/<issue>-` branch of the issue it claimed last. Other comments on its issues don't
+    count (the owner's phone checks land on many at once), nor do pushes for its earlier
+    issues (their PRs are armed; the finisher may push there). Each thread: title, issues
+    (claimed since its last stop note), claims (all claim times), last_seen, stop_text,
+    state ('active', 'stopped' or 'quiet')."""
+    threads: dict[str, dict] = {}
+    for c in comments:
+        body = c.get('body') or ''
+        at = parse_time(c['created_at'])
+        m = CLAIM_RE.match(body)
+        if m:
+            t = threads.setdefault(m.group(1), {'title': m.group(1), 'issues': [], 'claims': [], 'runs': [],
+                                                'started': at, 'stopped_at': None, 'stop_text': None})
+            if t['stopped_at']:   # a new run under the same title
+                t['runs'].append({'title': t['title'], 'started': t['started'], 'ended': t['stopped_at'],
+                                  'how': 'stop note'})
+                t.update(issues=[], started=at, stopped_at=None, stop_text=None)
+            t['claims'].append(at)
+            t['last_claim'] = at
+            n = issue_number(c)
+            if n is not None and n not in t['issues']:
+                t['issues'].append(n)
+            continue
+        m = STOP_RE.match(body)
+        if m and m.group(1) in threads:
+            threads[m.group(1)].update(stopped_at=at, stop_text=m.group(2).strip().splitlines()[0][:80])
+
+    for t in threads.values():
+        named = f'"{t["title"]}"'
+        seen = [t['last_claim']]
+        seen += [parse_time(c['created_at']) for c in comments if named in (c.get('body') or '')]
+        branch = f"refs/heads/ws/{t['issues'][-1]}-" if t['issues'] else None
+        for e in events:
+            ref = (e.get('payload') or {}).get('ref') or ''
+            if branch and e.get('type') == 'PushEvent' and ref.startswith(branch):
+                seen.append(parse_time(e['created_at']))
+        t['last_seen'] = max(seen)
+        if t['stopped_at']:
+            t['state'] = 'stopped'
+        elif now - t['last_seen'] > THREAD_QUIET:
+            t['state'] = 'quiet'
+        else:
+            t['state'] = 'active'
+    return sorted(threads.values(), key=lambda t: t['last_claim'])
+
+
+def finished_runs(threads: list[dict], now: dt.datetime) -> list[dict]:
+    """How long each finished thread run lasted, from its first claim to its stop note, or
+    to its last sign of life if it went quiet. Used to tune the spacing (owner, 2026-10-01)."""
+    runs = [r for t in threads for r in t['runs']]
+    for t in threads:
+        if t['state'] == 'stopped':
+            runs.append({'title': t['title'], 'started': t['started'], 'ended': t['stopped_at'], 'how': 'stop note'})
+        elif t['state'] == 'quiet':
+            runs.append({'title': t['title'], 'started': t['started'], 'ended': t['last_seen'], 'how': 'went quiet'})
+    for r in runs:
+        r['minutes'] = int((r['ended'] - r['started']).total_seconds() // 60)
+    return sorted(runs, key=lambda r: r['ended'])
+
+
+def active_count(threads: list[dict]) -> int:
+    return sum(t['state'] == 'active' for t in threads)
+
+
+def claims_since(threads: list[dict], when: dt.datetime) -> int:
+    return sum(at >= when for t in threads for at in t['claims'])
+
+
 def parse_time(s: str) -> dt.datetime:
     return dt.datetime.strptime(s, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=dt.timezone.utc)
 
@@ -172,7 +274,7 @@ def trend_line(now: dt.datetime, stop: int, hours_early: int) -> float:
 
 # ---------- decision (pure) ----------
 
-def decide(now, dial, usage_info, ready_count, ack, state) -> dict:
+def decide(now, dial, usage_info, ready_count, ack, state, active) -> dict:
     """Return {'fire': bool, 'why': str, 'hold': str|None}."""
     mode, threads, stop = dial['mode'], dial['threads'], dial['stop']
     if mode == 'off' or threads == 0:
@@ -207,13 +309,20 @@ def decide(now, dial, usage_info, ready_count, ack, state) -> dict:
         if last_at and now - last_at < ACK_TIMEOUT:
             return {'fire': False, 'why': f'Waiting for the coordinator to acknowledge {last_fire} '
                                           f'(sent {hours(now - last_at)} ago).', 'hold': None}
-    if last_at and now - last_at < REFILL_EVERY:
-        return {'fire': False, 'why': f'Last wake-up was {hours(now - last_at)} ago; next one after an hour.', 'hold': None}
-    if ack and ack['fire'] == last_fire and ack['running'] is not None and ack['running'] >= threads \
-            and last_at and now - last_at < FULL_RECHECK:
-        return {'fire': False, 'why': f"All {threads} threads were running at the last wake-up; "
-                                      f"checking again after 3 hours.", 'hold': None}
-    return {'fire': True, 'why': f'Waking the project: keep up to {threads} threads going.', 'hold': None}
+    if last_at and now - last_at < MIN_SPACING:
+        return {'fire': False, 'why': f'Last wake-up was {hours(now - last_at)} ago; '
+                                      f'wake-ups are at least 15 min apart.', 'hold': None}
+    refill_at = dial.get('refill_at')
+    wake_at = threads - 1 if refill_at is None else min(refill_at, threads - 1)
+    if active > wake_at:
+        if last_at and now - last_at < FALLBACK:
+            why = (f'{active} of {threads} threads are active, so no slot is open' if wake_at == threads - 1 else
+                   f"{active} of {threads} threads are active; the Dial wakes the project at "
+                   f"{wake_at} thread{'' if wake_at == 1 else 's'} left")
+            return {'fire': False, 'why': f'{why}; a fallback wake-up comes 3 hours after the last one.', 'hold': None}
+        return {'fire': True, 'why': f'{active} of {threads} threads look active, but the last wake-up '
+                                     f'was 3 hours ago or more: fallback wake-up.', 'hold': None}
+    return {'fire': True, 'why': f'Waking the project: {active} of {threads} threads are active.', 'hold': None}
 
 
 def hours(delta: dt.timedelta) -> str:
@@ -221,13 +330,15 @@ def hours(delta: dt.timedelta) -> str:
     return f'{minutes} min' if minutes < 90 else f'{minutes / 60:.1f} h'
 
 
-def status_text(now, dial, usage_info, ready_count, ack, state, decision) -> str:
+def status_text(now, dial, usage_info, ready_count, ack, state, decision, threads) -> str:
     eastern = dt.timezone(dt.timedelta(hours=-4))  # EDT; the gate only reports times
     t = lambda d: d.astimezone(eastern).strftime('%a %H:%M')
     u = usage_info['usage']
     lines = [STATUS_MARK, f"**Dial gate**, read {t(now)} (Eastern)", '']
     stop = f"stop line {dial['stop']}% (holds at {dial['stop'] - MARGIN}%)" if dial['stop'] else 'no stop line'
-    lines.append(f"- I read: **{dial['mode'].capitalize()}**, {dial['threads']} threads, {stop}.")
+    refill = ('when any slot opens' if dial.get('refill_at') is None or dial['refill_at'] >= dial['threads'] - 1
+              else f"at {dial['refill_at']} thread{'' if dial['refill_at'] == 1 else 's'} left")
+    lines.append(f"- I read: **{dial['mode'].capitalize()}**, {dial['threads']} threads, refill {refill}, {stop}.")
     for p in dial['problems']:
         lines.append(f'- Note: {p}.')
     lines.append(f"- Usage: {u['percent']}% from the Mac at {t(u['at'])}." if u else '- Usage: no report from the Mac.')
@@ -239,6 +350,20 @@ def status_text(now, dial, usage_info, ready_count, ack, state, decision) -> str
                      f"usage is {abs(gap):.0f} points {'ahead' if gap >= 0 else 'behind'} "
                      f"(Paced holds if more than {TREND_SLACK} ahead).")
     lines.append(f'- Ready issues: {ready_count}.')
+    issues = lambda th: ', '.join(f'#{n}' for n in th['issues']) or 'no issue'
+    active = [th for th in threads if th['state'] == 'active']
+    lines.append(f"- Active threads: {len(active)} of {dial['threads']}" + (':' if active else '.'))
+    for th in active:
+        lines.append(f"  - \"{th['title']}\" on {issues(th)}, last seen {t(th['last_seen'])}")
+    recent = lambda th, at: now - at <= QUIET_SHOWN
+    quiet = [th for th in threads if th['state'] == 'quiet' and recent(th, th['last_seen'])]
+    if quiet:
+        lines.append('- Gone quiet with no stop note (nothing on GitHub for 2 hours): ' + '; '.join(
+            f"\"{th['title']}\" on {issues(th)}, last seen {t(th['last_seen'])}" for th in quiet) + '.')
+    stopped = [th for th in threads if th['state'] == 'stopped' and recent(th, th['stopped_at'])]
+    if stopped:
+        lines.append('- Stopped: ' + '; '.join(
+            f"\"{th['title']}\" at {t(th['stopped_at'])} ({th['stop_text']})" for th in stopped) + '.')
     if state.get('last_fire'):
         acked = 'acknowledged' if ack and ack['fire'] == state['last_fire'] else 'not acknowledged yet'
         if acked == 'acknowledged' and ack.get('via') == 'claims':
@@ -246,6 +371,17 @@ def status_text(now, dial, usage_info, ready_count, ack, state, decision) -> str
             acked = f"acknowledged by {n} issue claim{'' if n == 1 else 's'} since"
         running = f", {ack['running']} running" if ack and ack['running'] is not None and acked == 'acknowledged' else ''
         lines.append(f"- Last wake-up: {t(parse_time(state['last_fire_at']))}, {acked}{running}.")
+    runs = [r for r in finished_runs(threads, now) if now - r['ended'] <= dt.timedelta(hours=24)]
+    # Only runs with a stop note have a real length; a quiet run's end is a guess.
+    timed = sorted(r['minutes'] for r in runs if r['how'] == 'stop note')
+    quiet = len(runs) - len(timed)
+    if timed:
+        mid = len(timed) // 2
+        median = timed[mid] if len(timed) % 2 else (timed[mid - 1] + timed[mid]) / 2
+        lines.append(f"- Thread runs ended in the last 24 h: {len(timed)} with a stop note, median {median:.0f} min, "
+                     f"longest {timed[-1]} min" + (f"; {quiet} more went quiet (length unknown)." if quiet else '.'))
+    elif quiet:
+        lines.append(f'- Thread runs ended in the last 24 h: {quiet}, all went quiet with no stop note (length unknown).')
     lines.append(f"- Now: {decision['why']}")
     return '\n'.join(lines)
 
@@ -260,6 +396,22 @@ def gh(method: str, path: str, token: str, body: dict | None = None):
                  'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'sm-dial-gate'})
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read() or b'null')
+
+
+def gh_pages(path: str, token: str, max_pages: int = 20) -> list:
+    """GET every page of a list endpoint (follows the Link header)."""
+    url, out = f'https://api.github.com/{path}', []
+    for _ in range(max_pages):
+        req = urllib.request.Request(url, headers={
+            'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'sm-dial-gate'})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            out += json.loads(resp.read() or b'[]')
+            nxt = re.search(r'<([^>]+)>;\s*rel="next"', resp.headers.get('Link') or '')
+        if not nxt:
+            break
+        url = nxt.group(1)
+    return out
 
 
 def fire_relay(url: str, token: str, text: str) -> dict:
@@ -303,22 +455,32 @@ def main(argv=None) -> int:
     ready = gh('GET', f'search/issues?q=repo:{REPO}+is:issue+is:open+label:ready&per_page=1', token)['total_count']
     dial_comments = gh('GET', f'repos/{REPO}/issues/{DIAL_ISSUE}/comments?per_page=100', token)
     ack = parse_ack(dial_comments)
+    # Newest first, then reversed: the repo gets over 2,000 comments a week (2026-10-01), so
+    # an oldest-first read hit the page cap before the latest notes. A thread is quiet after
+    # 2 hours without a sign of life, so 24 hours (inside the week) is plenty.
+    since = max(next_reset(now) - dt.timedelta(days=7), now - THREAD_WINDOW).strftime('%Y-%m-%dT%H:%M:%SZ')
+    all_comments = gh_pages(f'repos/{REPO}/issues/comments?since={since}&sort=created'
+                            f'&direction=desc&per_page=100', token)[::-1]
+    events = gh_pages(f'repos/{REPO}/events?per_page=100', token, max_pages=3)
+    threads = parse_threads(all_comments, events, now)
     # The coordinator's own comment can be blocked by its permission check (seen
     # 2026-10-01), so a thread claiming an issue after the fire also counts as the
-    # acknowledgement: a claim labels the issue in-progress within minutes.
+    # acknowledgement.
     if state.get('last_fire') and not (ack and ack['fire'] == state['last_fire']):
-        claimed = gh('GET', f"search/issues?q=repo:{REPO}+is:issue+is:open+label:in-progress"
-                            f"+updated:>={state['last_fire_at']}&per_page=1", token)['total_count']
+        claimed = claims_since(threads, parse_time(state['last_fire_at']))
         if claimed:
             ack = {'fire': state['last_fire'], 'running': None, 'started': claimed,
                    'at': now, 'id': None, 'via': 'claims'}
 
-    decision = decide(now, dial, usage_info, ready, ack, state)
+    active = [th for th in threads if th['state'] == 'active']
+    decision = decide(now, dial, usage_info, ready, ack, state, len(active))
 
     if decision['fire'] and not args.dry_run:
         fire_id = 'fire-' + now.strftime('%Y%m%dT%H%MZ')
+        running = ('; '.join(f'"{th["title"]}"' for th in active)) or 'none'
         text = (f'Dial {fire_id}: Cole\'s Dial (#{DIAL_ISSUE}) allows up to {dial["threads"]} threads. '
-                f'Keep that many going from the ready queue, then update your Dial ack comment on #{DIAL_ISSUE}.')
+                f'{len(active)} look active from their claim and stop notes ({running}). '
+                f'Keep {dial["threads"]} going from the ready queue.')
         url = (CONFIG_DIR / 'relay-url').read_text().strip()
         try:
             fire_relay(url, (CONFIG_DIR / 'relay-token').read_text().strip(), text)
@@ -326,7 +488,7 @@ def main(argv=None) -> int:
         except urllib.error.URLError as e:
             decision = {**decision, 'fire': False, 'why': f'Tried to wake the project, but the relay failed ({e}).'}
 
-    text = status_text(now, dial, usage_info, ready, ack, state, decision)
+    text = status_text(now, dial, usage_info, ready, ack, state, decision, threads)
     if args.dry_run:
         print(text)
         print(f"\n(dry run: fire={decision['fire']}; nothing written)")

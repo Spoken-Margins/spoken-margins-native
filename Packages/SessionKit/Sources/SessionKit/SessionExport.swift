@@ -118,8 +118,12 @@ public enum SessionExportMarkdownRenderer {
         let link = MarginDeepLink(sessionId: note.sessionId, marginId: note.id).url.absoluteString
         lines += ["[Open this Margin in Spoken Margins](\(link))", ""]
         lines += [note.captureKind == .written ? "## Written Margin" : "## Listener Margin", "", marginText(note), ""]
-        if !note.anchorBefore.isEmpty { lines += ["## Context before", "", note.anchorBefore, ""] }
-        if !note.anchorAfter.isEmpty { lines += ["## Context after", "", note.anchorAfter, ""] }
+        // Context captured from an item imported before #560 can hold link titles; the
+        // stored anchor keeps them, the note shows the text as read.
+        let before = SpeechTextNormalizer.removingLinkTitleRemnants(from: note.anchorBefore)
+        let after = SpeechTextNormalizer.removingLinkTitleRemnants(from: note.anchorAfter)
+        if !before.isEmpty { lines += ["## Context before", "", before, ""] }
+        if !after.isEmpty { lines += ["## Context after", "", after, ""] }
         return lines.joined(separator: "\n")
     }
 
