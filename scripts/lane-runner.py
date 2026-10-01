@@ -71,6 +71,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import functools
 import hashlib
 import json
 import os
@@ -890,31 +891,22 @@ def _cache_busy(cache: Path) -> bool:
 
 def wait_for_room_to_build(out=sys.stdout, max_wait: float = BUILD_RUNNER_WAIT, poll: float = 30,
                            clock=time.monotonic, sleep=time.sleep, simulator_jobs=None, pressure=None,
-                           free=lambda: shutil.disk_usage(Path.home()).free) -> str | None:
-    """The second runner builds only while the Mac has room: no simulator job, normal memory pressure,
-    and BUILD_RUNNER_FREE_DISK free. Returns None when there's room, or why it gave up waiting."""
-    if simulator_jobs is None or pressure is None:
-        from lane_slots import memory_pressure_level, simulator_jobs_running
-        simulator_jobs = simulator_jobs or simulator_jobs_running
-        pressure = pressure or memory_pressure_level
-    started, last_note = clock(), None
-    while True:
-        busy = []
-        if simulator_jobs():
-            busy.append('a simulator job is running')
-        if pressure() not in (1, None):
-            busy.append('memory pressure is above normal')
-        if free() < BUILD_RUNNER_FREE_DISK:
-            busy.append(f'less than {BUILD_RUNNER_FREE_DISK // 10**9} GB of disk is free')
-        if not busy:
-            return None
-        waited = clock() - started
-        if waited >= max_wait:
-            return f'the build runner waited {duration(waited)} for room: {"; ".join(busy)}'
-        if last_note is None or clock() - last_note >= 300:
-            print(f'[lane] build runner waiting ({duration(waited)} so far): {"; ".join(busy)}', file=out, flush=True)
-            last_note = clock()
-        sleep(poll)
+                           free=lambda: shutil.disk_usage(Path.home()).free, builds=None, note=None) -> str | None:
+    """The second runner builds only while the Mac has room: normal memory pressure and BUILD_RUNNER_FREE_DISK
+    free. Returns None when there's room, or why it gave up waiting.
+
+    Trial, extended 2026-10-01: sm-lane-mac-2 spent 6.9 of its 12.7 busy hours in a day waiting here for a
+    simulator job (mostly the Test Desk's) while the Mac was ~60% idle, and the host-only trial covered few
+    jobs because most automerge jobs build. A build may now start beside one simulator job on the host-only
+    terms (pressure read as normal now, BESIDE_SIMULATOR_FREE_DISK free) while the one build slot lane_slots
+    leaves during a simulator job is free; note(text) is called when it does. Never beside two.
+    """
+    from lane_slots import build_jobs_running, memory_pressure_level, simulator_jobs_running
+    problem, beside = wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs or simulator_jobs_running,
+                                    pressure or memory_pressure_level, free, builds or build_jobs_running)
+    if beside and note:
+        note(beside)
+    return problem
 
 
 def pressure_is_normal(level) -> bool:
@@ -931,12 +923,16 @@ def wait_for_room_to_test_on_host(out=sys.stdout, max_wait: float = BUILD_RUNNER
     Trial (2026-10-01): the build runner sat idle whenever any simulator job ran, the Test Desk's included
     (394 minutes in a day). A host-only job may now start beside one while the kernel reads memory pressure
     as normal and more than BESIDE_SIMULATOR_FREE_DISK is free. With no simulator job, the build runner's
-    usual rules hold. Builds still wait in wait_for_room_to_build.
+    usual rules hold. Builds wait in wait_for_room_to_build.
     """
-    if simulator_jobs is None or pressure is None:
-        from lane_slots import memory_pressure_level, simulator_jobs_running
-        simulator_jobs = simulator_jobs or simulator_jobs_running
-        pressure = pressure or memory_pressure_level
+    from lane_slots import memory_pressure_level, simulator_jobs_running
+    return wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs or simulator_jobs_running,
+                         pressure or memory_pressure_level, free)
+
+
+def wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs, pressure, free, builds=None) -> tuple:
+    """(None or why it gave up, a note when there's room beside a simulator job). builds, for a job that builds:
+    how many build slots are held; beside a simulator job, it needs the one slot left then, and one simulator."""
     started, last_note = clock(), None
     while True:
         jobs, level, room = simulator_jobs(), pressure(), free()
@@ -948,14 +944,18 @@ def wait_for_room_to_test_on_host(out=sys.stdout, max_wait: float = BUILD_RUNNER
             if room < BESIDE_SIMULATOR_FREE_DISK:
                 busy.append(f'a simulator job is running and less than {BESIDE_SIMULATOR_FREE_DISK // 2**30} GiB '
                             'of disk is free')
+            if builds and jobs > 1:
+                busy.append('two simulator jobs are running')
+            elif builds and builds():
+                busy.append('a simulator job is running and the one build slot it leaves is taken')
         else:
             if level not in (1, None):
                 busy.append('memory pressure is above normal')
             if room < BUILD_RUNNER_FREE_DISK:
                 busy.append(f'less than {BUILD_RUNNER_FREE_DISK // 10**9} GB of disk is free')
         if not busy:
-            return None, (f'ran beside a simulator job (trial): memory pressure normal, {room // 2**30} GiB free'
-                          if jobs else None)
+            return None, (f'{"built" if builds else "ran"} beside a simulator job (trial): memory pressure normal, '
+                          f'{room // 2**30} GiB free' if jobs else None)
         waited = clock() - started
         if waited >= max_wait:
             return f'the build runner waited {duration(waited)} for room: {"; ".join(busy)}', None
@@ -1519,14 +1519,17 @@ def main(argv=None) -> int:
     t3_first = t3_request_for_head(comments, labels, head) if request['tier'] == 'auto' else None
     no_room, beside, room_for_builds = None, None, None
     if request['tier'] == 'auto' and not t3_first and os.environ.get('SM_LANE_RUNNER_ROLE') == 'build':
-        if host_only_scope(ROOT, args.base):  # the trial: host-only work may run beside a simulator job
+        if host_only_scope(ROOT, args.base):  # the trial: work may run beside a simulator job, builds too
             no_room, beside = wait_for_room_to_test_on_host()
-            room_for_builds = wait_for_room_to_build
-            if beside:
-                print(f'[lane] {beside}', flush=True)
-                note_beside_simulator(request_id, args.pr, beside)
+            room_for_builds = functools.partial(wait_for_room_to_build, note=lambda text: (
+                print(f'[lane] {text}', flush=True), note_beside_simulator(request_id, args.pr, text)))
         else:
-            no_room = wait_for_room_to_build()
+            noted = []
+            no_room = wait_for_room_to_build(note=noted.append)
+            beside = noted[0] if noted else None
+        if beside:
+            print(f'[lane] {beside}', flush=True)
+            note_beside_simulator(request_id, args.pr, beside)
     started = time.monotonic()
     requested = request.get('commit', '')
     moved = [f'requested {requested[:7]}, tested the newest commit {head[:7]}'] \

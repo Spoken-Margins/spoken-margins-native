@@ -1,9 +1,11 @@
-"""Trial: the build runner runs host-only jobs beside a simulator job when the Mac has room.
+"""Trial: the build runner runs host-only jobs, and then builds, beside a simulator job when the Mac has room.
 
 sm-lane-mac-2 sat in wait_for_room_to_build whenever any simulator job ran, the Test Desk's included:
 394 idle minutes in the 24 hours to 2026-10-01, much of it for T0/T1 jobs that run no xcodebuild and
-no simulator. Builds still wait as before.
+no simulator. Most automerge jobs build, so it still spent 6.9 of 12.7 busy hours (54%) waiting; a build
+may now start beside one simulator job too, on the same terms, while the one build slot left is free.
 """
+import contextlib
 import os
 from pathlib import Path
 import subprocess
@@ -89,6 +91,71 @@ class HostRoomTests(unittest.TestCase):
         self.assertIn('memory pressure is above normal', problem)
 
 
+class BuildRoomTests(unittest.TestCase):
+    """A build (T2: simulator and device builds through the build slot, no simulator boot) beside a simulator job."""
+
+    def wait(self, jobs, pressures, frees, builds, max_wait=100):
+        now, notes = [0.0], []
+        states = {'jobs': list(jobs), 'pressure': list(pressures), 'free': list(frees), 'builds': list(builds)}
+        take = lambda key: (states[key].pop(0) if len(states[key]) > 1 else states[key][0])
+        with open(os.devnull, 'w') as quiet:
+            problem = lane.wait_for_room_to_build(
+                out=quiet, max_wait=max_wait, poll=10, clock=lambda: now[0],
+                sleep=lambda seconds: now.__setitem__(0, now[0] + seconds),
+                simulator_jobs=lambda: take('jobs'), pressure=lambda: take('pressure'), free=lambda: take('free'),
+                builds=lambda: take('builds'), note=notes.append)
+        return problem, notes, now[0]
+
+    def test_a_build_starts_beside_a_simulator_job_at_normal_pressure_and_says_so(self):
+        problem, notes, waited = self.wait([1], [1], [40 * GIB], [0])
+        self.assertEqual((problem, waited), (None, 0.0))
+        self.assertEqual(notes, ['built beside a simulator job (trial): memory pressure normal, 40 GiB free'])
+
+    def test_a_build_is_refused_beside_a_simulator_job_at_warn_or_unreadable_pressure(self):
+        for level, named in ((2, 'above normal'), (4, 'above normal'), (None, 'unreadable')):
+            with self.subTest(level=level):
+                problem, notes, _ = self.wait([1], [level], [40 * GIB], [0], max_wait=60)
+                self.assertIn(f'a simulator job is running and memory pressure is {named}', problem)
+                self.assertEqual(notes, [])
+        problem, notes, waited = self.wait([1], [2, 2, 1], [40 * GIB], [0])  # it starts once pressure is normal
+        self.assertEqual((problem, waited), (None, 20.0))
+        self.assertEqual(len(notes), 1)
+
+    def test_during_a_simulator_job_it_waits_while_the_one_build_slot_is_taken(self):
+        problem, notes, _ = self.wait([1], [1], [40 * GIB], [1], max_wait=60)
+        self.assertIn('the one build slot it leaves is taken', problem)
+        self.assertEqual(notes, [])
+        problem, notes, waited = self.wait([1], [1], [40 * GIB], [1, 1, 0])
+        self.assertEqual((problem, waited), (None, 20.0))
+
+    def test_never_beside_two_simulator_jobs_or_short_of_30_gib(self):
+        problem, _, _ = self.wait([2], [1], [40 * GIB], [0], max_wait=60)
+        self.assertIn('two simulator jobs are running', problem)
+        problem, _, _ = self.wait([1], [1], [29 * GIB], [0], max_wait=60)
+        self.assertIn('less than 30 GiB of disk is free', problem)
+
+    def test_with_no_simulator_job_the_old_rules_hold_and_nothing_is_noted(self):
+        problem, notes, waited = self.wait([0], [None], [21 * 10**9], [2])
+        self.assertEqual((problem, notes, waited), (None, [], 0.0))
+        problem, _, _ = self.wait([0], [2], [10**12], [0], max_wait=60)
+        self.assertIn('memory pressure is above normal', problem)
+
+    def test_with_real_locks_a_simulator_job_leaves_one_build_and_the_runner_sees_it(self):
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': folder, 'SM_LANE_MEMORY_PRESSURE': '1'}), \
+                mock.patch.object(lane_slots, 'POLL_SECONDS', 0.05), \
+                open(os.devnull, 'w') as quiet, contextlib.ExitStack() as held:
+            room = lambda: lane.wait_for_room_to_build(out=quiet, max_wait=0, free=lambda: 40 * GIB)  # noqa: E731
+            held.enter_context(lane_slots.simulator_slot('a T4', out=quiet))
+            self.assertIsNone(room())
+            held.enter_context(lane_slots.build_slot('the first build', out=quiet))
+            self.assertEqual(lane_slots.build_jobs_running(), 1)
+            self.assertIn('the one build slot it leaves is taken', room())
+            with self.assertRaises(TimeoutError):  # lane_slots still caps it at one build
+                with lane_slots.build_slot('a second build', out=quiet, max_wait=0.2):
+                    self.fail('took a second build slot during a simulator job')
+
+
 class BuildRunnerJobTests(unittest.TestCase):
     run_main = test_lane_runner.MainFlowTests.run_main
     conflicts, role, attempt = [], 'build', '1'
@@ -112,12 +179,30 @@ class BuildRunnerJobTests(unittest.TestCase):
         host.assert_called_once()
         builds.assert_not_called()
         auto.assert_called_once()
-        self.assertIs(auto.call_args.kwargs['room_for_builds'], builds)  # builds after all still wait
+        self.assertIs(auto.call_args.kwargs['room_for_builds'].func, builds)  # builds after all still wait
         self.assertIn(note, github.posted[0])
         self.assertEqual(len(lines), 1)
         self.assertIn('pr5-r42', lines[0])
         self.assertIn('PR #5', lines[0])
         self.assertIn(note, lines[0])
+
+    def test_a_job_that_builds_beside_a_simulator_reports_and_logs_it(self):
+        text = 'built beside a simulator job (trial): memory pressure normal, 41 GiB free'
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': folder}), \
+                mock.patch.object(lane, 'host_only_scope', return_value=False), \
+                mock.patch.object(lane, 'run_auto', return_value=('PASS', 'x', 'host tests; builds', [])) as auto, \
+                mock.patch.object(lane, 'wait_for_room_to_build',
+                                  side_effect=lambda note=None: note(text)) as builds:
+            github = FakeGitHub(labels=('automerge',))
+            self.run_main(github, HEAD, 'PASS', '--mode', 'auto')
+            lines = (Path(folder) / lane.BESIDE_SIMULATOR_LOG).read_text().splitlines()
+        builds.assert_called_once()
+        auto.assert_called_once()
+        self.assertIn(text, github.posted[0])
+        self.assertEqual(len(lines), 1)
+        self.assertIn('PR #5', lines[0])
+        self.assertIn(text, lines[0])
 
     def test_a_host_only_job_with_no_simulator_running_logs_nothing(self):
         github, auto, _, _, lines = self.run_job(True, beside=None)

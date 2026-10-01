@@ -1158,7 +1158,8 @@ class BuildRunnerRoomTests(unittest.TestCase):
             return lane.wait_for_room_to_build(
                 out=quiet, max_wait=max_wait, poll=10, clock=lambda: now[0],
                 sleep=lambda seconds: now.__setitem__(0, now[0] + seconds),
-                simulator_jobs=lambda: take('jobs'), pressure=lambda: take('pressure'), free=lambda: take('free')), now[0]
+                simulator_jobs=lambda: take('jobs'), pressure=lambda: take('pressure'), free=lambda: take('free'),
+                builds=lambda: 0), now[0]
 
     def test_it_starts_at_once_when_the_mac_has_room(self):
         self.assertEqual(self.wait([0], [1], [10**12]), (None, 0.0))
@@ -1169,9 +1170,12 @@ class BuildRunnerRoomTests(unittest.TestCase):
         self.assertEqual(waited, 30.0)
 
     def test_it_gives_up_after_its_limit_and_says_why(self):
-        result, _ = self.wait([1], [2], [10**9], max_wait=60)
+        result, _ = self.wait([0], [2], [10**9], max_wait=60)
         self.assertIn('waited 1m00s for room', result)
-        for reason in ('a simulator job is running', 'memory pressure is above normal', 'less than 20 GB of disk is free'):
+        for reason in ('memory pressure is above normal', 'less than 20 GB of disk is free'):
+            self.assertIn(reason, result)
+        result, _ = self.wait([1], [2], [10**9], max_wait=60)  # beside a simulator job: the trial's terms
+        for reason in ('a simulator job is running and memory pressure is above normal', 'less than 30 GiB'):
             self.assertIn(reason, result)
 
 

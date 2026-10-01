@@ -128,6 +128,11 @@ def simulator_job_running():
     return simulator_jobs_running() > 0
 
 
+def build_jobs_running():
+    """How many build slots some process (possibly this one) holds: 0, 1 or 2."""
+    return sum(_held(name) for name in build_slot_names())
+
+
 def second_slot_status():
     """(allowed, why): may a second simulator job start now?"""
     off = state_dir() / SECOND_SLOT_OFF
