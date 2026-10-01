@@ -35,6 +35,8 @@ NOTE_EVERY_SECONDS = 60.0
 SIMULATOR_SLOT = 'simulator-slot.lock'
 SIMULATOR_SLOTS = [SIMULATOR_SLOT, 'simulator-slot-2.lock']
 SECOND_SLOT_OFF = 'second-simulator-slot.off'
+SIMULATOR_DECISION = 'simulator-slot-decision.lock'
+BUILD_NEEDS_ROOM_ENV = 'SM_LANE_BUILD_NEEDS_ROOM'  # lane-runner.py sets it for the build runner's builds
 PRESSURE_NAMES = {1: 'normal', 2: 'warn', 4: 'critical'}
 
 
@@ -128,6 +130,11 @@ def simulator_job_running():
     return simulator_jobs_running() > 0
 
 
+def build_jobs_running():
+    """How many build slots some process (possibly this one) holds: 0, 1 or 2."""
+    return sum(_held(name) for name in build_slot_names())
+
+
 def second_slot_status():
     """(allowed, why): may a second simulator job start now?"""
     off = state_dir() / SECOND_SLOT_OFF
@@ -219,8 +226,8 @@ def release_handle(handle):
 
 
 @contextlib.contextmanager
-def _hold(names, what, label, out, max_wait, allowed=None):
-    handle, index, waited = acquire(names, what, label, out, max_wait, allowed)
+def _hold(names, what, label, out, max_wait, allowed=None, why=None, decide=None):
+    handle, index, waited = acquire(names, what, label, out, max_wait, allowed, why, decide)
     try:
         yield {'slot': index, 'waited_seconds': waited}
     finally:
@@ -232,9 +239,40 @@ def build_slot(label, out=sys.stderr, max_wait=None):
 
     Yields {'slot': index, 'waited_seconds': seconds}. By default waiting has no deadline, because
     queueing is the point; with max_wait (seconds) it raises TimeoutError instead of waiting longer.
+
+    With BUILD_NEEDS_ROOM_ENV set (the lane runner sets it for the build runner's builds), the build runner's
+    rules hold at the moment the slot is taken, not only when its job started: never beside two simulator
+    jobs, and beside one only while memory pressure reads normal. A second simulator job could start during
+    the job's host tests (#656 audit). The check and the take happen under the simulator-slot decision lock,
+    so a simulator job can't take its slot in between; one that takes it after waits for the build slots
+    to boot (lane_sim.py), and the build's next xcodebuild checks again.
     """
+    if os.environ.get(BUILD_NEEDS_ROOM_ENV):
+        return _hold(build_slot_names(), 'build slot', label, out, max_wait, allowed=_room_to_build,
+                     why=lambda: _no_room_to_build() or f'only 1 of {SLOTS} while a simulator job runs',
+                     decide=SIMULATOR_DECISION)
     return _hold(build_slot_names(), 'build slot', label, out, max_wait,
                  allowed=lambda: 1 if simulator_job_running() else SLOTS)
+
+
+def _no_room_to_build():
+    """Why a build-runner build may not start now (BUILD_NEEDS_ROOM_ENV), or None."""
+    jobs = simulator_jobs_running()
+    if jobs > 1:
+        return f'{jobs} simulator jobs are running, and a build-runner build starts beside one at most'
+    level = memory_pressure_level() if jobs else 1
+    if level != 1:
+        return (f'a simulator job is running and memory pressure is {PRESSURE_NAMES.get(level, level)}, '
+                'and a build-runner build beside it needs normal')
+    return None
+
+
+def _room_to_build():
+    """How many build slots a build-runner build may use now: none beside two simulator jobs, or beside one
+    unless memory pressure reads normal; otherwise the usual one beside a simulator job, two without."""
+    if _no_room_to_build():
+        return 0
+    return 1 if simulator_job_running() else SLOTS
 
 
 def host_slot_names():
@@ -280,7 +318,7 @@ def _simulator_slots_usable():
 
 def _simulator_slot_args(label, out, max_wait):
     return (SIMULATOR_SLOTS, 'simulator slot', label, out, max_wait, _simulator_slots_usable,
-            lambda: second_slot_status()[1], 'simulator-slot-decision.lock')
+            lambda: second_slot_status()[1], SIMULATOR_DECISION)
 
 
 @contextlib.contextmanager
