@@ -76,3 +76,59 @@ launchctl bootout gui/$(id -u)/com.spokenmargins.codex-worker
 
 - A child that is killed (for example, by a reboot) leaves its issue labelled `in-progress`. The next tick clears the dead lock and logs the issue number, but leaves the label for a human.
 - PRs that need a simulator test get no `/lane T3` request from the worker. The prompt keeps Codex to host-testable work, and the runner's own tier rules still apply.
+
+## Codex audit
+
+`sm_codex_audit.py` is the mechanical Codex (`gpt-6-astra`) audit of PRs into `next`. launchd runs it every 20 minutes (`com.spokenmargins.codex-audit.plist`). Its docstring has the full gating rules. In short, it audits an open PR when:
+
+1. The PR has no Codex audit comment naming its head.
+2. Its newest lane report is a PASS on the head.
+3. It touches a risky area (sharing, persistence, audio, or the lane itself: `.github/workflows/`, `scripts/lane*` and the runner's helpers), or the runner says it is waiting on an audit, or a comment asks for one.
+
+After a clean audit ("No blocking findings") it removes and re-adds `automerge` once, so the runner's automerge job runs again and can merge.
+
+`codex_limits.py` reads Codex usage for it. The audit holds when usage is used up or the read fails. The log, lock and kept Codex outputs are in `artifacts/ops/` (`codex-audit.log`, `codex-audit.lock`, `codex-audit-outputs/`).
+
+Keep the `lane` patterns in step with `LANE_PREFIXES` and `LANE_FILES` in `scripts/test-scope.py`.
+
+Try it. A dry run prints each PR's decision and the re-arm check, and runs no Codex and posts nothing:
+
+```zsh
+/usr/bin/python3 ~/SpokenMarginsOps/repo/ops/codex/sm_codex_audit.py --dry-run
+```
+
+Run the host tests:
+
+```zsh
+/usr/bin/python3 -m unittest ops/codex/test_sm_codex_audit.py
+```
+
+### Switch over from artifacts/tools (owner's call)
+
+Until 2026-10-01 the job ran an unversioned copy at `~/SpokenMarginsOps/repo/artifacts/tools/sm_codex_audit.py`. To move it to this folder, first update the ops checkout after this merges:
+
+```zsh
+git -C ~/SpokenMarginsOps/repo pull --ff-only
+```
+
+Then replace the job:
+
+```zsh
+launchctl bootout gui/$(id -u)/com.spokenmargins.codex-audit
+```
+
+```zsh
+cp ~/SpokenMarginsOps/repo/ops/codex/com.spokenmargins.codex-audit.plist ~/Library/LaunchAgents/
+```
+
+```zsh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.codex-audit.plist
+```
+
+Check that it points at the new path:
+
+```zsh
+launchctl print gui/$(id -u)/com.spokenmargins.codex-audit | grep ops/codex
+```
+
+Both copies share the same lock in `artifacts/ops/`, so an old run still going can't overlap a new one. The old files in `artifacts/tools/` can stay as a fallback; nothing runs them after the switch.

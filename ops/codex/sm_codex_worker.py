@@ -438,7 +438,7 @@ def default_codex(worktree: Path, answer: Path, prompt: str, transcript: Path) -
 
 
 def read_codex_limits(timeout: float = LIMITS_TIMEOUT_S) -> Optional[dict]:
-    """`account/rateLimits/read` over `codex app-server` (as artifacts/tools/codex_limits.py). None on failure."""
+    """`account/rateLimits/read` over `codex app-server` (as ops/codex/codex_limits.py). None on failure."""
     try:
         p = subprocess.Popen([CODEX, 'app-server'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.DEVNULL, text=True, start_new_session=True)
