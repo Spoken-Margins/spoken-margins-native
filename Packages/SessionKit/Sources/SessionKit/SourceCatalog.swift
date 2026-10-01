@@ -289,6 +289,32 @@ public enum CatalogFollowState {
         }
         return subscriptions.contains { catalog.entry(matchingFeedURL: $0.source.canonicalURL)?.id == entry.id }
     }
+
+    /// #246: the ids of every entry `isFollowed` would answer true for, in one pass. The drawer
+    /// asked `isFollowed` per row per render, and each ask parsed every catalog feed URL once per
+    /// subscription, which made scrolling stutter on the phone. Here each URL is parsed once.
+    public static func followedEntryIds(
+        in catalog: SourceCatalog,
+        recordedSourceIds: [String: String],
+        subscriptions: [FeedSubscription]
+    ) -> Set<String> {
+        let subscribedSourceIds = Set(subscriptions.map(\.source.id))
+        var followed = Set(recordedSourceIds.compactMap { entryId, sourceId in
+            subscribedSourceIds.contains(sourceId) ? entryId : nil
+        })
+        // Like `entry(matchingFeedURL:)`: a feed URL matches the first entry with that key.
+        var entryIdByFeedKey: [String: String] = [:]
+        for entry in catalog.entries {
+            guard let key = SourceCatalog.feedKey(entry.feedURL), entryIdByFeedKey[key] == nil else { continue }
+            entryIdByFeedKey[key] = entry.id
+        }
+        for subscription in subscriptions {
+            if let key = SourceCatalog.feedKey(subscription.source.canonicalURL), let entryId = entryIdByFeedKey[key] {
+                followed.insert(entryId)
+            }
+        }
+        return followed
+    }
 }
 
 /// B1 M1: when the first-run podcast drawer opens by itself. Only a fresh install sees it

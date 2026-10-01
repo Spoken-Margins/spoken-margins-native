@@ -12,6 +12,7 @@ final class CatalogDrawerTests: XCTestCase {
         /// Feeds that settle on another URL once followed.
         var moves: [String: String] = [:]
         var failing = false
+        var subscriptionReads = 0
     }
 
     private func makeDrawer(defaults: UserDefaults, log: FollowLog) throws -> CatalogDrawerModel {
@@ -25,7 +26,10 @@ final class CatalogDrawerTests: XCTestCase {
         return CatalogDrawerModel(
             store: store,
             defaults: defaults,
-            subscriptions: { log.subscriptions },
+            subscriptions: {
+                log.subscriptionReads += 1
+                return log.subscriptions
+            },
             follow: { feedURL in
                 if log.failing { throw URLError(.timedOut) }
                 log.feeds.append(feedURL)
@@ -91,6 +95,31 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertEqual(relaunched.state(for: entry), .followed, "still followed after a relaunch")
         log.subscriptions.removeAll()
         XCTAssertNil(relaunched.state(for: entry), "unfollowed in Following: shows Follow again")
+    }
+
+    /// #246 (found on the phone): the drawer stuttered while scrolling. Every row worked out its
+    /// follow state twice per render, and each time read the recorded follows from UserDefaults and
+    /// every subscription again. One pass over the whole catalog now reads subscriptions once.
+    func testOnePassOverTheCatalogReadsSubscriptionsOnce() async throws {
+        let log = FollowLog()
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: log)
+        await drawer.load()
+        let entries = drawer.entries
+        XCTAssertGreaterThanOrEqual(entries.count, 100)
+        drawer.toggleFollow(entries[0])
+        for _ in 0..<100 where drawer.followedCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        log.subscriptions.append(FeedSubscription(
+            id: "subscription-elsewhere",
+            source: SourceIdentity(id: "source-elsewhere", kind: .podcastFeed, canonicalURL: entries[2].feedURL, host: "example")
+        ))
+
+        log.subscriptionReads = 0
+        let states = drawer.followStates(for: entries)
+        XCTAssertLessThanOrEqual(log.subscriptionReads, 1, "one pass over \(entries.count) rows")
+        XCTAssertEqual(states[entries[0].id], .followed, "followed from the drawer")
+        XCTAssertNil(states[entries[1].id])
+        XCTAssertEqual(states[entries[2].id], .followed, "followed another way")
+        XCTAssertEqual(states.count, 2)
     }
 
     /// #470: a Writers entry follows through the same path as a podcast and is stored as an
