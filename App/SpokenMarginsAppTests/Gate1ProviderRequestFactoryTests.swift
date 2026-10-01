@@ -41,39 +41,8 @@ final class Gate1ProviderRequestFactoryTests: XCTestCase {
         XCTAssertTrue(prompt.contains(followUp))
     }
 
-    func testResponsesRequestUsesFixedOpenAIEndpointAndStreamingPayload() throws {
-        let request = try XCTUnwrap(OpenAIResponsesClient.makeRequest(
-            apiKey: "secret",
-            model: "conversation-model",
-            instructions: "System prompt",
-            messages: ["User request"],
-            stream: true
-        ))
-        XCTAssertEqual(request.url?.absoluteString, "https://api.openai.com/v1/responses")
-        XCTAssertEqual(request.timeoutInterval, 90)
-        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
-        let data = try XCTUnwrap(request.httpBody)
-        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        XCTAssertEqual(json["model"] as? String, "conversation-model")
-        XCTAssertEqual(json["instructions"] as? String, "System prompt")
-        XCTAssertEqual(json["input"] as? String, "User request")
-        XCTAssertEqual(json["stream"] as? Bool, true)
-        XCTAssertEqual(json["store"] as? Bool, false)
-    }
-
-    func testResponsesSSEParserEmitsTextAndSurfacesErrors() throws {
-        XCTAssertEqual(
-            try OpenAIResponsesClient.event(fromSSELine: #"data: {"type":"response.output_text.delta","delta":"Hello."}"#),
-            .textDelta("Hello.")
-        )
-        XCTAssertEqual(
-            try OpenAIResponsesClient.event(fromSSELine: #"data: {"type":"response.completed","response":{"id":"resp-1"}}"#),
-            .completed(responseId: "resp-1")
-        )
-        XCTAssertThrowsError(try OpenAIResponsesClient.event(
-            fromSSELine: #"data: {"type":"error","error":{"message":"rate limited"}}"#
-        ))
-    }
+    // The Responses request shape and SSE parsing are host-tested in SessionKit
+    // (ResponsesRequestBuilderTests, #548).
 
     func testSpokenPromptsContainNoStructuredTags() {
         for kind in ["interjection_summary", "assistant_response"] {
