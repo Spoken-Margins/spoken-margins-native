@@ -30,6 +30,10 @@ public struct ParsedFeedItem: Equatable, Sendable {
     public var audioURL: String?
     /// Episode length from `itunes:duration`, when the feed gives one.
     public var durationMs: Int? = nil
+    /// The item's full body, tags stripped, from RSS `content:encoded`, Atom `content` or JSON Feed
+    /// `content_html`/`content_text`, kept apart from the short description so a full post can be
+    /// told from show notes (#545). `summary` is unchanged: it still takes the last of these.
+    public var content: String? = nil
 }
 
 public struct ParsedFeed: Equatable, Sendable {
@@ -118,6 +122,7 @@ public final class FeedParser: @unchecked Sendable {
             // An episode with audio but no link is still an episode (#179); its audio stands in for the link.
             guard let url = item.url?.nilIfEmpty ?? item.external_url?.nilIfEmpty ?? audio else { return nil }
             let rawSummary = item.summary ?? item.content_text ?? item.content_html
+            let rawContent = item.content_html ?? item.content_text
             let author = item.authors?.compactMap(\.name).joined(separator: ", ").nilIfEmpty ?? item.author?.name
             return ParsedFeedItem(
                 id: item.id ?? url,
@@ -126,7 +131,8 @@ public final class FeedParser: @unchecked Sendable {
                 author: author.map(sanitize),
                 summary: rawSummary.map(sanitize),
                 publishedAt: item.date_published.flatMap(formatter.date(from:)),
-                audioURL: audio
+                audioURL: audio,
+                content: rawContent.map(sanitize)?.nilIfEmpty
             )
         }
         return ParsedFeed(format: .json, title: sanitize(decoded.title), homePageURL: decoded.home_page_url, feedURL: decoded.feed_url, items: items)
@@ -184,7 +190,11 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
             case "title": item?.title = value
             case "link": if format == .rss && item?.url == nil { item?.url = value }
             case "guid", "id": item?.id = value
-            case "description", "summary", "content", "encoded": item?.summary = value
+            case "description", "summary": item?.summary = value
+            case "content", "encoded":
+                item?.summary = value
+                // An empty `media:content` also ends as "content"; it mustn't wipe a body.
+                if !value.isEmpty { item?.content = value }
             case "author", "creator", "name": if item?.author == nil { item?.author = value }
             case "pubdate", "published", "updated": item?.published = value
             case "duration": item?.duration = value
@@ -215,6 +225,7 @@ private struct ItemBuilder {
     var published: String?
     var audioURL: String?
     var duration: String?
+    var content: String?
     func build() -> ParsedFeedItem? {
         // Podcast feeds, paid ones especially, often give episodes audio and a GUID but no
         // <link> (#179). The enclosure then stands in for the link, so identity falls back to
@@ -233,7 +244,8 @@ private struct ItemBuilder {
             summary: summary?.nilIfEmpty,
             publishedAt: published.flatMap { formatter.date(from: $0) ?? rssFormatter.date(from: $0) },
             audioURL: audioURL?.nilIfEmpty,
-            durationMs: duration.flatMap(FeedDuration.milliseconds(from:))
+            durationMs: duration.flatMap(FeedDuration.milliseconds(from:)),
+            content: content?.nilIfEmpty
         )
     }
 }

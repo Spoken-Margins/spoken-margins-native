@@ -129,11 +129,19 @@ final class Build29DatabaseFixtureTests: XCTestCase {
         )])
         XCTAssertEqual(try store.loadInterjections(sessionId: "session-\(v1.id)").first?.replyTo, replyLink)
 
+        // An article with publisher audio (#545): its own record kind beside the item, and a feed
+        // entry with the body word count and duration. Build 29 must still read both.
+        try store.savePublisherAudio(PublisherAudio(itemId: v1.id, audioURL: "https://api.substack.com/feed/podcast/1/a.mp3", durationMs: 60_000, detectedFrom: "feed_enclosure"))
+        let feedEntry = FeedEntry(id: "entry-publisher-audio", subscriptionId: "subscription-substack", canonicalURL: "https://example.substack.com/p/post",
+                                  audioURL: "https://api.substack.com/feed/podcast/1/a.mp3", title: "Post", bodyWordCount: 720, audioDurationMs: 60_000)
+        try store.saveFeedEntry(feedEntry)
+        XCTAssertEqual(try store.loadPublisherAudio(itemId: v1.id)?.durationMs, 60_000)
+
         XCTAssertNil(try store.loadStructuredDocument(itemId: v1.id))
         XCTAssertEqual(try store.loadStructuredDocument(itemId: v2.id), document)
         XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)
         let data = try JSONSerialization.data(
-            withJSONObject: ["items": expected, "importedMargins": [["layerId": layer.id, "marginId": "arrived-reply"]]],
+            withJSONObject: ["items": expected, "importedMargins": [["layerId": layer.id, "marginId": "arrived-reply"]], "feedEntryIds": [feedEntry.id]],
             options: [.sortedKeys]
         )
         try data.write(to: URL(fileURLWithPath: path + ".expected.json"))

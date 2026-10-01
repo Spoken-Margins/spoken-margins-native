@@ -80,8 +80,13 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
     public var summary: String?
     public var publishedAt: Date?
     public var state: FeedEntryState
+    /// Words in the entry's full body (RSS `content:encoded`), when the feed gives one apart from
+    /// its description (#545). Nil for entries saved before this was recorded.
+    public var bodyWordCount: Int?
+    /// The audio enclosure's length from `itunes:duration`, when the feed gives one.
+    public var audioDurationMs: Int?
 
-    public init(id: String, subscriptionId: String, canonicalURL: String, audioURL: String? = nil, title: String, author: String? = nil, summary: String? = nil, publishedAt: Date? = nil, state: FeedEntryState = .unseen) {
+    public init(id: String, subscriptionId: String, canonicalURL: String, audioURL: String? = nil, title: String, author: String? = nil, summary: String? = nil, publishedAt: Date? = nil, state: FeedEntryState = .unseen, bodyWordCount: Int? = nil, audioDurationMs: Int? = nil) {
         self.id = id
         self.subscriptionId = subscriptionId
         self.canonicalURL = canonicalURL
@@ -91,6 +96,8 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
         self.summary = summary
         self.publishedAt = publishedAt
         self.state = state
+        self.bodyWordCount = bodyWordCount
+        self.audioDurationMs = audioDurationMs
     }
 }
 
