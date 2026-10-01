@@ -161,6 +161,8 @@ actor FollowedSourceCoordinator {
         let host = url.host?.lowercased() ?? candidate.source.host
         let canonical = URL(string: parsed.feedURL ?? url.absoluteString) ?? url
         let sourceId = "source-\(Self.digest(canonical.absoluteString.lowercased()))"
+        // Following a feed again keeps its new-item choice (#466).
+        let previousPolicy = try repository.loadFeedSubscriptions().first { $0.id == "subscription-\(sourceId)" }?.newItemPolicy
         let subscription = FeedSubscription(
             id: "subscription-\(sourceId)",
             source: SourceIdentity(
@@ -169,7 +171,8 @@ actor FollowedSourceCoordinator {
                 canonicalURL: canonical.absoluteString,
                 host: canonical.host?.lowercased() ?? host,
                 title: parsed.title
-            )
+            ),
+            newItemPolicy: previousPolicy
         )
         try repository.saveFeedSubscription(subscription)
         try save(entries: parsed.items, subscription: subscription)
@@ -194,11 +197,16 @@ actor FollowedSourceCoordinator {
         )
     }
 
-    func refreshStale(now: Date = Date(), minimumAge: TimeInterval = 6 * 60 * 60, force: Bool = false) async {
+    /// Returns the entries that feeds set to "Add every new item" want added to the Library (#466).
+    /// They stay unseen here; the caller imports them, which marks them imported.
+    @discardableResult
+    func refreshStale(now: Date = Date(), minimumAge: TimeInterval = 6 * 60 * 60, force: Bool = false) async -> [FeedEntry] {
+        var toAdd: [FeedEntry] = []
         for subscription in (try? repository.loadFeedSubscriptions()) ?? [] {
             guard force || subscription.lastRefreshAt.map({ now.timeIntervalSince($0) >= minimumAge }) ?? true else { continue }
-            await refresh(subscription, now: now)
+            toAdd += await refresh(subscription, now: now)
         }
+        return toAdd
     }
 
     func entries() throws -> [FeedEntry] {
@@ -239,6 +247,12 @@ actor FollowedSourceCoordinator {
         return audioURL.absoluteString
     }
 
+    func setNewItemPolicy(subscriptionId: String, policy: FeedNewItemPolicy) throws {
+        guard var subscription = try repository.loadFeedSubscriptions().first(where: { $0.id == subscriptionId }) else { return }
+        subscription.newItemPolicy = policy
+        try repository.saveFeedSubscription(subscription)
+    }
+
     func setMuted(subscriptionId: String, muted: Bool) throws {
         guard var subscription = try repository.loadFeedSubscriptions().first(where: { $0.id == subscriptionId }) else { return }
         subscription.state = muted ? .muted : .active
@@ -252,11 +266,22 @@ actor FollowedSourceCoordinator {
         try repository.deleteFeedSubscription(id: subscriptionId)
     }
 
-    private func refresh(_ original: FeedSubscription, now: Date) async {
+    private func refresh(_ original: FeedSubscription, now: Date) async -> [FeedEntry] {
         var subscription = original
+        var toAdd: [FeedEntry] = []
         do {
             let parsed = try await fetch(url: URL(string: subscription.source.canonicalURL)!, subscription: subscription)
-            try save(entries: parsed.items, subscription: subscription)
+            // Mute and the new-item choice may have changed during the fetch; the latest ones win.
+            // An unfollow during the fetch wins too: nothing is saved or added.
+            guard let current = try repository.loadFeedSubscriptions().first(where: { $0.id == subscription.id }) else { return [] }
+            subscription.state = current.state
+            subscription.newItemPolicy = current.newItemPolicy
+            let saved = try save(entries: parsed.items, subscription: subscription)
+            // A muted feed adds nothing on its own.
+            toAdd = FeedNewItemPolicy.entriesToAdd(
+                new: saved.entries, existing: saved.previous,
+                policy: subscription.state == .muted ? nil : subscription.newItemPolicy
+            )
             subscription.lastRefreshAt = now
             try repository.saveFeedSubscription(subscription)
             try repository.saveFeedRefreshState(FeedRefreshState(
@@ -281,6 +306,7 @@ actor FollowedSourceCoordinator {
                 errorCode: String(describing: type(of: error))
             ))
         }
+        return toAdd
     }
 
     private func fetch(url: URL, subscription: FeedSubscription?) async throws -> ParsedFeed {
@@ -376,7 +402,9 @@ actor FollowedSourceCoordinator {
         return results
     }
 
-    private func save(entries: [ParsedFeedItem], subscription: FeedSubscription) throws {
+    /// Returns the retained entries as saved, and the entries the feed had before this save.
+    @discardableResult
+    private func save(entries: [ParsedFeedItem], subscription: FeedSubscription) throws -> (entries: [FeedEntry], previous: [FeedEntry]) {
         let existingEntries = try repository.loadFeedEntries(subscriptionId: subscription.id)
         let existing = Dictionary(uniqueKeysWithValues: existingEntries.map { ($0.id, $0) })
         let retainedItems = entries.enumerated()
@@ -396,9 +424,10 @@ actor FollowedSourceCoordinator {
             .map { $0.element }
         let retainedIDs = Set(retainedItems.map { Self.entryID(subscriptionID: subscription.id, itemID: $0.id) })
 
+        var saved: [FeedEntry] = []
         for item in retainedItems {
             let id = Self.entryID(subscriptionID: subscription.id, itemID: item.id)
-            try repository.saveFeedEntry(FeedEntry(
+            let entry = FeedEntry(
                 id: id,
                 subscriptionId: subscription.id,
                 canonicalURL: item.url,
@@ -407,8 +436,11 @@ actor FollowedSourceCoordinator {
                 author: item.author,
                 summary: item.summary,
                 publishedAt: item.publishedAt,
-                state: existing[id]?.state ?? .unseen
-            ))
+                state: existing[id]?.state ?? .unseen,
+                episodeGUID: item.guid
+            )
+            try repository.saveFeedEntry(entry)
+            saved.append(entry)
         }
 
         for entry in existingEntries where !retainedIDs.contains(entry.id) {
@@ -417,6 +449,7 @@ actor FollowedSourceCoordinator {
             guard entry.state == .unseen || entry.state == .seen else { continue }
             try repository.deleteFeedEntry(id: entry.id)
         }
+        return (saved, existingEntries)
     }
 
     private static func entryID(subscriptionID: String, itemID: String) -> String {

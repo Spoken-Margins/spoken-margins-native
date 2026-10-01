@@ -175,7 +175,7 @@ struct CatalogDrawerView: View {
                 list
             }
             .background(AppColors.bone)
-            .navigationTitle("Follow a few podcasts")
+            .navigationTitle("Follow a few favourites")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -233,7 +233,7 @@ struct CatalogDrawerView: View {
                             .equatable()
                     }
                 } header: {
-                    Text("New episodes show up in Following. Nothing downloads until you choose it.")
+                    Text("New episodes and posts show up in Following. Nothing downloads until you choose it.")
                         .font(.footnote)
                         .textCase(nil)
                 }

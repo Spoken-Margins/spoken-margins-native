@@ -856,6 +856,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var sourceLinkCandidateReview: SourceLinkCandidateReviewState?
     @Published private(set) var sourceLinkImportState = "idle"
     @Published private(set) var sourceLinkImportMessage: String?
+    @Published var sourceLinkSafariOffer: OpenInSafariOffer? // #145, set in Gate1AppModel+PasteAndGo.swift
     @Published private(set) var selectedListeningEdition: ListeningEdition?
     @Published var automaticMarginOutputEnabled = UserDefaults.standard.bool(forKey: "automaticMarginOutputEnabled")
     @Published var marginOutputStatus = "Choose a folder and send a test note before enabling automatic delivery."
@@ -992,10 +993,10 @@ final class Gate1AppModel: ObservableObject {
     private var requestedPodcastTransportReplacements: Set<String> = []
     private var offlineStorageLedger: OfflineStorageLedger?
     private var localSourceImporter: LocalSourceImporter?
-    private var followedSourceCoordinator: FollowedSourceCoordinator?
+    private(set) var followedSourceCoordinator: FollowedSourceCoordinator?
     /// A fresh install: the Library was empty before the welcome sample was added (B1 drawer).
     private(set) var libraryWasEmptyAtLaunch = false
-    private let readablePageExtractor = AppOwnedReadablePageExtractor()
+    var readablePageExtractor: any ReadablePageExtracting = AppOwnedReadablePageExtractor() // tests replace it (#223)
     private var sourceSuggestionChecks: Set<String> = []
     private var followDiscoveries: [String: Task<[SourceCandidateEvidence], Error>] = [:]
     @Published private var followOffers: [String: FollowOffer] = [:]
@@ -2662,25 +2663,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    nonisolated static func pastedSourceText(plainText: String, html: String?) -> String {
-        guard let html, let regex = try? NSRegularExpression(pattern: #"(?is)<h([1-6])\b[^>]*>(.*?)</h\1\s*>"#) else { return plainText }
-        var headings: [String: Int] = [:]
-        for match in regex.matches(in: html, range: NSRange(html.startIndex..., in: html)) {
-            guard let levelRange = Range(match.range(at: 1), in: html),
-                  let titleRange = Range(match.range(at: 2), in: html),
-                  let level = Int(html[levelRange]) else { continue }
-            var title = String(html[titleRange]).replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
-            for (entity, value) in [("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&nbsp;", " ")] {
-                title = title.replacingOccurrences(of: entity, with: value)
-            }
-            headings[title.trimmingCharacters(in: .whitespacesAndNewlines)] = level
-        }
-        return plainText.components(separatedBy: .newlines).map { line in
-            guard let level = headings[line.trimmingCharacters(in: .whitespaces)] else { return line }
-            return String(repeating: "#", count: level) + " " + line
-        }.joined(separator: "\n")
-    }
-
     func pasteImportTextFromClipboard() {
         #if canImport(UIKit)
         guard let clipboardText = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -3060,6 +3042,7 @@ final class Gate1AppModel: ObservableObject {
             return false
         }
         isResolvingSourceLink = true
+        sourceLinkSafariOffer = nil
         sourceLinkImportState = "resolving"
         sourceLinkImportMessage = "Resolving source link…"
         statusMessage = "Resolving source link..."
@@ -3081,7 +3064,7 @@ final class Gate1AppModel: ObservableObject {
                 sourceLinkImportMessage = "Choose the matching podcast episode."
             } else {
                 sourceLinkImportState = imported ? "success" : "failure"
-                sourceLinkImportMessage = imported ? "Source added." : (lastError ?? "This source could not be added.")
+                sourceLinkImportMessage = imported ? "Source added." : (sourceLinkSafariOffer?.message ?? lastError ?? "This source could not be added.")
             }
         }
         return true
@@ -3121,6 +3104,7 @@ final class Gate1AppModel: ObservableObject {
         guard !isResolvingSourceLink else { return }
         sourceLinkImportState = "idle"
         sourceLinkImportMessage = nil
+        sourceLinkSafariOffer = nil
     }
 
     @discardableResult
@@ -3166,32 +3150,17 @@ final class Gate1AppModel: ObservableObject {
         )
         do {
             let result = try await PublicPodcastLinkResolver().resolveAsync(request)
-            if result.foundNoAudio, let imported = await importLinkAsReadableArticle(url, startSession: shouldStartSession) {
-                return imported
+            if let article = await readLinkAsArticleOrOfferSafari(url, after: result, startSession: shouldStartSession) {
+                return importBrowserText(article)
             }
             return importResolvedSourceLink(request: request, result: result, startSession: shouldStartSession)
         } catch {
+            offerSafariIfUnreadable(url, error: error)
             reportFailure(error, context: "Source link import failed", retry: .init(key: "sourceLink") { [weak self] in
                 self?.sourceLinkURL = urlString
                 _ = self?.beginSourceLinkImportFromForm(startSession: startSession)
             })
             return false
-        }
-    }
-
-    /// The Link field promises web articles too (#144). When a page has no audio, read it with the same
-    /// app-owned extractor that followed article feeds use. Returns nil when that fails, so the caller shows the
-    /// original "no audio" result.
-    private func importLinkAsReadableArticle(_ url: URL, startSession: Bool) async -> Bool? {
-        guard url.scheme?.lowercased() == "https" else { return nil }
-        do {
-            var handoff = try await readablePageExtractor.extract(url: url)
-            handoff.requestedContinuation.startSession = startSession
-            diagnostics["lastSourceLinkArticleFallback"] = readablePageExtractor.lastExtractor ?? "extracted"
-            return importBrowserText(handoff)
-        } catch {
-            diagnostics["lastSourceLinkArticleFallback"] = "failed:\(error.localizedDescription)"
-            return nil
         }
     }
 
@@ -3463,6 +3432,9 @@ final class Gate1AppModel: ObservableObject {
             result = try await PublicPodcastLinkResolver().resolveAsync(request)
         }
         guard result.status == .playable else {
+            if feedEntry == nil, let article = try await LinkArticleFallback.article(for: url, after: result, startSession: false, using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }) {
+                try importBrowserTextInBackground(article); return nil
+            }
             let provider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
             diagnostics["lastSourceLinkFailureCategory"] = result.failureReason
                 ?? result.status.rawValue
@@ -3493,6 +3465,7 @@ final class Gate1AppModel: ObservableObject {
             identified.sourceURL = subscription?.source.canonicalURL ?? identified.sourceURL
             identified.externalReference = feedEntry.canonicalURL
             identified.author = feedEntry.author ?? identified.author
+            feedEntry.fillEpisodeIdentity(of: &identified, showTitle: subscription?.source.title)
             try store.saveItem(identified)
             if item.media?.url == result.selectedCandidate?.audioURL,
                try store.loadListeningMap(itemId: item.id) == nil,
@@ -3515,11 +3488,7 @@ final class Gate1AppModel: ObservableObject {
         return item.id
     }
 
-    static func isRemotePDFHandoff(_ handoff: SourceLinkHandoff) -> Bool {
-        handoff.sourceSurface == "share_sheet_pdf"
-            || (URL(string: handoff.inputURL)?.isFileURL == false
-                && URL(string: handoff.inputURL)?.pathExtension.lowercased() == "pdf")
-    }
+    static func isRemotePDFHandoff(_ handoff: SourceLinkHandoff) -> Bool { handoff.isRemotePDF }
 
     private func importLocalSharedPDFInBackground(url: URL) async throws {
         #if canImport(PDFKit)
@@ -8338,33 +8307,18 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func localSharedItemIdentity(for item: Item) -> SharedItemIdentity {
-        let isPodcast = item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile
-        let external = item.externalReference.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
-        let enclosure = item.media?.url.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
-        let localAudioDigest = item.mediaType == "audiobook"
-            ? (try? store?.loadOwnedOfflineAssets())?.first(where: {
-                $0.itemId == item.id && $0.category == .audiobook && $0.integrity == .valid
-            })?.checksumSHA256 : nil
-        return SharedItemIdentity(
-            itemType: sharedItemType(for: item),
-            canonicalURL: external ?? enclosure,
-            originalURL: external,
-            title: item.title,
-            enclosureURL: enclosure,
-            durationMs: item.media?.durationMs,
-            normalizedContentSHA256: isPodcast ? nil : PortableArticleAnchorResolver.normalizedContentSHA256(item.text ?? ""),
-            exactEditionSHA256: localAudioDigest ?? (isPodcast ? nil : PortableArticleAnchorResolver.exactEditionSHA256(item.text ?? ""))
-        )
+        SharedItemIdentityBuilder.localIdentity(for: item, localAudioDigest: localAudiobookDigest(for: item))
+    }
+
+    private func localAudiobookDigest(for item: Item) -> String? {
+        guard item.mediaType == "audiobook" else { return nil }
+        return (try? store?.loadOwnedOfflineAssets())?.first(where: {
+            $0.itemId == item.id && $0.category == .audiobook && $0.integrity == .valid
+        })?.checksumSHA256
     }
 
     private func normalizedSharingURL(_ value: String?) -> String? {
-        guard let value, var components = URLComponents(string: value),
-              components.scheme?.lowercased() == "https" else { return nil }
-        components.scheme = "https"
-        components.host = components.host?.lowercased()
-        components.fragment = nil
-        while components.path.hasSuffix("/") && components.path.count > 1 { components.path.removeLast() }
-        return components.string
+        SharedItemIdentityBuilder.normalizedSharingURL(value)
     }
 
     private func durationIsCompatible(_ lhs: Int?, _ rhs: Int?) -> Bool {
@@ -11678,7 +11632,7 @@ final class Gate1AppModel: ObservableObject {
                 do {
                     var completed = false
                     let stream = openAIResponsesClient.stream(
-                        apiKey: providerAPIKey,
+                        credentials: .apiKey(providerAPIKey),
                         model: selectedModel,
                         instructions: systemPromptForAIJob(kind: kind),
                         messages: messages
@@ -11847,7 +11801,7 @@ final class Gate1AppModel: ObservableObject {
         do {
             let messages = [assistantChapterPrompt(responseText: text)]
             let response = try await openAIResponsesClient.complete(
-                apiKey: providerAPIKey,
+                credentials: .apiKey(providerAPIKey),
                 model: model,
                 instructions: "Return only strict JSON for assistant response chapters. Do not use Markdown.",
                 messages: messages
@@ -11917,7 +11871,7 @@ final class Gate1AppModel: ObservableObject {
         var responseText = ""
         var completed = false
         for try await event in openAIResponsesClient.stream(
-            apiKey: providerAPIKey,
+            credentials: .apiKey(providerAPIKey),
             model: model,
             instructions: systemPrompt,
             messages: messages
@@ -13929,24 +13883,10 @@ final class Gate1AppModel: ObservableObject {
         for item: Item,
         drafts: [ShareInterjectionDraft]
     ) -> SharedItemIdentity {
-        let isPodcast = item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile
-        let external = item.externalReference.flatMap { normalizedSharingURL($0) }
-        let enclosure = item.media?.url.flatMap { URL(string: $0)?.scheme?.lowercased() == "https" ? $0 : nil }
-        let draftDigests = drafts.compactMap { $0.interjection.sourceExactEditionSHA256 }
-        let exactDigest = draftDigests.count == drafts.count && Set(draftDigests).count == 1
-            ? draftDigests.first
-            : nil
-        let articleExact = isPodcast ? nil : PortableArticleAnchorResolver.exactEditionSHA256(item.text ?? "")
-        let articleNormalized = isPodcast ? nil : PortableArticleAnchorResolver.normalizedContentSHA256(item.text ?? "")
-        return SharedItemIdentity(
-            itemType: sharedItemType(for: item),
-            canonicalURL: external ?? enclosure,
-            originalURL: external,
-            title: item.title,
-            enclosureURL: enclosure,
-            durationMs: item.media?.durationMs,
-            normalizedContentSHA256: articleNormalized,
-            exactEditionSHA256: exactDigest ?? localSharedItemIdentity(for: item).exactEditionSHA256 ?? articleExact
+        SharedItemIdentityBuilder.exportIdentity(
+            for: item,
+            draftEditionDigests: drafts.map(\.interjection.sourceExactEditionSHA256),
+            localAudioDigest: localAudiobookDigest(for: item)
         )
     }
 
@@ -13978,14 +13918,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func sharedItemType(for item: Item) -> SharedItemType {
-        if item.mediaType == "audiobook" { return .other }
-        if item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile {
-            return .podcast
-        }
-        let extensionName = URL(fileURLWithPath: item.externalReference ?? "").pathExtension.lowercased()
-        if extensionName == "pdf" { return .pdf }
-        if extensionName == "epub" { return .epub }
-        return .text
+        SharedItemIdentityBuilder.itemType(for: item)
     }
 
     private func portableAnchor(
@@ -16049,7 +15982,7 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             let coordinator = followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
             followedSourceCoordinator = coordinator
-            await coordinator.refreshStale(force: force)
+            for entry in await coordinator.refreshStale(force: force) { importFollowedSourceEntry(entry) } // "Add every new item" (#466)
             feedSubscriptions = try store.loadFeedSubscriptions()
             followedSourceEntries = try await coordinator.entries()
             diagnostics["followedSourceCount"] = "\(feedSubscriptions.count)"
@@ -16119,15 +16052,6 @@ final class Gate1AppModel: ObservableObject {
         guard let coordinator = followedSourceCoordinator else { return }
         Task { [weak self] in
             try? await coordinator.unfollow(subscriptionId: id)
-            await self?.refreshFollowedSources(force: false)
-        }
-    }
-
-    func toggleMuteSource(id: String) {
-        guard let coordinator = followedSourceCoordinator,
-              let subscription = feedSubscriptions.first(where: { $0.id == id }) else { return }
-        Task { [weak self] in
-            try? await coordinator.setMuted(subscriptionId: id, muted: subscription.state != .muted)
             await self?.refreshFollowedSources(force: false)
         }
     }

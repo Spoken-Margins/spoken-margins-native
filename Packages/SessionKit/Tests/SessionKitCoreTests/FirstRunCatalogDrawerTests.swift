@@ -25,6 +25,23 @@ final class FirstRunCatalogDrawerTests: XCTestCase {
         }
     }
 
+    /// #470: a short hand-picked "Writers" row of Substack publications, followed as article feeds.
+    func testWritersSubjectOffersExactlyItsHandPickedStarterRowOfNewsletters() throws {
+        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.bundledSnapshot))
+        XCTAssertTrue(catalog.visibleSubjects.contains { $0.id == "writers" && $0.title == "Writers" })
+        let starterRow = try XCTUnwrap(catalog.starterRows?.first { $0.subjectId == "writers" })
+        let writers = catalog.entries(forSubject: "writers")
+        XCTAssertEqual(writers.map(\.id), starterRow.entryIds)
+        XCTAssertTrue((6...10).contains(writers.count), "keep it short: \(writers.count)")
+        for entry in writers {
+            XCTAssertEqual(entry.kind, .articleFeed, entry.id)
+            XCTAssertEqual(entry.kind.identityKind, .articleFeed, entry.id)
+            XCTAssertEqual(entry.contentKind, .newsletter, entry.id)
+            XCTAssertTrue(entry.feedURL.hasPrefix("https://") && entry.feedURL.hasSuffix("/feed"), entry.feedURL)
+        }
+        XCTAssertFalse(catalog.entries(forSubject: "news").contains { $0.contentKind == .newsletter }, "podcast subjects are unchanged")
+    }
+
     /// #224 lane: after a relaunch, a show whose feed settled on another URL once followed showed
     /// "Follow" again in the drawer although Following listed it.
     func testAShowWhoseFeedMovedStaysFollowedAfterARelaunch() throws {
