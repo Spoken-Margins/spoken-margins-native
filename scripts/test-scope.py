@@ -32,6 +32,21 @@ BROWSER_PREFIXES = ('Tools/BrowserExtraction/',)
 BROWSER_FILES = {'package.json', 'package-lock.json'}
 BUILD_FILES = ('project.yml', 'SpokenMarginsNative.xcodeproj/', 'Config/')
 
+# The lane's own machinery (owner rule 2026-10-01). A PR touching any of these merges only after a clean
+# Codex audit of its head, like an audio, persistence or packet change (lane-runner.py, merge_blockers).
+# The list: every workflow; the runner and its helpers (lane-runner.py, lane_sim.py, lane_slots.py,
+# lane_guard.py, lane-sim-boot, xcodebuild-lane, host-test-lane, install-lane-guard.py); the policies the
+# runner loads from next (this file, hot_file_ratchet.py, merge_audit.py); verify-tests.py, which runs the
+# lane's host tests and T3 plans; and the two test plans a T3 runs. Tests of the lane (scripts/tests/)
+# can't break it and stay off the list, as does scripted-journeys.json (the Test Desk's list).
+# The Mac's Codex audit script keeps a copy of this list (its RISKY_PATTERNS "lane").
+LANE_PREFIXES = ('.github/workflows/', 'scripts/lane')
+LANE_FILES = {'scripts/xcodebuild-lane', 'scripts/host-test-lane', 'scripts/install-lane-guard.py',
+              'scripts/test-scope.py', 'scripts/hot_file_ratchet.py', 'scripts/merge_audit.py',
+              'scripts/verify-tests.py', 'TestPlans/AppBehavior.xctestplan', 'TestPlans/AudioAdapters.xctestplan'}
+LANE_NOTE = ('Lane change: the runner merges it only after a Codex audit of the head that says "No blocking '
+             'findings". The audit runs by itself once the automerge run passes.')
+
 SESSIONKIT_RISK = {'SessionKitAudio': 'audio', 'SessionKitPersistence': 'persistence', 'SessionKitSharing': 'packet'}
 SESSIONKIT_PACKET_FILES = {'SharingModels.swift', 'ShareableLinkPolicy.swift'}
 PACKET_SCHEMAS = {'spoken-margins-package.schema.json', 'shared-commentary-layer.schema.json',
@@ -145,6 +160,11 @@ def build_scripts(root):
     return set(re.findall(r'scripts/[\w.-]+', text))
 
 
+def is_lane_path(path):
+    """Whether a changed path is part of the lane itself (LANE_PREFIXES, LANE_FILES)."""
+    return path.startswith(LANE_PREFIXES) or path in LANE_FILES
+
+
 def classify_path(root, path, diff_text='', build_script_paths=frozenset()):
     name = Path(path).name
     if path.endswith('.md') or path in T0_FILES or path.startswith(T0_PREFIXES):
@@ -240,11 +260,15 @@ def classify(paths, diffs=None, root=ROOT):
     if tier >= 3:
         tests = ', '.join(f'SpokenMarginsAppTests/{t}' for t in app_tests) or '<the app test classes that cover it>'
         lane = f'/lane T3\ntests: {tests}'
+    lane_paths = [f.path for f in findings if is_lane_path(f.path)]
+    if lane_paths:
+        notes.append(LANE_NOTE)
     top = [f for f in findings if f.tier == tier]
     # app_tests: the classes the lane runner adds to every T3 request for this diff (#351).
+    # lane_paths: the changed paths that are part of the lane; the runner merges those only after an audit.
     return {'tier': f'T{tier}', 'why': sorted({REASONS[f.category] for f in top}),
             'files': [f.as_dict() for f in findings], 'run': commands, 'lane_request': lane, 'notes': notes,
-            'app_tests': app_tests}
+            'app_tests': app_tests, 'lane_paths': lane_paths}
 
 
 def git(*args):
