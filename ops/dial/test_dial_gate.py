@@ -127,9 +127,16 @@ class Decide(unittest.TestCase):
         ack = {'fire': 'fire-20261001T1100Z', 'running': 2, 'at': NOW, 'id': 1}
         self.assertTrue(self.decide(state=state, ack=ack)['fire'])
 
-    def test_unacknowledged_fire_is_retried_after_six_hours(self):
-        state = {'last_fire': 'fire-x', 'last_fire_at': ts(NOW - dt.timedelta(hours=7))}
+    def test_unacknowledged_fire_is_retried_after_three_hours(self):
+        state = {'last_fire': 'fire-x', 'last_fire_at': ts(NOW - dt.timedelta(hours=4))}
         self.assertTrue(self.decide(state=state)['fire'])
+        state = {'last_fire': 'fire-x', 'last_fire_at': ts(NOW - dt.timedelta(hours=2))}
+        self.assertFalse(self.decide(state=state)['fire'])
+
+    def test_a_claim_after_the_fire_counts_as_acknowledged(self):
+        state = {'last_fire': 'fire-x', 'last_fire_at': ts(NOW - dt.timedelta(hours=2))}
+        ack = {'fire': 'fire-x', 'running': None, 'started': 3, 'at': NOW, 'id': None, 'via': 'claims'}
+        self.assertTrue(self.decide(state=state, ack=ack)['fire'])
 
     def test_no_more_than_one_wake_up_an_hour(self):
         state = {'last_fire': 'fire-x', 'last_fire_at': ts(NOW - dt.timedelta(minutes=20))}

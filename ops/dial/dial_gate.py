@@ -12,7 +12,7 @@ Safety rules (owner, 2026-10-01):
   an empty or muddled Mode reads Off.
 - Paced mode needs a usage reading under 3 hours old; with the Mac offline it doesn't fire.
 - At most one fire outstanding: no new fire until the coordinator acknowledges the last
-  one (or 6 hours pass), so fires can't pile up while the plan limit is hit.
+  one (or 3 hours pass), so fires can't pile up while the plan limit is hit.
 - Machines never edit the issue body. The gate keeps one status comment, edited in place.
 
 Stdlib only, Python 3.9+. `--dry-run` prints the decision and writes nothing.
@@ -43,7 +43,7 @@ FINISH_BY = {'reset': 0, 'fri noon': 19, 'fri 7': 24}             # hours before
 USAGE_MAX_AGE = dt.timedelta(hours=3)
 REFILL_EVERY = dt.timedelta(minutes=60)
 FULL_RECHECK = dt.timedelta(hours=3)
-ACK_TIMEOUT = dt.timedelta(hours=6)
+ACK_TIMEOUT = dt.timedelta(hours=3)
 STATUS_REFRESH = dt.timedelta(minutes=60)
 
 STATUS_MARK = '<!-- dial-gate-status -->'
@@ -241,6 +241,9 @@ def status_text(now, dial, usage_info, ready_count, ack, state, decision) -> str
     lines.append(f'- Ready issues: {ready_count}.')
     if state.get('last_fire'):
         acked = 'acknowledged' if ack and ack['fire'] == state['last_fire'] else 'not acknowledged yet'
+        if acked == 'acknowledged' and ack.get('via') == 'claims':
+            n = ack['started']
+            acked = f"acknowledged by {n} issue claim{'' if n == 1 else 's'} since"
         running = f", {ack['running']} running" if ack and ack['running'] is not None and acked == 'acknowledged' else ''
         lines.append(f"- Last wake-up: {t(parse_time(state['last_fire_at']))}, {acked}{running}.")
     lines.append(f"- Now: {decision['why']}")
@@ -300,6 +303,15 @@ def main(argv=None) -> int:
     ready = gh('GET', f'search/issues?q=repo:{REPO}+is:issue+is:open+label:ready&per_page=1', token)['total_count']
     dial_comments = gh('GET', f'repos/{REPO}/issues/{DIAL_ISSUE}/comments?per_page=100', token)
     ack = parse_ack(dial_comments)
+    # The coordinator's own comment can be blocked by its permission check (seen
+    # 2026-10-01), so a thread claiming an issue after the fire also counts as the
+    # acknowledgement: a claim labels the issue in-progress within minutes.
+    if state.get('last_fire') and not (ack and ack['fire'] == state['last_fire']):
+        claimed = gh('GET', f"search/issues?q=repo:{REPO}+is:issue+is:open+label:in-progress"
+                            f"+updated:>={state['last_fire_at']}&per_page=1", token)['total_count']
+        if claimed:
+            ack = {'fire': state['last_fire'], 'running': None, 'started': claimed,
+                   'at': now, 'id': None, 'via': 'claims'}
 
     decision = decide(now, dial, usage_info, ready, ack, state)
 
