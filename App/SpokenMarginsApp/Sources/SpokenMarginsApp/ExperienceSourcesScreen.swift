@@ -25,6 +25,11 @@ struct ExperienceSourcesScreen: View {
     var body: some View {
         NavigationStack {
             List {
+                // An item's Follow can find several feeds; the choice shows here too, not only on Manage Feeds.
+                if !model.followedSourceCandidates.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) { FollowCandidateChoices() }
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+                }
                 manageFeedsRow
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 filterBar
@@ -281,6 +286,7 @@ private struct ManageFeedsScreen: View {
     /// Following's empty state found no link on the clipboard, so the field opens ready for typing.
     let focusFeedURLOnAppear: Bool
     @State private var pendingUnfollowID: String?
+    @State private var didFocusOnAppear = false
     @FocusState private var feedURLIsFocused: Bool
 
     var body: some View {
@@ -319,7 +325,9 @@ private struct ManageFeedsScreen: View {
             Text("Items already in your Library will be kept.")
         }
         .task {
-            guard focusFeedURLOnAppear else { return }
+            // Once: coming back from Read Later shouldn't raise the keyboard again.
+            guard focusFeedURLOnAppear, !didFocusOnAppear else { return }
+            didFocusOnAppear = true
             // Focus after the push settles; a field focused mid-transition can drop the keyboard.
             try? await Task.sleep(for: .milliseconds(450))
             feedURLIsFocused = true
@@ -338,25 +346,7 @@ private struct ManageFeedsScreen: View {
                     followButton
                 }
             }
-            ForEach(model.followedSourceCandidates) { candidate in
-                Button {
-                    model.followSourceCandidate(candidate)
-                } label: {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(candidate.source.title ?? candidate.source.host)
-                            .font(.headline)
-                        Text(candidate.source.canonicalURL)
-                            .font(.caption)
-                            .foregroundStyle(AppColors.secondaryText)
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                }
-                .buttonStyle(.bordered)
-            }
-            if !model.followedSourceCandidates.isEmpty {
-                Button("Cancel", action: model.cancelFollowSourceCandidates)
-            }
+            FollowCandidateChoices()
         }
     }
 
@@ -418,6 +408,33 @@ private struct ManageFeedsScreen: View {
             .padding(16)
             .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
             .overlay { RoundedRectangle(cornerRadius: 17).stroke(AppColors.border) }
+        }
+    }
+}
+
+/// The feeds a link or an item's Follow found, when there is more than one to choose from.
+private struct FollowCandidateChoices: View {
+    @EnvironmentObject private var model: Gate1AppModel
+
+    var body: some View {
+        ForEach(model.followedSourceCandidates) { candidate in
+            Button {
+                model.followSourceCandidate(candidate)
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(candidate.source.title ?? candidate.source.host)
+                        .font(.headline)
+                    Text(candidate.source.canonicalURL)
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            }
+            .buttonStyle(.bordered)
+        }
+        if !model.followedSourceCandidates.isEmpty {
+            Button("Cancel", action: model.cancelFollowSourceCandidates)
         }
     }
 }

@@ -668,7 +668,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("sources.follow.url").waitForExistence(timeout: 4))
         XCTAssertTrue(element("sources.follow.button").exists)
         XCTAssertTrue(element("sources.browseCatalog").exists)
-        app.navigationBars.buttons["Following"].tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(element("sources.manageFeeds").waitForExistence(timeout: 4))
         app.buttons["Settings"].tap()
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 5))
