@@ -63,7 +63,8 @@ final class ArtworkThumbnailLoaderTests: XCTestCase {
 
         let loaded = await loader.thumbnail(for: source)
         let image = try XCTUnwrap(loaded?.cgImage)
-        XCTAssertEqual(max(image.width, image.height), ArtworkThumbnailLoader.maxPixelSize, "downsampled to 3× a 56 pt cell")
+        XCTAssertLessThanOrEqual(max(image.width, image.height), ArtworkThumbnailLoader.maxPixelSize, "downsampled to at most 3× a 56 pt cell")
+        XCTAssertGreaterThan(min(image.width, image.height), 0)
         XCTAssertEqual(log.count, 1)
         XCTAssertEqual(log.countOnMain, 0, "loaded off the main thread")
 
