@@ -92,7 +92,14 @@ func (s *Store) PutMap(m Map) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(s.mapPath(m.EpisodeKey), append(data, '\n'))
+	if err := writeAtomic(s.mapPath(m.EpisodeKey), append(data, '\n')); err != nil {
+		return err
+	}
+	// A takedown that ran between the check above and the write wins.
+	if s.Withdrawn(m.EpisodeKey) {
+		return os.Remove(s.mapPath(m.EpisodeKey))
+	}
+	return nil
 }
 
 // Takedown deletes a map at once and withdraws its key, so a phone that
@@ -172,28 +179,32 @@ func (s *Store) readWaiting(key string) (waiting, error) {
 	return w, json.Unmarshal(data, &w)
 }
 
-// Waiting returns the waiting transcripts, oldest first. One that can't be
-// read is deleted: it can never be mapped, and must not linger.
-func (s *Store) Waiting() ([]Transcript, error) {
+// WaitingKeys lists the waiting transcripts' keys, oldest file first. It
+// reads no transcript, so the worker holds at most one in memory at a time.
+func (s *Store) WaitingKeys() ([]string, error) {
 	keys, err := s.transcriptKeys()
 	if err != nil {
 		return nil, err
 	}
-	var all []waiting
+	mtime := make(map[string]time.Time, len(keys))
 	for _, key := range keys {
-		w, err := s.readWaiting(key)
-		if err != nil {
-			s.DeleteTranscript(key)
-			continue
+		if info, err := os.Stat(s.transcriptPath(key)); err == nil {
+			mtime[key] = info.ModTime()
 		}
-		all = append(all, w)
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].ReceivedAt.Before(all[j].ReceivedAt) })
-	out := make([]Transcript, len(all))
-	for i, w := range all {
-		out[i] = w.Transcript
+	sort.SliceStable(keys, func(i, j int) bool { return mtime[keys[i]].Before(mtime[keys[j]]) })
+	return keys, nil
+}
+
+// ReadTranscript loads one waiting transcript. One that can't be read is
+// deleted: it can never be mapped, and must not linger.
+func (s *Store) ReadTranscript(key string) (Transcript, error) {
+	w, err := s.readWaiting(key)
+	if err != nil {
+		s.DeleteTranscript(key)
+		return Transcript{}, err
 	}
-	return out, nil
+	return w.Transcript, nil
 }
 
 // Sweep deletes every transcript older than maxAge, and any it can't read,

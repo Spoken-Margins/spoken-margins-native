@@ -3,7 +3,8 @@
 	# Caddy writes no access logs on this box, but its error logger records
 	# the client IP and every request header when a handler fails (for
 	# example a 502 while smserver is down). Attested requests carry an
-	# install's key id in a header, so strip those fields from every log.
+	# install's key id in a header, so strip those fields from every log,
+	# and a map fetch's path names an episode, so reduce it to the route.
 	# Box-wide: other sites' error logs lose client IPs and headers too.
 	log default {
 		format filter {
@@ -14,6 +15,8 @@
 				request>client_ip delete
 				request>headers delete
 				request>tls delete
+				# A listening-map path names an episode (#551).
+				request>uri regexp ^/api/v1/maps/.* /api/v1/maps/*
 			}
 		}
 	}

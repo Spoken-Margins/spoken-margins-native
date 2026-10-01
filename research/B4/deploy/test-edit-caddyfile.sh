@@ -99,6 +99,8 @@ if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   [[ "$(code http://127.0.0.1:18443/api/v1/config.json)" == 200 ]] || die "config.json not served while smserver is down"
   [[ "$(code http://127.0.0.1:18443/)" == 200 ]] || die "site root not served"
   curl -s -X POST -H 'X-SM-Key-Id: SECRETKEYID' http://127.0.0.1:18443/api/v1/ping >/dev/null
+  mapkey=5ec2e7a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
+  [[ "$(code http://127.0.0.1:18443/api/v1/maps/${mapkey})" == 502 ]] || die "map fetch should 502 with smserver down"
   [[ "$(code http://127.0.0.1:18443/api/v1/health)" == 502 ]] || die "api should 502 with smserver down"
   "${SMSERVER}" serve -listen 127.0.0.1:8795 -state "${work}/state" -public "${root}" >/dev/null 2>&1 &
   sleep 0.5
@@ -106,7 +108,9 @@ if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   sleep 0.5
   grep -q 'http.log.error' "${work}/caddy.log" || die "expected a 502 error line to inspect"
   ! grep -qE 'SECRETKEYID|remote_ip|client_ip|"headers"' "${work}/caddy.log" || die "Caddy error log leaked IP or headers"
+  ! grep -q "${mapkey}" "${work}/caddy.log" || die "Caddy error log leaked an episode key"
+  grep -q '"uri":"/api/v1/maps/\*"' "${work}/caddy.log" || die "map fetch not logged as /api/v1/maps/*"
   grep 'http.log.error' "${work}/caddy.log" | head -1 | grep -q '^{' || die "error log is not JSON"
-  ok "served locally: config.json with smserver down, site, /api proxied, error log JSON without IP or headers"
+  ok "served locally: config.json with smserver down, site, /api proxied, error log JSON without IP, headers or episode keys"
 fi
 echo "${pass} checks passed"

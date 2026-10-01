@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -211,12 +212,16 @@ func TestCapStopsCallsAndUploads(t *testing.T) {
 		t.Fatalf("calls %d at the cap", api.callCount())
 	}
 
-	// Just under the cap, a call that could carry it over isn't made either.
+	// Just under the cap, a call that could carry it over is refused at
+	// upload, and not made for a transcript already waiting.
 	svc2, clock2, _ := newService(t, api, 10)
 	svc2.Ledger.Add(clock2.Now(), USDToMicro(9.99))
-	svc2.Submit(testTranscript())
+	if out, _ := svc2.Submit(testTranscript()); out != CapReached {
+		t.Fatalf("submit just under the cap = %v, want CapReached", out)
+	}
+	svc2.Store.PutTranscript(testTranscript(), clock2.Now())
 	svc2.ProcessWaiting(context.Background())
-	if api.callCount() != 0 {
+	if api.callCount() != 0 || svc2.Store.HasTranscript(testKey) {
 		t.Fatalf("calls %d just under the cap", api.callCount())
 	}
 
@@ -332,5 +337,101 @@ func TestProviderRetriesOverloadThenAnswers(t *testing.T) {
 	// Overloaded answers bill nothing; only the good one is in the ledger.
 	if spent := svc.Ledger.Spent(svc.Now()); spent != 23000 {
 		t.Fatalf("ledger = %d", spent)
+	}
+}
+
+func TestSwitchedOffWorkerMakesNoCalls(t *testing.T) {
+	api := newFakeAPI(t, goodAnswer)
+	svc, _, _ := newService(t, api, 10)
+	svc.Submit(testTranscript())
+	svc.Enabled = func() bool { return false }
+	svc.ProcessWaiting(context.Background())
+	if api.callCount() != 0 || svc.Store.HasTranscript(testKey) || svc.Store.HasMap(testKey) {
+		t.Fatalf("calls %d with maps off, transcript kept %v", api.callCount(), svc.Store.HasTranscript(testKey))
+	}
+}
+
+// cancelling answers, then cancels the context, as a shutdown would.
+type cancelling struct {
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (c *cancelling) Generator() string { return "stub" }
+func (c *cancelling) Generate(ctx context.Context, req Request) (Response, error) {
+	c.calls++
+	c.cancel()
+	return Response{Text: goodAnswer, InputTokens: 13000, OutputTokens: 2000, Complete: true}, nil
+}
+
+func TestShutdownMidCallStillRecordsTheCost(t *testing.T) {
+	api := newFakeAPI(t, goodAnswer)
+	svc, _, _ := newService(t, api, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	stub := &cancelling{cancel: cancel}
+	svc.Provider = stub
+	svc.Submit(testTranscript())
+	svc.ProcessWaiting(ctx)
+	if spent := svc.Ledger.Spent(svc.Now()); spent != 23000 {
+		t.Fatalf("ledger = %d after a call answered during shutdown, want 23000", spent)
+	}
+	if !svc.Store.HasTranscript(testKey) {
+		t.Fatal("transcript dropped on shutdown; it should wait for the next start")
+	}
+}
+
+func TestLostAnswerIsCountedAndNotRetried(t *testing.T) {
+	block := make(chan struct{})
+	slow := newFakeAPI(t, goodAnswer)
+	slow.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slow.mu.Lock()
+		slow.calls++
+		slow.mu.Unlock()
+		<-block
+	})
+	t.Cleanup(func() { close(block) })
+	svc, _, logs := newService(t, slow, 10)
+	svc.Provider.(*Anthropic).client.Timeout = 50 * time.Millisecond
+	svc.Provider.(*Anthropic).Backoff = []time.Duration{0, 0}
+	svc.Submit(testTranscript())
+	svc.ProcessWaiting(context.Background())
+	// Two attempts, one HTTP call each: a lost answer is never retried by
+	// the provider, and each is counted at the estimate.
+	if slow.callCount() != 2 {
+		t.Fatalf("calls = %d, want 2", slow.callCount())
+	}
+	want := 2 * svc.estimate(buildRequest(testTranscript()))
+	if spent := svc.Ledger.Spent(svc.Now()); spent != want || want == 0 {
+		t.Fatalf("ledger = %d, want %d", spent, want)
+	}
+	if !containsAny(*logs, "answer lost") {
+		t.Fatalf("logs %v", *logs)
+	}
+}
+
+func TestLogsNeverNameAPath(t *testing.T) {
+	err := &os.PathError{Op: "remove", Path: "/var/lib/smserver/maps/transcripts/" + testKey + ".json", Err: os.ErrPermission}
+	if got := quiet(fmt.Errorf("wrapped: %w", err)); strings.Contains(got, testKey) || !strings.Contains(got, "permission") {
+		t.Fatalf("quiet = %q", got)
+	}
+	lerr := &os.LinkError{Op: "rename", Old: "a", New: "/x/maps/" + testKey + ".json", Err: os.ErrExist}
+	if got := quiet(lerr); strings.Contains(got, testKey) {
+		t.Fatalf("quiet = %q", got)
+	}
+}
+
+func TestWaitingKeysOldestFirst(t *testing.T) {
+	store, _ := OpenStore(t.TempDir())
+	keys := []string{strings.Repeat("b", 64), strings.Repeat("a", 64), strings.Repeat("c", 64)}
+	base := time.Now().Add(-time.Hour)
+	for i, key := range keys {
+		tr := testTranscript()
+		tr.EpisodeKey = key
+		store.PutTranscript(tr, base)
+		os.Chtimes(store.transcriptPath(key), base.Add(time.Duration(i)*time.Minute), base.Add(time.Duration(i)*time.Minute))
+	}
+	got, err := store.WaitingKeys()
+	if err != nil || strings.Join(got, ",") != strings.Join(keys, ",") {
+		t.Fatalf("WaitingKeys = %v, %v", got, err)
 	}
 }

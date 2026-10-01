@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -42,13 +43,22 @@ type Provider interface {
 	Generate(ctx context.Context, req Request) (Response, error)
 }
 
-// ProviderError says a call failed without billing tokens. It carries only
-// the HTTP status: the provider's message is never logged, so nothing it
-// echoes (an API key prefix, a request id) reaches the journal.
-type ProviderError struct{ Status int }
+// ProviderError says a call failed. It carries only the HTTP status: the
+// provider's message is never logged, so nothing it echoes (an API key
+// prefix, a request id) reaches the journal.
+type ProviderError struct {
+	Status int
+	// MaybeBilled is set when the request was sent but its answer was lost
+	// (a timeout, a dropped connection): the provider may have billed it,
+	// so the ledger counts it and it isn't retried.
+	MaybeBilled bool
+}
 
 func (e *ProviderError) Error() string {
-	if e.Status == 0 {
+	switch {
+	case e.MaybeBilled:
+		return "maps: provider answer lost"
+	case e.Status == 0:
 		return "maps: provider unreachable"
 	}
 	return fmt.Sprintf("maps: provider answered HTTP %d", e.Status)
@@ -119,10 +129,10 @@ type messagesResponse struct {
 	} `json:"usage"`
 }
 
-// retryable is an answer worth one more try after a pause: rate limited,
-// overloaded, a server error, or no answer at all. None of them bill tokens.
-func retryable(status int) bool {
-	return status == 0 || status == http.StatusTooManyRequests || status >= 500
+// retryable is a failure worth one more try after a pause: rate limited,
+// overloaded, a server error, or no connection. None of them bill tokens.
+func retryable(e *ProviderError) bool {
+	return !e.MaybeBilled && (e.Status == 0 || e.Status == http.StatusTooManyRequests || e.Status >= 500)
 }
 
 func (a *Anthropic) Generate(ctx context.Context, req Request) (Response, error) {
@@ -140,7 +150,7 @@ func (a *Anthropic) Generate(ctx context.Context, req Request) (Response, error)
 	for attempt := 0; ; attempt++ {
 		resp, err := a.call(ctx, body)
 		var perr *ProviderError
-		if err == nil || !errors.As(err, &perr) || !retryable(perr.Status) || attempt >= len(a.Backoff) {
+		if err == nil || !errors.As(err, &perr) || !retryable(perr) || attempt >= len(a.Backoff) {
 			return resp, err
 		}
 		select {
@@ -161,14 +171,17 @@ func (a *Anthropic) call(ctx context.Context, body []byte) (Response, error) {
 	httpReq.Header.Set("content-type", "application/json")
 	httpResp, err := a.client.Do(httpReq)
 	if err != nil {
-		// The error names the URL only, but it's dropped anyway: one fixed
-		// message is enough to act on.
-		return Response{}, &ProviderError{}
+		// A timeout means the request went out and the answer may have
+		// been generated. Other failures (no route, refused) never reached
+		// the provider. The error text itself is dropped.
+		// A server shutdown mid-call counts the same way.
+		var ne net.Error
+		return Response{}, &ProviderError{MaybeBilled: ctx.Err() != nil || errors.As(err, &ne) && ne.Timeout()}
 	}
 	defer httpResp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(httpResp.Body, maxAnswerBytes))
 	if err != nil {
-		return Response{}, &ProviderError{}
+		return Response{}, &ProviderError{Status: httpResp.StatusCode, MaybeBilled: httpResp.StatusCode == http.StatusOK}
 	}
 	if httpResp.StatusCode != http.StatusOK {
 		return Response{}, &ProviderError{Status: httpResp.StatusCode}

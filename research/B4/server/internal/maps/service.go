@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,7 +21,7 @@ const (
 	MaxTitleRunes      = 80
 	MaxSummaryRunes    = 300
 	MaxCopiedWords     = 9 // a summary may not repeat 10 or more transcript words in a row
-	DefaultMaxWaiting  = 50
+	DefaultMaxWaiting  = 20
 	answerMaxTokens    = 8000
 	attemptsPerEpisode = 2 // one call and one retry
 )
@@ -46,6 +48,10 @@ type Service struct {
 	// DefaultMaxWaiting.
 	MaxWaiting int
 	Now        func() time.Time
+	// Enabled reports the maps switch in config.json. The worker checks it
+	// before every call, so switching maps off stops spending at once.
+	// Nil means on.
+	Enabled func() bool
 	// Logf receives one line per notable event. It is never given an
 	// episode key, transcript text or the API key. Nil discards.
 	Logf func(format string, args ...any)
@@ -73,12 +79,33 @@ func (s *Service) logf(format string, args ...any) {
 	}
 }
 
-// CapReached reports whether the month's spending has reached the cap. A
-// ledger that couldn't be written counts as reached, so a disk problem can
-// never lead to unrecorded spending.
-func (s *Service) CapReached() bool {
-	s.init()
-	return s.halted.Load() || s.Ledger.Spent(s.Now()) >= s.CapMicroUSD
+// wouldPassCap reports whether spending estimate more could carry the month
+// past the cap. A ledger that couldn't be written counts as past it, so a
+// disk problem can never lead to unrecorded spending.
+func (s *Service) wouldPassCap(estimate int64) bool {
+	return s.halted.Load() || s.Ledger.Spent(s.Now())+estimate > s.CapMicroUSD
+}
+
+// estimate is a deliberately high guess at one call's cost (two bytes a
+// token, the whole output budget), so a call can't carry the month past the
+// cap.
+func (s *Service) estimate(req Request) int64 {
+	return s.Prices.Cost(int64(len(req.System)+len(req.Prompt))/2, req.MaxTokens)
+}
+
+func (s *Service) enabled() bool { return s.Enabled == nil || s.Enabled() }
+
+// quiet is an error's text without file paths, which name episode keys.
+func quiet(err error) string {
+	var pe *fs.PathError
+	var le *os.LinkError
+	switch {
+	case errors.As(err, &pe):
+		return pe.Op + ": " + pe.Err.Error()
+	case errors.As(err, &le):
+		return le.Op + ": " + le.Err.Error()
+	}
+	return err.Error()
 }
 
 // Submit queues a checked transcript for the worker.
@@ -89,7 +116,9 @@ func (s *Service) Submit(t Transcript) (Outcome, error) {
 		return Withdrawn, nil
 	case s.Store.HasMap(t.EpisodeKey):
 		return AlreadyMapped, nil
-	case s.CapReached():
+	case s.wouldPassCap(s.estimate(buildRequest(t))):
+		// The same rule the worker applies, so an upload is refused rather
+		// than accepted and then dropped without a call.
 		return CapReached, nil
 	case s.Store.HasTranscript(t.EpisodeKey):
 		return Accepted, nil
@@ -128,14 +157,19 @@ func (s *Service) Run(ctx context.Context) {
 // ProcessWaiting makes a map for every waiting transcript, oldest first.
 func (s *Service) ProcessWaiting(ctx context.Context) {
 	s.init()
-	waiting, err := s.Store.Waiting()
+	keys, err := s.Store.WaitingKeys()
 	if err != nil {
-		s.logf("maps: can't list waiting transcripts: %v", err)
+		s.logf("maps: can't list waiting transcripts: %s", quiet(err))
 		return
 	}
-	for _, t := range waiting {
+	for _, key := range keys {
 		if ctx.Err() != nil {
 			return // kept for the next start; the sweep bounds its age
+		}
+		t, err := s.Store.ReadTranscript(key)
+		if err != nil {
+			s.logf("maps: deleted a transcript that can't be read")
+			continue
 		}
 		s.process(ctx, t)
 	}
@@ -145,7 +179,7 @@ func (s *Service) process(ctx context.Context, t Transcript) {
 	defer func() {
 		if ctx.Err() == nil {
 			if err := s.Store.DeleteTranscript(t.EpisodeKey); err != nil {
-				s.logf("maps: can't delete a transcript: %v", err)
+				s.logf("maps: can't delete a transcript: %s", quiet(err))
 			}
 		}
 	}()
@@ -153,26 +187,40 @@ func (s *Service) process(ctx context.Context, t Transcript) {
 		return
 	}
 	req := buildRequest(t)
-	// A deliberately high guess (two bytes a token, the whole output
-	// budget), so a call can't carry the month past the cap.
-	estimate := s.Prices.Cost(int64(len(req.System)+len(req.Prompt))/2, req.MaxTokens)
+	estimate := s.estimate(req)
 	for attempt := 1; attempt <= attemptsPerEpisode; attempt++ {
-		if s.halted.Load() || s.Ledger.Spent(s.Now())+estimate > s.CapMicroUSD {
+		if !s.enabled() {
+			s.logf("maps: switched off; dropped a transcript without a call")
+			return
+		}
+		if s.wouldPassCap(estimate) {
 			s.logf("maps: monthly cap reached; dropped a transcript without a call")
 			return
 		}
 		resp, err := s.Provider.Generate(ctx, req)
+		// Record what was billed before anything else, even if the server
+		// is stopping, so a restart can't spend it a second time unrecorded.
+		var cost int64
+		var perr *ProviderError
+		switch {
+		case err == nil:
+			cost = s.Prices.Cost(resp.InputTokens, resp.OutputTokens)
+		case errors.As(err, &perr) && perr.MaybeBilled:
+			cost = estimate // the answer was lost, but may have been billed
+		}
+		if cost > 0 {
+			if err := s.Ledger.Add(s.Now(), cost); err != nil {
+				s.halted.Store(true)
+				s.logf("maps: can't write the spend ledger, so no more calls until a restart: %s", quiet(err))
+				return
+			}
+		}
 		if ctx.Err() != nil {
 			return
 		}
 		if err != nil {
-			s.logf("maps: attempt %d failed: %v", attempt, err)
+			s.logf("maps: attempt %d failed: %s", attempt, quiet(err))
 			continue
-		}
-		if err := s.Ledger.Add(s.Now(), s.Prices.Cost(resp.InputTokens, resp.OutputTokens)); err != nil {
-			s.halted.Store(true)
-			s.logf("maps: can't write the spend ledger, so no more calls until a restart: %v", err)
-			return
 		}
 		if !resp.Complete {
 			s.logf("maps: attempt %d: answer cut off or declined", attempt)
@@ -194,7 +242,7 @@ func (s *Service) process(ctx context.Context, t Transcript) {
 			Scenes:    scenes,
 		}
 		if err := s.Store.PutMap(m); err != nil {
-			s.logf("maps: can't store a map: %v", err)
+			s.logf("maps: can't store a map: %s", quiet(err))
 		}
 		return
 	}

@@ -153,6 +153,12 @@ func serve(args []string) error {
 		ErrorLog: log.New(discard{}, "", 0),
 	}
 
+	if mapService != nil {
+		mapService.Enabled = func() bool {
+			doc, err := srv.Config.Current()
+			return err == nil && doc.Enabled(config.ServiceMaps)
+		}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	sweepTranscripts := func() {
