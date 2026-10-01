@@ -280,6 +280,49 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertTrue(spoken.contains("Samples were collected at three sites"))
     }
 
+    func testV2JudgesAFootnoteLineByItsMainTypeSizeNotItsFirstCharacter() throws {
+        // #592 on arXiv 2609.31218 (POPT), sizes from PyMuPDF: body 10 pt, footnote text
+        // 8 pt, footnote markers 6 pt, math subscripts 7 pt. A line's size was its first
+        // character's, so a body line opening with a 7 pt subscript "m" read as small print
+        // and was skipped as a footnote, and a footnote whose 6 pt marker differs from its
+        // 8 pt text lost only its first line.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10)]
+        let script: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 7)]
+        let marker: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 6)]
+        let note: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 8)]
+        func line(_ pieces: [(String, [NSAttributedString.Key: Any])]) -> NSAttributedString {
+            let line = NSMutableAttributedString()
+            for (text, attributes) in pieces { line.append(NSAttributedString(string: text, attributes: attributes)) }
+            return line
+        }
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("We place one reflecting surface between the base station and the user." as NSString).draw(at: CGPoint(x: 60, y: 80), withAttributes: body)
+            ("Its elements are tuned so that the reflected beam reaches the receiver." as NSString).draw(at: CGPoint(x: 60, y: 96), withAttributes: body)
+            context.beginPage()
+            line([("The transmitter steers its beam toward the surface in practice,", body), ("1", marker), (" as is usual.", body)])
+                .draw(at: CGPoint(x: 60, y: 80))
+            ("The received signal is the sum of the direct path and the reflected one." as NSString).draw(at: CGPoint(x: 60, y: 96), withAttributes: body)
+            line([("where P is the transmit power and the gain is h", body), ("m", script), (" for each element,", body)])
+                .draw(at: CGPoint(x: 60, y: 500))
+            line([("m", script), (" (xi) depicts the channel of the surface to the user, while h", body)])
+                .draw(at: CGPoint(x: 60, y: 516))
+            line([("m", script), (" the single-bounce NLoS component. The total gain follows.", body)])
+                .draw(at: CGPoint(x: 60, y: 532))
+            line([("1", marker), (" In practice, directional transmit and receive antenna patterns", note)])
+                .draw(at: CGPoint(x: 60, y: 690))
+            ("are used at both ends of the link in every deployment we measured." as NSString).draw(at: CGPoint(x: 60, y: 700), withAttributes: note)
+        }
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: data)))
+        let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ")
+        XCTAssertTrue(spoken.contains("depicts the channel of the surface"), spoken)
+        XCTAssertTrue(spoken.contains("the single-bounce NLoS component"), spoken)
+        XCTAssertFalse(spoken.contains("directional transmit and receive"), spoken)
+        XCTAssertFalse(spoken.contains("are used at both ends of the link"), spoken)
+        XCTAssertTrue(spoken.contains("as is usual"), spoken)
+    }
+
     func testV2KeepsBodyLinesThatEndInNumbersOffAContentsPage() throws {
         // #354 on arXiv 2608.09666: a page with several lines ending in a number was
         // taken for a table of contents, and "clear: it attains at least 80% Within-1
