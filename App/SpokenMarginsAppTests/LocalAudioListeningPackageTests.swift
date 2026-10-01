@@ -112,6 +112,24 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         }
         XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, 5_100, "Skim must return to progressing source audio: status=\(model.snapshot.status), failure=\(model.snapshot.lastFailure ?? "none"), pending=\(model.pendingImportedCommentary != nil)")
         model.pause()
+        // While paused, a map change can move where Skim Back lands without flipping availability.
+        // The Lock Screen must show the new time, not the one from before the change (#115).
+        XCTAssertTrue(model.snapshot.canSkimBackward)
+        XCTAssertEqual(model.gate2CompactSnapshot?.skimBackwardDestinationMs, 5_000, "precondition: the Lock Screen shows Skim Back's destination")
+        func movedMap(sceneOneStartMs: Int) -> PortableListeningMapProposalArtifact {
+            let bounds = [0, sceneOneStartMs, 10_000]
+            return PortableListeningMapProposalArtifact(id: proposal.id, createdAt: proposal.createdAt, generator: "test", scenes: (0..<2).map { index in
+                PortableListeningMapScene(id: "scene-\(index)", order: index, title: "Scene \(index)", summaryText: "A short recap.", summaryAssetId: "supplied-summary", summaryProvenance: .modelGenerated, eligibility: .eligible, startAnchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: bounds[index]), endAnchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: bounds[index + 1]))
+            })
+        }
+        try store.savePortableListeningMapProposal(movedMap(sceneOneStartMs: 4_000), itemId: item.id)
+        model.refreshSkimAvailabilityForTesting()
+        XCTAssertTrue(model.snapshot.canSkimBackward)
+        XCTAssertEqual(model.skimBackwardDestinationMs, 4_000)
+        XCTAssertEqual(model.gate2CompactSnapshot?.skimBackwardDestinationMs, 4_000, "a destination-only change must reach the Lock Screen")
+        try store.savePortableListeningMapProposal(movedMap(sceneOneStartMs: 5_000), itemId: item.id)
+        model.refreshSkimAvailabilityForTesting()
+        XCTAssertEqual(model.gate2CompactSnapshot?.skimBackwardDestinationMs, 5_000)
         // Reproduce a device update: the durable item URL points at a former
         // container, while the owned asset remains under the current support root.
         let relocatedPath = "Audiobooks/relocated-\(UUID().uuidString).caf"

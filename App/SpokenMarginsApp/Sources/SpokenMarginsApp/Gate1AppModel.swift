@@ -4761,6 +4761,7 @@ final class Gate1AppModel: ObservableObject {
     #if DEBUG
     private(set) var skimResourceLoadCount = 0
     var skimAudioTransportRate: Float? { skimBridgePlayer?.rate }
+    func refreshSkimAvailabilityForTesting() { updateSkimAvailability() }
     #endif
 
     private func updateSkimAvailability(refreshResources: Bool = true) {
@@ -4771,11 +4772,11 @@ final class Gate1AppModel: ObservableObject {
         let backward = effectiveTime.flatMap { resolvedSkimPlaybackPlan(direction: .backward, at: $0) }
         let forwardTime = snapshot.skimBridgeState?.destinationMediaTimeMs ?? forward?.destinationMediaTimeMs
         let backwardTime = snapshot.skimBridgeState?.destinationMediaTimeMs ?? backward?.destinationMediaTimeMs
-        if skimForwardDestinationMs != forwardTime { skimForwardDestinationMs = forwardTime }
-        if skimBackwardDestinationMs != backwardTime { skimBackwardDestinationMs = backwardTime }
-        let canForward = forwardTime != nil
-        let canBackward = backwardTime != nil
-        guard snapshot.canSkimForward != canForward || snapshot.canSkimBackward != canBackward else { return }
+        let destinationsChanged = skimForwardDestinationMs != forwardTime || skimBackwardDestinationMs != backwardTime
+        if destinationsChanged { (skimForwardDestinationMs, skimBackwardDestinationMs) = (forwardTime, backwardTime) }
+        let canForward = forwardTime != nil, canBackward = backwardTime != nil
+        // A map can move where Skim lands with no availability flip (paused, say); the Lock Screen still needs it (#115).
+        guard snapshot.canSkimForward != canForward || snapshot.canSkimBackward != canBackward else { if destinationsChanged { updateGate2CompactState() }; return }
         isUpdatingSkimAvailability = true
         snapshot.canSkimForward = canForward
         snapshot.canSkimBackward = canBackward
