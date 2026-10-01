@@ -33,6 +33,8 @@ public enum SharedListeningMapPlacement {
         case outOfOrder = "out_of_order"
         /// No landmark's audio covers the scene start, so nothing confirms where it starts.
         case uncovered
+        /// Only one of the two landmarks around the scene start matched.
+        case oneSideOnly = "one_side_only"
     }
 
     public struct Refusal: Error, Equatable, Sendable {
@@ -60,6 +62,7 @@ public enum SharedListeningMapPlacement {
             case .unresolved: return "\(scene) wasn't found in your copy."
             case .ambiguous: return "\(scene) matched more than one place in your copy, or your copy changes inside it."
             case .outOfOrder: return "\(scene) landed before the scene ahead of it."
+            case .oneSideOnly: return "Only part of the audio around \(scene.lowercasedFirst) matched your copy, so its start can't be confirmed."
             case .uncovered: return "The shared map has no audio at the start of \(scene.lowercasedFirst), so nothing confirms where it starts in your copy."
             }
         }
@@ -125,6 +128,9 @@ public enum SharedListeningMapPlacement {
     /// On a different edition a scene start is placed only when a matched landmark's own
     /// audio covers it. Matches away from the start, even on both sides, can't rule out an
     /// insertion and an equal cut between them that moves the start and neither landmark.
+    /// The covering landmark must itself have matched, so a start between two landmarks needs
+    /// both (a fused result): a single flank, even corroborated by neighbouring scenes, may be
+    /// the far one while the covering passage was cut from the copy.
     /// A first scene that starts at 0:00 starts at 0:00 on any copy.
     public static func decide(
         proposal: PortableListeningMapProposalArtifact,
@@ -150,6 +156,9 @@ public enum SharedListeningMapPlacement {
                 return .notPlaced(Refusal(sceneId: query.sceneId, sceneLabel: sceneLabel, reason: reason))
             }
             if resolution.evidenceClass != .exactEdition {
+                if query.landmarks.count > 1, resolution.evidenceClass != .fused {
+                    return .notPlaced(Refusal(sceneId: query.sceneId, sceneLabel: sceneLabel, reason: .oneSideOnly))
+                }
                 if query.senderStartMs == 0 {
                     placed = 0
                 } else if !query.landmarks.contains(where: {

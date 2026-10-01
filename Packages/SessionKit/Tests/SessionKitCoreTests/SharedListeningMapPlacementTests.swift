@@ -185,6 +185,13 @@ final class SharedListeningMapPlacementTests: XCTestCase {
         guard case .placed(let headProjection) = preRoll else { return XCTFail("\(preRoll)") }
         XCTAssertEqual(headProjection.projectedRecipientTime(for: 0), 0)
         XCTAssertEqual(headProjection.projectedRecipientTime(for: 25_000), 32_000)
+        // Codex audit on 9091658: insert 11 s at 140 s and cut the sender's 180-191 s. The covering
+        // landmark (180 s) can't match; the far one (260 s), corroborated by neighbouring scenes,
+        // still gives acoustic evidence for 185 s. Between two landmarks both must match.
+        XCTAssertEqual(try decide(proposal(starts: [0, 25_000, 185_000, 265_000]), [
+            "scene-0": placed(0, .acousticVerified), "scene-1": placed(25_000),
+            "scene-2": placed(185_000, .acousticVerified), "scene-3": placed(265_000, .acousticVerified)
+        ]).refusal, .init(sceneId: "scene-2", sceneLabel: "Scene 3", reason: .oneSideOnly))
         // An exact edition needs no coverage: every byte is the sender's.
         guard case .placed = try decide(proposal(starts: [0, 60_000]), [
             "scene-0": placed(0, .exactEdition), "scene-1": placed(60_000, .exactEdition)
