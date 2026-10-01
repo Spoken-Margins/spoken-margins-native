@@ -2978,13 +2978,18 @@ public final class SessionEngine {
             // Explicit import also restores a trashed item, without rebuilding
             // it and discarding its existing media/transcript association.
             existing.deletedAt = nil
+            // Episode identity added since the item was first saved fills in only
+            // where it is missing; nothing already stored is replaced (#177).
+            if existing.episodeGUID == nil { existing.episodeGUID = Self.nonEmpty(candidate.episodeGUID) }
+            if existing.showTitle == nil { existing.showTitle = Self.nonEmpty(candidate.showTitle) }
+            if existing.publishedAt == nil { existing.publishedAt = Self.nonEmpty(candidate.publishedAt) }
             return existing
         } catch SessionKitError.missingFixture(let key) where key == "item:\(id)" || key == id {
             // A new identity gets a fresh record, never a legacy title-slug's
             // derivatives. Ambiguous old records remain available for recovery.
         }
         let title = candidate.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? (candidate.sourceLink.title ?? request.inputURL) : candidate.title
-        return Item(
+        var item = Item(
             id: id,
             title: title,
             mediaType: TargetType.transcriptBackedMedia.rawValue,
@@ -3002,6 +3007,15 @@ public final class SessionEngine {
             sourceURL: candidate.sourceLink.role == "canonical_feed" ? candidate.sourceLink.url : nil,
             createdAt: request.createdAt
         )
+        item.episodeGUID = Self.nonEmpty(candidate.episodeGUID)
+        item.showTitle = Self.nonEmpty(candidate.showTitle)
+        item.publishedAt = Self.nonEmpty(candidate.publishedAt)
+        return item
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return trimmed
     }
 
     private func resolvedSourceItemId(
