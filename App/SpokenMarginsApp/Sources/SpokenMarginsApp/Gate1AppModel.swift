@@ -856,6 +856,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var sourceLinkCandidateReview: SourceLinkCandidateReviewState?
     @Published private(set) var sourceLinkImportState = "idle"
     @Published private(set) var sourceLinkImportMessage: String?
+    @Published var sourceLinkSafariOffer: OpenInSafariOffer? // #145, set in Gate1AppModel+PasteAndGo.swift
     @Published private(set) var selectedListeningEdition: ListeningEdition?
     @Published var automaticMarginOutputEnabled = UserDefaults.standard.bool(forKey: "automaticMarginOutputEnabled")
     @Published var marginOutputStatus = "Choose a folder and send a test note before enabling automatic delivery."
@@ -2662,25 +2663,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    nonisolated static func pastedSourceText(plainText: String, html: String?) -> String {
-        guard let html, let regex = try? NSRegularExpression(pattern: #"(?is)<h([1-6])\b[^>]*>(.*?)</h\1\s*>"#) else { return plainText }
-        var headings: [String: Int] = [:]
-        for match in regex.matches(in: html, range: NSRange(html.startIndex..., in: html)) {
-            guard let levelRange = Range(match.range(at: 1), in: html),
-                  let titleRange = Range(match.range(at: 2), in: html),
-                  let level = Int(html[levelRange]) else { continue }
-            var title = String(html[titleRange]).replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
-            for (entity, value) in [("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&nbsp;", " ")] {
-                title = title.replacingOccurrences(of: entity, with: value)
-            }
-            headings[title.trimmingCharacters(in: .whitespacesAndNewlines)] = level
-        }
-        return plainText.components(separatedBy: .newlines).map { line in
-            guard let level = headings[line.trimmingCharacters(in: .whitespaces)] else { return line }
-            return String(repeating: "#", count: level) + " " + line
-        }.joined(separator: "\n")
-    }
-
     func pasteImportTextFromClipboard() {
         #if canImport(UIKit)
         guard let clipboardText = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -3060,6 +3042,7 @@ final class Gate1AppModel: ObservableObject {
             return false
         }
         isResolvingSourceLink = true
+        sourceLinkSafariOffer = nil
         sourceLinkImportState = "resolving"
         sourceLinkImportMessage = "Resolving source link…"
         statusMessage = "Resolving source link..."
@@ -3081,7 +3064,7 @@ final class Gate1AppModel: ObservableObject {
                 sourceLinkImportMessage = "Choose the matching podcast episode."
             } else {
                 sourceLinkImportState = imported ? "success" : "failure"
-                sourceLinkImportMessage = imported ? "Source added." : (lastError ?? "This source could not be added.")
+                sourceLinkImportMessage = imported ? "Source added." : (sourceLinkSafariOffer?.message ?? lastError ?? "This source could not be added.")
             }
         }
         return true
@@ -3121,6 +3104,7 @@ final class Gate1AppModel: ObservableObject {
         guard !isResolvingSourceLink else { return }
         sourceLinkImportState = "idle"
         sourceLinkImportMessage = nil
+        sourceLinkSafariOffer = nil
     }
 
     @discardableResult
@@ -3166,11 +3150,12 @@ final class Gate1AppModel: ObservableObject {
         )
         do {
             let result = try await PublicPodcastLinkResolver().resolveAsync(request)
-            if let article = try? await LinkArticleFallback.article(for: url, after: result, startSession: shouldStartSession, using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }) {
+            if let article = await readLinkAsArticleOrOfferSafari(url, after: result, startSession: shouldStartSession) {
                 return importBrowserText(article)
             }
             return importResolvedSourceLink(request: request, result: result, startSession: shouldStartSession)
         } catch {
+            offerSafariIfUnreadable(url, error: error)
             reportFailure(error, context: "Source link import failed", retry: .init(key: "sourceLink") { [weak self] in
                 self?.sourceLinkURL = urlString
                 _ = self?.beginSourceLinkImportFromForm(startSession: startSession)
