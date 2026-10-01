@@ -24,6 +24,11 @@ BODY = """Tap one box in each group.
 - [ ] 80%
 - [x] 97%
 
+**Refill when**
+- [ ] Any slot opens
+- [ ] 1 thread left
+- [ ] No threads left
+
 **Finish by**
 - [ ] Sat 7 AM (the weekly reset)
 - [x] Fri noon
@@ -75,6 +80,20 @@ class ParseDial(unittest.TestCase):
 
     def test_paced_and_cloud_max_reads_paced(self):
         self.assertEqual(g.parse_dial(BODY.replace('- [ ] Cloud max', '- [x] Cloud max'))['mode'], 'paced')
+
+    def test_refill_defaults_to_any_open_slot(self):
+        self.assertIsNone(g.parse_dial(BODY)['refill_at'])
+        self.assertIsNone(g.parse_dial(BODY.replace('**Refill when**', '**Something else**'))['refill_at'])
+
+    def test_refill_threshold_reads_the_box(self):
+        self.assertEqual(g.parse_dial(BODY.replace('- [ ] 1 thread left', '- [x] 1 thread left'))['refill_at'], 1)
+        self.assertEqual(g.parse_dial(BODY.replace('- [ ] No threads left', '- [x] No threads left'))['refill_at'], 0)
+        self.assertIsNone(g.parse_dial(BODY.replace('- [ ] Any slot', '- [x] Any slot'))['refill_at'])
+
+    def test_two_refill_ticks_take_the_one_that_wakes_less(self):
+        d = g.parse_dial(BODY.replace('- [ ] Any slot', '- [x] Any slot').replace('- [ ] 1 thread left', '- [x] 1 thread left'))
+        self.assertEqual(d['refill_at'], 1)
+        self.assertTrue(any('Refill' in p for p in d['problems']))
 
     def test_mangled_body_reads_off_and_does_not_crash(self):
         d = g.parse_dial('I accidentally deleted everything')
@@ -158,6 +177,27 @@ class Decide(unittest.TestCase):
         ack = {'fire': 'fire-x', 'running': None, 'at': NOW, 'id': 1}
         state = {'last_fire': 'fire-x', 'last_fire_at': ts(NOW - dt.timedelta(minutes=20))}
         self.assertTrue(self.decide(state=state, ack=ack, active=2)['fire'])
+
+    def test_refill_threshold_holds_until_active_threads_fall_to_it(self):
+        dial = g.parse_dial(BODY.replace('- [ ] 1 thread left', '- [x] 1 thread left'))
+        ack = {'fire': 'fire-x', 'running': None, 'at': NOW, 'id': 1}
+        state = {'last_fire': 'fire-x', 'last_fire_at': ts(NOW - dt.timedelta(minutes=40))}
+        r = self.decide(dial=dial, state=state, ack=ack, active=2)
+        self.assertFalse(r['fire'])
+        self.assertIn('1 thread', r['why'])
+        self.assertTrue(self.decide(dial=dial, state=state, ack=ack, active=1)['fire'])
+
+    def test_no_threads_left_waits_for_zero(self):
+        dial = g.parse_dial(BODY.replace('- [ ] No threads left', '- [x] No threads left'))
+        state = {'last_fire': 'fire-x', 'last_fire_at': ts(NOW - dt.timedelta(minutes=40))}
+        ack = {'fire': 'fire-x', 'running': None, 'at': NOW, 'id': 1}
+        self.assertFalse(self.decide(dial=dial, state=state, ack=ack, active=1)['fire'])
+        self.assertTrue(self.decide(dial=dial, state=state, ack=ack, active=0)['fire'])
+
+    def test_a_threshold_at_or_above_the_maximum_means_any_open_slot(self):
+        dial = dict(g.parse_dial(BODY), threads=1, refill_at=1)
+        self.assertFalse(self.decide(dial=dial, active=1, state={'last_fire_at': ts(NOW - dt.timedelta(hours=1))})['fire'])
+        self.assertTrue(self.decide(dial=dial, active=0)['fire'])
 
     def test_trend_line_runs_from_week_start_to_the_stop_line(self):
         # Week: Sat 2026-09-26 11:00Z to Sat 10-03 11:00Z; Fri noon EDT = 19 h early = Fri 16:00Z.
@@ -264,6 +304,27 @@ class Threads(unittest.TestCase):
         threads = g.parse_threads([claim('A', 1, ago(hours=2)), claim('B', 2, ago(minutes=40)),
                                    claim('C', 3, ago(minutes=10))], [], NOW)
         self.assertEqual(g.claims_since(threads, ago(hours=1)), 2)
+
+
+class Durations(unittest.TestCase):
+    def test_runs_last_from_first_claim_to_stop_note_or_last_sign_of_life(self):
+        threads = g.parse_threads([claim('A', 1, ago(hours=5)), claim('A', 2, ago(hours=4)), stop('A', 2, ago(hours=3)),
+                                   claim('B', 3, ago(hours=8)), claim('C', 4, ago(minutes=30))], [], NOW)
+        runs = {r['title']: r for r in g.finished_runs(threads, NOW)}
+        self.assertEqual(runs['A']['minutes'], 120)
+        self.assertEqual(runs['A']['how'], 'stop note')
+        self.assertEqual(runs['B']['minutes'], 0)       # quiet: claimed, then nothing
+        self.assertEqual(runs['B']['how'], 'went quiet')
+        self.assertNotIn('C', runs)                      # still running
+
+    def test_status_reports_the_median_run(self):
+        threads = g.parse_threads([claim('A', 1, ago(hours=5)), stop('A', 1, ago(hours=4)),
+                                   claim('B', 2, ago(hours=3)), stop('B', 2, ago(hours=1))], [], NOW)
+        dial = g.parse_dial(BODY)
+        usage = g.parse_usage([tick(82, ago(minutes=30))])
+        decision = g.decide(NOW, dial, usage, 10, None, {}, 0)
+        text = g.status_text(NOW, dial, usage, 10, None, {}, decision, threads)
+        self.assertIn('Thread runs ended in the last 24 h: 2 with a stop note, median 90 min', text)
 
 
 class Status(unittest.TestCase):

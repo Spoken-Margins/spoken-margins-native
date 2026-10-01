@@ -120,12 +120,26 @@ def parse_dial(body: str) -> dict:
         problems.append(f'{len(stops)} Stop line boxes are ticked, so it uses the lowest, {stop}%')
     if stop is None and mode == 'paced':
         problems.append('no Stop line box is ticked, so Paced starts nothing')
+    refill_group = next((g for g in groups if g.startswith('refill when')), None)
+    refills = []
+    for t in groups.get(refill_group, []):
+        if t.startswith('any'):
+            refills.append(None)
+        elif t.startswith('no '):
+            refills.append(0)
+        elif re.match(r'\d+', t):
+            refills.append(int(re.match(r'\d+', t).group(0)))
+    numeric = [r for r in refills if r is not None]
+    refill_at = min(numeric) if numeric else None   # two ticks: the one that wakes less
+    if len(refills) > 1:
+        problems.append('two Refill when boxes are ticked, so it uses the one that wakes the project less')
     finish_group = next((g for g in groups if g.startswith('finish by')), None)
     early = [h for t in groups.get(finish_group, []) for key, h in FINISH_BY.items() if key in t]
     hours_early = min(early) if early else 0   # two ticks: the later deadline spends slower
     if len(early) > 1:
         problems.append('two Finish by boxes are ticked, so it uses the later one')
-    return {'mode': mode, 'threads': threads, 'stop': stop, 'hours_early': hours_early, 'problems': problems}
+    return {'mode': mode, 'threads': threads, 'stop': stop, 'hours_early': hours_early,
+            'refill_at': refill_at, 'problems': problems}
 
 
 def parse_usage(comments: list[dict]) -> dict:
@@ -181,10 +195,12 @@ def parse_threads(comments: list[dict], events: list[dict], now: dt.datetime) ->
         at = parse_time(c['created_at'])
         m = CLAIM_RE.match(body)
         if m:
-            t = threads.setdefault(m.group(1), {'title': m.group(1), 'issues': [], 'claims': [],
-                                                'stopped_at': None, 'stop_text': None})
+            t = threads.setdefault(m.group(1), {'title': m.group(1), 'issues': [], 'claims': [], 'runs': [],
+                                                'started': at, 'stopped_at': None, 'stop_text': None})
             if t['stopped_at']:   # a new run under the same title
-                t.update(issues=[], stopped_at=None, stop_text=None)
+                t['runs'].append({'title': t['title'], 'started': t['started'], 'ended': t['stopped_at'],
+                                  'how': 'stop note'})
+                t.update(issues=[], started=at, stopped_at=None, stop_text=None)
             t['claims'].append(at)
             t['last_claim'] = at
             n = issue_number(c)
@@ -212,6 +228,20 @@ def parse_threads(comments: list[dict], events: list[dict], now: dt.datetime) ->
         else:
             t['state'] = 'active'
     return sorted(threads.values(), key=lambda t: t['last_claim'])
+
+
+def finished_runs(threads: list[dict], now: dt.datetime) -> list[dict]:
+    """How long each finished thread run lasted, from its first claim to its stop note, or
+    to its last sign of life if it went quiet. Used to tune the spacing (owner, 2026-10-01)."""
+    runs = [r for t in threads for r in t['runs']]
+    for t in threads:
+        if t['state'] == 'stopped':
+            runs.append({'title': t['title'], 'started': t['started'], 'ended': t['stopped_at'], 'how': 'stop note'})
+        elif t['state'] == 'quiet':
+            runs.append({'title': t['title'], 'started': t['started'], 'ended': t['last_seen'], 'how': 'went quiet'})
+    for r in runs:
+        r['minutes'] = int((r['ended'] - r['started']).total_seconds() // 60)
+    return sorted(runs, key=lambda r: r['ended'])
 
 
 def active_count(threads: list[dict]) -> int:
@@ -282,10 +312,14 @@ def decide(now, dial, usage_info, ready_count, ack, state, active) -> dict:
     if last_at and now - last_at < MIN_SPACING:
         return {'fire': False, 'why': f'Last wake-up was {hours(now - last_at)} ago; '
                                       f'wake-ups are at least 15 min apart.', 'hold': None}
-    if active >= threads:
+    refill_at = dial.get('refill_at')
+    wake_at = threads - 1 if refill_at is None else min(refill_at, threads - 1)
+    if active > wake_at:
         if last_at and now - last_at < FALLBACK:
-            return {'fire': False, 'why': f'{active} of {threads} threads are active, so no slot is open; '
-                                          f'a fallback wake-up comes 3 hours after the last one.', 'hold': None}
+            why = (f'{active} of {threads} threads are active, so no slot is open' if wake_at == threads - 1 else
+                   f"{active} of {threads} threads are active; the Dial wakes the project at "
+                   f"{wake_at} thread{'' if wake_at == 1 else 's'} left")
+            return {'fire': False, 'why': f'{why}; a fallback wake-up comes 3 hours after the last one.', 'hold': None}
         return {'fire': True, 'why': f'{active} of {threads} threads look active, but the last wake-up '
                                      f'was 3 hours ago or more: fallback wake-up.', 'hold': None}
     return {'fire': True, 'why': f'Waking the project: {active} of {threads} threads are active.', 'hold': None}
@@ -302,7 +336,9 @@ def status_text(now, dial, usage_info, ready_count, ack, state, decision, thread
     u = usage_info['usage']
     lines = [STATUS_MARK, f"**Dial gate**, read {t(now)} (Eastern)", '']
     stop = f"stop line {dial['stop']}% (holds at {dial['stop'] - MARGIN}%)" if dial['stop'] else 'no stop line'
-    lines.append(f"- I read: **{dial['mode'].capitalize()}**, {dial['threads']} threads, {stop}.")
+    refill = ('when any slot opens' if dial.get('refill_at') is None or dial['refill_at'] >= dial['threads'] - 1
+              else f"at {dial['refill_at']} thread{'' if dial['refill_at'] == 1 else 's'} left")
+    lines.append(f"- I read: **{dial['mode'].capitalize()}**, {dial['threads']} threads, refill {refill}, {stop}.")
     for p in dial['problems']:
         lines.append(f'- Note: {p}.')
     lines.append(f"- Usage: {u['percent']}% from the Mac at {t(u['at'])}." if u else '- Usage: no report from the Mac.')
@@ -335,6 +371,17 @@ def status_text(now, dial, usage_info, ready_count, ack, state, decision, thread
             acked = f"acknowledged by {n} issue claim{'' if n == 1 else 's'} since"
         running = f", {ack['running']} running" if ack and ack['running'] is not None and acked == 'acknowledged' else ''
         lines.append(f"- Last wake-up: {t(parse_time(state['last_fire_at']))}, {acked}{running}.")
+    runs = [r for r in finished_runs(threads, now) if now - r['ended'] <= dt.timedelta(hours=24)]
+    # Only runs with a stop note have a real length; a quiet run's end is a guess.
+    timed = sorted(r['minutes'] for r in runs if r['how'] == 'stop note')
+    quiet = len(runs) - len(timed)
+    if timed:
+        mid = len(timed) // 2
+        median = timed[mid] if len(timed) % 2 else (timed[mid - 1] + timed[mid]) / 2
+        lines.append(f"- Thread runs ended in the last 24 h: {len(timed)} with a stop note, median {median:.0f} min, "
+                     f"longest {timed[-1]} min" + (f"; {quiet} more went quiet (length unknown)." if quiet else '.'))
+    elif quiet:
+        lines.append(f'- Thread runs ended in the last 24 h: {quiet}, all went quiet with no stop note (length unknown).')
     lines.append(f"- Now: {decision['why']}")
     return '\n'.join(lines)
 
