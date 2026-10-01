@@ -87,6 +87,21 @@ final class EpisodeGUIDStorageTests: XCTestCase {
         XCTAssertNil(withoutGUID.items.first?.guid, "the id falls back to the link, the GUID does not")
     }
 
+    /// Audit on 66cf893: the direct RSS add keeps `episode<42>`; Following must store the same GUID,
+    /// while the entry id keeps its display cleanup so saved entries keep their identity.
+    func testAFollowedFeedKeepsAnEscapedGUIDAsWritten() throws {
+        let xml = feed(guid: nil).replacingOccurrences(
+            of: "<title>Episode One</title>",
+            with: "<title>Episode One</title><guid isPermaLink=\"false\"> episode&lt;42&gt; </guid>"
+        )
+        let item = try XCTUnwrap(try FeedParser().parse(data: Data(xml.utf8)).items.first)
+        XCTAssertEqual(item.guid, "episode<42>")
+        XCTAssertEqual(item.id, "episode", "the entry id is unchanged")
+        let request = LinkResolutionRequest(id: "direct", inputURL: "https://example.com/feed.xml", sourceSurface: "paste", createdAt: Date())
+        let direct = try PublicPodcastLinkResolver(fetch: { _ in Data(xml.utf8) }).resolve(request)
+        XCTAssertEqual(direct.selectedCandidate?.episodeGUID, item.guid)
+    }
+
     func testAnEpisodeAddedFromAFollowedFeedGetsTheEntrysIdentity() {
         let published = Date(timeIntervalSince1970: 1_790_675_200)
         let entry = FeedEntry(

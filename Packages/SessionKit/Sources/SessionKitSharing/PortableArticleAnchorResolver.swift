@@ -288,12 +288,25 @@ public enum ImportedItemResolver {
     /// 20% apart rejects the match; placement inside the episode is the audio evidence's job.
     /// An unknown length on either side keeps the GUID match.
     /// GUIDs are unique only within a feed; some feeds use short ones like "42". When both sides
-    /// know the show, a different show rules the match out.
+    /// know the show, a different show rules the match out. Import paths clean a feed's title
+    /// differently (Following drops tags and decodes `&amp;`; a direct RSS add keeps CDATA text as
+    /// written), so both titles get the same cleanup before they're compared.
     static func guidShowsAreCompatible(_ lhs: String?, _ rhs: String?) -> Bool {
         func folded(_ value: String?) -> String? {
-            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Entities first, then tags, so `&lt;b&gt;` and an already decoded `<b>` end up alike.
+            let cleaned = value?
+                .replacingOccurrences(of: "&nbsp;", with: " ")
+                .replacingOccurrences(of: "&quot;", with: "\"")
+                .replacingOccurrences(of: "&#39;", with: "'")
+                .replacingOccurrences(of: "&apos;", with: "'")
+                .replacingOccurrences(of: "&lt;", with: "<")
+                .replacingOccurrences(of: "&gt;", with: ">")
+                .replacingOccurrences(of: "&amp;", with: "&")
+                .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
                 .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-            return trimmed?.isEmpty == false ? trimmed : nil
+            return cleaned?.isEmpty == false ? cleaned : nil
         }
         guard let lhs = folded(lhs), let rhs = folded(rhs) else { return true }
         return lhs == rhs

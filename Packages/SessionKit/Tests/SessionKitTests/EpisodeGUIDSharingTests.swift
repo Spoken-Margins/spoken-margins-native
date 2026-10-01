@@ -95,6 +95,21 @@ final class EpisodeGUIDSharingTests: XCTestCase {
         XCTAssertTrue(ImportedItemResolver.canRepresentSameWork(sender, SharedItemIdentityBuilder.localIdentity(for: sameShow)))
     }
 
+    /// Audit on 66cf893: a direct RSS add keeps CDATA text as written (`News &amp; Views`), while
+    /// Following decodes it (`News & Views`). They are the same show.
+    func testTheSameShowTitledThroughDifferentImportPathsMatches() {
+        var direct = episode(audioURL: senderLink, guid: "42", durationMs: 3_600_000)
+        direct.showTitle = "News &amp; Views"
+        var followed = episode(audioURL: recipientLink, guid: "42", durationMs: 3_600_000)
+        followed.showTitle = "News & Views"
+        let sender = SharedItemIdentityBuilder.exportIdentity(for: direct, draftEditionDigests: [nil])
+        XCTAssertTrue(ImportedItemResolver.canRepresentSameWork(sender, SharedItemIdentityBuilder.localIdentity(for: followed)))
+        followed.showTitle = "<b>News</b> &amp;   views"
+        XCTAssertTrue(ImportedItemResolver.canRepresentSameWork(sender, SharedItemIdentityBuilder.localIdentity(for: followed)))
+        followed.showTitle = "News & Reviews"
+        XCTAssertFalse(ImportedItemResolver.canRepresentSameWork(sender, SharedItemIdentityBuilder.localIdentity(for: followed)))
+    }
+
     // MARK: Done when 2 and 6: Build 29 reads the new item record and the packet
 
     func testTheBuild29ItemDecoderReadsARecordWithTheNewFields() throws {

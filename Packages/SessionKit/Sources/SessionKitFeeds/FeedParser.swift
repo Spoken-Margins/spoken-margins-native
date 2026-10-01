@@ -30,8 +30,8 @@ public struct ParsedFeedItem: Equatable, Sendable {
     public var audioURL: String?
     /// Episode length from `itunes:duration`, when the feed gives one.
     public var durationMs: Int? = nil
-    /// The item's `<guid>`, Atom `id` or JSON Feed `id` as written; nil when the feed gives none
-    /// (`id` then falls back to the link).
+    /// The item's `<guid>`, Atom `id` or JSON Feed `id` as written, without the display cleanup
+    /// `id` gets; nil when the feed gives none (`id` then falls back to the link).
     public var guid: String? = nil
 }
 
@@ -187,7 +187,11 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
             switch name {
             case "title": item?.title = value
             case "link": if format == .rss && item?.url == nil { item?.url = value }
-            case "guid", "id": item?.id = value
+            case "guid", "id":
+                item?.id = value
+                // Kept as written: display cleanup would turn `episode&lt;42&gt;` into `episode`,
+                // while the direct RSS import keeps `episode<42>`, and the GUIDs must match.
+                item?.guid = text.trimmingCharacters(in: .whitespacesAndNewlines)
             case "description", "summary", "content", "encoded": item?.summary = value
             case "author", "creator", "name": if item?.author == nil { item?.author = value }
             case "pubdate", "published", "updated": item?.published = value
@@ -212,6 +216,7 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
 
 private struct ItemBuilder {
     var id: String?
+    var guid: String?
     var title: String?
     var url: String?
     var author: String?
@@ -238,7 +243,7 @@ private struct ItemBuilder {
             publishedAt: published.flatMap { formatter.date(from: $0) ?? rssFormatter.date(from: $0) },
             audioURL: audioURL?.nilIfEmpty,
             durationMs: duration.flatMap(FeedDuration.milliseconds(from:)),
-            guid: id?.nilIfEmpty
+            guid: guid?.nilIfEmpty
         )
     }
 }
