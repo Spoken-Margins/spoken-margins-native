@@ -221,6 +221,14 @@ class IssueTests(unittest.TestCase):
         ]
         self.assertEqual([i['number'] for i in w.order_issues(issues)], [12, 11, 10])
 
+    def test_priority_label_goes_first(self):
+        issues = [
+            issue(20, created='2026-09-01T00:00:00Z', body='host test in SessionKitAudio/'),
+            issue(21, labels=('ready', 'priority'), created='2026-09-30T00:00:00Z', body='Gate1RootView layout'),
+            issue(22, created='2026-09-02T00:00:00Z', body='Gate1RootView layout'),
+        ]
+        self.assertEqual([i['number'] for i in w.order_issues(issues)], [21, 20, 22])
+
     def test_choose_skips_and_fetches_comments_lazily(self):
         issues = [issue(1, labels=('ready', 'blocked')), issue(2, created='2026-09-01T00:00:00Z'),
                   issue(3, created='2026-09-02T00:00:00Z')]

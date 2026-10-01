@@ -13,7 +13,7 @@ launchd runs `sm_codex_worker.py` every 10 minutes. Each run (a tick) reads:
 
 If a slot is free and nothing holds, it picks one issue and starts one detached child, then exits. It starts at most one child per tick.
 
-**Issue choice:** open, labelled `ready`, and not labelled `in-progress`, `where:mac`, `regression` or `blocked`. No `Claimed by project thread "` comment in the last 24 hours. Issues that name SessionKit paths or host tests go first, then oldest first. The child checks again just before it claims.
+**Issue choice:** open, labelled `ready`, and not labelled `in-progress`, `where:mac`, `regression` or `blocked`. No `Claimed by project thread "` comment in the last 24 hours. Issues labelled `priority` go first; within that, issues that name SessionKit paths or host tests go first, then oldest first. The child checks again just before it claims.
 
 **The child** claims the issue (label `in-progress` and a claim comment as "Codex worker N"). It makes the worktree `codex-worker/wt-N` on `ws/<issue>-codex-<slug>` from fresh `origin/next`, then runs `codex exec` (workspace-write, 60-minute cap). Then:
 
