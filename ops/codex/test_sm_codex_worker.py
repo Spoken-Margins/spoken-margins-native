@@ -503,7 +503,7 @@ class FinishChildTests(unittest.TestCase):
 
     def run_finish(self, fast_rc=0, fail=(), codex_ok=True, rearmed=False, moved=False, conflict=False,
                    push_rc=0, arm_failure=False, no_request=False, needs_mac_only=False, empty=False,
-                   audit_only=False):
+                   audit_only=False, checked_text=None, stage_failure=False):
         data = pull(labels=['needs-mac', 'automerge'], comments=[lane(),
                     {'body': '/lane T3\ntests: SpokenMarginsAppTests/PlaybackTests',
                      'createdAt': '2026-10-01T11:00:00Z'}])
@@ -519,6 +519,23 @@ class FinishChildTests(unittest.TestCase):
 
         class Run(FakeRun):
             def __call__(self, cmd, cwd=None, timeout=None):
+                if cmd[0] == 'git' and 'diff' in cmd and '--check' in cmd and checked_text is not None:
+                    self.calls.append(list(cmd))
+                    # Use real Git diagnostics without changing any repository's index.
+                    result = w.default_run(cmd[:cmd.index('diff')] +
+                                           ['diff', '--no-index', '--check', '--', '/dev/null',
+                                            str(Path(cwd) / 'Playback.swift')], cwd=cwd)
+                    # --no-index returns 1 for a clean diff; --cached returns 0.
+                    return w.Result(0 if result.returncode == 1 else result.returncode,
+                                    result.stdout, result.stderr)
+                if cmd[:2] == ['git', 'diff'] and '--name-only' in cmd and '-z' in cmd:
+                    self.calls.append(list(cmd))
+                    return w.Result(0, 'Playback.swift\0' if checked_text is not None else '')
+                if cmd[:2] == ['git', 'add'] and stage_failure:
+                    self.calls.append(list(cmd))
+                    return w.default_run(cmd, cwd=cwd)
+                if cmd[:2] == ['git', 'add'] and checked_text is not None:
+                    self.staged_text = (Path(cwd) / 'Playback.swift').read_text()
                 if cmd[:3] == ['gh', 'pr', 'view']:
                     self.calls.append(list(cmd))
                     return w.Result(0, json.dumps(data))
@@ -557,6 +574,15 @@ class FinishChildTests(unittest.TestCase):
                                            else 'Preserved the playback anchor.')}, ok=codex_ok)
 
         def run_codex(*args):
+            if stage_failure:
+                wt = Path(args[0])
+                for command in (['git', 'init', '--quiet'],
+                                ['git', '-c', 'user.name=t', '-c', 'user.email=t@t',
+                                 'commit', '--quiet', '--allow-empty', '-m', 'base']):
+                    test.assertEqual(w.default_run(command, cwd=wt).returncode, 0)
+                (wt / '.git' / 'index.lock').write_text('another Git process owns this index')
+            if checked_text is not None:
+                (Path(args[0]) / 'Playback.swift').write_text(checked_text)
             if rearmed:
                 data['labels'].append('automerge')
             if moved:
@@ -631,6 +657,32 @@ class FinishChildTests(unittest.TestCase):
         self.assertIn('Finding is wrong: the anchor is already preserved.', '\n'.join(run.comments()))
         self.assertFalse(run.has('git', 'push'))
         self.assertNotIn('automerge', data['labels'])
+
+    def test_extra_blank_line_at_eof_is_trimmed_and_finished(self):
+        outcome, run, _, _ = self.run_finish(checked_text='let anchor = 1\n\n')
+        self.assertEqual(outcome, 'finished')
+        self.assertEqual(run.staged_text, 'let anchor = 1\n')
+
+    def test_other_whitespace_warnings_do_not_discard_a_finished_fix(self):
+        outcome, run, _, _ = self.run_finish(checked_text='let anchor = 1  \n')
+        self.assertEqual(outcome, 'finished')
+        self.assertEqual(run.staged_text, 'let anchor = 1  \n')
+
+    def test_conflict_markers_still_stop_before_fast_plan_or_push(self):
+        outcome, run, _, _ = self.run_finish(
+            checked_text='<<<<<<< HEAD\nlet anchor = 1\n=======\nlet anchor = 2\n>>>>>>> next\n')
+        self.assertEqual(outcome, 'error')
+        self.assertFalse(any('verify-tests.py' in ' '.join(c) for c in run.calls))
+        self.assertFalse(run.has('git', 'push'))
+        self.assertIn('leftover conflict marker', run.comments()[-1])
+
+    def test_real_staging_failure_stops_before_validation_or_push(self):
+        outcome, run, data, _ = self.run_finish(checked_text='let anchor = 1\n', stage_failure=True)
+        self.assertEqual(outcome, 'error')
+        self.assertFalse(any('verify-tests.py' in ' '.join(c) for c in run.calls))
+        self.assertFalse(run.has('git', 'push'))
+        self.assertNotIn('automerge', data['labels'])
+        self.assertIn('index.lock', run.comments()[-1])
 
     def test_rearmed_or_moved_pr_never_pushes(self):
         for options in ({'rearmed': True}, {'moved': True}):
@@ -807,7 +859,7 @@ class ChildTests(unittest.TestCase):
         idx = lambda pred: next(i for i, c in enumerate(run.calls) if pred(c))
         add = idx(lambda c: c[:3] == ['git', 'add', '-A'])
         self.assertIn(':(exclude).codex-out', run.calls[add])
-        diff = idx(lambda c: c[:2] == ['git', 'diff'])
+        diff = idx(lambda c: c[:2] == ['git', 'diff'] and '--cached' in c)
         self.assertLess(add, diff)
         self.assertIn('--cached', run.calls[diff])
         self.assertIn('--binary', run.calls[diff])
@@ -915,20 +967,64 @@ class SaveDiffTests(unittest.TestCase):
         git = lambda *a: w.default_run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', *a], cwd=wt)
         git('init', '--quiet')
         (wt / 'old.swift').write_text('let a = 1\n')
+        (wt / 'untouched.txt').write_bytes(b'untouched\n\n')
+        (wt / 'deleted.txt').write_text('delete me\n')
         git('add', '-A')
         git('commit', '--quiet', '-m', 'base')
-        (wt / 'old.swift').write_text('let a = 2\n')
+        (wt / 'old.swift').write_bytes(b'let a = 2\r\n \t\r\n\r\n')
+        git('add', 'old.swift')  # Already staged changes must also be normalized.
+        (wt / 'deleted.txt').unlink()
         (wt / 'Sources').mkdir()
-        (wt / 'Sources' / 'PreparationChunkGate.swift').write_text('struct Gate {}\n')
+        (wt / 'Sources' / 'PreparationChunkGate.swift').write_text('struct Gate {}\n\n')
+        preserved = {'binary.dat': b'\0binary\n\n', 'no-final-newline.txt': b'keep this  '}
+        for name, data in preserved.items():
+            (wt / name).write_bytes(data)
+        target = tmp / 'target.txt'
+        target.write_text('symlink target\n\n')
+        (wt / 'link.txt').symlink_to(target)
         (wt / w.OUT_DIR_NAME).mkdir()
-        (wt / w.OUT_DIR_NAME / 'give-up.txt').write_text('stuck\n')
+        (wt / w.OUT_DIR_NAME / 'give-up.txt').write_text('stuck\n\n')
         ops = w.Ops(home=tmp, repo_root=tmp, now=lambda: NOW, alive=lambda pid: False, echo=False)
         w.save_diff(ops, wt, tmp / 'codex.diff')
+        self.assertEqual((wt / 'old.swift').read_bytes(), b'let a = 2\r\n')
+        self.assertEqual((wt / 'Sources' / 'PreparationChunkGate.swift').read_bytes(), b'struct Gate {}\n')
+        self.assertEqual((wt / 'untouched.txt').read_bytes(), b'untouched\n\n')
+        for name, data in preserved.items():
+            self.assertEqual((wt / name).read_bytes(), data)
+        self.assertTrue((wt / 'link.txt').is_symlink())
+        self.assertEqual(target.read_bytes(), b'symlink target\n\n')
+        self.assertEqual((wt / w.OUT_DIR_NAME / 'give-up.txt').read_bytes(), b'stuck\n\n')
+        w.check_staged_changes(ops, wt)
         diff = (tmp / 'codex.diff').read_text()
         self.assertIn('+let a = 2', diff)
         self.assertIn('b/Sources/PreparationChunkGate.swift', diff)
         self.assertIn('+struct Gate {}', diff)
         self.assertNotIn('give-up.txt', diff)
+
+
+class StageChangesTests(unittest.TestCase):
+    def test_non_utf8_is_preserved_and_nul_delimited_paths_are_trimmed(self):
+        with tempfile.TemporaryDirectory(prefix='cw-stage-') as directory:
+            wt = Path(directory)
+            (wt / 'non-utf8.txt').write_bytes(b'\xff\n\n')
+            (wt / 'file with\na newline.txt').write_bytes(b'text\n\n')
+
+            def run(cmd, cwd=None, timeout=None):
+                if '--name-only' in cmd:
+                    return w.Result(0, 'non-utf8.txt\0')
+                if cmd[:2] == ['git', 'ls-files']:
+                    return w.Result(0, 'file with\na newline.txt\0')
+                self.assertEqual(cmd, ['git', 'add', '-A', '--', '.', ':(exclude).codex-out'])
+                return w.Result(0)
+
+            w.stage_changes(w.Ops(home=wt, repo_root=wt, run=run, echo=False), wt)
+            self.assertEqual((wt / 'non-utf8.txt').read_bytes(), b'\xff\n\n')
+            self.assertEqual((wt / 'file with\na newline.txt').read_bytes(), b'text\n')
+
+    def test_git_errors_remain_fatal(self):
+        ops = w.Ops(run=lambda *args, **kwargs: w.Result(128, '', 'fatal: bad index'))
+        with self.assertRaisesRegex(RuntimeError, 'fatal: bad index'):
+            w.check_staged_changes(ops, Path('/unused'))
 
 
 # ---------------------------------------------------------------------------
