@@ -272,6 +272,34 @@ final class PublisherAudioAlignerTests: XCTestCase {
         XCTAssertEqual(timeline.segments.map(\.startMs), [0, 4_000, 6_000, 8_000])
     }
 
+    func testAnIntroWordDoesNotPullTheFirstSentenceEarlier() throws {
+        // Codex audit on #636: the recogniser drops the article's opening "The", and the intro said
+        // "the" nine seconds earlier. Neither the word-by-word pass nor the start estimate may
+        // reach back into the intro for it.
+        let text = "The harbour at Kettleness shelters fishing boats. Crab pots line the quay wall. "
+            + "Gulls circle above the lifeboat station. Tourists photograph the herring barrel. Ruth Alder lands her catch before dawn."
+        let spoken: [(Int, String)] = [
+            (0, "This is the audio version of our newsletter."),
+            (10_000, "harbour at Kettleness shelters fishing boats."),
+            (13_000, "Crab pots line the quay wall."),
+            (16_000, "Gulls circle above the lifeboat station."),
+            (19_000, "Tourists photograph the herring barrel."),
+            (22_000, "Ruth Alder lands her catch before dawn."),
+        ]
+        let segments = spoken.enumerated().map { index, entry in
+            MediaTimelineSegment(id: "s\(index)", startMs: entry.0, endMs: entry.0 + 2_500, text: entry.1)
+        }
+        let alignment = PublisherAudioAligner.align(
+            articleText: text,
+            recognised: TranscriptTimeline(segments: segments, chapters: [], durationMs: 25_000)
+        )
+        let timeline = try XCTUnwrap(alignment.timeline, alignment.status)
+        XCTAssertEqual(timeline.segments.count, 5)
+        let first = try XCTUnwrap(timeline.segments.first)
+        XCTAssertEqual(first.startChar, 0)
+        XCTAssertLessThanOrEqual(abs(first.startMs - 10_000), 1_000, "starts at \(first.startMs)")
+    }
+
     func testAParagraphReadOutOfOrderCostsOnlyThatParagraph() throws {
         // The narrator reads the opening paragraph last. Matching in article order alone would
         // place it and lose everything after it.

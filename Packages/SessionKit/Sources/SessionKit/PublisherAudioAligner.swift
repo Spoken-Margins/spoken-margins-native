@@ -50,6 +50,8 @@ public enum PublisherAudioAligner {
     /// Stretches between anchors longer than this, on either side, are left unmatched. Real gaps
     /// between anchors are a few misheard words; this keeps the word-by-word pass cheap.
     static let maximumGapWords = 80
+    /// The most time an unmatched word at a sentence's start or end can add to it.
+    static let maximumUnmatchedWordMs = 800
 
     public static func align(articleText: String, recognised: TranscriptTimeline) -> PublisherAudioAlignment {
         let article = Array(articleText)
@@ -78,8 +80,17 @@ public enum PublisherAudioAligner {
             let nextMatch = (wordRange.upperBound..<articleWords.count).lazy.compactMap { matches[$0] }.first ?? spoken.count
             let endWord = min(nextMatch - 1, last.1 + trailing)
 
-            let startMs = max(previousEndMs, spoken[min(startWord, first.1)].startMs)
-            let endMs = max(startMs + 1, spoken[max(endWord, last.1)].endMs)
+            // ...but no further than those words could take to say, so an intro or a long pause
+            // before them isn't counted as part of the sentence.
+            let startMs = max(
+                previousEndMs,
+                spoken[min(startWord, first.1)].startMs,
+                spoken[first.1].startMs - leading * maximumUnmatchedWordMs
+            )
+            let endMs = max(
+                startMs + 1,
+                min(spoken[max(endWord, last.1)].endMs, spoken[last.1].endMs + trailing * maximumUnmatchedWordMs)
+            )
             previousEndMs = endMs
             segments.append(MediaTimelineSegment(
                 id: "publisher-audio-\(String(format: "%04d", index + 1))",
@@ -329,7 +340,19 @@ public enum PublisherAudioAligner {
         into matches: inout [Int?]
     ) {
         let articleRange = (start.0 + 1)..<end.0
-        let spokenRange = (start.1 + 1)..<end.1
+        var spokenRange = (start.1 + 1)..<end.1
+        // Before the first anchor and after the last there's only one side to go by, and the
+        // recording may have an intro or outro there. Look only at as many recognised words next
+        // to the anchor as there are article words, plus two, so an article word can't be
+        // matched to the same word in the intro.
+        let reach = articleRange.count + 2
+        let openStart = start.0 < 0
+        let openEnd = end.0 >= article.count
+        if openStart, !openEnd {
+            spokenRange = max(spokenRange.lowerBound, end.1 - reach)..<end.1
+        } else if openEnd, !openStart {
+            spokenRange = spokenRange.lowerBound..<min(spokenRange.upperBound, spokenRange.lowerBound + reach)
+        }
         guard !articleRange.isEmpty, !spokenRange.isEmpty,
               articleRange.count <= maximumGapWords, spokenRange.count <= maximumGapWords else { return }
         let a = Array(article[articleRange])
