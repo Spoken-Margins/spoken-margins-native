@@ -42,6 +42,8 @@ extract_status=0
 # C1 M3: extraction v2 (I13 roles, spoken per I14), with v1 timed beside it.
 "$here/.build/release/c1-extract" --root "$c1" --v2 "$@" || extract_status=$?
 "$py" "$c1/tools/score.py" --extractor app-v2 "$@"
+# #272: chapters built from title, author or front-matter lines.
+"$py" "$c1/tools/chapters.py" app-v2
 "$py" "$c1/tools/report.py"
 # C1 M2: fit and evaluate the hard-PDF pre-check on the app's own output.
 "$py" "$c1/tools/precheck.py"

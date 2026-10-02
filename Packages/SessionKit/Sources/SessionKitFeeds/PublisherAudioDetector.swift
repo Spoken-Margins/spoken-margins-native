@@ -12,19 +12,17 @@ public enum FeedEntryMediaKind: String, Equatable, Sendable {
     case article
 }
 
-/// Tells a post that carries the publisher's audio from a podcast episode. Feeds with any audio
-/// enclosure are followed as podcast feeds, so before this a publication that added voiceovers
-/// lost its text. Show notes are short, and a post's full body comes in its own element, so an
-/// entry with an audio enclosure is an article only when that body is long and its link is a
-/// page of its own rather than the audio file.
+/// Length alone cannot distinguish narration from a podcast transcript. Require an affirmative
+/// publisher declaration before changing audio import into article import.
 public enum PublisherAudioDetector {
-    /// Show notes rarely reach this; a post that carries a voiceover nearly always does.
+    /// A minimum article body, applied only after affirmative narration evidence.
     public static let minimumBodyWords = 600
     public static let detectedFromFeedEnclosure = "feed_enclosure"
+    public static let detectedFromPublisherNarration = "substack_post_voiceover"
 
-    public static func kind(audioURL: String?, pageURL: String, bodyWordCount: Int?) -> FeedEntryMediaKind {
+    public static func kind(audioURL: String?, pageURL: String, bodyWordCount: Int?, publisherNarrationConfirmed: Bool = false) -> FeedEntryMediaKind {
         guard let audio = httpsURL(audioURL) else { return .article }
-        guard let words = bodyWordCount, words >= minimumBodyWords,
+        guard publisherNarrationConfirmed, let words = bodyWordCount, words >= minimumBodyWords,
               let page = httpsURL(pageURL), page != audio else { return .podcastEpisode }
         return .articleWithPublisherAudio
     }
@@ -34,7 +32,7 @@ public enum PublisherAudioDetector {
     }
 
     public static func kind(of entry: FeedEntry) -> FeedEntryMediaKind {
-        kind(audioURL: entry.audioURL, pageURL: entry.canonicalURL, bodyWordCount: entry.bodyWordCount)
+        kind(audioURL: entry.audioURL, pageURL: entry.canonicalURL, bodyWordCount: entry.bodyWordCount, publisherNarrationConfirmed: entry.publisherNarrationConfirmed == true)
     }
 
     /// Words in the item's full body, or nil when the feed gives no body apart from its description.
@@ -52,7 +50,15 @@ public enum PublisherAudioDetector {
     /// an article with publisher audio.
     public static func publisherAudio(for entry: FeedEntry, itemId: String) -> PublisherAudio? {
         guard kind(of: entry) == .articleWithPublisherAudio, let audioURL = httpsURL(entry.audioURL) else { return nil }
-        return PublisherAudio(itemId: itemId, audioURL: audioURL, durationMs: entry.audioDurationMs, detectedFrom: detectedFromFeedEnclosure)
+        return PublisherAudio(itemId: itemId, audioURL: audioURL, durationMs: entry.audioDurationMs, detectedFrom: detectedFromPublisherNarration)
+    }
+
+    /// An authenticated feed already supplied this text. Do not replace it with a public teaser.
+    public static func articleHandoff(for entry: FeedEntry) -> BrowserTextHandoff? {
+        guard entry.hasPublisherAudio, let body = entry.fullBody,
+              !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return BrowserTextHandoff(captureMode: .readablePage,
+            source: BrowserTextSource(url: entry.canonicalURL, title: entry.title), text: body)
     }
 
     private static func httpsURL(_ raw: String?) -> String? {

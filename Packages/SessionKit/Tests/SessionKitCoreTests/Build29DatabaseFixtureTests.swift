@@ -138,7 +138,7 @@ final class Build29DatabaseFixtureTests: XCTestCase {
             textMapStatus: "aligned(1 of 1 sentences)"
         ))
         let feedEntry = FeedEntry(id: "entry-publisher-audio", subscriptionId: "subscription-substack", canonicalURL: "https://example.substack.com/p/post",
-                                  audioURL: "https://api.substack.com/feed/podcast/1/a.mp3", title: "Post", bodyWordCount: 720, audioDurationMs: 60_000)
+                                  audioURL: "https://api.substack.com/feed/podcast/1/a.mp3", title: "Post", bodyWordCount: 720, fullBody: "A full subscriber article", publisherPlatform: "substack", publisherNarrationConfirmed: true, audioDurationMs: 60_000)
         try store.saveFeedEntry(feedEntry)
         XCTAssertEqual(try store.loadPublisherAudio(itemId: v1.id)?.durationMs, 60_000)
         XCTAssertNil(try store.loadTranscriptTimeline(itemId: v1.id), "the map must not make the article transcript-backed")

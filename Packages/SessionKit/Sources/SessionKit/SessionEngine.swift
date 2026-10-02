@@ -42,6 +42,8 @@ public final class SessionEngine {
     private var recordingTargetType: InterjectionTargetType?
     private var recordingTargetId: String?
     private var priorPhase: SessionPhase?
+    /// The Margin being recorded started on a finished source, at its end (#142).
+    private var recordingOnFinishedSource = false
     private var streamingBuffers: [String: String] = [:]
     private var spokenPrefixes: [String: Int] = [:]
     private var externallyStreamedTurnId: String?
@@ -1259,7 +1261,14 @@ public final class SessionEngine {
         guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
         let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
             || session.currentTargetType == .browserOwnedMedia
-        if usesNativeMediaClock {
+        recordingOnFinishedSource = isFinishedAtEnd(session)
+        if recordingOnFinishedSource {
+            // A recap Margin on a finished item (#142). The saved end position is
+            // authoritative: a stopped speech player reports a reset offset, so
+            // neither the session nor the anchor may sample it.
+            protectPlaybackPosition(for: session)
+            try audio.pause()
+        } else if usesNativeMediaClock {
             // Freeze native transport before sampling its clock. Sampling first
             // lets media advance before the interruption and accumulates drift.
             try audio.pause()
@@ -1650,6 +1659,9 @@ public final class SessionEngine {
         lastScheduledTranscriptionInterjectionId = interjection.id
         snapshot.lastInterjectionAnchorType = anchor.anchorType
         snapshot.lastInterjectionTargetType = targetType
+        if returnsToFinishedSource(targetType: targetType) {
+            return try settleFinishedSourceAfterInterjection(session)
+        }
         session.phase = priorPhaseForResume(targetType: targetType)
         // beginInterjection already captured and persisted the authoritative
         // source position before pausing. Resume from that position exactly;
@@ -1672,12 +1684,16 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("cancelInterjection")
         }
         try recorder.cancelRecording()
+        let returnsToFinished = returnsToFinishedSource(targetType: recordingTargetType ?? .item)
         session.phase = priorPhase ?? priorPhaseForResume(targetType: recordingTargetType ?? .item)
         // Cancellation follows the same exact-resume policy as completion.
         // The captured position is already present in the session.
         recordingAnchor = nil
         recordingTargetType = nil
         recordingTargetId = nil
+        if returnsToFinished {
+            return try settleFinishedSourceAfterInterjection(session)
+        }
         currentSession = session
         try persistSession(session)
         if externallyStreamedTurnId == session.currentTargetId {
@@ -2298,8 +2314,11 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// Stops caller-owned inline audio before closing the source, even if teardown fails.
+    /// The callback must cancel playback without resuming the source (#651).
     @discardableResult
-    public func endSession() throws -> SessionSnapshot {
+    public func endSession(stoppingInlinePlayback: () -> Void = {}) throws -> SessionSnapshot {
+        stoppingInlinePlayback()
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("endSession")
         }
@@ -2340,6 +2359,10 @@ public final class SessionEngine {
         recordingTargetType = nil
         recordingTargetId = nil
         priorPhase = nil
+        recordingOnFinishedSource = false
+        // A protected position belongs to the session that just ended. Left set, it would
+        // pin a replay of the same target to this session's end until playback confirms.
+        pendingPlaybackPosition = nil
         externallyStreamedTurnId = nil
         streamingBuffers.removeAll()
         spokenPrefixes.removeAll()
@@ -3707,6 +3730,26 @@ public final class SessionEngine {
         default:
             return (.item, session.itemId)
         }
+    }
+
+    private func isFinishedAtEnd(_ session: Session) -> Bool {
+        session.phase == .finished && session.completionPercent >= 100
+            && session.currentTargetType != .summaryTurnTTS && session.currentTargetType != .assistantTurnTTS
+    }
+
+    /// A Margin recorded on the finished source returns to the finished state instead of
+    /// resuming: there is nothing left to play, and playing again would restart or re-finish it.
+    private func returnsToFinishedSource(targetType: InterjectionTargetType) -> Bool {
+        targetType == .item && recordingOnFinishedSource
+    }
+
+    private func settleFinishedSourceAfterInterjection(_ session: Session) throws -> SessionSnapshot {
+        var session = session
+        session.phase = .finished
+        currentSession = session
+        try persistSession(session)
+        publish(status: .paused, phase: .finished)
+        return snapshot
     }
 
     private func priorPhaseForResume(targetType: InterjectionTargetType) -> SessionPhase {

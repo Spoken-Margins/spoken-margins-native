@@ -83,18 +83,18 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
     public var summary: String?
     public var publishedAt: Date?
     public var state: FeedEntryState
-    /// Words in the entry's full body (RSS `content:encoded`), when the feed gives one apart from
-    /// its description (#545). Nil for entries saved before this was recorded.
+    /// Full feed text retained for confirmed narration; Build 29 ignores the optional keys.
+    public var fullBody: String?
+    /// Feed generator used to limit provider metadata lookups to that provider.
+    public var publisherPlatform: String?
+    /// Affirmative evidence from the current post, never inferred from transcript length.
+    public var publisherNarrationConfirmed: Bool?
     public var bodyWordCount: Int?
-    /// The audio enclosure's length from `itunes:duration`, when the feed gives one.
     public var audioDurationMs: Int?
-
-    /// The feed's `<guid>` (or Atom/JSON Feed `id`) as written, so an episode added from a followed
-    /// feed can be matched to a shared Margin by GUID (#177). Nil for entries saved before #177
-    /// until the feed refreshes.
+    /// The feed's GUID as written; nil for entries saved before #177 until refresh.
     public var episodeGUID: String?
 
-    public init(id: String, subscriptionId: String, canonicalURL: String, audioURL: String? = nil, title: String, author: String? = nil, summary: String? = nil, publishedAt: Date? = nil, state: FeedEntryState = .unseen, bodyWordCount: Int? = nil, audioDurationMs: Int? = nil, episodeGUID: String? = nil) {
+    public init(id: String, subscriptionId: String, canonicalURL: String, audioURL: String? = nil, title: String, author: String? = nil, summary: String? = nil, publishedAt: Date? = nil, state: FeedEntryState = .unseen, bodyWordCount: Int? = nil, fullBody: String? = nil, publisherPlatform: String? = nil, publisherNarrationConfirmed: Bool? = nil, audioDurationMs: Int? = nil, episodeGUID: String? = nil) {
         self.id = id
         self.subscriptionId = subscriptionId
         self.canonicalURL = canonicalURL
@@ -104,6 +104,9 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
         self.summary = summary
         self.publishedAt = publishedAt
         self.state = state
+        self.fullBody = fullBody
+        self.publisherPlatform = publisherPlatform
+        self.publisherNarrationConfirmed = publisherNarrationConfirmed
         self.bodyWordCount = bodyWordCount
         self.audioDurationMs = audioDurationMs
         self.episodeGUID = episodeGUID
