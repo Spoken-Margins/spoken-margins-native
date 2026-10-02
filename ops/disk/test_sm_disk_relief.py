@@ -11,7 +11,6 @@ import sys
 import tempfile
 import time
 import unittest
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -403,7 +402,7 @@ class Moves(Base):
         result = d.run(self.cfg, m, self.log)
         self.assertFalse(self.src.exists())
         day = time.strftime('%Y-%m-%d', time.localtime(m.now()))
-        primary = self.cfg.drive / self.cfg.offload_dir / f'{day}-disk-relief'
+        primary = self.cfg.drive / 'Codex-Offload' / f'{day}-disk-relief'
         self.assertTrue((primary / self.rel / 'report.md').exists())
         self.assertTrue(result.acted)
 

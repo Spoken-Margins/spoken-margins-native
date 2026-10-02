@@ -18,35 +18,20 @@ extension ListeningSignalRecorder {
 /// a followed source are not logged.
 @MainActor
 final class ListeningSignalsCoordinator {
-    private let recorder: ListeningSignalRecorder
+    private let collector: ListeningSignalCollector
     private let repository: @MainActor () -> (any SessionRepository)?
-    /// The playing item's context, so progress ticks don't query the store.
-    private var cachedItemId: String?
-    private var cachedContext: (source: ListeningSignalSource, item: ListeningSignalItem)?
-
     init(recorder: ListeningSignalRecorder = .app, repository: @escaping @MainActor () -> (any SessionRepository)?) {
-        self.recorder = recorder
+        self.collector = ListeningSignalCollector(recorder: recorder)
         self.repository = repository
     }
 
-    /// One playback progress tick. The recorder coalesces ticks into intervals.
-    func listened(itemId: String?) {
-        guard let itemId else { return }
-        if cachedItemId != itemId {
-            let resolved = context(forItemId: itemId)
-            cachedItemId = itemId
-            cachedContext = resolved
-        }
-        guard let context = cachedContext else { return }
-        recorder.noteListening(source: context.source, item: context.item)
+    /// The tick path captures values and enqueues; all context reads happen on the collector's queue.
+    func playbackProgress(itemId: String?, status: PlaybackStatus) {
+        collector.playbackProgress(itemId: itemId, status: status, repository: repository())
     }
 
-    /// Playback stopped: close the open interval, and look the item up again next time (it may
-    /// have been followed or re-imported meanwhile).
     func endListening() {
-        recorder.endListening()
-        cachedItemId = nil
-        cachedContext = nil
+        collector.endListening()
     }
 
     func writtenMargin(itemId: String?, text: String) {
@@ -55,14 +40,13 @@ final class ListeningSignalsCoordinator {
 
     /// Spoken Margin length is its recording's duration, read off the main thread.
     func spokenMargin(itemId: String?, audioURL: URL?) {
-        guard let itemId, let context = context(forItemId: itemId) else { return }
-        let source = context.source, item = context.item, at = Date(), signals = self.recorder
+        let store = repository(), at = Date(), signals = collector
         Task.detached(priority: .utility) {
             var seconds = 0
             if let audioURL, let duration = try? await AVURLAsset(url: audioURL).load(.duration), duration.isNumeric {
                 seconds = max(0, Int(duration.seconds.rounded()))
             }
-            signals.record(.margin(kind: .spoken, length: seconds), source: source, item: item, at: at)
+            signals.record(.margin(kind: .spoken, length: seconds), itemId: itemId, repository: store, at: at)
         }
     }
 
@@ -75,8 +59,7 @@ final class ListeningSignalsCoordinator {
     }
 
     func packetImport(itemId: String?, packetId: String, marginCount: Int) {
-        guard let itemId, let context = context(forItemId: itemId) else { return }
-        recorder.recordPacketImport(packetId: packetId, marginCount: marginCount, source: context.source, item: context.item)
+        collector.packetImport(itemId: itemId, packetId: packetId, marginCount: marginCount, repository: repository())
     }
 
     func finish(itemId: String?) {
@@ -84,33 +67,15 @@ final class ListeningSignalsCoordinator {
     }
 
     func dismiss(entryId: String) {
-        guard let repository = repository(),
-              let context = ListeningSignalContext.context(
-                forEntryId: entryId,
-                entries: (try? repository.loadFeedEntries(subscriptionId: nil)) ?? [],
-                subscriptions: (try? repository.loadFeedSubscriptions()) ?? [],
-                seenAt: Date()
-              ) else { return }
-        recorder.record(.dismiss, source: context.source, item: context.item)
+        collector.dismiss(entryId: entryId, repository: repository())
     }
 
     /// A copy of the log for the share sheet, or nil when nothing has been logged yet.
     func exportFileURL() -> URL? {
-        try? recorder.exportCopy(to: FileManager.default.temporaryDirectory.appendingPathComponent("ListeningSignals", isDirectory: true))
+        try? collector.exportCopy(to: FileManager.default.temporaryDirectory.appendingPathComponent("ListeningSignals", isDirectory: true))
     }
 
     private func record(_ event: ListeningSignalEvent, itemId: String?) {
-        guard let itemId, let context = context(forItemId: itemId) else { return }
-        recorder.record(event, source: context.source, item: context.item)
-    }
-
-    private func context(forItemId itemId: String) -> (source: ListeningSignalSource, item: ListeningSignalItem)? {
-        if itemId == cachedItemId { return cachedContext }
-        guard let repository = repository(),
-              let item = try? repository.loadItem(id: itemId),
-              let subscriptions = try? repository.loadFeedSubscriptions(),
-              !subscriptions.isEmpty else { return nil }
-        let entries = (try? repository.loadFeedEntries(subscriptionId: nil)) ?? []
-        return ListeningSignalContext.context(for: item, subscriptions: subscriptions, entries: entries)
+        collector.record(event, itemId: itemId, repository: repository())
     }
 }

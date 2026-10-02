@@ -4,6 +4,28 @@ import XCTest
 /// Host-only wiring checks for #567's overlapping edits with #273 and #466.
 /// These catch merge omissions; app builds and journeys still verify the runtime boundary.
 final class ListeningSignalMergeIntegrationTests: XCTestCase {
+    func testPlaybackTickerPassesConfirmedStatusToTheSignalCollector() throws {
+        let source = try appSource("Gate1AppModel.swift")
+        XCTAssertTrue(source.contains("listeningSignals.playbackProgress(itemId: updated.itemId, status: updated.status)"),
+                      "starting playback is not confirmed listening")
+        XCTAssertFalse(source.contains("listeningSignals.listened(itemId: updated.itemId)"))
+    }
+
+    func testAllSpokenMarginCompletionRoutesShareTheSignalHook() throws {
+        let source = try appSource("Gate1AppModel.swift")
+        for (start, end) in [
+            ("func finishInterjection()", "func cancelInterjection()"),
+            ("private func performGate3WatchCommand(", "private func performGate2CompactCommand("),
+            ("private func performGate2CompactCommand(", "private func compactSkipUnit(")
+        ] {
+            let route = try body(source, from: start, to: end)
+            XCTAssertTrue(route.contains("transcribeAndRecordSavedSpokenMargin()"), start)
+        }
+        let helper = try appSource("Gate1AppModel+ListeningSignals.swift")
+        XCTAssertTrue(helper.contains("listeningSignals.spokenMargin(itemId:"))
+        XCTAssertTrue(helper.contains("scheduleTranscription(for:"))
+    }
+
     func testFeedSaveKeepsPublicationSignalsGUIDsAndAutomaticImportCandidates() throws {
         let source = try appSource("FollowedSourceCoordinator.swift")
         let save = try body(source, from: "private func save(entries:", to: "private static func entryID(")

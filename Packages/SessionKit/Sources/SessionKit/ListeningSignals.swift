@@ -197,6 +197,14 @@ public struct ListeningSignal: Codable, Equatable, Sendable {
 /// source are logged: I4 ranks followed sources, and an item without one has no source id to
 /// group under.
 public enum ListeningSignalContext {
+    public typealias Value = (source: ListeningSignalSource, item: ListeningSignalItem)
+
+    public static func load(forItemId itemId: String, from repository: any SessionRepository) -> Value? {
+        guard let item = try? repository.loadItem(id: itemId),
+              let subscriptions = try? repository.loadFeedSubscriptions(), !subscriptions.isEmpty else { return nil }
+        return context(for: item, subscriptions: subscriptions,
+                       entries: (try? repository.loadFeedEntries(subscriptionId: nil)) ?? [])
+    }
     public static func source(for subscription: FeedSubscription) -> ListeningSignalSource {
         ListeningSignalSource(
             id: subscription.source.id,
@@ -236,14 +244,15 @@ public enum ListeningSignalContext {
         subscriptions: [FeedSubscription],
         entries: [FeedEntry]
     ) -> (source: ListeningSignalSource, item: ListeningSignalItem)? {
-        guard let subscription = followedSubscription(for: item, subscriptions: subscriptions) else { return nil }
         let itemKeys = Set([item.externalReference, item.media?.url].compactMap(FollowedSourceMatching.normalizedFollowSourceURL))
         let entry = entries.first { entry in
-            guard entry.subscriptionId == subscription.id else { return false }
+            guard subscriptions.contains(where: { $0.id == entry.subscriptionId }) else { return false }
             return [entry.canonicalURL, entry.audioURL]
                 .compactMap(FollowedSourceMatching.normalizedFollowSourceURL)
                 .contains(where: itemKeys.contains)
         }
+        guard let subscription = entry.flatMap({ entry in subscriptions.first { $0.id == entry.subscriptionId } })
+                ?? followedSubscription(for: item, subscriptions: subscriptions) else { return nil }
         let duration = item.media?.durationMs.map { Double($0) / 1_000 }
         let signalItem = ListeningSignalItem(
             id: entry?.id ?? "library-\(item.id)",

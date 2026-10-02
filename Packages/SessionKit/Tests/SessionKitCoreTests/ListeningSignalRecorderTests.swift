@@ -191,6 +191,27 @@ final class ListeningSignalRecorderTests: XCTestCase {
 
     // MARK: Context
 
+    func testImportedArticleMatchesItsEntryWithoutSourceMetadata() throws {
+        let subscription = FeedSubscription(id: "subscription", source: SourceIdentity(
+            id: "source", kind: .articleFeed, canonicalURL: "https://example.com/feed",
+            host: "example.com", title: "Notes"))
+        let entry = FeedEntry(id: "entry", subscriptionId: subscription.id,
+                              canonicalURL: "https://example.com/posts/1", title: "One", publishedAt: Self.time("2026-09-01T08:00:00Z"))
+        let item = Item(id: "imported", title: "One", mediaType: "article", text: "Words",
+                        externalReference: entry.canonicalURL, status: "ready")
+        let context = try XCTUnwrap(ListeningSignalContext.context(for: item, subscriptions: [subscription], entries: [entry]))
+        XCTAssertEqual(context.source.id, "source")
+        XCTAssertEqual(context.item.id, entry.id)
+        // An exact entry relationship wins over unrelated or stale display metadata.
+        var stale = item
+        stale.sourceTitle = "Other source"
+        let other = FeedSubscription(id: "other", source: SourceIdentity(id: "other-source", kind: .articleFeed,
+            canonicalURL: "https://other.example/feed", host: "other.example", title: "Other source"))
+        XCTAssertEqual(ListeningSignalContext.context(for: stale, subscriptions: [other, subscription], entries: [entry])?.source.id, "source")
+        XCTAssertNil(ListeningSignalContext.context(for: item, subscriptions: [other], entries: [entry]),
+                     "an orphaned feed entry must not manufacture a followed source")
+    }
+
     func testItemsMatchTheirFollowedSourceByURLOrTitleOnly() {
         let subscription = FeedSubscription(
             id: "subscription-source-1",

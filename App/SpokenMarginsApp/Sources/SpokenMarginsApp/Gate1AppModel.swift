@@ -1725,7 +1725,7 @@ final class Gate1AppModel: ObservableObject {
                         if updated != self.snapshot {
                             self.snapshot = updated
                         }
-                        self.listeningSignals.listened(itemId: updated.itemId)
+                        self.listeningSignals.playbackProgress(itemId: updated.itemId, status: updated.status)
                         if previousEngagementProgress < 25,
                            updated.currentPlaybackProgressPercent >= 25,
                            let itemId = updated.itemId,
@@ -6434,10 +6434,7 @@ final class Gate1AppModel: ObservableObject {
             snapshot = try engine.finishInterjection(audioRef: nil)
             refreshSelectedItem()
             recordSavedInterjectionForOnboarding()
-            if let interjection = latestInterjectionNeedingTranscription() {
-                scheduleTranscription(for: interjection)
-                listeningSignals.spokenMargin(itemId: interjection.itemId, audioURL: interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)))
-            }
+            transcribeAndRecordSavedSpokenMargin()
             reportConfirmation("Margin saved. Transcription is continuing in the background.")
         }
         if !snapshot.isRecording {
@@ -9528,8 +9525,8 @@ final class Gate1AppModel: ObservableObject {
                 updateGate3WatchState()
             }
             refreshSelectedItem()
-            if request.command == .finishInterjection, let interjection = latestInterjectionNeedingTranscription() {
-                scheduleTranscription(for: interjection)
+            if request.command == .finishInterjection, result.delegatedToCanonicalRuntime {
+                transcribeAndRecordSavedSpokenMargin()
             }
             diagnostics["gate3WatchLastCommand"] = request.command.rawValue
             diagnostics["gate3WatchLastResult"] = result.delegatedToCanonicalRuntime ? "delegated" : (result.rejectedReason ?? "rejected")
@@ -9654,8 +9651,8 @@ final class Gate1AppModel: ObservableObject {
             if command == .finishInterjection {
                 recordSavedInterjectionForOnboarding()
             }
-            if command == .finishInterjection, let interjection = latestInterjectionNeedingTranscription() {
-                scheduleTranscription(for: interjection)
+            if command == .finishInterjection, result.delegatedToCanonicalRuntime {
+                transcribeAndRecordSavedSpokenMargin()
             }
             if command == .finishInterjection || command == .cancelInterjection {
                 streamingSpeechQueue.resumeAfterInterjection()
@@ -12062,7 +12059,7 @@ final class Gate1AppModel: ObservableObject {
         reportFailure(userMessage, itemId: itemId, retry: retry)
     }
 
-    private func latestInterjectionNeedingTranscription() -> Interjection? {
+    func latestInterjectionNeedingTranscription() -> Interjection? {
         guard let sessionId = snapshot.sessionId,
               let interjections = try? store?.loadInterjections(sessionId: sessionId) else { return nil }
         return interjections.last { $0.transcriptionStatus == "pending" && $0.audioPath != nil }
@@ -12770,7 +12767,7 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    private func scheduleTranscription(for interjection: Interjection) {
+    func scheduleTranscription(for interjection: Interjection) {
         guard let audioPath = interjection.audioPath else { return }
         recordAnchorCaptureDiagnostics(for: interjection)
         switch interjection.podcastAnchorEvidenceCaptureStatus {
@@ -14077,7 +14074,7 @@ final class Gate1AppModel: ObservableObject {
         return "duration_ms=unknown;bytes=\(bytes)"
     }
 
-    private func resolvedInterjectionAudioURL(for path: String) -> URL? {
+    func resolvedInterjectionAudioURL(for path: String) -> URL? {
         Self.resolvedInterjectionAudioURL(
             for: path,
             applicationSupportDirectory: try? FileManager.default.url(
