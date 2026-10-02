@@ -2314,8 +2314,11 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// Stops caller-owned inline audio before closing the source, even if teardown fails.
+    /// The callback must cancel playback without resuming the source (#651).
     @discardableResult
-    public func endSession() throws -> SessionSnapshot {
+    public func endSession(stoppingInlinePlayback: () -> Void = {}) throws -> SessionSnapshot {
+        stoppingInlinePlayback()
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("endSession")
         }
