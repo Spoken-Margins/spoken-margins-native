@@ -18,7 +18,8 @@ import time
 
 from check_posterboard_repair import new_crash
 import lane_sim
-from lane_slots import acquire_simulator_slot, build_slot, host_test_slot, release_handle
+from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
+                        state_dir, SIMULATOR_SLOTS)
 
 from test_inventory import ROOT, plan_tests, swift_tests, target_tests, validate
 
@@ -125,6 +126,33 @@ def capture(command):
     return subprocess.check_output(command, cwd=ROOT, text=True).strip()
 
 
+def inherited_simulator_slot(fd):
+    """Borrow a parent's real locked simulator-slot descriptor; never trust an env flag.
+
+    The parent keeps the decision lock too, excluding a second simulator job for
+    an unattended integration run. Closing this duplicate preserves its lock.
+    """
+    try:
+        info = os.fstat(fd)
+        for name in SIMULATOR_SLOTS:
+            path = state_dir() / name
+            if not path.exists():
+                continue
+            lock_info = path.stat()
+            if (info.st_dev, info.st_ino) != (lock_info.st_dev, lock_info.st_ino):
+                continue
+            with path.open('a+') as probe:
+                try:
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return os.fdopen(os.dup(fd), 'a+')
+                fcntl.flock(probe, fcntl.LOCK_UN)
+            break
+    except OSError:
+        pass
+    raise ValueError('inherited simulator descriptor must name a held Mac-wide simulator slot')
+
+
 def input_identity():
     paths = capture(['git', 'ls-files', '--cached', '--others', '--exclude-standard']).splitlines()
     digest = hashlib.sha256()
@@ -159,6 +187,69 @@ def test_records(log):
     return records
 
 
+def xcresult_test_records(payload):
+    """Read individual XCTest results, independent of interleaved application stdout."""
+    records = {}
+    statuses = {'Passed': 'passed', 'Failed': 'failed', 'Skipped': 'skipped',
+                'Expected Failure': 'passed'}
+
+    def status(node):
+        try:
+            return statuses[node['result']]
+        except KeyError as error:
+            raise ValueError(f'Unfinished or unknown xcresult test result: {node.get("result")}') from error
+
+    def worst(results):
+        return next(s for s in ('failed', 'skipped', 'passed') if s in results)
+
+    def attempts(node):
+        for child in node.get('children', []):
+            if child['nodeType'] == 'Test Case Run':
+                yield status(child)
+            yield from attempts(child)
+
+    def visit(nodes, bundle=None):
+        for node in nodes:
+            if node['nodeType'] in ('Unit test bundle', 'UI test bundle'):
+                bundle = node['name']
+            if node['nodeType'] == 'Test Case':
+                name = node['nodeIdentifier'].removesuffix('()')
+                if not bundle or not re.fullmatch(r'\w+/test\w+', name):
+                    raise ValueError(f'Unknown xcresult test identifier: {bundle}/{name}')
+                identifier = f'{bundle}/{name}'
+                result = {'status': worst([status(node), *attempts(node)]),
+                          'seconds': float(node.get('durationInSeconds', 0))}
+                if identifier in records:
+                    previous = records[identifier]
+                    result['status'] = worst([previous['status'], result['status']])
+                    result['seconds'] += previous['seconds']
+                records[identifier] = result
+            else:
+                visit(node.get('children', []), bundle)
+
+    visit(payload['testNodes'])
+    return records
+
+
+def completed_test_records(log, result_bundle):
+    """Preserve log failures/retries and recover missing completions from the result bundle."""
+    records = test_records(log)
+    payload = json.loads(subprocess.check_output(
+        ['xcrun', 'xcresulttool', 'get', 'test-results', 'tests', '--path', str(result_bundle), '--compact'],
+        cwd=ROOT, text=True, stderr=subprocess.PIPE, timeout=60))
+    structured = xcresult_test_records(payload)
+    if not structured:
+        raise ValueError('No completed individual tests in xcresult')
+    for identifier, result in structured.items():
+        if identifier not in records:
+            records[identifier] = result
+        else:
+            previous = records[identifier]
+            previous['status'] = next(s for s in ('failed', 'skipped', 'passed')
+                                      if s in (previous['status'], result['status']))
+    return records, payload
+
+
 def reconcile(expected, records, allowed_skips=(), probation=()):
     """Errors that fail the step. A test on probation that fails or is missing is reported, not an error."""
     errors = []
@@ -191,6 +282,42 @@ def log_errors(text, limit=3, width=300):
                 break
             found.append('failed: ' + line.strip())
     return [line[:width] for line in dict.fromkeys(found)][:limit]
+
+
+# Codex runs its shell commands under macOS seatbelt and sets CODEX_SANDBOX there. That sandbox refuses
+# to run `ps`, which the lane's own boot tests in scripts/tests need, so runner-tests can't pass inside it
+# (#64's Codex run, 2026-10-01: 2 failures and 12 errors, and the plan stopped before the package step).
+# Inside it the plan skips runner-tests and ends as verified_in_codex_sandbox, which no gate accepts;
+# the Codex worker's own run, outside the sandbox, is the full plan.
+CODEX_SANDBOX_SKIPS = {'runner-tests': 'Codex sandbox: `ps` cannot run here, so the lane boot tests cannot'}
+# SessionKit tests that encode, play or speak real audio fail in that sandbox and pass outside it
+# (AVFoundation 'fmt?' errors, players that never start, speech that never renders; 2026-10-01).
+# Inside the sandbox their results are reported but don't fail the package step.
+CODEX_SANDBOX_AUDIO_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
+    'PodcastEvidenceSignatureLengthTests/testEvidenceFromStereo48kHzAudioStaysQueryableAndPlacesTheMargin',
+    'PodcastLateAnchorPlacementTests/testMarginLateInALongEpisodeIsPlaced',
+    'RealPlayerMarginMomentTests/testMarginPlaysWhenPlaybackReachesItAndTheEpisodeResumesAfterwards',
+    'RealPlayerPodcastEvidenceTests/testContinuousTapCapturesThePreWindowFromAStreamedEpisode',
+    'RealPlayerPodcastEvidenceTests/testContinuousTapInstallsOnceTracksLoadAndCapturesThePreWindow',
+    'RealPlayerPodcastEvidenceTests/testTapKeepsTheHeardAudioAroundAStreamedMarginForTranscription',
+    'SharingTests/testAcousticPauseDetectionFindsEdgesAndProtectsAlignedSpeech',
+    'SharingTests/testAcousticResolverDeclinesConflictingSyntheticMatchesAcrossInsertedAd',
+    'SharingTests/testAcousticResolverDoesNotPlaceMarginsNextToRepeatedAudio',
+    'SharingTests/testAcousticResolverPlacesAMarginAfterAnInsertedAdByTheAdsLength',
+    'SharingTests/testBuilderIncludesOnlyExplicitlySelectedOriginalOrCleanedVoice',
+    'SharingTests/testPortableListeningMapProposalAndPodcastEvidenceImportWithoutActivatingMap',
+    'SharingTests/testSpeechAwarePauseDetectionRemovesAHighEnergyGapWithoutTouchingWords',
+    'SupertonicChunkingTests/testSystemVoiceReadsAFlaggedChunkInSupertonicsFormat',
+    'SystemNarrationRateTests/testNarrationIsHeardAtTheChosenSpeed',
+))
+
+
+def in_codex_sandbox():
+    return bool(os.environ.get('CODEX_SANDBOX'))
+
+
+def passed_status():
+    return 'verified_in_codex_sandbox' if in_codex_sandbox() else 'verified'
 
 
 def ops_test_folders(root=None):
@@ -287,10 +414,20 @@ class Run:
         errors = []
         if tests:
             records = test_records(text)
+            entry['test_evidence'] = 'log'
+            if '-resultBundlePath' in args:
+                bundle = args[args.index('-resultBundlePath') + 1]
+                entry['result_bundle'] = bundle
+                try:
+                    records, payload = completed_test_records(text, bundle)
+                    (self.output / f'{name}-xcresult.json').write_text(json.dumps(payload, indent=2) + '\n')
+                    entry['test_evidence'] = 'log+xcresult'
+                except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
+                    errors.append(f'Could not reconcile xcresult individual tests: {error}')
             entry['tests'] = records
             entry['counts'] = {status: sum(r['status'] == status for r in records.values())
                                for status in ('passed', 'failed', 'skipped')}
-            errors = reconcile(expected, records, allowed_skips, probation or ())
+            errors.extend(reconcile(expected, records, allowed_skips, probation or ()))
             if probation is not None:  # scripted journeys: each listed test's result, by status
                 entry['gating'] = {test: records.get(test, {}).get('status', 'missing')
                                    for test in sorted(set(expected or ()) - probation)}
@@ -330,7 +467,10 @@ class Run:
             self.host_steps()
 
     def host_steps(self):
-        self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'])
+        if in_codex_sandbox():
+            self.skip('runner-tests')
+        else:
+            self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'])
         self.ops_steps()
         self.command('contracts', [sys.executable, 'scripts/validate-contracts.py'])
         self.command('surfaces', [sys.executable, 'scripts/validate-surface-contracts.py'])
@@ -343,10 +483,17 @@ class Run:
             expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))
         self.command('package', ['bash', 'scripts/run-sessionkit-tests.sh'], timeout=300,
                      expected=expected, tests=True,
-                     allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus'})
+                     allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus'},
+                     probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
 
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed during fast verification')
+
+    def skip(self, name):
+        reason = CODEX_SANDBOX_SKIPS[name]
+        self.manifest['steps'].append({'name': name, 'skipped': reason})
+        self.save()
+        print(f'{name}: skipped ({reason})', flush=True)
 
     def ops_steps(self, root=None):
         """The ops tools' own tests (ops/dial, ops/codex), one step per folder: each folder imports its
@@ -356,7 +503,7 @@ class Run:
             name = 'ops-' + '-'.join(folder.relative_to(base).parts[1:]) if folder != base / 'ops' else 'ops'
             self.command(name, [sys.executable, '-m', 'unittest', 'discover', '-s', str(folder), '-t', str(folder)])
 
-    def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None):
+    def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None, simulator_slot_fd=None):
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
@@ -409,8 +556,9 @@ class Run:
         # A run that boots its own simulator holds a Mac-wide simulator slot until it shuts it down
         # (16 GB Mac: a second simulator job only while memory pressure is normal, #184). A device
         # someone else booted is theirs, and so is the slot.
-        slot = acquire_simulator_slot(f'verify-tests {plan}', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS) \
-            if booted_here else None
+        slot = inherited_simulator_slot(simulator_slot_fd) if simulator_slot_fd is not None else (
+            acquire_simulator_slot(f'verify-tests {plan}', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS)
+            if booted_here else None)
         try:
             if booted_here:
                 # Lane boot rules (scripts/lane_sim.py): one boot at a time, no builds meanwhile, no retry
@@ -447,7 +595,10 @@ class Run:
                 subprocess.run(['xcrun', 'simctl', 'shutdown', chosen['udid']],
                                cwd=ROOT, capture_output=True, timeout=60)
             if slot:
-                release_handle(slot)
+                if simulator_slot_fd is not None:
+                    slot.close()
+                else:
+                    release_handle(slot)
         if input_identity() != identity:
             raise RuntimeError('Inputs changed during testing; rerun on a stable source state')
 
@@ -457,6 +608,7 @@ def main():
     parser.add_argument('--plan', choices=['fast', *PLANS], default='fast')
     parser.add_argument('--device', help='Supported simulator UDID (including iPad); overrides phone preference')
     parser.add_argument('--ios', type=int, help='Required iOS major version, e.g. 26 or 27; never falls back to another OS')
+    parser.add_argument('--simulator-slot-fd', type=int, help=argparse.SUPPRESS)
     parser.add_argument('--rebuild', action='store_true', help='Ignore the compatible build stamp')
     parser.add_argument('--output', type=Path, help='New evidence directory')
     parser.add_argument('--list', action='store_true', help='Inspect selection without running tests')
@@ -490,12 +642,14 @@ def main():
                 if journeys:
                     run.manifest['scripted_journeys'] = journeys
                     run.xcode(args.plan, args.device, args.rebuild, args.ios,
-                              journeys['gating'] + journeys['probation'], probation=journeys['probation'])
+                              journeys['gating'] + journeys['probation'], probation=journeys['probation'],
+                              simulator_slot_fd=args.simulator_slot_fd)
                 else:
-                    run.xcode(args.plan, args.device, args.rebuild, args.ios, args.only_testing)
+                    run.xcode(args.plan, args.device, args.rebuild, args.ios, args.only_testing,
+                              simulator_slot_fd=args.simulator_slot_fd)
             if input_identity() != run.manifest['input_sha256']:
                 raise RuntimeError('Inputs changed during verification; rerun on a stable source state')
-            run.manifest['status'] = 'verified'
+            run.manifest['status'] = passed_status()
             return 0
         except (RuntimeError, subprocess.SubprocessError, OSError, KeyboardInterrupt) as error:
             run.manifest.update(status='failed_or_incomplete', error=str(error) or repr(error))

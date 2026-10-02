@@ -203,6 +203,8 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
     public var showTitle: String?
     public var durationMs: Int?
     public var publishedAt: String?
+    /// The feed's `<guid>` for the episode, or Apple's `episodeGuid` (#177).
+    public var episodeGUID: String?
     public var audioURL: String?
     public var transcriptLinks: [SourceTranscriptLink]
     public var chapterLinks: [SourceChapterLink]
@@ -215,6 +217,7 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
         showTitle: String? = nil,
         durationMs: Int? = nil,
         publishedAt: String? = nil,
+        episodeGUID: String? = nil,
         audioURL: String? = nil,
         transcriptLinks: [SourceTranscriptLink] = [],
         chapterLinks: [SourceChapterLink] = [],
@@ -226,6 +229,7 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
         self.showTitle = showTitle
         self.durationMs = durationMs
         self.publishedAt = publishedAt
+        self.episodeGUID = episodeGUID
         self.audioURL = audioURL
         self.transcriptLinks = transcriptLinks
         self.chapterLinks = chapterLinks
@@ -239,6 +243,7 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
         case showTitle
         case durationMs
         case publishedAt
+        case episodeGUID
         case audioURL
         case transcriptLinks
         case chapterLinks
@@ -253,6 +258,7 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
         showTitle = try container.decodeIfPresent(String.self, forKey: .showTitle)
         durationMs = try container.decodeIfPresent(Int.self, forKey: .durationMs)
         publishedAt = try container.decodeIfPresent(String.self, forKey: .publishedAt)
+        episodeGUID = try container.decodeIfPresent(String.self, forKey: .episodeGUID)
         audioURL = try container.decodeIfPresent(String.self, forKey: .audioURL)
         transcriptLinks = try container.decodeIfPresent([SourceTranscriptLink].self, forKey: .transcriptLinks) ?? []
         chapterLinks = try container.decodeIfPresent([SourceChapterLink].self, forKey: .chapterLinks) ?? []
@@ -631,6 +637,13 @@ public struct Item: Codable, Equatable, Sendable {
     public var documentStructure: PDFDocumentStructure?
     /// Source completion survives replay and independent assistant-turn playback.
     public var sourceCompletedAt: Date? = nil
+    /// A podcast episode's feed GUID, show title and publish date, stored when the episode is
+    /// added from a feed or Apple Podcasts link. Shared Margins match by GUID because every
+    /// subscriber's GUID is the same even when their audio links differ (#177). Optional and
+    /// additive, so Build 29's decoder ignores them.
+    public var episodeGUID: String? = nil
+    public var showTitle: String? = nil
+    public var publishedAt: String? = nil
 
     public init(
         id: String,

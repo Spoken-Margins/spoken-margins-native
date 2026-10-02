@@ -247,6 +247,65 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertTrue(spoken.contains("A bulleted point in body text stays"))
     }
 
+    func testV2MakesNoChaptersFromTheTitleAndAuthorLines() throws {
+        // #272 on PMC13305550 (F1000Research): the two lines of a 16 pt title, the
+        // fragments of a 13 pt bold author line and a 14 pt "v1" badge each became
+        // a chapter, because display type before the abstract was left to the
+        // visual-heading rule.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9)]
+        let title: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 16)]
+        let authors: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 13)]
+        let badge: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 14)]
+        let heading: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 12)]
+        let prose = [
+            "Listening lets researchers take in papers during time that reading cannot use.",
+            "We asked twelve researchers to listen to papers during their daily commute.",
+            "Each participant kept a short diary of the sessions over four weeks of study.",
+        ]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("Listening to Papers: A Field Study of Researchers" as NSString).draw(at: CGPoint(x: 60, y: 90), withAttributes: title)
+            ("on Their Commute" as NSString).draw(at: CGPoint(x: 60, y: 120), withAttributes: title)
+            ("Ada Example1" as NSString).draw(at: CGPoint(x: 60, y: 160), withAttributes: authors)
+            (", Ben Sample2" as NSString).draw(at: CGPoint(x: 160, y: 160), withAttributes: authors)
+            (", Cy Third3" as NSString).draw(at: CGPoint(x: 260, y: 160), withAttributes: authors)
+            ("v1" as NSString).draw(at: CGPoint(x: 520, y: 200), withAttributes: badge)
+            // At heading size: on the simulator a 9 pt bold "Abstract" wasn't read as a
+            // heading, and this test is about the title page, not bold detection.
+            ("Abstract" as NSString).draw(at: CGPoint(x: 60, y: 236), withAttributes: heading)
+            for (offset, line) in prose.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 256 + CGFloat(offset) * 12), withAttributes: body)
+            }
+            context.beginPage()
+            ("Introduction" as NSString).draw(at: CGPoint(x: 60, y: 90), withAttributes: heading)
+            for (offset, line) in prose.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 110 + CGFloat(offset) * 12), withAttributes: body)
+            }
+        }
+        let pdf = try XCTUnwrap(PDFDocument(data: data))
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        let characters = Array(document.text)
+        func text(_ segment: StructuredDocument.Segment) -> String {
+            String(characters[segment.range.start..<segment.range.end])
+        }
+
+        XCTAssertEqual(document.segments.filter { $0.role == .heading }.map(text), ["Abstract", "Introduction"])
+        let titles = document.segments.filter { $0.role == .title }
+        XCTAssertEqual(titles.count, 1, "a two-line title is one segment, read once")
+        XCTAssertEqual(titles.first.map(text)?.split(whereSeparator: \.isNewline).joined(separator: " "),
+                       "Listening to Papers: A Field Study of Researchers on Their Commute")
+        let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ")
+        XCTAssertTrue(spoken.contains("Ada Example"), "author names are read (owner, #191)")
+        XCTAssertFalse(spoken.contains("v1"))
+
+        // The item keeps v1's title, so a PDF imported under v1 and re-imported under
+        // v2 is the same item and the edition guard applies.
+        let v1Title = try PDFStructuredTextExtractor.markdown(from: pdf)
+            .split(separator: "\n").first { $0.hasPrefix("# ") }.map { String($0.dropFirst(2)) }
+        XCTAssertEqual(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: document), try XCTUnwrap(v1Title))
+    }
+
     func testV2SkipsFootnoteTextAtTheFootOfAPage() throws {
         // #250: v2 never gave a line the footnote role, so a page's footnote was read
         // where PDFKit placed it, often between the halves of a body sentence.
