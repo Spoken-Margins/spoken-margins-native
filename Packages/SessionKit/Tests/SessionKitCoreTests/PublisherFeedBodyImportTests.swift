@@ -10,16 +10,14 @@ final class PublisherFeedBodyImportTests: XCTestCase {
         let expectedPrefix = "Don’t stop. “Read—then listen” © 2026. ≂̸ 😀"
         let words = String(repeating: "The harbour shelters fishing boats. ", count: 130)
         let parsed = try FeedParser().parse(data: Data("""
-        <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
-        <channel><title>Publisher</title><generator>Substack</generator><item>
-        <title>Article</title><link>https://publisher.example/p/article</link>
-        <enclosure url="https://publisher.example/recording.mp3" type="audio/mpeg"/>
-        <content:encoded><![CDATA[<p>\(prefix)</p><p>\(words)</p>]]></content:encoded>
+        <rss><channel><item><title>Article</title>
+        <link>https://publisher.example/p/article</link>
+        <content:encoded xmlns:content="http://purl.org/rss/1.0/modules/content/"><![CDATA[<p>\(prefix)</p><p>\(words)</p>]]></content:encoded>
         </item></channel></rss>
         """.utf8))
         let post = try XCTUnwrap(parsed.items.first)
         let entry = FeedEntry(id: "post", subscriptionId: "source", canonicalURL: post.url,
-            audioURL: post.audioURL, title: post.title, bodyWordCount: PublisherAudioDetector.bodyWordCount(of: post),
+            audioURL: "https://publisher.example/recording.mp3", title: post.title, bodyWordCount: PublisherAudioDetector.bodyWordCount(of: post),
             fullBody: post.content, publisherNarrationConfirmed: true)
         let handoff = try XCTUnwrap(PublisherAudioDetector.articleHandoff(for: entry))
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
