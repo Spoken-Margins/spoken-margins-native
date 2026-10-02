@@ -20,6 +20,7 @@ extension ListeningSignalRecorder {
 final class ListeningSignalsCoordinator {
     private let collector: ListeningSignalCollector
     private let repository: @MainActor () -> (any SessionRepository)?
+    private var pendingDurations: [UUID: Task<Void, Never>] = [:]
     init(recorder: ListeningSignalRecorder = .app, repository: @escaping @MainActor () -> (any SessionRepository)?) {
         self.collector = ListeningSignalCollector(recorder: recorder)
         self.repository = repository
@@ -41,12 +42,18 @@ final class ListeningSignalsCoordinator {
     /// Spoken Margin length is its recording's duration, read off the main thread.
     func spokenMargin(itemId: String?, audioURL: URL?) {
         let store = repository(), at = Date(), signals = collector
-        Task.detached(priority: .utility) {
+        let id = UUID()
+        let task = Task.detached(priority: .utility) {
             var seconds = 0
             if let audioURL, let duration = try? await AVURLAsset(url: audioURL).load(.duration), duration.isNumeric {
                 seconds = max(0, Int(duration.seconds.rounded()))
             }
             signals.record(.margin(kind: .spoken, length: seconds), itemId: itemId, repository: store, at: at)
+        }
+        pendingDurations[id] = task
+        Task { [weak self] in
+            await task.value
+            self?.pendingDurations.removeValue(forKey: id)
         }
     }
 
@@ -71,8 +78,16 @@ final class ListeningSignalsCoordinator {
     }
 
     /// A copy of the log for the share sheet, or nil when nothing has been logged yet.
-    func exportFileURL() -> URL? {
-        try? collector.exportCopy(to: FileManager.default.temporaryDirectory.appendingPathComponent("ListeningSignals", isDirectory: true))
+    func exportFileURL() async -> URL? {
+        // Capture the work already present at invocation. Later actions do not keep this
+        // export waiting indefinitely; every captured task enqueues before the queue drains.
+        let pending = Array(pendingDurations.values)
+        for task in pending { await task.value }
+        let signals = collector
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ListeningSignals", isDirectory: true)
+        return await Task.detached(priority: .utility) {
+            try? signals.exportCopy(to: directory)
+        }.value
     }
 
     private func record(_ event: ListeningSignalEvent, itemId: String?) {

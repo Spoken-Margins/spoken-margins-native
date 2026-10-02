@@ -50,20 +50,15 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         else { model.finishInterjection() }
         XCTAssertFalse(model.snapshot.isRecording)
         XCTAssertEqual(model.selectedItem.interjections.count, 1)
-        let deadline = Date().addingTimeInterval(5)
-        var margins: [ListeningSignal] = []
-        repeat {
-            _ = coordinator.exportFileURL()
-            margins = recorder.signals().filter { $0.event.name == "margin" }
-            if !margins.isEmpty { break }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        } while Date() < deadline
+        let exported = await coordinator.exportFileURL()
+        XCTAssertNotNil(exported, "the first explicit export includes the saved spoken Margin")
+        let margins = recorder.signals().filter { $0.event.name == "margin" }
         XCTAssertEqual(margins.map(\.event), [.margin(kind: .spoken, length: 1)])
         XCTAssertEqual(margins.first?.item?.id, "entry")
         XCTAssertEqual(margins.first?.source.id, "source")
         if compact {
             model.dispatchGate2CompactCommand(.finishInterjection)
-            _ = coordinator.exportFileURL()
+            _ = await coordinator.exportFileURL()
             XCTAssertEqual(recorder.signals().filter { $0.event.name == "margin" }.count, 1)
         }
         model.endSession()

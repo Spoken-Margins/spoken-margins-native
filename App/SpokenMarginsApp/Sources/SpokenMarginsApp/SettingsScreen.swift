@@ -16,6 +16,7 @@ struct SettingsScreen: View {
     @State private var isResetConfirmationPresented = false
     @State private var copiedDiagnostics = false
     @State private var listeningSignalsExportURL: URL?
+    @State private var isExportingListeningSignals = false
     @State private var isListeningSignalsSharePresented = false
     @State private var hasNoListeningSignals = false
 
@@ -368,9 +369,13 @@ struct SettingsScreen: View {
                         .accessibilityIdentifier("settings.copyDiagnostics.button")
                     #if canImport(UIKit)
                     Button {
-                        listeningSignalsExportURL = model.listeningSignals.exportFileURL()
-                        isListeningSignalsSharePresented = listeningSignalsExportURL != nil
-                        hasNoListeningSignals = listeningSignalsExportURL == nil
+                        isExportingListeningSignals = true
+                        Task {
+                            defer { isExportingListeningSignals = false }
+                            listeningSignalsExportURL = await model.listeningSignals.exportFileURL()
+                            isListeningSignalsSharePresented = listeningSignalsExportURL != nil
+                            hasNoListeningSignals = listeningSignalsExportURL == nil
+                        }
                     } label: {
                         Label(
                             hasNoListeningSignals ? "Nothing Recorded Yet" : "Export Listening Signals",
@@ -379,6 +384,7 @@ struct SettingsScreen: View {
                     }
                     .buttonStyle(.borderless)
                     .accessibilityIdentifier("settings.exportListeningSignals.button")
+                    .disabled(isExportingListeningSignals)
                     .sheet(isPresented: $isListeningSignalsSharePresented) {
                         if let listeningSignalsExportURL {
                             ListeningSignalsActivityView(fileURL: listeningSignalsExportURL)
