@@ -211,7 +211,12 @@ final class SourceLinkImportTests: XCTestCase {
             let subscription = FeedSubscription(id: "s", source: SourceIdentity(id: "publication", kind: .podcastFeed,
                 canonicalURL: "https://publisher.example/private-feed", host: "publisher.example", title: "Publisher"), lastRefreshAt: Date())
             try store.saveFeedSubscription(subscription)
-            let body = String(repeating: "This subscriber article is available in the feed only. ", count: 90)
+            let sentences = String(repeating: "This subscriber article is available in the feed only. ", count: 90)
+            let html = "<p>Don&#8217;t stop. &ldquo;Listen&rdquo; &copy; 2026.</p><p>\(sentences)</p>"
+            let feed = "<rss><channel><item><title>Private publisher narration</title><content:encoded xmlns:content=\"http://purl.org/rss/1.0/modules/content/\"><![CDATA[\(html)]]></content:encoded></item></channel></rss>"
+            let parsed = try FeedParser().parse(data: Data(feed.utf8), contentType: "application/rss+xml")
+            let body = try XCTUnwrap(parsed.items.first?.content)
+            let expected = "Don’t stop. “Listen” © 2026. " + sentences.trimmingCharacters(in: .whitespacesAndNewlines)
             let entry = FeedEntry(id: "private-post", subscriptionId: "s", canonicalURL: "https://publisher.example/p/private",
                 audioURL: "https://publisher.example/private.mp3", title: "Private publisher narration", bodyWordCount: 810,
                 fullBody: body, publisherNarrationConfirmed: true, audioDurationMs: 60_000)
@@ -223,7 +228,7 @@ final class SourceLinkImportTests: XCTestCase {
             let row = try XCTUnwrap(model.libraryItems.first { $0.title == entry.title })
             let item = try store.loadItem(id: row.id)
             XCTAssertEqual(item.mediaType, "text")
-            XCTAssertEqual(item.text, body.trimmingCharacters(in: .whitespacesAndNewlines))
+            XCTAssertEqual(item.text, expected, "Add and open must import decoded feed text")
             XCTAssertNil(item.media)
             XCTAssertEqual(try store.loadPublisherAudio(itemId: item.id)?.audioURL, entry.audioURL)
             XCTAssertEqual(extractor.calls, 0, "a public 403/teaser must never replace accessible feed text")
