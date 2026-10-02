@@ -392,6 +392,17 @@ class T3Tests(unittest.TestCase):
                 verdict = self._t3_with((problem, {'period': 'two-simulator'}), None, back_to_one)[0]
                 self.assertEqual((verdict, back_to_one.call_count), ('INCONCLUSIVE', expected))
 
+    def test_t3_failure_report_links_exported_manifest_and_media(self):
+        manifest = {'status': 'failed_or_incomplete', 'steps': [{
+            'tests': {'T/A/testBad': {'status': 'failed'}},
+            'attachments': [{'test': 'T/A/testBad', 'manifest': '/mac/manifest.json',
+                             'files': ['/mac/recording.mp4']}]}]}
+        summaries, statuses, _, details = lane.run_plans(
+            {'app': ['T/A']}, lambda *args: manifest, Path('/mac/run'))
+        self.assertEqual(lane.t3_verdict(summaries, statuses), 'FAIL')
+        self.assertIn('- [Attachment manifest](</mac/manifest.json>)', details)
+        self.assertIn('- [recording.mp4](</mac/recording.mp4>)', details)
+
     def test_a_flood_stops_the_remaining_plans(self):
         calls = []
 
