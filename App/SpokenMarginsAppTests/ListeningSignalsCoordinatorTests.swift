@@ -46,7 +46,10 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         let exported = await signals.exportFileURL()
         let rows = exported.map(ListeningSignalRecorder.read) ?? []
         XCTAssertEqual(rows.map { $0.source.id }, [subscription.source.id])
-        XCTAssertEqual(rows.map(\.event), [.listened(seconds: 1)])
+        guard case .listened(let seconds) = try XCTUnwrap(rows.first?.event) else {
+            return XCTFail("confirmed playing after relationship refresh must be exported")
+        }
+        XCTAssertGreaterThanOrEqual(seconds, 1, "the recorder rounds real elapsed time to tenths")
         model.endSession()
     }
 
