@@ -4,7 +4,6 @@ import ZIPFoundation
 import SessionKit
 import SessionKitPersistence
 import SessionKitSharing
-import ShippedPacketReader
 
 final class PublisherAudioPacketTests: XCTestCase {
     func testPublisherRecordingDoesNotChangeExportedPacketOrEscapeInAnyEntry() throws {
@@ -28,8 +27,7 @@ final class PublisherAudioPacketTests: XCTestCase {
                     anchorBefore: "The harbour", anchorAfter: "fishing boats.", status: .senderApproved),
                     anchor: .init(anchorType: .text, exactText: "shelters"), representation: .textOnly)])
             let url = root.appendingPathComponent("\(name).spokenmargins")
-            _ = try SpokenMarginsPackageArchive.write(prepared, to: url)
-            _ = try ShippedPacketReader.importPacket(at: url)
+            _ = try exportPacket(prepared, to: url)
             let archive = try Archive(url: url, accessMode: .read)
             var entries: [String: Data] = [:]
             for entry in archive {
