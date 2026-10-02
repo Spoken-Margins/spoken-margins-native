@@ -59,7 +59,7 @@ public enum PublisherAudioAligner {
         let sentences = self.sentences(in: article, words: articleWords)
         guard !sentences.isEmpty else { return .noMatch(placedSentences: 0, totalSentences: 0) }
         let spoken = recognisedWords(in: recognised)
-        let matches = match(articleWords.map(\.normalized), spoken.map(\.normalized))
+        let matches = match(articleWords.map(\.normalized), spoken)
 
         var segments: [MediaTimelineSegment] = []
         var previousEndMs = 0
@@ -262,9 +262,9 @@ public enum PublisherAudioAligner {
 
     /// For each article word, the index of the recognised word it matched, or nil.
     /// Matched indices only go up.
-    static func match(_ article: [String], _ spoken: [String]) -> [Int?] {
+    static func match(_ article: [String], _ spoken: [SpokenWord]) -> [Int?] {
         var matches = [Int?](repeating: nil, count: article.count)
-        let anchors = orderedAnchors(article, spoken, size: 3)
+        let anchors = orderedAnchors(article, spoken.map(\.normalized), size: 3)
 
         // Each anchor matches three words; consecutive anchors often overlap.
         var lastArticle = -1
@@ -334,7 +334,7 @@ public enum PublisherAudioAligner {
     /// both stretches are short.
     private static func fillGap(
         _ article: [String],
-        _ spoken: [String],
+        _ spoken: [SpokenWord],
         from start: (Int, Int),
         to end: (Int, Int),
         into matches: inout [Int?]
@@ -350,13 +350,23 @@ public enum PublisherAudioAligner {
         let openEnd = end.0 >= article.count
         if openStart, !openEnd {
             spokenRange = max(spokenRange.lowerBound, end.1 - reach)..<end.1
+            // Word distance alone still reaches into a short intro before a long pause. A
+            // match must also fit the same per-word time budget used by start extrapolation.
+            let earliestStart = spoken[end.1].startMs - articleRange.count * maximumUnmatchedWordMs
+            while !spokenRange.isEmpty, spoken[spokenRange.lowerBound].startMs < earliestStart {
+                spokenRange = (spokenRange.lowerBound + 1)..<spokenRange.upperBound
+            }
         } else if openEnd, !openStart {
             spokenRange = spokenRange.lowerBound..<min(spokenRange.upperBound, spokenRange.lowerBound + reach)
+            let latestEnd = spoken[start.1].endMs + articleRange.count * maximumUnmatchedWordMs
+            while !spokenRange.isEmpty, spoken[spokenRange.upperBound - 1].endMs > latestEnd {
+                spokenRange = spokenRange.lowerBound..<(spokenRange.upperBound - 1)
+            }
         }
         guard !articleRange.isEmpty, !spokenRange.isEmpty,
               articleRange.count <= maximumGapWords, spokenRange.count <= maximumGapWords else { return }
         let a = Array(article[articleRange])
-        let s = Array(spoken[spokenRange])
+        let s = spoken[spokenRange].map(\.normalized)
         var table = [[Int]](repeating: [Int](repeating: 0, count: s.count + 1), count: a.count + 1)
         for i in stride(from: a.count - 1, through: 0, by: -1) {
             for j in stride(from: s.count - 1, through: 0, by: -1) {

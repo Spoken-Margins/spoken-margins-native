@@ -278,26 +278,50 @@ final class PublisherAudioAlignerTests: XCTestCase {
         // reach back into the intro for it.
         let text = "The harbour at Kettleness shelters fishing boats. Crab pots line the quay wall. "
             + "Gulls circle above the lifeboat station. Tourists photograph the herring barrel. Ruth Alder lands her catch before dawn."
+        for intro in ["This is the audio version of our newsletter.", "Welcome to the audio version."] {
+            let spoken: [(Int, String)] = [
+                (0, intro),
+                (10_000, "harbour at Kettleness shelters fishing boats."),
+                (13_000, "Crab pots line the quay wall."),
+                (16_000, "Gulls circle above the lifeboat station."),
+                (19_000, "Tourists photograph the herring barrel."),
+                (22_000, "Ruth Alder lands her catch before dawn."),
+            ]
+            let segments = spoken.enumerated().map { index, entry in
+                MediaTimelineSegment(id: "s\(index)", startMs: entry.0, endMs: entry.0 + 2_500, text: entry.1)
+            }
+            let alignment = PublisherAudioAligner.align(
+                articleText: text,
+                recognised: TranscriptTimeline(segments: segments, chapters: [], durationMs: 25_000)
+            )
+            let timeline = try XCTUnwrap(alignment.timeline, alignment.status)
+            XCTAssertEqual(timeline.segments.count, 5)
+            let first = try XCTUnwrap(timeline.segments.first)
+            XCTAssertEqual(first.startChar, 0)
+            XCTAssertLessThanOrEqual(abs(first.startMs - 10_000), 1_000, "\(intro): starts at \(first.startMs)")
+        }
+    }
+
+    func testAnOutroWordAcrossAPauseDoesNotExtendTheLastSentence() throws {
+        let text = "The harbour at Kettleness shelters fishing boats. Crab pots line the quay wall. "
+            + "Gulls circle above the lifeboat station. Tourists photograph the herring barrel. Ruth Alder lands her catch before dawn."
         let spoken: [(Int, String)] = [
-            (0, "This is the audio version of our newsletter."),
-            (10_000, "harbour at Kettleness shelters fishing boats."),
+            (10_000, "The harbour at Kettleness shelters fishing boats."),
             (13_000, "Crab pots line the quay wall."),
             (16_000, "Gulls circle above the lifeboat station."),
             (19_000, "Tourists photograph the herring barrel."),
-            (22_000, "Ruth Alder lands her catch before dawn."),
+            (22_000, "Ruth Alder lands her catch before"),
+            (35_000, "Until dawn."),
         ]
         let segments = spoken.enumerated().map { index, entry in
             MediaTimelineSegment(id: "s\(index)", startMs: entry.0, endMs: entry.0 + 2_500, text: entry.1)
         }
-        let alignment = PublisherAudioAligner.align(
-            articleText: text,
-            recognised: TranscriptTimeline(segments: segments, chapters: [], durationMs: 25_000)
-        )
+        let alignment = PublisherAudioAligner.align(articleText: text, recognised: TranscriptTimeline(
+            segments: segments, chapters: [], durationMs: 37_500))
         let timeline = try XCTUnwrap(alignment.timeline, alignment.status)
         XCTAssertEqual(timeline.segments.count, 5)
-        let first = try XCTUnwrap(timeline.segments.first)
-        XCTAssertEqual(first.startChar, 0)
-        XCTAssertLessThanOrEqual(abs(first.startMs - 10_000), 1_000, "starts at \(first.startMs)")
+        let last = try XCTUnwrap(timeline.segments.last)
+        XCTAssertLessThanOrEqual(abs(last.endMs - 24_500), 1_000, "ends at \(last.endMs)")
     }
 
     func testAParagraphReadOutOfOrderCostsOnlyThatParagraph() throws {
