@@ -9,6 +9,7 @@ real first lines seen on PRs #344, #366, #374 and #418 on 2026-09-30.
 import json
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -268,6 +269,46 @@ class Rearm(unittest.TestCase):
     def test_clean_audit_after_held_pass_rearms(self):
         ok, why = self.decide([self.LANE, self.CLEAN])
         self.assertTrue(ok, why)
+
+    def test_inherited_findings_prevent_rearm_until_exact_head_resolution(self):
+        finding = {'audit': 'https://github.com/example/repo/pull/616#issuecomment-42',
+                   'audit_sha256': 'd' * 64, 'source_pr': 616, 'source_head': OLD,
+                   'body': 'The inherited app boundary loses literal tags.'}
+        args = (pr(**self.ARMED), [self.LANE, self.CLEAN], [], [finding])
+        self.assertEqual(A.rearm_decision(*args), (False, 'unresolved inherited audit findings'))
+        marker = {k: finding[k] for k in ('audit', 'audit_sha256')}
+        marker.update(head=HEAD, resolution='fixed', evidence='Reviewed literal-tag app import regression.')
+        resolved = {**self.CLEAN, 'author_association': 'OWNER', 'body': self.CLEAN['body'] +
+                    '\n<!-- inherited-audit-resolution: ' + json.dumps(marker) + ' -->'}
+        self.assertTrue(A.rearm_decision(pr(**self.ARMED), [self.LANE, resolved], [], [finding])[0])
+        context_pr = {**pr(), 'lines': 5, 'issues': [], 'inherited_audits': [finding]}
+        context = A.pr_context_block(context_pr, {}, 'diff', OLD, OLD)
+        for required in (finding['audit'], finding['audit_sha256'], finding['body'], HEAD):
+            self.assertIn(required, context)
+
+    def test_live_rearm_checks_inherited_evidence_before_any_label_write(self):
+        candidate = pr(**self.ARMED)
+        finding = {'audit': 'https://github.com/example/repo/pull/616#issuecomment-42',
+                   'audit_sha256': 'd' * 64, 'source_pr': 616, 'source_head': OLD, 'body': 'Lost text.'}
+        with mock.patch.object(A, 'REARMED', set()), \
+                mock.patch.object(A, 'fetch_open_prs', return_value=[candidate]), \
+                mock.patch.object(A, 'fetch_comments', return_value=[self.LANE, self.CLEAN]), \
+                mock.patch.object(A, 'fetch_label_events', return_value=[]), \
+                mock.patch.object(A, 'fetch_inherited_audits', return_value=[finding]), \
+                mock.patch.object(A, 'log'), mock.patch.object(A, 'run') as mutation:
+            A.rearm_pass([candidate], False)
+            mutation.assert_not_called()
+
+    def test_rearm_does_not_restore_label_removed_during_inherited_lookup(self):
+        candidate = pr(**self.ARMED)
+        with mock.patch.object(A, 'REARMED', set()), \
+                mock.patch.object(A, 'fetch_open_prs', side_effect=[[candidate], [pr(labels=[])]]), \
+                mock.patch.object(A, 'fetch_comments', return_value=[self.LANE, self.CLEAN]), \
+                mock.patch.object(A, 'fetch_label_events', return_value=[]), \
+                mock.patch.object(A, 'fetch_inherited_audits', return_value=[]), \
+                mock.patch.object(A, 'log'), mock.patch.object(A, 'run') as mutation:
+            A.rearm_pass([candidate], False)
+            mutation.assert_not_called()
 
     def test_events_are_fetched_last(self):
         self.assertEqual(A.rearm_decision(pr(**self.ARMED), [self.LANE, self.CLEAN], None), (False, "need events"))

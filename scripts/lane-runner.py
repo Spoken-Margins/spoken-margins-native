@@ -724,6 +724,19 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
         held = t3_gate(latest)
         if held:
             return held[0], where, ran, details + [f'not merged: {held[1]}.']
+        try:
+            inherited = github.inherited_audit_blockers(ROOT, base, base_sha, head, latest)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            return 'INCONCLUSIVE', where, ran, details + [
+                f'not merged: held for inherited audit: evidence unavailable ({error}).']
+        if inherited:
+            return verdict, where, ran, details + ['not merged by the runner: ' + reason for reason in inherited]
+        # Discovery may take longer than a normal comments read. Keep the
+        # existing own-PR audit and T3 gates fresh after that network work too.
+        latest = github.comments()
+        held = t3_gate(latest)
+        if held:
+            return held[0], where, ran, details + [f'not merged: {held[1]}.']
         blockers = merge_blockers(scope, latest, head)
         if blockers:
             return verdict, where, ran, details + [f'not merged by the runner: {b}. It merges once a Codex audit '
@@ -1354,6 +1367,16 @@ class GitHub:
         lines = self.api('--paginate', '--jq', '.[] | @json', f'repos/{self.repo}/issues/{self.pr}/comments')
         return [json.loads(line) for line in lines.splitlines() if line.strip()]
 
+    def inherited_audit_blockers(self, tree: Path, base: str, base_sha: str,
+                                 head: str, comments: list[dict]) -> list[str]:
+        policy = base_policy(tree, base, 'scripts/lane_inherited_audits.py')
+        if policy is None:
+            raise RuntimeError('the base has no inherited-audit policy')
+        findings = policy.collect(tree, self.repo, self.pr, base_sha, head)
+        # Source discovery can take time. Re-read the candidate audit/clearances
+        # afterwards; the caller also checks its live head and automerge label.
+        return policy.reasons(findings, self.comments(), head)
+
     def comment(self, body: str) -> str:
         return json.loads(self.api(f'repos/{self.repo}/issues/{self.pr}/comments', '-f', f'body={body}'))['html_url']
 
@@ -1375,7 +1398,8 @@ MERGE_SUBJECT = re.compile(r'^Merge pull request #(\d+)(?::\s*(.*)| from \S+)')
 TESTED_ON = re.compile(r'\(tested merged with (\S+) at ([0-9a-f]{7,40})\)')
 REVERTS = re.compile(r'^This reverts commit ([0-9a-f]{40})', re.M)  # git revert's own line
 # INCONCLUSIVE reports that are the PR's or the request's own doing, not the lane's.
-NOT_LANE_FAULTS = (('does not merge cleanly', 'a merge conflict'),
+NOT_LANE_FAULTS = (('held for inherited audit:', 'an inherited audit evidence hold'),
+                   ('does not merge cleanly', 'a merge conflict'),
                    ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'))
 PENDING_T3_HOLD = re.compile(r'^not merged: held for T3:', re.M)
 LANE_MERGE_LOOKBACK = 300

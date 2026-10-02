@@ -40,6 +40,9 @@ class FakeGitHub:
         self.posted, self.label_changes, self.fail_comment = [], [], fail_comment
         self.labeled = []  # GitHub's `labeled` events: none when the label was already there
 
+    def inherited_audit_blockers(self, tree, base, base_sha, head, comments):
+        return getattr(self, "inherited", [])
+
     def pull(self):
         return {'head': {'sha': self.head}, 'labels': [{'name': n} for n in sorted(self.labels)]}
 
@@ -779,6 +782,49 @@ class MergeTests_Runner(unittest.TestCase):
         self.assertTrue(merge_audit.has_merge_check([dict(body=github.posted[0], created_at='2026-09-29T20:00:00Z')],
                                                     HEAD, '2026-09-29T20:00:01Z'))
         self.assertIn('merged into next as m100000', details[-1])
+
+    def test_clean_descendant_cannot_merge_an_inherited_blocking_audit(self):
+        github = FakeGitHub(labels=('automerge',), comments=[
+            comment('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.')])
+        github.inherited = ['unresolved inherited audit from #616 on 8ddbd14: https://example.test/block']
+        (_, _, _, details), events = self.run_auto(github)
+        self.assertEqual(events, ['build'])
+        self.assertIn('unresolved inherited audit from #616', details[-1])
+
+    def test_inherited_evidence_failure_is_inconclusive_without_losing_test_evidence(self):
+        github = FakeGitHub(labels=('automerge',))
+        github.inherited_audit_blockers = mock.Mock(side_effect=RuntimeError('GitHub unavailable'))
+        (verdict, _, ran, details), events = self.run_auto(github)
+        self.assertEqual((verdict, events), ('INCONCLUSIVE', ['build']))
+        self.assertEqual(ran, 'host tests; builds')
+        self.assertIn('held for inherited audit: evidence unavailable', details[-1])
+        self.assertIn('tested the merge commit', details[0])
+
+    def test_inherited_evidence_hold_does_not_trigger_lane_auto_revert(self):
+        body = lane.report('pr1-r1', 'INCONCLUSIVE', HEAD, MERGE, 'auto', 'host', 1,
+                           'host tests; builds', ['not merged: held for inherited audit: evidence unavailable'],
+                           'none', '/e', 'owner', lane.identity('auto', HEAD, MERGE, []))
+        fault, why = lane.lane_report_verdict(body)
+        self.assertFalse(fault)
+        self.assertIn('inherited audit evidence hold', why)
+
+    def test_new_inherited_hold_is_read_again_after_next_moves(self):
+        github = FakeGitHub(labels=('automerge',))
+        github.inherited_audit_blockers = mock.Mock(side_effect=[[], ['unresolved inherited audit from #616']])
+        (_, _, _, details), events = self.run_auto(github, verdicts=('PASS', 'PASS'), pushes=(False,))
+        self.assertEqual(events, ['build', 'comment', 'push m1', 'build'])
+        self.assertIn('unresolved inherited audit', details[-1])
+
+    def test_own_blocking_audit_arriving_during_inherited_lookup_still_holds(self):
+        github = FakeGitHub(labels=('automerge',), comments=[
+            comment('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.')])
+        def inherited(*_):
+            github._comments.append(comment('**Codex audit (Astra) on `aaaaaaa`**\n\nBlocking findings.'))
+            return []
+        github.inherited_audit_blockers = inherited
+        (_, _, _, details), events = self.run_auto(github, scope=self.RISKY)
+        self.assertEqual(events, ['build'])
+        self.assertIn('has blocking findings', details[-1])
 
     def test_a_fail_or_inconclusive_never_merges(self):
         for verdict in ('FAIL', 'INCONCLUSIVE'):

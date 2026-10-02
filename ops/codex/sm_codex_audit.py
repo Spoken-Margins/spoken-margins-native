@@ -62,6 +62,9 @@ BASE_BRANCH = "next"
 AUTOMERGE = "automerge"
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[1]  # ops/codex/ -> repo root
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+import lane_inherited_audits as inherited_audits  # noqa: E402
+
 OPS_DIR = REPO_ROOT / "artifacts" / "ops"
 LOG_PATH = OPS_DIR / "codex-audit.log"
 LOCK_PATH = OPS_DIR / "codex-audit.lock"
@@ -256,7 +259,7 @@ def head_audit(comments: list[dict], head_sha: str) -> tuple[str, str] | None:
 
 
 def rearm_decision(pr: dict, comments: list[dict],
-                   label_events: list[dict] | None) -> tuple[bool, str]:
+                   label_events: list[dict] | None, inherited: list[dict] | tuple = ()) -> tuple[bool, str]:
     """Whether to remove and re-add automerge so the runner merges after a clean audit.
 
     `label_events` (the PR's issue events) may be None until every other check
@@ -273,6 +276,8 @@ def rearm_decision(pr: dict, comments: list[dict],
     audited_at, verdict = audit
     if not _CLEAN_AUDIT_RE.match(verdict):
         return False, "audit of the head has findings"
+    if inherited_audits.unresolved(inherited, comments, head):
+        return False, "unresolved inherited audit findings"
     ok, why = lane_pass_for_head(comments, head)
     if not ok:
         return False, why
@@ -569,6 +574,15 @@ def rearm_pass(prs: list[dict], dry_run: bool) -> None:
                 if dry_run:
                     print(f"  re-arm #{n}: no ({why})")
                 continue
+            inherited = fetch_inherited_audits(pr)
+            now = fetch_open_prs(n)
+            if not now or now[0]["headRefOid"] != pr["headRefOid"]:
+                continue
+            pr = now[0]  # do not restore permission revoked during source discovery
+            ok, why = rearm_decision(pr, fetch_comments(n), fetch_label_events(n), inherited)
+            if not ok:
+                log(f"re-arm #{n}: held ({why})")
+                continue
             if dry_run:
                 log(f"dry-run: would re-arm #{n} on {pr['headRefOid'][:7]} ({why})")
                 continue
@@ -590,6 +604,17 @@ def rearm_pass(prs: list[dict], dry_run: bool) -> None:
                     f"add it back by hand: {added.stderr.strip()[:160]}")
         except Exception as exc:  # log and move on to the next PR
             log(f"re-arm #{n}: error: {exc}")
+
+
+def fetch_inherited_audits(pr: dict) -> list[dict]:
+    """Fresh ancestry for rearming; the runner independently repeats this before merging."""
+    run(["git", "fetch", "--quiet", "origin", BASE_BRANCH], cwd=REPO_ROOT)
+    base = run(["git", "rev-parse", f"origin/{BASE_BRANCH}"], cwd=REPO_ROOT).stdout.strip()
+    run(["git", "fetch", "--quiet", "origin", f"pull/{pr['number']}/head"], cwd=REPO_ROOT)
+    fetched = run(["git", "rev-parse", "FETCH_HEAD"], cwd=REPO_ROOT).stdout.strip()
+    if fetched != pr["headRefOid"]:
+        raise RuntimeError("PR head moved during inherited audit lookup; left for next run")
+    return inherited_audits.collect(REPO_ROOT, REPO, pr['number'], base, fetched)
 
 
 def fetch_issue(number: int) -> dict | None:
@@ -668,6 +693,9 @@ def pr_context_block(c: dict, issue_texts: dict[int, dict[str, str]], diff_rel: 
         "PR description:",
         (c.get("body") or "(none)").strip()[:BODY_CHARS],
     ]
+    inherited = inherited_audits.context(c.get("inherited_audits", []), c["headRefOid"])
+    if inherited:
+        parts += ["", inherited]
     for inum in c["issues"]:
         secs = issue_texts.get(inum) or {}
         if not secs:
@@ -777,6 +805,8 @@ def audit_batch(batch: list[dict]) -> None:
                 issue = fetch_issue(inum)
                 if issue and not issue.get("pull_request"):
                     issue_texts[inum] = issue_sections(issue.get("body") or "")
+            c["inherited_audits"] = inherited_audits.collect(
+                REPO_ROOT, REPO, c['number'], base_sha, head)
             blocks.append(pr_context_block(c, issue_texts, rel, base_sha, mb))
             blocks.append("")
         prompt = build_prompt(live, blocks, base_sha)
