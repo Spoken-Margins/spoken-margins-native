@@ -6557,7 +6557,7 @@ final class Gate1AppModel: ObservableObject {
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         let closedItemId = snapshot.itemId ?? activeItemId
         run { engine in
-            snapshot = try engine.endSession()
+            snapshot = try engine.endSession(stoppingInlinePlayback: endMarginMoment)
             activeItemId = closedItemId
             refreshSelectedItem()
             if let store {
