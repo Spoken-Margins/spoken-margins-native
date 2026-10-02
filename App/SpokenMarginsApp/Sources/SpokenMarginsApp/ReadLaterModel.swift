@@ -2,7 +2,7 @@ import Foundation
 import SessionKit
 
 /// Credentials never follow a service redirect or enter a shared browser cache.
-private final class ReadLaterSessionDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+final class ReadLaterSessionDelegate: NSObject, URLSessionTaskDelegate, Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
         completionHandler(nil)
     }
@@ -18,8 +18,8 @@ final class ReadLaterModel: ObservableObject {
     private var generation = UUID()
     private var task: Task<Void, Never>?
     private let session = URLSession(configuration: .ephemeral, delegate: ReadLaterSessionDelegate(), delegateQueue: nil)
-    private let credentialService = "com.spokenmargins.read-later"
-    var connected: Bool { KeychainStore.load(service: credentialService, account: service.rawValue) != nil }
+    static let credentialService = "com.spokenmargins.read-later"
+    var connected: Bool { KeychainStore.load(service: Self.credentialService, account: service.rawValue) != nil }
 
     func selectService() {
         generation = UUID(); task?.cancel(); task = nil
@@ -29,19 +29,19 @@ final class ReadLaterModel: ObservableObject {
     func connect() {
         let value = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { status = "Enter an access token."; return }
-        guard KeychainStore.save(value, service: credentialService, account: service.rawValue) == 0 else {
+        guard KeychainStore.save(value, service: Self.credentialService, account: service.rawValue) == 0 else {
             status = "The token could not be saved securely."; return
         }
         token = ""; refresh()
     }
     func disconnect() {
-        guard KeychainStore.save("", service: credentialService, account: service.rawValue) == 0 else {
+        guard KeychainStore.save("", service: Self.credentialService, account: service.rawValue) == 0 else {
             status = "The token could not be removed. Try again while the device is unlocked."; return
         }
         selectService(); status = "Disconnected. Imported items and Margins remain in your Library."
     }
     func refresh(more: Bool = false) {
-        guard !isLoading, let secret = KeychainStore.load(service: credentialService, account: service.rawValue) else { return }
+        guard !isLoading, let secret = KeychainStore.load(service: Self.credentialService, account: service.rawValue) else { return }
         let requestedService = service; let requestGeneration = generation
         let cursor = more ? nextCursor : nil
         guard !more || cursor != nil else { return }

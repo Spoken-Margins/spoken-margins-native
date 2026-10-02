@@ -56,6 +56,19 @@ for entry in expected {
     }
     print("ok   \(itemId): \(text.count) characters, Margin \(marginId) at \(margin.anchor.startChar)..<\(margin.anchor.endChar)")
 }
+// Imported Margins, including replies that carry links (#472).
+for entry in root["importedMargins"] as? [[String: Any]] ?? [] {
+    guard let layerId = entry["layerId"] as? String, let marginId = entry["marginId"] as? String else { fail("bad expected.json") }
+    let layers: [ImportedCommentaryLayer]
+    let margins: [ImportedCommentaryInterjection]
+    do {
+        layers = try store.loadImportedCommentaryLayers()
+        margins = try store.loadImportedCommentaryInterjections(layerId: layerId)
+    } catch { fail("imported Margins don't load: \(error)") }
+    guard layers.contains(where: { $0.id == layerId }) else { fail("imported layer \(layerId) missing") }
+    guard margins.contains(where: { $0.id == marginId }) else { fail("imported Margin \(marginId) missing") }
+    print("ok   imported Margin \(marginId) in layer \(layerId)")
+}
 let quarantined = (try? store.quarantinedRecordCount()) ?? -1
 guard quarantined == 0 else { fail("\(quarantined) records quarantined as undecodable") }
 print("ok   Build 29 opened the database: \(items.count) items, \(sessions.count) sessions, nothing quarantined")

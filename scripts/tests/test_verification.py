@@ -56,6 +56,73 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(step['simulator_crash_report'], crashes[-1])
             self.assertEqual(step['exit_code'], 124)
 
+    def test_the_host_plan_runs_each_ops_folder_s_own_tests(self):
+        # ops/dial and ops/codex carry their own Python tests, which no lane plan ran.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            for folder, body in (('dial', 'self.assertTrue(True)'), ('codex', 'self.assertEqual(1, 1)')):
+                (root / 'ops' / folder).mkdir(parents=True)
+                (root / 'ops' / folder / f'test_{folder}.py').write_text(
+                    f'import unittest\nclass T(unittest.TestCase):\n    def test_it(self):\n        {body}\n')
+            (root / 'ops' / 'notes').mkdir()
+            (root / 'ops' / 'notes' / 'README.md').write_text('no tests here\n')
+            self.assertEqual([p.relative_to(root).as_posix() for p in verification.ops_test_folders(root)],
+                             ['ops/codex', 'ops/dial'])
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            run.ops_steps(root)
+            steps = {step['name']: step for step in run.manifest['steps']}
+            self.assertEqual(sorted(steps), ['ops-codex', 'ops-dial'])
+            self.assertTrue(all(step['executed_count'] == 1 and not step['errors'] for step in steps.values()), steps)
+            (root / 'ops' / 'dial' / 'test_dial.py').write_text('import unittest\n')  # a folder whose tests vanished
+            run = verification.Run(Path(temporary) / 'run-2', 'fast')
+            with self.assertRaises(RuntimeError) as raised:
+                run.ops_steps(root)
+            self.assertIn('executed zero tests', str(raised.exception))
+
+    def host_step_calls(self, environment):
+        """(commands run, manifest, final status) for the host steps under an environment."""
+        calls = []
+        audio = next(iter(verification.CODEX_SANDBOX_AUDIO_TESTS))
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, environment, clear=False):
+            if not environment:
+                verification.os.environ.pop('CODEX_SANDBOX', None)
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                    patch.object(run, 'ops_steps'), \
+                    patch.object(verification, 'swift_tests',
+                                 side_effect=lambda folder: {audio.split('/', 1)[1], 'OtherTests/testX'}
+                                 if folder.name == 'SessionKitTests' else set()), \
+                    patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                run.host_steps()
+            return calls, run.manifest, verification.passed_status(), audio
+
+    def test_inside_codex_s_sandbox_the_fast_plan_skips_runner_tests_and_is_never_verified(self):
+        # #64's Codex run (2026-10-01): its sandbox refuses `ps`, runner-tests failed (2 failures, 12 errors),
+        # the plan stopped before the package step, and Codex gave up after 33 minutes.
+        calls, manifest, status, audio = self.host_step_calls({'CODEX_SANDBOX': 'seatbelt'})
+        names = [name for name, _ in calls]
+        self.assertNotIn('runner-tests', names)
+        self.assertIn('package', names)
+        self.assertIn('runner-tests', [step['name'] for step in manifest['steps'] if step.get('skipped')])
+        self.assertEqual(dict(calls)['package']['probation'], {audio})
+        self.assertEqual(status, 'verified_in_codex_sandbox')
+
+    def test_outside_a_sandbox_the_fast_plan_runs_everything_and_tolerates_no_audio_failure(self):
+        calls, manifest, status, _ = self.host_step_calls({})
+        self.assertEqual([name for name, _ in calls][0], 'runner-tests')
+        self.assertIsNone(dict(calls)['package']['probation'])
+        self.assertFalse([step for step in manifest['steps'] if step.get('skipped')])
+        self.assertEqual(status, 'verified')
+
+    def test_ops_files_count_as_verification_inputs(self):
+        with patch.object(verification, 'capture', return_value='ops/dial/dial_gate.py\n'), \
+                tempfile.TemporaryDirectory() as temporary, patch.object(verification, 'ROOT', Path(temporary)):
+            (Path(temporary) / 'ops/dial').mkdir(parents=True)
+            (Path(temporary) / 'ops/dial/dial_gate.py').write_text('one\n')
+            before = verification.input_identity()
+            (Path(temporary) / 'ops/dial/dial_gate.py').write_text('two\n')
+            self.assertNotEqual(before, verification.input_identity())
+
     def test_a_failed_step_names_its_first_errors_not_just_the_exit_code(self):
         # #411: T3 reports on #368 and #408 said only "Process exit 70"; the log that says why stayed on the Mac.
         script = ('import sys; print("Command line invocation: xcodebuild build-for-testing"); '
@@ -182,6 +249,17 @@ class VerificationTests(unittest.TestCase):
 
     def test_repository_inventory_is_complete(self):
         self.assertEqual(inventory.validate(), [])
+
+    def test_j1_is_registered_as_an_executable_scripted_journey(self):
+        listing = json.loads((inventory.ROOT / 'TestPlans/scripted-journeys.json').read_text())
+        entries = [entry for status in ('gating', 'probation') for entry in listing[status]
+                   if entry['journey'] == 'J1']
+        self.assertEqual(len(entries), 1, 'The integration run has no J1 script to execute')
+        self.assertEqual(inventory.scripted_journey_errors(inventory.ROOT), [])
+        selector = entries[0]['test'].removeprefix('SpokenMarginsAppUITests/')
+        available = inventory.target_tests(inventory.ROOT, 'SpokenMarginsAppUITests')
+        selected = {test for test in available if inventory.matches(test, selector)}
+        self.assertEqual(len(selected), 1, 'J1 must select one short journey test')
 
     def test_zero_missing_extra_and_unexpected_skips_fail_closed(self):
         name = 'App/ExportTests/testIsolation'

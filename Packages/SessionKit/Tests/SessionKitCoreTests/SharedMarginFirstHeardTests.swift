@@ -72,6 +72,48 @@ final class SharedMarginFirstHeardTests: XCTestCase {
         XCTAssertEqual(try reopened.markImportedCommentaryInterjectionHeard(id: "heard", at: secondPlay)?.firstHeardAt, firstPlay)
     }
 
+    /// #576 merges two additive record fields: hearing a reply must keep its conversation links.
+    func testHearingAReplyKeepsItsLinksInBothStoresAndAcrossAReopen() throws {
+        let path = temporaryDatabasePath()
+        defer { for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) } }
+        try assertHearingKeepsReplyLinks(in: InMemorySessionRepository())
+        try assertHearingKeepsReplyLinks(in: SQLiteSessionStore(path: path))
+        let reopened = try SQLiteSessionStore(path: path)
+        let reply = try XCTUnwrap(try reopened.loadImportedCommentaryInterjections(layerId: "layer").first)
+        XCTAssertEqual(reply.firstHeardAt, firstPlay)
+        XCTAssertEqual(reply.replyLinks, [replyLink])
+        XCTAssertEqual(try reopened.quarantinedRecordCount(), 0)
+    }
+
+    private var replyLink: MarginReplyLink {
+        .replying(to: .init(packageDigest: String(repeating: "a", count: 64), packageScopedId: "parent"), parentConversationId: nil)
+    }
+
+    private func assertHearingKeepsReplyLinks(in repository: some ListeningSessionRepository) throws {
+        let reply = ImportedCommentaryInterjection(
+            id: "reply", layerId: "layer", packageScopedId: "reply", createdAt: firstPlay,
+            anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "A reply",
+            replyLinks: [replyLink]
+        )
+        _ = try repository.importCommentaryLayer(layer(), interjections: [reply])
+        let unheard = try XCTUnwrap(try repository.loadImportedCommentaryInterjections(layerId: "layer").first)
+        XCTAssertNil(unheard.firstHeardAt)
+        XCTAssertEqual(unheard.replyLinks, [replyLink])
+        let heard = try XCTUnwrap(try repository.markImportedCommentaryInterjectionHeard(id: reply.id, at: firstPlay))
+        XCTAssertEqual(heard.firstHeardAt, firstPlay)
+        XCTAssertEqual(heard.replyLinks, [replyLink])
+        XCTAssertEqual(try repository.markImportedCommentaryInterjectionHeard(id: reply.id, at: secondPlay), heard)
+
+        // The anchor pass may save its copy from before playback; neither field may be lost.
+        var stale = unheard
+        stale.resolution = ImportedAnchorResolution(evidenceClass: .articleTextVerified, localStartChar: 12, localEndChar: 24)
+        try repository.saveImportedCommentaryInterjection(stale)
+        let saved = try XCTUnwrap(try repository.loadImportedCommentaryInterjections(layerId: "layer").first)
+        XCTAssertEqual(saved.firstHeardAt, firstPlay)
+        XCTAssertEqual(saved.replyLinks, [replyLink])
+        XCTAssertEqual(saved.resolution, stale.resolution)
+    }
+
     func testMarginsImportedBeforeThisBuildReadAsNew() throws {
         // Owner data: records written before #469 have no firstHeardAt key, so every one
         // shows as new until it's heard.

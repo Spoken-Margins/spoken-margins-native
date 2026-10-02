@@ -20,7 +20,11 @@ final class SharedMarginFirstHeardBuild29Tests: XCTestCase {
         let margin = SessionKit.ImportedCommentaryInterjection(
             id: "heard", layerId: "layer", packageScopedId: "heard", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
             anchorEvidence: SessionKit.PortableAnchorEvidence(anchorType: .text), approvedTranscript: "Listen to this part.",
-            audioPath: "ImportedCommentary/heard.m4a", audioDurationMs: 4_000
+            audioPath: "ImportedCommentary/heard.m4a", audioDurationMs: 4_000,
+            replyLinks: [SessionKit.MarginReplyLink.replying(
+                to: .init(packageDigest: String(repeating: "a", count: 64), packageScopedId: "parent"),
+                parentConversationId: nil
+            )]
         )
         _ = try store.importCommentaryLayer(layer, interjections: [margin])
         let heardAt = Date(timeIntervalSince1970: 1_800_000_000)
@@ -28,6 +32,7 @@ final class SharedMarginFirstHeardBuild29Tests: XCTestCase {
 
         let payload = try storedPayload(path: path, kind: "imported_commentary_interjection", id: "heard")
         XCTAssertTrue(String(decoding: payload, as: UTF8.self).contains("firstHeardAt"), "the record carries the new key")
+        XCTAssertTrue(String(decoding: payload, as: UTF8.self).contains("replyLinks"), "both additive fields coexist")
         // Build 29's store decodes records with an ISO 8601 JSONDecoder.
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
