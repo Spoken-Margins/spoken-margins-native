@@ -34,17 +34,21 @@ public struct ReviewedInterjectionSelection: Sendable {
     public let revision: InterjectionShareRevision
     public let anchor: PortableAnchorEvidence
     public let representation: ReviewedRepresentationSelection
+    /// The Margin's `replyTo` when it answers someone's shared Margin (#472).
+    public let replyTo: MarginReplyLink?
 
     public init(
         packageScopedId: String,
         revision: InterjectionShareRevision,
         anchor: PortableAnchorEvidence,
-        representation: ReviewedRepresentationSelection
+        representation: ReviewedRepresentationSelection,
+        replyTo: MarginReplyLink? = nil
     ) {
         self.packageScopedId = packageScopedId
         self.revision = revision
         self.anchor = anchor
         self.representation = representation
+        self.replyTo = replyTo
     }
 }
 
@@ -284,6 +288,25 @@ public enum SpokenMarginsPackageBuilder {
             fullItemOmitted = false
         }
 
+        // Only a packet with a reply gets the artifact, so every other packet stays exactly as
+        // Build 29 wrote it. It is optional and adds no required capability: Build 29 skips it and
+        // imports the replies as ordinary Margins (#472).
+        let replies = selections.compactMap { selection in
+            selection.replyTo.map { MarginConversationArtifact.Reply(packageScopedId: selection.packageScopedId, link: $0) }
+        }
+        if !replies.isEmpty {
+            let conversation = MarginConversationArtifact(replies: replies)
+            let path = "artifacts/margin-conversation.json"
+            artifactData[path] = try encodeArtifact(conversation)
+            artifacts.append(SpokenMarginsArtifactDescriptor(
+                id: conversation.id,
+                kind: SpokenMarginsArtifactKind.conversation,
+                schemaVersion: conversation.schemaVersion,
+                path: path,
+                required: false
+            ))
+        }
+
         var requiredCapabilities = [SharedCommentaryLayerArtifact.schemaVersion]
         if itemTransport.kind == .embeddedText {
             requiredCapabilities.append(EmbeddedTextItemArtifact.schemaVersion)
@@ -381,6 +404,7 @@ public enum SpokenMarginsPackageImporter {
                 itemText: itemText
             )
         } ?? ImportedItemResolver.pending(interjections: commentary.interjections)
+        let replyLinks = contents.conversations.first?.linksByPackageScopedId ?? [:]
         let layerID = makeLocalID("layer", manifest.packageId)
         let packageIDs = Set([manifest.packageId] + commentary.interjections.map(\.packageScopedId))
         guard !layerID.isEmpty, !packageIDs.contains(layerID) else {
@@ -424,7 +448,8 @@ public enum SpokenMarginsPackageImporter {
                 audioDurationMs: asset?.durationMs,
                 podcastAnchorEvidence: podcastEvidence,
                 resolution: itemResolution.anchorsByPackageScopedId[record.packageScopedId]
-                    ?? ImportedAnchorResolution(evidenceClass: .unresolved)
+                    ?? ImportedAnchorResolution(evidenceClass: .unresolved),
+                replyLinks: replyLinks[record.packageScopedId]
             ))
         }
         let layer = ImportedCommentaryLayer(
@@ -457,6 +482,27 @@ public enum SpokenMarginsPackageImporter {
 
     public static func defaultLocalID(kind: String, packageScopedID: String) -> String {
         "imported-\(kind)-\(UUID().uuidString.lowercased())"
+    }
+}
+
+public enum SpokenMarginsPackageExportRecord {
+    /// Call after a packet is written: remembers each exported Margin's packet identity on the
+    /// Margin, so replies to it that come back in someone else's packet link to it (#472).
+    public static func recordExport(
+        manifest: SpokenMarginsPackageManifest,
+        selections: [ReviewedInterjectionSelection],
+        repository: ListeningSessionRepository
+    ) throws {
+        guard let digest = manifest.contentDigest else {
+            throw InterjectionPackagePreparationError.missingVerifiedDigest
+        }
+        for selection in selections {
+            let revision = selection.revision
+            guard let margin = try repository.loadInterjections(sessionId: revision.sessionId)
+                .first(where: { $0.id == revision.interjectionId }) else { continue }
+            let identity = MarginPacketIdentity(packageDigest: digest, packageScopedId: selection.packageScopedId)
+            try repository.saveInterjection(margin.recordingShare(as: identity))
+        }
     }
 }
 

@@ -59,6 +59,30 @@
     "captureKind": { "type": ["string", "null"], "enum": ["audio", "written", null] },
     "isStarredForSharing": { "type": ["boolean", "null"] },
     "privateSharingNote": { "type": ["string", "null"], "maxLength": 500 },
+    "replyTo": {
+      "description": "Set when this Margin answers someone's shared Margin (#472).",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["conversationId", "parentPackageDigest", "parentPackageScopedId"],
+      "properties": {
+        "conversationId": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "parentPackageDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "parentPackageScopedId": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "sharedAs": {
+      "description": "The packets this Margin went out in, so replies that come back link to it. Never exported.",
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["packageDigest", "packageScopedId"],
+        "properties": {
+          "packageDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "packageScopedId": { "type": "string", "minLength": 1, "maxLength": 200 }
+        }
+      }
+    },
     "alignedTranscript": {
       "type": ["object", "null"],
       "additionalProperties": false,

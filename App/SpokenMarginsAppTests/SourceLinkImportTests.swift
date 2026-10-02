@@ -64,11 +64,47 @@ final class SourceLinkImportTests: XCTestCase {
 
     private var temporaryDirectories: [URL] = []
 
+    // On a fresh simulator the first-use voice choice is still pending, and
+    // start() and resumeSession() wait for it. A full run only passed because
+    // earlier classes had made that choice, so a targeted T3 of this class
+    // failed (#446). Every test starts with the choice made: the iOS voice.
+    private static let firstUseVoiceKeys = [
+        "supertonicTTSMigrationV1",
+        "supertonicVoicePendingTermsV1",
+        "ttsMode",
+        "ttsVoiceSelection",
+        SpokenMarginsTerms.acceptanceVersionKey,
+        SpokenMarginsTerms.acceptanceDateKey
+    ]
+    private var priorFirstUseVoiceDefaults: [String: Any] = [:]
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        let defaults = UserDefaults.standard
+        priorFirstUseVoiceDefaults = [:]
+        for key in Self.firstUseVoiceKeys {
+            priorFirstUseVoiceDefaults[key] = defaults.object(forKey: key)
+            defaults.removeObject(forKey: key)
+        }
+        // What declineCurrentTerms() leaves behind after the pre-1.0 migration.
+        defaults.set(true, forKey: "supertonicTTSMigrationV1")
+        defaults.set(AppTTSVoiceSelection.system.rawValue, forKey: "ttsVoiceSelection")
+        defaults.set("systemImmediate", forKey: "ttsMode")
+    }
+
     override func tearDownWithError() throws {
         for directory in temporaryDirectories {
             try? FileManager.default.removeItem(at: directory)
         }
         temporaryDirectories.removeAll()
+        let defaults = UserDefaults.standard
+        for key in Self.firstUseVoiceKeys {
+            if let value = priorFirstUseVoiceDefaults[key] {
+                defaults.set(value, forKey: key)
+            } else {
+                defaults.removeObject(forKey: key)
+            }
+        }
         try super.tearDownWithError()
     }
 
@@ -86,7 +122,7 @@ final class SourceLinkImportTests: XCTestCase {
         let store = try SQLiteSessionStore(path: databaseURL.path)
         let subscription = FeedSubscription(id: "subscription", source: SourceIdentity(id: "source", kind: .podcastFeed, canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Actual Publisher"), lastRefreshAt: Date())
         try store.saveFeedSubscription(subscription)
-        let entry = FeedEntry(id: "entry", subscriptionId: subscription.id, canonicalURL: "https://publisher.example/episode", audioURL: audioURL, title: "Actual episode title", author: "Actual author", summary: "00:00 Opening\n02:00 Discussion")
+        let entry = FeedEntry(id: "entry", subscriptionId: subscription.id, canonicalURL: "https://publisher.example/episode", audioURL: audioURL, title: "Actual episode title", author: "Actual author", summary: "00:00 Opening\n02:00 Discussion", publishedAt: Date(timeIntervalSince1970: 1_790_675_200), episodeGUID: "episode-42")
         try store.saveFeedEntry(entry)
         model.importFollowedSourceEntry(entry)
         try await waitFor("feed entry import") { model.libraryItems.contains { $0.title == entry.title } }
@@ -96,6 +132,10 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(persisted.sourceURL, subscription.source.canonicalURL)
         XCTAssertEqual(persisted.externalReference, entry.canonicalURL)
         XCTAssertEqual(persisted.author, "Actual author")
+        // #177 audit: an episode added from a followed feed can be matched to a shared Margin by GUID.
+        XCTAssertEqual(persisted.episodeGUID, "episode-42")
+        XCTAssertEqual(persisted.showTitle, "Actual Publisher")
+        XCTAssertEqual(persisted.publishedAt, ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: 1_790_675_200)))
         XCTAssertEqual(try store.loadTranscriptTimeline(itemId: row.id)?.timeline.chapters.map(\.startMs), [0, 120_000])
         XCTAssertEqual(model.snapshot.sessionId, activeSession)
         XCTAssertEqual(model.selectedItem.id, "item-pill")
