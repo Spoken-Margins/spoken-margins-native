@@ -662,8 +662,14 @@ final class Gate1FlowUITests: XCTestCase {
 
         tapRoot("Following")
         XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 4))
+        // Following opens on its entries; the feed field lives on Manage Feeds (#141).
+        XCTAssertFalse(element("sources.follow.url").exists)
+        element("sources.manageFeeds").tap()
         XCTAssertTrue(element("sources.follow.url").waitForExistence(timeout: 4))
         XCTAssertTrue(element("sources.follow.button").exists)
+        XCTAssertTrue(element("sources.browseCatalog").exists)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(element("sources.manageFeeds").waitForExistence(timeout: 4))
         app.buttons["Settings"].tap()
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 5))
         captureScreen(named: "following-settings-opened")

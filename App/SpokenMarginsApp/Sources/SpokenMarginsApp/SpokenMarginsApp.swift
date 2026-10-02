@@ -52,14 +52,32 @@ struct SpokenMarginsApp: App {
     @StateObject private var model: Gate1AppModel
     @StateObject private var sharingCoordinator: Build23SharingCoordinator
     @StateObject private var catalogDrawer: CatalogDrawerModel
+    @StateObject private var bridge: BridgeService
     @Environment(\.scenePhase) private var scenePhase
+    private let memoryFootprint: MemoryFootprintRecorder
+    #if canImport(MetricKit)
+    private let memoryExits: MemoryExitMetricsSubscriber
+    #endif
 
     init() {
         let model = Gate1AppModel.makeApplicationModel()
+        // Memory use and memory kills, in Diagnostics (#122). Unit tests keep nothing on disk.
+        let runningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        let pinnedDiagnostics = PinnedDiagnostics(diagnostics: model.runtimeDiagnostics)
+        let memoryFootprint = MemoryFootprintRecorder(diagnostics: pinnedDiagnostics,
+                                                      fileURL: runningTests ? nil : MemoryFootprintRecorder.defaultFileURL)
+        memoryFootprint.start(observing: model)
+        self.memoryFootprint = memoryFootprint
+        #if canImport(MetricKit)
+        let memoryExits = MemoryExitMetricsSubscriber()
+        memoryExits.start { line in pinnedDiagnostics.set(MemoryExitMetricsSubscriber.diagnosticsKey, line) }
+        self.memoryExits = memoryExits
+        #endif
         #if !SPOKEN_MARGINS_LEGACY
         ListeningEditionShortcutBridge.model = model
         #endif
         _model = StateObject(wrappedValue: model)
+        _bridge = StateObject(wrappedValue: BridgeService(store: BridgeService.makeStore()))
         _sharingCoordinator = StateObject(
             wrappedValue: Build23SharingCoordinator(model: model)
         )
@@ -79,6 +97,7 @@ struct SpokenMarginsApp: App {
                 .environmentObject(model)
                 .environmentObject(sharingCoordinator)
                 .environmentObject(catalogDrawer)
+                .environmentObject(bridge)
                 .onReceive(NotificationCenter.default.publisher(for: ListeningReadyNotifications.opened)) { _ in model.openReadyListeningEdition() }
                 .onOpenURL { url in
                     model.handleIncomingURL(url)

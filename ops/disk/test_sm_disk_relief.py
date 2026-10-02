@@ -3,6 +3,7 @@
 Run: python3 -m unittest ops/disk/test_sm_disk_relief.py
 """
 import fcntl
+import json
 import os
 import plistlib
 import subprocess
@@ -108,6 +109,9 @@ class Base(unittest.TestCase):
             launch_agents=home / 'Library/LaunchAgents',
             claude_projects=home / '.claude/projects',
             codex_sessions=home / '.codex/sessions',
+            claude_tmp=home / 'tmp/claude-501',
+            claude_sessions=home / '.claude/sessions',
+            own_session=None,
             trigger_bytes=100 * MiB,
             target_bytes=104 * MiB,
         )
@@ -397,7 +401,9 @@ class Moves(Base):
         m = FakeMachine(self.cfg, base_free=99 * MiB)
         result = d.run(self.cfg, m, self.log)
         self.assertFalse(self.src.exists())
-        self.assertTrue((self.primary / self.rel / 'report.md').exists())
+        day = time.strftime('%Y-%m-%d', time.localtime(m.now()))
+        primary = self.cfg.drive / 'Codex-Offload' / f'{day}-disk-relief'
+        self.assertTrue((primary / self.rel / 'report.md').exists())
         self.assertTrue(result.acted)
 
     def test_a_drive_without_twice_the_space_skips_the_move(self):
@@ -418,6 +424,83 @@ class Moves(Base):
             self.assertTrue(old.exists())
         d.run(self.cfg, FakeMachine(self.cfg, base_free=99 * MiB), self.log)
         self.assertFalse(old.exists())
+
+
+class SessionScratch(Base):
+    """Real folders, the real lsof for open files; only the clock and pid liveness are faked."""
+
+    def scratch(self, session: str, age: float, size: int = MiB, project='-Users-x-Documents-proj') -> Path:
+        folder = self.cfg.claude_tmp / project / session
+        write(folder / 'scratchpad/notes.bin', size)
+        write(folder / 'tasks/b1.output', 100)
+        age_tree(folder, age)
+        return folder
+
+    def register(self, pid: int, session: str) -> None:
+        sessions = self.cfg.claude_sessions
+        sessions.mkdir(parents=True, exist_ok=True)
+        (sessions / f'{pid}.json').write_text(json.dumps({'pid': pid, 'sessionId': session, 'cwd': '/x'}))
+
+    def test_old_scratch_goes_and_recent_scratch_stays(self):
+        old = self.scratch('11111111-1111-4111-8111-111111111111', 2 * DAY)
+        recent = self.scratch('22222222-2222-4222-8222-222222222222', 2 * 3600)
+        loose = write(self.cfg.claude_tmp / 'cache-break-state-x.json', 10, age=9 * DAY)
+        odd = self.scratch('33333333-3333-4333-8333-333333333333', 9 * DAY, project='bundled-skills')
+        result = d.run(self.cfg, FakeMachine(self.cfg, base_free=99 * MiB), self.log)
+        self.assertTrue(result.acted)
+        self.assertFalse(old.exists())
+        self.assertTrue(old.parent.exists(), 'removed the project folder too')
+        self.assertTrue((recent / 'scratchpad/notes.bin').exists())
+        self.assertTrue(loose.exists() and odd.exists(), 'touched something that is not a session folder')
+
+    def test_scratch_with_an_open_file_stays(self):
+        held = self.scratch('44444444-4444-4444-8444-444444444444', 2 * DAY)
+        with open(held / 'tasks/b1.output', 'rb'):
+            age_tree(held, 2 * DAY)
+            d.run(self.cfg, FakeMachine(self.cfg, base_free=99 * MiB), self.log)
+        self.assertTrue((held / 'scratchpad/notes.bin').exists())
+        self.assertTrue(any('has' in line and 'open' in line for line in self.log.lines), self.log.lines)
+
+    def test_running_and_own_sessions_stay_and_a_dead_registry_entry_does_not_protect(self):
+        running = self.scratch('55555555-5555-4555-8555-555555555555', 2 * DAY)
+        own = self.scratch('66666666-6666-4666-8666-666666666666', 2 * DAY)
+        crashed = self.scratch('77777777-7777-4777-8777-777777777777', 2 * DAY)
+        named = self.scratch('88888888-8888-4888-8888-888888888888', 2 * DAY)
+        self.register(4242, running.name)
+        self.register(4343, crashed.name)
+        self.cfg.own_session = own.name
+        procs = [d.Proc(9, '/', f'claude -p --resume {named.name}')]
+        m = FakeMachine(self.cfg, base_free=90 * MiB, live_pids={4242}, procs=procs)
+        d.run(self.cfg, m, self.log)
+        self.assertTrue(running.exists())
+        self.assertTrue(own.exists())
+        self.assertTrue(named.exists())
+        self.assertFalse(crashed.exists())
+
+    def test_a_session_that_starts_again_after_planning_is_kept(self):
+        folder = self.scratch('99999999-9999-4999-8999-999999999999', 2 * DAY)
+        m = FakeMachine(self.cfg, base_free=99 * MiB)
+        plan = d.make_plan(self.cfg, m)
+        self.assertIn(folder, {c.path for c in plan.candidates})
+        write(folder / 'scratchpad/new.txt', 10)
+        d.execute(self.cfg, m, plan, self.log, 99 * MiB)
+        self.assertTrue(folder.exists())
+
+    def test_above_the_trigger_nothing_is_removed(self):
+        old = self.scratch('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 9 * DAY)
+        result = d.run(self.cfg, FakeMachine(self.cfg, base_free=self.cfg.trigger_bytes), self.log)
+        self.assertFalse(result.acted)
+        self.assertTrue((old / 'scratchpad/notes.bin').exists())
+
+    def test_without_lsof_nothing_counts_as_ended(self):
+        old = self.scratch('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 9 * DAY)
+
+        class NoLsof(FakeMachine):
+            def open_files(self):
+                return None
+        plan = d.make_plan(self.cfg, NoLsof(self.cfg, 0))
+        self.assertNotIn(old, {c.path for c in plan.candidates})
+        self.assertTrue(any('could not list open files' in s for s in plan.skipped))
 
 
 class DryRun(Base):

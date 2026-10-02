@@ -2,6 +2,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -78,6 +79,41 @@ class VerificationTests(unittest.TestCase):
             with self.assertRaises(RuntimeError) as raised:
                 run.ops_steps(root)
             self.assertIn('executed zero tests', str(raised.exception))
+
+    def host_step_calls(self, environment):
+        """(commands run, manifest, final status) for the host steps under an environment."""
+        calls = []
+        audio = next(iter(verification.CODEX_SANDBOX_AUDIO_TESTS))
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, environment, clear=False):
+            if not environment:
+                verification.os.environ.pop('CODEX_SANDBOX', None)
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                    patch.object(run, 'ops_steps'), \
+                    patch.object(verification, 'swift_tests',
+                                 side_effect=lambda folder: {audio.split('/', 1)[1], 'OtherTests/testX'}
+                                 if folder.name == 'SessionKitTests' else set()), \
+                    patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                run.host_steps()
+            return calls, run.manifest, verification.passed_status(), audio
+
+    def test_inside_codex_s_sandbox_the_fast_plan_skips_runner_tests_and_is_never_verified(self):
+        # #64's Codex run (2026-10-01): its sandbox refuses `ps`, runner-tests failed (2 failures, 12 errors),
+        # the plan stopped before the package step, and Codex gave up after 33 minutes.
+        calls, manifest, status, audio = self.host_step_calls({'CODEX_SANDBOX': 'seatbelt'})
+        names = [name for name, _ in calls]
+        self.assertNotIn('runner-tests', names)
+        self.assertIn('package', names)
+        self.assertIn('runner-tests', [step['name'] for step in manifest['steps'] if step.get('skipped')])
+        self.assertEqual(dict(calls)['package']['probation'], {audio})
+        self.assertEqual(status, 'verified_in_codex_sandbox')
+
+    def test_outside_a_sandbox_the_fast_plan_runs_everything_and_tolerates_no_audio_failure(self):
+        calls, manifest, status, _ = self.host_step_calls({})
+        self.assertEqual([name for name, _ in calls][0], 'runner-tests')
+        self.assertIsNone(dict(calls)['package']['probation'])
+        self.assertFalse([step for step in manifest['steps'] if step.get('skipped')])
+        self.assertEqual(status, 'verified')
 
     def test_ops_files_count_as_verification_inputs(self):
         with patch.object(verification, 'capture', return_value='ops/dial/dial_gate.py\n'), \
@@ -214,6 +250,17 @@ class VerificationTests(unittest.TestCase):
 
     def test_repository_inventory_is_complete(self):
         self.assertEqual(inventory.validate(), [])
+
+    def test_j1_is_registered_as_an_executable_scripted_journey(self):
+        listing = json.loads((inventory.ROOT / 'TestPlans/scripted-journeys.json').read_text())
+        entries = [entry for status in ('gating', 'probation') for entry in listing[status]
+                   if entry['journey'] == 'J1']
+        self.assertEqual(len(entries), 1, 'The integration run has no J1 script to execute')
+        self.assertEqual(inventory.scripted_journey_errors(inventory.ROOT), [])
+        selector = entries[0]['test'].removeprefix('SpokenMarginsAppUITests/')
+        available = inventory.target_tests(inventory.ROOT, 'SpokenMarginsAppUITests')
+        selected = {test for test in available if inventory.matches(test, selector)}
+        self.assertEqual(len(selected), 1, 'J1 must select one short journey test')
 
     def test_zero_missing_extra_and_unexpected_skips_fail_closed(self):
         name = 'App/ExportTests/testIsolation'
@@ -473,6 +520,38 @@ class VerificationTests(unittest.TestCase):
             self.assertTrue(inventory.scripted_journey_errors(root))
             listing.unlink()
             self.assertTrue(inventory.scripted_journey_errors(root))
+
+
+class InheritedSimulatorSlotTests(unittest.TestCase):
+    def test_cli_passes_inherited_slot_to_the_app_runner(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(verification, 'ROOT', Path(temporary)), \
+                patch.object(verification, 'validate', return_value=[]), \
+                patch.object(verification, 'input_identity', return_value='inputs'), \
+                patch.object(verification, 'Run') as factory, \
+                patch.object(sys, 'argv', ['verify-tests.py', '--plan', 'app', '--simulator-slot-fd', '8']):
+            run = factory.return_value
+            run.manifest = {'input_sha256': 'inputs'}
+            self.assertEqual(verification.main(), 0)
+            run.xcode.assert_called_once_with('app', None, False, None, [], simulator_slot_fd=8)
+
+    def test_only_a_real_locked_simulator_slot_descriptor_can_be_inherited(self):
+        import fcntl
+        import lane_slots
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}):
+            path = Path(temporary) / lane_slots.SIMULATOR_SLOT
+            with path.open('a+') as handle:
+                with self.assertRaises(ValueError):
+                    verification.inherited_simulator_slot(handle.fileno())
+                fcntl.flock(handle, fcntl.LOCK_EX)
+                borrowed = verification.inherited_simulator_slot(handle.fileno())
+                borrowed.close()
+                self.assertTrue(lane_slots.simulator_job_running())
+            self.assertFalse(lane_slots.simulator_job_running())
+            with (Path(temporary) / 'wrong.lock').open('a+') as handle:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+                with self.assertRaises(ValueError):
+                    verification.inherited_simulator_slot(handle.fileno())
 
 
 if __name__ == '__main__':

@@ -438,7 +438,8 @@ actor FollowedSourceCoordinator {
                 publishedAt: item.publishedAt,
                 state: existing[id]?.state ?? .unseen,
                 bodyWordCount: PublisherAudioDetector.bodyWordCount(of: item),
-                audioDurationMs: item.durationMs
+                audioDurationMs: item.durationMs,
+                episodeGUID: item.guid
             )
             try repository.saveFeedEntry(entry)
             saved.append(entry)

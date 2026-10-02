@@ -51,6 +51,20 @@ def tick(percent, at, extra=''):
 
 
 class ParseDial(unittest.TestCase):
+    def test_codex_groups_leave_the_claude_dial_unchanged(self):
+        codex = '''**Codex workers**
+- [x] 1
+**Codex stop line** (Codex weekly usage; Codex holds 3 points below it)
+- [x] 70%
+- [x] 80%
+**Codex finish by** (Codex follows its own window)
+- [x] Sat 7 AM
+- [x] Codex reset
+'''
+        # Check both orders so the new groups cannot shadow the Claude headings.
+        for body in (codex + BODY, BODY.replace('---', codex + '\n---')):
+            self.assertEqual(g.parse_dial(body), g.parse_dial(BODY))
+
     def test_reads_the_ticked_boxes(self):
         d = g.parse_dial(BODY)
         self.assertEqual((d['mode'], d['threads'], d['stop'], d['hours_early'], d['problems']),

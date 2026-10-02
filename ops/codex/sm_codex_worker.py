@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""Codex worker: take `ready` issues with Codex gpt-6.1-sol and open PRs, paced by the Dial (#589).
+"""Codex worker: finish PRs, then take `ready` issues, paced by the Dial (#589).
 
 launchd runs this every 10 minutes with no arguments (a "tick"). A tick never waits on Codex:
 it reads the Dial, Codex usage, free disk and the live slots, and when a slot is free and
-pacing allows it spawns ONE detached child (`--slot N --issue M`) and exits.
+pacing allows it spawns ONE detached child (`--slot N --pr M` or `--issue M`) and exits.
+
+PR finishing goes first: needs-mac, a code lane FAIL, or Codex audit findings on the head.
+Drafts and forks are excluded; lane changes qualify only for audit findings. At most two
+finishing rounds per PR per 24 h. The child disarms
+automerge, merges next without rewriting history, runs Codex and the host fast plan, and
+only on a pass pushes normally and re-arms (repeating the newest T3 request if present).
+A stopped finisher leaves the PR's labels as found, except automerge stays removed.
 
 The child claims the issue, makes a worktree on `ws/<issue>-codex-<slug>` from fresh
 origin/next, runs `codex exec` (workspace-write, 60-minute cap), re-runs the fast plan
@@ -13,14 +20,16 @@ other outcome posts a stop note and frees the issue. Worktree and lock always go
 Holds (every slip fails toward spending less):
 - Dial: no `**Codex workers**` group, no tick, Mode Off, or dial_gate not importable -> 0.
   Two ticks -> the lower.
-- Codex usage at or above the Dial's stop line minus 3, or more than 5 points ahead of a
-  straight line from the Codex window's start to its reset (scaled to the stop line).
+- Codex usage at or above its stop line minus 3, or more than 5 points ahead of a
+  straight line from the Codex window's start to its finish-by target. Without Codex
+  pacing ticks, use the Dial's stop line and Codex's reset.
 - The usage read fails, or no stop line is ticked.
 - Less than 30 GiB free disk.
 
 Usage:
   /usr/bin/python3 ops/codex/sm_codex_worker.py [--dry-run]
   /usr/bin/python3 ops/codex/sm_codex_worker.py --slot N --issue M     (the child; launched by a tick)
+  /usr/bin/python3 ops/codex/sm_codex_worker.py --slot N --pr M        (finish an existing PR)
 
 Stdlib only, Python 3.9+. `gh` and `git` must be on PATH. Log: ~/SpokenMarginsOps/codex-worker/log.txt
 """
@@ -29,6 +38,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import fcntl
+import importlib.util
 import json
 import os
 import re
@@ -40,6 +50,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Callable, Optional
+from zoneinfo import ZoneInfo
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -63,6 +74,8 @@ MAX_WORKERS = 3
 MARGIN = 3                 # points below the stop line where new work holds (as the Dial gate)
 TREND_SLACK = 5            # points ahead of the trend line allowed (as the Dial gate)
 MIN_FREE_GIB = 30
+CODEX_STOPS = (70, 80, 90, 97)
+CODEX_FINISHES = {'Fri noon': (4, 12), 'Sat 7 AM': (5, 7), 'Codex reset': None}
 CLAIM_WINDOW = dt.timedelta(hours=24)
 
 EXCLUDED_LABELS = {'in-progress', 'where:mac', 'regression', 'blocked'}
@@ -73,6 +86,13 @@ HOST_HINT_RE = re.compile(
     r'|\bhost[- ]?test|--plan fast|\bswift test\b',
     re.I)
 OUT_DIR_NAME = '.codex-out'
+# Codex's workspace-write sandbox writes only the worktree and temp folders. The fast plan also takes a
+# Mac-wide host-test slot in the lane's folder (as scripts/lane_slots.state_dir()), and swift test writes
+# the clang module cache. Without these, #64's run (2026-10-01) failed before any test ran.
+SANDBOX_WRITABLE_ROOTS = [
+    Path(os.environ.get('SM_LANE_STATE_DIR') or Path.home() / 'Library' / 'Caches' / 'SpokenMarginsLane'),
+    Path.home() / '.cache' / 'clang',
+]
 
 
 # ---------------------------------------------------------------------------
@@ -125,21 +145,67 @@ def parse_codex_workers(body: str) -> tuple[int, list[str]]:
     return n, problems
 
 
+def codex_pacing(body: str, shared_stop: Optional[int]) -> dict:
+    """Read only Codex's pacing groups; empty groups retain the old defaults."""
+    groups: dict[str, list[str]] = {'codex stop line': [], 'codex finish by': []}
+    current = None
+    for line in body.splitlines():
+        heading = re.match(r'\s*\*\*(.+?)\*\*', line)
+        if heading and not line.lstrip().startswith('-'):
+            name = heading.group(1).strip().lower()
+            current = next((g for g in groups if name.startswith(g)), None)
+            continue
+        if line.strip() == '---':
+            current = None
+            continue
+        box = re.match(r'\s*[-*]\s*\[([ xX])\]\s*(.*)', line)
+        if box and current and box.group(1).lower() == 'x':
+            groups[current].append(box.group(2).strip().lower())
+
+    problems = []
+    stop, source = shared_stop, 'Dial Stop line'
+    stops = groups['codex stop line']
+    if stops:
+        source = 'Codex stop line'
+        values = {f'{n}%': n for n in CODEX_STOPS}
+        if any(t not in values for t in stops):
+            stop = None
+            problems.append('muddled Codex stop line box, so nothing new starts')
+        else:
+            stop = min(values[t] for t in stops)
+            if len(stops) > 1:
+                problems.append(f'{len(stops)} Codex stop line boxes are ticked, so it uses the lowest, {stop}%')
+
+    finishes = []
+    for t in groups['codex finish by']:
+        label = next((name for name in CODEX_FINISHES if t == name.lower()), None)
+        if label is None:
+            problems.append('muddled Codex finish by box, so it includes Codex reset (the cautious choice)')
+        finishes.append(label or 'Codex reset')
+    if len(finishes) > 1:
+        problems.append('multiple Codex finish by boxes are ticked, so it uses the later time')
+    return {'stop': stop, 'stop_source': source, 'finish_by': tuple(finishes) or ('Codex reset',),
+            'problems': problems}
+
+
 def read_dial(body: str, parse_dial: Optional[Callable[[str], dict]]) -> dict:
-    """{'mode', 'stop', 'workers', 'problems'} for the Codex worker."""
+    """Mode, workers, Codex pacing targets and problems. Unreadable means zero workers."""
     workers, problems = parse_codex_workers(body)
+    off = {'mode': 'off', 'stop': None, 'stop_source': 'Dial Stop line',
+           'finish_by': ('Codex reset',), 'workers': 0}
     if parse_dial is None:
-        return {'mode': 'off', 'stop': None, 'workers': 0,
+        return {**off,
                 'problems': problems + ['ops/dial/dial_gate.py could not be imported, so it reads Off']}
     try:
         d = parse_dial(body)
         mode, stop = d.get('mode', 'off'), d.get('stop')
     except Exception as exc:  # a muddled Dial must not start work
-        return {'mode': 'off', 'stop': None, 'workers': 0,
+        return {**off,
                 'problems': problems + [f'parse_dial failed ({exc}), so it reads Off']}
     if mode == 'off':
         workers = 0
-    return {'mode': mode, 'stop': stop, 'workers': workers, 'problems': problems}
+    pacing = codex_pacing(body, stop)
+    return {**pacing, 'mode': mode, 'workers': workers, 'problems': problems + pacing['problems']}
 
 
 # ---------------------------------------------------------------------------
@@ -162,16 +228,38 @@ def parse_rate_limits(result: Optional[dict]) -> Optional[dict]:
     return {'used': float(used), 'window_mins': int(mins), 'resets_at': int(resets), 'worst': worst}
 
 
-def trend_line(now_ts: float, limits: dict, stop: float) -> float:
-    """Where Codex usage should be by now: 0 at the window's start, the stop line at its reset."""
-    end = limits['resets_at']
-    start = end - limits['window_mins'] * 60
+def finish_target(limits: dict, finish_by: tuple[str, ...] = ('Codex reset',)) -> tuple[str, float]:
+    """Resolve Eastern deadlines after the window's start; multiple ticks take the latest."""
+    reset = limits['resets_at']
+    start = reset - limits['window_mins'] * 60
+    local_start = dt.datetime.fromtimestamp(start, ZoneInfo('America/New_York'))
+    targets = []
+    for label in finish_by:
+        schedule = CODEX_FINISHES[label]
+        if schedule is None:
+            end = reset
+        else:
+            weekday, hour = schedule
+            finish = local_start.replace(hour=hour, minute=0, second=0, microsecond=0)
+            finish += dt.timedelta(days=(weekday - local_start.weekday()) % 7)
+            if finish.timestamp() <= start:
+                finish += dt.timedelta(days=7)
+            end = finish.timestamp()
+        targets.append((label, end))
+    return max(targets, key=lambda target: target[1])
+
+
+def trend_line(now_ts: float, limits: dict, stop: float,
+               finish_by: tuple[str, ...] = ('Codex reset',)) -> float:
+    """0 at the window's start, the stop line at finish-by and thereafter."""
+    start = limits['resets_at'] - limits['window_mins'] * 60
+    _, end = finish_target(limits, finish_by)
     share = (now_ts - start) / (end - start)
     return stop * max(0.0, min(1.0, share))
 
 
 def pacing_hold(now_ts: float, stop: Optional[int], limits: Optional[dict],
-                free_bytes: Optional[int]) -> Optional[str]:
+                free_bytes: Optional[int], finish_by: tuple[str, ...] = ('Codex reset',)) -> Optional[str]:
     """The reason to hold, or None to go."""
     if free_bytes is not None and free_bytes < MIN_FREE_GIB * 2**30:
         return f'only {free_bytes / 2**30:.0f} GiB free disk (needs {MIN_FREE_GIB})'
@@ -182,7 +270,7 @@ def pacing_hold(now_ts: float, stop: Optional[int], limits: Optional[dict],
     if limits['worst'] >= stop - MARGIN:
         return (f"Codex usage {limits['worst']:.0f}% has reached the hold line {stop - MARGIN}% "
                 f"(stop line {stop}% minus {MARGIN})")
-    line = trend_line(now_ts, limits, stop)
+    line = trend_line(now_ts, limits, stop, finish_by)
     if limits['used'] > line + TREND_SLACK:
         return (f"Codex usage {limits['used']:.0f}% is more than {TREND_SLACK} points ahead of the "
                 f"trend ({line:.0f}% by now)")
@@ -303,8 +391,9 @@ def host_testable(issue: dict) -> bool:
 
 
 def order_issues(issues: list) -> list:
-    """Host-testable (SessionKit) first, then oldest first."""
-    return sorted(issues, key=lambda i: (not host_testable(i), i.get('createdAt') or '', i.get('number') or 0))
+    """Labelled `priority` first, then host-testable (SessionKit), then oldest first."""
+    return sorted(issues, key=lambda i: ('priority' not in label_names(i), not host_testable(i),
+                                         i.get('createdAt') or '', i.get('number') or 0))
 
 
 def choose_issue(issues: list, comments_for: Callable[[int], list], now: dt.datetime,
@@ -321,6 +410,130 @@ def choose_issue(issues: list, comments_for: Callable[[int], list], now: dt.date
             return issue, skipped
         skipped.append((issue.get('number'), why))
     return None, skipped
+
+
+# PR finishing stays in the ops worker; use the lane's path policy rather than a second copy.
+_scope_spec = importlib.util.spec_from_file_location('worker_test_scope', REPO_ROOT / 'scripts/test-scope.py')
+_scope = importlib.util.module_from_spec(_scope_spec)
+_scope_spec.loader.exec_module(_scope)
+LANE_REPORT_RE = re.compile(r'^Lane report \S+ — (PASS|FAIL|INCONCLUSIVE)\b')
+FINISH_MARK_RE = re.compile(r'Thread "Codex worker \d+" finishing #\d+')
+AUDIT_REPORT_RE = re.compile(r'^\*\*Codex audit \(Astra\) on `([0-9a-f]{7,40})`\*\*\s*$')
+MAX_FINISH_ROUNDS = 2
+FINISH_LIMIT_REASON = 'two finishing rounds in the last 24 h; leaving this PR for a human'
+FINISH_LIMIT_MARK = 'Codex finisher round limit reached.'
+RUNNER_FAULT_RE = re.compile(
+    r"runner fault|lane error|lane itself failed|lane's fault|not this PR|not the PR|"
+    r'PermissionError|Operation not permitted|No space left on device|device (?:lost|vanished)', re.I)
+CODE_FAILURE_RE = re.compile(
+    r'\b(?:simulator|device) build \(fail\)|'
+    r'host tests \(--plan fast\).*observed: exit [1-9]\d*|'
+    r'expected: passes\. observed: failed|'
+    r'\.(?:swift|m|mm|c|h):\d+:\d+: error:|failed: (?:SwiftCompile|SwiftEmitModule|CompileSwift|Ld)\b', re.I)
+
+
+def comment_time(comment: dict) -> str:
+    return comment.get('createdAt') or comment.get('created_at') or ''
+
+
+def newest_lane_report(comments: list) -> Optional[dict]:
+    reports = [c for c in comments if LANE_REPORT_RE.match((c.get('body') or '').strip())]
+    return max(reports, key=comment_time, default=None)
+
+
+def failing_head_report(pr: dict) -> Optional[dict]:
+    report = newest_lane_report(pr.get('comments') or [])
+    if not report:
+        return None
+    body = report['body'].strip()
+    sha = re.search(r'\bcommit `?([0-9a-f]{7,40})\b', body)
+    head = pr.get('headRefOid') or ''
+    if (LANE_REPORT_RE.match(body).group(1) != 'FAIL' or not sha or not head.startswith(sha.group(1))
+            or RUNNER_FAULT_RE.search(body) or not CODE_FAILURE_RE.search(body)):
+        return None
+    return report
+
+
+def audit_findings_on_head(pr: dict) -> Optional[dict]:
+    """Newest Astra audit only: its header must name the head and its verdict must not be clean."""
+    reports = [c for c in pr.get('comments') or []
+               if AUDIT_REPORT_RE.match((c.get('body') or '').strip().split('\n', 1)[0])]
+    report = max(reports, key=comment_time, default=None)
+    if not report:
+        return None
+    header, _, verdict = report['body'].strip().partition('\n')
+    head = pr.get('headRefOid') or ''
+    if not head.startswith(AUDIT_REPORT_RE.match(header).group(1)):
+        return None
+    if verdict.lstrip().startswith('No blocking findings'):
+        return None
+    return report
+
+
+def recent_finish_rounds(comments: list, now: dt.datetime) -> int:
+    """Count starts, including failed rounds and earlier heads. Undated starts hold spending."""
+    rounds = 0
+    for c in comments:
+        if not FINISH_MARK_RE.search(c.get('body') or ''):
+            continue
+        try:
+            if not comment_time(c):
+                return MAX_FINISH_ROUNDS
+            if now - parse_time(comment_time(c)) < CLAIM_WINDOW:
+                rounds += 1
+        except ValueError:
+            return MAX_FINISH_ROUNDS
+    return rounds
+
+
+def finish_eligible(pr: dict, now: dt.datetime, held: set = frozenset()) -> tuple[bool, str]:
+    if pr.get('state') != 'OPEN' or pr.get('baseRefName') != BASE_BRANCH or pr.get('isDraft'):
+        return False, 'not an open non-draft PR into next'
+    owner = (pr.get('headRepositoryOwner') or {}).get('login')
+    repo = (pr.get('headRepository') or {}).get('name')
+    if pr.get('isCrossRepository') or f'{owner}/{repo}'.lower() != REPO.lower():
+        return False, 'branch is not in this repo'
+    if pr.get('headRefName') in ('main', BASE_BRANCH):
+        return False, 'protected branch belongs to the owner'
+    if pr['number'] in held:
+        return False, 'held by a live Codex slot'
+    audit = audit_findings_on_head(pr)
+    if not audit and any(_scope.is_lane_path(f['path']) for f in pr.get('files') or []):
+        return False, 'touches lane machinery'
+    if audit or 'needs-mac' in label_names(pr) or failing_head_report(pr):
+        if recent_finish_rounds(pr.get('comments') or [], now) >= MAX_FINISH_ROUNDS:
+            return False, FINISH_LIMIT_REASON
+        return True, ('Codex audit findings on head' if audit else
+                      'needs-mac' if 'needs-mac' in label_names(pr) else 'lane FAIL on head')
+    return False, 'no needs-mac, code failure or Codex audit findings on head'
+
+
+def choose_finish(prs: list, details_for: Callable[[int], dict], now: dt.datetime,
+                  held: set = frozenset(),
+                  on_limit: Optional[Callable[[dict], None]] = None) -> tuple[Optional[dict], list]:
+    skipped = []
+    for pr in sorted(prs, key=lambda p: (p.get('createdAt') or '', p['number'])):
+        if pr.get('isDraft') or pr['number'] in held:
+            continue
+        pr = details_for(pr['number'])
+        ok, why = finish_eligible(pr, now, held)
+        if ok:
+            return pr, skipped
+        if why == FINISH_LIMIT_REASON and on_limit:
+            on_limit(pr)
+        skipped.append((pr['number'], why))
+    return None, skipped
+
+
+def finish_lane_request(comments: list) -> Optional[str]:
+    requests = [c for c in comments if re.search(r'^\s*/lane\s+T\d\b', c.get('body') or '', re.M)]
+    newest = max(requests, key=comment_time, default=None)
+    if not newest or not re.search(r'^\s*/lane\s+T3\b', newest['body'], re.M):
+        return None
+    tests = re.search(r'^[ \t]*tests[ \t]*:[^\r\n]*', newest['body'], re.M)
+    if not tests or not tests.group(0).split(':', 1)[1].strip():
+        raise RuntimeError('newest T3 request has no tests: line; cannot safely requeue')
+    return '/lane T3\n' + tests.group(0)
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +571,19 @@ def build_prompt(number: int, title: str, body: str) -> str:
         '- Keep the change small and host-testable. Put logic in Packages/SessionKit first; '
         'do not grow App/SpokenMarginsApp/Gate1AppModel.swift.',
         '- Write a regression test that fails without the fix, and check that it does.',
-        '- Run `.venv/bin/python scripts/verify-tests.py --plan fast` and make it pass.',
+        '- Your sandbox cannot run `ps`, has no network, and cannot encode, play or speak real audio. '
+        'SessionKit\'s dependencies are already resolved. Run SessionKit tests directly with '
+        '`swift test --disable-sandbox --filter <Name>` in Packages/SessionKit (SwiftPM cannot start '
+        'its own sandbox inside yours).',
+        '- Run `.venv/bin/python scripts/verify-tests.py --plan fast` and make every step it runs pass. '
+        'In your sandbox it skips `runner-tests` (the lane boot tests need `ps`), reports the known '
+        'real-audio tests without failing on them, and ends with status `verified_in_codex_sandbox`. '
+        'If you change anything under scripts/, also run that file\'s tests: '
+        '`.venv/bin/python -m unittest discover -s scripts/tests -p \'test_<name>.py\'`.',
+        '- After you finish, the wrapper runs the full fast plan itself, outside your sandbox, before any '
+        'PR opens; that run is the gate. A failure caused only by the sandbox (no `ps`, no network, no '
+        'real audio, no writes outside the worktree and temp folders) is not a reason to give up or to '
+        'build shims or wrappers: finish the change and name the failure in pr-body.md.',
         '- Do not boot simulators or run xcodebuild.',
         '- Do not commit, branch, stash or run any other git command that changes state. '
         'Leave your changes uncommitted in the working tree.',
@@ -407,8 +632,11 @@ def kill_tree(proc: subprocess.Popen) -> None:
 
 
 def default_run(cmd: list, cwd: Optional[Path] = None, timeout: Optional[float] = 300) -> Result:
-    """Run a command in its own process group; on timeout kill the group and return 124."""
-    proc = subprocess.Popen([str(c) for c in cmd], cwd=str(cwd) if cwd else None,
+    """Run a command in its own process group; on timeout kill the group and return 124.
+
+    Never with CODEX_SANDBOX: with it, verify-tests skips runner-tests, and this runs the gate."""
+    env = {k: v for k, v in os.environ.items() if k != 'CODEX_SANDBOX'}
+    proc = subprocess.Popen([str(c) for c in cmd], cwd=str(cwd) if cwd else None, env=env,
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, start_new_session=True)
     try:
@@ -420,9 +648,15 @@ def default_run(cmd: list, cwd: Optional[Path] = None, timeout: Optional[float] 
     return Result(proc.returncode, out, err)
 
 
+def codex_command(worktree: Path, answer: Path, prompt: str) -> list:
+    roots = json.dumps([str(p) for p in SANDBOX_WRITABLE_ROOTS])  # a JSON string list is a TOML array
+    return [CODEX, 'exec', '-m', MODEL, '-c', f'model_reasoning_effort="{EFFORT}"',
+            '-s', 'workspace-write', '-c', f'sandbox_workspace_write.writable_roots={roots}',
+            '-C', str(worktree), '-o', str(answer), prompt]
+
+
 def default_codex(worktree: Path, answer: Path, prompt: str, transcript: Path) -> tuple[bool, str]:
-    cmd = [CODEX, 'exec', '-m', MODEL, '-c', f'model_reasoning_effort="{EFFORT}"',
-           '-s', 'workspace-write', '-C', str(worktree), '-o', str(answer), prompt]
+    cmd = codex_command(worktree, answer, prompt)
     with open(os.devnull, 'rb') as devnull, open(transcript, 'wb') as tfh:
         proc = subprocess.Popen(cmd, stdin=devnull, stdout=tfh, stderr=subprocess.STDOUT,
                                 start_new_session=True)
@@ -438,7 +672,7 @@ def default_codex(worktree: Path, answer: Path, prompt: str, transcript: Path) -
 
 
 def read_codex_limits(timeout: float = LIMITS_TIMEOUT_S) -> Optional[dict]:
-    """`account/rateLimits/read` over `codex app-server` (as artifacts/tools/codex_limits.py). None on failure."""
+    """`account/rateLimits/read` over `codex app-server` (as ops/codex/codex_limits.py). None on failure."""
     try:
         p = subprocess.Popen([CODEX, 'app-server'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.DEVNULL, text=True, start_new_session=True)
@@ -524,6 +758,15 @@ class Ops:
         return self.gh_json(['issue', 'view', str(number), '-R', REPO,
                              '--json', 'number,title,body,labels,state,createdAt,comments'])
 
+    def open_prs(self) -> list:
+        return self.gh_json(['pr', 'list', '-R', REPO, '--state', 'open', '--base', BASE_BRANCH,
+                             '--limit', '200', '--json', 'number,isDraft,createdAt'])
+
+    def pull(self, number: int) -> dict:
+        return self.gh_json(['pr', 'view', str(number), '-R', REPO, '--json',
+                             'number,title,body,labels,state,isDraft,baseRefName,headRefName,headRefOid,'
+                             'headRepository,headRepositoryOwner,isCrossRepository,files,comments,createdAt'])
+
     def comment(self, number: int, body: str) -> None:
         self.must(['gh', 'issue', 'comment', str(number), '-R', REPO, '--body', body], cwd=self.repo_root)
 
@@ -540,6 +783,23 @@ class Ops:
 # Tick (the launchd run)
 # ---------------------------------------------------------------------------
 
+def note_finish_limit(ops: Ops, pr: dict, now: dt.datetime) -> None:
+    """Post once per rolling window, without changing labels or spending another round."""
+    for c in pr.get('comments') or []:
+        if not (c.get('body') or '').startswith(FINISH_LIMIT_MARK):
+            continue
+        try:
+            if not comment_time(c) or now - parse_time(comment_time(c)) < CLAIM_WINDOW:
+                return
+        except ValueError:
+            return
+    try:
+        ops.comment(pr['number'], f'{FINISH_LIMIT_MARK} Two rounds started in the last 24 h. '
+                    'Leaving this PR for a human; no further finisher round until the window clears.')
+    except Exception as exc:
+        ops.log(f"PR #{pr['number']}: could not post finisher limit note: {exc}")
+
+
 def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> dict:
     """Decide and maybe start one child. Returns the decision for logging and tests."""
     now = ops.now()
@@ -550,7 +810,7 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
     try:
         dial = read_dial(ops.dial_body(), load_parse_dial())
     except Exception as exc:
-        dial = {'mode': 'off', 'stop': None, 'workers': 0, 'problems': [f'Dial read failed ({exc})']}
+        dial = {**read_dial('', None), 'problems': [f'Dial read failed ({exc})']}
     decision['dial'] = dial
     limits = parse_rate_limits(ops.limits())
     decision['limits'] = limits
@@ -561,14 +821,19 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
     live, dead = scan_slots(ops.home, ops.alive)
     decision['live'] = sorted(live)
 
+    stop = f"{dial['stop_source']} {dial['stop']}%" if dial['stop'] else f"no readable {dial['stop_source']}"
+    if limits:
+        label, finish_ts = finish_target(limits, dial['finish_by'])
+        finish = f"{label} ({utc_stamp(dt.datetime.fromtimestamp(finish_ts, dt.timezone.utc))})"
+    else:
+        finish = ' / '.join(dial['finish_by']) + ' (time unavailable without usage window)'
+    say(f"Dial: mode {dial['mode']}, {stop}, finish by {finish}, Codex workers {dial['workers']}")
+    for p in dial['problems']:
+        say(f'  note: {p}')
     if dry_run:
-        stop = f"stop line {dial['stop']}%" if dial['stop'] else 'no stop line'
-        print(f"Dial: mode {dial['mode']}, {stop}, Codex workers {dial['workers']}")
-        for p in dial['problems']:
-            print(f'  note: {p}')
         if limits:
             resets = dt.datetime.fromtimestamp(limits['resets_at'], dt.timezone.utc)
-            line = trend_line(now.timestamp(), limits, dial['stop']) if dial['stop'] else None
+            line = trend_line(now.timestamp(), limits, dial['stop'], dial['finish_by']) if dial['stop'] else None
             trend = f', trend {line:.0f}%' if line is not None else ''
             print(f"Codex usage: {limits['used']:.0f}% of a {limits['window_mins'] // 60} h window "
                   f"resetting {utc_stamp(resets)} (worst window {limits['worst']:.0f}%){trend}")
@@ -578,11 +843,12 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
         print(f"Slots: live {sorted(live) or 'none'}; dead locks {[s for s, _, _ in dead] or 'none'}")
     else:
         for slot, path, info in dead:
-            ops.log(f"slot {slot}: lock of dead pid {info.get('pid', '?')} (issue #{info.get('issue', '?')}) "
-                    f"cleared; check that issue's in-progress label by hand")
+            kind = 'pr' if info.get('pr') else 'issue'
+            ops.log(f"slot {slot}: lock of dead pid {info.get('pid', '?')} ({kind} #{info.get(kind, '?')}) "
+                    'cleared; check its labels by hand')
             path.unlink(missing_ok=True)
 
-    hold = pacing_hold(now.timestamp(), dial['stop'], limits, free)
+    hold = pacing_hold(now.timestamp(), dial['stop'], limits, free, dial['finish_by'])
     slot = free_slot(live, dial['workers'])
     if dial['workers'] == 0:
         decision['why'] = 'Dial allows 0 Codex workers'
@@ -593,46 +859,59 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
     else:
         decision['why'] = None
 
-    issue = None
+    issue = pr = None
     if decision['why'] is None or dry_run:
         try:
+            held_prs = {int(i['pr']) for i in live.values() if i.get('pr')}
+            pr, skipped = choose_finish(ops.open_prs(), ops.pull, now, held_prs,
+                                       on_limit=None if dry_run else lambda p: note_finish_limit(ops, p, now))
             held = {int(i.get('issue')) for i in live.values() if i.get('issue')}
-            issue, skipped = choose_issue(ops.ready_issues(), lambda n: ops.issue(n).get('comments') or [],
-                                          now, held)
+            if pr is None:
+                issue, issue_skipped = choose_issue(ops.ready_issues(), lambda n: ops.issue(n).get('comments') or [],
+                                                    now, held)
+                skipped += issue_skipped
+            decision['pr'] = pr['number'] if pr else None
             decision['issue'] = issue['number'] if issue else None
             if dry_run:
+                print(f"Chosen PR to finish: #{pr['number']} {pr['title']}" if pr else 'Chosen PR to finish: none')
                 print(f"Chosen issue: #{issue['number']} {issue['title']}" if issue else 'Chosen issue: none')
                 for n, why in skipped:
                     print(f'  passed over #{n}: {why}')
         except Exception as exc:
             if decision['why'] is None:
-                decision['why'] = f'listing ready issues failed ({exc})'
-        if decision['why'] is None and issue is None:
+                decision['why'] = f'listing jobs failed ({exc})'
+        if decision['why'] is None and issue is None and pr is None:
             decision['why'] = 'no eligible ready issue'
 
     if decision['why']:
         say(f"{tag}idle: {decision['why']}")
         return decision
+    job, kind = (pr, 'pr') if pr else (issue, 'issue')
     if dry_run:
-        print(f"Would start slot {slot} on issue #{issue['number']}; dry run, nothing started")
-        decision['start'] = (slot, issue['number'])
+        print(f"Would start slot {slot} on {kind} #{job['number']}; dry run, nothing started")
+        decision['start'] = (slot, job['number'])
         return decision
 
-    pid = (spawn or spawn_child)(ops, slot, issue['number'])
-    write_lock(ops.home, slot, {'pid': pid, 'issue': issue['number'], 'started': utc_stamp(now)})
-    ops.log(f"started slot {slot} (pid {pid}) on #{issue['number']} {issue['title']}")
-    decision['start'] = (slot, issue['number'])
+    spawner = spawn or (spawn_finish_child if pr else spawn_child)
+    pid = spawner(ops, slot, job['number'])
+    write_lock(ops.home, slot, {'pid': pid, kind: job['number'], 'started': utc_stamp(now)})
+    ops.log(f"started slot {slot} (pid {pid}) on {kind} #{job['number']} {job['title']}")
+    decision['start'] = (slot, job['number'])
     return decision
 
 
-def spawn_child(ops: Ops, slot: int, number: int) -> int:
+def spawn_child(ops: Ops, slot: int, number: int, kind: str = 'issue') -> int:
     ops.home.mkdir(parents=True, exist_ok=True)
     out = open(ops.home / f'slot-{slot}.out', 'ab')
     proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '--slot', str(slot),
-                             '--issue', str(number)],
+                             f'--{kind}', str(number)],
                             cwd=str(ops.repo_root), stdin=subprocess.DEVNULL, stdout=out,
                             stderr=subprocess.STDOUT, start_new_session=True)
     return proc.pid
+
+
+def spawn_finish_child(ops: Ops, slot: int, number: int) -> int:
+    return spawn_child(ops, slot, number, kind='pr')
 
 
 # ---------------------------------------------------------------------------
@@ -654,6 +933,17 @@ def pick_branch(ops: Ops, number: int, title: str) -> str:
         if branch_free(ops, name):
             return name
     raise RuntimeError(f'no free branch name for {base}')
+
+
+def save_diff(ops: Ops, wt: Path, dest: Path) -> None:
+    """Save everything Codex changed, new files included, before the worktree is removed.
+
+    Plain `git diff` leaves out untracked files, so a give-up or failed run lost every file Codex
+    created (#64). Staging first is safe: the commit step stages the same paths again.
+    """
+    ops.run(['git', 'add', '-A', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt)
+    diff = ops.run(['git', 'diff', '--cached', '--binary'], cwd=wt).stdout
+    dest.write_text(diff or '')
 
 
 def run_child(ops: Ops, slot: int, number: int) -> str:
@@ -703,6 +993,8 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
                  cwd=ops.repo_root, timeout=600)
         wt_added = True
         ops.must(['scripts/setup-worktree.sh'], cwd=wt)
+        # Codex's sandbox has no network, so SwiftPM there can't clone SessionKit's dependencies.
+        ops.must(['swift', 'package', '--package-path', 'Packages/SessionKit', 'resolve'], cwd=wt, timeout=600)
         out = wt / OUT_DIR_NAME
         out.mkdir(exist_ok=True)
 
@@ -713,8 +1005,7 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
 
         changes = ops.run(['git', 'status', '--porcelain', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt).stdout
         if changes.strip():
-            diff = ops.run(['git', 'diff'], cwd=wt).stdout
-            (run_dir / 'codex.diff').write_text(diff or '')
+            save_diff(ops, wt, run_dir / 'codex.diff')
         give_up = out / 'give-up.txt'
         if give_up.exists():
             reason = (give_up.read_text(errors='replace').strip().splitlines() or ['Codex gave up'])[0]
@@ -772,6 +1063,167 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Child (finish one PR in a shared slot)
+# ---------------------------------------------------------------------------
+
+def run_finish_child(ops: Ops, slot: int, number: int) -> str:
+    """Finish an existing PR. Never push failed work, rewrite history, or push while armed."""
+    wt = ops.home / f'wt-{slot}'
+    lock = ops.home / f'slot-{slot}.lock'
+    now = ops.now()
+    run_dir = ops.home / 'runs' / f"pr-{number}-{now.strftime('%Y%m%dT%H%M%SZ')}"
+    claimed = wt_added = False
+    original_labels = set()
+
+    def stop(reason: str) -> None:
+        # Keep every original label except automerge, even if arming failed partway through.
+        try:
+            ops.label(number, remove='automerge')
+            current = label_names(ops.pull(number))
+            for label in original_labels - current - {'automerge'}:
+                ops.label(number, add=label)
+            if 'lane:queued' not in original_labels and 'lane:queued' in current:
+                ops.label(number, remove='lane:queued')
+        except Exception as exc:
+            ops.log(f'PR #{number}: could not restore stop labels: {exc}')
+        try:
+            ops.comment(number, stop_text(slot, 'PR not armed', reason[:500]))
+        except Exception as exc:
+            ops.log(f'PR #{number}: could not post stop note: {exc}')
+
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        pr = ops.pull(number)
+        ok, why = finish_eligible(pr, now)
+        if not ok:
+            if why == FINISH_LIMIT_REASON:
+                note_finish_limit(ops, pr, now)
+            ops.log(f'PR #{number}: not claimed on re-check: {why}')
+            return 'skipped'
+        original_labels = label_names(pr)
+        ops.comment(number, f'Thread "Codex worker {slot}" finishing #{number}')
+        claimed = True
+        ops.label(number, remove='automerge')
+        if 'automerge' in label_names(ops.pull(number)):
+            raise RuntimeError('automerge still present after disarming')
+
+        branch, head = pr['headRefName'], pr['headRefOid']
+        # Explicit tracking refs, so a checkout configured to fetch only next still gets the PR.
+        ops.must(['git', 'fetch', '--quiet', 'origin',
+                  f'refs/heads/{BASE_BRANCH}:refs/remotes/origin/{BASE_BRANCH}',
+                  f'refs/heads/{branch}:refs/remotes/origin/{branch}'], cwd=ops.repo_root, timeout=600)
+        if wt.exists():
+            ops.must(['git', 'worktree', 'remove', '--force', str(wt)], cwd=ops.repo_root)
+        # A detached checkout avoids moving/deleting an author's local branch. The push names its ref.
+        ops.must(['git', 'worktree', 'add', '--quiet', '--detach', str(wt), f'origin/{branch}'],
+                 cwd=ops.repo_root, timeout=600)
+        wt_added = True
+        if ops.must(['git', 'rev-parse', 'HEAD'], cwd=wt).stdout.strip() != head:
+            raise RuntimeError('PR head changed before checkout; no push')
+        ops.must(['scripts/setup-worktree.sh'], cwd=wt)
+        ops.must(['swift', 'package', '--package-path', 'Packages/SessionKit', 'resolve'], cwd=wt, timeout=600)
+        merge = ops.run(['git', 'merge', '--no-commit', '--no-ff', f'origin/{BASE_BRANCH}'], cwd=wt, timeout=600)
+        conflicts = ops.must(['git', 'diff', '--name-only', '--diff-filter=U'], cwd=wt).stdout.strip()
+        if merge.returncode != 0 and not conflicts:
+            raise RuntimeError(f'merge failed without resolvable conflicts: {merge.stderr or merge.stdout}')
+        report = failing_head_report(pr) or newest_lane_report(pr.get('comments') or [])
+        report_text = report['body'] if report else '(no lane report)'
+        audit = audit_findings_on_head(pr)
+        audit_text = audit['body'] if audit else '(no Codex audit findings on head)'
+        summary = '\n'.join(line for line in report_text.splitlines()
+                            if 'evidence:' in line or 'observed:' in line or line.startswith('ran:'))
+        summary += f'\nMerge next output:\n{merge.stdout}\n{merge.stderr}\nConflicts:\n{conflicts or "none"}'
+        context = (f"Finish PR #{number}: {pr['title']}\n\n{pr.get('body') or ''}\n\n"
+                   f'Lane report:\n{report_text}\n\nEvidence summary:\n{summary}\n\n'
+                   f'Codex audit findings:\n{audit_text}\n\n'
+                   'For each audit finding, fix it with a regression test that you run first to show '
+                   'it fails without the fix, or explain with evidence why the finding is wrong in '
+                   '.codex-out/pr-body.md. The wrapper posts that explanation as a PR comment, even '
+                   'if no code change is needed. Do not post comments yourself. '
+                   'Fix the reported code failure or resolve the merge conflicts. The wrapper has merged '
+                   'origin/next with --no-commit; leave resolved files uncommitted. Do not run git merge, '
+                   'rebase, reset, push, or change labels. Explain the cause and fix in the output files.')
+        prompt = build_prompt(number, pr['title'], context).replace(
+            f'Implement GitHub issue #{number}:', f'Finish existing GitHub PR #{number}:', 1).replace(
+                f'(branch from origin/{BASE_BRANCH})', '(PR head with origin/next merged, uncommitted)', 1).replace(
+                'Issue body:', 'PR context:', 1)
+        out = wt / OUT_DIR_NAME
+        out.mkdir(exist_ok=True)
+        codex_ok, codex_why = ops.codex(wt, run_dir / 'answer.md', prompt, run_dir / 'transcript.txt')
+        changes = ops.must(['git', 'status', '--porcelain', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt).stdout
+        if changes.strip():
+            save_diff(ops, wt, run_dir / 'codex.diff')
+        if (out / 'give-up.txt').exists():
+            reason = (out / 'give-up.txt').read_text(errors='replace').strip().splitlines()
+            stop(f'Codex gave up: {reason[0] if reason else "no reason"}')
+            return 'give-up'
+        if not codex_ok:
+            stop(codex_why)
+            return 'codex-failed'
+        merge_pending = ops.run(['git', 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD'], cwd=wt).returncode == 0
+        if not changes.strip() and not merge_pending:
+            if audit and (out / 'pr-body.md').exists():
+                explanation = (out / 'pr-body.md').read_text(errors='replace').strip()
+                if explanation:
+                    ops.comment(number, f'Thread "Codex worker {slot}" response to audit on `{head[:7]}`.\n\n'
+                                + explanation)
+            stop('Codex made no changes and next is already merged; no push')
+            return 'empty'
+        # Staging the resolutions does not hide accidentally retained conflict markers.
+        ops.must(['git', 'diff', '--cached', '--check'], cwd=wt)
+        fast = ops.run(['.venv/bin/python', 'scripts/verify-tests.py', '--plan', 'fast'], cwd=wt,
+                       timeout=FAST_PLAN_TIMEOUT_S)
+        (run_dir / 'fast-plan.txt').write_text((fast.stdout or '') + (fast.stderr or ''))
+        if fast.returncode != 0:
+            stop('fast plan failed; no commit or push. Evidence kept in ' + str(run_dir / 'fast-plan.txt'))
+            return 'fast-failed'
+
+        raw_msg = (out / 'commit-msg.txt').read_text(errors='replace') if (out / 'commit-msg.txt').exists() else ''
+        if not raw_msg.strip() or not (out / 'pr-body.md').exists():
+            raise RuntimeError('Codex did not leave a cause/fix and change summary; no push')
+        subject = (f'Address Codex audit findings on #{number}' if audit else
+                   f'Fix lane FAIL on #{number}' if failing_head_report(pr) else 'Merge next and resolve conflicts')
+        msg = run_dir / 'commit-msg.txt'
+        msg.write_text(commit_message(f'{subject}\n\n{raw_msg.strip()}', number, pr['title']))
+        ops.must(['git', 'add', '-A', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt)
+        ops.must(['git', 'diff', '--cached', '--check'], cwd=wt)
+        ops.must(['git', 'commit', '--quiet', '-F', str(msg)], cwd=wt)
+        fresh = ops.pull(number)
+        if (fresh['state'] != 'OPEN' or fresh.get('isDraft') or fresh['baseRefName'] != BASE_BRANCH
+                or fresh['headRefOid'] != head or fresh['headRefName'] != branch):
+            raise RuntimeError('PR changed during finishing; no push')
+        if 'automerge' in label_names(fresh):
+            raise RuntimeError('PR was re-armed during finishing; no push')
+        request = finish_lane_request(fresh.get('comments') or [])
+        # No force options, no ref rewrite. A concurrent author's push makes this fail normally.
+        ops.must(['git', 'push', '--quiet', 'origin', f'HEAD:refs/heads/{branch}'], cwd=wt, timeout=600)
+        summary = (out / 'pr-body.md').read_text(errors='replace').strip()
+        ops.comment(number, f'Thread "Codex worker {slot}" finished #{number}.\n\n{summary}\n\n'
+                    'Wrapper --plan fast passed. No simulator or device check.')
+        ops.label(number, remove='needs-mac')
+        # Queue T3 before arming so an automerge run sees the pending request immediately.
+        if request:
+            ops.comment(number, request)
+            ops.label(number, add='lane:queued')
+        ops.label(number, add='automerge')
+        return 'finished'
+    except Exception as exc:
+        ops.log(f'PR #{number} slot {slot}: wrapper error: {exc}')
+        if claimed:
+            stop(f'wrapper error: {exc}')
+        return 'error'
+    finally:
+        if wt_added:
+            ops.run(['git', 'worktree', 'remove', '--force', str(wt)], cwd=ops.repo_root)
+        try:
+            info = json.loads(lock.read_text())
+            if int(info.get('pid', -1)) in (os.getpid(), -1) or not ops.alive(int(info['pid'])):
+                lock.unlink()
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Entry
 # ---------------------------------------------------------------------------
 
@@ -780,13 +1232,17 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument('--dry-run', action='store_true', help='print the decision; change nothing')
     ap.add_argument('--slot', type=int, help='(child) slot number')
     ap.add_argument('--issue', type=int, help='(child) issue number')
+    ap.add_argument('--pr', type=int, help='(child) PR to finish')
     args = ap.parse_args(argv)
     ops = Ops()
 
-    if args.slot is not None or args.issue is not None:
-        if args.slot is None or args.issue is None:
-            ap.error('--slot and --issue go together')
-        run_child(ops, args.slot, args.issue)
+    if args.slot is not None or args.issue is not None or args.pr is not None:
+        if args.slot is None or (args.issue is None) == (args.pr is None):
+            ap.error('--slot needs exactly one of --issue or --pr')
+        if args.pr is not None:
+            run_finish_child(ops, args.slot, args.pr)
+        else:
+            run_child(ops, args.slot, args.issue)
         return 0
 
     if args.dry_run:

@@ -416,6 +416,10 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
     public let editionFingerprintSpines: [EditionFingerprintSpineArtifact]?
     public let transcriptPhraseSketches: [TranscriptPhraseSketchArtifact]?
     public let episodeMapEvidencePaths: [String: String]?
+    /// Why this packet's shared map couldn't be placed on the listener's copy, kept so the
+    /// item can still say why after a restart (#481). Nil when a shared map is in use or
+    /// the listener has their own; older builds ignore the field.
+    public var sharedMapRefusalReason: String?
 
     public init(
         id: String,
@@ -436,8 +440,10 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         editionFingerprintSpines: [EditionFingerprintSpineArtifact]? = nil,
         transcriptPhraseSketches: [TranscriptPhraseSketchArtifact]? = nil,
         episodeMapEvidencePaths: [String: String]? = nil,
-        resolvedRecipientEditionSHA256: String? = nil
+        resolvedRecipientEditionSHA256: String? = nil,
+        sharedMapRefusalReason: String? = nil
     ) {
+        self.sharedMapRefusalReason = sharedMapRefusalReason
         self.resolvedRecipientEditionSHA256 = resolvedRecipientEditionSHA256
         self.id = id
         self.itemId = itemId
@@ -465,6 +471,7 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         case resolvedRecipientEditionSHA256
         case sourceResolutionStatus, isEnabled, isMuted, revealMode, deletedAt
         case listeningMapProposals, editionFingerprintSpines, transcriptPhraseSketches, episodeMapEvidencePaths
+        case sharedMapRefusalReason
     }
 
     public init(from decoder: Decoder) throws {
@@ -504,6 +511,7 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
             forKey: .transcriptPhraseSketches
         )
         episodeMapEvidencePaths = try values.decodeIfPresent([String: String].self, forKey: .episodeMapEvidencePaths)
+        sharedMapRefusalReason = try values.decodeIfPresent(String.self, forKey: .sharedMapRefusalReason)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -527,6 +535,7 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         try values.encodeIfPresent(editionFingerprintSpines, forKey: .editionFingerprintSpines)
         try values.encodeIfPresent(transcriptPhraseSketches, forKey: .transcriptPhraseSketches)
         try values.encodeIfPresent(episodeMapEvidencePaths, forKey: .episodeMapEvidencePaths)
+        try values.encodeIfPresent(sharedMapRefusalReason, forKey: .sharedMapRefusalReason)
     }
 }
 

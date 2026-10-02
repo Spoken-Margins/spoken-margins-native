@@ -155,6 +155,24 @@ class TestScopeTests(unittest.TestCase):
         self.assertFalse(any('xcodebuild' in command for command in result['run']))
         self.assertEqual(self.classify('ops/README.md')['tier'], 'T0')
 
+    def test_lane_paths_are_listed_so_the_runner_holds_them_for_an_audit(self):
+        # Owner rule 2026-10-01: a lane PR merges on PASS plus a clean Codex audit, like a packet change.
+        lane = ['.github/workflows/lane.yml', '.github/workflows/linux-t1.yml', 'scripts/lane-runner.py',
+                'scripts/lane_sim.py', 'scripts/lane_slots.py', 'scripts/lane_guard.py', 'scripts/lane-sim-boot',
+                'scripts/xcodebuild-lane', 'scripts/host-test-lane', 'scripts/install-lane-guard.py',
+                'scripts/test-scope.py', 'scripts/hot_file_ratchet.py', 'scripts/merge_audit.py',
+                'scripts/verify-tests.py', 'TestPlans/AppBehavior.xctestplan', 'TestPlans/AudioAdapters.xctestplan']
+        result = self.classify(*lane)
+        self.assertEqual(result['lane_paths'], sorted(lane))
+        self.assertTrue(any(note.startswith('Lane change:') for note in result['notes']))
+        # Ordinary PRs stay off it: the lane's tests, the Test Desk's journey list, other scripts, docs.
+        ordinary = ['scripts/tests/test_lane_runner.py', 'TestPlans/scripted-journeys.json', 'scripts/phone-build',
+                    'scripts/validate-contracts.py', 'docs/workstreams/test-lane.md', '.github/ISSUE_TEMPLATE/bug.md',
+                    '.claude/skills/lane-request/SKILL.md', 'ops/codex/sm_codex_worker.py', APP + 'PlaybackScreen.swift']
+        result = self.classify(*ordinary)
+        self.assertEqual(result['lane_paths'], [])
+        self.assertFalse(any(note.startswith('Lane change:') for note in result['notes']))
+
     def test_unknown_paths_default_to_a_compile(self):
         self.assertEqual(self.classify('NewTopLevel/thing.swift')['tier'], 'T2')
 

@@ -83,13 +83,14 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
     public var summary: String?
     public var publishedAt: Date?
     public var state: FeedEntryState
-    /// Words in the entry's full body (RSS `content:encoded`), when the feed gives one apart from
-    /// its description (#545). Nil for entries saved before this was recorded.
+    /// The feed's `<guid>` (or Atom/JSON Feed `id`) as written, so an episode added from a followed
+    /// feed can be matched to a shared Margin by GUID (#177). Nil for entries saved before #177
+    /// until the feed refreshes.
     public var bodyWordCount: Int?
-    /// The audio enclosure's length from `itunes:duration`, when the feed gives one.
     public var audioDurationMs: Int?
+    public var episodeGUID: String?
 
-    public init(id: String, subscriptionId: String, canonicalURL: String, audioURL: String? = nil, title: String, author: String? = nil, summary: String? = nil, publishedAt: Date? = nil, state: FeedEntryState = .unseen, bodyWordCount: Int? = nil, audioDurationMs: Int? = nil) {
+    public init(id: String, subscriptionId: String, canonicalURL: String, audioURL: String? = nil, title: String, author: String? = nil, summary: String? = nil, publishedAt: Date? = nil, state: FeedEntryState = .unseen, bodyWordCount: Int? = nil, audioDurationMs: Int? = nil, episodeGUID: String? = nil) {
         self.id = id
         self.subscriptionId = subscriptionId
         self.canonicalURL = canonicalURL
@@ -101,6 +102,22 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
         self.state = state
         self.bodyWordCount = bodyWordCount
         self.audioDurationMs = audioDurationMs
+        self.episodeGUID = episodeGUID
+    }
+
+    /// Fills the episode identity an item added from this entry is missing: the GUID, the followed
+    /// show's title and the publish date. Values the item already has are kept.
+    public func fillEpisodeIdentity(of item: inout Item, showTitle: String?) {
+        if item.episodeGUID == nil { item.episodeGUID = Self.nonEmpty(episodeGUID) }
+        if item.showTitle == nil { item.showTitle = Self.nonEmpty(showTitle) }
+        if item.publishedAt == nil, let publishedAt {
+            item.publishedAt = ISO8601DateFormatter().string(from: publishedAt)
+        }
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return trimmed
     }
 }
 
