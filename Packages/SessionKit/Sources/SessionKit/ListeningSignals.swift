@@ -264,11 +264,10 @@ public enum ListeningSignalContext {
     }
 
     static func followedSubscription(for item: Item, subscriptions: [FeedSubscription]) -> FeedSubscription? {
-        if let sourceURL = FollowedSourceMatching.normalizedFollowSourceURL(item.sourceURL),
-           let match = subscriptions.first(where: {
+        if let sourceURL = FollowedSourceMatching.normalizedFollowSourceURL(item.sourceURL) {
+            return subscriptions.first(where: {
                FollowedSourceMatching.normalizedFollowSourceURL($0.source.canonicalURL) == sourceURL
-           }) {
-            return match
+            })
         }
         guard let title = nonEmpty(item.sourceTitle) else { return nil }
         return subscriptions.first {

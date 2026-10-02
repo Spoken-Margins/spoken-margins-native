@@ -234,6 +234,14 @@ final class ListeningSignalRecorderTests: XCTestCase {
         XCTAssertNil(ListeningSignalContext.context(for: unfollowed, subscriptions: [subscription], entries: []))
     }
 
+    func testValidUnfollowedSourceURLCannotBorrowASameTitleSubscription() {
+        let subscription = FeedSubscription(id: "followed", source: SourceIdentity(id: "source-b", kind: .articleFeed,
+            canonicalURL: "https://b.example/feed", host: "b.example", title: "Daily News"))
+        let item = Item(id: "a", title: "A", mediaType: "article", text: "Words", externalReference: nil,
+            status: "ready", sourceTitle: "Daily News", sourceURL: "https://a.example/feed")
+        XCTAssertNil(ListeningSignalContext.context(for: item, subscriptions: [subscription], entries: []))
+    }
+
     // MARK: Helpers
 
     private func makeRecorder() -> ListeningSignalRecorder {
