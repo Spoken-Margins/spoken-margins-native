@@ -1587,6 +1587,11 @@ struct AudioPlaybackInterruptionResumePolicy: Equatable {
 }
 
 struct MediaSeekLifecycle: Equatable {
+    enum Observation: Equatable {
+        case playbackSample
+        case nativeTimeJump
+    }
+
     enum Purpose: Equatable {
         case playbackStart
         case navigation
@@ -1648,11 +1653,12 @@ struct MediaSeekLifecycle: Equatable {
     }
 
     /// A seek whose completion never arrived kept every clock at its target while the audio played
-    /// on (#166). Time bounds possible playback; it does not prove landing. Remember a near-target
-    /// observation or a displacement from the origin that ordinary playback cannot explain, then
+    /// on (#166). Time bounds possible playback; it does not prove landing. Remember a native jump
+    /// near the target or a displacement from the origin that ordinary playback cannot explain, then
     /// recover only when the player moves beyond the target. Sample at rate changes as well as ticks
     /// so a slower rate cannot erase playback accumulated at the earlier rate.
-    mutating func abandonIfOverrun(playerMediaTimeMs: Int?, uptimeMs: Int, playbackRate: Double) -> Pending? {
+    mutating func abandonIfOverrun(playerMediaTimeMs: Int?, uptimeMs: Int, playbackRate: Double,
+                                  observation: Observation = .playbackSample) -> Pending? {
         guard var current = pending else { return nil }
         let elapsed = max(0, uptimeMs - current.lastObservedUptimeMs)
         current.playbackAllowanceMs += Double(elapsed) * (playbackRate.isFinite ? max(playbackRate, 0) : 0)
@@ -1666,11 +1672,11 @@ struct MediaSeekLifecycle: Equatable {
         let tolerance = Double(Self.overrunToleranceMs)
         let reach = current.playbackAllowanceMs + tolerance
         let pastTarget = Double(player) - Double(current.mediaTimeMs)
-        if abs(pastTarget) <= tolerance {
+        if observation == .nativeTimeJump, abs(pastTarget) <= tolerance {
             current.landingObserved = true
         } else if moved, pastTarget >= -tolerance, pastTarget <= reach,
                   let origin = current.originMediaTimeMs,
-                  player < origin || Double(player) - Double(origin) > reach {
+                  observation == .nativeTimeJump || player < origin || Double(player) - Double(origin) > reach {
             current.landingObserved = true
         }
         pending = current
@@ -2313,11 +2319,13 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         )
     }
 
-    /// Runs on each watchdog tick (#166), and logs a `seek_abandoned` trace when it gives up a seek.
-    private func abandonOverrunMediaSeek(uptime: TimeInterval) {
+    /// Native jumps supply landing evidence; watchdog/rate samples only supply movement and bounds.
+    private func abandonOverrunMediaSeek(uptime: TimeInterval,
+                                        observation: MediaSeekLifecycle.Observation = .playbackSample) {
         let observed = observedPlayerMediaTimeMs()
         guard let abandoned = mediaSeekLifecycle.abandonIfOverrun(
-            playerMediaTimeMs: observed, uptimeMs: Int(uptime * 1_000), playbackRate: playbackRate
+            playerMediaTimeMs: observed, uptimeMs: Int(uptime * 1_000), playbackRate: playbackRate,
+            observation: observation
         ) else { return }
         mediaSeekFailure = nil
         if abandoned.purpose == .navigation {
@@ -2656,7 +2664,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         ) { [weak self] notification in
             guard let self, let jumpedItem = notification.object as? AVPlayerItem,
                   self.player?.currentItem === jumpedItem else { return }
-            self.abandonOverrunMediaSeek(uptime: ProcessInfo.processInfo.systemUptime)
+            self.abandonOverrunMediaSeek(uptime: ProcessInfo.processInfo.systemUptime, observation: .nativeTimeJump)
         }
         completionObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
