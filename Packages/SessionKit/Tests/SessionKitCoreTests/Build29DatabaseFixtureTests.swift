@@ -110,10 +110,32 @@ final class Build29DatabaseFixtureTests: XCTestCase {
                 "hasListeningMap": try store.loadListeningMap(itemId: item.id) != nil,
             ])
         }
+        // A reply and an arrived reply carry links (#472); Build 29 must still decode both.
+        let replyLink = MarginReplyLink.replying(
+            to: MarginPacketIdentity(packageDigest: String(repeating: "a", count: 64), packageScopedId: "a-1"),
+            parentConversationId: nil
+        )
+        var reply = try XCTUnwrap(try store.loadInterjections(sessionId: "session-\(v1.id)").first)
+        reply.replyTo = replyLink
+        try store.saveInterjection(reply.recordingShare(as: MarginPacketIdentity(
+            packageDigest: String(repeating: "b", count: 64), packageScopedId: "b-1")))
+        let layer = ImportedCommentaryLayer(
+            id: "layer-reply", itemId: v1.id, packageDigest: String(repeating: "c", count: 64), packageId: "package-c",
+            itemIdentity: SharedItemIdentity(itemType: .pdf, title: "Old"), importedAt: Date(timeIntervalSince1970: 1)
+        )
+        _ = try store.importCommentaryLayer(layer, interjections: [ImportedCommentaryInterjection(
+            id: "arrived-reply", layerId: layer.id, packageScopedId: "c-1", createdAt: Date(timeIntervalSince1970: 1),
+            anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "A reply", replyLinks: [replyLink]
+        )])
+        XCTAssertEqual(try store.loadInterjections(sessionId: "session-\(v1.id)").first?.replyTo, replyLink)
+
         XCTAssertNil(try store.loadStructuredDocument(itemId: v1.id))
         XCTAssertEqual(try store.loadStructuredDocument(itemId: v2.id), document)
         XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)
-        let data = try JSONSerialization.data(withJSONObject: ["items": expected], options: [.sortedKeys])
+        let data = try JSONSerialization.data(
+            withJSONObject: ["items": expected, "importedMargins": [["layerId": layer.id, "marginId": "arrived-reply"]]],
+            options: [.sortedKeys]
+        )
         try data.write(to: URL(fileURLWithPath: path + ".expected.json"))
         if environment["SM_BUILD29_DB"] == nil {
             for suffix in ["", "-wal", "-shm", ".expected.json"] { try? FileManager.default.removeItem(atPath: path + suffix) }

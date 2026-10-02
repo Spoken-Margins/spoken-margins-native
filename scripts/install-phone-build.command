@@ -5,13 +5,15 @@
 # over the app already on the one iPhone plugged into this Mac. Installing over the app keeps its
 # Library and recordings. It never uninstalls or deletes the app. Then it records the installed
 # commit in ~/SpokenMargins-phone/installed.txt, so the next build's test plan starts from here,
-# and opens this build's test-plan.md.
+# and opens this build's test-plan.md. It also copies the plan to iCloud Drive (folder "Spoken Margins
+# test plans", the newest five kept), so the owner can read it on the phone away from the Mac.
 #
 # If installed.txt already names the newest build, it says so and changes nothing, unless the
 # owner types R to reinstall (#500). It also says whether a newer build is being made right now
 # (a scratch folder in ~/SpokenMargins-phone/.work) or the newest attempt failed (last-attempt.json).
 #
-# Tests: SM_PHONE_DIR replaces ~/SpokenMargins-phone; scripts/tests put a fake xcrun on PATH.
+# Tests: SM_PHONE_DIR replaces ~/SpokenMargins-phone, SM_PHONE_ICLOUD the iCloud Drive folder;
+# scripts/tests put a fake xcrun on PATH.
 set -u
 
 phone_dir="${SM_PHONE_DIR:-$HOME/SpokenMargins-phone}"
@@ -163,4 +165,16 @@ fi
 print -r -- "$sha $(date '+%Y-%m-%dT%H:%M:%S') $name" > "$phone_dir/installed.txt"
 print -r -- ""
 print -r -- "Done: $name now runs commit ${sha[1,7]}. Opening the test plan."
+
+# The phone reads the plan from iCloud Drive (Files app > iCloud Drive > Spoken Margins test plans).
+# Only "Test plan <commit>.md" files are ours; anything else in the folder is left alone.
+icloud="${SM_PHONE_ICLOUD:-$HOME/Library/Mobile Documents/com~apple~CloudDocs/Spoken Margins test plans}"
+if [[ -f "$latest/test-plan.md" ]] && { [[ -d "$icloud" ]] || mkdir "$icloud" 2>/dev/null; } \
+    && cp "$latest/test-plan.md" "$icloud/Test plan ${sha[1,7]}.md" 2>/dev/null; then
+  old=("$icloud"/Test\ plan\ *.md(Nom[6,-1]))
+  (( ${#old} )) && rm -f -- "${old[@]}"
+  print -r -- "The test plan is also on your phone: Files > iCloud Drive > Spoken Margins test plans > Test plan ${sha[1,7]}."
+else
+  print -r -- "(I couldn't copy the test plan to iCloud Drive, so it's only on this Mac.)"
+fi
 open "$latest/test-plan.md"

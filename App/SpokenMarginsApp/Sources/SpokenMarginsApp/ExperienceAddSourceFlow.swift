@@ -59,6 +59,8 @@ struct ExperienceAddSourceFlow: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if showsPinnedTextAction {
                     pastedTextActions
+                } else if showsPasteAndGo {
+                    PasteAndGoBar { dismiss() }
                 }
             }
             .scrollDismissesKeyboard(.interactively)
@@ -140,6 +142,11 @@ struct ExperienceAddSourceFlow: View {
 
     private var showsPinnedTextAction: Bool {
         !showsRoutePicker && selectedRoute == .pastedText && model.sourceLinkCandidateReview == nil
+    }
+
+    /// Paste & go sits in the bottom inset of the route picker, in thumb reach at the medium detent (#145).
+    private var showsPasteAndGo: Bool {
+        showsRoutePicker && model.sourceLinkCandidateReview == nil
     }
 
     private var routePicker: some View {
@@ -274,12 +281,7 @@ struct ExperienceAddSourceFlow: View {
                     .disabled(model.sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isResolvingSourceLink)
                     .accessibilityIdentifier("sourceLink.import.button")
                 }
-                if let message = model.sourceLinkImportMessage {
-                    Text(message)
-                        .font(.subheadline)
-                        .foregroundStyle(model.sourceLinkImportState == "failure" ? AppColors.coral : AppColors.secondaryText)
-                        .accessibilityIdentifier("sourceLink.import.status")
-                }
+                SourceLinkImportStatusView()
                 Text("Adding a source never replaces the item already in Now Playing.")
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)

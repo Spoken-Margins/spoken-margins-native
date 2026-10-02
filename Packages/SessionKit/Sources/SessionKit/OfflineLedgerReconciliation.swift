@@ -85,6 +85,28 @@ public struct OfflineLedgerReconciliation: Equatable, Sendable {
         return result
     }
 
+    /// Applies only what the plan changed on one row to that row as it is now (#287). `recorded` is
+    /// the row the plan read and `planned` the plan's copy of it. The app can toggle a protection
+    /// between the plan's read and its write, so writing `planned` back whole could drop it.
+    public static func apply(recorded: OwnedOfflineAsset, planned: OwnedOfflineAsset, to current: inout OwnedOfflineAsset) {
+        // A writer replaced the row with another file since the plan read it; the plan's facts are stale.
+        guard current.relativePath == recorded.relativePath else { return }
+        if planned.byteCount != recorded.byteCount, current.byteCount == recorded.byteCount {
+            current.byteCount = planned.byteCount
+            current.checksumSHA256 = planned.checksumSHA256
+        }
+        // Merge keepers take their aliases' protections; the keeper's own are left as they are now.
+        current.protections.formUnion(planned.protections.subtracting(recorded.protections))
+        if recorded.isReproducible, !planned.isReproducible { current.isReproducible = false }
+        if recorded.itemId == nil, current.itemId == nil { current.itemId = planned.itemId }
+        if planned.lastAccessedAt > recorded.lastAccessedAt {
+            current.lastAccessedAt = max(current.lastAccessedAt, planned.lastAccessedAt)
+        }
+        if planned.createdAt < recorded.createdAt {
+            current.createdAt = min(current.createdAt, planned.createdAt)
+        }
+    }
+
     /// Among rows naming one file, the writer's own row wins over an adopted one (adoption only
     /// guesses the category and has no owner); then the one with an owner; then the oldest.
     private static func keeperFirst(_ lhs: OwnedOfflineAsset, _ rhs: OwnedOfflineAsset) -> Bool {

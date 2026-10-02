@@ -1,0 +1,64 @@
+{
+  "schema": "spokenmargins.bridge-manifest",
+  "version": 1,
+  "generatedAt": "2026-09-28T12:00:00Z",
+  "sources": [
+    {
+      "id": "example-essays",
+      "title": "Example Essays",
+      "homepage": "https://essays.example.org/",
+      "match": {
+        "hosts": ["essays.example.org"],
+        "pathPrefixes": ["/p/"]
+      },
+      "status": "active",
+      "checkedAt": "2026-09-28T11:40:00Z",
+      "updatedAt": "2026-09-27T10:00:00Z",
+      "items": [
+        {
+          "url": "https://essays.example.org/p/on-margins",
+          "title": "On margins",
+          "publishedAt": "2026-09-27T09:00:00Z",
+          "firstSeenAt": "2026-09-27T10:00:00Z"
+        },
+        {
+          "url": "https://essays.example.org/p/listening-slowly",
+          "title": "Listening slowly",
+          "publishedAt": "2026-09-20T09:00:00Z",
+          "firstSeenAt": "2026-09-20T11:00:00Z"
+        }
+      ],
+      "recipe": {
+        "version": 1,
+        "extract": "selectors",
+        "content": ["article .post-body"],
+        "remove": [".subscribe-box", "aside[data-role=\"promo\"]"],
+        "title": "h1.post-title",
+        "published": { "selector": "time[datetime]", "attribute": "datetime" }
+      }
+    },
+    {
+      "id": "lab-notes",
+      "title": "Lab Notes",
+      "homepage": "https://www.lab.example.com/notes",
+      "match": {
+        "hosts": ["www.lab.example.com", "lab.example.com"],
+        "pathPrefixes": ["/notes/"]
+      },
+      "status": "active",
+      "checkedAt": "2026-09-28T11:45:00Z",
+      "updatedAt": "2026-09-26T08:15:00Z",
+      "items": [
+        {
+          "url": "https://www.lab.example.com/notes/2026/09/26/field-report",
+          "title": "Field report",
+          "firstSeenAt": "2026-09-26T08:15:00Z"
+        }
+      ],
+      "recipe": {
+        "version": 1,
+        "extract": "readable"
+      }
+    }
+  ]
+}
