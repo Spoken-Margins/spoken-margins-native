@@ -200,6 +200,7 @@ final class SourceLinkImportTests: XCTestCase {
         for openWhenFinished in [false, true] {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            temporaryDirectories.append(root)
             let databaseURL = root.appendingPathComponent("subscriber.sqlite")
             let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
             model.resetAndSeed()
@@ -212,11 +213,11 @@ final class SourceLinkImportTests: XCTestCase {
                 canonicalURL: "https://publisher.example/private-feed", host: "publisher.example", title: "Publisher"), lastRefreshAt: Date())
             try store.saveFeedSubscription(subscription)
             let sentences = String(repeating: "This subscriber article is available in the feed only. ", count: 90)
-            let html = "<p>Don&#8217;t stop. &ldquo;Listen&rdquo; &copy; 2026.</p><p>\(sentences)</p>"
+            let html = "<p>Don&#8217;t stop. &ldquo;Listen&rdquo; &copy; 2026. Use &lt;article&gt; and &#x3C;section&#62;. Keep &amp;lt;aside&amp;gt; once decoded. &NotEqualTilde; &#x1F600;</p><p>\(sentences)</p>"
             let feed = "<rss><channel><item><title>Private publisher narration</title><link>https://publisher.example/p/private</link><content:encoded xmlns:content=\"http://purl.org/rss/1.0/modules/content/\"><![CDATA[\(html)]]></content:encoded></item></channel></rss>"
             let parsed = try FeedParser().parse(data: Data(feed.utf8), contentType: "application/rss+xml")
             let body = try XCTUnwrap(parsed.items.first?.content)
-            let expected = "Don’t stop. “Listen” © 2026. " + sentences.trimmingCharacters(in: .whitespacesAndNewlines)
+            let expected = "Don’t stop. “Listen” © 2026. Use <article> and <section>. Keep &lt;aside&gt; once decoded. ≂̸ 😀 " + sentences.trimmingCharacters(in: .whitespacesAndNewlines)
             let entry = FeedEntry(id: "private-post", subscriptionId: "s", canonicalURL: "https://publisher.example/p/private",
                 audioURL: "https://publisher.example/private.mp3", title: "Private publisher narration", bodyWordCount: 810,
                 fullBody: body, publisherNarrationConfirmed: true, audioDurationMs: 60_000)
@@ -234,6 +235,9 @@ final class SourceLinkImportTests: XCTestCase {
             XCTAssertEqual(extractor.calls, 0, "a public 403/teaser must never replace accessible feed text")
             XCTAssertEqual(model.snapshot.sessionId, activeSession)
             XCTAssertEqual(model.selectedItem.id, openWhenFinished ? item.id : "item-pill")
+            let reopened = try SQLiteSessionStore(path: databaseURL.path)
+            XCTAssertEqual(try reopened.loadItem(id: item.id).text, expected, "plaintext survives a fresh repository read")
+            XCTAssertEqual(item.externalReferenceType, "url", "feed provenance must not change capture identity")
         }
     }
 
