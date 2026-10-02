@@ -1,0 +1,12 @@
+{
+  "id": "margin-conversation",
+  "replies": [
+    {
+      "conversationId": "conversation-5d1f0e6c2a9b4c7d8e3f1a2b3c4d5e6f",
+      "packageScopedId": "b-1",
+      "parentPackageDigest": "3f7c2a1e9b8d4c6a5e0f1b2c3d4e5f60718293a4b5c6d7e8f901122334455667",
+      "parentPackageScopedId": "a-1"
+    }
+  ],
+  "schemaVersion": "spoken-margins.margin-conversation.v1"
+}

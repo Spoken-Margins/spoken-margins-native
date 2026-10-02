@@ -13,6 +13,9 @@ public enum SourceLinkShareRepresentation {
 }
 
 public struct SourceLinkHandoff: Codable, Equatable, Sendable {
+    /// A PDF sent from the Safari extension's toolbar button (#658).
+    public static let safariExtensionPDFSurface = "safari_extension_pdf"
+
     public var id: String
     public var schemaVersion: String
     public var inputURL: String
@@ -31,6 +34,16 @@ public struct SourceLinkHandoff: Codable, Equatable, Sendable {
         self.inputURL = inputURL
         self.sourceSurface = sourceSurface
         self.startSession = startSession
+    }
+
+    /// A web PDF for the app's remote-PDF import: sent as a PDF by the share
+    /// sheet or the Safari extension, or an http(s) address ending in .pdf.
+    public var isRemotePDF: Bool {
+        if sourceSurface == "share_sheet_pdf" || sourceSurface == Self.safariExtensionPDFSurface {
+            return true
+        }
+        guard let url = URL(string: inputURL), !url.isFileURL else { return false }
+        return url.pathExtension.lowercased() == "pdf"
     }
 }
 

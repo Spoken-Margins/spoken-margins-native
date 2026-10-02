@@ -395,6 +395,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             showTitle: showTitle,
             durationMs: durationMs,
             publishedAt: publishedAt,
+            episodeGUID: episode["episodeGuid"] as? String,
             audioURL: audioURL,
             confidence: score
         )
@@ -665,6 +666,8 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 title: title ?? "Apple Podcasts Episode",
                 showTitle: episode["collectionName"] as? String,
                 durationMs: (episode["trackTimeMillis"] as? NSNumber)?.intValue,
+                publishedAt: episode["releaseDate"] as? String,
+                episodeGUID: episode["episodeGuid"] as? String,
                 audioURL: episodeURL,
                 publisherChapterCollections: appleDescriptionChapters(episode),
                 confidence: 0.95
@@ -720,6 +723,8 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 title: title ?? "Apple Podcasts Episode",
                 showTitle: episode["collectionName"] as? String,
                 durationMs: (episode["trackTimeMillis"] as? NSNumber)?.intValue,
+                publishedAt: episode["releaseDate"] as? String,
+                episodeGUID: episode["episodeGuid"] as? String,
                 audioURL: episodeURL,
                 publisherChapterCollections: appleDescriptionChapters(episode),
                 confidence: 0.95
@@ -821,6 +826,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             showTitle: selected.feedTitle,
             durationMs: selected.durationMs,
             publishedAt: selected.publishedAt,
+            episodeGUID: selected.guid,
             audioURL: audioURL,
             transcriptLinks: selected.transcriptLinks,
             chapterLinks: selected.chapterLinks,
@@ -860,6 +866,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             showTitle: selected.feedTitle,
             durationMs: selected.durationMs,
             publishedAt: selected.publishedAt,
+            episodeGUID: selected.guid,
             audioURL: audioURL,
             transcriptLinks: selected.transcriptLinks,
             chapterLinks: selected.chapterLinks,
@@ -998,6 +1005,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             showTitle: item.feedTitle,
             durationMs: item.durationMs,
             publishedAt: item.publishedAt,
+            episodeGUID: item.guid,
             audioURL: item.enclosureURL,
             transcriptLinks: item.transcriptLinks,
             chapterLinks: item.chapterLinks,
@@ -1469,6 +1477,13 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
     private var isInItem = false
     private var isInPodloveChapters = false
 
+    /// Substack lists each text post's cover image as an `image/jpeg` enclosure, so a shared text post looked like an
+    /// episode whose audio was a picture (#223). An enclosure without a type stays: some podcast feeds omit it.
+    static func mayBePlayable(enclosureType: String?) -> Bool {
+        let type = (enclosureType ?? "").lowercased()
+        return !type.hasPrefix("image/") && !type.hasPrefix("text/")
+    }
+
     func parse(data: Data) -> [RSSFeedItem] {
         let parser = XMLParser(data: data)
         parser.shouldProcessNamespaces = true
@@ -1485,7 +1500,7 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
         if element == "item" || element == "entry" {
             isInItem = true
             currentItem = RSSFeedItem(feedTitle: feedTitle)
-        } else if isInItem, element == "enclosure" {
+        } else if isInItem, element == "enclosure", Self.mayBePlayable(enclosureType: attributeDict["type"]) {
             currentItem?.enclosureURL = attributeDict["url"]
         } else if isInItem, element == "link", let href = attributeDict["href"], currentItem?.link == nil {
             currentItem?.link = href

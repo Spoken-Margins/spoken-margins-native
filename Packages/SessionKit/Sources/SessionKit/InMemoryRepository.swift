@@ -27,6 +27,8 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     public var episodeMapPreparationJobs: [String: EpisodeMapPreparationJob]
     public var offlineStorageBudget: OfflineStorageBudget
     public var ownedOfflineAssets: [String: OwnedOfflineAsset]
+    /// The ledger actor and the app's main actor both write these rows (#287).
+    private let ownedOfflineAssetsLock = NSLock()
     public var offlineStorageReservations: [String: OfflineStorageReservation]
     public var feedSubscriptions: [String: FeedSubscription]
     public var feedEntries: [String: FeedEntry]
@@ -135,7 +137,8 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     }
 
     public func loadInterjections(sessionId: String) throws -> [Interjection] {
-        interjections.values.filter { $0.sessionId == sessionId }.sorted { $0.createdAt < $1.createdAt }
+        interjections.values.filter { $0.sessionId == sessionId }
+            .sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
     }
 
     public func saveInterjectionShareRevision(_ revision: InterjectionShareRevision) throws {
@@ -309,7 +312,7 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
         if let canonicalSource { canonicalSources[item.id] = canonicalSource }
         if let listeningMap { mapsByItemId[item.id] = listeningMap }
         if let audioAsset { audioAssets[audioAsset.id] = audioAsset }
-        ownedOfflineAssets[ownedAsset.id] = ownedAsset
+        ownedOfflineAssetsLock.withLock { ownedOfflineAssets[ownedAsset.id] = ownedAsset }
     }
 
     public func savePreparedAudioManifest(_ manifest: PreparedAudioManifest) throws { preparedAudioManifests[manifest.id] = manifest }
@@ -358,9 +361,24 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
 
     public func saveOfflineStorageBudget(_ budget: OfflineStorageBudget) throws { offlineStorageBudget = budget }
     public func loadOfflineStorageBudget() throws -> OfflineStorageBudget { offlineStorageBudget }
-    public func saveOwnedOfflineAsset(_ asset: OwnedOfflineAsset) throws { ownedOfflineAssets[asset.id] = asset }
-    public func loadOwnedOfflineAssets() throws -> [OwnedOfflineAsset] { ownedOfflineAssets.values.sorted { $0.id < $1.id } }
-    public func deleteOwnedOfflineAsset(id: String) throws { ownedOfflineAssets[id] = nil }
+    public func saveOwnedOfflineAsset(_ asset: OwnedOfflineAsset) throws {
+        ownedOfflineAssetsLock.withLock { ownedOfflineAssets[asset.id] = asset }
+    }
+    public func loadOwnedOfflineAssets() throws -> [OwnedOfflineAsset] {
+        ownedOfflineAssetsLock.withLock { ownedOfflineAssets.values.sorted { $0.id < $1.id } }
+    }
+    public func deleteOwnedOfflineAsset(id: String) throws {
+        ownedOfflineAssetsLock.withLock { ownedOfflineAssets[id] = nil }
+    }
+    @discardableResult
+    public func updateOwnedOfflineAsset(id: String, _ change: (inout OwnedOfflineAsset) -> Void) throws -> OwnedOfflineAsset? {
+        ownedOfflineAssetsLock.withLock {
+            guard var asset = ownedOfflineAssets[id] else { return nil }
+            change(&asset)
+            ownedOfflineAssets[id] = asset
+            return asset
+        }
+    }
     public func saveOfflineStorageReservation(_ reservation: OfflineStorageReservation) throws { offlineStorageReservations[reservation.id] = reservation }
     public func loadOfflineStorageReservations() throws -> [OfflineStorageReservation] { offlineStorageReservations.values.sorted { $0.id < $1.id } }
     public func deleteOfflineStorageReservation(id: String) throws { offlineStorageReservations[id] = nil }

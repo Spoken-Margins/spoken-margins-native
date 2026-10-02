@@ -1,5 +1,6 @@
 import Foundation
 @testable import SessionKit
+import SessionKitPersistence
 import SessionKitSupertonic
 import XCTest
 @testable import SpokenMarginsApp
@@ -398,6 +399,45 @@ final class OfflineStorageLedgerTests: XCTestCase {
         XCTAssertEqual(cache.sizeBytes, 0)
     }
 
+    // #287: playback can start while the ledger checks files. Reconcile used to write back the
+    // row it had read before that, so the playing episode lost its protection and could be evicted.
+    @MainActor
+    func testAPlayingEpisodeKeepsItsProtectionWhenReconcileRunsAtTheSameMoment() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "offline-ledger-race-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let support = root.appending(path: "ApplicationSupport", directoryHint: .isDirectory)
+        let podcasts = support.appending(path: "PodcastAudio", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: podcasts, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data(repeating: 1, count: 3).write(to: podcasts.appending(path: "episode.mp3"))
+        let store = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
+        try store.savePodcastDownload(PodcastDownloadRecord(
+            id: "download-episode", itemId: "episode", remoteURL: "https://example.com/episode.mp3",
+            localRelativePath: "episode.mp3", state: .availableOffline, bytesWritten: 3
+        ))
+        // A stale size puts the row in reconcile's write-back.
+        try store.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: "asset-episode", itemId: "episode", category: .podcast, relativePath: "PodcastAudio/episode.mp3",
+            byteCount: 10, isReproducible: true
+        ))
+        let fileManager = FileCheckHookFileManager()
+        let ledger = OfflineStorageLedger(repository: store, rootDirectory: support, fileManager: fileManager)
+        let coordinator = try PodcastDownloadCoordinator(
+            store: store, ledger: ledger, applicationSupportDirectory: support,
+            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false
+        )
+        fileManager.onFirstCheck = {
+            // The ledger runs off the main actor, which is free while this test awaits it.
+            DispatchQueue.main.sync { MainActor.assumeIsolated { coordinator.configureActiveItem("episode") } }
+        }
+
+        try await ledger.reconcileWithDisk()
+
+        XCTAssertTrue(fileManager.didFire, "playback started during the file check")
+        let row = try XCTUnwrap(store.loadOwnedOfflineAssets().first { $0.id == "asset-episode" })
+        XCTAssertEqual(row.byteCount, 3, "the size still comes from disk")
+        XCTAssertEqual(row.protections, [.activePlayback], "the playing episode keeps its protection")
+    }
+
     private func writeAsset(_ fixture: Fixture, relativePath: String, category: OfflineAssetCategory) throws -> URL {
         let file = fixture.root.appending(path: relativePath)
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -529,5 +569,19 @@ private final class ItemEditedAfterSnapshotRepository: InMemorySessionRepository
             items[editedItemId] = item
         }
         return snapshot
+    }
+}
+
+/// Runs a hook the first time the ledger checks the episode's file, inside `reconcileWithDisk`.
+private final class FileCheckHookFileManager: FileManager, @unchecked Sendable {
+    var onFirstCheck: (@Sendable () -> Void)?
+    private(set) var didFire = false
+
+    override func fileExists(atPath path: String, isDirectory: UnsafeMutablePointer<ObjCBool>?) -> Bool {
+        if !didFire, path.hasSuffix("episode.mp3"), let hook = onFirstCheck {
+            didFire = true
+            hook()
+        }
+        return super.fileExists(atPath: path, isDirectory: isDirectory)
     }
 }

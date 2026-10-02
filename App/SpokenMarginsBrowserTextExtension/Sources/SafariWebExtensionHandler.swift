@@ -19,8 +19,13 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
 
     private func responseMessage(for context: NSExtensionContext) -> [String: Any] {
         guard let item = context.inputItems.first as? NSExtensionItem,
-              let message = item.userInfo?[SFExtensionMessageKey] as? [String: Any],
-              message["action"] as? String == "storeBrowserTextPayload",
+              let message = item.userInfo?[SFExtensionMessageKey] as? [String: Any] else {
+            return errorResponse("Unsupported browser text extension message.")
+        }
+        if message["action"] as? String == "storeRemotePDFHandoff" {
+            return storeRemotePDFHandoff(urlString: message["url"] as? String)
+        }
+        guard message["action"] as? String == "storeBrowserTextPayload",
               var payload = message["payload"] as? [String: Any] else {
             return errorResponse("Unsupported browser text extension message.")
         }
@@ -46,6 +51,33 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             ]
         } catch {
             return errorResponse("Unable to store browser text payload: \(error.localizedDescription)")
+        }
+    }
+
+    /// A PDF tab is handed to the app's remote-PDF import, the same route the
+    /// share sheet uses, instead of capturing the PDF viewer's page text (#658).
+    private func storeRemotePDFHandoff(urlString: String?) -> [String: Any] {
+        guard let urlString,
+              let url = URL(string: urlString),
+              url.scheme?.lowercased() == "https",
+              url.host != nil else {
+            return errorResponse("Only PDFs on an https:// address can be sent to Spoken Margins.")
+        }
+        let handoff = SourceLinkHandoff(
+            id: "source-link-\(UUID().uuidString)",
+            inputURL: url.absoluteString,
+            sourceSurface: SourceLinkHandoff.safariExtensionPDFSurface,
+            startSession: true
+        )
+        do {
+            let payloadID = try SourceLinkHandoffStore.appGroup().save(handoff)
+            return [
+                "ok": true,
+                "payloadId": payloadID,
+                "openURL": SourceLinkHandoffURL.url(forPayloadID: payloadID).absoluteString
+            ]
+        } catch {
+            return errorResponse("Unable to send this PDF to Spoken Margins: \(error.localizedDescription)")
         }
     }
 

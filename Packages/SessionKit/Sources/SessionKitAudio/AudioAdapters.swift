@@ -797,7 +797,14 @@ enum SpeechPlaybackPlanner {
     }
 }
 
-public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unchecked Sendable {
+/// A voice that can say it is still moving through its words where its place in the source text
+/// stands still, as it does while speaking a citation list expanded from one bracket (#432 audit).
+public protocol SpokenProgressReporting: AnyObject {
+    /// Grows each time the voice starts another word; nil when the voice can't tell.
+    func spokenProgress() -> Int?
+}
+
+public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, SpokenProgressReporting, @unchecked Sendable {
     #if canImport(AVFoundation)
     private var synthesizer = AVSpeechSynthesizer()
     #endif
@@ -807,6 +814,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
     private var lastStartOffset = 0
     private var currentOffset: Int?
     private var currentRangeLength = 0
+    private var spokenRanges = 0
     private var completedTargetId: String?
     private var playbackComplete = false
     private var pendingStartTargetId: String?
@@ -1052,6 +1060,10 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         currentOffset
     }
 
+    public func spokenProgress() -> Int? {
+        spokenRanges
+    }
+
     public func currentPlaybackPosition() -> PlaybackPosition? {
         guard let currentOffset else { return nil }
         let end = min(preparedSourceText.count, currentOffset + max(1, currentRangeLength))
@@ -1268,6 +1280,7 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         let end = chunk.sourceOffset(atSpokenUTF16Offset: markerStart + markerLength)
         currentOffset = start
         currentRangeLength = max(0, end - start)
+        spokenRanges += 1
     }
 
     public func speechSynthesizer(
@@ -1675,6 +1688,15 @@ struct MediaPlaybackCompletionPolicy {
         let remainingMs = max(0, durationMs - currentMediaTimeMs)
         return currentMediaTimeMs > 0 && remainingMs <= terminalToleranceMs
     }
+
+    /// Whether a seek to `mediaTimeMs` takes an ended episode back from its end, so its
+    /// end-of-item notification no longer holds (#588). Any destination before the end does,
+    /// even one inside the terminal tolerance: that tolerance is for a player that stopped on
+    /// its own, not for a place the listener chose. Without a known length, any seek does.
+    static func seekLeavesEnd(toMediaTimeMs mediaTimeMs: Int, durationMs: Int?) -> Bool {
+        guard let durationMs, durationMs > 0 else { return true }
+        return mediaTimeMs < durationMs
+    }
 }
 
 public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked Sendable {
@@ -1929,6 +1951,15 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         lastRequestedMediaTimeMs = max(0, mediaTimeMs)
         guard let player, let activeTargetId else {
             throw SessionKitError.invalidCommandForState("media_seek_player_unavailable")
+        }
+        // Scrubbing back from the end leaves the episode paused at the new place, not ended:
+        // a kept completion flag would move it straight back to the end (#588).
+        if playbackComplete,
+           MediaPlaybackCompletionPolicy.seekLeavesEnd(
+               toMediaTimeMs: lastRequestedMediaTimeMs, durationMs: durationMs(for: activeTargetId)
+           ) {
+            playbackComplete = false
+            completedTargetId = nil
         }
         let seekGeneration = beginMediaSeek(
             targetId: activeTargetId,
