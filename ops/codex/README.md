@@ -7,7 +7,7 @@ A Mac-side worker that takes `ready` issues with Codex (`gpt-6.1-sol`, reasoning
 launchd runs `sm_codex_worker.py` every 10 minutes. Each run (a tick) reads:
 
 1. The Dial's `**Codex workers**` group (0 to 3). No group, no tick, or Mode Off means 0. Two ticks take the lower.
-2. Codex usage (`codex app-server`, `account/rateLimits/read`). It holds at the Dial's stop line minus 3, or when usage is more than 5 points ahead of a straight line from the Codex window's start to its reset, scaled to the stop line. It also holds when the read fails or no stop line is ticked.
+2. Codex usage (`codex app-server`, `account/rateLimits/read`). It holds at the Codex stop line minus 3, or when usage is more than 5 points ahead of a straight line from the Codex window's start to its finish-by time, scaled to the stop line. With no Codex pacing ticks, it uses the Dial's Stop line and Codex's reset. It also holds when the read fails or no readable stop line is ticked.
 3. Free disk. It holds below 30 GiB.
 4. Live slots: `~/SpokenMarginsOps/codex-worker/slot-N.lock` files whose pid is still a worker.
 
@@ -34,7 +34,20 @@ Paste this above the `---` line:
 - [ ] 1
 - [ ] 2
 - [ ] 3
+
+**Codex stop line** (Codex weekly usage; Codex holds 3 points below it)
+- [ ] 70%
+- [ ] 80%
+- [ ] 90%
+- [ ] 97%
+
+**Codex finish by** (Codex follows a straight line from its window's start to its stop line at this time)
+- [ ] Fri noon
+- [ ] Sat 7 AM
+- [ ] Codex reset
 ```
+
+The Codex pacing groups leave Claude's Dial unchanged. Two stops take the lower; two finish times take the later, resolved as the next occurrence after the Codex window's start in Eastern time. After that time the trend stays at the stop line. An unrecognized checked stop holds work; an unrecognized checked finish includes Codex reset among the choices. Each tick and dry run reports the chosen stop and resolved finish time. The worker never edits the Dial body.
 
 ## Try it
 
