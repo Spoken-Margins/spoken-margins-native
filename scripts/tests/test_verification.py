@@ -250,6 +250,17 @@ class VerificationTests(unittest.TestCase):
     def test_repository_inventory_is_complete(self):
         self.assertEqual(inventory.validate(), [])
 
+    def test_j1_is_registered_as_an_executable_scripted_journey(self):
+        listing = json.loads((inventory.ROOT / 'TestPlans/scripted-journeys.json').read_text())
+        entries = [entry for status in ('gating', 'probation') for entry in listing[status]
+                   if entry['journey'] == 'J1']
+        self.assertEqual(len(entries), 1, 'The integration run has no J1 script to execute')
+        self.assertEqual(inventory.scripted_journey_errors(inventory.ROOT), [])
+        selector = entries[0]['test'].removeprefix('SpokenMarginsAppUITests/')
+        available = inventory.target_tests(inventory.ROOT, 'SpokenMarginsAppUITests')
+        selected = {test for test in available if inventory.matches(test, selector)}
+        self.assertEqual(len(selected), 1, 'J1 must select one short journey test')
+
     def test_zero_missing_extra_and_unexpected_skips_fail_closed(self):
         name = 'App/ExportTests/testIsolation'
         good = {name: {'status': 'passed', 'seconds': 0.01}}
