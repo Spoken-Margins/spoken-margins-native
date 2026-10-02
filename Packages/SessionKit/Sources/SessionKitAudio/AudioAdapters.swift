@@ -1602,6 +1602,10 @@ struct MediaSeekLifecycle: Equatable {
         /// Where the player was when the seek began, and when (system uptime), for `abandonIfOverrun`.
         var originMediaTimeMs: Int? = nil
         var beganUptimeMs = 0
+        var lastObservedUptimeMs = 0
+        var lastObservedPlayerMediaTimeMs: Int? = nil
+        var playbackAllowanceMs: Double = 0
+        var landingObserved = false
     }
 
     /// How far past its target the player must be before a pending seek counts as landed.
@@ -1633,27 +1637,44 @@ struct MediaSeekLifecycle: Equatable {
             retryCount: 0,
             purpose: purpose,
             originMediaTimeMs: originMediaTimeMs,
-            beganUptimeMs: uptimeMs
+            beganUptimeMs: uptimeMs,
+            lastObservedUptimeMs: uptimeMs,
+            lastObservedPlayerMediaTimeMs: originMediaTimeMs,
+            landingObserved: originMediaTimeMs.map {
+                abs(Double($0) - Double(max(0, mediaTimeMs))) <= Double(Self.overrunToleranceMs)
+            } ?? false
         )
         return generation
     }
 
     /// A seek whose completion never arrived kept every clock at its target while the audio played
-    /// on (#166). Forgets and returns the pending seek when the player's clock shows it landed: more
-    /// than the tolerance past the target, by no more than playback since the seek began explains,
-    /// and, for a forward seek, not explained by the player still playing on from where it was (a seek
-    /// still in flight). A backward seek in flight already fails the reach check.
+    /// on (#166). Time bounds possible playback; it does not prove landing. Remember a near-target
+    /// observation or a displacement from the origin that ordinary playback cannot explain, then
+    /// recover only when the player moves beyond the target. Sample at rate changes as well as ticks
+    /// so a slower rate cannot erase playback accumulated at the earlier rate.
     mutating func abandonIfOverrun(playerMediaTimeMs: Int?, uptimeMs: Int, playbackRate: Double) -> Pending? {
-        guard let current = pending, let player = playerMediaTimeMs else { return nil }
-        let played = Double(max(0, uptimeMs - current.beganUptimeMs)) * max(playbackRate, 0)
-        let reach = Int(played.rounded()) + Self.overrunToleranceMs
-        let pastTarget = player - current.mediaTimeMs
-        guard pastTarget > Self.overrunToleranceMs, pastTarget <= reach else { return nil }
-        if let origin = current.originMediaTimeMs,
-           current.mediaTimeMs - origin > Self.overrunToleranceMs,
-           player >= origin, player - origin <= reach {
+        guard var current = pending else { return nil }
+        let elapsed = max(0, uptimeMs - current.lastObservedUptimeMs)
+        current.playbackAllowanceMs += Double(elapsed) * (playbackRate.isFinite ? max(playbackRate, 0) : 0)
+        current.lastObservedUptimeMs = max(current.lastObservedUptimeMs, uptimeMs)
+        guard let player = playerMediaTimeMs else {
+            pending = current
             return nil
         }
+        let moved = current.lastObservedPlayerMediaTimeMs.map { $0 != player } ?? false
+        current.lastObservedPlayerMediaTimeMs = player
+        let tolerance = Double(Self.overrunToleranceMs)
+        let reach = current.playbackAllowanceMs + tolerance
+        let pastTarget = Double(player) - Double(current.mediaTimeMs)
+        if abs(pastTarget) <= tolerance {
+            current.landingObserved = true
+        } else if moved, pastTarget >= -tolerance, pastTarget <= reach,
+                  let origin = current.originMediaTimeMs,
+                  player < origin || Double(player) - Double(origin) > reach {
+            current.landingObserved = true
+        }
+        pending = current
+        guard moved, current.landingObserved, pastTarget > tolerance, pastTarget <= reach else { return nil }
         invalidate()
         return current
     }
@@ -1673,16 +1694,9 @@ struct MediaSeekLifecycle: Equatable {
             return .failed(current)
         }
         self.generation += 1
-        let retry = Pending(
-            generation: self.generation,
-            requestId: current.requestId,
-            targetId: current.targetId,
-            mediaTimeMs: current.mediaTimeMs,
-            retryCount: 1,
-            purpose: current.purpose,
-            originMediaTimeMs: current.originMediaTimeMs,
-            beganUptimeMs: current.beganUptimeMs
-        )
+        var retry = current
+        retry.generation = self.generation
+        retry.retryCount = 1
         pending = retry
         return .retry(retry)
     }
@@ -1735,6 +1749,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     #if canImport(AVFoundation)
     private var player: AVPlayer?
     private var completionObserver: NSObjectProtocol?
+    private var timeJumpObserver: NSObjectProtocol?
     private var timeObserverToken: Any?
     private var playerStateObservation: NSKeyValueObservation?
     private var audioSessionObservers: [NSObjectProtocol] = []
@@ -1753,6 +1768,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var mediaSeekStartedUptime: TimeInterval?
     /// Tests only: drop AVPlayer's seek completions, as happened on a stream in #166.
     var withholdsSeekCompletionsForTesting = false
+    var pendingSeekHasLandingEvidenceForTesting: Bool { mediaSeekLifecycle.pending?.landingObserved == true }
     #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
     private var postResumeEvidenceTap: MTAudioProcessingTap?
     private var postResumeEvidenceTapContext: PostResumePodcastEvidenceTapContext?
@@ -2033,6 +2049,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     public func setPlaybackRate(_ rate: Double) throws {
+        // Account for the interval at the old rate before changing it (#166).
+        abandonOverrunMediaSeek(uptime: ProcessInfo.processInfo.systemUptime)
         playbackRate = max(0.25, min(3.0, rate))
         #if canImport(AVFoundation)
         if !paused {
@@ -2632,6 +2650,14 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     #if canImport(AVFoundation)
     private func observeCompletion(for item: AVPlayerItem) {
+        // A seek can land between watchdog ticks without ever delivering its completion (#166).
+        timeJumpObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemTimeJumped, object: item, queue: .main
+        ) { [weak self] notification in
+            guard let self, let jumpedItem = notification.object as? AVPlayerItem,
+                  self.player?.currentItem === jumpedItem else { return }
+            self.abandonOverrunMediaSeek(uptime: ProcessInfo.processInfo.systemUptime)
+        }
         completionObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: item,
@@ -2650,6 +2676,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     private func removeCompletionObserver() {
+        if let timeJumpObserver {
+            NotificationCenter.default.removeObserver(timeJumpObserver)
+            self.timeJumpObserver = nil
+        }
         if let completionObserver {
             NotificationCenter.default.removeObserver(completionObserver)
             self.completionObserver = nil

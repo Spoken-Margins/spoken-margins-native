@@ -44,6 +44,37 @@ final class StreamSeekLifecycleTests: XCTestCase {
         XCTAssertNotNil(abandoned["ageMs"])
     }
 
+    func testNativeSeekJumpRecordsLandingWithoutAWatchdogTick() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "stream-seek-jump-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let episodeURL = try Self.writeTone(to: directory.appending(path: "episode.caf"), seconds: 12, hz: 220)
+        let client = AVPlayerStreamPlaybackClient()
+        try client.setPlaybackVolume(0)
+        try client.configureMediaContext(PlaybackMediaContext(
+            itemId: "episode", targetType: .transcriptBackedMedia, targetId: "episode-target",
+            title: "Test episode", playbackURL: episodeURL.absoluteString, durationMs: 12_000,
+            sourceType: .nativeMediaFile
+        ))
+        defer { try? client.stop() }
+        try client.play(targetId: "episode-target", fromMediaTimeMs: 0)
+        let readyDeadline = Date().addingTimeInterval(5)
+        while Date() < readyDeadline, (client.currentMediaTimeMs() ?? 0) < 200 {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertGreaterThanOrEqual(client.currentMediaTimeMs() ?? 0, 200)
+        try client.pause() // Stop the watchdog before creating the pending seek.
+        client.withholdsSeekCompletionsForTesting = true
+        _ = try client.requestMediaSeek(toMediaTimeMs: 5_000)
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, !client.pendingSeekHasLandingEvidenceForTesting {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertTrue(client.pendingSeekHasLandingEvidenceForTesting,
+                      "a real AVPlayer seek jump must record landing even with its completion withheld and watchdog stopped")
+    }
+
     private static func writeTone(to url: URL, seconds: Double, hz: Double) throws -> URL {
         let sampleRate = 44_100.0
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))

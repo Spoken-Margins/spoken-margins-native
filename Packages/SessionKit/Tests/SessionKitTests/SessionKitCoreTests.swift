@@ -116,6 +116,7 @@ final class SessionKitCoreTests: XCTestCase {
 
         // A skip back 2 s that landed and played on past where it started is still abandoned.
         _ = lifecycle.begin(targetId: "episode", mediaTimeMs: 100_000, purpose: .navigation, originMediaTimeMs: 102_000, uptimeMs: 0)
+        XCTAssertNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 101_000, uptimeMs: 1_000, playbackRate: 1), "observe the backward landing before playback passes the old origin")
         XCTAssertNotNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 103_500, uptimeMs: 3_500, playbackRate: 1))
     }
 
