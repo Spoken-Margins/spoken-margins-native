@@ -187,6 +187,69 @@ def test_records(log):
     return records
 
 
+def xcresult_test_records(payload):
+    """Read individual XCTest results, independent of interleaved application stdout."""
+    records = {}
+    statuses = {'Passed': 'passed', 'Failed': 'failed', 'Skipped': 'skipped',
+                'Expected Failure': 'passed'}
+
+    def status(node):
+        try:
+            return statuses[node['result']]
+        except KeyError as error:
+            raise ValueError(f'Unfinished or unknown xcresult test result: {node.get("result")}') from error
+
+    def worst(results):
+        return next(s for s in ('failed', 'skipped', 'passed') if s in results)
+
+    def attempts(node):
+        for child in node.get('children', []):
+            if child['nodeType'] == 'Test Case Run':
+                yield status(child)
+            yield from attempts(child)
+
+    def visit(nodes, bundle=None):
+        for node in nodes:
+            if node['nodeType'] in ('Unit test bundle', 'UI test bundle'):
+                bundle = node['name']
+            if node['nodeType'] == 'Test Case':
+                name = node['nodeIdentifier'].removesuffix('()')
+                if not bundle or not re.fullmatch(r'\w+/test\w+', name):
+                    raise ValueError(f'Unknown xcresult test identifier: {bundle}/{name}')
+                identifier = f'{bundle}/{name}'
+                result = {'status': worst([status(node), *attempts(node)]),
+                          'seconds': float(node.get('durationInSeconds', 0))}
+                if identifier in records:
+                    previous = records[identifier]
+                    result['status'] = worst([previous['status'], result['status']])
+                    result['seconds'] += previous['seconds']
+                records[identifier] = result
+            else:
+                visit(node.get('children', []), bundle)
+
+    visit(payload['testNodes'])
+    return records
+
+
+def completed_test_records(log, result_bundle):
+    """Preserve log failures/retries and recover missing completions from the result bundle."""
+    records = test_records(log)
+    payload = json.loads(subprocess.check_output(
+        ['xcrun', 'xcresulttool', 'get', 'test-results', 'tests', '--path', str(result_bundle), '--compact'],
+        cwd=ROOT, text=True, stderr=subprocess.PIPE, timeout=60))
+    structured = xcresult_test_records(payload)
+    if not structured:
+        raise ValueError('No completed individual tests in xcresult')
+    for identifier, result in structured.items():
+        if identifier not in records:
+            records[identifier] = result
+        else:
+            previous = records[identifier]
+            previous['status'] = next(s for s in ('failed', 'skipped', 'passed')
+                                      if s in (previous['status'], result['status']))
+    return records, payload
+
+
 def reconcile(expected, records, allowed_skips=(), probation=()):
     """Errors that fail the step. A test on probation that fails or is missing is reported, not an error."""
     errors = []
@@ -351,10 +414,20 @@ class Run:
         errors = []
         if tests:
             records = test_records(text)
+            entry['test_evidence'] = 'log'
+            if '-resultBundlePath' in args:
+                bundle = args[args.index('-resultBundlePath') + 1]
+                entry['result_bundle'] = bundle
+                try:
+                    records, payload = completed_test_records(text, bundle)
+                    (self.output / f'{name}-xcresult.json').write_text(json.dumps(payload, indent=2) + '\n')
+                    entry['test_evidence'] = 'log+xcresult'
+                except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
+                    errors.append(f'Could not reconcile xcresult individual tests: {error}')
             entry['tests'] = records
             entry['counts'] = {status: sum(r['status'] == status for r in records.values())
                                for status in ('passed', 'failed', 'skipped')}
-            errors = reconcile(expected, records, allowed_skips, probation or ())
+            errors.extend(reconcile(expected, records, allowed_skips, probation or ()))
             if probation is not None:  # scripted journeys: each listed test's result, by status
                 entry['gating'] = {test: records.get(test, {}).get('status', 'missing')
                                    for test in sorted(set(expected or ()) - probation)}
