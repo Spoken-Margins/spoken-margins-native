@@ -153,16 +153,16 @@ final class LocalAudioListeningPackageTests: XCTestCase {
     // MARK: A friend's shared map on a downloaded podcast copy (#481)
 
     func testSharedMapOnTheSameDownloadedEditionBecomesTheItemsMap() async throws {
-        let fixture = try await importSharedPodcastMap(senderEdition: .sameAsRecipient, listenerHasOwnMap: false)
+        let fixture = try await importSharedPodcastMap(senderEdition: .sameAsRecipient, listenerMap: .none)
         defer { fixture.cleanup() }
         let projection = try XCTUnwrap(fixture.store.loadResolvedListeningMapProjection(itemId: fixture.itemId))
         XCTAssertEqual(projection.proposalId, "friend-map", "Skim reads this projection and the layer's proposal")
         XCTAssertEqual(projection.projectedRecipientTime(for: 5_000), 5_000)
-        XCTAssertNil(fixture.model.sharedListeningMapRefusals[fixture.itemId])
+        XCTAssertNil(fixture.model.sharedListeningMapRefusal(itemId: fixture.itemId))
     }
 
     func testSharedMapNeverReplacesTheListenersOwnMap() async throws {
-        let fixture = try await importSharedPodcastMap(senderEdition: .sameAsRecipient, listenerHasOwnMap: true)
+        let fixture = try await importSharedPodcastMap(senderEdition: .sameAsRecipient, listenerMap: .own)
         defer { fixture.cleanup() }
         let projection = try XCTUnwrap(fixture.store.loadResolvedListeningMapProjection(itemId: fixture.itemId))
         XCTAssertEqual(projection.id, "my-projection")
@@ -170,23 +170,37 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         XCTAssertEqual(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId).map(\.id), ["my-map"])
     }
 
+    func testSharedMapNeverReplacesThePublishersChapters() async throws {
+        let fixture = try await importSharedPodcastMap(senderEdition: .sameAsRecipient, listenerMap: .publisherChapters)
+        defer { fixture.cleanup() }
+        XCTAssertNil(try fixture.store.loadResolvedListeningMapProjection(itemId: fixture.itemId),
+                     "The publisher's chapters stay the item's map")
+        XCTAssertNil(fixture.model.sharedListeningMapRefusal(itemId: fixture.itemId))
+    }
+
     func testSharedMapThatCannotBePlacedOnYourCopySaysWhy() async throws {
-        let fixture = try await importSharedPodcastMap(senderEdition: .differentWithoutEvidence, listenerHasOwnMap: false)
+        let fixture = try await importSharedPodcastMap(senderEdition: .differentWithoutEvidence, listenerMap: .none)
         defer { fixture.cleanup() }
         XCTAssertEqual(
-            fixture.model.sharedListeningMapRefusals[fixture.itemId],
+            fixture.model.sharedListeningMapRefusal(itemId: fixture.itemId),
             "The shared map has no audio to match near scene 1 (Opening)."
         )
+        let reopened = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: fixture.databaseURL)
+        reopened.bootstrapLibraryIfNeeded()
+        XCTAssertEqual(reopened.sharedListeningMapRefusal(itemId: fixture.itemId),
+                       "The shared map has no audio to match near scene 1 (Opening).", "The reason survives a restart")
         XCTAssertNil(try fixture.store.loadResolvedListeningMapProjection(itemId: fixture.itemId)?.proposalId,
                      "A refused map is never activated")
     }
 
     private enum SenderEdition { case sameAsRecipient, differentWithoutEvidence }
+    private enum ListenerMap { case none, own, publisherChapters }
 
     private struct SharedPodcastMapFixture {
         let model: Gate1AppModel
         let store: SQLiteSessionStore
         let itemId: String
+        let databaseURL: URL
         let cleanup: () -> Void
     }
 
@@ -194,7 +208,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
     /// through the same import and download paths the app uses, and waits for anchor resolution.
     private func importSharedPodcastMap(
         senderEdition: SenderEdition,
-        listenerHasOwnMap: Bool
+        listenerMap: ListenerMap
     ) async throws -> SharedPodcastMapFixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "shared-podcast-map-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -220,7 +234,15 @@ final class LocalAudioListeningPackageTests: XCTestCase {
             id: "download-\(item.id)", itemId: item.id, remoteURL: "https://cdn.example.com/shared-map.m4a",
             localRelativePath: fileName, state: .availableOffline, bytesWritten: Int64(downloadBytes.count)
         ))
-        if listenerHasOwnMap {
+        if listenerMap == .publisherChapters {
+            try store.saveTranscriptTimeline(SourceTranscriptTimeline(
+                id: "publisher-timeline", itemId: item.id, createdAt: Date(),
+                timeline: TranscriptTimeline(segments: [], chapters: [
+                    MediaTimelineChapter(id: "chapter-1", title: "Cold open", startMs: 0, transcriptSegmentId: "segment-1")
+                ], durationMs: 10_000)
+            ))
+        }
+        if listenerMap == .own {
             try store.savePortableListeningMapProposal(PortableListeningMapProposalArtifact(
                 id: "my-map", createdAt: Date(), generator: "test",
                 scenes: [PortableListeningMapScene(id: "mine", order: 0, eligibility: .eligible,
@@ -273,7 +295,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(20))
         }
         XCTAssertEqual(model.diagnostics[key]?.hasPrefix("complete"), true, model.diagnostics[key] ?? "never scheduled")
-        return SharedPodcastMapFixture(model: model, store: store, itemId: item.id) {
+        return SharedPodcastMapFixture(model: model, store: store, itemId: item.id, databaseURL: db) {
             try? FileManager.default.removeItem(at: download)
             try? FileManager.default.removeItem(at: root)
         }

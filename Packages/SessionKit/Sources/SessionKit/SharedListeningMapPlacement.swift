@@ -228,8 +228,8 @@ public enum SharedListeningMapPlacement {
     }
 
     /// What to save after resolving every friend's map on an item. A shared map never
-    /// replaces one the listener already has (a map they prepared or imported for their
-    /// own copy is stored as a committed proposal). Among friends' maps, the one in use
+    /// replaces one the listener already has: a map they prepared or imported for their
+    /// own copy (a committed proposal) or the publisher's chapters. Among friends' maps, the one in use
     /// stays while it still places (matched by projection id, since friends' proposal ids can
     /// collide); otherwise the earliest imported that places wins, so
     /// a later packet doesn't swap the map under the listener. A refusal
@@ -239,10 +239,10 @@ public enum SharedListeningMapPlacement {
     ///   - activeProjectionId: the projection in use now, which stays while it still places.
     public static func activation(
         _ outcomes: [Outcome],
-        listenerProposalIds: [String],
+        listenerHasMap: Bool,
         activeProjectionId: String? = nil
     ) -> Activation {
-        guard listenerProposalIds.isEmpty else { return Activation(projection: nil, refusal: nil) }
+        guard !listenerHasMap else { return Activation(projection: nil, refusal: nil) }
         let placed = outcomes.compactMap { outcome -> ResolvedListeningMapProjection? in
             if case .placed(let projection) = outcome { return projection }
             return nil
@@ -251,6 +251,15 @@ public enum SharedListeningMapPlacement {
             return Activation(projection: projection, refusal: nil)
         }
         return Activation(projection: nil, refusal: outcomes.lazy.compactMap(\.refusal).first)
+    }
+
+    /// The reason to show on the item, from what the last resolution stored on each packet:
+    /// the earliest imported packet's, unless the listener now has a map of their own.
+    public static func storedRefusalReason(layers: [ImportedCommentaryLayer], listenerHasMap: Bool) -> String? {
+        guard !listenerHasMap else { return nil }
+        return layers.filter { $0.deletedAt == nil }
+            .sorted { $0.importedAt < $1.importedAt }
+            .lazy.compactMap(\.sharedMapRefusalReason).first
     }
 
     static func isDirectPlacement(_ resolution: ImportedAnchorResolution) -> Bool {

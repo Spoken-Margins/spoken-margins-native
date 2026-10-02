@@ -568,8 +568,6 @@ final class Gate1AppModel: ObservableObject {
     @Published var requestedExperienceRoot: AppRoot?
     @Published private(set) var writtenMarginDraft: WrittenMarginDraft?
     @Published private(set) var recordingPermissionDenied = false
-    /// Why a friend's shared map couldn't be placed on this item's copy, by item id (#481).
-    @Published private(set) var sharedListeningMapRefusals: [String: String] = [:]
     @Published var marginCollectionQuery = MarginCollectionQuery()
     @Published private(set) var sharedMarginRows: [SharedMarginRow] = []
     private var pendingVoiceCaptureRequestID: UUID?
@@ -4663,6 +4661,19 @@ final class Gate1AppModel: ObservableObject {
     private func currentSummaryBridgeVoiceKey() -> String {
         let systemIdentifier = ttsVoiceSelection == .system ? speechVoiceIdentifier : ""
         return safePodcastEvidenceComponent("\(ttsVoiceSelection.rawValue)-\(systemIdentifier)-\(SummaryBridgeRatePolicy.cacheVersion)")
+    }
+
+    /// Why a friend's shared map couldn't be placed on this item's copy, as stored on its packets (#481).
+    func sharedListeningMapRefusal(itemId: String) -> String? {
+        guard let store, let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
+              let hasMap = try? Self.listenerHasListeningMap(itemId: itemId, store: store) else { return nil }
+        return SharedListeningMapPlacement.storedRefusalReason(layers: layers, listenerHasMap: hasMap)
+    }
+
+    /// The listener's own map or the publisher's chapters, which a friend's map never replaces.
+    private static func listenerHasListeningMap(itemId: String, store: SQLiteSessionStore) throws -> Bool {
+        try !store.loadPortableListeningMapProposals(itemId: itemId).isEmpty
+            || store.loadTranscriptTimeline(itemId: itemId)?.timeline.chapters.isEmpty == false
     }
 
     private func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String? = nil) -> String {
@@ -16382,19 +16393,20 @@ final class Gate1AppModel: ObservableObject {
                           let store = self.store else { return }
                     self.transcriptAssistedResolutionItems.remove(itemId)
                     do {
-                        for (layer, records, _) in resolvedWork {
-                            try store.saveImportedCommentaryLayer(layer)
-                            for record in records { try store.saveImportedCommentaryInterjection(record) }
-                        }
                         let outcomes = resolvedWork.sorted { $0.0.importedAt < $1.0.importedAt }.compactMap(\.2)
                         let current = try store.loadResolvedListeningMapProjection(itemId: itemId)
                         let activation = SharedListeningMapPlacement.activation(
-                            outcomes, listenerProposalIds: try store.loadPortableListeningMapProposals(itemId: itemId).map(\.id),
+                            outcomes, listenerHasMap: try Self.listenerHasListeningMap(itemId: itemId, store: store),
                             activeProjectionId: current?.id)
+                        for (layer, records, outcome) in resolvedWork {
+                            var layer = layer
+                            layer.sharedMapRefusalReason = activation.refusal == nil ? nil : outcome?.refusal?.listenerReason
+                            try store.saveImportedCommentaryLayer(layer)
+                            for record in records { try store.saveImportedCommentaryInterjection(record) }
+                        }
                         let sharedProposals = Dictionary(resolvedWork.compactMap { work in
                             work.0.listeningMapProposals?.first.map { (SharedListeningMapPlacement.projectionId(layerId: work.0.id), $0) }
                         }, uniquingKeysWith: { first, _ in first })
-                        if !outcomes.isEmpty { self.sharedListeningMapRefusals[itemId] = activation.refusal?.listenerReason }
                         if activation.refusal != nil, let stale = current, sharedProposals[stale.id] != nil {
                             try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(
                                 id: stale.id, itemId: itemId, proposalId: stale.proposalId,

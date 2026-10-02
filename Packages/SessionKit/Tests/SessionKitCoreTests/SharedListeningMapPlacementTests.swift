@@ -132,8 +132,8 @@ final class SharedListeningMapPlacementTests: XCTestCase {
     func testASharedMapNeverReplacesTheListenersOwnMap() throws {
         let outcome = try decide(proposal(starts: [0, 25_000]), ["scene-0": placed(0), "scene-1": placed(25_000)])
         guard case .placed(let projection) = outcome else { return XCTFail("\(outcome)") }
-        XCTAssertEqual(SharedListeningMapPlacement.activation([outcome], listenerProposalIds: []).projection, projection)
-        let mine = SharedListeningMapPlacement.activation([outcome], listenerProposalIds: ["episode-map-proposal-mine"])
+        XCTAssertEqual(SharedListeningMapPlacement.activation([outcome], listenerHasMap: false).projection, projection)
+        let mine = SharedListeningMapPlacement.activation([outcome], listenerHasMap: true)
         XCTAssertNil(mine.projection)
         XCTAssertNil(mine.refusal, "The listener's own map is in use, so nothing is wrong")
     }
@@ -143,17 +143,17 @@ final class SharedListeningMapPlacementTests: XCTestCase {
         let refused = try decide(proposal(starts: [0, 25_000]), ["scene-0": placed(0)])
         let otherPlaced = SharedListeningMapPlacement.Outcome.placed(ResolvedListeningMapProjection(
             id: "second-friend", itemId: "my-episode", proposalId: "second-map", points: [], intervals: []))
-        let both = SharedListeningMapPlacement.activation([refused, placedOutcome, otherPlaced], listenerProposalIds: [])
+        let both = SharedListeningMapPlacement.activation([refused, placedOutcome, otherPlaced], listenerHasMap: false)
         XCTAssertEqual(both.projection?.proposalId, "friend-map")
         XCTAssertNil(both.refusal)
-        let none = SharedListeningMapPlacement.activation([refused], listenerProposalIds: [])
+        let none = SharedListeningMapPlacement.activation([refused], listenerHasMap: false)
         XCTAssertNil(none.projection)
         XCTAssertEqual(none.refusal?.reason, .unresolved)
-        let nothing = SharedListeningMapPlacement.activation([], listenerProposalIds: [])
+        let nothing = SharedListeningMapPlacement.activation([], listenerHasMap: false)
         XCTAssertNil(nothing.projection)
         XCTAssertNil(nothing.refusal)
         let inUse = SharedListeningMapPlacement.activation(
-            [placedOutcome, otherPlaced], listenerProposalIds: [], activeProjectionId: "second-friend")
+            [placedOutcome, otherPlaced], listenerHasMap: false, activeProjectionId: "second-friend")
         XCTAssertEqual(inUse.projection?.proposalId, "second-map", "The map in use stays while it still places")
         // Codex audit on ebd2f49: two friends' packets for one episode can carry the same proposal id.
         // The packet's projection id tells them apart.
@@ -164,7 +164,7 @@ final class SharedListeningMapPlacementTests: XCTestCase {
             id: SharedListeningMapPlacement.projectionId(layerId: "layer-b"), itemId: "my-episode",
             proposalId: "episode-map-proposal", points: [], intervals: []))
         let keptB = SharedListeningMapPlacement.activation(
-            [friendA, friendB], listenerProposalIds: [],
+            [friendA, friendB], listenerHasMap: false,
             activeProjectionId: SharedListeningMapPlacement.projectionId(layerId: "layer-b"))
         XCTAssertEqual(keptB.projection?.id, SharedListeningMapPlacement.projectionId(layerId: "layer-b"))
         XCTAssertTrue(SharedListeningMapPlacement.isSharedProjection(id: SharedListeningMapPlacement.projectionId(layerId: "layer-b")))
@@ -222,5 +222,28 @@ final class SharedListeningMapPlacementTests: XCTestCase {
         guard case .placed = try decide(proposal(starts: [0, 60_000]), [
             "scene-0": placed(0, .exactEdition), "scene-1": placed(60_000, .exactEdition)
         ]) else { return XCTFail("exact edition") }
+    }
+
+    /// Codex audit on 7d03901: the reason has to survive a restart, so it is kept on each
+    /// packet's layer, which older builds decode without it.
+    func testTheRefusalReasonIsKeptOnThePacketAndShownUntilTheListenerHasAMap() throws {
+        func layer(_ id: String, at seconds: TimeInterval, reason: String?) -> ImportedCommentaryLayer {
+            ImportedCommentaryLayer(
+                id: id, packageDigest: "digest-\(id)", packageId: "package-\(id)",
+                itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"),
+                importedAt: Date(timeIntervalSince1970: seconds), sharedMapRefusalReason: reason
+            )
+        }
+        let layers = [layer("later", at: 20, reason: "Later reason."), layer("earlier", at: 10, reason: "Earlier reason.")]
+        XCTAssertEqual(SharedListeningMapPlacement.storedRefusalReason(layers: layers, listenerHasMap: false), "Earlier reason.")
+        XCTAssertNil(SharedListeningMapPlacement.storedRefusalReason(layers: layers, listenerHasMap: true))
+        XCTAssertNil(SharedListeningMapPlacement.storedRefusalReason(layers: [layer("placed", at: 1, reason: nil)], listenerHasMap: false))
+
+        let encoded = try JSONEncoder().encode(layers[1])
+        XCTAssertEqual(try JSONDecoder().decode(ImportedCommentaryLayer.self, from: encoded).sharedMapRefusalReason, "Earlier reason.")
+        var older = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        older.removeValue(forKey: "sharedMapRefusalReason")
+        let decodedOlder = try JSONDecoder().decode(ImportedCommentaryLayer.self, from: JSONSerialization.data(withJSONObject: older))
+        XCTAssertNil(decodedOlder.sharedMapRefusalReason, "Rows written before this field still decode")
     }
 }
