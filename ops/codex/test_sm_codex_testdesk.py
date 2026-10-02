@@ -40,6 +40,27 @@ class PureTests(unittest.TestCase):
         self.assertIsNone(desk.hold_reason(3000, dial, limits, 30 * 2**30, False))
         self.assertIn('could not be read', desk.hold_reason(3000, dial, None, 30 * 2**30, False))
 
+    def test_hold_uses_the_dial_s_codex_finish_by(self):
+        # 2026-10-02: the Dial said Sat 7 AM (trend 72%) but the desk paced to Codex's Tuesday reset (40%).
+        with patch.object(worker, 'pacing_hold', return_value=None) as hold:
+            desk.hold_reason(3000, {'workers': 1, 'stop': 97, 'finish_by': ('Sat 7 AM',)}, {}, 30 * 2**30, False)
+        self.assertEqual(hold.call_args.kwargs.get('finish_by'), ('Sat 7 AM',))
+
+    def test_diagnosis_runs_at_the_worker_s_reasoning_effort(self):
+        # Without -c the CLI falls back to ~/.codex/config.toml's effort (low).
+        seen = []
+        class Proc:
+            returncode = 1
+            def __init__(self, cmd, **kwargs):
+                seen.append(cmd)
+            def wait(self, timeout=None):
+                return 0
+        with tempfile.TemporaryDirectory() as tmp, patch.object(desk.subprocess, 'Popen', Proc):
+            ops = desk.Ops(home=Path(tmp) / 'state', repo_root=Path(tmp), run=lambda *a, **k: worker.Result(0),
+                           limits=lambda: None, echo=False)
+            ops.diagnose(Path(tmp), Path(tmp), [TEST])
+        self.assertIn(f'model_reasoning_effort="{worker.EFFORT}"', seen[0])
+
     def test_once_per_sha_and_spacing_even_after_inconclusive(self):
         state = {'last_started': 100, 'results': {SHA: {'verdict': 'INCONCLUSIVE'}}}
         self.assertIn('already', desk.schedule_hold(SHA, state, 10000))
