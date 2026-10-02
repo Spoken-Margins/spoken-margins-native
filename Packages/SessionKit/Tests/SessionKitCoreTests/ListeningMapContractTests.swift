@@ -210,6 +210,26 @@ final class ListeningMapContractTests: XCTestCase {
         XCTAssertEqual(violations(textAudioForward), [])
     }
 
+    func testSceneMustRunForwardInBothTextAndAudioCoordinates() {
+        let cases: [(String, Int, Int, Int, Int, Bool)] = [
+            ("forward audio, reversed text", 0, 1_000, 500, 100, true),
+            ("equal audio, reversed text", 0, 0, 500, 100, true),
+            ("reversed audio, forward text", 1_000, 0, 100, 500, true),
+            ("both forward", 0, 1_000, 100, 500, false),
+            ("both equal", 0, 0, 100, 100, false),
+        ]
+        for (name, startMs, endMs, startChar, endChar, inverted) in cases {
+            let map = proposal([PortableListeningMapScene(
+                id: "scene-0", order: 0, summaryText: "A short summary.",
+                summaryProvenance: .senderAuthored, eligibility: .eligible,
+                startAnchor: .init(anchorType: .text, startChar: startChar, mediaTimeMs: startMs),
+                endAnchor: .init(anchorType: .text, endChar: endChar, mediaTimeMs: endMs)
+            )])
+            XCTAssertEqual(violations(map), inverted ? [.sceneEndsBeforeItStarts(sceneId: "scene-0")] : [], name)
+            XCTAssertEqual(PortableListeningMapContract.forSharing([map]), inverted ? [] : [map], name)
+        }
+    }
+
     func testSummaryMustNotQuoteTenWordsOfItsSourceText() {
         let source = "The committee met at dawn and agreed that the old bridge must close before winter storms arrive."
         let quoting = "In short, the committee met at dawn and agreed that the old bridge must close."

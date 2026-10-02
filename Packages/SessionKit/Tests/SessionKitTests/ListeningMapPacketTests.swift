@@ -100,6 +100,29 @@ final class ListeningMapPacketTests: XCTestCase {
         }
     }
 
+    func testPacketRejectsReversedTextEvenWhenAudioRunsForward() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for endMs in [0, 1_000] {
+            let name = "reversed-text-\(endMs)"
+            let bad = proposal([PortableListeningMapScene(
+                id: "scene-0", order: 0, summaryText: "A short summary.",
+                summaryProvenance: .senderAuthored, eligibility: .eligible,
+                startAnchor: .init(anchorType: .text, startChar: 500, mediaTimeMs: 0),
+                endAnchor: .init(anchorType: .text, endChar: 100, mediaTimeMs: endMs)
+            )])
+            let prepared = try replacingProposal(in: package(item: articleItem), with: bad)
+            XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(prepared, to: root.appending(path: "\(name).spokenmargins"))) {
+                XCTAssertTrue("\($0)".contains("ends before it starts"), "\($0)")
+            }
+            // Older packets retain their Margins; only the malformed optional map is omitted.
+            try assertBuild29PacketImportsWithoutItsMap(prepared, name: name, root: root)
+            let built = try package(item: articleItem, proposals: [bad])
+            _ = try exportPacket(built, to: root.appending(path: "built-\(name).spokenmargins"))
+            XCTAssertFalse(built.manifest.artifacts.contains { $0.kind == SpokenMarginsArtifactKind.listeningMapProposal }, name)
+        }
+    }
+
     func testPacketRejectsSummaryThatQuotesTenWordsOfTheSceneSource() throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

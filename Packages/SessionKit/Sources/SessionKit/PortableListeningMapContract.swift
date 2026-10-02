@@ -53,7 +53,7 @@ public enum PortableListeningMapContract {
             }
             let start = position(scene.startAnchor, isEnd: false)
             let end = position(scene.endAnchor, isEnd: true)
-            if let start, let end, let order = compare(start, end), order > 0 {
+            if let start, let end, isPast(start, end) {
                 result.append(.sceneEndsBeforeItStarts(sceneId: scene.id))
             }
             if let start {
@@ -163,8 +163,8 @@ public enum PortableListeningMapContract {
         let character: Int?
     }
 
-    /// Where an anchor sits in the producing edition. Media time wins; character offsets are used when
-    /// either side has no media time. Rough percentages are hints, never positions.
+    /// Where an anchor sits in the producing edition. Keep both coordinates so either can reveal an
+    /// inverted range or overlap. Rough percentages are hints, never positions.
     private static func position(_ anchor: PortableAnchorEvidence, isEnd: Bool) -> Position? {
         let character = isEnd ? (anchor.endChar ?? anchor.startChar) : (anchor.startChar ?? anchor.endChar)
         guard anchor.mediaTimeMs != nil || character != nil else { return nil }
@@ -186,12 +186,6 @@ public enum PortableListeningMapContract {
             mediaTimeMs: later(reached.mediaTimeMs, next.mediaTimeMs),
             character: later(reached.character, next.character)
         )
-    }
-
-    private static func compare(_ lhs: Position, _ rhs: Position) -> Int? {
-        if let left = lhs.mediaTimeMs, let right = rhs.mediaTimeMs { return left < right ? -1 : (left == right ? 0 : 1) }
-        if let left = lhs.character, let right = rhs.character { return left < right ? -1 : (left == right ? 0 : 1) }
-        return nil
     }
 
     private static func words(_ text: String) -> [String] {
