@@ -10,6 +10,7 @@ public final class ListeningSignalCollector: @unchecked Sendable {
     private var cachedItemId: String?
     private var cachedRepository: (any SessionRepository)?
     private var cachedContext: ListeningSignalContext.Value?
+    private var cachedSubscriptions: [FeedSubscription]?
 
     public init(recorder: ListeningSignalRecorder,
                 resolve: @escaping @Sendable (String, any SessionRepository) -> ListeningSignalContext.Value? = {
@@ -26,11 +27,20 @@ public final class ListeningSignalCollector: @unchecked Sendable {
                 self.closeListening()
                 return
             }
-            if self.cachedItemId != itemId || self.cachedRepository !== repository {
+            // Subscription mutations can happen through any follow/unfollow caller, while the
+            // item and repository stay the same. Detect them here, off the playback thread,
+            // while retaining the more expensive item/feed-entry resolution during steady ticks.
+            guard let subscriptions = try? repository.loadFeedSubscriptions() else {
+                self.closeListening()
+                return
+            }
+            if self.cachedItemId != itemId || self.cachedRepository !== repository
+                || self.cachedSubscriptions != subscriptions {
                 self.recorder.endListening()
                 self.cachedContext = self.resolve(itemId, repository)
                 self.cachedItemId = itemId
                 self.cachedRepository = repository
+                self.cachedSubscriptions = subscriptions
             }
             guard let context = self.cachedContext else { return }
             self.recorder.noteListening(source: context.source, item: context.item, at: at)
@@ -84,5 +94,6 @@ public final class ListeningSignalCollector: @unchecked Sendable {
         cachedItemId = nil
         cachedRepository = nil
         cachedContext = nil
+        cachedSubscriptions = nil
     }
 }
