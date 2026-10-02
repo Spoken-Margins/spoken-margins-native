@@ -1,4 +1,7 @@
 import importlib.util
+import json
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -180,6 +183,124 @@ class TestScopeTests(unittest.TestCase):
         # The command-line path (git merge base, untracked files) must work in this checkout.
         paths, diffs = scope.changed_paths('HEAD')
         self.assertIsInstance(scope.classify(paths, diffs)['tier'], str)
+
+
+class LaneRunnerRoutingTests(unittest.TestCase):
+    def route(self, paths=(), labels=(), online=True, **overrides):
+        pr = {'labels': [{'name': label} for label in labels], 'changed_files': len(paths)}
+        files = [[{'filename': path} for path in paths]]
+        runners = [{'runners': [{'status': 'online' if online else 'offline', 'busy': True,
+                                'labels': [{'name': 'self-hosted'}, {'name': 'sm-lane-priority'}]}]}]
+        return scope.runner_routing(overrides.get('pr', pr), overrides.get('files', files),
+                                    overrides.get('runners', runners))
+
+    def assert_normal(self, result):
+        self.assertEqual(result, {'lane': ['self-hosted', 'macOS', 'sm-lane'],
+                                  'automerge': ['self-hosted', 'macOS', 'sm-lane-build']})
+
+    def assert_priority(self, result):
+        for job in ('lane', 'automerge'):
+            self.assertEqual(result[job], ['self-hosted', 'sm-lane-priority'])
+
+    def test_priority_label_routes_even_app_changes_and_busy_runner(self):
+        self.assert_priority(self.route([APP + 'Gate1AppModel.swift'], ['priority']))
+
+    def test_ops_only_t1_with_lane_and_docs_routes_priority(self):
+        self.assert_priority(self.route(['ops/codex/sm_codex_worker.py', 'scripts/lane-runner.py',
+                                         '.github/workflows/lane.yml', 'docs/workstreams/test-lane.md']))
+
+    def test_mixed_t1_diff_stays_normal(self):
+        for path in ('Packages/SessionKit/Sources/SessionKit/ListeningEdition.swift',
+                     'scripts/tests/test_lane_runner.py', 'scripts/validate-contracts.py'):
+            with self.subTest(path=path):
+                self.assert_normal(self.route(['ops/codex/sm_codex_worker.py', path]))
+
+    def test_build_lane_script_and_app_diff_stay_normal(self):
+        for path in (APP + 'ExperienceLibraryScreen.swift', 'project.yml'):
+            with self.subTest(path=path):
+                self.assert_normal(self.route(['ops/codex/sm_codex_worker.py', path]))
+
+    def test_docs_and_workflow_only_t0_stay_normal(self):
+        self.assert_normal(self.route(['docs/journeys.md', '.github/workflows/lane.yml']))
+        self.assert_normal(self.route())
+
+    def test_no_online_runner_falls_back_for_both_priority_reasons(self):
+        self.assert_normal(self.route([APP + 'Gate1AppModel.swift'], ['priority'], online=False))
+        self.assert_normal(self.route(['ops/codex/sm_codex_worker.py'], online=False))
+        self.assert_normal(self.route(labels=['priority'], runners=[]))
+
+    def test_runner_must_match_all_priority_labels(self):
+        self.assert_normal(self.route(labels=['priority'], runners=[{'runners': [
+            {'status': 'online', 'labels': [{'name': 'sm-lane-build'}]},
+            {'status': 'online', 'labels': [{'name': 'sm-lane-priority'}]}]}]))
+
+    def test_runner_on_later_page_counts(self):
+        self.assert_priority(self.route(labels=['priority'], runners=[{'runners': []}, {'runners': [
+            {'status': 'online', 'labels': [{'name': 'self-hosted'}, {'name': 'sm-lane-priority'}]}]}]))
+
+    def test_files_on_later_page_prevent_ops_only_route(self):
+        self.assert_normal(self.route(['ops/codex/a.py', APP + 'ExperienceLibraryScreen.swift'], files=[
+            [{'filename': 'ops/codex/a.py'}], [{'filename': APP + 'ExperienceLibraryScreen.swift'}]]))
+
+    def test_missing_files_or_api_failure_falls_back(self):
+        self.assert_normal(self.route(['ops/codex/a.py', APP + 'ExperienceLibraryScreen.swift'],
+                                      files=[[{'filename': 'ops/codex/a.py'}]]))
+        self.assert_normal(self.route(['ops/codex/a.py'], files=[]))
+        self.assert_normal(self.route(labels=['priority'], runners={}))
+
+    def test_rename_out_of_app_is_not_ops_only(self):
+        self.assert_normal(self.route(['ops/codex/a.py'], files=[[{
+            'filename': 'ops/codex/a.py', 'previous_filename': APP + 'ExperienceLibraryScreen.swift'}]]))
+
+
+    def test_t2_lane_path_stays_normal(self):
+        self.assert_normal(self.route(['ops/codex/a.py', 'project.yml']))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'project.yml').write_text('script: scripts/xcodebuild-lane\n')
+            result = scope.runner_routing({'labels': [], 'changed_files': 1},
+                                         [[{'filename': 'scripts/xcodebuild-lane'}]], [{'runners': [{
+                                             'status': 'online', 'labels': [
+                                                 {'name': 'self-hosted'}, {'name': 'sm-lane-priority'}]}]}], root=root)
+            self.assert_normal(result)
+
+    def test_ops_only_and_lane_only_t1_route_priority(self):
+        self.assert_priority(self.route(['ops/codex/sm_codex_worker.py']))
+        self.assert_priority(self.route(['scripts/lane_slots.py']))
+
+    def test_cli_reads_real_json_files_and_falls_back_on_bad_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in ('event.json', 'files.json', 'runners.json')]
+            payloads = [{'pull_request': {'labels': [{'name': 'priority'}], 'changed_files': 0}}, [],
+                        [{'runners': [{'status': 'online', 'labels': [
+                            {'name': 'self-hosted'}, {'name': 'sm-lane-priority'}]}]}]]
+            for path, payload in zip(paths, payloads):
+                path.write_text(json.dumps(payload))
+            command = [sys.executable, str(SCRIPTS / 'test-scope.py'), '--runner-routing', *map(str, paths)]
+            self.assert_priority(json.loads(subprocess.check_output(command, text=True)))
+            paths[-1].write_text('not JSON')
+            self.assert_normal(json.loads(subprocess.check_output(command, text=True)))
+
+    def test_workflow_routes_both_jobs_with_normal_defaults(self):
+        workflow = (SCRIPTS.parent / '.github/workflows/lane.yml').read_text()
+        route, mac_jobs = workflow.split('\n  lane:\n', 1)
+        self.assertIn('runs-on: ubuntu-latest', route)
+        self.assertIn('--paginate --slurp', route)
+        self.assertIn('actions/runners?per_page=100', route)
+        self.assertIn('pulls/$PR_NUMBER/files?per_page=100', route)
+        self.assertIn('ref: ${{ github.event.pull_request.base.sha }}', route)
+        for job, text, normal in [('lane', mac_jobs.split('\n  automerge:\n')[0], 'sm-lane'),
+                                  ('automerge', mac_jobs.split('\n  automerge:\n')[1], 'sm-lane-build')]:
+            with self.subTest(job=job):
+                self.assertIn('needs: route', text)
+                self.assertIn('always()', text)
+                self.assertIn(f'fromJSON(needs.route.outputs.{job} ||', text)
+                self.assertIn(f'"{normal}"', text)
+
+    def test_lane_routes_still_require_codex_audit(self):
+        result = scope.classify(['scripts/lane-runner.py'])
+        self.assertIn('scripts/lane-runner.py', result['lane_paths'])
+        self.assertTrue(any('Codex audit' in note for note in result['notes']))
 
 
 if __name__ == '__main__':
