@@ -55,7 +55,7 @@ private struct ResolvedSkimPlaybackPlan {
 private struct SkimResourceContext {
     let itemId: String
     let projection: ResolvedListeningMapProjection?
-    let proposals: [PortableListeningMapProposalArtifact]
+    let proposal: PortableListeningMapProposalArtifact?
     let assets: [OwnedOfflineAsset]
 }
 
@@ -4726,17 +4726,22 @@ final class Gate1AppModel: ObservableObject {
                 )
                 sourceURL = result.audioURL
             } else {
-                let renderer = SystemTextAudioPreparationClient(
-                    outputDirectory: directory,
-                    voiceIdentifier: speechVoiceIdentifier,
-                    speechRate: SummaryBridgeRatePolicy.systemSynthesisRate,
-                    allowsSynchronousRendering: true
-                )
-                guard let prepared = try renderer.prepareTextAudio(
-                    itemId: assetID,
-                    title: scene.title ?? "Scene summary",
-                    text: summary
-                ), let value = prepared.media.url, let url = URL(string: value) else {
+                let title = scene.title ?? "Scene summary"
+                // An injected preparation job renders in place of the system voice, as it does for text items.
+                let prepared: PreparedTextAudio?
+                if let prewarm = preparedTextAudioPrewarmHandler {
+                    prepared = try await prewarm(
+                        assetID, title, summary, directory, speechVoiceIdentifier, SummaryBridgeRatePolicy.systemSynthesisRate
+                    ).get()
+                } else {
+                    prepared = try SystemTextAudioPreparationClient(
+                        outputDirectory: directory,
+                        voiceIdentifier: speechVoiceIdentifier,
+                        speechRate: SummaryBridgeRatePolicy.systemSynthesisRate,
+                        allowsSynchronousRendering: true
+                    ).prepareTextAudio(itemId: assetID, title: title, text: summary)
+                }
+                guard let prepared, let value = prepared.media.url, let url = URL(string: value) else {
                     try? await ledger.release(reservationId: reservation.id)
                     return nil
                 }
@@ -4804,24 +4809,18 @@ final class Gate1AppModel: ObservableObject {
             #if DEBUG
             skimResourceLoadCount += 1
             #endif
-            let committed = (try? store.loadPortableListeningMapProposals(itemId: activeItemId)) ?? []
-            let layers = (try? store.loadImportedCommentaryLayers(itemId: activeItemId)) ?? []
             let projection = try? store.loadResolvedListeningMapProjection(itemId: activeItemId)
-            // A friend's map is found by its packet's projection id: friends' proposal ids can collide (#481).
-            let shared = layers.first { SharedListeningMapPlacement.projectionId(layerId: $0.id) == projection?.id }?
-                .listeningMapProposals?.first
             skimResourceContext = SkimResourceContext(
                 itemId: activeItemId,
                 projection: projection,
-                proposals: (shared.map { [$0] } ?? []) + committed + layers.flatMap { $0.listeningMapProposals ?? [] },
+                proposal: SharedListeningMapPlacement.proposal(
+                    for: projection, committed: (try? store.loadPortableListeningMapProposals(itemId: activeItemId)) ?? [],
+                    layers: (try? store.loadImportedCommentaryLayers(itemId: activeItemId)) ?? []),
                 assets: (try? store.loadOwnedOfflineAssets()) ?? []
             )
         }
         guard let resources = skimResourceContext, let projection = resources.projection else { return nil }
-        let proposals = resources.proposals
-        guard let proposal = proposals.first(where: { $0.id == projection.proposalId }) ?? proposals.first else {
-            return nil
-        }
+        guard let proposal = resources.proposal else { return nil }
         let scenes = proposal.scenes.sorted { $0.order < $1.order }
         guard !scenes.isEmpty else { return nil }
         let exactIdentityProjection = projection.algorithmVersion == "episode-projection.exact-edition.v1"
@@ -14948,10 +14947,9 @@ final class Gate1AppModel: ObservableObject {
         let mediaTimeline = try store.loadTranscriptTimeline(itemId: id)?.timeline
         let mediaChapters = mediaTimeline?.chapters ?? []
         let projection = try store.loadResolvedListeningMapProjection(itemId: id)
-        let proposals = try store.loadPortableListeningMapProposals(itemId: id)
-        let proposal = projection.flatMap { projection in
-            proposals.first(where: { $0.id == projection.proposalId })
-        } ?? proposals.first
+        let proposal = SharedListeningMapPlacement.proposal(
+            for: projection, committed: try store.loadPortableListeningMapProposals(itemId: id),
+            layers: try store.loadImportedCommentaryLayers(itemId: id))
         let exactIdentityProjection = projection?.algorithmVersion == "episode-projection.exact-edition.v1"
             || (projection?.points.isEmpty == false
                 && projection?.points.allSatisfy {

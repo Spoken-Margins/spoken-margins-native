@@ -246,4 +246,43 @@ final class SharedListeningMapPlacementTests: XCTestCase {
         let decodedOlder = try JSONDecoder().decode(ImportedCommentaryLayer.self, from: JSONSerialization.data(withJSONObject: older))
         XCTAssertNil(decodedOlder.sharedMapRefusalReason, "Rows written before this field still decode")
     }
+
+    /// Codex audit on 3227748: a placed friend's map stays on its packet, so the item's scene
+    /// list has to find it there the way Skim does, by the packet's projection id.
+    func testTheItemsMapIsFoundOnTheFriendsPacketByProjectionId() {
+        func map(_ id: String, scene: String) -> PortableListeningMapProposalArtifact {
+            PortableListeningMapProposalArtifact(
+                id: id, createdAt: Date(timeIntervalSince1970: 0), generator: "test",
+                scenes: [PortableListeningMapScene(
+                    id: scene, order: 0, eligibility: .unknown,
+                    startAnchor: PortableAnchorEvidence(anchorType: .transcript, mediaTimeMs: 0),
+                    endAnchor: PortableAnchorEvidence(anchorType: .transcript, mediaTimeMs: 1_000))]
+            )
+        }
+        func layer(_ id: String, _ proposal: PortableListeningMapProposalArtifact) -> ImportedCommentaryLayer {
+            ImportedCommentaryLayer(
+                id: id, packageDigest: "digest-\(id)", packageId: "package-\(id)",
+                itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"),
+                importedAt: Date(timeIntervalSince1970: 0), listeningMapProposals: [proposal]
+            )
+        }
+        func projection(_ id: String, proposalId: String) -> ResolvedListeningMapProjection {
+            ResolvedListeningMapProjection(
+                id: id, itemId: "my-episode", proposalId: proposalId,
+                recipientEditionSHA256: "my-bytes", points: [], intervals: [])
+        }
+        // Two friends sent maps with the same proposal id.
+        let layers = [layer("first", map("episode-map", scene: "first-scene")),
+                      layer("second", map("episode-map", scene: "second-scene"))]
+        let own = map("my-map", scene: "my-scene")
+        let shared = projection(SharedListeningMapPlacement.projectionId(layerId: "second"), proposalId: "episode-map")
+        XCTAssertEqual(SharedListeningMapPlacement.proposal(for: shared, committed: [own], layers: layers)?.scenes.first?.id,
+                       "second-scene", "The map the projection placed, not the first with that id or the listener's")
+        XCTAssertEqual(SharedListeningMapPlacement.proposal(for: projection("my-projection", proposalId: "my-map"),
+                                                            committed: [own], layers: layers)?.scenes.first?.id, "my-scene")
+        XCTAssertEqual(SharedListeningMapPlacement.proposal(for: nil, committed: [own], layers: layers)?.id, "my-map")
+        XCTAssertNil(SharedListeningMapPlacement.proposal(
+            for: projection(SharedListeningMapPlacement.projectionId(layerId: "deleted"), proposalId: "episode-map"),
+            committed: [own], layers: layers), "A projection whose packet is gone places nothing")
+    }
 }

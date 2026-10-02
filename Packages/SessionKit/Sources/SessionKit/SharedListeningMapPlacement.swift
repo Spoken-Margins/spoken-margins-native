@@ -24,6 +24,22 @@ public enum SharedListeningMapPlacement {
         id.hasPrefix(projectionId(layerId: ""))
     }
 
+    /// The map a stored projection places, for the item's scene list and for Skim. A friend's
+    /// map stays on its packet and is found by the packet's projection id; any other projection
+    /// names its map by proposal id, among the listener's own maps first.
+    public static func proposal(
+        for projection: ResolvedListeningMapProjection?,
+        committed: [PortableListeningMapProposalArtifact],
+        layers: [ImportedCommentaryLayer]
+    ) -> PortableListeningMapProposalArtifact? {
+        if let projection, isSharedProjection(id: projection.id) {
+            return layers.first { projectionId(layerId: $0.id) == projection.id }?.listeningMapProposals?.first
+        }
+        let proposals = committed + layers.flatMap { $0.listeningMapProposals ?? [] }
+        return projection.flatMap { projection in proposals.first { $0.id == projection.proposalId } }
+            ?? committed.first
+    }
+
     /// The sender's scene starts must be present and increase even on an exact edition,
     /// where nothing is matched: Skim walks them in order.
     public static func startsRefusal(proposal: PortableListeningMapProposalArtifact) -> Refusal? {
