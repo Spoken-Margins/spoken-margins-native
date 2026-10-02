@@ -880,13 +880,44 @@ def pick_branch(ops: Ops, number: int, title: str) -> str:
     raise RuntimeError(f'no free branch name for {base}')
 
 
+def stage_changes(ops: Ops, wt: Path) -> None:
+    """Trim trailing blank lines in changed text files before staging, including new files."""
+    paths = ['--', '.', f':(exclude){OUT_DIR_NAME}']
+    tracked = ops.must(['git', 'diff', '--name-only', '-z', 'HEAD', *paths], cwd=wt).stdout
+    untracked = ops.must(['git', 'ls-files', '--others', '--exclude-standard', '-z', *paths], cwd=wt).stdout
+    for name in sorted(set((tracked + untracked).split('\0')) - {''}):
+        path = wt / name
+        if path.is_symlink() or not path.is_file():
+            continue
+        data = path.read_bytes()
+        if b'\0' in data:
+            continue
+        try:
+            data.decode('utf-8')
+        except UnicodeDecodeError:
+            continue
+        lines = data.splitlines(keepends=True)
+        while lines and not lines[-1].strip(b' \t\r\n'):
+            lines.pop()
+        trimmed = b''.join(lines)
+        if trimmed != data:
+            path.write_bytes(trimmed)
+    ops.must(['git', 'add', '-A', *paths], cwd=wt)
+
+
+def check_staged_changes(ops: Ops, wt: Path) -> None:
+    """Reject conflict markers and Git errors, but never reject whitespace warnings."""
+    ops.must(['git', '-c', 'core.whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab,'
+              '-indent-with-non-tab,-tab-in-indent', 'diff', '--cached', '--check'], cwd=wt)
+
+
 def save_diff(ops: Ops, wt: Path, dest: Path) -> None:
     """Save everything Codex changed, new files included, before the worktree is removed.
 
     Plain `git diff` leaves out untracked files, so a give-up or failed run lost every file Codex
     created (#64). Staging first is safe: the commit step stages the same paths again.
     """
-    ops.run(['git', 'add', '-A', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt)
+    stage_changes(ops, wt)
     diff = ops.run(['git', 'diff', '--cached', '--binary'], cwd=wt).stdout
     dest.write_text(diff or '')
 
@@ -970,7 +1001,7 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
         msg_file = run_dir / 'commit-msg.txt'
         raw_msg = (out / 'commit-msg.txt').read_text(errors='replace') if (out / 'commit-msg.txt').exists() else ''
         msg_file.write_text(commit_message(raw_msg, number, issue.get('title') or ''))
-        ops.must(['git', 'add', '-A', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt)
+        stage_changes(ops, wt)
         ops.must(['git', 'commit', '--quiet', '-F', str(msg_file)], cwd=wt)
 
         if fast.returncode != 0:
@@ -1101,7 +1132,7 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
             stop('Codex made no changes and next is already merged; no push')
             return 'empty'
         # Staging the resolutions does not hide accidentally retained conflict markers.
-        ops.must(['git', 'diff', '--cached', '--check'], cwd=wt)
+        check_staged_changes(ops, wt)
         fast = ops.run(['.venv/bin/python', 'scripts/verify-tests.py', '--plan', 'fast'], cwd=wt,
                        timeout=FAST_PLAN_TIMEOUT_S)
         (run_dir / 'fast-plan.txt').write_text((fast.stdout or '') + (fast.stderr or ''))
@@ -1115,8 +1146,8 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
         subject = f'Fix lane FAIL on #{number}' if failing_head_report(pr) else 'Merge next and resolve conflicts'
         msg = run_dir / 'commit-msg.txt'
         msg.write_text(commit_message(f'{subject}\n\n{raw_msg.strip()}', number, pr['title']))
-        ops.must(['git', 'add', '-A', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt)
-        ops.must(['git', 'diff', '--cached', '--check'], cwd=wt)
+        stage_changes(ops, wt)
+        check_staged_changes(ops, wt)
         ops.must(['git', 'commit', '--quiet', '-F', str(msg)], cwd=wt)
         fresh = ops.pull(number)
         if (fresh['state'] != 'OPEN' or fresh.get('isDraft') or fresh['baseRefName'] != BASE_BRANCH
