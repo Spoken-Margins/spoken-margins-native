@@ -131,7 +131,7 @@ def input_identity():
     for relative in sorted(set(paths)):
         if not (relative.startswith(('App/', 'Packages/', 'Contracts/', 'Config/', 'TestPlans/',
                                      'SpokenMarginsNative.xcodeproj/', 'scripts/', 'validation/',
-                                     'Tools/', 'schemas/'))
+                                     'Tools/', 'schemas/', 'ops/'))
                 or relative in ('project.yml', 'package.json', 'package-lock.json')):
             continue
         path = ROOT / relative
@@ -191,6 +191,48 @@ def log_errors(text, limit=3, width=300):
                 break
             found.append('failed: ' + line.strip())
     return [line[:width] for line in dict.fromkeys(found)][:limit]
+
+
+# Codex runs its shell commands under macOS seatbelt and sets CODEX_SANDBOX there. That sandbox refuses
+# to run `ps`, which the lane's own boot tests in scripts/tests need, so runner-tests can't pass inside it
+# (#64's Codex run, 2026-10-01: 2 failures and 12 errors, and the plan stopped before the package step).
+# Inside it the plan skips runner-tests and ends as verified_in_codex_sandbox, which no gate accepts;
+# the Codex worker's own run, outside the sandbox, is the full plan.
+CODEX_SANDBOX_SKIPS = {'runner-tests': 'Codex sandbox: `ps` cannot run here, so the lane boot tests cannot'}
+# SessionKit tests that encode, play or speak real audio fail in that sandbox and pass outside it
+# (AVFoundation 'fmt?' errors, players that never start, speech that never renders; 2026-10-01).
+# Inside the sandbox their results are reported but don't fail the package step.
+CODEX_SANDBOX_AUDIO_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
+    'PodcastEvidenceSignatureLengthTests/testEvidenceFromStereo48kHzAudioStaysQueryableAndPlacesTheMargin',
+    'PodcastLateAnchorPlacementTests/testMarginLateInALongEpisodeIsPlaced',
+    'RealPlayerMarginMomentTests/testMarginPlaysWhenPlaybackReachesItAndTheEpisodeResumesAfterwards',
+    'RealPlayerPodcastEvidenceTests/testContinuousTapCapturesThePreWindowFromAStreamedEpisode',
+    'RealPlayerPodcastEvidenceTests/testContinuousTapInstallsOnceTracksLoadAndCapturesThePreWindow',
+    'RealPlayerPodcastEvidenceTests/testTapKeepsTheHeardAudioAroundAStreamedMarginForTranscription',
+    'SharingTests/testAcousticPauseDetectionFindsEdgesAndProtectsAlignedSpeech',
+    'SharingTests/testAcousticResolverDeclinesConflictingSyntheticMatchesAcrossInsertedAd',
+    'SharingTests/testAcousticResolverDoesNotPlaceMarginsNextToRepeatedAudio',
+    'SharingTests/testAcousticResolverPlacesAMarginAfterAnInsertedAdByTheAdsLength',
+    'SharingTests/testBuilderIncludesOnlyExplicitlySelectedOriginalOrCleanedVoice',
+    'SharingTests/testPortableListeningMapProposalAndPodcastEvidenceImportWithoutActivatingMap',
+    'SharingTests/testSpeechAwarePauseDetectionRemovesAHighEnergyGapWithoutTouchingWords',
+    'SupertonicChunkingTests/testSystemVoiceReadsAFlaggedChunkInSupertonicsFormat',
+    'SystemNarrationRateTests/testNarrationIsHeardAtTheChosenSpeed',
+))
+
+
+def in_codex_sandbox():
+    return bool(os.environ.get('CODEX_SANDBOX'))
+
+
+def passed_status():
+    return 'verified_in_codex_sandbox' if in_codex_sandbox() else 'verified'
+
+
+def ops_test_folders(root=None):
+    """Each folder under ops/ that holds its own Python tests (test_*.py), e.g. ops/dial."""
+    base = Path(root or ROOT)
+    return sorted({path.parent for path in (base / 'ops').rglob('test_*.py')})
 
 
 class Run:
@@ -289,11 +331,12 @@ class Run:
                 entry['gating'] = {test: records.get(test, {}).get('status', 'missing')
                                    for test in sorted(set(expected or ()) - probation)}
                 entry['probation'] = {test: records.get(test, {}).get('status', 'missing') for test in sorted(probation)}
-        if name == 'runner-tests':
+        if name == 'runner-tests' or name.startswith('ops-'):
             match = re.search(r'Ran (\d+) tests? in ', text)
             entry['executed_count'] = int(match[1]) if match else 0
             if not entry['executed_count']:
-                errors.append('Infrastructure runner executed zero tests')
+                errors.append('Infrastructure runner executed zero tests' if name == 'runner-tests'
+                              else f'{name} executed zero tests')
         if name == 'browser':
             match = re.search(r'^# tests (\d+)$', text, re.M)
             entry['executed_count'] = int(match[1]) if match else 0
@@ -323,7 +366,11 @@ class Run:
             self.host_steps()
 
     def host_steps(self):
-        self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'])
+        if in_codex_sandbox():
+            self.skip('runner-tests')
+        else:
+            self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'])
+        self.ops_steps()
         self.command('contracts', [sys.executable, 'scripts/validate-contracts.py'])
         self.command('surfaces', [sys.executable, 'scripts/validate-surface-contracts.py'])
         self.command('inventory', [sys.executable, 'scripts/test_inventory.py'])
@@ -335,10 +382,25 @@ class Run:
             expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))
         self.command('package', ['bash', 'scripts/run-sessionkit-tests.sh'], timeout=300,
                      expected=expected, tests=True,
-                     allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus'})
+                     allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus'},
+                     probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
 
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed during fast verification')
+
+    def skip(self, name):
+        reason = CODEX_SANDBOX_SKIPS[name]
+        self.manifest['steps'].append({'name': name, 'skipped': reason})
+        self.save()
+        print(f'{name}: skipped ({reason})', flush=True)
+
+    def ops_steps(self, root=None):
+        """The ops tools' own tests (ops/dial, ops/codex), one step per folder: each folder imports its
+        module from beside its tests, so each is its own discovery top level."""
+        base = Path(root or ROOT)
+        for folder in ops_test_folders(base):
+            name = 'ops-' + '-'.join(folder.relative_to(base).parts[1:]) if folder != base / 'ops' else 'ops'
+            self.command(name, [sys.executable, '-m', 'unittest', 'discover', '-s', str(folder), '-t', str(folder)])
 
     def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None):
         if input_identity() != self.manifest['input_sha256']:
@@ -456,7 +518,7 @@ def main():
     if args.list:
         print('\n'.join(f'{t} ({status})' for status, tests in journeys.items() for t in tests) if journeys
               else '\n'.join(sorted(plan_tests(ROOT, PLANS[args.plan][1]))) if args.plan in PLANS
-              else 'runner-tests, contracts, surfaces, inventory, browser, all SessionKit tests')
+              else 'runner-tests, ops tests, contracts, surfaces, inventory, browser, all SessionKit tests')
         return 0
     if journeys is not None and not any(journeys.values()):
         print('No scripted journeys are listed in TestPlans/scripted-journeys.json; nothing to run.')
@@ -479,7 +541,7 @@ def main():
                     run.xcode(args.plan, args.device, args.rebuild, args.ios, args.only_testing)
             if input_identity() != run.manifest['input_sha256']:
                 raise RuntimeError('Inputs changed during verification; rerun on a stable source state')
-            run.manifest['status'] = 'verified'
+            run.manifest['status'] = passed_status()
             return 0
         except (RuntimeError, subprocess.SubprocessError, OSError, KeyboardInterrupt) as error:
             run.manifest.update(status='failed_or_incomplete', error=str(error) or repr(error))

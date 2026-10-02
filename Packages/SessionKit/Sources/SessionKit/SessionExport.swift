@@ -19,6 +19,9 @@ public struct ExportItem: Codable, Equatable {
     public var includedFullText: Bool
     public var text: String?
     public var sourceTranscript: String? = nil
+    public var author: String? = nil
+    /// A paper's DOI or arXiv id, authors and year, when its PDF carried one (#206).
+    public var bibliography: PDFBibliography? = nil
 }
 
 public struct ExportSession: Codable, Equatable {
@@ -52,6 +55,9 @@ public struct ExportInterjection: Codable, Equatable {
     /// Nil retains the legacy audio-recording interpretation for exports created
     /// before written Margins were introduced.
     public var captureKind: InterjectionCaptureKind? = nil
+    /// The 1-based PDF page the Margin's anchor sits on, when the item's structured
+    /// document knows it (#206).
+    public var page: Int? = nil
 }
 
 public struct ExportOptions: Equatable {
@@ -94,16 +100,46 @@ public struct ExportOptions: Equatable {
 public enum SessionExportMarkdownRenderer {
     /// Stable single-note export: session progress must not rewrite a vault note
     /// every playback tick. The canonical export already scopes/bounds context.
+    /// The YAML properties block lets Obsidian and other Markdown tools search the note
+    /// without Spoken Margins (#491). The notes-folder writer rewrites its own unedited
+    /// notes when this body changes, and edited ones never.
     public static func renderMargin(_ export: SessionExport, createdAt: Date) -> String {
         guard let note = export.interjections.first, export.interjections.count == 1 else { return "" }
-        var lines = ["# " + export.item.title, "", "Created: " + ISO8601DateFormatter().string(from: createdAt)]
+        let onSource = note.targetType == InterjectionTargetType.item.rawValue
+        let created = ISO8601DateFormatter().string(from: createdAt)
+        var lines = MarginNoteFrontmatter(export: export, margin: note, created: created).lines
+        lines += ["# " + export.item.title, "", "Created: " + created]
         if let reference = export.item.externalReference { lines += ["Source: " + reference] }
         lines += ["Target: \(note.targetType) / \(note.targetId)", "Session: \(note.sessionId)", "Margin: \(note.id)"]
-        lines += ["Position: " + (note.mediaTimeMs.map { "\($0) ms" } ?? "\(note.roughPercent)%"), ""]
-        lines += [note.captureKind == .written ? "## Written Margin" : "## Listener Margin", "", note.transcript ?? "", ""]
-        if !note.anchorBefore.isEmpty { lines += ["## Context before", "", note.anchorBefore, ""] }
-        if !note.anchorAfter.isEmpty { lines += ["## Context after", "", note.anchorAfter, ""] }
+        // A Margin on an AI reply sits in the reply, not in the source (#112).
+        let position = note.mediaTimeMs.map(MarginDeepLink.clockPosition(ms:)) ?? "\(note.roughPercent)%"
+        lines += [(onSource ? "Position: " : "Position in AI reply: ") + position]
+        // The way back to the moment (#171).
+        let link = MarginDeepLink(sessionId: note.sessionId, marginId: note.id).url.absoluteString
+        lines += ["[Open this Margin in Spoken Margins](\(link))", ""]
+        lines += [note.captureKind == .written ? "## Written Margin" : "## Listener Margin", "", marginText(note), ""]
+        // Context captured from an item imported before #560 can hold link titles; the
+        // stored anchor keeps them, the note shows the text as read.
+        let before = SpeechTextNormalizer.removingLinkTitleRemnants(from: note.anchorBefore)
+        let after = SpeechTextNormalizer.removingLinkTitleRemnants(from: note.anchorAfter)
+        if !before.isEmpty { lines += ["## Context before", "", before, ""] }
+        if !after.isEmpty { lines += ["## Context after", "", after, ""] }
         return lines.joined(separator: "\n")
+    }
+
+    public static let transcriptNotAvailableYet = "Transcript not available yet."
+
+    /// Whether a Margin gets a note in the notes folder (#171). A spoken Margin always does, so a failed or
+    /// unfinished transcription still reaches the folder; its note is rewritten when the transcript arrives.
+    /// A written Margin with no words has nothing to say.
+    public static func writesMarginNote(captureKind: InterjectionCaptureKind?, text: String?) -> Bool {
+        captureKind != .written || !(text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func marginText(_ note: ExportInterjection) -> String {
+        let text = note.transcript ?? ""
+        guard note.captureKind != .written, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
+        return transcriptNotAvailableYet
     }
 
     public static func render(_ export: SessionExport) -> String {
