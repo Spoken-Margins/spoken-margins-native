@@ -43,6 +43,38 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertFalse(chapters.contains { $0.title.contains("Field Study") || $0.title.contains("Ada Example") })
     }
 
+    func testTitleIdentitySurvivesRoundTripAlongsideFootnotes() throws {
+        // #272 and #250 touch the same extractor path. Keeping the title's old
+        // heading level must not create title-page chapters or read footnotes.
+        let original = document([
+            StructuredDocumentLine(text: "Listening to Papers: A Field Study", role: .title, pageIndex: 0, level: 1),
+            StructuredDocumentLine(text: "of Researchers", role: .title, pageIndex: 0, level: 1),
+            StructuredDocumentLine(text: "Ada Example, Ben Sample", role: .authors, pageIndex: 0),
+            StructuredDocumentLine(text: "v1", role: .frontMatter, pageIndex: 0),
+            StructuredDocumentLine(text: "1 Introduction", role: .heading, pageIndex: 1, level: 2),
+            StructuredDocumentLine(text: "Participants kept diaries.", role: .body, pageIndex: 1),
+            StructuredDocumentLine(text: "1 Diaries were transcribed later.", role: .footnote, pageIndex: 1),
+        ])
+        let doc = try JSONDecoder().decode(StructuredDocument.self, from: JSONEncoder().encode(original))
+        let title = try XCTUnwrap(doc.segments.first { $0.role == .title })
+        XCTAssertEqual(title.level, 1, "the v1 level used to find the item title survives persistence")
+        let characters = Array(doc.text)
+        let titleText = String(characters[title.range.start..<title.range.end])
+        XCTAssertEqual(titleText.split(whereSeparator: \.isNewline).first.map(String.init),
+                       "Listening to Papers: A Field Study")
+        let map = try XCTUnwrap(StructuredDocumentImport.listeningMap(for: doc, title: "Listening to Papers", itemId: "item"))
+        // The canonical map includes one front-matter span before the first
+        // section, rather than a chapter for each title or author line.
+        XCTAssertEqual(map.chapters.map(\.title), ["Front Matter", "1 Introduction"])
+        XCTAssertEqual(StructuredDocumentSpeech.spokenLines(doc), [
+            "Listening to Papers: A Field Study",
+            "of Researchers",
+            "Ada Example, Ben Sample",
+            "1 Introduction",
+            "Participants kept diaries.",
+        ])
+    }
+
     func testSpeechFollowsI14AndMapsBackToTheCanonicalText() throws {
         let doc = document([
             StructuredDocumentLine(text: "J Biol 12 (2020) 1-9", role: .pageHeader, pageIndex: 0),

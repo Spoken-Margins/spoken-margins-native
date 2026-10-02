@@ -77,7 +77,8 @@ class InstallerTests(unittest.TestCase):
 
     def run_installer(self, devices, answer='', **extra):
         env = {**os.environ, 'PATH': f'{self.bin}:/usr/bin:/bin', 'SM_PHONE_DIR': str(self.phone),
-               'FAKE_LOG': str(self.log), 'FAKE_DEVICES': json.dumps(devices), **extra}
+               'FAKE_LOG': str(self.log), 'FAKE_DEVICES': json.dumps(devices),
+               'SM_PHONE_ICLOUD': str(self.tmp / 'icloud'), **extra}
         done = subprocess.run(['/bin/zsh', str(INSTALLER)], env=env, input=answer, capture_output=True, text=True,
                               timeout=60)
         calls = self.log.read_text().splitlines() if self.log.exists() else []
@@ -94,6 +95,31 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse(any('uninstall' in c for c in calls))
         self.assertEqual((self.phone / 'installed.txt').read_text().split()[0], self.sha)
         self.assertIn(f'open {folder.resolve()}/test-plan.md', calls)
+
+    def test_copies_the_test_plan_to_icloud_drive_for_the_phone(self):
+        folder = self.make_build()
+        (folder / 'test-plan.md').write_text('# Phone build: what to try\n1. Check the Following tab\n')
+        icloud = self.tmp / 'icloud'
+        icloud.mkdir()
+        for old in ('1111111', '2222222', '3333333', '4444444', '5555555'):
+            (icloud / f'Test plan {old}.md').write_text('old')
+        (icloud / 'my own notes.md').write_text('keep me')
+        done, _ = self.run_installer([iphone('PHONE-1')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        copy = icloud / f'Test plan {self.sha[:7]}.md'
+        self.assertEqual(copy.read_text(), '# Phone build: what to try\n1. Check the Following tab\n')
+        self.assertIn('iCloud Drive', done.stdout)
+        plans = sorted(p.name for p in icloud.glob('Test plan *.md'))
+        self.assertEqual(len(plans), 5)                  # the newest five, this one included
+        self.assertNotIn('Test plan 1111111.md', plans)  # the oldest copy goes
+        self.assertTrue((icloud / 'my own notes.md').exists())
+
+    def test_no_icloud_drive_still_installs(self):
+        self.make_build()
+        done, _ = self.run_installer([iphone('PHONE-1')], SM_PHONE_ICLOUD=str(self.tmp / 'missing' / 'x'))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual((self.phone / 'installed.txt').read_text().split()[0], self.sha)
+        self.assertIn("couldn't copy the test plan", done.stdout)
 
     def test_no_phone_plugged_in(self):
         self.make_build()
