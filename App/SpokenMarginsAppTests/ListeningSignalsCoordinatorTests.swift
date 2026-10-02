@@ -32,7 +32,7 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         // when the already-followed subscription itself did not change. The entry is a refresh
         // completion marker; it is not the listened item and cannot provide its context.
         try store.saveFeedEntry(FeedEntry(id: "refresh-marker", subscriptionId: subscription.id,
-            canonicalURL: "https://publisher.example/other", title: "Other", state: .dismissed))
+            canonicalURL: "https://publisher.example/other", title: "Other", state: .unseen))
         model.refreshFollowedSources(force: false)
         let deadline = Date().addingTimeInterval(5)
         while !model.followedSourceEntries.contains(where: { $0.id == "refresh-marker" }), Date() < deadline {
