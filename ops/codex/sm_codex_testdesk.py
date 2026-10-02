@@ -33,7 +33,8 @@ NOT_VERIFIED = 'not verified: agent-driven journeys, audible content, Lock Scree
 def hold_reason(now: float, dial: dict, limits: dict | None, free: int, busy: bool) -> str | None:
     if dial['workers'] == 0:
         return 'Dial allows 0 Codex workers'
-    return (worker.pacing_hold(now, dial['stop'], limits, free)
+    return (worker.pacing_hold(now, dial['stop'], limits, free,
+                               finish_by=dial.get('finish_by', ('Codex reset',)))
             or ('Mac-wide simulator slot is busy' if busy else None))
 
 
@@ -242,7 +243,8 @@ class Ops(worker.Ops):
         prompt_path.write_text(prompt)
         answer = evidence / 'diagnosis.json'
         # Prompt on stdin keeps a large test log below the OS argument-size limit.
-        cmd = [worker.CODEX, 'exec', '-m', worker.MODEL, '-s', 'read-only',
+        cmd = [worker.CODEX, 'exec', '-m', worker.MODEL, '-c', f'model_reasoning_effort="{worker.EFFORT}"',
+               '-s', 'read-only',
                '-C', str(wt), '-o', str(answer), '-']
         with prompt_path.open() as source, (evidence / 'codex.log').open('w') as log:
             proc = subprocess.Popen(cmd, stdin=source, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
