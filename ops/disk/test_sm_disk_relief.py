@@ -401,7 +401,11 @@ class Moves(Base):
         m = FakeMachine(self.cfg, base_free=99 * MiB)
         result = d.run(self.cfg, m, self.log)
         self.assertFalse(self.src.exists())
-        self.assertTrue((self.primary / self.rel / 'report.md').exists())
+        # run() names its destination from the fake machine's clock, not the date
+        # passed explicitly by the move_verified tests above.
+        day = d.dt.datetime.fromtimestamp(m.now()).strftime('%Y-%m-%d')
+        primary = self.cfg.drive / d.run_folder(self.cfg, day)
+        self.assertTrue((primary / self.rel / 'report.md').exists())
         self.assertTrue(result.acted)
 
     def test_a_drive_without_twice_the_space_skips_the_move(self):

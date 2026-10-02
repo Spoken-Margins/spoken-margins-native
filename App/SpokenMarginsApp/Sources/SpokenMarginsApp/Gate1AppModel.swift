@@ -3442,16 +3442,20 @@ final class Gate1AppModel: ObservableObject {
             sourceSurface: handoff.sourceSurface,
             createdAt: Date()
         )
-        let result: LinkResolutionResult
-        if let sourceLinkResolver {
-            result = try sourceLinkResolver.resolve(request)
-        } else {
-            result = try await PublicPodcastLinkResolver().resolveAsync(request)
-        }
-        guard result.status == .playable else {
-            if feedEntry == nil, let article = try await LinkArticleFallback.article(for: url, after: result, startSession: false, using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }) {
-                try importBrowserTextInBackground(article); return nil
+        let resolution = try await LinkArticleFallback.resolve(
+            url: url, allowsArticle: feedEntry == nil, using: readablePageExtractor,
+            record: { diagnostics["lastSourceLinkArticleFallback"] = $0 },
+            podcast: {
+                if let sourceLinkResolver { return try sourceLinkResolver.resolve(request) }
+                return try await PublicPodcastLinkResolver().resolveAsync(request)
             }
+        )
+        if case .article(let article) = resolution {
+            try importBrowserTextInBackground(article)
+            return nil
+        }
+        guard case .podcast(let result) = resolution else { return nil }
+        guard result.status == .playable else {
             let provider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
             diagnostics["lastSourceLinkFailureCategory"] = result.failureReason
                 ?? result.status.rawValue

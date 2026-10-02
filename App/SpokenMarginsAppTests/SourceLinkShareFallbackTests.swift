@@ -1,6 +1,7 @@
 import XCTest
 import SessionKit
 import SessionKitFeeds
+import WebKit
 @testable import SpokenMarginsApp
 
 /// #223: a link shared as a bare URL from another app (the Substack app shares a post that way) is added as an
@@ -23,13 +24,9 @@ final class SourceLinkShareFallbackTests: XCTestCase {
         let store = makePayloadStore()
         let handoff = SourceLinkHandoff(id: "source-link-substack-post", inputURL: Self.postURL, sourceSurface: "share_sheet", startSession: true)
         try store.save(handoff)
-        let extractor = RecordedPageExtractor(.success(try AppOwnedReadablePageExtractor.handoff(from: [
-            "text": "# \(Self.postTitle)\n\nThe number of reported incidents involving AI agents keeps climbing.",
-            "metadata": ["extractor": "defuddle"],
-            "source": ["url": Self.postURL, "title": Self.postTitle, "author": "Gary Marcus"]
-        ])))
+        let extractor = URLProtocolPageExtractor()
         let model = Gate1AppModel(
-            sourceLinkResolver: PublicPodcastLinkResolver(fetch: { try SourceLinkShareFallbackTests.substackPostAndFeed($0) }),
+            sourceLinkResolver: PublicPodcastLinkResolver(fetch: RecordedSubstackURLProtocol.fetch),
             sourceLinkHandoffStore: store,
             audioPlaybackClient: NoopAudioPlaybackClient()
         )
@@ -42,17 +39,20 @@ final class SourceLinkShareFallbackTests: XCTestCase {
         }
 
         XCTAssertEqual(model.diagnostics["pendingSourceLinkPayload:\(handoff.id)"], "imported")
-        XCTAssertEqual(model.diagnostics["lastSourceLinkArticleFallback"], "defuddle")
+        XCTAssertNotNil(model.diagnostics["lastSourceLinkArticleFallback"])
         XCTAssertEqual(extractor.requested, [URL(string: Self.postURL)!])
         XCTAssertEqual(try store.failedHandoffs(), [])
         XCTAssertThrowsError(try store.handoff(payloadID: handoff.id)) { error in
             XCTAssertEqual(error as? SourceLinkHandoffStoreError, .missingPayload(handoff.id))
         }
         let row = try XCTUnwrap(model.libraryItems.first { $0.title == Self.postTitle })
+        XCTAssertEqual(row.mediaType, "text")
+        XCTAssertEqual(row.sourceReference, Self.postURL)
         XCTAssertFalse(row.hasNativeAudio)
         XCTAssertEqual(model.screen, .home)
         model.openItem(id: row.id)
-        XCTAssertTrue(model.selectedItem.text.contains("reported incidents involving AI agents"), model.selectedItem.text)
+        XCTAssertEqual(model.selectedItem.externalReference, Self.postURL)
+        XCTAssertTrue(model.selectedItem.text.contains("controlled article body"), model.selectedItem.text)
     }
 
     /// The page loads and has no audio, but the extractor finds no article text (a paywall stub, say).
@@ -86,14 +86,14 @@ final class SourceLinkShareFallbackTests: XCTestCase {
         XCTAssertEqual(model.libraryItems.map(\.id), itemsBefore)
     }
 
-    /// A 404 fails in the podcast resolver's own fetch, before any article reading, and is quarantined as before.
-    func testMissingSharedPageIsQuarantinedWithoutReadingIt() async throws {
+    /// Both the podcast fetch and the extractor see HTTP 404; quarantine keeps the extractor's specific reason.
+    func testMissingSharedPageIsQuarantinedNamingTheExtractorHTTPStatus() async throws {
         let store = makePayloadStore()
         let handoff = SourceLinkHandoff(id: "source-link-gone", inputURL: "https://garymarcus.substack.com/p/deleted", sourceSurface: "share_sheet", startSession: true)
         try store.save(handoff)
-        let extractor = RecordedPageExtractor(.failure(ReadablePageExtractionError.invalidResult))
+        let extractor = URLProtocolPageExtractor()
         let model = Gate1AppModel(
-            sourceLinkResolver: PublicPodcastLinkResolver(fetch: { _ in throw URLError(.badServerResponse) }),
+            sourceLinkResolver: PublicPodcastLinkResolver(fetch: RecordedSubstackURLProtocol.fetch),
             sourceLinkHandoffStore: store,
             audioPlaybackClient: NoopAudioPlaybackClient()
         )
@@ -106,9 +106,13 @@ final class SourceLinkShareFallbackTests: XCTestCase {
             (try? store.failedHandoffs().count) == 1
         }
 
-        XCTAssertEqual(extractor.requested, [])
-        XCTAssertTrue(model.diagnostics["pendingSourceLinkPayload:\(handoff.id)"]?.hasPrefix("quarantined:") == true)
+        XCTAssertEqual(extractor.requested, [URL(string: handoff.inputURL)!])
+        let diagnostic = model.diagnostics["pendingSourceLinkPayload:\(handoff.id)"] ?? "none"
+        XCTAssertTrue(diagnostic.hasPrefix("quarantined:"), diagnostic)
+        XCTAssertTrue(diagnostic.contains("HTTP 404"), diagnostic)
+        XCTAssertEqual(model.diagnostics["lastSourceLinkArticleFallback"], "failed:The site answered with HTTP 404 instead of the article.")
         XCTAssertEqual(try store.failedHandoffs().first?.handoff, handoff)
+        XCTAssertTrue(try XCTUnwrap(store.failedHandoffs().first).reason.contains("HTTP 404"))
         XCTAssertEqual(model.libraryItems.map(\.id), itemsBefore)
     }
 
@@ -142,7 +146,7 @@ final class SourceLinkShareFallbackTests: XCTestCase {
         return SourceLinkHandoffStore(baseDirectory: directory)
     }
 
-    private func waitFor(_ description: String, timeoutNanoseconds: UInt64 = 2_000_000_000, condition: () -> Bool) async throws {
+    private func waitFor(_ description: String, timeoutNanoseconds: UInt64 = 10_000_000_000, condition: () -> Bool) async throws {
         var elapsed: UInt64 = 0
         while elapsed < timeoutNanoseconds {
             if condition() { return }
@@ -174,4 +178,141 @@ private final class RecordedPageExtractor: ReadablePageExtracting {
         lastExtractor = "defuddle"
         return handoff
     }
+}
+
+/// WebKit's HTTPS requests bypass URLProtocol. Fetch the fixture through URLProtocol, then run the
+/// bundled production capture script on its DOM. No canned title/body is returned to the model.
+@MainActor
+private final class URLProtocolPageExtractor: NSObject, ReadablePageExtracting, WKNavigationDelegate {
+    private(set) var requested: [URL] = []
+    private(set) var lastExtractor: String?
+    private(set) var contactedHosts: [String] = []
+    private var webView: WKWebView?
+    private var documentURL: URL?
+    private var continuation: CheckedContinuation<BrowserTextHandoff, Error>?
+
+    func extract(url: URL) async throws -> BrowserTextHandoff {
+        requested.append(url)
+        contactedHosts = [url.host ?? ""]
+        let (data, response) = try await RecordedSubstackURLProtocol.session.data(from: url)
+        documentURL = response.url ?? url
+        if let status = AppOwnedReadablePageExtractor.failingHTTPStatus(response) {
+            throw ReadablePageExtractionError.httpStatus(status)
+        }
+        let scriptURL = try XCTUnwrap(Bundle.main.url(forResource: "browserTextCapture", withExtension: "js"))
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: try String(contentsOf: scriptURL, encoding: .utf8),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient
+        ))
+        let rules = try await WKContentRuleListStore.default().compileContentRuleList(
+            forIdentifier: "spoken-margins-shared-link-test",
+            encodedContentRuleList: #"[{"trigger":{"url-filter":".*","resource-type":["image","style-sheet","script","font","media","raw","svg-document","popup"]},"action":{"type":"block"}}]"#
+        )
+        configuration.userContentController.add(try XCTUnwrap(rules))
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = self
+        self.webView = webView
+        defer { webView.stopLoading(); webView.navigationDelegate = nil; self.webView = nil }
+        return try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            webView.loadHTMLString(String(decoding: data, as: UTF8.self), baseURL: url)
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        Task { @MainActor in
+            do {
+                let result = try await webView.callAsyncJavaScript(
+                    "return globalThis.SpokenMarginsBrowserTextCapture.captureReadablePage(document);",
+                    arguments: [:], in: nil, contentWorld: .defaultClient
+                )
+                var payload = try XCTUnwrap(result as? [String: Any])
+                // loadHTMLString can give the DOM about:blank. A real HTTPS load uses the response URL.
+                var source = try XCTUnwrap(payload["source"] as? [String: Any])
+                source["url"] = try XCTUnwrap(documentURL).absoluteString
+                payload["source"] = source
+                lastExtractor = (payload["metadata"] as? [String: Any])?["extractor"] as? String
+                finish(.success(try AppOwnedReadablePageExtractor.handoff(from: payload)))
+            } catch { finish(.failure(error)) }
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        finish(.failure(error))
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        finish(.failure(error))
+    }
+
+    private func finish(_ result: Result<BrowserTextHandoff, Error>) {
+        continuation?.resume(with: result)
+        continuation = nil
+    }
+}
+
+private final class RecordedSubstackURLProtocol: URLProtocol, @unchecked Sendable {
+    static let session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RecordedSubstackURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }()
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        do {
+            let url = try XCTUnwrap(request.url)
+            guard url.host == "garymarcus.substack.com" else { throw URLError(.notConnectedToInternet) }
+            let body: Data
+            let status: Int
+            if url.path == "/p/deleted" {
+                body = Data("Page not found".utf8)
+                status = 404
+            } else {
+                let feed = url.path == "/feed"
+                guard feed || url.path == "/p/breaking-ai-agent-incident-toll-has" else {
+                    throw URLError(.notConnectedToInternet)
+                }
+                let fixture = try XCTUnwrap(Bundle(for: SourceLinkShareFallbackTests.self).url(
+                    forResource: feed ? "substack-shared-text-feed" : "substack-shared-text-post",
+                    withExtension: feed ? "xml" : "html"
+                ))
+                body = try Data(contentsOf: fixture)
+                status = 200
+            }
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: url, statusCode: status, httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": url.path == "/feed" ? "application/rss+xml" : "text/html"]
+            ))
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch { client?.urlProtocol(self, didFailWithError: error) }
+    }
+
+    override func stopLoading() {}
+
+    /// The app's injected podcast resolver is synchronous; URLProtocol callbacks run off the main actor.
+    static func fetch(_ url: URL) throws -> Data {
+        let semaphore = DispatchSemaphore(value: 0)
+        let result = FetchResult()
+        session.dataTask(with: url) { data, response, error in
+            if let error { result.value = .failure(error) }
+            else if let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode), let data {
+                result.value = .success(data)
+            } else { result.value = .failure(URLError(.badServerResponse)) }
+            semaphore.signal()
+        }.resume()
+        semaphore.wait()
+        return try result.value.get()
+    }
+}
+
+/// The semaphore publishes the callback's single write before the resolver reads it.
+private final class FetchResult: @unchecked Sendable {
+    var value: Result<Data, Error> = .failure(URLError(.unknown))
 }
