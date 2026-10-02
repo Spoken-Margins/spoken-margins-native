@@ -130,7 +130,7 @@ public final class FeedParser: @unchecked Sendable {
             // An episode with audio but no link is still an episode (#179); its audio stands in for the link.
             guard let url = item.url?.nilIfEmpty ?? item.external_url?.nilIfEmpty ?? audio else { return nil }
             let rawSummary = item.summary ?? item.content_text ?? item.content_html
-            let rawContent = item.content_html ?? item.content_text
+            let content = item.content_html.map(FeedArticleBodyText.html) ?? item.content_text.map(sanitize)
             let author = item.authors?.compactMap(\.name).joined(separator: ", ").nilIfEmpty ?? item.author?.name
             return ParsedFeedItem(
                 id: item.id ?? url,
@@ -140,7 +140,7 @@ public final class FeedParser: @unchecked Sendable {
                 summary: rawSummary.map(sanitize),
                 publishedAt: item.date_published.flatMap(formatter.date(from:)),
                 audioURL: audio,
-                content: rawContent.map(sanitize)?.nilIfEmpty,
+                content: content?.nilIfEmpty,
                 guid: item.id?.nilIfEmpty
             )
         }
@@ -208,7 +208,8 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
             case "content", "encoded":
                 item?.summary = value
                 // An empty `media:content` also ends as "content"; it mustn't wipe a body.
-                if !value.isEmpty { item?.content = value }
+                let content = FeedArticleBodyText.html(text)
+                if !content.isEmpty { item?.content = content }
             case "author", "creator", "name": if item?.author == nil { item?.author = value }
             case "pubdate", "published", "updated": item?.published = value
             case "duration": item?.duration = value
