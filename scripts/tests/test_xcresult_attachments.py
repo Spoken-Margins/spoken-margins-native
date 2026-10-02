@@ -32,6 +32,43 @@ class AttachmentTests(unittest.TestCase):
             return attachments.export_failed_attachments('retained.xcresult',
                        {TEST: {'status': 'failed'}}, PAYLOAD, Path(tmp))
 
+    def test_thousand_attachment_report_is_bounded_and_preserves_evidence(self):
+        prefix = '/mac/' + 'long-path/' * 25
+        files = [prefix + f'debug-{n}.txt' for n in range(999)] + [prefix + 'recording.mp4']
+        entry = {'test': TEST, 'manifest': prefix + 'manifest.json', 'files': files}
+        original = json.loads(json.dumps(entry))
+        text = '\n'.join(attachments.report_lines([entry]))
+        self.assertLessEqual(len(text), 8192)
+        self.assertIn(f'[Attachment manifest](<{entry["manifest"]}>)', text)
+        self.assertIn('recording.mp4', text)
+        self.assertIn('1000 files', text)
+        self.assertIn('more file links omitted', text)
+        self.assertEqual(entry, original)
+
+    def test_many_test_summaries_warn_about_omitted_warning_records(self):
+        entries = [{'test': f'App/JourneyTests/test{n}', 'manifest': f'/mac/{n}/manifest.json',
+                    'files': [f'/mac/{n}/recording.mp4'], 'error': 'export interrupted',
+                    'export_log': f'/mac/{n}/export.log'} for n in range(1000)]
+        original = json.loads(json.dumps(entries))
+        text = '\n'.join(attachments.report_lines(entries))
+        self.assertLessEqual(len(text), 8192)
+        self.assertIn('Attachment summaries omitted', text)
+        self.assertIn('1000 export warning records in total', text)
+        self.assertIn('verification manifest.json', text)
+        self.assertEqual(entries, original)
+
+    def test_extreme_paths_and_warning_lengths_cannot_exceed_report_budget(self):
+        for entry in (
+            {'test': TEST, 'files': ['/mac/' + 'x' * 10000]},
+            {'test': TEST, 'files': [], 'error': 'export failed ' + 'x' * 100000,
+             'export_log': '/mac/export.log'},
+            {'test': 'x' * 10000, 'files': [], 'error': 'export failed', 'export_log': '/mac/export.log'},
+        ):
+            with self.subTest(entry=entry['test'][:30]):
+                text = '\n'.join(attachments.report_lines([entry]))
+                self.assertLessEqual(len(text), 8192)
+                self.assertTrue('omitted' in text or 'Export warning:' in text)
+
     def test_no_export_for_passing_or_skipped_tests(self):
         with patch.object(attachments.subprocess, 'run') as run:
             self.assertEqual(attachments.export_failed_attachments('bundle', {

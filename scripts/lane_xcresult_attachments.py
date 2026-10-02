@@ -77,16 +77,63 @@ def export_failed_attachments(bundle, records, payload, output):
     return recovered
 
 
+REPORT_CHARACTER_BUDGET = 8192
+REPORT_FILES_PER_TEST = 10
+
+
 def report_lines(attachments):
-    """Mac-local Markdown links for manifests/media, and explicit export warnings."""
+    """Bound the comment contribution; full files/warnings remain in verification manifests."""
     lines = []
+    used = shown_tests = 0
+    # Reserve room for omission counts even when a test's name/path or warning is very long.
+    limit = REPORT_CHARACTER_BUDGET - 1024
+
+    def append(block):
+        nonlocal used
+        size = sum(len(line) + 1 for line in block)
+        if used + size > limit:
+            return False
+        lines.extend(block)
+        used += size
+        return True
+
+    def priority(path):
+        suffix = Path(path).suffix.lower()
+        return (0 if suffix in ('.mp4', '.mov') else
+                1 if suffix in ('.png', '.jpg', '.jpeg') else
+                2 if suffix == '.txt' else 3)
+
     for entry in attachments:
-        lines.extend([f"Attachments for `{entry['test']}`: {len(entry['files'])} files.", ''])
+        block = [f"Attachments for `{entry['test']}`: {len(entry['files'])} files.", '']
         if entry.get('manifest'):
-            lines.append(f"- [Attachment manifest](<{entry['manifest']}>)")
-        for path in entry['files']:
-            lines.append(f'- [{Path(path).name}](<{path}>)')
+            block.append(f"- [Attachment manifest](<{entry['manifest']}>)")
         if entry.get('error'):
-            lines.append(f"- Export warning: {entry['error']} (log: `{entry['export_log']}`)")
-        lines.append('')
+            warning = entry['error'][:300]
+            if len(entry['error']) > 300:
+                warning += '… (full warning in the verification manifest)'
+            block.append(f"- Export warning: {warning} (log: `{entry['export_log']}`)")
+        # Keep a manifest and any warning together; do not emit a partial Markdown link.
+        if used + sum(len(line) + 1 for line in block) + 200 > limit:
+            break
+        append(block)
+        shown_tests += 1
+        shown_files = 0
+        for path in sorted(entry['files'], key=priority)[:REPORT_FILES_PER_TEST]:
+            line = f'- [{Path(path).name}](<{path}>)'
+            # Leave room for the per-test omission notice and the next blank line.
+            if used + len(line) + 201 > limit:
+                continue
+            append([line])
+            shown_files += 1
+        omitted = len(entry['files']) - shown_files
+        if omitted:
+            append([f'- {omitted} more file links omitted; see the attachment manifest for all files.'])
+        append([''])
+    omitted_tests = len(attachments) - shown_tests
+    if omitted_tests:
+        warnings = sum(bool(entry.get('error')) for entry in attachments)
+        lines.extend([f'Attachment summaries omitted for {omitted_tests} of {len(attachments)} tests '
+                      f'to keep the report bounded; {warnings} export warning records in total.',
+                      'Full attachment manifests, files and warnings remain in the verification '
+                      'manifest.json files under the evidence directory on the Mac.', ''])
     return lines

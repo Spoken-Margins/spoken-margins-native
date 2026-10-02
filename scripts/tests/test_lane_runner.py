@@ -403,6 +403,25 @@ class T3Tests(unittest.TestCase):
         self.assertIn('- [Attachment manifest](</mac/manifest.json>)', details)
         self.assertIn('- [recording.mp4](</mac/recording.mp4>)', details)
 
+    def test_large_attachment_listing_keeps_t3_failure_report_postable(self):
+        prefix = '/mac/' + 'long-path/' * 25
+        files = [prefix + f'debug-{n}.txt' for n in range(999)] + [prefix + 'recording.mp4']
+        manifest = {'status': 'failed_or_incomplete', 'steps': [{
+            'tests': {'T/A/testBad': {'status': 'failed'}},
+            'attachments': [{'test': 'T/A/testBad', 'manifest': prefix + 'manifest.json',
+                             'files': files}]}]}
+        summaries, statuses, _, details = lane.run_plans(
+            {'app': ['T/A']}, lambda *args: manifest, Path('/mac/run'))
+        verdict = lane.t3_verdict(summaries, statuses)
+        text = lane.report('r', verdict, HEAD, HEAD, 'T3', 'simulator', 1, '1 failed',
+                           details, 'none', '/mac/run', 'audible content', {})
+        self.assertLess(len(text), 65536)
+        self.assertIn('— FAIL', text)
+        self.assertIn('observed: failed', text)
+        self.assertIn('more file links omitted', text)
+        self.assertIn('recording.mp4', text)
+        self.assertEqual(manifest['steps'][0]['attachments'][0]['files'], files)
+
     def test_a_flood_stops_the_remaining_plans(self):
         calls = []
 

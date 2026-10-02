@@ -108,6 +108,21 @@ class PureTests(unittest.TestCase):
                       desk.report_text(SHA, desk.summarize(source), Path('/mac/run')))
         self.assertEqual(desk.summarize(manifest('failed'))['verdict'], 'FAIL')
 
+    def test_large_attachment_listing_keeps_failed_report_postable(self):
+        source = manifest('failed')
+        prefix = '/mac/' + 'long-path/' * 25
+        files = [prefix + f'debug-{n}.txt' for n in range(999)] + [prefix + 'recording.mp4']
+        source['steps'][0]['attachments'] = [{'test': TEST, 'manifest': prefix + 'manifest.json',
+                                           'files': files}]
+        result = desk.summarize(source)
+        text = desk.report_text(SHA, result, Path('/mac/run'))
+        self.assertLess(len(text), 65536)
+        self.assertIn('FAIL — 0 passed, 1 failed', text)
+        self.assertIn('Failing tests: `' + TEST + '`', text)
+        self.assertIn('more file links omitted', text)
+        self.assertIn('recording.mp4', text)
+        self.assertEqual(result['attachments'][0]['files'], files)
+
     def test_dedupe_search_is_open_issues_and_uses_test_method(self):
         query = desk.dedupe_query(TEST)
         self.assertIn('is:open', query)
