@@ -21,6 +21,7 @@ import sm_codex_worker as worker
 
 sys.path.insert(0, str(worker.REPO_ROOT / 'scripts'))
 import lane_slots
+from lane_xcresult_attachments import report_lines
 
 HOME_DIR = Path.home() / 'SpokenMarginsOps' / 'codex-testdesk'
 SPACING_SECONDS = 2 * 60 * 60
@@ -48,10 +49,11 @@ def schedule_hold(sha: str, state: dict, now: float) -> str | None:
 
 def summarize(manifest: dict) -> dict:
     counts = dict.fromkeys(('passed', 'failed', 'skipped'), 0)
-    failed, journeys, errors = [], {}, []
+    failed, journeys, errors, attachments = [], {}, [], []
     incomplete = False
     for step in manifest.get('steps', []):
         errors.extend(step.get('errors', []))
+        attachments.extend(step.get('attachments', []))
         # Timeouts/floods take precedence over any assertion recorded before interruption.
         incomplete |= bool(step.get('interrupted') or step.get('simulator_crash_report')
                            or step.get('exit_code') == 124)
@@ -75,7 +77,8 @@ def summarize(manifest: dict) -> dict:
         # completes a test are infrastructure evidence, not listener bugs.
         verdict = 'INCONCLUSIVE'
     return {'verdict': verdict, 'counts': counts, 'failed': sorted(set(failed)),
-            'journeys': journeys, 'errors': errors + ([manifest['error']] if manifest.get('error') else [])}
+            'journeys': journeys, 'attachments': attachments,
+            'errors': errors + ([manifest['error']] if manifest.get('error') else [])}
 
 
 def combine(results: list[dict]) -> dict:
@@ -86,6 +89,7 @@ def combine(results: list[dict]) -> dict:
             # A plan that failed conclusively is filed even when another plan was INCONCLUSIVE.
             'confirmed_failed': sorted({t for r in results if r['verdict'] == 'FAIL' for t in r['failed']}),
             'journeys': {t: s for r in results for t, s in r['journeys'].items()},
+            'attachments': [a for r in results for a in r.get('attachments', [])],
             'errors': [e for r in results for e in r['errors']]}
 
 
@@ -124,6 +128,8 @@ def report_text(sha: str, result: dict, evidence: Path) -> str:
                   + ', '.join(f'`{t}`' for t in result['probation_ready'])]
     if result['errors']:
         lines += ['Details: ' + '; '.join(dict.fromkeys(result['errors']))[:1500]]
+    if result.get('attachments'):
+        lines += ['', *report_lines(result['attachments'])]
     return '\n'.join(lines + [f'Evidence on the Mac: `{evidence}`', '', NOT_VERIFIED, ''])
 
 
