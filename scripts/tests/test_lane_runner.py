@@ -1253,6 +1253,7 @@ class PushTests(unittest.TestCase):
 class MainFlowTests(unittest.TestCase):
     def run_main(self, github, event_head=HEAD, verdict='PASS', *extra, evidence=None, t2=None):
         with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(lane, 'ROOT', Path(temporary)), \
                 mock.patch.object(lane, 'GitHub', return_value=github), \
                 mock.patch.dict('os.environ', {'GH_REPO': 'o/r', 'SM_LANE_EVIDENCE_DIR': evidence or temporary,
                                                # set, not inherited: runner two's own .env has role=build,
@@ -1270,6 +1271,41 @@ class MainFlowTests(unittest.TestCase):
     conflicts = []
     role = ''  # the main runner, unless a test says otherwise
     attempt = '1'
+
+    def test_main_flow_fixture_does_not_delete_callers_build_folders(self):
+        with tempfile.TemporaryDirectory() as caller:
+            root = Path(caller)
+            sentinels = [root / '.build' / name / 'active-product'
+                         for name in ('dd-simulator', 'dd-device', 'verification')]
+            for sentinel in sentinels:
+                sentinel.parent.mkdir(parents=True)
+                sentinel.write_text('caller-owned build evidence')
+            github = FakeGitHub(comments=[comment('/lane T2')])
+            with mock.patch.object(lane, 'ROOT', root):
+                self.run_main(github)
+            for sentinel in sentinels:
+                self.assertTrue(sentinel.exists(), f'the test deleted {sentinel}')
+                self.assertEqual(sentinel.read_text(), 'caller-owned build evidence')
+
+    def test_main_flow_still_cleans_its_own_cold_build_folders(self):
+        caches = []
+
+        def t2(evidence):
+            for name in ('dd-simulator', 'verification'):
+                cache = lane.ROOT / '.build' / name
+                cache.mkdir(parents=True)
+                (cache / 'scratch-product').write_text('fixture-owned')
+                caches.append(cache)
+            return 'PASS', 'simulator build (pass), device build (pass)', []
+
+        github = FakeGitHub(comments=[comment('/lane T2')])
+        # Observe the real runner cleanup, before TemporaryDirectory removes the fixture root.
+        with mock.patch.object(lane.shutil, 'rmtree', wraps=lane.shutil.rmtree) as cleanup:
+            self.run_main(github, t2=t2)
+        removed = [Path(call.args[0]) for call in cleanup.call_args_list]
+        self.assertEqual(len(caches), 2)
+        for cache in caches:
+            self.assertIn(cache, removed)
 
     def test_a_rerun_of_a_job_gets_its_own_report_name_and_evidence_folder(self):
         # After #419 merged, re-runs of runs 36711256675 and 36710023344 kept their run ids, so
