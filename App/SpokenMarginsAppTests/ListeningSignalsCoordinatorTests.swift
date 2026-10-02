@@ -6,6 +6,50 @@ import SessionKitPersistence
 
 @MainActor
 final class ListeningSignalsCoordinatorTests: XCTestCase {
+    func testFollowingAnExistingSubscriptionRefreshesACachedMissingItemRelationship() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let database = root.appendingPathComponent("existing-follow.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: database)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: database.path)
+        var item = try store.loadItem(id: "item-pill")
+        item.externalReference = nil; item.sourceURL = nil; item.sourceTitle = nil
+        try store.saveItem(item)
+        let subscription = FeedSubscription(id: "existing", source: SourceIdentity(id: "publication", kind: .articleFeed,
+            canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Publisher"), lastRefreshAt: Date())
+        try store.saveFeedSubscription(subscription)
+        let recorder = ListeningSignalRecorder(fileURL: root.appendingPathComponent("signals.jsonl"), flushDelay: 60)
+        let signals = ListeningSignalsCoordinator(recorder: recorder, repository: { store })
+        model.listeningSignals = signals
+        signals.playbackProgress(itemId: item.id, status: .playing)
+        _ = await signals.exportFileURL() // The same collector has cached a missing relationship.
+        item.sourceURL = subscription.source.canonicalURL
+        try store.saveItem(item)
+        // Publishing the followed-source refresh must invalidate item relationships too, even
+        // when the already-followed subscription itself did not change. The entry is a refresh
+        // completion marker; it is not the listened item and cannot provide its context.
+        try store.saveFeedEntry(FeedEntry(id: "refresh-marker", subscriptionId: subscription.id,
+            canonicalURL: "https://publisher.example/other", title: "Other", state: .dismissed))
+        model.refreshFollowedSources(force: false)
+        let deadline = Date().addingTimeInterval(5)
+        while !model.followedSourceEntries.contains(where: { $0.id == "refresh-marker" }), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(model.followedSourceEntries.contains { $0.id == "refresh-marker" })
+        XCTAssertEqual(try store.loadFeedSubscriptions(), [subscription])
+        signals.playbackProgress(itemId: item.id, status: .playing)
+        try await Task.sleep(for: .milliseconds(1_100))
+        signals.playbackProgress(itemId: item.id, status: .playing)
+        signals.endListening()
+        let exported = await signals.exportFileURL()
+        let rows = exported.map(ListeningSignalRecorder.read) ?? []
+        XCTAssertEqual(rows.map { $0.source.id }, [subscription.source.id])
+        XCTAssertEqual(rows.map(\.event), [.listened(seconds: 1)])
+        model.endSession()
+    }
+
     func testAppCompletionRecordsTheSavedSpokenMargin() async throws {
         try await checkCompletion(compact: false)
     }

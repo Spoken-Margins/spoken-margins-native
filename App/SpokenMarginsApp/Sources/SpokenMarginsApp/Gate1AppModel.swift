@@ -841,7 +841,7 @@ final class Gate1AppModel: ObservableObject {
         return FollowedSourceMatching.uniqueUnfollowedCandidates(storedSourceFollowSuggestionCandidates, subscriptions: feedSubscriptions)
     }
     @Published private(set) var followedSourceEntries: [FeedEntry] = [] { didSet { cachedQuickAddCandidates = nil } }
-    @Published private(set) var feedSubscriptions: [FeedSubscription] = [] { didSet { cachedQuickAddCandidates = nil } }
+    @Published private(set) var feedSubscriptions: [FeedSubscription] = [] { didSet { cachedQuickAddCandidates = nil; listeningSignals.endListening() } }
     @Published private(set) var isRefreshingFollowedSources = false
     @Published private(set) var importingFollowedSourceEntryIds: Set<String> = []
     @Published private(set) var isFollowingSelectedSource = false
