@@ -213,7 +213,7 @@ final class SourceLinkImportTests: XCTestCase {
             try store.saveFeedSubscription(subscription)
             let sentences = String(repeating: "This subscriber article is available in the feed only. ", count: 90)
             let html = "<p>Don&#8217;t stop. &ldquo;Listen&rdquo; &copy; 2026.</p><p>\(sentences)</p>"
-            let feed = "<rss><channel><item><title>Private publisher narration</title><content:encoded xmlns:content=\"http://purl.org/rss/1.0/modules/content/\"><![CDATA[\(html)]]></content:encoded></item></channel></rss>"
+            let feed = "<rss><channel><item><title>Private publisher narration</title><link>https://publisher.example/p/private</link><content:encoded xmlns:content=\"http://purl.org/rss/1.0/modules/content/\"><![CDATA[\(html)]]></content:encoded></item></channel></rss>"
             let parsed = try FeedParser().parse(data: Data(feed.utf8), contentType: "application/rss+xml")
             let body = try XCTUnwrap(parsed.items.first?.content)
             let expected = "Don’t stop. “Listen” © 2026. " + sentences.trimmingCharacters(in: .whitespacesAndNewlines)
