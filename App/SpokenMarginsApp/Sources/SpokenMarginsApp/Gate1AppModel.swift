@@ -55,7 +55,7 @@ private struct ResolvedSkimPlaybackPlan {
 private struct SkimResourceContext {
     let itemId: String
     let projection: ResolvedListeningMapProjection?
-    let proposals: [PortableListeningMapProposalArtifact]
+    let proposal: PortableListeningMapProposalArtifact?
     let assets: [OwnedOfflineAsset]
 }
 
@@ -4649,6 +4649,19 @@ final class Gate1AppModel: ObservableObject {
         return safePodcastEvidenceComponent("\(ttsVoiceSelection.rawValue)-\(systemIdentifier)-\(SummaryBridgeRatePolicy.cacheVersion)")
     }
 
+    /// Why a friend's shared map couldn't be placed on this item's copy, as stored on its packets (#481).
+    func sharedListeningMapRefusal(itemId: String) -> String? {
+        guard let store, let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
+              let hasMap = try? Self.listenerHasListeningMap(itemId: itemId, store: store) else { return nil }
+        return SharedListeningMapPlacement.storedRefusalReason(layers: layers, listenerHasMap: hasMap)
+    }
+
+    /// The listener's own map or the publisher's chapters, which a friend's map never replaces.
+    private static func listenerHasListeningMap(itemId: String, store: SQLiteSessionStore) throws -> Bool {
+        try !store.loadPortableListeningMapProposals(itemId: itemId).isEmpty
+            || store.loadTranscriptTimeline(itemId: itemId)?.timeline.chapters.isEmpty == false
+    }
+
     private func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String? = nil) -> String {
         let voiceKey = suppliedAssetId.map { "supplied-\(safePodcastEvidenceComponent($0))" } ?? currentSummaryBridgeVoiceKey()
         return "summary-bridge-\(safePodcastEvidenceComponent(itemId))-\(safePodcastEvidenceComponent(proposalId))-\(safePodcastEvidenceComponent(sceneId))-\(voiceKey)"
@@ -4699,17 +4712,22 @@ final class Gate1AppModel: ObservableObject {
                 )
                 sourceURL = result.audioURL
             } else {
-                let renderer = SystemTextAudioPreparationClient(
-                    outputDirectory: directory,
-                    voiceIdentifier: speechVoiceIdentifier,
-                    speechRate: SummaryBridgeRatePolicy.systemSynthesisRate,
-                    allowsSynchronousRendering: true
-                )
-                guard let prepared = try renderer.prepareTextAudio(
-                    itemId: assetID,
-                    title: scene.title ?? "Scene summary",
-                    text: summary
-                ), let value = prepared.media.url, let url = URL(string: value) else {
+                let title = scene.title ?? "Scene summary"
+                // An injected preparation job renders in place of the system voice, as it does for text items.
+                let prepared: PreparedTextAudio?
+                if let prewarm = preparedTextAudioPrewarmHandler {
+                    prepared = try await prewarm(
+                        assetID, title, summary, directory, speechVoiceIdentifier, SummaryBridgeRatePolicy.systemSynthesisRate
+                    ).get()
+                } else {
+                    prepared = try SystemTextAudioPreparationClient(
+                        outputDirectory: directory,
+                        voiceIdentifier: speechVoiceIdentifier,
+                        speechRate: SummaryBridgeRatePolicy.systemSynthesisRate,
+                        allowsSynchronousRendering: true
+                    ).prepareTextAudio(itemId: assetID, title: title, text: summary)
+                }
+                guard let prepared, let value = prepared.media.url, let url = URL(string: value) else {
                     try? await ledger.release(reservationId: reservation.id)
                     return nil
                 }
@@ -4777,21 +4795,18 @@ final class Gate1AppModel: ObservableObject {
             #if DEBUG
             skimResourceLoadCount += 1
             #endif
-            let committed = (try? store.loadPortableListeningMapProposals(itemId: activeItemId)) ?? []
-            let imported = ((try? store.loadImportedCommentaryLayers(itemId: activeItemId)) ?? [])
-                .flatMap { $0.listeningMapProposals ?? [] }
+            let projection = try? store.loadResolvedListeningMapProjection(itemId: activeItemId)
             skimResourceContext = SkimResourceContext(
                 itemId: activeItemId,
-                projection: try? store.loadResolvedListeningMapProjection(itemId: activeItemId),
-                proposals: committed + imported,
+                projection: projection,
+                proposal: SharedListeningMapPlacement.proposal(
+                    for: projection, committed: (try? store.loadPortableListeningMapProposals(itemId: activeItemId)) ?? [],
+                    layers: (try? store.loadImportedCommentaryLayers(itemId: activeItemId)) ?? []),
                 assets: (try? store.loadOwnedOfflineAssets()) ?? []
             )
         }
         guard let resources = skimResourceContext, let projection = resources.projection else { return nil }
-        let proposals = resources.proposals
-        guard let proposal = proposals.first(where: { $0.id == projection.proposalId }) ?? proposals.first else {
-            return nil
-        }
+        guard let proposal = resources.proposal else { return nil }
         let scenes = proposal.scenes.sorted { $0.order < $1.order }
         guard !scenes.isEmpty else { return nil }
         let exactIdentityProjection = projection.algorithmVersion == "episode-projection.exact-edition.v1"
@@ -4839,7 +4854,7 @@ final class Gate1AppModel: ObservableObject {
         }
         let assetID = summaryBridgeAssetID(
             itemId: activeItemId,
-            proposalId: proposal.id,
+            proposalId: SharedListeningMapPlacement.isSharedProjection(id: projection.id) ? projection.id : proposal.id,
             sceneId: summaryScene.id,
             suppliedAssetId: summaryScene.summaryAssetId
         )
@@ -14855,10 +14870,9 @@ final class Gate1AppModel: ObservableObject {
         let mediaTimeline = try store.loadTranscriptTimeline(itemId: id)?.timeline
         let mediaChapters = mediaTimeline?.chapters ?? []
         let projection = try store.loadResolvedListeningMapProjection(itemId: id)
-        let proposals = try store.loadPortableListeningMapProposals(itemId: id)
-        let proposal = projection.flatMap { projection in
-            proposals.first(where: { $0.id == projection.proposalId })
-        } ?? proposals.first
+        let proposal = SharedListeningMapPlacement.proposal(
+            for: projection, committed: try store.loadPortableListeningMapProposals(itemId: id),
+            layers: try store.loadImportedCommentaryLayers(itemId: id))
         let exactIdentityProjection = projection?.algorithmVersion == "episode-projection.exact-edition.v1"
             || (projection?.points.isEmpty == false
                 && projection?.points.allSatisfy {
@@ -16195,7 +16209,7 @@ final class Gate1AppModel: ObservableObject {
                     return true
                 }
                 guard isCurrent else { return }
-                var resolvedWork: [(ImportedCommentaryLayer, [ImportedCommentaryInterjection], ResolvedListeningMapProjection?)] = []
+                var resolvedWork: [(ImportedCommentaryLayer, [ImportedCommentaryInterjection], SharedListeningMapPlacement.Outcome?)] = []
                 for (var layer, records) in work {
                     let queries = records.map { record in
                         let evidence = (record.podcastAnchorEvidence ?? []).compactMap { asset -> PodcastAcousticEvidenceQuery? in
@@ -16277,82 +16291,22 @@ final class Gate1AppModel: ObservableObject {
                     } else {
                         layer.sourceResolutionStatus = .contextOnly
                     }
-                    var mapProjection: ResolvedListeningMapProjection?
-                    if let spine = layer.editionFingerprintSpines?.first {
-                        let landmarkQueries = spine.landmarks.map { landmark -> PodcastPortableAnchorQuery in
-                            let evidence = layer.episodeMapEvidencePaths?[landmark.signatureAssetId]
-                                .flatMap { path in
-                                    Self.resolvedApplicationSupportAssetURL(
-                                        for: path,
-                                        applicationSupportDirectory: applicationSupportDirectory
-                                    )
-                                }
-                                .flatMap { try? Data(contentsOf: $0) }
-                                .map {
-                                    [PodcastAcousticEvidenceQuery(
-                                        id: landmark.signatureAssetId,
-                                        signatureData: $0,
-                                        anchorOffsetMs: landmark.anchorMediaTimeMs - landmark.sourceMediaStartMs
-                                    )]
-                                } ?? []
-                            return PodcastPortableAnchorQuery(
-                                packageScopedId: landmark.id,
-                                senderMediaTimeMs: landmark.anchorMediaTimeMs,
-                                evidence: evidence,
-                                evidenceWasDeclared: true
-                            )
-                        }
-                        let landmarkResolutions = try await PodcastAcousticAnchorResolver.resolve(
-                            queries: landmarkQueries,
-                            recipientAudioURL: localURL,
-                            senderExactEditionSHA256: spine.producingEditionSHA256,
-                            senderDurationMs: spine.producingEditionDurationMs,
+                    var mapOutcome: SharedListeningMapPlacement.Outcome?
+                    if layer.listeningMapProposals?.first != nil, layer.editionFingerprintSpines?.first == nil {
+                        mapOutcome = .notPlaced(.init(sceneId: nil, sceneLabel: nil, reason: .noEvidence))
+                    } else if let spine = layer.editionFingerprintSpines?.first, let proposal = layer.listeningMapProposals?.first {
+                        let evidencePaths = layer.episodeMapEvidencePaths ?? [:]
+                        mapOutcome = try await SharedListeningMapResolver.resolve(
+                            proposal: proposal, spine: spine,
+                            signatureData: { id in evidencePaths[id].flatMap {
+                                Self.resolvedApplicationSupportAssetURL(for: $0, applicationSupportDirectory: applicationSupportDirectory)
+                            }.flatMap { try? Data(contentsOf: $0) } },
+                            recipientAudioURL: localURL, recipientEditionSHA256: recipientDigest,
+                            itemId: itemId, projectionId: SharedListeningMapPlacement.projectionId(layerId: layer.id),
                             strongSourceIdentity: ImportedItemResolver.canRepresentSameWork(layer.itemIdentity, localItem)
                         )
-                        let sketch = layer.transcriptPhraseSketches?.first
-                        let salt = sketch.flatMap { Data(base64Encoded: $0.saltBase64) }
-                        let matches = spine.landmarks.compactMap { landmark -> FingerprintLandmarkMatch? in
-                            guard let resolution = landmarkResolutions[landmark.id],
-                                  let localTime = resolution.localMediaTimeMs,
-                                  !resolution.isAmbiguous else { return nil }
-                            var transcriptCorroborated = false
-                            if let recipientTranscript, let sketch, let salt,
-                               let sourceWindow = sketch.windows.first(where: { $0.id == landmark.transcriptSketchWindowId }) {
-                                let localText = recipientTranscript.segments
-                                    .filter { $0.endMs > localTime - 15_000 && $0.startMs < localTime + 15_000 }
-                                    .map(\.text)
-                                    .joined(separator: " ")
-                                let localHashes = TranscriptPhraseSketchBuilder.hashes(for: localText, salt: salt)
-                                let overlap = Set(localHashes).intersection(sourceWindow.hashes).count
-                                transcriptCorroborated = overlap >= 8
-                                    && TranscriptPhraseSketchBuilder.overlapScore(localHashes, sourceWindow.hashes) >= 0.2
-                            }
-                            let exact = resolution.evidenceClass == .exactEdition
-                            let direct = resolution.evidenceClass == .acousticVerified
-                                || resolution.evidenceClass == .fused
-                                || exact
-                            guard direct else { return nil }
-                            return FingerprintLandmarkMatch(
-                                id: "match-\(landmark.id)",
-                                landmarkId: landmark.id,
-                                sourceMediaTimeMs: landmark.anchorMediaTimeMs,
-                                recipientMediaTimeMs: localTime,
-                                acousticConfidence: resolution.confidence ?? (exact ? 1 : 0.9),
-                                transcriptCorroborated: transcriptCorroborated || exact,
-                                isUniqueWithinEpisode: exact || transcriptCorroborated
-                            )
-                        }
-                        mapProjection = EpisodeFingerprintAlignment.makeProjection(
-                            id: "imported-projection-\(layer.id)",
-                            itemId: itemId,
-                            proposalId: layer.listeningMapProposals?.first?.id,
-                            recipientEditionSHA256: recipientDigest,
-                            matches: matches,
-                            exactEdition: spine.producingEditionSHA256 != nil
-                                && spine.producingEditionSHA256 == recipientDigest
-                        )
                     }
-                    resolvedWork.append((layer, updated, mapProjection))
+                    resolvedWork.append((layer, updated, mapOutcome))
                 }
                 await MainActor.run {
                     guard let self,
@@ -16360,18 +16314,35 @@ final class Gate1AppModel: ObservableObject {
                           let store = self.store else { return }
                     self.transcriptAssistedResolutionItems.remove(itemId)
                     do {
-                        for (layer, records, projection) in resolvedWork {
+                        let outcomes = resolvedWork.sorted { $0.0.importedAt < $1.0.importedAt }.compactMap(\.2)
+                        let current = try store.loadResolvedListeningMapProjection(itemId: itemId)
+                        let activation = SharedListeningMapPlacement.activation(
+                            outcomes, listenerHasMap: try Self.listenerHasListeningMap(itemId: itemId, store: store),
+                            activeProjectionId: current?.id)
+                        for (layer, records, outcome) in resolvedWork {
+                            var layer = layer
+                            layer.sharedMapRefusalReason = activation.refusal == nil ? nil : outcome?.refusal?.listenerReason
                             try store.saveImportedCommentaryLayer(layer)
                             for record in records { try store.saveImportedCommentaryInterjection(record) }
-                            if let projection { try store.saveResolvedListeningMapProjection(projection) }
-                            if projection != nil, let proposal = layer.listeningMapProposals?.first {
+                        }
+                        let sharedProposals = Dictionary(resolvedWork.compactMap { work in
+                            work.0.listeningMapProposals?.first.map { (SharedListeningMapPlacement.projectionId(layerId: work.0.id), $0) }
+                        }, uniquingKeysWith: { first, _ in first })
+                        if activation.refusal != nil, let stale = current, sharedProposals[stale.id] != nil {
+                            try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(
+                                id: stale.id, itemId: itemId, proposalId: stale.proposalId,
+                                recipientEditionSHA256: stale.recipientEditionSHA256, points: [], intervals: []))
+                        }
+                        if let projection = activation.projection {
+                            try store.saveResolvedListeningMapProjection(projection)
+                            if let proposal = sharedProposals[projection.id] {
                                 Task { @MainActor [weak self] in
                                     guard let self else { return }
                                     for scene in proposal.scenes where
                                         scene.eligibility == .eligible && scene.summaryText?.isEmpty == false {
                                         _ = try? await self.prepareSummaryBridgeAsset(
                                             itemId: itemId,
-                                            proposalId: proposal.id,
+                                            proposalId: projection.id,
                                             scene: scene,
                                             store: store
                                         )
