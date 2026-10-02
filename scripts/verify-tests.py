@@ -18,7 +18,8 @@ import time
 
 from check_posterboard_repair import new_crash
 import lane_sim
-from lane_slots import acquire_simulator_slot, build_slot, host_test_slot, release_handle
+from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
+                        state_dir, SIMULATOR_SLOTS)
 
 from test_inventory import ROOT, plan_tests, swift_tests, target_tests, validate
 
@@ -123,6 +124,33 @@ def refuse_unsafe(chosen, unsafe):
 
 def capture(command):
     return subprocess.check_output(command, cwd=ROOT, text=True).strip()
+
+
+def inherited_simulator_slot(fd):
+    """Borrow a parent's real locked simulator-slot descriptor; never trust an env flag.
+
+    The parent keeps the decision lock too, excluding a second simulator job for
+    an unattended integration run. Closing this duplicate preserves its lock.
+    """
+    try:
+        info = os.fstat(fd)
+        for name in SIMULATOR_SLOTS:
+            path = state_dir() / name
+            if not path.exists():
+                continue
+            lock_info = path.stat()
+            if (info.st_dev, info.st_ino) != (lock_info.st_dev, lock_info.st_ino):
+                continue
+            with path.open('a+') as probe:
+                try:
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return os.fdopen(os.dup(fd), 'a+')
+                fcntl.flock(probe, fcntl.LOCK_UN)
+            break
+    except OSError:
+        pass
+    raise ValueError('inherited simulator descriptor must name a held Mac-wide simulator slot')
 
 
 def input_identity():
@@ -402,7 +430,7 @@ class Run:
             name = 'ops-' + '-'.join(folder.relative_to(base).parts[1:]) if folder != base / 'ops' else 'ops'
             self.command(name, [sys.executable, '-m', 'unittest', 'discover', '-s', str(folder), '-t', str(folder)])
 
-    def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None):
+    def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None, simulator_slot_fd=None):
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
@@ -455,8 +483,9 @@ class Run:
         # A run that boots its own simulator holds a Mac-wide simulator slot until it shuts it down
         # (16 GB Mac: a second simulator job only while memory pressure is normal, #184). A device
         # someone else booted is theirs, and so is the slot.
-        slot = acquire_simulator_slot(f'verify-tests {plan}', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS) \
-            if booted_here else None
+        slot = inherited_simulator_slot(simulator_slot_fd) if simulator_slot_fd is not None else (
+            acquire_simulator_slot(f'verify-tests {plan}', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS)
+            if booted_here else None)
         try:
             if booted_here:
                 # Lane boot rules (scripts/lane_sim.py): one boot at a time, no builds meanwhile, no retry
@@ -493,7 +522,10 @@ class Run:
                 subprocess.run(['xcrun', 'simctl', 'shutdown', chosen['udid']],
                                cwd=ROOT, capture_output=True, timeout=60)
             if slot:
-                release_handle(slot)
+                if simulator_slot_fd is not None:
+                    slot.close()
+                else:
+                    release_handle(slot)
         if input_identity() != identity:
             raise RuntimeError('Inputs changed during testing; rerun on a stable source state')
 
@@ -503,6 +535,7 @@ def main():
     parser.add_argument('--plan', choices=['fast', *PLANS], default='fast')
     parser.add_argument('--device', help='Supported simulator UDID (including iPad); overrides phone preference')
     parser.add_argument('--ios', type=int, help='Required iOS major version, e.g. 26 or 27; never falls back to another OS')
+    parser.add_argument('--simulator-slot-fd', type=int, help=argparse.SUPPRESS)
     parser.add_argument('--rebuild', action='store_true', help='Ignore the compatible build stamp')
     parser.add_argument('--output', type=Path, help='New evidence directory')
     parser.add_argument('--list', action='store_true', help='Inspect selection without running tests')
@@ -536,9 +569,11 @@ def main():
                 if journeys:
                     run.manifest['scripted_journeys'] = journeys
                     run.xcode(args.plan, args.device, args.rebuild, args.ios,
-                              journeys['gating'] + journeys['probation'], probation=journeys['probation'])
+                              journeys['gating'] + journeys['probation'], probation=journeys['probation'],
+                              simulator_slot_fd=args.simulator_slot_fd)
                 else:
-                    run.xcode(args.plan, args.device, args.rebuild, args.ios, args.only_testing)
+                    run.xcode(args.plan, args.device, args.rebuild, args.ios, args.only_testing,
+                              simulator_slot_fd=args.simulator_slot_fd)
             if input_identity() != run.manifest['input_sha256']:
                 raise RuntimeError('Inputs changed during verification; rerun on a stable source state')
             run.manifest['status'] = passed_status()

@@ -402,7 +402,8 @@ class Moves(Base):
         m = FakeMachine(self.cfg, base_free=99 * MiB)
         result = d.run(self.cfg, m, self.log)
         self.assertFalse(self.src.exists())
-        primary = self.cfg.drive / self.cfg.offload_dir / f'{datetime.fromtimestamp(m.now()):%Y-%m-%d}-disk-relief'
+        day = time.strftime('%Y-%m-%d', time.localtime(m.now()))
+        primary = self.cfg.drive / self.cfg.offload_dir / f'{day}-disk-relief'
         self.assertTrue((primary / self.rel / 'report.md').exists())
         self.assertTrue(result.acted)
 
