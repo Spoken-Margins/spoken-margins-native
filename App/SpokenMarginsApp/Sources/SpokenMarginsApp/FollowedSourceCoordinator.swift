@@ -233,7 +233,10 @@ actor FollowedSourceCoordinator {
               let url = Self.validHTTPSURL(entry.canonicalURL),
               let html = try? await fetchHTML(url: url),
               let confirmed = PublisherNarrationEvidence.confirmedEntry(entry, html: html) else { return entry }
-        try? repository.saveFeedEntry(confirmed)
+        // A refresh, dismissal or unfollow may finish while the page request awaits. Cache only
+        // against the unchanged entry, so corroboration cannot restore a removed/stale row.
+        if let current = try? repository.loadFeedEntries(subscriptionId: entry.subscriptionId).first(where: { $0.id == entry.id }),
+           current == entry { try? repository.saveFeedEntry(confirmed) }
         return confirmed
     }
 
