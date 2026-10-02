@@ -3519,7 +3519,7 @@ final class Gate1AppModel: ObservableObject {
             contentFormat: .plainText,
             documentStructure: extracted.documentStructure
         )
-        try importBrowserTextInBackground(handoff, structuredDocument: extracted.document)
+        try await importBrowserTextInBackground(handoff, structuredDocument: extracted.document)
         diagnostics["lastSharedPDFImport"] = url.lastPathComponent
         markOnboardingSteps([.addedOwnSource, .addedFromSafari])
         #else
@@ -3557,7 +3557,7 @@ final class Gate1AppModel: ObservableObject {
             contentFormat: .plainText,
             documentStructure: extracted.documentStructure
         )
-        try importBrowserTextInBackground(handoff, structuredDocument: extracted.document)
+        try await importBrowserTextInBackground(handoff, structuredDocument: extracted.document)
         diagnostics["lastRemotePDFImport"] = url.absoluteString
         markOnboardingSteps([.addedOwnSource, .addedFromSafari])
         #else
@@ -3565,7 +3565,15 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    private func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws {
+    private func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument) async throws {
+        let store = try requireStore()
+        if engine == nil { installEngine(try makeEngine(store: store)) }
+        guard let engine else { throw SessionKitError.persistenceFailed("Browser text importer is unavailable.") }
+        let item = try await engine.importBrowserTextInBackgroundAsync(Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument)
+        try importBrowserTextInBackground(handoff, structuredDocument: Optional(structuredDocument), importedItem: item)
+    }
+
+    private func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil, importedItem: Item? = nil) throws {
         let store = try requireStore()
         if engine == nil {
             installEngine(try makeEngine(store: store))
@@ -3573,7 +3581,7 @@ final class Gate1AppModel: ObservableObject {
         guard let engine else {
             throw SessionKitError.persistenceFailed("Browser text importer is unavailable.")
         }
-        let item = try engine.importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument)
+        let item = try importedItem ?? engine.importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument)
         // A PDF that moved to the new extraction had its prepared audio retired (#322).
         if structuredDocument != nil, let ledger = offlineStorageLedger {
             Task { [itemId = item.id] in await ledger.removeRetiredPreparedAudio(itemId: itemId) }
@@ -10349,31 +10357,15 @@ final class Gate1AppModel: ObservableObject {
                 signature: signature,
                 plan: plan
             )
-            let targetChunkCount = min(Self.startupAudioChunkCount, plan.count)
-            if manifest.chunks.count < targetChunkCount {
-                var job = (try store.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifest.id })
-                    ?? AudioPreparationJob(
-                        id: "job-\(manifest.id)",
-                        itemId: item.id,
-                        manifestId: manifest.id,
-                        policy: .demandWindow
-                    )
-                if job.policy == .demandWindow {
-                    job.requestedAt = item.createdAt ?? job.requestedAt
-                    job.maximumChunkCount = targetChunkCount
-                }
-                job.isCancelled = false
-                job.lastFailureCode = nil
-                try store.saveAudioPreparationJob(job)
-                diagnostics["startupAudioPreparation:\(itemId)"] = "preparing_0_of_\(targetChunkCount)"
-            } else if let job = try store.loadAudioPreparationJobs().first(where: {
-                $0.manifestId == manifest.id && $0.policy == .demandWindow && $0.maximumChunkCount != nil
-            }) {
-                try store.deleteAudioPreparationJob(id: job.id)
-                diagnostics["startupAudioPreparation:\(itemId)"] = "ready_from_cache"
-            }
+            let job = try PreparedAudioEnqueue.configureJob(
+                manifest: manifest, sourceText: sourceText, repository: store,
+                request: .startup(maximumChunkCount: min(Self.startupAudioChunkCount, plan.count), requestedAt: item.createdAt)
+            )
+            diagnostics["startupAudioPreparation:\(itemId)"] = job == nil ? "ready_from_cache" : "preparing_0_of_\(min(Self.startupAudioChunkCount, plan.count))"
             try refreshLibraryRows(store: store)
             startForegroundAudioPreparationIfNeeded()
+        } catch PreparedAudioEnqueue.Rejection.staleSource {
+            updateLibraryStartupAudioState(itemId: itemId, state: .notRequired)
         } catch is CancellationError {
             diagnostics["startupAudioPreparation:\(itemId)"] = "cancelled"
         } catch {
@@ -15084,19 +15076,7 @@ final class Gate1AppModel: ObservableObject {
                 reportConfirmation("\(item.title) is already available offline.")
                 return
             }
-            var job = (try store.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifest.id })
-                ?? AudioPreparationJob(
-                    id: "job-\(manifest.id)",
-                    itemId: item.id,
-                    manifestId: manifest.id,
-                    policy: .explicit
-                )
-            job.policy = .explicit
-            job.userPriority = 0
-            job.maximumChunkCount = nil
-            job.requestedAt = Date()
-            job.isCancelled = false
-            try store.saveAudioPreparationJob(job)
+            try PreparedAudioEnqueue.configureJob(manifest: manifest, sourceText: sourceText, repository: store, request: .explicit)
             try refreshLibraryRows(store: store)
             diagnostics["explicitAudioPreparation:\(item.id)"] = "queued"
             reportConfirmation("Prioritized \(item.title) for offline rendering.")
@@ -15161,23 +15141,12 @@ final class Gate1AppModel: ObservableObject {
                     Self.preparedChunkPlan(for: text)
                 }.value
                 guard !plan.isEmpty else { continue }
-                let manifest = try await coordinator.begin(
-                    itemId: item.id,
-                    sourceText: text,
-                    signature: signature,
-                    plan: plan
-                )
-                guard manifest.state != .readyOffline else { continue }
-                var job = (try store.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifest.id })
-                    ?? AudioPreparationJob(id: "job-\(manifest.id)", itemId: item.id, manifestId: manifest.id, policy: .whileCharging, requestedAt: item.createdAt ?? Date())
-                let unfinishedStartupHorizon = job.policy == .demandWindow
-                    && job.maximumChunkCount.map { manifest.chunks.count < $0 } == true
-                if !unfinishedStartupHorizon {
-                    job.policy = .whileCharging
-                    job.maximumChunkCount = nil
+                do {
+                    let manifest = try await coordinator.begin(itemId: item.id, sourceText: text, signature: signature, plan: plan)
+                    try PreparedAudioEnqueue.configureJob(manifest: manifest, sourceText: text, repository: store, request: .automatic(requestedAt: item.createdAt))
+                } catch PreparedAudioEnqueue.Rejection.staleSource {
+                    continue
                 }
-                job.isCancelled = false
-                try store.saveAudioPreparationJob(job)
             }
             try refreshAudioPreparationPresentation(store: store)
             diagnostics["automaticAudioPreparationQueue"] = "queued"

@@ -291,6 +291,9 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         let same = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[1], sourceText: original)
         XCTAssertNotNil(same, "the unchanged text still matches")
 
+        var editedItem = try fixture.store.loadItem(id: "item")
+        editedItem.text = edited
+        try fixture.store.saveItem(editedItem)
         let restarted = try await coordinator.begin(itemId: "item", sourceText: edited, signature: signature("one"), plan: plan)
         XCTAssertTrue(restarted.chunks.isEmpty, "preparing the edited text starts over")
 
@@ -311,6 +314,9 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
             .joined(separator: " ")
         let plan = PreparedChunkPlan.articlePlan(article)
         XCTAssertGreaterThan(plan.count, 1)
+        var articleItem = try fixture.store.loadItem(id: "item")
+        articleItem.text = article
+        try fixture.store.saveItem(articleItem)
         _ = try await coordinator.begin(itemId: "item", sourceText: article, signature: signature("one"), plan: plan)
         for entry in plan {
             let input = fixture.root.appending(path: "input-\(entry.index).wav")
@@ -443,6 +449,8 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
     private func makeFixture() throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "prepared-audio-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        return Fixture(root: root, prepared: root.appending(path: "Prepared", directoryHint: .isDirectory), store: try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path))
+        let store = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
+        try store.saveItem(Item(id: "item", title: "Paper", mediaType: "pdf", text: "First chunk. Second chunk.", externalReference: nil, status: "ready"))
+        return Fixture(root: root, prepared: root.appending(path: "Prepared", directoryHint: .isDirectory), store: store)
     }
 }

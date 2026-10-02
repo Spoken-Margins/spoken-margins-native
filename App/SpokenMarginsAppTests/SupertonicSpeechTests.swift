@@ -267,6 +267,7 @@ final class SupertonicSpeechTests: XCTestCase {
             synthesisParametersHash: "parameters", normalizationVersion: "normalization", chunkingVersion: "chunking",
             digest: "digest-258-prepared-survives"
         )
+        try store.saveItem(Item(id: "item-258", title: "Prepared", mediaType: "text", text: text, externalReference: nil, status: "ready"))
         _ = try await coordinator.begin(itemId: "item-258", sourceText: text, signature: signature, plan: [plan])
         let wav = try makeTestWAV(duration: 1)
         defer { try? FileManager.default.removeItem(at: wav) }

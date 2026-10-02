@@ -2,7 +2,7 @@ import Foundation
 import SessionKit
 import SQLite3
 
-public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
+public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked Sendable {
     /// Schema 5 adds record kinds and optional payload fields to the generic
     /// records table; it does not change the SQLite table layout. Sharing builds
     /// must accept it so installing this lane over another active lane does not
@@ -978,6 +978,10 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     /// SQLite can't nest them: a read inside `updateOwnedOfflineAsset` that meets a malformed row quarantines
     /// it in the update's transaction (#529 audit). If anything in the outer transaction throws, all of it
     /// rolls back, the quarantine included, and the next read quarantines the row again.
+    public func withSessionTransaction<T>(_ operation: () throws -> T) throws -> T {
+        try withTransaction(operation)
+    }
+
     private func withTransaction<T>(_ operation: () throws -> T) throws -> T {
         try withConnectionLock {
             guard transactionDepth == 0 else { return try operation() }
@@ -1104,6 +1108,7 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
     public func applyStructuredDocumentUpgrade(_ upgrade: StructuredDocumentUpgrade) throws {
         let itemId = upgrade.item.id
         try withTransaction {
+            try upgrade.validateBaseline(repository: self)
             try saveItem(upgrade.item)
             try deleteRecords(kind: "listening_map", itemId: itemId)
             if let map = upgrade.listeningMap {
@@ -1111,8 +1116,12 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
             }
             for interjection in upgrade.interjections { try saveInterjection(interjection) }
             for session in upgrade.sessions { try saveSession(session) }
-            for id in upgrade.retiredManifestIds { try deletePreparedAudioManifest(id: id) }
-            for id in upgrade.retiredJobIds { try deleteAudioPreparationJob(id: id) }
+            for manifest in try loadPreparedAudioManifests(itemId: itemId) {
+                try deletePreparedAudioManifest(id: manifest.id)
+            }
+            for job in try loadAudioPreparationJobs() where job.itemId == itemId {
+                try deleteAudioPreparationJob(id: job.id)
+            }
             try saveStructuredDocument(upgrade.document, itemId: itemId)
         }
     }

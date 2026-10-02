@@ -760,12 +760,9 @@ public final class SessionEngine {
     @discardableResult
     public func importBrowserText(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> SessionSnapshot {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
-        let (item, deterministicMap, document) = try browserTextImportRecords(handoff, structuredDocument: structuredDocument)
-        try repository.saveItem(item)
-        if let deterministicMap {
-            try repository.saveListeningMap(deterministicMap)
-        }
-        try saveStructuredDocument(document, itemId: item.id)
+        let (item, deterministicMap, document) = try BrowserTextImporter(repository: repository, excludingItemId: currentSession?.itemId)
+            .importRecords(handoff, structuredDocument: structuredDocument)
+        if document != nil { invalidateStructuredDocumentCaches(itemId: item.id) }
         forgetFailure(unlessItemIs: item.id)
         currentItem = item
         currentMap = deterministicMap
@@ -789,18 +786,23 @@ public final class SessionEngine {
     @discardableResult
     public func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> Item {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
-        let (item, deterministicMap, document) = try browserTextImportRecords(handoff, structuredDocument: structuredDocument)
-        try repository.saveItem(item)
-        if let deterministicMap {
-            try repository.saveListeningMap(deterministicMap)
-        }
-        try saveStructuredDocument(document, itemId: item.id)
+        let (item, _, document) = try BrowserTextImporter(repository: repository, excludingItemId: currentSession?.itemId)
+            .importRecords(handoff, structuredDocument: structuredDocument)
+        if document != nil { invalidateStructuredDocumentCaches(itemId: item.id) }
         return item
     }
 
-    private func saveStructuredDocument(_ document: StructuredDocument?, itemId: String) throws {
-        guard let document, let store = repository as? StructuredDocumentRepository else { return }
-        try store.saveStructuredDocument(document, itemId: itemId)
+    /// Awaited PDF import; keeps playback state on the caller's actor.
+    @MainActor
+    public func importBrowserTextInBackgroundAsync(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) async throws -> Item {
+        try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
+        let importer = BrowserTextImporter(repository: repository, excludingItemId: currentSession?.itemId)
+        let item = try await importer.importInBackground(handoff, structuredDocument: structuredDocument)
+        if structuredDocument != nil { invalidateStructuredDocumentCaches(itemId: item.id) }
+        return item
+    }
+
+    private func invalidateStructuredDocumentCaches(itemId: String) {
         // The cache may hold "no document" for this item's text (#220 audit 5).
         if listenableCache?.itemId == itemId { listenableCache = nil }
         if exportPageDocumentCache?.itemId == itemId { exportPageDocumentCache = nil }
@@ -3594,113 +3596,6 @@ public final class SessionEngine {
         guard snapshot.status != .recording, pendingWrittenInterjection == nil else {
             throw SessionKitError.invalidCommandForState(command)
         }
-    }
-
-    private func browserTextImportRecords(
-        _ handoff: BrowserTextHandoff,
-        structuredDocument: StructuredDocument? = nil
-    ) throws -> (Item, ListeningMap?, StructuredDocument?) {
-        let fallbackTitle = cleanedBrowserTextTitle(handoff.source.title, url: handoff.source.url)
-        let sourceExtension = URL(string: handoff.source.url)?.pathExtension.lowercased()
-        // A v2 document only comes from a PDF, whatever its URL looks like
-        // (https://arxiv.org/pdf/2607.28282v1 has no ".pdf").
-        let isPDF = handoff.captureMode == .markdownFile && (sourceExtension == "pdf" || structuredDocument != nil)
-        // A v2 PDF's canonical text is the document's; it isn't parsed as Markdown,
-        // so every I13 range indexes Item.text exactly.
-        let document = isPDF ? structuredDocument.flatMap { $0.text.isEmpty ? nil : $0 } : nil
-        let rawText = (document?.text ?? handoff.text).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !rawText.isEmpty else {
-            throw SessionKitError.invalidCommandForState("importBrowserText")
-        }
-
-        let parsedMarkdown: ParsedObsidianMarkdown?
-        if document == nil, handoff.contentFormat == .markdown {
-            parsedMarkdown = try? ObsidianMarkdownParser.parse(fileName: fallbackTitle, contents: rawText)
-        } else {
-            parsedMarkdown = nil
-        }
-        let title = parsedMarkdown?.title ?? fallbackTitle
-        let text = document?.text ?? (parsedMarkdown?.text ?? rawText).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else {
-            throw SessionKitError.invalidCommandForState("importBrowserText")
-        }
-        var itemId = handoff.itemId ?? browserTextItemId(title: title, url: handoff.source.url)
-        if handoff.itemId == nil, handoff.captureMode == .readablePage || isPDF {
-            // A corrected extraction (or a new PDF extractor) must not move existing
-            // Margin anchors. Retain the original edition and give changed text its
-            // own identity.
-            if let existing = try existingItem(id: itemId), existing.text != text {
-                // C1 M3 step 5: a PDF re-imported with a newer extraction moves the
-                // existing item to it when every Margin and position lands on the same
-                // words (I13 rule 1d). Otherwise it stays, and the new text becomes
-                // its own edition as before.
-                if let document, existing.deletedAt == nil, currentSession?.itemId != existing.id,
-                   let store = repository as? any (SessionRepository & StructuredDocumentRepository),
-                   // A planning error falls back to the plain import below (#322).
-                   case .success(let upgrade)? = try? StructuredDocumentUpgrader.plan(
-                       existing: existing,
-                       document: document,
-                       listeningMap: StructuredDocumentImport.listeningMap(for: document, title: existing.title, itemId: existing.id),
-                       repository: store
-                   ) {
-                    try store.applyStructuredDocumentUpgrade(upgrade)
-                    return (upgrade.item, upgrade.listeningMap, document)
-                }
-                let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
-                itemId += "-edition-\(digest)"
-            }
-            if var existing = try existingItem(id: itemId) {
-                existing.deletedAt = nil
-                return (existing, try repository.loadListeningMap(itemId: itemId), document)
-            }
-        }
-        let mapPolicy: DeterministicListeningMapPolicy = isPDF
-            ? .canonicalHeadings
-            : .adaptiveListeningSections
-        let deterministicMap = document.map { StructuredDocumentImport.listeningMap(for: $0, title: title, itemId: itemId) }
-            ?? parsedMarkdown?.deterministicListeningMap(
-                itemId: itemId,
-                policy: mapPolicy
-            )
-        let source = parsedMarkdown?.source ?? handoff.source.url
-        let item = Item(
-            id: itemId,
-            title: title,
-            mediaType: isPDF || sourceExtension == "pdf" ? "pdf" : "text",
-            text: text,
-            externalReference: source,
-            status: deterministicMap == nil ? "needs_listening_map" : "ready",
-            externalReferenceType: handoff.captureMode == .markdownFile || handoff.captureMode == .plainTextFile ? "file" : "url",
-            createdAt: Date(),
-            documentStructure: handoff.documentStructure
-        )
-        return (item, deterministicMap, document)
-    }
-
-    private func existingItem(id: String) throws -> Item? {
-        do { return try repository.loadItem(id: id) }
-        catch SessionKitError.missingFixture(let key) where key == "item:\(id)" || key == id { return nil }
-    }
-
-    private func cleanedBrowserTextTitle(_ title: String, url: String) -> String {
-        let cleaned = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleaned.isEmpty {
-            return cleaned
-        }
-        guard let host = URLComponents(string: url)?.host, !host.isEmpty else {
-            return "Browser Text"
-        }
-        return host
-    }
-
-    private func browserTextItemId(title: String, url: String) -> String {
-        let base = [title, url].joined(separator: "-").lowercased()
-        let allowed = CharacterSet.alphanumerics
-        let slug = base.unicodeScalars.map { scalar -> Character in
-            allowed.contains(scalar) ? Character(scalar) : "-"
-        }
-        let collapsed = String(slug).split(separator: "-").joined(separator: "-")
-        return "item-browser-\(collapsed.prefix(48))"
     }
 
     private func resolveSession(_ sessionId: String?) throws -> Session {

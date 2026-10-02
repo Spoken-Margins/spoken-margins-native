@@ -163,6 +163,15 @@ actor PreparedAudioCoordinator {
         plan: [PreparedChunkPlan],
         schedulesJob: Bool = true
     ) throws -> PreparedAudioManifest {
+        try PreparedAudioEnqueue.withValidatedSource(itemId: itemId, sourceText: sourceText, repository: repository) {
+            try beginValidated(itemId: itemId, sourceText: sourceText, signature: signature, plan: plan, schedulesJob: schedulesJob)
+        }
+    }
+
+    private func beginValidated(
+        itemId: String, sourceText: String, signature: TTSRenderSignature,
+        plan: [PreparedChunkPlan], schedulesJob: Bool
+    ) throws -> PreparedAudioManifest {
         try fileManager.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
         let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
         let sourceId = "source-\(itemId)"
@@ -285,10 +294,6 @@ actor PreparedAudioCoordinator {
             try? fileManager.removeItem(at: destination)
             return
         }
-        if var job = try repository.loadAudioPreparationJobs().first(where: { $0.manifestId == manifestId }) {
-            job.nextChunkIndex = manifest.chunks.count
-            try repository.saveAudioPreparationJob(job)
-        }
     }
 
     /// False when the manifest is gone or was retired by a re-import meanwhile (#344 audit).
@@ -312,55 +317,58 @@ actor PreparedAudioCoordinator {
         manifest.failureCode = nil
         manifest.updatedAt = Date()
         guard try saveUnlessRetired(manifest, stillCurrent: { Self.isMade(from: $0.text ?? "", manifest) }) else { return false }
-        try repository.deleteAudioPreparationJob(id: "job-\(manifestId)")
         return true
     }
 
-    /// Saves `manifest` unless a re-import retired it (#322) while this actor copied a chunk
-    /// or hashed the narration: the import runs on the main actor, so it can land between
-    /// this actor's load and save, and saving would bring the manifest back (#344 audit).
-    /// `stillCurrent` checks the item as stored; an item that isn't stored has nothing to move.
-    /// If the retirement commits between the check and the save, the save is taken back out.
+    /// Saves progress/completion and its job atomically with the retirement check.
+    /// File copying and hashing happen before entering this short transaction.
     private func saveUnlessRetired(_ manifest: PreparedAudioManifest, stillCurrent: (Item) -> Bool) throws -> Bool {
-        func current() -> Bool {
-            (try? repository.loadItem(id: manifest.itemId)).map(stillCurrent) ?? true
-        }
-        guard try repository.loadPreparedAudioManifest(id: manifest.id) != nil, current() else { return false }
-        try repository.savePreparedAudioManifest(manifest)
-        guard current() else {
-            try repository.deletePreparedAudioManifest(id: manifest.id)
-            return false
-        }
-        return true
+        try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: repository) { _, item in
+            guard stillCurrent(item) else { return false }
+            try repository.savePreparedAudioManifest(manifest)
+            if manifest.state == .readyOffline {
+                try repository.deleteAudioPreparationJob(id: "job-\(manifest.id)")
+            } else if var job = try repository.loadAudioPreparationJobs().first(where: { $0.manifestId == manifest.id }) {
+                job.nextChunkIndex = manifest.chunks.count
+                try repository.saveAudioPreparationJob(job)
+            }
+            return true
+        } ?? false
     }
 
     func stop(itemId: String, signature: TTSRenderSignature) throws {
         let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
-        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return }
-        manifest.state = .stopped
-        manifest.updatedAt = Date()
-        try repository.savePreparedAudioManifest(manifest)
-        if var job = try repository.loadAudioPreparationJobs().first(where: { $0.manifestId == manifestId }) {
-            job.isCancelled = true
-            try repository.saveAudioPreparationJob(job)
+        guard let candidate = try repository.loadPreparedAudioManifest(id: manifestId) else { return }
+        _ = try PreparedAudioEnqueue.withCurrentManifest(candidate, repository: repository) { current, _ in
+            var manifest = current
+            manifest.state = .stopped
+            manifest.updatedAt = Date()
+            try repository.savePreparedAudioManifest(manifest)
+            if var job = try repository.loadAudioPreparationJobs().first(where: { $0.manifestId == manifestId }) {
+                job.isCancelled = true
+                try repository.saveAudioPreparationJob(job)
+            }
         }
     }
 
     func retry(itemId: String, signature: TTSRenderSignature) throws {
         let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
-        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return }
-        guard manifest.state != .readyOffline else { return }
-        manifest.state = .preparing
-        manifest.failureCode = nil
-        manifest.updatedAt = Date()
-        try repository.savePreparedAudioManifest(manifest)
-        var job = (try repository.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifestId })
-            ?? AudioPreparationJob(id: "job-\(manifestId)", itemId: itemId, manifestId: manifestId, policy: .explicit)
-        job.policy = .explicit
-        job.isCancelled = false
-        job.lastFailureCode = nil
-        job.nextChunkIndex = manifest.chunks.count
-        try repository.saveAudioPreparationJob(job)
+        guard let candidate = try repository.loadPreparedAudioManifest(id: manifestId) else { return }
+        _ = try PreparedAudioEnqueue.withCurrentManifest(candidate, repository: repository) { current, _ in
+            guard current.state != .readyOffline else { return }
+            var manifest = current
+            manifest.state = .preparing
+            manifest.failureCode = nil
+            manifest.updatedAt = Date()
+            try repository.savePreparedAudioManifest(manifest)
+            var job = (try repository.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifestId })
+                ?? AudioPreparationJob(id: "job-\(manifestId)", itemId: itemId, manifestId: manifestId, policy: .explicit)
+            job.policy = .explicit
+            job.isCancelled = false
+            job.lastFailureCode = nil
+            job.nextChunkIndex = manifest.chunks.count
+            try repository.saveAudioPreparationJob(job)
+        }
     }
 
     private func isIntact(_ chunk: PreparedAudioChunk) -> Bool {
