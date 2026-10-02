@@ -20,6 +20,7 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         let subscription = FeedSubscription(id: "existing", source: SourceIdentity(id: "publication", kind: .articleFeed,
             canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Publisher"), lastRefreshAt: Date())
         try store.saveFeedSubscription(subscription)
+        let originalSubscriptions = try store.loadFeedSubscriptions()
         let recorder = ListeningSignalRecorder(fileURL: root.appendingPathComponent("signals.jsonl"), flushDelay: 60)
         let signals = ListeningSignalsCoordinator(recorder: recorder, repository: { store })
         model.listeningSignals = signals
@@ -38,7 +39,7 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertTrue(model.followedSourceEntries.contains { $0.id == "refresh-marker" })
-        XCTAssertEqual(try store.loadFeedSubscriptions(), [subscription])
+        XCTAssertEqual(try store.loadFeedSubscriptions(), originalSubscriptions)
         signals.playbackProgress(itemId: item.id, status: .playing)
         try await Task.sleep(for: .milliseconds(1_100))
         signals.playbackProgress(itemId: item.id, status: .playing)
