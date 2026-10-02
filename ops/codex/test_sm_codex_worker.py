@@ -391,6 +391,10 @@ def lane(verdict='FAIL', head=HEAD[:7], detail='simulator build (fail)', at='202
             'evidence: /tmp/lane/73 (on the Mac)'}
 
 
+def audit(text='[P2] Preserve the anchor on resume', head=HEAD[:7], at='2026-10-01T12:00:00Z'):
+    return {'createdAt': at, 'body': f'**Codex audit (Astra) on `{head}`**\n\n{text}\n\n---\nAudit footer'}
+
+
 class FinishSelectionTests(unittest.TestCase):
     def eligible(self, pr):
         return w.finish_eligible(pr, NOW)[0]
@@ -435,11 +439,49 @@ class FinishSelectionTests(unittest.TestCase):
         pr['files'] = [{'path': 'scripts/tests/test_lane_runner.py'}]
         self.assertTrue(self.eligible(pr))
 
-    def test_recent_finishing_claim_only(self):
+    def test_two_finishing_rounds_per_24_hours(self):
         c = {'body': 'Thread "Codex worker 2" finishing #73', 'createdAt': '2026-10-01T01:00:00Z'}
-        self.assertFalse(self.eligible(pull(labels=['needs-mac'], comments=[c])))
-        c['createdAt'] = '2026-09-29T01:00:00Z'
+        second = dict(c, createdAt='2026-10-01T02:00:00Z')
         self.assertTrue(self.eligible(pull(labels=['needs-mac'], comments=[c])))
+        for trigger in (pull(labels=['needs-mac']), pull(comments=[lane()]), pull(comments=[audit()])):
+            trigger['comments'] += [c, second]
+            self.assertFalse(self.eligible(trigger))
+            # Exactly 24 h old is outside the rolling window, even after the head changes.
+            c['createdAt'] = '2026-09-30T13:00:00Z'
+            self.assertTrue(self.eligible(trigger))
+            c['createdAt'] = '2026-10-01T01:00:00Z'
+        for at in ('', 'invalid'):
+            self.assertFalse(self.eligible(pull(labels=['needs-mac'], comments=[dict(c, createdAt=at)])))
+
+    def test_newest_audit_must_name_head_and_open_with_findings(self):
+        self.assertTrue(self.eligible(pull(comments=[audit()])))
+        self.assertFalse(self.eligible(pull(comments=[audit(head='9876543')])))
+        clean = audit('No blocking findings.\nMention of [P2] in footer', at='2026-10-01T12:01:00Z')
+        self.assertFalse(self.eligible(pull(comments=[clean, audit()])))
+        newer = audit(at='2026-10-01T12:02:00Z')
+        self.assertTrue(self.eligible(pull(comments=[newer, clean])))
+        self.assertFalse(self.eligible(pull(comments=[audit(), audit(head='9876543', at=newer['createdAt'])])))
+        # A quoted header or SHA mentioned only in the body is not a head audit.
+        for body in ('Quoted: ' + audit()['body'], audit(head='9876543')['body'] + '\n' + HEAD[:7]):
+            self.assertFalse(self.eligible(pull(comments=[{'body': body}])))
+
+    def test_lane_paths_eligible_only_for_current_head_audit_findings(self):
+        for path in sorted(w._scope.LANE_FILES) + [p + 'example' for p in w._scope.LANE_PREFIXES]:
+            pr = pull(comments=[lane('PASS'), audit()])
+            pr['files'] = [{'path': path}]
+            self.assertTrue(self.eligible(pr), path)
+            for report in (audit(head='9876543'), audit('No blocking findings.')):
+                pr['comments'] = [lane(), report]
+                pr['labels'] = ['needs-mac']
+                self.assertFalse(self.eligible(pr), path)
+
+    def test_audit_candidate_still_respects_protected_prs(self):
+        for key, value in (('isDraft', True), ('baseRefName', 'main'), ('state', 'CLOSED'),
+                           ('isCrossRepository', True), ('headRefName', 'next')):
+            pr = pull(comments=[audit()])
+            pr[key] = value
+            self.assertFalse(self.eligible(pr), key)
+        self.assertFalse(w.finish_eligible(pull(comments=[audit()]), NOW, {73})[0])
 
     def test_latest_lane_request_controls_t3_requeue(self):
         request = {'body': '/lane T3\ntests: SpokenMarginsAppTests/PlaybackTests',
@@ -460,7 +502,8 @@ class FinishChildTests(unittest.TestCase):
         w.write_lock(self.home, 1, {'pid': os.getpid(), 'pr': 73})
 
     def run_finish(self, fast_rc=0, fail=(), codex_ok=True, rearmed=False, moved=False, conflict=False,
-                   push_rc=0, arm_failure=False, no_request=False, needs_mac_only=False, empty=False):
+                   push_rc=0, arm_failure=False, no_request=False, needs_mac_only=False, empty=False,
+                   audit_only=False):
         data = pull(labels=['needs-mac', 'automerge'], comments=[lane(),
                     {'body': '/lane T3\ntests: SpokenMarginsAppTests/PlaybackTests',
                      'createdAt': '2026-10-01T11:00:00Z'}])
@@ -468,6 +511,10 @@ class FinishChildTests(unittest.TestCase):
             data['comments'] = [lane()]
         if needs_mac_only:
             data['comments'] = []
+        if audit_only:
+            data['labels'] = ['automerge']
+            data['comments'] = [lane('PASS'), audit()]
+            data['files'] = [{'path': 'ops/codex/sm_codex_testdesk.py'}]
         test = self
 
         class Run(FakeRun):
@@ -506,7 +553,8 @@ class FinishChildTests(unittest.TestCase):
 
         run = Run(test, status='' if empty else ' M Playback.swift\n', fast_rc=fast_rc, fail=fail)
         codex = fake_codex({'commit-msg.txt': 'Fix resume\n\nThe test lost its anchor; preserve it.',
-                            'pr-body.md': 'Preserved the playback anchor.'}, ok=codex_ok)
+                            'pr-body.md': ('Finding is wrong: the anchor is already preserved.' if empty and audit_only
+                                           else 'Preserved the playback anchor.')}, ok=codex_ok)
 
         def run_codex(*args):
             if rearmed:
@@ -555,6 +603,34 @@ class FinishChildTests(unittest.TestCase):
                 self.assertFalse(run.has('git', 'push'))
                 self.assertEqual(set(data['labels']), {'needs-mac'})
                 self.assertIn('stopping:', run.comments()[-1])
+
+    def test_lane_audit_fix_gets_findings_and_rearms_after_passing_push(self):
+        outcome, run, data, codex = self.run_finish(audit_only=True)
+        self.assertEqual(outcome, 'finished')
+        self.assertIn(audit()['body'], codex.prompt)
+        self.assertIn('For each audit finding', codex.prompt)
+        self.assertIn('it fails without the fix', codex.prompt)
+        self.assertIn('why the finding is wrong', codex.prompt)
+        self.assertEqual(data['labels'], ['automerge'])
+        push = next(i for i, c in enumerate(run.calls) if c[:2] == ['git', 'push'])
+        arm = next(i for i, c in enumerate(run.calls) if c[-2:] == ['--add-label', 'automerge'])
+        self.assertLess(push, arm)
+        self.assertFalse(any(c.startswith('/lane') for c in run.comments()))
+        commit = next(c for c in run.calls if c[:2] == ['git', 'commit'])
+        self.assertTrue(Path(commit[-1]).read_text().startswith('Address Codex audit findings on #73'))
+
+    def test_audit_failed_fast_never_pushes_or_rearms(self):
+        outcome, run, data, _ = self.run_finish(audit_only=True, fast_rc=1)
+        self.assertEqual(outcome, 'fast-failed')
+        self.assertFalse(run.has('git', 'push'))
+        self.assertNotIn('automerge', data['labels'])
+
+    def test_disputed_audit_without_changes_posts_explanation(self):
+        outcome, run, data, _ = self.run_finish(audit_only=True, empty=True)
+        self.assertEqual(outcome, 'empty')
+        self.assertIn('Finding is wrong: the anchor is already preserved.', '\n'.join(run.comments()))
+        self.assertFalse(run.has('git', 'push'))
+        self.assertNotIn('automerge', data['labels'])
 
     def test_rearmed_or_moved_pr_never_pushes(self):
         for options in ({'rearmed': True}, {'moved': True}):
@@ -610,6 +686,20 @@ class FinishChildTests(unittest.TestCase):
         ops.pull = lambda n: pr
         self.assertEqual(w.run_finish_child(ops, 1, 73), 'skipped')
         self.assertEqual(run.gh_writes(), [])
+        self.assertFalse(run.has('git', 'worktree', 'add'))
+        self.assertFalse((self.home / 'slot-1.lock').exists())
+
+    def test_child_round_limit_comments_without_claim_or_label_changes(self):
+        run = FakeRun(self)
+        ops = w.Ops(home=self.home, repo_root=self.home, run=run, codex=fake_codex(),
+                    now=lambda: NOW, alive=lambda pid: False, echo=False)
+        pr = pull(comments=[audit(),
+                  {'body': 'Thread "Codex worker 1" finishing #73', 'createdAt': '2026-10-01T10:00:00Z'},
+                  {'body': 'Thread "Codex worker 2" finishing #73', 'createdAt': '2026-10-01T11:00:00Z'}])
+        ops.pull = lambda n: pr
+        self.assertEqual(w.run_finish_child(ops, 1, 73), 'skipped')
+        self.assertEqual(len(run.gh_writes()), 1)
+        self.assertIn(w.FINISH_LIMIT_MARK, run.comments()[0])
         self.assertFalse(run.has('git', 'worktree', 'add'))
         self.assertFalse((self.home / 'slot-1.lock').exists())
 
@@ -957,6 +1047,47 @@ class TickTests(unittest.TestCase):
     def test_ineligible_pr_falls_back_to_issue(self):
         spawn = self.spawner()
         d = w.tick(self.ops(prs=[pull(comments=[lane('INCONCLUSIVE')])]), spawn=spawn)
+        self.assertEqual(d['start'], (1, 42))
+
+    def test_audit_lane_pr_precedes_ready_issue(self):
+        pr = pull(comments=[lane('PASS'), audit()])
+        pr['files'] = [{'path': 'ops/codex/sm_codex_testdesk.py'}]
+        spawn = self.spawner()
+        self.assertEqual(w.tick(self.ops(prs=[pr]), spawn=spawn)['pr'], 73)
+        self.assertEqual(spawn.started, [(1, 73)])
+
+    def test_round_limit_note_once_and_falls_back_to_issue(self):
+        pr = pull(comments=[audit(),
+                  {'body': 'Thread "Codex worker 1" finishing #73', 'createdAt': '2026-10-01T10:00:00Z'},
+                  {'body': 'Thread "Codex worker 2" finishing #73', 'createdAt': '2026-10-01T11:00:00Z'}])
+        ops = self.ops(prs=[pr])
+        notes = []
+
+        def comment(n, body):
+            notes.append((n, body))
+            pr['comments'].append({'body': body, 'createdAt': NOW.strftime('%Y-%m-%dT%H:%M:%SZ')})
+
+        ops.comment = comment
+        for _ in range(2):
+            spawn = self.spawner()
+            self.assertEqual(w.tick(ops, spawn=spawn)['issue'], 42)
+            self.assertEqual(spawn.started, [(1, 42)])
+            (self.home / 'slot-1.lock').unlink()
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0][0], 73)
+        self.assertTrue(notes[0][1].startswith(w.FINISH_LIMIT_MARK))
+
+    def test_round_limit_dry_run_posts_nothing(self):
+        import contextlib
+        import io
+        pr = pull(comments=[audit(),
+                  {'body': 'Thread "Codex worker 1" finishing #73', 'createdAt': '2026-10-01T10:00:00Z'},
+                  {'body': 'Thread "Codex worker 2" finishing #73', 'createdAt': '2026-10-01T11:00:00Z'}])
+        ops = self.ops(prs=[pr])
+        ops.comment = lambda *args: self.fail('dry run wrote a comment')
+        with contextlib.redirect_stdout(io.StringIO()):
+            d = w.tick(ops, dry_run=True, spawn=self.spawner())
+        self.assertIsNone(d['pr'])
         self.assertEqual(d['start'], (1, 42))
 
     def test_pr_jobs_obey_dial_and_pacing(self):
