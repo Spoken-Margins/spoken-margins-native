@@ -1816,8 +1816,10 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             libraryAccessError = nil
             purgeExpiredEpisodeMapPreparationJobs(store: store)
+            let seededPodcast = try UITestPodcastBootstrap.seedIfRequested(store: store) { try applicationSupportDirectory() }
+            if seededPodcast { try configurePodcastDownloads(store: store) }
             if let fixtureText = ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"],
-               CommandLine.arguments.contains("--ui-testing") {
+               CommandLine.arguments.contains("--ui-testing"), !seededPodcast {
                 try resetAndSeedUITestingText(
                     store: store,
                     title: ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] ?? "UI Test Text",
@@ -1826,7 +1828,7 @@ final class Gate1AppModel: ObservableObject {
                 )
                 return
             }
-            if CommandLine.arguments.contains("--ui-testing") {
+            if CommandLine.arguments.contains("--ui-testing"), !seededPodcast {
                 resetAndSeed()
                 return
             }
@@ -14799,6 +14801,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func seedUITestingGeneratedTimelineIfNeeded(sessionId: String, engine: SessionEngine, store: SQLiteSessionStore) throws {
         guard CommandLine.arguments.contains("--ui-testing"),
+              ProcessInfo.processInfo.environment[UITestPodcastSeed.environmentKey] != "1",
               ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] == nil,
               try store.loadTurns(sessionId: sessionId).isEmpty else {
             return
