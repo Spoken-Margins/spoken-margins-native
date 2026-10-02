@@ -727,6 +727,7 @@ class MergeTests_Runner(unittest.TestCase):
             github.head = NEWER
         verdicts = list(verdicts)
         with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.object(lane, 'TESTED_RECORD', Path(folder) / 'tested.json'), \
                 mock.patch.object(lane, 'build_merge_commit', side_effect=build), \
                 mock.patch.object(lane, 'push_merge', side_effect=push), \
                 mock.patch.object(lane, 'fetch_base', side_effect=lambda tree, base: NEWER), \
@@ -1274,6 +1275,56 @@ class MainFlowTests(unittest.TestCase):
     conflicts = []
     role = ''  # the main runner, unless a test says otherwise
     attempt = '1'
+
+    def retry_fault_report(self, released_t3=False, throws=False, exhausted=False):
+        real_auto = lane.run_auto
+
+        def retry(*args, **kwargs):
+            second = RuntimeError('runner failed after retry') if throws else (
+                'INCONCLUSIVE', 'host only', 'interrupted', ['host tests ran out of time'])
+            if exhausted:
+                second = ('PASS', 'host only', 'passed', [])
+            with mock.patch.object(lane, 'build_merge_commit', return_value=('m' * 40, [])), \
+                    mock.patch.object(lane, 'diff_scope', return_value={'tier': 'T1', 'why': [], 'files': []}), \
+                    mock.patch.object(lane, 'run_automerge', side_effect=[('PASS', 'host only', 'passed', []), second]), \
+                    mock.patch.object(lane, 'push_merge', return_value=(False, '! [rejected] (fetch first)')), \
+                    mock.patch.object(lane, 'fetch_base', side_effect=[NEWER, 'd' * 40]), \
+                    mock.patch.object(lane, 'untested_moves', return_value=(None, 'build inputs changed')):
+                result = real_auto(*args, **kwargs, attempts=2)
+                self.last_retry_note = lane.tested_note()
+                return result
+
+        github = FakeGitHub(labels=('automerge', 'lane:queued') if released_t3 else ('automerge',),
+                            comments=[self.T3_REQUEST, self.held_report()] if released_t3 else [])
+        with mock.patch.object(lane, 'run_auto', side_effect=retry), \
+                mock.patch.object(lane, 't3_scope', return_value=([], [])), \
+                mock.patch.object(lane, 'run_t3', return_value=('PASS', 'sim', 'ran', [], 'none', '')), \
+                mock.patch.object(lane, 'clean_tree'):
+            self.run_main(github)
+        return next(body for body in reversed(github.posted) if body.startswith('Lane report'))
+
+    def test_auto_fault_after_retry_reports_the_base_it_actually_tested(self):
+        for throws in (False, True):
+            with self.subTest(throws=throws):
+                body = self.retry_fault_report(throws=throws)
+                self.assertIn('— INCONCLUSIVE', body)
+                self.assertEqual(lane.TESTED_ON.search(body).group(2), NEWER[:7])
+                self.assertEqual(json.loads(lane.MARKER.search(body).group(1))['next'], NEWER)
+
+    def test_t3_released_fault_after_retry_reports_the_base_it_actually_tested(self):
+        for throws in (False, True):
+            with self.subTest(throws=throws):
+                body = self.retry_fault_report(released_t3=True, throws=throws)
+                self.assertIn('— INCONCLUSIVE', body)
+                self.assertEqual(lane.TESTED_ON.search(body).group(2), NEWER[:7])
+                self.assertEqual(json.loads(lane.MARKER.search(body).group(1))['next'], NEWER)
+
+    def test_exhausted_retries_do_not_claim_an_unused_fetched_base_was_tested(self):
+        body = self.retry_fault_report(exhausted=True)
+        self.assertIn('— PASS', body)
+        self.assertEqual(lane.TESTED_ON.search(body).group(2), NEWER[:7])
+        self.assertEqual(json.loads(lane.MARKER.search(body).group(1))['next'], NEWER)
+        self.assertEqual(self.last_retry_note, f' (tested merged with next at {NEWER[:7]})')
 
     def test_main_flow_fixture_does_not_delete_callers_build_folders(self):
         with tempfile.TemporaryDirectory() as caller:
@@ -2023,6 +2074,16 @@ class AutoRevertTests(unittest.TestCase):
                          (True, 'the job stopped before it could report'))
         self.assertIsNone(lane.lane_report_verdict('Lane report journeys-abc1234 — INCONCLUSIVE\nrun by: Test Desk'))
         self.assertTrue(lane.lane_report_verdict(self.fault('2026-10-01T13:00:00Z', 1)['body'])[0])
+
+    def test_a_fault_after_t3_release_counts_despite_the_historical_hold(self):
+        released = self.report('INCONCLUSIVE', [
+            'started by the T3 PASS; the automerge run on aaaaaaa was held for T3',
+            "The lane itself failed: RuntimeError('runner timed out').",
+        ], '2026-10-01T13:30:00Z', n=2)
+        self.assertTrue(lane.lane_report_verdict(released['body'])[0])
+        repo = FakeRepo([self.fault('2026-10-01T13:00:00Z', 1), released])
+        self.assertTrue(self.revert(repo).startswith('reverted #7 as '))
+        self.assertEqual(self.origin_file('scripts/lane-runner.py'), 'v1\n')
 
     def test_only_reports_on_prs_by_the_runner_after_the_change_landed_count(self):
         before = self.fault('2026-10-01T11:00:00Z', 1)  # posted before the merge

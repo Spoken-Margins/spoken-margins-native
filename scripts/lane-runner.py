@@ -677,9 +677,15 @@ def merge_check(head: str, merge_sha: str, base: str, base_sha: str, ran: str) -
             '_Posted by the lane runner (scripts/lane-runner.py)._')
 
 
+class AutoRunContext:
+    """The base of the latest merge/check attempt, available even if that attempt raises."""
+    def __init__(self, tested_base: str):
+        self.tested_base = tested_base
+
+
 def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, evidence: Path,
              comments: list[dict], labels=(), attempts: int = MERGE_ATTEMPTS,
-             room_for_builds=None) -> tuple[str, str, str, list[str]]:
+             room_for_builds=None, context: AutoRunContext | None = None) -> tuple[str, str, str, list[str]]:
     """The automerge run: test the merge commit, and push it to <base> on PASS unless something blocks it.
 
     room_for_builds: for a job that started as host-only beside a simulator job. If the merge commit needs
@@ -688,6 +694,9 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
     notes: list[str] = []
     tested_base, skipped = None, None  # the next the last test ran on; next's commits since, when they can't matter
     for attempt in range(1, attempts + 1):
+        if context is not None:
+            context.tested_base = base_sha
+        remember_tested(base, base_sha)
         # Each retry gets its own folder: verify-tests.py refuses an --output folder that exists (#404).
         tried = evidence if attempt == 1 else evidence / f'attempt-{attempt}'
         merge_sha, conflicts = build_merge_commit(ROOT, base, head, pr, pull.get('title', ''))
@@ -734,7 +743,6 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             return verdict, where, ran, details + [f'not merged: the push to {base} failed ({message}). A job '
                                                    'whose lane.yml predates push rights (#382) can\'t push.']
         base_sha = fetch_base(ROOT, base)
-        remember_tested(base, base_sha)
         try:
             skipped, why = untested_moves(ROOT, tested_base, base_sha, head)
         except (OSError, subprocess.SubprocessError) as error:  # can't tell: test again
@@ -777,15 +785,18 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
     evidence.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     started_by = [f'{why}; the automerge run on {head[:7]} was held for T3']
+    context = AutoRunContext(base_sha)
     try:
         clean_tree(ROOT)  # the T3 ran in this tree; the merge commit checks out next over it
         base_sha = fetch_base(ROOT, base)
         remember_tested(base, base_sha)
-        verdict, where, ran, details = run_auto(github, pull, pr, base, head, base_sha, evidence, comments, labels)
+        verdict, where, ran, details = run_auto(github, pull, pr, base, head, base_sha, evidence, comments, labels,
+                                               context=context)
     except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
         verdict, where, ran = 'INCONCLUSIVE', 'lane error', 'nothing'
         details = [f'The lane itself failed: {error!r}. evidence: {evidence}. Remove and re-add automerge to '
                    'run it again.']
+    base_sha = context.tested_base
     body = report(request_id, verdict, head, base_sha, 'auto', where, time.monotonic() - started, ran,
                   started_by + details, 'none', str(evidence), NOT_VERIFIED, identity('auto', head, base_sha, []),
                   base_name=base)
@@ -1360,8 +1371,9 @@ MERGE_SUBJECT = re.compile(r'^Merge pull request #(\d+)(?::\s*(.*)| from \S+)')
 TESTED_ON = re.compile(r'\(tested merged with (\S+) at ([0-9a-f]{7,40})\)')
 REVERTS = re.compile(r'^This reverts commit ([0-9a-f]{40})', re.M)  # git revert's own line
 # INCONCLUSIVE reports that are the PR's or the request's own doing, not the lane's.
-NOT_LANE_FAULTS = (('does not merge cleanly', 'a merge conflict'), ('held for T3', 'held for T3'),
+NOT_LANE_FAULTS = (('does not merge cleanly', 'a merge conflict'),
                    ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'))
+PENDING_T3_HOLD = re.compile(r'^not merged: held for T3:', re.M)
 LANE_MERGE_LOOKBACK = 300
 
 
@@ -1411,6 +1423,8 @@ def lane_report_verdict(body: str) -> tuple[bool, str] | None:
         return None
     if verdict.group(1) != 'INCONCLUSIVE':
         return False, verdict.group(1)
+    if PENDING_T3_HOLD.search(body):
+        return False, 'INCONCLUSIVE (held for T3)'
     for text, why in NOT_LANE_FAULTS:
         if text in body:
             return False, f'INCONCLUSIVE ({why})'
@@ -1876,6 +1890,7 @@ def main(argv=None) -> int:
     moved = [f'requested {requested[:7]}, tested the newest commit {head[:7]}'] \
         if requested and not head.startswith(requested) else []
     cc = ''
+    context = AutoRunContext(base_sha)
     try:
         conflicts = [] if request['tier'] == 'auto' else merge_base_branch(ROOT, args.base)
         if t3_first:
@@ -1889,7 +1904,8 @@ def main(argv=None) -> int:
             details = [f'{no_room}. Push again, or remove and re-add automerge, to try again.']
         elif request['tier'] == 'auto':
             verdict, where, ran, details = run_auto(github, pull, args.pr, args.base, head, base_sha, evidence,
-                                                    comments, labels, room_for_builds=room_for_builds)
+                                                    comments, labels, room_for_builds=room_for_builds,
+                                                    context=context)
             details = ([beside] if beside else []) + details
             crashes = 'none'
         elif conflicts:
@@ -1908,6 +1924,9 @@ def main(argv=None) -> int:
     except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
         verdict, where, ran, crashes = 'INCONCLUSIVE', 'lane error', 'nothing', 'unknown'
         details = [f'The lane itself failed: {error!r}. evidence: {evidence}']
+    if request['tier'] == 'auto':
+        base_sha = context.tested_base
+        wanted = identity('auto', head, base_sha, request['tests'])
     body = report(request_id, verdict, head, base_sha, request['tier'], where, time.monotonic() - started,
                   ran, moved + details, crashes, str(evidence),
                   NOT_VERIFIED, wanted, cc, args.base)
