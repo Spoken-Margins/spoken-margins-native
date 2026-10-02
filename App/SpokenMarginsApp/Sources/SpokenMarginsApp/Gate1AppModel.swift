@@ -3565,7 +3565,7 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    @discardableResult private func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> String {
+    @discardableResult private func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil, textSource: FollowedArticleImport.TextSource = .extractorOutput) throws -> String {
         let store = try requireStore()
         if engine == nil {
             installEngine(try makeEngine(store: store))
@@ -3573,7 +3573,7 @@ final class Gate1AppModel: ObservableObject {
         guard let engine else {
             throw SessionKitError.persistenceFailed("Browser text importer is unavailable.")
         }
-        let item = try engine.importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument)
+        let item = try engine.importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff, textSource: textSource), structuredDocument: structuredDocument)
         libraryItems = try loadLibraryRows(store: store)
         scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
         diagnostics["lastBackgroundBrowserTextImport"] = item.id
@@ -12295,8 +12295,8 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    static func sanitizedBrowserTextHandoff(_ handoff: BrowserTextHandoff) -> BrowserTextHandoff {
-        guard handoff.captureMode == .readablePage,
+    static func sanitizedBrowserTextHandoff(_ handoff: BrowserTextHandoff, textSource: FollowedArticleImport.TextSource = .extractorOutput) -> BrowserTextHandoff {
+        guard textSource != .feedPlainText, handoff.captureMode == .readablePage,
               handoff.text.range(of: #"<[^>]+>"#, options: .regularExpression) != nil else {
             return handoff
         }
@@ -16025,11 +16025,11 @@ final class Gate1AppModel: ObservableObject {
                     imported = importedItemId != nil
                     if openWhenFinished, let importedItemId { self.openItem(id: importedItemId) }
                 } else {
-                    let handoff = try await FollowedArticleImport.handoff(for: entry, url: url, using: self.readablePageExtractor, record: { self.diagnostics.merge($0) { _, new in new } })
+                    let prepared = try await FollowedArticleImport.handoff(for: entry, url: url, using: self.readablePageExtractor, record: { self.diagnostics.merge($0) { _, new in new } })
                     if openWhenFinished, !entry.hasPublisherAudio {
-                        imported = self.importBrowserText(handoff)
+                        imported = self.importBrowserText(prepared.handoff)
                     } else {
-                        let itemId = try self.importBrowserTextInBackground(handoff)
+                        let itemId = try self.importBrowserTextInBackground(prepared.handoff, textSource: prepared.textSource)
                         if let audio = try PublisherAudioDetector.publisherAudio(for: entry, itemId: itemId)?.keepingTextMap(of: store.loadPublisherAudio(itemId: itemId)) { try store.savePublisherAudio(audio); PublisherAudioTextMapper.start(audio, store: store, transcriber: self.sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(itemId): \($0)" } }
                         if openWhenFinished { self.openItem(id: itemId) }
                         imported = true

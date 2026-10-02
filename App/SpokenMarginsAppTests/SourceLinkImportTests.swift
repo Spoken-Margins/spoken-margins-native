@@ -206,6 +206,7 @@ final class SourceLinkImportTests: XCTestCase {
             model.resetAndSeed()
             model.startItem(id: "item-pill")
             let activeSession = model.snapshot.sessionId
+            let activeTarget = model.snapshot.targetId
             let extractor = RefusingPublisherPageExtractor()
             model.readablePageExtractor = extractor
             let store = try SQLiteSessionStore(path: databaseURL.path)
@@ -234,6 +235,7 @@ final class SourceLinkImportTests: XCTestCase {
             XCTAssertEqual(try store.loadPublisherAudio(itemId: item.id)?.audioURL, entry.audioURL)
             XCTAssertEqual(extractor.calls, 0, "a public 403/teaser must never replace accessible feed text")
             XCTAssertEqual(model.snapshot.sessionId, activeSession)
+            XCTAssertEqual(model.snapshot.targetId, activeTarget)
             XCTAssertEqual(model.selectedItem.id, openWhenFinished ? item.id : "item-pill")
             let reopened = try SQLiteSessionStore(path: databaseURL.path)
             XCTAssertEqual(try reopened.loadItem(id: item.id).text, expected, "plaintext survives a fresh repository read")
@@ -251,9 +253,50 @@ final class SourceLinkImportTests: XCTestCase {
         var diagnostics: [String: String] = [:]
         let result = try await FollowedArticleImport.handoff(for: entry, url: XCTUnwrap(URL(string: entry.canonicalURL)),
             using: extractor, record: { diagnostics = $0 })
-        XCTAssertEqual(result, expected)
+        XCTAssertEqual(result.handoff, expected)
+        XCTAssertEqual(result.textSource, .extractorOutput)
         XCTAssertEqual(extractor.calls, 1)
         XCTAssertEqual(diagnostics["followedArticleExtractor"], "unauthenticated-page")
+    }
+
+    func testPublisherNarrationExtractorFallbackStillSanitizesHTMLInBothAddVariants() async throws {
+        for openWhenFinished in [false, true] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            temporaryDirectories.append(root)
+            let databaseURL = root.appendingPathComponent("extractor.sqlite")
+            let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+            model.resetAndSeed()
+            model.startItem(id: "item-pill")
+            let activeSession = model.snapshot.sessionId
+            let activeTarget = model.snapshot.targetId
+            let store = try SQLiteSessionStore(path: databaseURL.path)
+            let subscription = FeedSubscription(id: "s", source: SourceIdentity(id: "publication", kind: .podcastFeed,
+                canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Publisher"), lastRefreshAt: Date())
+            try store.saveFeedSubscription(subscription)
+            let entry = FeedEntry(id: "fallback-post", subscriptionId: "s", canonicalURL: "https://publisher.example/p/fallback",
+                audioURL: "https://publisher.example/fallback.mp3", title: "Extractor fallback", bodyWordCount: 810,
+                publisherNarrationConfirmed: true, audioDurationMs: 60_000)
+            try store.saveFeedEntry(entry)
+            let extractor = RefusingPublisherPageExtractor(result: BrowserTextHandoff(captureMode: .readablePage,
+                source: BrowserTextSource(url: entry.canonicalURL, title: entry.title),
+                text: "<p>Visible article.</p><script>Hidden script.</script><style>Hidden style.</style>",
+                contentFormat: .plainText))
+            model.readablePageExtractor = extractor
+
+            model.importFollowedSourceEntry(entry, openWhenFinished: openWhenFinished)
+            try await waitFor("publisher extractor fallback") {
+                (try? store.loadFeedEntries(subscriptionId: "s").first?.state) == .imported
+            }
+
+            let row = try XCTUnwrap(model.libraryItems.first { $0.title == entry.title })
+            let reopened = try SQLiteSessionStore(path: databaseURL.path)
+            XCTAssertEqual(try reopened.loadItem(id: row.id).text, "Visible article.")
+            XCTAssertEqual(extractor.calls, 1, "publisher audio and plainText format alone must not bypass sanitation")
+            XCTAssertEqual(model.snapshot.sessionId, activeSession)
+            XCTAssertEqual(model.snapshot.targetId, activeTarget)
+            XCTAssertEqual(model.selectedItem.id, openWhenFinished ? row.id : "item-pill")
+        }
     }
 
     func testFollowedSourceAcceptsLargeFeedAndRetainsOnlyNewestTwentyFiveSuggestions() async throws {
