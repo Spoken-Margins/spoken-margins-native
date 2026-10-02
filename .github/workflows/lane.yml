@@ -10,23 +10,32 @@
 # (scripts/lane-runner.py). Lane changes, this file included, merge that way too (owner rule
 # 2026-10-01).
 #
-# Trigger: pull_request. GitHub builds these runs from the PR's merge ref, which it doesn't refresh
-# when next moves, so a PR last pushed before this file reached next gets no run (#221) until it
-# merges next and pushes; a PR that conflicts with next gets no run either. The other triggers
-# don't help: comment events and pull_request_target always use the default branch's (main's)
-# copy of this file, and main doesn't carry it.
-# The job checks out the PR head, takes lane-runner.py from the base branch, and lets it merge the
-# newest base in itself, so a report always tests the PR against the current next.
+# Trigger: pull_request_target uses trusted base-branch policy and fires even on a conflicted
+# PR. A hosted merge preflight gates both Mac jobs; push sweeps recheck armed PRs when next
+# moves. issue_comment runs only after this file reaches the default branch, so until then
+# posting /lane and adding lane:queued uses the PR label trigger. The Mac retains its final
+# merge check because the base may move after a hosted gate passes.
+# The job checks out the PR head, takes lane-runner.py from the base branch, and lets it merge
+# the newest base in itself, so a report always tests the PR against the current next.
 #
 # `lane-check/**` bases exist only to test a change to the lane before it reaches next.
 name: lane
+# pull_request_target's run head is the base SHA. Name the actual PR head so the hosted
+# next sweep can identify and cancel its queued Mac jobs without trusting that run SHA.
+run-name: >-
+  Lane PR #${{ github.event.pull_request.number || github.event.issue.number || 0 }} head ${{ github.event.pull_request.head.sha || github.sha }}
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [next, 'lane-check/**']
     types: [labeled, synchronize, reopened]
+  issue_comment:
+    types: [created]
+  push:
+    branches: [next]
 
 permissions:
+  actions: write # cancel queued lane runs when next introduces a conflict
   # write: the runner pushes the merge commits it tested to next. The checkout keeps no credentials
   # and the PR's own builds and tests run without the token, so only lane-runner.py (taken from the
   # base branch) can use it.
@@ -35,9 +44,27 @@ permissions:
   issues: write
 
 jobs:
+  merge-check:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       startsWith(github.event.comment.body, '/lane ')) ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       (contains(github.event.pull_request.labels.*.name, 'lane:queued') ||
+        contains(github.event.pull_request.labels.*.name, 'automerge')) &&
+       (github.event.action != 'labeled' || github.event.label.name == 'lane:queued' ||
+        github.event.label.name == 'automerge'))
+    uses: ./.github/workflows/lane-conflicts.yml
+    with:
+      pr: ${{ github.event.pull_request.number || github.event.issue.number || 0 }}
+      head: ${{ github.event.pull_request.head.sha || '' }}
+      base: ${{ github.event.pull_request.base.ref || 'next' }}
+
   lane:
+    needs: merge-check
     # /lane T2 and T3 requests: the main runner, the only one that runs simulators.
     if: >-
+      needs.merge-check.outputs.clean == 'true' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       contains(github.event.pull_request.labels.*.name, 'lane:queued') &&
       (github.event.action != 'labeled' || github.event.label.name == 'lane:queued')
@@ -95,9 +122,11 @@ jobs:
           --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode explicit
 
   automerge:
+    needs: merge-check
     # The automerge label: host tests and builds only, so any runner labelled sm-lane-build takes it.
     # The build-only runner waits for room first (lane-runner.py, wait_for_room_to_build).
     if: >-
+      needs.merge-check.outputs.clean == 'true' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       contains(github.event.pull_request.labels.*.name, 'automerge') &&
       (github.event.action != 'labeled' || github.event.label.name == 'automerge')

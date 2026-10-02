@@ -1,0 +1,103 @@
+# Cheap base-first merge check; no Swift image, LFS models, or Mac queue slot.
+# Called by lane.yml for PR labels/pushes, /lane comments, and pushes to next.
+# Pushes made with GITHUB_TOKEN do not fire push workflows; the Mac still checks the actual
+# merge immediately before testing/pushing, so this preflight is an early filter, not proof.
+name: lane-conflicts
+
+on:
+  workflow_call:
+    inputs:
+      pr:
+        type: number
+        default: 0
+      head:
+        type: string
+        default: ''
+      base:
+        type: string
+        default: next
+    outputs:
+      clean:
+        description: Whether this exact armed PR head merges cleanly into the current base
+        value: ${{ jobs.preflight.outputs.clean }}
+
+permissions:
+  actions: write # cancel queued lane runs when next introduces a conflict
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      targets: ${{ steps.select.outputs.targets }}
+    steps:
+      - name: Select the PR, or every armed PR when next moves
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr || github.event.pull_request.number || github.event.issue.number }}
+          EVENT_HEAD: ${{ inputs.head || github.event.pull_request.head.sha }}
+        run: |
+          if [ -n "$PR_NUMBER" ]; then
+            targets=$(jq -cn --argjson pr "$PR_NUMBER" --arg head "$EVENT_HEAD" \
+              '{include: [{pr: $pr, head: $head}]}')
+          else
+            targets=$(gh api --paginate --slurp "repos/$GH_REPO/pulls?state=open&base=next&per_page=100" |
+              jq -c --arg repo "$GH_REPO" '{include: [.[][] |
+                select(.head.repo.full_name == $repo) |
+                select(any(.labels[]; .name == "automerge" or .name == "lane:queued")) |
+                {pr: .number, head: .head.sha}]}')
+          fi
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
+  preflight:
+    needs: select
+    if: needs.select.outputs.targets != '{"include":[]}'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.targets) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # A sweep and PR/comment requests serialize for the same PR. A global
+    # concurrency group would let a different PR replace a pending check (one pending per group).
+    concurrency:
+      group: lane-conflicts-${{ github.repository }}-${{ matrix.pr }}
+      cancel-in-progress: false
+    outputs:
+      clean: ${{ steps.check.outputs.clean }}
+    steps:
+      # Never check out or execute PR code with the write token. The merge happens in a temp clone.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base || 'next' }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check merge before the Mac queue
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ matrix.pr }}
+          EVENT_HEAD: ${{ matrix.head }}
+          BASE_REF: ${{ inputs.base || 'next' }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          args=(--base "$BASE_REF")
+          if [ -n "$PR_NUMBER" ]; then
+            args+=(--pr "$PR_NUMBER" --event-head "$EVENT_HEAD")
+          fi
+          if [ "$EVENT_NAME" = issue_comment ]; then
+            args+=(--request)
+          fi
+          if [ -f scripts/lane_conflicts.py ]; then
+            python3 scripts/lane_conflicts.py "${args[@]}"
+          else
+            # This PR introduces the helper. Its own gate must use the trusted base's existing
+            # Mac merge check until the helper lands; never borrow executable code from the PR.
+            echo "Base predates hosted preflight; the existing Mac merge check applies."
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+          fi
