@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import sm_codex_worker as w  # noqa: E402
 
 NOW = dt.datetime(2026, 10, 1, 13, 0, tzinfo=dt.timezone.utc)
+CODEX_RESET = int(dt.datetime(2026, 10, 6, 14, 10, tzinfo=dt.timezone.utc).timestamp())
 
 DIAL = """Tap one box in each group.
 
@@ -45,6 +46,15 @@ def codex_group(*ticked: int) -> str:
     lines = ['**Codex workers**']
     for n in range(4):
         lines.append(f"- [{'x' if n in ticked else ' '}] {n}")
+    return '\n'.join(lines)
+
+
+def codex_pacing(stops=(), finishes=()) -> str:
+    lines = ['**Codex stop line** (Codex weekly usage; Codex holds 3 points below it)']
+    lines += [f"- [{'x' if n in stops else ' '}] {n}%" for n in (70, 80, 90, 97)]
+    lines += ['**Codex finish by** (Codex follows a straight line from its window\'s start)']
+    lines += [f"- [{'x' if name in finishes else ' '}] {name}"
+              for name in ('Fri noon', 'Sat 7 AM', 'Codex reset')]
     return '\n'.join(lines)
 
 
@@ -101,6 +111,57 @@ class DialTests(unittest.TestCase):
     def test_stop_line_comes_from_the_dial(self):
         self.assertEqual(self.read(dial(codex_group(1)))['stop'], 90)
 
+    def test_no_codex_pacing_groups_preserve_the_old_line(self):
+        # Claude's finish-by must not change Codex's default weekly-reset target.
+        body = dial(codex_group(1) + '\n**Finish by**\n- [x] Fri noon')
+        d = self.read(body)
+        limits = w.parse_rate_limits(limits_result(50))
+        self.assertEqual((d['stop'], d['stop_source'], d['finish_by']),
+                         (90, 'Dial Stop line', ('Codex reset',)))
+        self.assertAlmostEqual(w.trend_line(NOW.timestamp(), limits, d['stop'], d['finish_by']),
+                               90 * 4 / 7)
+
+    def test_codex_stop_line_only_overrides_the_shared_stop(self):
+        body = dial(codex_group(1) + '\n**Codex stop line**\n- [x] 70%')
+        d = self.read(body)
+        self.assertEqual((d['stop'], d['stop_source'], d['finish_by']),
+                         (70, 'Codex stop line', ('Codex reset',)))
+        self.assertIn('hold line 67%', w.pacing_hold(NOW.timestamp(), d['stop'],
+                      w.parse_rate_limits(limits_result(67)), 100 * 2**30, d['finish_by']))
+
+    def test_empty_codex_groups_keep_the_fallbacks(self):
+        d = self.read(dial(codex_group(1) + '\n' + codex_pacing()))
+        self.assertEqual((d['stop'], d['stop_source'], d['finish_by']),
+                         (90, 'Dial Stop line', ('Codex reset',)))
+
+    def test_two_stop_ticks_take_the_lower(self):
+        d = self.read(dial(codex_group(1) + '\n' + codex_pacing((80, 97))))
+        self.assertEqual(d['stop'], 80)
+        self.assertTrue(any('lowest, 80%' in p for p in d['problems']))
+
+    def test_muddled_stop_group_holds_instead_of_using_a_higher_fallback(self):
+        for ticks in ('- [x] seventy', '- [x] 70%\n- [x] ninety?', '- [x] 970%'):
+            with self.subTest(ticks=ticks):
+                d = self.read(dial(codex_group(1) + '\n**Codex stop line**\n' + ticks))
+                self.assertIsNone(d['stop'])
+                self.assertTrue(d['problems'])
+
+    def test_muddled_finish_group_uses_reset(self):
+        d = self.read(dial(codex_group(1) + '\n**Codex finish by**\n- [x] Friday-ish'))
+        self.assertEqual(d['finish_by'], ('Codex reset',))
+        self.assertTrue(any('Codex finish by' in p for p in d['problems']))
+
+    def test_repeated_groups_and_uppercase_ticks_stay_cautious(self):
+        body = dial(codex_group(1) + '\n' + codex_pacing((97,)) +
+                    '\n**Codex stop line**\n- [X] 70%\n**Codex finish by**\n- [X] Fri noon')
+        d = self.read(body)
+        self.assertEqual((d['stop'], d['finish_by']), (70, ('Fri noon',)))
+
+    def test_pacing_ticks_after_the_rule_do_not_override_the_fallback(self):
+        body = dial(codex_group(1)) + '\n- [x] 70%\n- [x] Fri noon'
+        d = self.read(body)
+        self.assertEqual((d['stop'], d['finish_by']), (90, ('Codex reset',)))
+
     def test_ticks_after_the_rule_are_ignored(self):
         # The stray "- [x] 3" after --- must not count as a Codex workers tick.
         self.assertEqual(self.read(dial(codex_group(1)))['workers'], 1)
@@ -147,6 +208,66 @@ class PacingTests(unittest.TestCase):
         line = w.trend_line(NOW.timestamp(), w.parse_rate_limits(limits_result(0)), 90)
         self.assertAlmostEqual(line, 90 * 4 / 7, places=3)
         self.assertIsNone(self.hold(limits_result(int(line + 5))))
+
+    def test_fri_noon_before_the_time_frontloads_from_window_start(self):
+        # Tue Sep 29 10:10 EDT -> Fri Oct 2 noon EDT (73 h 50 m).
+        limits = w.parse_rate_limits(limits_result(60, resets_at=CODEX_RESET))
+        d = w.read_dial(dial(codex_group(1) + '\n' + codex_pacing(finishes=('Fri noon',))),
+                        w.load_parse_dial())
+        line = w.trend_line(NOW.timestamp(), limits, d['stop'], d['finish_by'])
+        self.assertAlmostEqual(line, 90 * (46 * 60 + 50) / (73 * 60 + 50))
+        self.assertIsNone(w.pacing_hold(NOW.timestamp(), d['stop'], limits, self.PLENTY, d['finish_by']))
+        limits['used'] = line + 5.01
+        self.assertIn('ahead of the', w.pacing_hold(NOW.timestamp(), d['stop'], limits,
+                                                 self.PLENTY, d['finish_by']))
+
+    def test_fri_noon_after_the_time_stays_at_stop_and_keeps_margin(self):
+        limits = w.parse_rate_limits(limits_result(86, resets_at=CODEX_RESET))
+        d = w.read_dial(dial(codex_group(1) + '\n' + codex_pacing(finishes=('Fri noon',))),
+                        w.load_parse_dial())
+        for now in (dt.datetime(2026, 10, 2, 16, tzinfo=dt.timezone.utc),
+                    dt.datetime(2026, 10, 3, 18, tzinfo=dt.timezone.utc)):
+            with self.subTest(now=now):
+                self.assertEqual(w.trend_line(now.timestamp(), limits, d['stop'], d['finish_by']), 90)
+                self.assertIsNone(w.pacing_hold(now.timestamp(), d['stop'], limits, self.PLENTY, d['finish_by']))
+                self.assertIn('hold line 87%', w.pacing_hold(now.timestamp(), d['stop'],
+                              dict(limits, worst=87), self.PLENTY, d['finish_by']))
+
+    def test_two_finish_ticks_take_the_later_resolved_deadline(self):
+        limits = w.parse_rate_limits(limits_result(0, resets_at=CODEX_RESET))
+        saturday = dt.datetime(2026, 10, 3, 11, tzinfo=dt.timezone.utc).timestamp()
+        for choices, label, end in ((('Fri noon', 'Sat 7 AM'), 'Sat 7 AM', saturday),
+                                    (('Fri noon', 'Codex reset'), 'Codex reset', CODEX_RESET)):
+            with self.subTest(choices=choices):
+                d = w.read_dial(dial(codex_group(1) + '\n' + codex_pacing(finishes=choices)),
+                                w.load_parse_dial())
+                self.assertEqual(w.finish_target(limits, d['finish_by']), (label, end))
+                self.assertTrue(any('later' in p for p in d['problems']))
+
+    def test_finish_is_next_occurrence_after_start_not_after_now(self):
+        # A window starting Friday afternoon reaches Sat before the next Fri noon.
+        reset = dt.datetime(2026, 10, 9, 18, tzinfo=dt.timezone.utc).timestamp()
+        limits = w.parse_rate_limits(limits_result(0, resets_at=reset))
+        label, end = w.finish_target(limits, ('Fri noon', 'Sat 7 AM'))
+        self.assertEqual(label, 'Fri noon')
+        self.assertEqual(end, dt.datetime(2026, 10, 9, 16, tzinfo=dt.timezone.utc).timestamp())
+        self.assertEqual(w.trend_line(reset - 60, limits, 90, ('Fri noon',)), 90)
+
+    def test_eastern_finish_observes_dst_and_skips_start_itself(self):
+        reset = dt.datetime(2026, 11, 6, 16, tzinfo=dt.timezone.utc).timestamp()
+        limits = w.parse_rate_limits(limits_result(0, resets_at=reset))
+        # Start is exactly Fri noon EDT; the next Fri noon is in EST.
+        label, end = w.finish_target(limits, ('Fri noon',))
+        self.assertEqual(end, dt.datetime(2026, 11, 6, 17, tzinfo=dt.timezone.utc).timestamp())
+        self.assertEqual(w.trend_line(reset - 7 * 24 * 3600 - 1, limits, 90, ('Fri noon',)), 0)
+
+    def test_muddled_finish_with_a_valid_tick_does_not_accelerate_spending(self):
+        body = dial(codex_group(1) + '\n**Codex finish by**\n- [x] Fri noon\n- [x] tomorrow?')
+        d = w.read_dial(body, w.load_parse_dial())
+        limits = w.parse_rate_limits(limits_result(60, resets_at=CODEX_RESET))
+        self.assertEqual(w.finish_target(limits, d['finish_by']), ('Codex reset', CODEX_RESET))
+        self.assertIn('ahead of the', w.pacing_hold(NOW.timestamp(), d['stop'], limits,
+                                                 self.PLENTY, d['finish_by']))
 
     def test_hold_when_read_failed(self):
         self.assertIn('could not be read', self.hold(None))
@@ -533,8 +654,9 @@ class TickTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.home, ignore_errors=True)
 
-    def ops(self, workers=2, used=10, free=100 * 2**30, alive=lambda pid: True, issues=None):
-        body = dial(codex_group(workers) if workers is not None else '')
+    def ops(self, workers=2, used=10, free=100 * 2**30, alive=lambda pid: True, issues=None,
+            body=None, resets_at=None):
+        body = body if body is not None else dial(codex_group(workers) if workers is not None else '')
         listing = issues if issues is not None else [issue(42, title='Fix the thing')]
 
         def run(cmd, cwd=None, timeout=None):
@@ -548,7 +670,7 @@ class TickTests(unittest.TestCase):
                 return w.Result(0, json.dumps(next(i for i in listing if i['number'] == n)))
             raise AssertionError(f'unexpected command {cmd}')
         return w.Ops(home=self.home, repo_root=self.home, run=run, codex=None,
-                     limits=lambda: limits_result(used) if used is not None else None,
+                     limits=lambda: limits_result(used, resets_at=resets_at) if used is not None else None,
                      now=lambda: NOW, alive=alive, free_bytes=lambda: free, echo=False)
 
     def spawner(self):
@@ -580,6 +702,60 @@ class TickTests(unittest.TestCase):
             d = w.tick(self.ops(**kw), spawn=spawn)
             self.assertEqual(spawn.started, [], kw)
             self.assertIn(word, d['why'])
+
+    def test_tick_and_dry_run_use_and_report_codex_targets(self):
+        import contextlib
+        import io
+        body = dial(codex_group(1) + '\n' + codex_pacing((90,), ('Fri noon',)))
+        for dry_run in (True, False):
+            with self.subTest(dry_run=dry_run):
+                spawn = self.spawner()
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    d = w.tick(self.ops(used=60, body=body, resets_at=CODEX_RESET),
+                               dry_run=dry_run, spawn=spawn)
+                self.assertEqual(d['start'], (1, 42))
+                self.assertEqual(spawn.started, [] if dry_run else [(1, 42)])
+                out = buf.getvalue() if dry_run else (self.home / 'log.txt').read_text()
+                for text in ('Codex stop line 90%', 'finish by Fri noon (2026-10-02 16:00 UTC)'):
+                    self.assertIn(text, out)
+
+    def test_tick_fallback_output_reports_shared_stop_and_codex_reset(self):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            w.tick(self.ops(resets_at=CODEX_RESET), dry_run=True, spawn=self.spawner())
+        self.assertIn('Dial Stop line 90%', buf.getvalue())
+        self.assertIn('finish by Codex reset (2026-10-06 14:10 UTC)', buf.getvalue())
+
+    def test_dry_run_reports_the_lower_stop_and_later_finish(self):
+        import contextlib
+        import io
+        body = dial(codex_group(1) + '\n' + codex_pacing((80, 97), ('Fri noon', 'Sat 7 AM')))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            w.tick(self.ops(body=body, resets_at=CODEX_RESET), dry_run=True, spawn=self.spawner())
+        self.assertIn('Codex stop line 80%', buf.getvalue())
+        self.assertIn('finish by Sat 7 AM (2026-10-03 11:00 UTC)', buf.getvalue())
+
+    def test_tick_uses_codex_hold_line(self):
+        body = dial(codex_group(1) + '\n' + codex_pacing((70,), ('Fri noon',)))
+        spawn = self.spawner()
+        d = w.tick(self.ops(used=67, body=body), spawn=spawn)
+        self.assertEqual(spawn.started, [])
+        self.assertIn('hold line 67%', d['why'])
+
+    def test_unreadable_dial_starts_nothing(self):
+        ops = self.ops()
+
+        def unreadable():
+            raise OSError('unavailable')
+        ops.dial_body = unreadable
+        spawn = self.spawner()
+        d = w.tick(ops, spawn=spawn)
+        self.assertEqual((d['dial']['workers'], spawn.started), (0, []))
+        self.assertIn('Dial read failed', d['dial']['problems'][0])
 
     def test_busy_slots_and_dead_lock_cleared(self):
         w.write_lock(self.home, 1, {'pid': 1, 'issue': 5})

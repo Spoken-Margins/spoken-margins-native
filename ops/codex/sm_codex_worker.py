@@ -13,8 +13,9 @@ other outcome posts a stop note and frees the issue. Worktree and lock always go
 Holds (every slip fails toward spending less):
 - Dial: no `**Codex workers**` group, no tick, Mode Off, or dial_gate not importable -> 0.
   Two ticks -> the lower.
-- Codex usage at or above the Dial's stop line minus 3, or more than 5 points ahead of a
-  straight line from the Codex window's start to its reset (scaled to the stop line).
+- Codex usage at or above its stop line minus 3, or more than 5 points ahead of a
+  straight line from the Codex window's start to its finish-by target. Without Codex
+  pacing ticks, use the Dial's stop line and Codex's reset.
 - The usage read fails, or no stop line is ticked.
 - Less than 30 GiB free disk.
 
@@ -40,6 +41,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Callable, Optional
+from zoneinfo import ZoneInfo
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -63,6 +65,8 @@ MAX_WORKERS = 3
 MARGIN = 3                 # points below the stop line where new work holds (as the Dial gate)
 TREND_SLACK = 5            # points ahead of the trend line allowed (as the Dial gate)
 MIN_FREE_GIB = 30
+CODEX_STOPS = (70, 80, 90, 97)
+CODEX_FINISHES = {'Fri noon': (4, 12), 'Sat 7 AM': (5, 7), 'Codex reset': None}
 CLAIM_WINDOW = dt.timedelta(hours=24)
 
 EXCLUDED_LABELS = {'in-progress', 'where:mac', 'regression', 'blocked'}
@@ -132,21 +136,67 @@ def parse_codex_workers(body: str) -> tuple[int, list[str]]:
     return n, problems
 
 
+def codex_pacing(body: str, shared_stop: Optional[int]) -> dict:
+    """Read only Codex's pacing groups; empty groups retain the old defaults."""
+    groups: dict[str, list[str]] = {'codex stop line': [], 'codex finish by': []}
+    current = None
+    for line in body.splitlines():
+        heading = re.match(r'\s*\*\*(.+?)\*\*', line)
+        if heading and not line.lstrip().startswith('-'):
+            name = heading.group(1).strip().lower()
+            current = next((g for g in groups if name.startswith(g)), None)
+            continue
+        if line.strip() == '---':
+            current = None
+            continue
+        box = re.match(r'\s*[-*]\s*\[([ xX])\]\s*(.*)', line)
+        if box and current and box.group(1).lower() == 'x':
+            groups[current].append(box.group(2).strip().lower())
+
+    problems = []
+    stop, source = shared_stop, 'Dial Stop line'
+    stops = groups['codex stop line']
+    if stops:
+        source = 'Codex stop line'
+        values = {f'{n}%': n for n in CODEX_STOPS}
+        if any(t not in values for t in stops):
+            stop = None
+            problems.append('muddled Codex stop line box, so nothing new starts')
+        else:
+            stop = min(values[t] for t in stops)
+            if len(stops) > 1:
+                problems.append(f'{len(stops)} Codex stop line boxes are ticked, so it uses the lowest, {stop}%')
+
+    finishes = []
+    for t in groups['codex finish by']:
+        label = next((name for name in CODEX_FINISHES if t == name.lower()), None)
+        if label is None:
+            problems.append('muddled Codex finish by box, so it includes Codex reset (the cautious choice)')
+        finishes.append(label or 'Codex reset')
+    if len(finishes) > 1:
+        problems.append('multiple Codex finish by boxes are ticked, so it uses the later time')
+    return {'stop': stop, 'stop_source': source, 'finish_by': tuple(finishes) or ('Codex reset',),
+            'problems': problems}
+
+
 def read_dial(body: str, parse_dial: Optional[Callable[[str], dict]]) -> dict:
-    """{'mode', 'stop', 'workers', 'problems'} for the Codex worker."""
+    """Mode, workers, Codex pacing targets and problems. Unreadable means zero workers."""
     workers, problems = parse_codex_workers(body)
+    off = {'mode': 'off', 'stop': None, 'stop_source': 'Dial Stop line',
+           'finish_by': ('Codex reset',), 'workers': 0}
     if parse_dial is None:
-        return {'mode': 'off', 'stop': None, 'workers': 0,
+        return {**off,
                 'problems': problems + ['ops/dial/dial_gate.py could not be imported, so it reads Off']}
     try:
         d = parse_dial(body)
         mode, stop = d.get('mode', 'off'), d.get('stop')
     except Exception as exc:  # a muddled Dial must not start work
-        return {'mode': 'off', 'stop': None, 'workers': 0,
+        return {**off,
                 'problems': problems + [f'parse_dial failed ({exc}), so it reads Off']}
     if mode == 'off':
         workers = 0
-    return {'mode': mode, 'stop': stop, 'workers': workers, 'problems': problems}
+    pacing = codex_pacing(body, stop)
+    return {**pacing, 'mode': mode, 'workers': workers, 'problems': problems + pacing['problems']}
 
 
 # ---------------------------------------------------------------------------
@@ -169,16 +219,38 @@ def parse_rate_limits(result: Optional[dict]) -> Optional[dict]:
     return {'used': float(used), 'window_mins': int(mins), 'resets_at': int(resets), 'worst': worst}
 
 
-def trend_line(now_ts: float, limits: dict, stop: float) -> float:
-    """Where Codex usage should be by now: 0 at the window's start, the stop line at its reset."""
-    end = limits['resets_at']
-    start = end - limits['window_mins'] * 60
+def finish_target(limits: dict, finish_by: tuple[str, ...] = ('Codex reset',)) -> tuple[str, float]:
+    """Resolve Eastern deadlines after the window's start; multiple ticks take the latest."""
+    reset = limits['resets_at']
+    start = reset - limits['window_mins'] * 60
+    local_start = dt.datetime.fromtimestamp(start, ZoneInfo('America/New_York'))
+    targets = []
+    for label in finish_by:
+        schedule = CODEX_FINISHES[label]
+        if schedule is None:
+            end = reset
+        else:
+            weekday, hour = schedule
+            finish = local_start.replace(hour=hour, minute=0, second=0, microsecond=0)
+            finish += dt.timedelta(days=(weekday - local_start.weekday()) % 7)
+            if finish.timestamp() <= start:
+                finish += dt.timedelta(days=7)
+            end = finish.timestamp()
+        targets.append((label, end))
+    return max(targets, key=lambda target: target[1])
+
+
+def trend_line(now_ts: float, limits: dict, stop: float,
+               finish_by: tuple[str, ...] = ('Codex reset',)) -> float:
+    """0 at the window's start, the stop line at finish-by and thereafter."""
+    start = limits['resets_at'] - limits['window_mins'] * 60
+    _, end = finish_target(limits, finish_by)
     share = (now_ts - start) / (end - start)
     return stop * max(0.0, min(1.0, share))
 
 
 def pacing_hold(now_ts: float, stop: Optional[int], limits: Optional[dict],
-                free_bytes: Optional[int]) -> Optional[str]:
+                free_bytes: Optional[int], finish_by: tuple[str, ...] = ('Codex reset',)) -> Optional[str]:
     """The reason to hold, or None to go."""
     if free_bytes is not None and free_bytes < MIN_FREE_GIB * 2**30:
         return f'only {free_bytes / 2**30:.0f} GiB free disk (needs {MIN_FREE_GIB})'
@@ -189,7 +261,7 @@ def pacing_hold(now_ts: float, stop: Optional[int], limits: Optional[dict],
     if limits['worst'] >= stop - MARGIN:
         return (f"Codex usage {limits['worst']:.0f}% has reached the hold line {stop - MARGIN}% "
                 f"(stop line {stop}% minus {MARGIN})")
-    line = trend_line(now_ts, limits, stop)
+    line = trend_line(now_ts, limits, stop, finish_by)
     if limits['used'] > line + TREND_SLACK:
         return (f"Codex usage {limits['used']:.0f}% is more than {TREND_SLACK} points ahead of the "
                 f"trend ({line:.0f}% by now)")
@@ -579,7 +651,7 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
     try:
         dial = read_dial(ops.dial_body(), load_parse_dial())
     except Exception as exc:
-        dial = {'mode': 'off', 'stop': None, 'workers': 0, 'problems': [f'Dial read failed ({exc})']}
+        dial = {**read_dial('', None), 'problems': [f'Dial read failed ({exc})']}
     decision['dial'] = dial
     limits = parse_rate_limits(ops.limits())
     decision['limits'] = limits
@@ -590,14 +662,19 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
     live, dead = scan_slots(ops.home, ops.alive)
     decision['live'] = sorted(live)
 
+    stop = f"{dial['stop_source']} {dial['stop']}%" if dial['stop'] else f"no readable {dial['stop_source']}"
+    if limits:
+        label, finish_ts = finish_target(limits, dial['finish_by'])
+        finish = f"{label} ({utc_stamp(dt.datetime.fromtimestamp(finish_ts, dt.timezone.utc))})"
+    else:
+        finish = ' / '.join(dial['finish_by']) + ' (time unavailable without usage window)'
+    say(f"Dial: mode {dial['mode']}, {stop}, finish by {finish}, Codex workers {dial['workers']}")
+    for p in dial['problems']:
+        say(f'  note: {p}')
     if dry_run:
-        stop = f"stop line {dial['stop']}%" if dial['stop'] else 'no stop line'
-        print(f"Dial: mode {dial['mode']}, {stop}, Codex workers {dial['workers']}")
-        for p in dial['problems']:
-            print(f'  note: {p}')
         if limits:
             resets = dt.datetime.fromtimestamp(limits['resets_at'], dt.timezone.utc)
-            line = trend_line(now.timestamp(), limits, dial['stop']) if dial['stop'] else None
+            line = trend_line(now.timestamp(), limits, dial['stop'], dial['finish_by']) if dial['stop'] else None
             trend = f', trend {line:.0f}%' if line is not None else ''
             print(f"Codex usage: {limits['used']:.0f}% of a {limits['window_mins'] // 60} h window "
                   f"resetting {utc_stamp(resets)} (worst window {limits['worst']:.0f}%){trend}")
@@ -611,7 +688,7 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
                     f"cleared; check that issue's in-progress label by hand")
             path.unlink(missing_ok=True)
 
-    hold = pacing_hold(now.timestamp(), dial['stop'], limits, free)
+    hold = pacing_hold(now.timestamp(), dial['stop'], limits, free, dial['finish_by'])
     slot = free_slot(live, dial['workers'])
     if dial['workers'] == 0:
         decision['why'] = 'Dial allows 0 Codex workers'
