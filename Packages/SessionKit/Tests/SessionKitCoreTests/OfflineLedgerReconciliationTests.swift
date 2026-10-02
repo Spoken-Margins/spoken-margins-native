@@ -104,4 +104,54 @@ final class OfflineLedgerReconciliationTests: XCTestCase {
         ]) { _ in .missing }
         XCTAssertEqual(plan.removedAssetIds, ["margin-audio"])
     }
+
+    // #287: the app can toggle a protection between the plan's read and its write-back.
+    func testApplyingAResizeKeepsProtectionsToggledSinceThePlanRead() throws {
+        let recorded = asset("episode", "PodcastAudio/episode.m4a", 10, category: .podcast, protections: [.activeEpisodeMapPreparation])
+        let plan = OfflineLedgerReconciliation.plan(assets: [recorded]) { _ in .file(byteCount: 3) }
+        let planned = try XCTUnwrap(plan.updatedAssets.first)
+        var current = recorded
+        current.protections = [.activePlayback] // one added and one removed since the read
+
+        OfflineLedgerReconciliation.apply(recorded: recorded, planned: planned, to: &current)
+
+        XCTAssertEqual(current.byteCount, 3)
+        XCTAssertNil(current.checksumSHA256)
+        XCTAssertEqual(current.protections, [.activePlayback])
+    }
+
+    func testApplyingAMergeAddsTheAliasProtectionsToTheKeeperAsItIsNow() throws {
+        let keeper = asset("guided-onboarding-audio", "GuidedOnboarding/tour.m4a", 9, category: .guidedTour)
+        let alias = asset("adopted-guided", "GuidedOnboarding/tour.m4a", 9, category: .guidedTour, reproducible: false,
+                          protections: [.dormantWatchTransfer])
+        let plan = OfflineLedgerReconciliation.plan(assets: [keeper, alias]) { _ in .file(byteCount: 9) }
+        let planned = try XCTUnwrap(plan.updatedAssets.first)
+        var current = keeper
+        current.protections = [.activePlayback]
+
+        OfflineLedgerReconciliation.apply(recorded: keeper, planned: planned, to: &current)
+
+        XCTAssertEqual(current.protections, [.activePlayback, .dormantWatchTransfer])
+        XCTAssertFalse(current.isReproducible)
+        XCTAssertEqual(current.byteCount, 9)
+    }
+
+    func testApplyingLeavesARowAWriterChangedSinceThePlanRead() throws {
+        let recorded = asset("episode", "PodcastAudio/episode.m4a", 10, category: .podcast)
+        let plan = OfflineLedgerReconciliation.plan(assets: [recorded]) { _ in .file(byteCount: 3) }
+        let planned = try XCTUnwrap(plan.updatedAssets.first)
+
+        var resized = recorded
+        resized.byteCount = 12
+        resized.checksumSHA256 = "new"
+        OfflineLedgerReconciliation.apply(recorded: recorded, planned: planned, to: &resized)
+        XCTAssertEqual(resized.byteCount, 12, "the writer's newer size stands")
+        XCTAssertEqual(resized.checksumSHA256, "new")
+
+        var moved = recorded
+        moved.relativePath = "PodcastAudio/other.m4a"
+        let before = moved
+        OfflineLedgerReconciliation.apply(recorded: recorded, planned: planned, to: &moved)
+        XCTAssertEqual(moved, before, "a row that now names another file is not touched")
+    }
 }

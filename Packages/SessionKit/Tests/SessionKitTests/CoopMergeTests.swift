@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 @testable import SessionKit
 import SessionKitPersistence
@@ -12,16 +13,32 @@ final class CoopMergeTests: XCTestCase {
     private static let enclosure = "https://cdn.example.com/audio/harbour-lights.mp3"
 
     func testThreeSendersPacketsMergeOntoOneItemInEveryOrder() throws {
+        try checkThreeSendersInEveryOrder(hasLocalCopy: false)
+    }
+
+    func testThreeSendersPacketsMergeOntoDigestMatchedLocalCopyInEveryOrder() throws {
+        try checkThreeSendersInEveryOrder(hasLocalCopy: true)
+    }
+
+    private func checkThreeSendersInEveryOrder(hasLocalCopy: Bool) throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
-        // Ana downloaded the episode, so her packet names the exact edition; Ben and Cleo shared by link.
+        // Identity tests need file bytes and their real checksum, not audio decoding or playback.
+        let localFile = root.appending(path: "harbour-lights.fixture")
+        try Data("Harbour Lights local-copy fixture".utf8).write(to: localFile)
+        let localDigest = SHA256.hash(data: try Data(contentsOf: localFile)).map { String(format: "%02x", $0) }.joined()
+        // Ana names the exact edition; Ben and Cleo shared by link.
         let senders: [(label: String, digest: String?)] = [
-            ("Ana", String(repeating: "a1", count: 32)), ("Ben", nil), ("Cleo", nil),
+            ("Ana", localDigest), ("Ben", nil), ("Cleo", nil),
         ]
         let packets = try senders.enumerated().map { index, sender in
             let url = root.appending(path: "\(sender.label).spokenmargins")
             // exportPacket also imports each packet with Build 29's frozen reader (Done when 4).
-            _ = try exportPacket(packet(from: sender.label, digest: sender.digest, margins: index + 1), to: url)
+            _ = try exportPacket(packet(
+                from: sender.label, digest: sender.digest, margins: index + 1,
+                // Ana's alternate discovery link cannot match the recipient by URL or GUID.
+                canonicalURL: hasLocalCopy && index == 0 ? "https://ana.example.com/harbour-lights" : Self.episodePage
+            ), to: url)
             return try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appending(path: "assets-\(sender.label)"))
         }
 
@@ -30,18 +47,48 @@ final class CoopMergeTests: XCTestCase {
             let name = order.map { senders[$0].label }.joined(separator: "-")
             let store = try SQLiteSessionStore(path: root.appending(path: "\(name).sqlite").path)
             episodesAdded = 0
+            if hasLocalCopy {
+                // The app represents imported local audio as an audiobook, even for an episode.
+                // It can still match Ben/Cleo by the retained discovery link.
+                let item = Item(
+                    id: "local-harbour-lights", title: "Harbour Lights", mediaType: "audiobook",
+                    text: nil, externalReference: Self.episodePage, status: "ready", externalReferenceType: "url",
+                    media: ItemMedia(sourceType: .nativeMediaFile, url: localFile.absoluteString, durationMs: 1_800_000)
+                )
+                try store.saveItem(item)
+                try store.saveOwnedOfflineAsset(OwnedOfflineAsset(
+                    id: "local-episode-asset", itemId: item.id, category: .audiobook,
+                    relativePath: localFile.lastPathComponent,
+                    byteCount: Int64(try Data(contentsOf: localFile).count), checksumSHA256: localDigest,
+                    isReproducible: false, integrity: .valid, protections: [.importedAudiobook]
+                ))
+                let digest = try ownedAudiobookDigest(for: item, in: store)
+                let localIdentity = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: digest)
+                XCTAssertEqual(localIdentity.exactEditionSHA256, packets[0].manifest.item.exactEditionSHA256, name)
+                XCTAssertNotEqual(localIdentity.canonicalURL, packets[0].manifest.item.canonicalURL, name)
+                XCTAssertNil(localIdentity.episodeGUID, name)
+                XCTAssertEqual(SharedPacketItemMatcher.matchingItemId(
+                    for: packets[0].manifest.item, among: [item], ownedAudiobookDigest: { _ in digest }
+                ), item.id, name)
+                // Removing the recipient digest must remove Ana's only match.
+                XCTAssertNil(SharedPacketItemMatcher.matchingItemId(
+                    for: packets[0].manifest.item, among: [item]
+                ), name)
+            }
             for index in order {
                 XCTAssertEqual(try importAsTheAppDoes(packets[index], into: store).isImported, true, name)
             }
 
-            // The second and third packets find the episode the first one added.
-            XCTAssertEqual(episodesAdded, 1, name)
-            let items = try store.listItems().filter { $0.media?.url == Self.enclosure }
+            // An empty Library adds once; an existing local copy needs no new episode.
+            XCTAssertEqual(episodesAdded, hasLocalCopy ? 0 : 1, name)
+            let items = try store.listItems()
             XCTAssertEqual(items.count, 1, name)
             let itemId = try XCTUnwrap(items.first?.id)
+            if hasLocalCopy { XCTAssertEqual(itemId, "local-harbour-lights", name) }
             let layers = try store.loadImportedCommentaryLayers(itemId: itemId)
             XCTAssertEqual(Set(layers.compactMap(\.displayLabel)), ["Ana", "Ben", "Cleo"], name)
             XCTAssertEqual(layers.count, 3, name)
+            XCTAssertFalse(layers.contains { $0.sourceResolutionStatus == .wrongSource }, name)
             let margins = try Set(layers.flatMap { layer in
                 try store.loadImportedCommentaryInterjections(layerId: layer.id).map {
                     "\(layer.displayLabel ?? "?")/\($0.packageScopedId)"
@@ -54,8 +101,8 @@ final class CoopMergeTests: XCTestCase {
             for index in order {
                 XCTAssertEqual(try importAsTheAppDoes(packets[index], into: store).isImported, false, name)
             }
-            XCTAssertEqual(episodesAdded, 1, name)
-            XCTAssertEqual(try store.listItems().filter { $0.media?.url == Self.enclosure }.count, 1, name)
+            XCTAssertEqual(episodesAdded, hasLocalCopy ? 0 : 1, name)
+            XCTAssertEqual(try store.listItems().count, 1, name)
             XCTAssertEqual(try store.loadImportedCommentaryLayers(itemId: itemId).count, 3, name)
             XCTAssertEqual(try store.loadImportedCommentaryLayers(itemId: itemId).flatMap {
                 try store.loadImportedCommentaryInterjections(layerId: $0.id)
@@ -77,13 +124,20 @@ final class CoopMergeTests: XCTestCase {
         if let existing = try store.loadImportedCommentaryLayer(packageDigest: XCTUnwrap(contents.manifest.contentDigest)) {
             return .duplicate(existingLayerId: existing.id)
         }
-        let itemId = try SharedPacketItemMatcher.matchingItemId(for: contents.manifest.item, among: store.listItems())
+        let assets = try store.loadOwnedOfflineAssets()
+        let itemId = try SharedPacketItemMatcher.matchingItemId(
+            for: contents.manifest.item, among: store.listItems(),
+            ownedAudiobookDigest: { item in
+                guard item.mediaType == "audiobook" else { return nil }
+                return assets.first { $0.itemId == item.id && $0.category == .audiobook && $0.integrity == .valid }?.checksumSHA256
+            }
+        )
             ?? addEpisode(named: contents.manifest.item, to: store)
         let item = try store.loadItem(id: itemId)
         return try SpokenMarginsPackageImporter.importPackage(
             contents,
             itemId: itemId,
-            localItem: SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: nil),
+            localItem: SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: ownedAudiobookDigest(for: item, in: store)),
             repository: store
         )
     }
@@ -106,12 +160,21 @@ final class CoopMergeTests: XCTestCase {
         return item.id
     }
 
-    private func packet(from sender: String, digest: String?, margins: Int) throws -> PreparedSpokenMarginsPackage {
+    private func ownedAudiobookDigest(for item: Item, in store: SQLiteSessionStore) throws -> String? {
+        guard item.mediaType == "audiobook" else { return nil }
+        return try store.loadOwnedOfflineAssets().first {
+            $0.itemId == item.id && $0.category == .audiobook && $0.integrity == .valid
+        }?.checksumSHA256
+    }
+
+    private func packet(
+        from sender: String, digest: String?, margins: Int, canonicalURL: String
+    ) throws -> PreparedSpokenMarginsPackage {
         try SpokenMarginsPackageBuilder.prepare(
             packageId: "package-\(sender.lowercased())",
             createdAt: Date(timeIntervalSince1970: 1_777_000_000),
             item: SharedItemIdentity(
-                itemType: .podcast, canonicalURL: Self.episodePage, originalURL: Self.episodePage,
+                itemType: .podcast, canonicalURL: canonicalURL, originalURL: canonicalURL,
                 title: "Harbour Lights", showTitle: "Example Show", episodeGUID: "harbour-lights",
                 enclosureURL: Self.enclosure, durationMs: 1_800_000, exactEditionSHA256: digest
             ),

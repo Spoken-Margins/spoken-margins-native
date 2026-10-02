@@ -26,7 +26,8 @@ public struct BridgeManifestPolicy: Equatable, Sendable {
     }
 
     func isTrusted(_ url: URL) -> Bool {
-        url.scheme?.lowercased() == "https" && url.host?.lowercased() == trustedHost.lowercased()
+        url.scheme?.lowercased() == "https" && url.host?.lowercased() == trustedHost.lowercased() &&
+        url.user == nil && url.password == nil && (url.port == nil || url.port == 443)
     }
 }
 
@@ -35,6 +36,11 @@ public struct BridgeManifestPolicy: Equatable, Sendable {
 public struct BridgeSnapshot: Equatable, Sendable {
     public var state: ServerFeatureState
     public var manifest: BridgeManifest?
+
+    public init(state: ServerFeatureState, manifest: BridgeManifest?) {
+        self.state = state
+        self.manifest = state.isOn ? manifest : nil
+    }
 
     /// Whether bridged sources can show new items; otherwise the UI says "not updating".
     public var isUpdating: Bool { state.isOn && manifest != nil }
@@ -142,9 +148,10 @@ public actor BridgeManifestStore {
         let status: Int
         let body: Data
         do {
-            // Fetch past the parse limit so an oversized config arrives and is refused
-            // as malformed (off) rather than surfacing as a network error (kept).
-            (status, body) = try await fetch(policy.configURL, 4 * ServerFeatureGate.maximumConfigBytes)
+            (status, body) = try await fetch(policy.configURL, ServerFeatureGate.maximumConfigBytes)
+        } catch let error as URLError where error.code == .dataLengthExceedsMaximum {
+            store(CachedServerConfig(config: config?.config, fetchedAt: config?.fetchedAt ?? now, malformed: true))
+            return
         } catch {
             // Unreachable: keep what we have. The gate turns it off once it's a week old.
             return
@@ -183,6 +190,8 @@ public actor BridgeManifestStore {
         let body: Data
         do {
             (status, body) = try await fetch(url, maximumBytes)
+        } catch let error as URLError where error.code == .dataLengthExceedsMaximum {
+            throw BridgeRefreshError.oversizedManifest
         } catch {
             throw BridgeRefreshError.network
         }
