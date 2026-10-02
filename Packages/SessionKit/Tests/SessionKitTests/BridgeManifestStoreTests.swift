@@ -195,6 +195,54 @@ final class BridgeManifestStoreTests: XCTestCase {
         XCTAssertEqual(outcome, .off(.malformedConfig))
     }
 
+    func testAFetchSizeLimitSwitchesOffEvenWithAGoodConfigCached() async {
+        serveConfig()
+        serveManifest()
+        let store = store()
+        _ = await store.refresh(now: start)
+        // The transport refuses this before returning a body. It must not be
+        // mistaken for an outage that preserves the cached 'on' document.
+        serveConfig(Data(count: 100_000))
+        let before = server.requests.count
+        let outcome = await store.refresh(now: start.addingTimeInterval(60))
+        XCTAssertEqual(outcome, .off(.malformedConfig))
+        let snapshot = await store.current(now: start.addingTimeInterval(60))
+        XCTAssertNil(snapshot.manifest)
+        XCTAssertEqual(Array(server.requests.dropFirst(before)), [policy.configURL])
+        let relaunched = await self.store().current(now: start.addingTimeInterval(120))
+        XCTAssertEqual(relaunched.state, .off(.malformedConfig))
+    }
+
+    func testADecodableButInvalidCachedConfigFailsClosed() async throws {
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        var config = try ServerFeatureGate.parse(ServerConfigTests.configJSON())
+        config.schema = "wrong-schema"
+        let cache = CachedServerConfig(config: config, fetchedAt: start)
+        try JSONEncoder().encode(cache).write(to: temporary.appendingPathComponent("server-config.json"))
+        let snapshot = await store().current(now: start)
+        XCTAssertEqual(snapshot.state, .off(.malformedConfig))
+        XCTAssertNil(snapshot.manifest)
+        XCTAssertTrue(server.requests.isEmpty, "reading the cache is offline")
+    }
+
+    func testAFetchSizeLimitIsReportedAsAnOversizedManifest() async {
+        serveConfig()
+        serveManifest(Data(count: BridgeManifestVerifier.maximumBytes + 1))
+        let outcome = await store().refresh(now: start)
+        XCTAssertEqual(outcome, .failed(.oversizedManifest))
+    }
+
+    func testTrustedEndpointsRejectCredentialsAndAlternatePorts() {
+        for url in [
+            "https://user:password@spokenmargins.proximitytoprogress.com/api/v1/config.json",
+            "https://spokenmargins.proximitytoprogress.com:8443/api/v1/config.json",
+            "http://spokenmargins.proximitytoprogress.com/api/v1/config.json"
+        ] {
+            XCTAssertFalse(policy.isTrusted(URL(string: url)!), url)
+        }
+        XCTAssertTrue(policy.isTrusted(policy.configURL))
+    }
+
     func testMinimumBuildSwitchesOffOlderBuildsOnly() async {
         serveConfig(ServerConfigTests.configJSON(bridge: #"{"enabled":true,"minimumBuild":41}"#))
         serveManifest()

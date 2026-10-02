@@ -36,6 +36,8 @@ final class ServerConfigTests: XCTestCase {
             "enabled is a string": Self.configJSON(bridge: #"{"enabled":"yes"}"#),
             "no services": Data(#"{"schema":"spokenmargins.server-config","version":1,"serial":1}"#.utf8),
             "negative serial": Self.configJSON(serial: -1),
+            "negative minimum build": Self.configJSON(bridge: #"{"enabled":true,"minimumBuild":-1}"#),
+            "invalid check interval": Data(String(decoding: Self.configJSON(), as: UTF8.self).replacingOccurrences(of: "21600", with: "0").utf8),
             "oversized": Self.configJSON(extra: #","padding":"\#(String(repeating: "x", count: 17_000))""#),
         ]
         for (name, data) in cases {
@@ -85,5 +87,25 @@ final class ServerConfigTests: XCTestCase {
     func testUnknownFieldsFromANewerServerAreIgnored() {
         let data = Self.configJSON(bridge: #"{"enabled":true,"region":"eu"}"#, extra: #","message":"hello""#)
         XCTAssertEqual(state(fetched(data)), .on)
+    }
+
+    func testInvalidTypedConfigsCannotBypassTheGate() throws {
+        let valid = try ServerFeatureGate.parse(Self.configJSON())
+        var cases = [ServerConfig]()
+        var invalid = valid
+        invalid.schema = "wrong-schema"
+        cases.append(invalid)
+        invalid = valid
+        invalid.version += 1
+        cases.append(invalid)
+        invalid = valid
+        invalid.serial = -1
+        cases.append(invalid)
+        invalid = valid
+        invalid.services[ServerService.bridge]?.minimumBuild = -1
+        cases.append(invalid)
+        for config in cases {
+            XCTAssertEqual(state(CachedServerConfig(config: config, fetchedAt: now)), .off(.malformedConfig))
+        }
     }
 }
