@@ -16000,9 +16000,9 @@ final class Gate1AppModel: ObservableObject {
                     self.diagnostics["followedArticleNetworkHosts"] = self.readablePageExtractor.contactedHosts.joined(separator: ",")
                     self.diagnostics["followedArticleExtractor"] = self.readablePageExtractor.lastExtractor ?? "unknown"
                     if openWhenFinished {
-                        imported = self.importBrowserText(handoff)
+                        imported = self.importBrowserText(FollowedArticleIdentity.preservingEntryURL(in: handoff, for: entry))
                     } else {
-                        try self.importBrowserTextInBackground(handoff)
+                        try self.importBrowserTextInBackground(FollowedArticleIdentity.preservingEntryURL(in: handoff, for: entry))
                         imported = true
                     }
                 }
