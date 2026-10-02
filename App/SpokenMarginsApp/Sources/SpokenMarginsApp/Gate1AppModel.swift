@@ -10962,7 +10962,7 @@ final class Gate1AppModel: ObservableObject {
         client.playbackStallTraceHandler = { [weak self] fields in
             Task { @MainActor [weak self] in
                 // #166: the clock froze on a stream while the app showed "playing"; this records the player's state.
-                self?.recordDeveloperDiagnostic("media.stall", fields)
+                self?.recordDeveloperDiagnostic(fields["event"] == "seek_abandoned" ? "media.seek_abandoned" : "media.stall", fields)
             }
         }
         #if canImport(AVFoundation) && canImport(ShazamKit)
