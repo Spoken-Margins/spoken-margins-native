@@ -372,6 +372,248 @@ class IssueTests(unittest.TestCase):
 # Fakes for the tick and the child
 # ---------------------------------------------------------------------------
 
+HEAD = 'abcdef0123456789abcdef0123456789abcdef0123'
+
+
+def pull(labels=(), comments=None, **extra):
+    return dict(number=73, title='Fix playback', body='body', state='OPEN', isDraft=False,
+                baseRefName='next', headRefName='ws/73-playback', headRefOid=HEAD,
+                headRepository={'name': w.REPO.split('/')[1]},
+                headRepositoryOwner={'login': w.REPO.split('/')[0]}, isCrossRepository=False,
+                files=[{'path': 'Packages/SessionKit/Sources/SessionKit/Playback.swift'}],
+                labels=list(labels), comments=comments or [], createdAt='2026-09-30T00:00:00Z',
+                **extra)
+
+
+def lane(verdict='FAIL', head=HEAD[:7], detail='simulator build (fail)', at='2026-10-01T12:00:00Z'):
+    return {'createdAt': at, 'body': f'Lane report pr73-r1 — {verdict}\n'
+            f'commit {head} (tested merged with next at 1234567) · tier auto\nran: {detail}\n'
+            'evidence: /tmp/lane/73 (on the Mac)'}
+
+
+class FinishSelectionTests(unittest.TestCase):
+    def eligible(self, pr):
+        return w.finish_eligible(pr, NOW)[0]
+
+    def test_only_newest_report_on_head(self):
+        self.assertTrue(self.eligible(pull(comments=[lane()])))
+        self.assertFalse(self.eligible(pull(comments=[lane(head='9876543')])))
+        for verdict in ('PASS', 'INCONCLUSIVE'):
+            self.assertFalse(self.eligible(pull(comments=[lane(), lane(verdict, at='2026-10-01T12:01:00Z')])))
+        self.assertTrue(self.eligible(pull(comments=[lane(detail='host tests (--plan fast) — expected: verified. observed: exit 1')])))
+        self.assertTrue(self.eligible(pull(comments=[lane(detail='PlaybackTests/testResume — expected: passes. observed: failed.')])))
+
+    def test_runner_faults_and_unknown_failures_skipped(self):
+        for detail in ('nothing', 'The lane itself failed: runner fault',
+                       'Not in any app test plan: MissingTest',
+                       'simulator build (fail)\nThis is the lane\'s fault, not the PR\'s',
+                       'host tests (--plan fast) — expected: verified. observed: exit 1\nPermissionError: denied'):
+            self.assertFalse(self.eligible(pull(comments=[lane(detail=detail)])), detail)
+
+    def test_t3_compile_report_with_real_swift_diagnostic(self):
+        report = lane(detail='PlaybackTests (0 passed; app plan, build and tests, 1m)\n'
+                      'app: Process exit 65. evidence: /tmp/lane/manifest.json\n'
+                      'app: /src/Playback.swift:12:8: error: cannot find anchor in scope')
+        self.assertTrue(self.eligible(pull(comments=[report])))
+
+    def test_needs_mac_and_exclusions(self):
+        self.assertTrue(self.eligible(pull(labels=['needs-mac'])))
+        for key, value in (('isDraft', True), ('baseRefName', 'main'), ('state', 'CLOSED'),
+                           ('headRefName', 'main'), ('headRefName', 'next'),
+                           ('isCrossRepository', True), ('headRepository', None),
+                           ('headRepositoryOwner', {'login': 'someone-else'})):
+            pr = pull(labels=['needs-mac'])
+            pr[key] = value
+            self.assertFalse(self.eligible(pr), key)
+        self.assertFalse(w.finish_eligible(pull(labels=['needs-mac']), NOW, {73})[0])
+
+    def test_lane_paths_use_the_scope_policy(self):
+        for path in sorted(w._scope.LANE_FILES) + [p + 'example' for p in w._scope.LANE_PREFIXES]:
+            pr = pull(labels=['needs-mac'])
+            pr['files'] = [{'path': path}]
+            self.assertFalse(self.eligible(pr), path)
+        pr['files'] = [{'path': 'scripts/tests/test_lane_runner.py'}]
+        self.assertTrue(self.eligible(pr))
+
+    def test_recent_finishing_claim_only(self):
+        c = {'body': 'Thread "Codex worker 2" finishing #73', 'createdAt': '2026-10-01T01:00:00Z'}
+        self.assertFalse(self.eligible(pull(labels=['needs-mac'], comments=[c])))
+        c['createdAt'] = '2026-09-29T01:00:00Z'
+        self.assertTrue(self.eligible(pull(labels=['needs-mac'], comments=[c])))
+
+    def test_latest_lane_request_controls_t3_requeue(self):
+        request = {'body': '/lane T3\ntests: SpokenMarginsAppTests/PlaybackTests',
+                   'createdAt': '2026-10-01T10:00:00Z'}
+        self.assertEqual(w.finish_lane_request([request]), request['body'])
+        newer = {'body': '/lane T2', 'createdAt': '2026-10-01T11:00:00Z'}
+        self.assertIsNone(w.finish_lane_request([request, newer]))
+        with self.assertRaises(RuntimeError):
+            w.finish_lane_request([{'body': '/lane T3', 'createdAt': '2026-10-01T12:00:00Z'}])
+        request['body'] = '  /lane T3\r\n  tests: Class/method, Other\r\n'
+        self.assertEqual(w.finish_lane_request([request]), '/lane T3\n  tests: Class/method, Other')
+
+
+class FinishChildTests(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp(prefix='cw-finish-'))
+        self.addCleanup(shutil.rmtree, self.home, True)
+        w.write_lock(self.home, 1, {'pid': os.getpid(), 'pr': 73})
+
+    def run_finish(self, fast_rc=0, fail=(), codex_ok=True, rearmed=False, moved=False, conflict=False,
+                   push_rc=0, arm_failure=False, no_request=False, needs_mac_only=False, empty=False):
+        data = pull(labels=['needs-mac', 'automerge'], comments=[lane(),
+                    {'body': '/lane T3\ntests: SpokenMarginsAppTests/PlaybackTests',
+                     'createdAt': '2026-10-01T11:00:00Z'}])
+        if no_request:
+            data['comments'] = [lane()]
+        if needs_mac_only:
+            data['comments'] = []
+        test = self
+
+        class Run(FakeRun):
+            def __call__(self, cmd, cwd=None, timeout=None):
+                if cmd[:3] == ['gh', 'pr', 'view']:
+                    self.calls.append(list(cmd))
+                    return w.Result(0, json.dumps(data))
+                if cmd[:3] == ['gh', 'issue', 'edit']:
+                    if arm_failure and cmd[-2:] == ['--add-label', 'automerge']:
+                        self.calls.append(list(cmd))
+                        return w.Result(1, '', 'arm failed')
+                    if '--remove-label' in cmd:
+                        data['labels'] = [l for l in data['labels'] if l != cmd[cmd.index('--remove-label') + 1]]
+                    if '--add-label' in cmd:
+                        data['labels'].append(cmd[cmd.index('--add-label') + 1])
+                if cmd[:2] == ['git', 'rev-parse']:
+                    self.calls.append(list(cmd))
+                    if empty and cmd[-1] == 'MERGE_HEAD':
+                        return w.Result(1)
+                    return w.Result(0, HEAD + '\n')
+                if cmd[:2] == ['git', 'push']:
+                    test.assertNotIn('automerge', data['labels'])
+                    self.calls.append(list(cmd))
+                    return w.Result(push_rc, '', 'non-fast-forward' if push_rc else '')
+                if cmd[:3] == ['git', 'worktree', 'add']:
+                    self.calls.append(list(cmd))
+                    Path(cmd[-2]).mkdir(parents=True, exist_ok=True)
+                    return w.Result(0)
+                if cmd[:2] == ['git', 'merge'] and conflict:
+                    self.calls.append(list(cmd))
+                    return w.Result(1, 'CONFLICT (content): Merge conflict in Playback.swift')
+                if cmd[:2] == ['git', 'diff'] and '--diff-filter=U' in cmd:
+                    self.calls.append(list(cmd))
+                    return w.Result(0, 'Playback.swift\n' if conflict else '')
+                return super().__call__(cmd, cwd, timeout)
+
+        run = Run(test, status='' if empty else ' M Playback.swift\n', fast_rc=fast_rc, fail=fail)
+        codex = fake_codex({'commit-msg.txt': 'Fix resume\n\nThe test lost its anchor; preserve it.',
+                            'pr-body.md': 'Preserved the playback anchor.'}, ok=codex_ok)
+
+        def run_codex(*args):
+            if rearmed:
+                data['labels'].append('automerge')
+            if moved:
+                data['headRefOid'] = 'f' * 40
+            return codex(*args)
+
+        ops = w.Ops(home=self.home, repo_root=self.home, run=run, codex=run_codex,
+                    now=lambda: NOW, alive=lambda pid: False, echo=False)
+        outcome = w.run_finish_child(ops, 1, 73)
+        self.assertFalse((self.home / 'slot-1.lock').exists())
+        self.assertTrue(run.has('git', 'worktree', 'remove', '--force'))
+        self.assertFalse(run.has('git', 'branch', '-D'))
+        for command in run.calls:
+            if command[:2] == ['git', 'push']:
+                self.assertFalse(any(a.startswith('--force') or a.startswith('+') or a == '-f' for a in command))
+        return outcome, run, data, codex
+
+    def test_success_disarms_before_work_pushes_then_rearms(self):
+        outcome, run, data, codex = self.run_finish()
+        self.assertEqual(outcome, 'finished')
+        writes = [c for c in run.calls if c[:3] == ['gh', 'issue', 'edit']]
+        self.assertEqual([c[-2:] for c in writes], [['--remove-label', 'automerge'],
+                         ['--remove-label', 'needs-mac'], ['--add-label', 'lane:queued'],
+                         ['--add-label', 'automerge']])
+        idx = lambda prefix: next(i for i, c in enumerate(run.calls) if c[:len(prefix)] == prefix)
+        self.assertLess(idx(['gh', 'issue', 'edit']), idx(['git', 'worktree', 'add']))
+        self.assertLess(idx(['git', 'commit']), idx(['git', 'push']))
+        self.assertLess(idx(['git', 'push']), run.calls.index(writes[-1]))
+        push = next(c for c in run.calls if c[:2] == ['git', 'push'])
+        self.assertEqual(push[-2:], ['origin', 'HEAD:refs/heads/ws/73-playback'])
+        self.assertIn('/lane T3\ntests: SpokenMarginsAppTests/PlaybackTests', run.comments())
+        self.assertIn('Thread "Codex worker 1" finishing #73', run.comments()[0])
+        self.assertIn('Lane report pr73-r1 — FAIL', codex.prompt)
+        self.assertIn('Evidence summary:', codex.prompt)
+        self.assertIn('Preserved the playback anchor.', '\n'.join(run.comments()))
+        commit = next(c for c in run.calls if c[:2] == ['git', 'commit'])
+        self.assertTrue(Path(commit[-1]).read_text().startswith('Fix lane FAIL on #73'))
+
+    def test_failed_fast_or_codex_never_pushes_and_leaves_needs_mac(self):
+        for options in ({'fast_rc': 1}, {'codex_ok': False}, {'fail': ('scripts/setup-worktree.sh',)}):
+            with self.subTest(options=options):
+                outcome, run, data, _ = self.run_finish(**options)
+                self.assertNotEqual(outcome, 'finished')
+                self.assertFalse(run.has('git', 'push'))
+                self.assertEqual(set(data['labels']), {'needs-mac'})
+                self.assertIn('stopping:', run.comments()[-1])
+
+    def test_rearmed_or_moved_pr_never_pushes(self):
+        for options in ({'rearmed': True}, {'moved': True}):
+            outcome, run, data, _ = self.run_finish(**options)
+            self.assertNotEqual(outcome, 'finished')
+            self.assertFalse(run.has('git', 'push'))
+            self.assertEqual(set(data['labels']), {'needs-mac'})
+
+    def test_merge_conflict_reaches_codex_without_rewriting_history(self):
+        outcome, run, _, codex = self.run_finish(conflict=True)
+        self.assertEqual(outcome, 'finished')
+        self.assertIn('CONFLICT (content)', codex.prompt)
+        self.assertTrue(run.has('git', 'merge', '--no-commit', '--no-ff', 'origin/next'))
+        self.assertFalse(run.has('git', 'rebase'))
+
+    def test_rejected_push_stops_without_force_retry(self):
+        outcome, run, data, _ = self.run_finish(push_rc=1)
+        self.assertEqual(outcome, 'error')
+        self.assertEqual(len([c for c in run.calls if c[:2] == ['git', 'push']]), 1)
+        self.assertEqual(set(data['labels']), {'needs-mac'})
+        self.assertIn('non-fast-forward', run.comments()[-1])
+
+    def test_partial_arming_failure_restores_labels_except_automerge(self):
+        outcome, _, data, _ = self.run_finish(arm_failure=True)
+        self.assertEqual(outcome, 'error')
+        self.assertEqual(set(data['labels']), {'needs-mac'})
+
+    def test_no_t3_request_does_not_queue_one(self):
+        outcome, run, data, _ = self.run_finish(no_request=True)
+        self.assertEqual(outcome, 'finished')
+        self.assertEqual(set(data['labels']), {'automerge'})
+        self.assertFalse(any(c.startswith('/lane') for c in run.comments()))
+
+    def test_needs_mac_only_uses_merge_subject(self):
+        outcome, run, _, _ = self.run_finish(needs_mac_only=True)
+        self.assertEqual(outcome, 'finished')
+        commit = next(c for c in run.calls if c[:2] == ['git', 'commit'])
+        self.assertTrue(Path(commit[-1]).read_text().startswith('Merge next and resolve conflicts'))
+
+    def test_empty_result_does_not_rearm_the_same_failure(self):
+        outcome, run, data, _ = self.run_finish(empty=True)
+        self.assertEqual(outcome, 'empty')
+        self.assertFalse(run.has('git', 'commit'))
+        self.assertFalse(run.has('git', 'push'))
+        self.assertEqual(set(data['labels']), {'needs-mac'})
+
+    def test_child_rechecks_eligibility_before_claiming(self):
+        run = FakeRun(self)
+        ops = w.Ops(home=self.home, repo_root=self.home, run=run, codex=fake_codex(),
+                    now=lambda: NOW, alive=lambda pid: False, echo=False)
+        pr = pull(labels=['needs-mac'])
+        pr['isDraft'] = True
+        ops.pull = lambda n: pr
+        self.assertEqual(w.run_finish_child(ops, 1, 73), 'skipped')
+        self.assertEqual(run.gh_writes(), [])
+        self.assertFalse(run.has('git', 'worktree', 'add'))
+        self.assertFalse((self.home / 'slot-1.lock').exists())
+
+
 class FakeRun:
     """Records every command; answers by the first matching rule."""
 
@@ -655,12 +897,16 @@ class TickTests(unittest.TestCase):
         shutil.rmtree(self.home, ignore_errors=True)
 
     def ops(self, workers=2, used=10, free=100 * 2**30, alive=lambda pid: True, issues=None,
-            body=None, resets_at=None):
+            body=None, resets_at=None, prs=None):
         body = body if body is not None else dial(codex_group(workers) if workers is not None else '')
         listing = issues if issues is not None else [issue(42, title='Fix the thing')]
 
         def run(cmd, cwd=None, timeout=None):
             cmd = [str(c) for c in cmd]
+            if cmd[:3] == ['gh', 'pr', 'list']:
+                return w.Result(0, json.dumps(prs or []))
+            if cmd[:3] == ['gh', 'pr', 'view']:
+                return w.Result(0, json.dumps(next(p for p in prs if p['number'] == int(cmd[3]))))
             if cmd[:3] == ['gh', 'issue', 'view'] and cmd[3] == str(w.DIAL_ISSUE):
                 return w.Result(0, json.dumps({'body': body}))
             if cmd[:3] == ['gh', 'issue', 'list']:
@@ -694,6 +940,41 @@ class TickTests(unittest.TestCase):
         d = w.tick(self.ops(workers=0), spawn=spawn)
         self.assertEqual(spawn.started, [])
         self.assertIn('0 Codex workers', d['why'])
+
+    def test_finishing_pr_precedes_ready_issue_and_uses_shared_slot(self):
+        spawn = self.spawner()
+        d = w.tick(self.ops(prs=[pull(labels=['needs-mac'])]), spawn=spawn)
+        self.assertEqual(spawn.started, [(1, 73)])
+        self.assertEqual(d['pr'], 73)
+        self.assertIsNone(d['issue'])
+        info = json.loads((self.home / 'slot-1.lock').read_text())
+        self.assertEqual(info['pr'], 73)
+        self.assertNotIn('issue', info)
+        # The same PR cannot be taken twice; the other slot may still work an issue.
+        d = w.tick(self.ops(prs=[pull(labels=['needs-mac'])]), spawn=spawn)
+        self.assertEqual(d['start'], (2, 42))
+
+    def test_ineligible_pr_falls_back_to_issue(self):
+        spawn = self.spawner()
+        d = w.tick(self.ops(prs=[pull(comments=[lane('INCONCLUSIVE')])]), spawn=spawn)
+        self.assertEqual(d['start'], (1, 42))
+
+    def test_pr_jobs_obey_dial_and_pacing(self):
+        for options in ({'workers': 0}, {'used': 95}):
+            spawn = self.spawner()
+            d = w.tick(self.ops(prs=[pull(labels=['needs-mac'])], **options), spawn=spawn)
+            self.assertEqual(spawn.started, [])
+            self.assertIsNone(d['start'])
+
+    def test_spawn_and_cli_route_pr_to_finisher(self):
+        from unittest import mock
+        with mock.patch.object(w.subprocess, 'Popen') as popen:
+            w.spawn_finish_child(self.ops(), 2, 73)
+            command = popen.call_args.args[0]
+            self.assertEqual(command[-4:], ['--slot', '2', '--pr', '73'])
+        with mock.patch.object(w, 'Ops'), mock.patch.object(w, 'run_finish_child') as finish:
+            self.assertEqual(w.main(['--slot', '2', '--pr', '73']), 0)
+            self.assertEqual(finish.call_args.args[1:], (2, 73))
 
     def test_holds_start_nothing(self):
         for kw, word in (({'used': 95}, 'hold line'), ({'used': None}, 'could not be read'),

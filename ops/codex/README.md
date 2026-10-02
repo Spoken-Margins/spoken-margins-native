@@ -1,6 +1,6 @@
 # Codex worker
 
-A Mac-side worker that takes `ready` issues with Codex (`gpt-6.1-sol`, reasoning effort `high`) and opens `automerge` PRs into `next`, paced by the Dial (#589), so spare Codex allowance gets used. Nothing here is installed by default.
+A Mac-side worker that finishes PRs before taking `ready` issues with Codex (`gpt-6.1-sol`, reasoning effort `high`), paced by the Dial (#589), so spare Codex allowance gets used. Nothing here is installed by default.
 
 ## What it does
 
@@ -11,7 +11,11 @@ launchd runs `sm_codex_worker.py` every 10 minutes. Each run (a tick) reads:
 3. Free disk. It holds below 30 GiB.
 4. Live slots: `~/SpokenMarginsOps/codex-worker/slot-N.lock` files whose pid is still a worker.
 
-If a slot is free and nothing holds, it picks one issue and starts one detached child, then exits. It starts at most one child per tick.
+If a slot is free and nothing holds, it picks one job and starts one detached child, then exits. It starts at most one child per tick. PR finishing and issue runs share the same slots, Dial and pacing.
+
+**PR finishing comes first:** open non-draft PRs into `next`, with a branch in this repo and either `needs-mac` or a newest lane report that names the current head and reports a test or compile FAIL. An older-head FAIL, a newer PASS or INCONCLUSIVE, and runner faults do not qualify as code failures. PRs touching `LANE_PREFIXES`/`LANE_FILES` in `scripts/test-scope.py`, protected branches, live-slot PRs and PRs with a `Thread "Codex worker N" finishing #PR` comment in the last 24 hours are skipped. Oldest eligible PR goes first; the child rechecks before claiming.
+
+**The finisher** posts that finishing comment, removes `automerge`, and checks it is gone. It checks out the PR head in a detached worktree (leaving the author's local branch alone), merges `origin/next` with `--no-commit --no-ff`, and gives Codex the lane report and a summary of failures, evidence paths and merge conflicts. Codex uses the same sandbox and output files as issue jobs. The wrapper runs `--plan fast` outside the sandbox. On a pass it commits the fix and merge, rechecks that the PR has neither moved nor been re-armed, and pushes `HEAD` to the existing PR branch with an ordinary push. A rejected push stops; there is no force retry. It comments the change, removes `needs-mac`, repeats the newest `/lane T3` request with its original `tests:` line and `lane:queued` when applicable, then adds `automerge`. Queueing precedes arming so the runner sees the pending T3 immediately. On any stop it posts why and leaves the original labels except `automerge`; failed work is not pushed. Finisher evidence stays in `codex-worker/runs/pr-<PR>-<time>/`.
 
 **Issue choice:** open, labelled `ready`, and not labelled `in-progress`, `where:mac`, `regression` or `blocked`. No `Claimed by project thread "` comment in the last 24 hours. Issues labelled `priority` go first; within that, issues that name SessionKit paths or host tests go first, then oldest first. The child checks again just before it claims.
 
@@ -51,7 +55,7 @@ The Codex pacing groups leave Claude's Dial unchanged. Two stops take the lower;
 
 ## Try it
 
-Run a dry run. It prints the Dial read, Codex usage, slots and the issue it would pick, and changes nothing:
+Run a dry run. It prints the Dial read, Codex usage, slots and the PR or issue it would pick, and changes nothing:
 
 ```zsh
 /usr/bin/python3 ~/SpokenMarginsOps/repo/ops/codex/sm_codex_worker.py --dry-run
@@ -88,7 +92,7 @@ launchctl bootout gui/$(id -u)/com.spokenmargins.codex-worker
 ## Known limits
 
 - A child that is killed (for example, by a reboot) leaves its issue labelled `in-progress`. The next tick clears the dead lock and logs the issue number, but leaves the label for a human.
-- PRs that need a simulator test get no `/lane T3` request from the worker. The prompt keeps Codex to host-testable work, and the runner's own tier rules still apply.
+- New issue PRs get no `/lane T3` request from the worker. Finishers repeat an existing newest T3 request; they do not invent test selectors. The prompt keeps Codex to host-testable work, and the runner's own tier rules still apply.
 
 ## Codex audit
 
