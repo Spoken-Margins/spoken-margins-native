@@ -140,6 +140,29 @@ final class PublisherAudioDetectorTests: XCTestCase {
         }
     }
 
+    func testNarrationConfirmationCannotRestoreARemovedEntryOrOverwriteARefresh() throws {
+        let store = try SQLiteSessionStore(path: temporary.appendingPathComponent("confirmation.sqlite").path)
+        let original = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://captured.example/p/voiceover",
+                                 title: "Article", bodyWordCount: 720)
+        let confirmed = try XCTUnwrap(PublisherNarrationEvidence.confirmedEntry(original,
+            html: String(decoding: Self.fixture("substack-voiceover-page.html"), as: UTF8.self)))
+        try store.saveFeedEntry(original)
+        try store.deleteFeedEntry(id: original.id)
+        try PublisherNarrationEvidence.cache(confirmed, replacing: original, in: store)
+        XCTAssertTrue(try store.loadFeedEntries(subscriptionId: "s").isEmpty, "unfollow cannot be undone by the old request")
+
+        var refreshed = original
+        refreshed.fullBody = "New edition from a later feed refresh."
+        refreshed.state = .dismissed
+        try store.saveFeedEntry(refreshed)
+        try PublisherNarrationEvidence.cache(confirmed, replacing: original, in: store)
+        XCTAssertEqual(try store.loadFeedEntries(subscriptionId: "s"), [refreshed])
+
+        try store.saveFeedEntry(original)
+        try PublisherNarrationEvidence.cache(confirmed, replacing: original, in: store)
+        XCTAssertEqual(try store.loadFeedEntries(subscriptionId: "s"), [confirmed])
+    }
+
     func testSubscriberFeedTextSurvivesSQLiteAndSuppliesArticleHandoff() throws {
         let path = temporary.appendingPathComponent("subscriber.sqlite").path
         let store = try SQLiteSessionStore(path: path)

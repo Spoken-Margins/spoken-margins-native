@@ -4,6 +4,13 @@ import SessionKit
 /// Substack explicitly labels the current post's narration. RSS enclosure URLs and transcript
 /// lengths do not carry that distinction. Decode data only; never execute publisher scripts.
 public enum PublisherNarrationEvidence {
+    /// Cache evidence only against the entry that was read before awaiting the provider.
+    public static func cache(_ confirmed: FeedEntry, replacing original: FeedEntry, in repository: any SessionRepository) throws {
+        guard let current = try repository.loadFeedEntries(subscriptionId: original.subscriptionId).first(where: { $0.id == original.id }),
+              current == original else { return }
+        try repository.saveFeedEntry(confirmed)
+    }
+
     public static func confirmedEntry(_ entry: FeedEntry, html: String) -> FeedEntry? {
         let pattern = #"window\._preloads\s*=\s*JSON\.parse\((\"(?:\\.|[^\"\\])*\")\)"#
         guard let regex = try? NSRegularExpression(pattern: pattern),
