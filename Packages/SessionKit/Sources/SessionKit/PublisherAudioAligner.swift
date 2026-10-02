@@ -59,7 +59,11 @@ public enum PublisherAudioAligner {
         let sentences = self.sentences(in: article, words: articleWords)
         guard !sentences.isEmpty else { return .noMatch(placedSentences: 0, totalSentences: 0) }
         let spoken = recognisedWords(in: recognised)
-        let matches = match(articleWords.map(\.normalized), spoken)
+        var sentenceByWord = [Int](repeating: -1, count: articleWords.count)
+        for (index, sentence) in sentences.enumerated() {
+            for word in sentence.wordRange { sentenceByWord[word] = index }
+        }
+        let matches = match(articleWords.map(\.normalized), spoken, sentenceByWord: sentenceByWord)
 
         var segments: [MediaTimelineSegment] = []
         var previousEndMs = 0
@@ -262,9 +266,9 @@ public enum PublisherAudioAligner {
 
     /// For each article word, the index of the recognised word it matched, or nil.
     /// Matched indices only go up.
-    static func match(_ article: [String], _ spoken: [SpokenWord]) -> [Int?] {
+    static func match(_ article: [String], _ spoken: [SpokenWord], sentenceByWord: [Int]) -> [Int?] {
         var matches = [Int?](repeating: nil, count: article.count)
-        let anchors = orderedAnchors(article, spoken.map(\.normalized), size: 3)
+        let anchors = orderedAnchors(article, spoken, sentenceByWord: sentenceByWord, size: 3)
 
         // Each anchor matches three words; consecutive anchors often overlap.
         var lastArticle = -1
@@ -280,7 +284,7 @@ public enum PublisherAudioAligner {
 
         var previous = (-1, -1)
         for pair in pairs + [(article.count, spoken.count)] {
-            fillGap(article, spoken, from: previous, to: pair, into: &matches)
+            fillGap(article, spoken, sentenceByWord: sentenceByWord, from: previous, to: pair, into: &matches)
             if pair.0 < article.count { matches[pair.0] = pair.1 }
             previous = pair
         }
@@ -288,7 +292,9 @@ public enum PublisherAudioAligner {
     }
 
     /// Word triples found exactly once on each side, in an order both sides agree on.
-    private static func orderedAnchors(_ article: [String], _ spoken: [String], size: Int) -> [(Int, Int)] {
+    private static func orderedAnchors(
+        _ article: [String], _ spoken: [SpokenWord], sentenceByWord: [Int], size: Int
+    ) -> [(Int, Int)] {
         func uniqueGrams(_ words: [String]) -> [String: Int] {
             guard words.count >= size else { return [:] }
             var positions: [String: Int] = [:]
@@ -300,9 +306,20 @@ public enum PublisherAudioAligner {
             for gram in repeated { positions[gram] = nil }
             return positions
         }
-        let spokenGrams = uniqueGrams(spoken)
+        let spokenGrams = uniqueGrams(spoken.map(\.normalized))
         let candidates = uniqueGrams(article)
-            .compactMap { gram, a in spokenGrams[gram].map { (a, $0) } }
+            .compactMap { gram, a -> (Int, Int)? in
+                guard let s = spokenGrams[gram] else { return nil }
+                // A triple ending in the next sentence's common opening word can instead
+                // pick that word from an ad beside the previous sentence.
+                guard sentenceByWord[a] == sentenceByWord[a + size - 1] else { return nil }
+                // A matching triple split by a long silence can join an ad's last word to
+                // the following article sentence. It is not one trusted spoken phrase.
+                guard (s..<(s + size - 1)).allSatisfy({
+                    spoken[$0 + 1].startMs - spoken[$0].endMs <= maximumUnmatchedWordMs
+                }) else { return nil }
+                return (a, s)
+            }
             .sorted { $0.0 < $1.0 }
         return longestIncreasingRun(candidates)
     }
@@ -335,6 +352,7 @@ public enum PublisherAudioAligner {
     private static func fillGap(
         _ article: [String],
         _ spoken: [SpokenWord],
+        sentenceByWord: [Int],
         from start: (Int, Int),
         to end: (Int, Int),
         into matches: inout [Int?]
@@ -367,16 +385,38 @@ public enum PublisherAudioAligner {
               articleRange.count <= maximumGapWords, spokenRange.count <= maximumGapWords else { return }
         let a = Array(article[articleRange])
         let s = spoken[spokenRange].map(\.normalized)
+        // A short article gap can span a long pause or an ad in the recording. An isolated
+        // common word there is evidence only when it fits the per-word time budget beside
+        // either trusted anchor. Apply this while choosing the subsequence, so a distant
+        // occurrence cannot hide a later, nearby occurrence of the same word.
+        func canMatch(_ i: Int, _ j: Int) -> Bool {
+            guard a[i] == s[j] else { return false }
+            guard !openStart, !openEnd else { return true }
+            let articleIndex = articleRange.lowerBound + i
+            let word = spoken[spokenRange.lowerBound + j]
+            let afterStart = word.startMs - spoken[start.1].endMs
+            let beforeEnd = spoken[end.1].startMs - word.endMs
+            let nearStart = afterStart <= (articleIndex - start.0) * maximumUnmatchedWordMs
+            let nearEnd = beforeEnd <= (end.0 - articleIndex) * maximumUnmatchedWordMs
+            let sameStartSentence = sentenceByWord[articleIndex] == sentenceByWord[start.0]
+            let sameEndSentence = sentenceByWord[articleIndex] == sentenceByWord[end.0]
+            // At a sentence edge, an ad beside the other sentence's anchor gives no evidence
+            // about this sentence's missing word. Prefer an anchor belonging to this sentence.
+            if sameStartSentence || sameEndSentence {
+                return (sameStartSentence && nearStart) || (sameEndSentence && nearEnd)
+            }
+            return nearStart || nearEnd
+        }
         var table = [[Int]](repeating: [Int](repeating: 0, count: s.count + 1), count: a.count + 1)
         for i in stride(from: a.count - 1, through: 0, by: -1) {
             for j in stride(from: s.count - 1, through: 0, by: -1) {
-                table[i][j] = a[i] == s[j] ? table[i + 1][j + 1] + 1 : max(table[i + 1][j], table[i][j + 1])
+                table[i][j] = canMatch(i, j) ? table[i + 1][j + 1] + 1 : max(table[i + 1][j], table[i][j + 1])
             }
         }
         var i = 0
         var j = 0
         while i < a.count, j < s.count {
-            if a[i] == s[j] {
+            if canMatch(i, j) {
                 matches[articleRange.lowerBound + i] = spokenRange.lowerBound + j
                 i += 1
                 j += 1

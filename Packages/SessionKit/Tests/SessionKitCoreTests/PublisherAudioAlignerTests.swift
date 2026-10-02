@@ -272,6 +272,86 @@ final class PublisherAudioAlignerTests: XCTestCase {
         XCTAssertEqual(timeline.segments.map(\.startMs), [0, 4_000, 6_000, 8_000])
     }
 
+    func testAShortSentenceBetweenTrustedPhrasesStillGetsPlaced() throws {
+        let text = "Red birds fly north. Boats return. Green boats cross rivers. Blue flowers bloom early. Tall trees shade paths."
+        let fixture = Self.spoken(text)
+        let alignment = PublisherAudioAligner.align(articleText: text, recognised: fixture.transcript)
+        XCTAssertEqual(try XCTUnwrap(alignment.timeline, alignment.status).segments.count, 5)
+        try assertMap(alignment, matches: fixture, text: text)
+    }
+
+    func testAnAdWordAcrossAnInternalPauseDoesNotPullTheNextSentenceEarlier() throws {
+        let text = "Red birds fly north. The harbour at Kettleness shelters fishing boats. "
+            + "Crab pots line the quay wall. Gulls circle above the lifeboat station. "
+            + "Tourists photograph the herring barrel. Ruth Alder lands her catch before dawn."
+        let spoken: [(Int, String)] = [
+            (0, "Red birds fly north."),
+            (3_000, "Welcome to the audio version."),
+            (20_000, "harbour at Kettleness shelters fishing boats."),
+            (23_000, "Crab pots line the quay wall."),
+            (26_000, "Gulls circle above the lifeboat station."),
+            (29_000, "Tourists photograph the herring barrel."),
+            (32_000, "Ruth Alder lands her catch before dawn."),
+        ]
+        let segments = spoken.enumerated().map { index, entry in
+            MediaTimelineSegment(id: "s\(index)", startMs: entry.0, endMs: entry.0 + 2_500, text: entry.1)
+        }
+        let alignment = PublisherAudioAligner.align(articleText: text, recognised: TranscriptTimeline(
+            segments: segments, chapters: [], durationMs: 34_500))
+        let timeline = try XCTUnwrap(alignment.timeline, alignment.status)
+        XCTAssertEqual(timeline.segments.count, 6)
+        let harbour = try XCTUnwrap(timeline.segments.first { $0.text.hasPrefix("The harbour") })
+        XCTAssertLessThanOrEqual(abs(harbour.startMs - 20_000), 1_000, "starts at \(harbour.startMs)")
+    }
+
+    func testAnAdWordNearThePreviousSentenceCannotAnchorTheNextSentence() throws {
+        let text = "Red birds fly north. The harbour at Kettleness shelters fishing boats. "
+            + "Crab pots line the quay wall. Gulls circle above the lifeboat station. "
+            + "Tourists photograph the herring barrel. Ruth Alder lands her catch before dawn."
+        let spoken: [(Int, String)] = [
+            (0, "Red birds fly north."),
+            (2_600, "The sponsor."),
+            (20_000, "harbour at Kettleness shelters fishing boats."),
+            (23_000, "Crab pots line the quay wall."),
+            (26_000, "Gulls circle above the lifeboat station."),
+            (29_000, "Tourists photograph the herring barrel."),
+            (32_000, "Ruth Alder lands her catch before dawn."),
+        ]
+        let segments = spoken.enumerated().map { index, entry in
+            MediaTimelineSegment(id: "s\(index)", startMs: entry.0, endMs: entry.0 + 2_500, text: entry.1)
+        }
+        let alignment = PublisherAudioAligner.align(articleText: text, recognised: TranscriptTimeline(
+            segments: segments, chapters: [], durationMs: 34_500))
+        let timeline = try XCTUnwrap(alignment.timeline, alignment.status)
+        XCTAssertEqual(timeline.segments.count, 6)
+        let harbour = try XCTUnwrap(timeline.segments.first { $0.text.hasPrefix("The harbour") })
+        XCTAssertLessThanOrEqual(abs(harbour.startMs - 20_000), 1_000, "starts at \(harbour.startMs)")
+    }
+
+    func testAnAdWordAcrossAnInternalPauseDoesNotExtendThePreviousSentence() throws {
+        let text = "Ruth Alder lands her catch before dawn. Red birds fly north. "
+            + "Crab pots line the quay wall. Gulls circle above the lifeboat station. "
+            + "Tourists photograph the herring barrel. Green boats cross rivers."
+        let spoken: [(Int, String)] = [
+            (0, "Ruth Alder lands her catch before"),
+            (20_000, "Until dawn."),
+            (30_000, "Red birds fly north."),
+            (33_000, "Crab pots line the quay wall."),
+            (36_000, "Gulls circle above the lifeboat station."),
+            (39_000, "Tourists photograph the herring barrel."),
+            (42_000, "Green boats cross rivers."),
+        ]
+        let segments = spoken.enumerated().map { index, entry in
+            MediaTimelineSegment(id: "s\(index)", startMs: entry.0, endMs: entry.0 + 2_500, text: entry.1)
+        }
+        let alignment = PublisherAudioAligner.align(articleText: text, recognised: TranscriptTimeline(
+            segments: segments, chapters: [], durationMs: 44_500))
+        let timeline = try XCTUnwrap(alignment.timeline, alignment.status)
+        XCTAssertEqual(timeline.segments.count, 6)
+        let first = try XCTUnwrap(timeline.segments.first)
+        XCTAssertLessThanOrEqual(abs(first.endMs - 2_500), 1_000, "ends at \(first.endMs)")
+    }
+
     func testAnIntroWordDoesNotPullTheFirstSentenceEarlier() throws {
         // Codex audit on #636: the recogniser drops the article's opening "The", and the intro said
         // "the" nine seconds earlier. Neither the word-by-word pass nor the start estimate may
