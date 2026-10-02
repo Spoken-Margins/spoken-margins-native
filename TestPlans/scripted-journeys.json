@@ -5,6 +5,10 @@
     {
       "test": "SpokenMarginsAppUITests/J1ListenToAnArticleJourneyUITests",
       "journey": "J1"
+    },
+    {
+      "test": "SpokenMarginsAppUITests/J3RecordAndRejoinJourneyUITests",
+      "journey": "J3"
     }
   ]
 }

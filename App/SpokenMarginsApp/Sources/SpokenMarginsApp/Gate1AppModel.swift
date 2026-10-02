@@ -550,13 +550,6 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    static func makeApplicationModel() -> Gate1AppModel {
-        if ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_RECORDING"] == "1" {
-            return Gate1AppModel(recordingClient: NoopRecordingClient())
-        }
-        return Gate1AppModel()
-    }
-
     @Published private var presentedScreen: Gate1Screen = .home
     @Published var requestedExperienceRoot: AppRoot?
     @Published private(set) var writtenMarginDraft: WrittenMarginDraft?
@@ -1816,17 +1809,11 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             libraryAccessError = nil
             purgeExpiredEpisodeMapPreparationJobs(store: store)
-            if let fixtureText = ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"],
-               CommandLine.arguments.contains("--ui-testing") {
-                try resetAndSeedUITestingText(
-                    store: store,
-                    title: ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] ?? "UI Test Text",
-                    text: fixtureText,
-                    reference: ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SOURCE_URL"] ?? "ui-test"
-                )
+            if let item = try UITestingAppSeed.resetAndSeed(store: store) {
+                try configureUITestingLibrary(store: store, item: item)
                 return
             }
-            if CommandLine.arguments.contains("--ui-testing") {
+            if CommandLine.arguments.contains("--ui-testing"), !UITestingAppSeed.configuration.preservesLibrary {
                 resetAndSeed()
                 return
             }
@@ -1914,27 +1901,12 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func resetAndSeedUITestingText(
-        store: SQLiteSessionStore,
-        title: String,
-        text: String,
-        reference: String
-    ) throws {
-        try store.reset()
-        let item = Item(
-            id: "item-ui-text-regression",
-            title: title,
-            mediaType: "text",
-            text: text,
-            externalReference: reference,
-            status: "needs_listening_map"
-        )
-        try store.seed(item: item)
+    private func configureUITestingLibrary(store: SQLiteSessionStore, item: Item) throws {
         self.store = store
         try configurePodcastDownloads(store: store)
         installEngine(try makeEngine(store: store))
         activeItemId = item.id
-        liveSpeechFallbackItemIds.insert(item.id)
+        if item.media == nil { liveSpeechFallbackItemIds.insert(item.id) }
         snapshot = SessionSnapshot()
         libraryItems = try loadLibraryRows(store: store)
         recentlyDeletedItems = []
@@ -1946,7 +1918,7 @@ final class Gate1AppModel: ObservableObject {
             "uiTestFixture": item.id,
             "speechRate": String(format: "%.2f", speechRate)
         ]
-        reportSuccess("Loaded simulator speech regression article.")
+        reportSuccess("Loaded UI-test source.")
     }
 
     static func shouldSeedWelcomeSample(
@@ -14799,7 +14771,8 @@ final class Gate1AppModel: ObservableObject {
 
     private func seedUITestingGeneratedTimelineIfNeeded(sessionId: String, engine: SessionEngine, store: SQLiteSessionStore) throws {
         guard CommandLine.arguments.contains("--ui-testing"),
-              ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] == nil,
+              !UITestingAppSeed.configuration.seedsOfflinePodcast,
+              UITestingAppSeed.configuration.sourceText == nil,
               try store.loadTurns(sessionId: sessionId).isEmpty else {
             return
         }

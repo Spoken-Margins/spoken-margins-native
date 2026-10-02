@@ -47,6 +47,7 @@ struct ExperienceMarginDetailView: View {
                             model.isPlayingInterjectionAudio(current.interjection) ? "Stop playing" : "Play Margin",
                             systemImage: model.isPlayingInterjectionAudio(current.interjection) ? "stop.fill" : "play.fill"
                         ) { model.toggleInterjectionAudioPlayback(current.interjection) }
+                        .accessibilityIdentifier("marginDetail.playRecording.button")
                     }
                     if current.canRetryTranscription {
                         Button(model.isRetryingInterjectionTranscription(current.interjection) ? "Transcribing…" : "Retry Transcription", systemImage: "arrow.clockwise") {
@@ -109,7 +110,10 @@ struct ExperienceMarginDetailView: View {
                     .accessibilityLabel(current.interjection.isStarredForSharing == true ? "Unstar Margin" : "Star Margin")
                     .accessibilityIdentifier("marginDetail.star.button")
                 }
-                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .accessibilityIdentifier("marginDetail.done.button")
+                }
             }
             .sheet(isPresented: $showsManagement) {
                 InterjectionDetailView(interjection: current.interjection).environmentObject(model)
