@@ -34,6 +34,7 @@ public struct ParsedFeedItem: Equatable, Sendable {
     /// `content_html`/`content_text`, kept apart from the short description so a full post can be
     /// told from show notes (#545). `summary` is unchanged: it still takes the last of these.
     public var content: String? = nil
+    public var publisherPlatform: String? = nil
     /// The item's `<guid>`, Atom `id` or JSON Feed `id` as written, without the display cleanup
     /// `id` gets; nil when the feed gives none (`id` then falls back to the link).
     public var guid: String? = nil
@@ -88,7 +89,11 @@ public final class FeedParser: @unchecked Sendable {
             title: delegate.feedTitle.nilIfEmpty ?? "Untitled Source",
             homePageURL: delegate.homePageURL.nilIfEmpty,
             feedURL: delegate.feedURL.nilIfEmpty,
-            items: Array(delegate.items.prefix(limits.maximumEntries))
+            items: Array(delegate.items.prefix(limits.maximumEntries)).map { item in
+                var item = item
+                item.publisherPlatform = delegate.feedGenerator.nilIfEmpty?.lowercased()
+                return item
+            }
         )
     }
 
@@ -147,6 +152,7 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
     let limits: FeedParserLimits
     var format: ParsedFeedFormat?
     var feedTitle = ""
+    var feedGenerator = ""
     var homePageURL = ""
     var feedURL = ""
     var items: [ParsedFeedItem] = []
@@ -209,6 +215,7 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
             default: break
             }
         } else {
+            if name == "generator", feedGenerator.isEmpty { feedGenerator = value }
             if name == "title", feedTitle.isEmpty { feedTitle = value }
             if name == "link", format == .rss, homePageURL.isEmpty { homePageURL = value }
         }

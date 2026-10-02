@@ -16009,6 +16009,7 @@ final class Gate1AppModel: ObservableObject {
                 guard let subscription = try store.loadFeedSubscriptions().first(where: { $0.id == entry.subscriptionId }) else {
                     throw FollowedSourceError.noFeedCandidates
                 }
+                let entry = await self.followedSourceCoordinator?.publisherAudioEntry(for: entry) ?? entry
                 let imported: Bool
                 // A post with the publisher's own audio imports as an article (#545).
                 if subscription.source.kind == .podcastFeed, !entry.hasPublisherAudio {
@@ -16024,9 +16025,7 @@ final class Gate1AppModel: ObservableObject {
                     imported = importedItemId != nil
                     if openWhenFinished, let importedItemId { self.openItem(id: importedItemId) }
                 } else {
-                    let handoff = try await self.readablePageExtractor.extract(url: url)
-                    self.diagnostics["followedArticleNetworkHosts"] = self.readablePageExtractor.contactedHosts.joined(separator: ",")
-                    self.diagnostics["followedArticleExtractor"] = self.readablePageExtractor.lastExtractor ?? "unknown"
+                    let handoff = try await FollowedArticleImport.handoff(for: entry, url: url, using: self.readablePageExtractor, record: { self.diagnostics.merge($0) { _, new in new } })
                     if openWhenFinished, !entry.hasPublisherAudio {
                         imported = self.importBrowserText(handoff)
                     } else {

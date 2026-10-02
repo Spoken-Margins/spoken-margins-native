@@ -24,8 +24,9 @@ final class PublisherAudioDetectorTests: XCTestCase {
     func testParserKeepsTheFullBodyApartFromTheDescription() throws {
         let items = try Self.substackItems()
         let voiceover = try XCTUnwrap(items.first { $0.title == "The harbor in winter" })
-        XCTAssertNotNil(voiceover.audioURL)
-        XCTAssertEqual(voiceover.durationMs, 1_312_000)
+        XCTAssertNil(voiceover.audioURL, "the captured main feed uses image enclosures, not audio")
+        XCTAssertNil(voiceover.durationMs)
+        XCTAssertEqual(voiceover.publisherPlatform, "substack")
         let body = try XCTUnwrap(voiceover.content)
         XCTAssertFalse(body.contains("<p>"), "tags are stripped")
         XCTAssertFalse(body.contains("A short subtitle"), "the description isn't mixed in")
@@ -56,11 +57,17 @@ final class PublisherAudioDetectorTests: XCTestCase {
 
     func testASubstackVoiceoverPostIsAnArticleWithPublisherAudio() throws {
         let voiceover = try XCTUnwrap(try Self.substackItems().first { $0.title == "The harbor in winter" })
-        XCTAssertEqual(PublisherAudioDetector.kind(of: voiceover), .articleWithPublisherAudio)
+        let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: voiceover.url, title: voiceover.title,
+                              bodyWordCount: PublisherAudioDetector.bodyWordCount(of: voiceover), fullBody: voiceover.content)
+        let confirmed = try XCTUnwrap(PublisherNarrationEvidence.confirmedEntry(entry,
+            html: String(decoding: Self.fixture("substack-voiceover-page.html"), as: UTF8.self)))
+        XCTAssertEqual(PublisherAudioDetector.kind(of: confirmed), .articleWithPublisherAudio)
+        XCTAssertEqual(confirmed.audioURL, "https://recordings.example/voiceover.mp3")
+        XCTAssertEqual(PublisherAudioDetector.articleHandoff(for: confirmed)?.text, voiceover.content)
     }
 
     func testAnEpisodeWithShortShowNotesIsStillAPodcastEpisode() throws {
-        let episode = try XCTUnwrap(try Self.substackItems().first { $0.title == "Episode 12: A harbor pilot" })
+        let episode = try XCTUnwrap(try FeedParser().parse(data: Self.fixture("substack-transcript-podcast.rss")).items.first)
         XCTAssertNotNil(episode.content)
         XCTAssertEqual(PublisherAudioDetector.kind(of: episode), .podcastEpisode)
         for item in try FeedParser().parse(data: Self.fixture("enclosure-only-episodes.rss")).items {
@@ -78,9 +85,23 @@ final class PublisherAudioDetectorTests: XCTestCase {
         let audio = "https://media.example.com/show/ep1.mp3"
         XCTAssertEqual(PublisherAudioDetector.kind(audioURL: audio, pageURL: audio, bodyWordCount: 5_000), .podcastEpisode)
         XCTAssertEqual(PublisherAudioDetector.kind(audioURL: audio, pageURL: "https://example.com/p/1", bodyWordCount: 599), .podcastEpisode)
-        XCTAssertEqual(PublisherAudioDetector.kind(audioURL: audio, pageURL: "https://example.com/p/1", bodyWordCount: 600), .articleWithPublisherAudio)
+        XCTAssertEqual(PublisherAudioDetector.kind(audioURL: audio, pageURL: "https://example.com/p/1", bodyWordCount: 600), .podcastEpisode)
         XCTAssertEqual(PublisherAudioDetector.kind(audioURL: "http://media.example.com/a.mp3", pageURL: "https://example.com/p/1", bodyWordCount: 900), .article,
                        "a non-https enclosure isn't audio the app would play")
+    }
+
+    func testALongTranscriptWithAnEpisodePageStillImportsAsAPodcast() throws {
+        let transcript = String(repeating: "The host and guest discuss the harbour today. ", count: 100)
+        let xml = Data("""
+        <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><title>A real podcast</title>
+        <item><title>Episode with transcript</title><link>https://example.com/episodes/1</link>
+        <enclosure url="https://example.com/audio/1.mp3" type="audio/mpeg"/>
+        <content:encoded><![CDATA[<p>\(transcript)</p>]]></content:encoded></item>
+        </channel></rss>
+        """.utf8)
+        let item = try XCTUnwrap(try FeedParser().parse(data: xml).items.first)
+        XCTAssertGreaterThanOrEqual(PublisherAudioDetector.bodyWordCount(of: item) ?? 0, 600)
+        XCTAssertEqual(PublisherAudioDetector.kind(of: item), .podcastEpisode)
     }
 
     func testEntriesSavedBeforeBodiesWereCountedImportAsBefore() {
@@ -94,12 +115,48 @@ final class PublisherAudioDetectorTests: XCTestCase {
         let entry = FeedEntry(
             id: "e", subscriptionId: "s", canonicalURL: "https://marginsweekly.substack.com/p/the-harbor-in-winter",
             audioURL: "https://api.substack.com/feed/podcast/1/a.mp3", title: "The harbor in winter",
-            bodyWordCount: 720, audioDurationMs: 1_312_000
+            bodyWordCount: 720, publisherNarrationConfirmed: true, audioDurationMs: 1_312_000
         )
         XCTAssertTrue(entry.hasPublisherAudio)
         XCTAssertEqual(PublisherAudioDetector.publisherAudio(for: entry, itemId: "item-1"), PublisherAudio(
-            itemId: "item-1", audioURL: "https://api.substack.com/feed/podcast/1/a.mp3", durationMs: 1_312_000, detectedFrom: "feed_enclosure"
+            itemId: "item-1", audioURL: "https://api.substack.com/feed/podcast/1/a.mp3", durationMs: 1_312_000, detectedFrom: "substack_post_voiceover"
         ))
+    }
+
+    func testOnlyTheCurrentPostsCompletedNarrationConfirmsPublisherAudio() throws {
+        let html = String(decoding: try Self.fixture("substack-voiceover-page.html"), as: UTF8.self)
+        let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://captured.example/p/voiceover",
+                              title: "Article", bodyWordCount: 720)
+        XCTAssertNotNil(PublisherNarrationEvidence.confirmedEntry(entry, html: html))
+        for invalid in [
+            html.replacingOccurrences(of: "newsletter", with: "podcast"),
+            html.replacingOccurrences(of: "completed", with: "processing"),
+            html.replacingOccurrences(of: "https://recordings.example", with: "http://recordings.example"),
+            html.replacingOccurrences(of: "https://captured.example/p/voiceover", with: "https://captured.example/p/other"),
+            html.replacingOccurrences(of: #"post_id\":1"#, with: #"post_id\":2"#),
+            "not a publisher page"
+        ] {
+            XCTAssertNil(PublisherNarrationEvidence.confirmedEntry(entry, html: invalid))
+        }
+    }
+
+    func testSubscriberFeedTextSurvivesSQLiteAndSuppliesArticleHandoff() throws {
+        let path = temporary.appendingPathComponent("subscriber.sqlite").path
+        let store = try SQLiteSessionStore(path: path)
+        let body = String(repeating: "Subscriber article body unavailable on the public page. ", count: 90)
+        let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://captured.example/p/private",
+            audioURL: "https://recordings.example/private.mp3", title: "Private article", bodyWordCount: 720,
+            fullBody: body, publisherNarrationConfirmed: true)
+        try store.saveFeedEntry(entry)
+        let reopened = try SQLiteSessionStore(path: path)
+        let persisted = try XCTUnwrap(try reopened.loadFeedEntries(subscriptionId: "s").first)
+        XCTAssertEqual(persisted, entry)
+        let handoff = try XCTUnwrap(PublisherAudioDetector.articleHandoff(for: persisted))
+        XCTAssertEqual(handoff.text, body)
+        XCTAssertEqual(handoff.source.url, entry.canonicalURL)
+        var missingBody = persisted
+        missingBody.fullBody = nil
+        XCTAssertNil(PublisherAudioDetector.articleHandoff(for: missingBody), "no body falls back to extraction")
     }
 
     func testWordCountIgnoresPunctuationOnlyTokens() {
@@ -112,12 +169,15 @@ final class PublisherAudioDetectorTests: XCTestCase {
     func testFeedEntriesKeepTheNewFieldsAndOldPayloadsStillDecode() throws {
         let store = try SQLiteSessionStore(path: temporary.appendingPathComponent("entries.sqlite").path)
         let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://example.com/p/1", audioURL: "https://example.com/1.mp3",
-                              title: "Post", bodyWordCount: 720, audioDurationMs: 60_000)
+                              title: "Post", bodyWordCount: 720, fullBody: "Retained text", publisherPlatform: "substack", publisherNarrationConfirmed: true, audioDurationMs: 60_000)
         try store.saveFeedEntry(entry)
         XCTAssertEqual(try store.loadFeedEntries(subscriptionId: "s"), [entry])
 
         let old = Data(#"{"id":"e","subscriptionId":"s","canonicalURL":"https://example.com/p/1","title":"Post","state":"unseen"}"#.utf8)
         let decoded = try JSONDecoder().decode(FeedEntry.self, from: old)
+        XCTAssertNil(decoded.publisherPlatform)
+        XCTAssertNil(decoded.fullBody)
+        XCTAssertNil(decoded.publisherNarrationConfirmed)
         XCTAssertNil(decoded.bodyWordCount)
         XCTAssertNil(decoded.audioDurationMs)
     }

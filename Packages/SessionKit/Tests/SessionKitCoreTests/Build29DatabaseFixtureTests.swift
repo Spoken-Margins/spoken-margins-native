@@ -133,7 +133,7 @@ final class Build29DatabaseFixtureTests: XCTestCase {
         // entry with the body word count and duration. Build 29 must still read both.
         try store.savePublisherAudio(PublisherAudio(itemId: v1.id, audioURL: "https://api.substack.com/feed/podcast/1/a.mp3", durationMs: 60_000, detectedFrom: "feed_enclosure"))
         let feedEntry = FeedEntry(id: "entry-publisher-audio", subscriptionId: "subscription-substack", canonicalURL: "https://example.substack.com/p/post",
-                                  audioURL: "https://api.substack.com/feed/podcast/1/a.mp3", title: "Post", bodyWordCount: 720, audioDurationMs: 60_000)
+                                  audioURL: "https://api.substack.com/feed/podcast/1/a.mp3", title: "Post", bodyWordCount: 720, fullBody: "A full subscriber article", publisherPlatform: "substack", publisherNarrationConfirmed: true, audioDurationMs: 60_000)
         try store.saveFeedEntry(feedEntry)
         XCTAssertEqual(try store.loadPublisherAudio(itemId: v1.id)?.durationMs, 60_000)
 
