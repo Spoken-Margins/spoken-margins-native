@@ -23,6 +23,17 @@ final class SessionKitCoreTests: XCTestCase {
         ))
     }
 
+    func testASeekBackFromTheEndLeavesTheEndedState() {
+        // #588: a scrub back from the end must clear the end-of-item notification, or the
+        // engine moves the episode straight back to its end.
+        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 0, durationMs: 178_808))
+        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 177_000, durationMs: 178_808))
+        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 178_000, durationMs: 178_808),
+                      "a place the listener chose inside the end tolerance is not the end")
+        XCTAssertFalse(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 178_808, durationMs: 178_808))
+        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 178_000, durationMs: nil))
+    }
+
     func testMediaCompletionDoesNotMistakeUserPauseOrPendingSeekForCompletion() {
         XCTAssertFalse(MediaPlaybackCompletionPolicy.reachedEffectiveEnd(
             completionNotificationObserved: false,
@@ -1979,6 +1990,34 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(transcriber.scheduledInterjectionIds, [interjection.id])
         XCTAssertEqual(engine.currentSession?.position.charOffset, "First ".count)
         XCTAssertEqual(audio.playedOffsets.last, "First ".count)
+    }
+
+    /// #624: spoken Margins were stamped one second after 1970 per Margin, which Readwise and the
+    /// notes folder took as the real date. They now carry the engine's clock, like written Margins.
+    func testSpokenMarginCarriesTheTimeItWasRecorded() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "interjection": ["record_audio", "capture_text_anchor"]
+            ]
+        )
+        let item = Item(id: "item-text", title: "Text", mediaType: "text", text: "First sentence.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let recordedAt = Date(timeIntervalSince1970: 1_790_000_000)
+        let engine = SessionEngine(
+            profile: profile, repository: repo, audio: RecordingAudioClient(),
+            transcriber: RecordingTranscriptionClient(), now: { recordedAt }
+        )
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/text.m4a")
+
+        let margin = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
+        XCTAssertEqual(margin.createdAt, recordedAt)
     }
 
     func testNativeTextInterjectionsResumeAtExactBoundaryWithoutAccumulatingDrift() throws {
@@ -5814,6 +5853,40 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.targetType, TargetType.itemTextTTS.rawValue)
         XCTAssertEqual(audio.preparedTexts.last, "Overview. Map\n\nOne. Two. Three.")
         XCTAssertEqual(audio.playedOffsets.last, "Overview. Map\n\n".count + 5)
+    }
+
+    /// #356: the first spoken unit of a fresh start is the item's title, including for a map an
+    /// older build stored with the "Structured into … listening chapters" sentence.
+    func testFreshStartSpeaksTheTitleFirstEvenForAStoredLegacyOverview() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let item = Item(id: "item-agents", title: "Evaluation Agents", mediaType: "text", text: "One. Two. Three.", externalReference: nil, status: "ready")
+        let chapters = [
+            Chapter(id: "ch-1", title: "One", startChar: 0, endChar: 5, percent: 0),
+            Chapter(id: "ch-2", title: "Two", startChar: 5, endChar: 16, percent: 31)
+        ]
+        for overview in [
+            "Structured into 2 listening chapters from canonical document headings in Evaluation Agents.",
+            ListeningMapOverviewText.appGenerated(title: item.title, chapterCount: chapters.count)
+        ] {
+            let map = ListeningMap(id: "map-agents", itemId: item.id, overview: overview, chapters: chapters)
+            let audio = RecordingAudioClient()
+            let repo = InMemorySessionRepository(items: [item.id: item], mapsByItemId: [item.id: map])
+            let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+            _ = try engine.startSession(itemId: item.id)
+
+            let spoken = try XCTUnwrap(audio.preparedTexts.last, overview)
+            XCTAssertEqual(spoken, "Evaluation Agents. 2 chapters.\n\nOne. Two. Three.", overview)
+            XCTAssertEqual(spoken.components(separatedBy: ". ").first, "Evaluation Agents", "the first spoken unit is the title")
+        }
     }
 
     func testInspectSessionDoesNotStartPlayback() throws {

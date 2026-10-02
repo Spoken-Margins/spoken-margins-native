@@ -9,7 +9,7 @@ import {
   normalizeSocialEmbedsForReading
 } from "./browserExtractionCore.mjs";
 import {
-  capturePageText,
+  capturePage,
   invokeInjectedCapture
 } from "./popupCore.mjs";
 
@@ -165,7 +165,7 @@ test("popup capture returns the injected result without tabs messaging", async (
     }
   };
 
-  assert.equal(await capturePageText(extensionAPI), payload);
+  assert.deepEqual(await capturePage(extensionAPI), { payload });
   assert.equal(calls.length, 2);
   assert.deepEqual(calls[0], {
     target: { tabId: 42 },
@@ -189,7 +189,7 @@ test("popup capture reports the injected failure instead of a generic missing re
   };
 
   await assert.rejects(
-    capturePageText(extensionAPI),
+    capturePage(extensionAPI),
     /No readable article was found\./
   );
 });
@@ -211,6 +211,69 @@ test("injected dispatcher invokes the initialized page capture directly", () => 
     globalThis.SpokenMarginsBrowserTextCapture = previousCapture;
     globalThis.document = previousDocument;
   }
+});
+
+function withInjectedPage(documentRef, run) {
+  const previousCapture = globalThis.SpokenMarginsBrowserTextCapture;
+  const previousDocument = globalThis.document;
+  let textCaptures = 0;
+  globalThis.document = documentRef;
+  globalThis.SpokenMarginsBrowserTextCapture = {
+    captureReadablePage: () => {
+      textCaptures += 1;
+      return { title: "#annotationContainer { overflow: hidden; }" };
+    }
+  };
+  try {
+    return run(() => textCaptures);
+  } finally {
+    globalThis.SpokenMarginsBrowserTextCapture = previousCapture;
+    globalThis.document = previousDocument;
+  }
+}
+
+test("on a PDF tab the injected dispatcher hands back the PDF's address, not the viewer's text (#658)", () => {
+  const arxiv = "https://arxiv.org/pdf/2609.31218v1";
+  // arXiv serves the PDF without a .pdf suffix, so the content type decides.
+  withInjectedPage({ contentType: "application/pdf", location: { href: arxiv } }, (textCaptures) => {
+    assert.deepEqual(invokeInjectedCapture(), { ok: true, pdfURL: arxiv });
+    assert.equal(textCaptures(), 0);
+  });
+  // Safari's PDF viewer document, recognised by WebKit's annotation container.
+  const viewer = parseHTML(`<html><head><style>#annotationContainer { overflow: hidden; }</style></head>
+    <body><div id="annotationContainer"></div></body></html>`).document;
+  Object.defineProperty(viewer, "location", { value: { href: "https://example.org/download?id=7" } });
+  withInjectedPage(viewer, (textCaptures) => {
+    assert.deepEqual(invokeInjectedCapture(), { ok: true, pdfURL: "https://example.org/download?id=7" });
+    assert.equal(textCaptures(), 0);
+  });
+  withInjectedPage({ contentType: "text/html", location: { href: "https://example.org/paper.PDF" } }, () => {
+    assert.deepEqual(invokeInjectedCapture(), { ok: true, pdfURL: "https://example.org/paper.PDF" });
+  });
+});
+
+test("an ordinary page and a non-HTTPS PDF still go through text capture", () => {
+  const page = articleDocument();
+  withInjectedPage(page, (textCaptures) => {
+    assert.equal(invokeInjectedCapture().pdfURL, undefined);
+    assert.equal(textCaptures(), 1);
+  });
+  withInjectedPage({ contentType: "application/pdf", location: { href: "http://example.org/a.pdf" } }, (textCaptures) => {
+    assert.equal(invokeInjectedCapture().pdfURL, undefined);
+    assert.equal(textCaptures(), 1);
+  });
+});
+
+test("popup capture passes a PDF address through instead of a text payload", async () => {
+  const extensionAPI = {
+    tabs: { query: async () => [{ id: 3 }] },
+    scripting: {
+      executeScript: async (request) => request.files
+        ? [{ frameId: 0 }]
+        : [{ frameId: 0, result: { ok: true, pdfURL: "https://arxiv.org/pdf/2609.31218v1" } }]
+    }
+  };
+  assert.deepEqual(await capturePage(extensionAPI), { pdfURL: "https://arxiv.org/pdf/2609.31218v1" });
 });
 
 test("built resources contain the pinned extractor and Safari preprocessor", () => {

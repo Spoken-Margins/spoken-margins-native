@@ -336,14 +336,18 @@ struct MarginRow: Identifiable, Equatable, Sendable {
     var canPlayRecording: Bool { !isWritten && interjection.audioPath != nil }
     var canRetryTranscription: Bool { !isWritten && !["transcribed", "complete"].contains(interjection.transcriptionStatus) && interjection.audioPath != nil }
 
+    /// A voice Margin whose transcript can't be made until Speech Recognition is back on (#268).
+    var transcriptWaitsForSpeechRecognition: Bool {
+        canRetryTranscription && interjection.transcriptionStatus == "failed" && SpeechRecognitionAccess.isOff
+    }
+
     var attentionDescription: String {
-        if interjection.anchorContextStatus == .unavailable { return "Context needs retry" }
-        if interjection.audioStatus == "missing" { return "Recording is unavailable" }
-        switch interjection.transcriptionStatus {
-        case "pending": return "Transcription is pending"
-        case "failed": return "Transcription needs retry"
-        default: return "Margin needs attention"
-        }
+        TranscriptionFailureWording.marginAttention(
+            transcriptionStatus: interjection.transcriptionStatus,
+            speechRecognitionOff: SpeechRecognitionAccess.isOff,
+            contextUnavailable: interjection.anchorContextStatus == .unavailable,
+            recordingMissing: interjection.audioStatus == "missing"
+        )
     }
 
     var targetDescription: String {

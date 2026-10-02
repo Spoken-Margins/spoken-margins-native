@@ -72,7 +72,9 @@ A PR is done when it's armed (`AGENTS.md`). Never stop before that:
 
 **Don't retry or wait.** Once armed, don't watch for the run to start, don't re-check after a few minutes, and don't set timers, reminders or check-ins on your own PRs. The runner merges on PASS. What happens otherwise is the project's hourly dispatcher's job:
 - **FAIL on the PR's own code**, or a conflict with `next`: the dispatcher gives the fix to whoever is free.
-- **Runner fault** (no run starts, the runner is offline, or INCONCLUSIVE because of the lane: no simulator, XCTest never connected, a failed boot, a crash flood, low disk): the dispatcher files an issue labelled `ready` and `regression`.
+- **Runner fault** (no run starts, the runner is offline, or INCONCLUSIVE because of the lane: no simulator, XCTest never connected, a failed boot, a crash flood, low disk): the dispatcher asks for one more run, and files an issue labelled `ready` and `regression` only if it fails the same way again.
+
+An INCONCLUSIVE T3 is re-run by a new `/lane T3` comment with the same `tests:` line plus `lane:queued`, because re-adding `automerge` starts only the host tests and builds. A fault in those is re-run by removing and re-adding `automerge`. An identical request for the same head and `next` commit that already has a PASS or FAIL report isn't run again; the lane links the earlier report.
 
 ## 5. Read a report (the dispatcher and fix-up threads)
 
@@ -80,7 +82,7 @@ The lane replies on the PR with `Lane report <id> — PASS | FAIL | INCONCLUSIVE
 
 - **INCONCLUSIVE is not a pass.** It means no simulator, XCTest never connected, a crash flood stopped the run, or `next` didn't merge into the head (the report names the files). The report says which. A merge conflict is the PR's to fix; the rest are runner faults. Don't treat it as green.
 - **FAIL** names the step, what was expected, what was observed, and a local evidence path (`artifacts/lane/<id>/…` on the Mac). A fix-up thread fixes the first failure, pushes (the `automerge` label reruns the lane on every push), posts a new `/lane T3` request and adds `lane:queued` again if the FAIL was T3 (the runner swaps it for `lane:done` after each report). That re-arms the PR, and the thread moves on.
-- **Held for T3.** A PR with a T3 request merges only on a T3 PASS, and an automerge run that finished before the T3 report doesn't merge it later by itself. After the T3 PASS, the dispatcher removes and re-adds `automerge` (until #421 lets the runner do it).
-- **Held for the Codex audit.** The runner won't merge an audio, persistence or packet diff until a "Codex audit (Astra)" comment is on the PR. Confirmed findings go to whoever is free, like a FAIL. A clean audit: the dispatcher removes and re-adds `automerge`.
+- **Held for T3.** A PR with a T3 request merges only on a T3 PASS. When an automerge run finished before the T3 report and was held, the lane job that reports the T3 PASS runs the automerge checks again itself and merges on PASS (#421). Nobody re-adds `automerge` for this.
+- **Held for the Codex audit.** The runner won't merge an audio, persistence, packet or lane diff until the newest "Codex audit (Astra) on `<sha7>`" comment names the PR's head commit and its verdict line opens with "No blocking findings" (#441). Confirmed findings go to whoever is free, like a FAIL. A clean audit that lands after the automerge run finished: the dispatcher removes and re-adds `automerge`, because a comment starts no run.
 - **No run started.** Check the PR's base (`next`, from a branch in this repository), whether `next` has been merged in since the lane workflow last changed, and the runners: `gh api repos/uncomposed/spoken-margins-native/actions/runners` should show `sm-lane-mac online`.
 - **"not verified"** lists what the lane can't check (audible content, Lock Screen, Bluetooth). Those belong to the owner's T6 pass, so carry them into your milestone report.

@@ -4,6 +4,7 @@ The installer runs against a fake `xcrun` on PATH, so no test can reach a real p
 answers `devicectl list devices` from FAKE_DEVICES and records every other call. The build runs
 against a scratch repo and a fake xcodebuild (SM_LANE_XCODEBUILD) that makes an ad-hoc signed app.
 """
+import datetime
 import importlib.machinery
 import importlib.util
 import json
@@ -74,10 +75,12 @@ class InstallerTests(unittest.TestCase):
         os.symlink(folder.name, self.phone / 'latest')
         return folder
 
-    def run_installer(self, devices, **extra):
+    def run_installer(self, devices, answer='', **extra):
         env = {**os.environ, 'PATH': f'{self.bin}:/usr/bin:/bin', 'SM_PHONE_DIR': str(self.phone),
-               'FAKE_LOG': str(self.log), 'FAKE_DEVICES': json.dumps(devices), **extra}
-        done = subprocess.run(['/bin/zsh', str(INSTALLER)], env=env, capture_output=True, text=True, timeout=60)
+               'FAKE_LOG': str(self.log), 'FAKE_DEVICES': json.dumps(devices),
+               'SM_PHONE_ICLOUD': str(self.tmp / 'icloud'), **extra}
+        done = subprocess.run(['/bin/zsh', str(INSTALLER)], env=env, input=answer, capture_output=True, text=True,
+                              timeout=60)
         calls = self.log.read_text().splitlines() if self.log.exists() else []
         return done, calls
 
@@ -92,6 +95,31 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse(any('uninstall' in c for c in calls))
         self.assertEqual((self.phone / 'installed.txt').read_text().split()[0], self.sha)
         self.assertIn(f'open {folder.resolve()}/test-plan.md', calls)
+
+    def test_copies_the_test_plan_to_icloud_drive_for_the_phone(self):
+        folder = self.make_build()
+        (folder / 'test-plan.md').write_text('# Phone build: what to try\n1. Check the Following tab\n')
+        icloud = self.tmp / 'icloud'
+        icloud.mkdir()
+        for old in ('1111111', '2222222', '3333333', '4444444', '5555555'):
+            (icloud / f'Test plan {old}.md').write_text('old')
+        (icloud / 'my own notes.md').write_text('keep me')
+        done, _ = self.run_installer([iphone('PHONE-1')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        copy = icloud / f'Test plan {self.sha[:7]}.md'
+        self.assertEqual(copy.read_text(), '# Phone build: what to try\n1. Check the Following tab\n')
+        self.assertIn('iCloud Drive', done.stdout)
+        plans = sorted(p.name for p in icloud.glob('Test plan *.md'))
+        self.assertEqual(len(plans), 5)                  # the newest five, this one included
+        self.assertNotIn('Test plan 1111111.md', plans)  # the oldest copy goes
+        self.assertTrue((icloud / 'my own notes.md').exists())
+
+    def test_no_icloud_drive_still_installs(self):
+        self.make_build()
+        done, _ = self.run_installer([iphone('PHONE-1')], SM_PHONE_ICLOUD=str(self.tmp / 'missing' / 'x'))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual((self.phone / 'installed.txt').read_text().split()[0], self.sha)
+        self.assertIn("couldn't copy the test plan", done.stdout)
 
     def test_no_phone_plugged_in(self):
         self.make_build()
@@ -131,6 +159,56 @@ class InstallerTests(unittest.TestCase):
         self.assertIn('no phone build yet', done.stdout)
         self.assertEqual(calls, [])
 
+    def test_names_the_installed_build_before_installing_a_newer_one(self):
+        self.make_build()
+        (self.phone / 'installed.txt').write_text(f'{"cd" * 20} 2026-09-29T09:05:29 Cole iPhone\n')
+        done, calls = self.run_installer([iphone('A')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('Your phone has commit cdcdcdc', done.stdout)
+        self.assertIn('This build is newer', done.stdout)
+        self.assertTrue(any('install app' in c for c in calls))
+
+    def test_already_installed_says_so_and_changes_nothing(self):
+        self.make_build()
+        record = f'{self.sha} 2026-09-30T09:05:29 Slaw’s iPhone\n'
+        (self.phone / 'installed.txt').write_text(record)
+        done, calls = self.run_installer([iphone('A')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn(f'Slaw’s iPhone already has this build: commit {self.sha[:7]}', done.stdout)
+        self.assertIn('No newer build yet', done.stdout)
+        self.assertIn('type R', done.stdout)
+        self.assertEqual(calls, [])  # not even a device listing: the phone needn't be plugged in
+        self.assertEqual((self.phone / 'installed.txt').read_text(), record)
+
+    def test_already_installed_reinstalls_on_r(self):
+        folder = self.make_build()
+        (self.phone / 'installed.txt').write_text(f'{self.sha} 2026-09-30T09:05:29 Cole iPhone\n')
+        done, calls = self.run_installer([iphone('A')], answer='r\n')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn(f'devicectl device install app --device A {folder.resolve()}/SpokenMarginsApp.app', calls)
+
+    def test_already_installed_mentions_a_newer_build_in_progress(self):
+        self.make_build()
+        (self.phone / 'installed.txt').write_text(f'{self.sha} 2026-09-30T09:05:29 Cole iPhone\n')
+        started = datetime.datetime.now() - datetime.timedelta(minutes=3)
+        (self.phone / '.work' / f'{started:%Y%m%d-%H%M%S}-1234567').mkdir(parents=True)
+        (self.phone / '.work' / '20200101-000000-7654321').mkdir()  # a leftover, not a running build
+        done, calls = self.run_installer([iphone('A')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn(f'being made right now: commit 1234567, started today at {started:%H:%M}', done.stdout)
+        self.assertNotIn('7654321', done.stdout)
+        self.assertEqual(calls, [])
+
+    def test_already_installed_mentions_a_failed_newer_attempt(self):
+        self.make_build()
+        (self.phone / 'installed.txt').write_text(f'{self.sha} 2026-09-30T09:05:29 Cole iPhone\n')
+        (self.phone / 'last-attempt.json').write_text(json.dumps(
+            {'sha': 'ef' * 20, 'result': 'failed: host tests (--plan fast) failed', 'at': '2026-09-30T11:00:00'}))
+        done, _ = self.run_installer([iphone('A')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('commit efefefe, failed', done.stdout)
+        self.assertIn('host tests (--plan fast) failed.', done.stdout)
+
 
 FAKE_XCODEBUILD = r'''#!/usr/bin/python3
 import os, plistlib, shutil, subprocess, sys
@@ -157,6 +235,10 @@ open(os.path.join(app, "embedded.mobileprovision"), "w").write("profile")
 subprocess.check_call(["codesign", "-s", "-", "--force", app], stderr=subprocess.DEVNULL)
 '''
 
+FAKE_NOTIFY = '''#!/bin/sh
+echo "notify $*" >> "$FAKE_LOG"
+'''
+
 FAKE_GH = r'''#!/usr/bin/python3
 import json, os, sys
 args = sys.argv[1:]
@@ -166,8 +248,10 @@ tip = os.environ["FAKE_TIP"]
 if args[:1] == ["api"] and args[1].endswith("/issues/12/comments"):
     print("**Merge check (triage desk) on `1234567`: PASS.**\n- Tested the merge commit `%s`.\n"
           "- Ran: --plan fast and both builds.\n- Pushing `%s` to next now." % (tip[:7], tip[:7]))
-elif args[:1] == ["api"] and args[1].endswith("/issues/337/comments"):
-    print("**2026-09-30 09:00 EDT (SM integration run)** · next `%s` PASS, 564 of 564" % tip[:7])
+elif args[:1] == ["api"] and args[1].endswith("/issues/184/comments"):
+    for body in ("```text\nLane report integration-%s — PASS\nran: --plan app (pass: 564 of 564 tests)\n```" % tip[:7],
+                 "```text\nLane report journeys-%s — PASS\nran: J4 (pass)\n```" % tip[:7]):
+        print(json.dumps(body))
 elif args[:2] == ["api", "graphql"]:
     def pr(n, title, files, issue):
         return {"number": n, "title": title, "url": "https://example/pr/%d" % n, "mergedAt": "", "body": "",
@@ -195,7 +279,7 @@ class PhoneBuildTests(unittest.TestCase):
         self.repo, self.phone, self.bin, self.log = (self.tmp / 'repo', self.tmp / 'phone', self.tmp / 'bin',
                                                      self.tmp / 'calls.log')
         self.bin.mkdir()
-        for name, body in (('xcodebuild', FAKE_XCODEBUILD), ('gh', FAKE_GH)):
+        for name, body in (('xcodebuild', FAKE_XCODEBUILD), ('gh', FAKE_GH), ('notify', FAKE_NOTIFY)):
             (self.bin / name).write_text(body)
             (self.bin / name).chmod(0o755)
         self.repo.mkdir()
@@ -214,7 +298,7 @@ class PhoneBuildTests(unittest.TestCase):
                     'SM_PHONE_GH': str(self.bin / 'gh'), 'SM_PHONE_DISK_FREE_GB': '100',
                     'SM_LANE_XCODEBUILD': str(self.bin / 'xcodebuild'), 'SM_LANE_STATE_DIR': str(self.tmp / 'lane'),
                     'SM_LANE_MEMORY_PRESSURE': '1', 'FAKE_LOG': str(self.log), 'FAKE_TIP': self.tip,
-                    'FAKE_PLIST_KEY': '1'}
+                    'FAKE_PLIST_KEY': '1', 'SM_PHONE_NOTIFY': str(self.bin / 'notify')}
 
     def git(self, *args):
         return subprocess.run(['git', *args], cwd=str(self.repo), check=True, capture_output=True,
@@ -243,11 +327,13 @@ class PhoneBuildTests(unittest.TestCase):
         self.assertIn('(found on your phone)', plan)
         self.assertIn('play an article for a minute', plan)
         self.assertNotIn('Lane: retry evidence', plan)
-        self.assertIn('564 of 564', plan)
+        self.assertIn(f'Latest integration run for this commit: Lane report integration-{self.tip[:7]} — PASS.', plan)
+        self.assertIn(f'Latest journeys run for this commit: Lane report journeys-{self.tip[:7]} — PASS.', plan)
         builds = self.log.read_text()
         self.assertIn('-configuration Release', builds)
         self.assertIn('-allowProvisioningUpdates', builds)
         self.assertNotIn('build-for-testing', builds)  # the runner already tested this commit
+        self.assertIn(f'Commit {self.tip[:7]} is ready: 2 things to try.', builds)  # the owner's notification
         self.assertFalse(any((self.phone / '.work').iterdir()))  # scratch worktree and DerivedData gone
         self.assertNotIn('.work', self.git('worktree', 'list'))
 
@@ -283,6 +369,8 @@ class PhoneBuildTests(unittest.TestCase):
         done = self.run_build(FAKE_FAIL='error: errSecInternalComponent')
         self.assertEqual(done.returncode, 1)
         self.assertIn('Always Allow', done.stdout)
+        self.assertIn('phone build needs you', self.log.read_text())
+        self.assertNotIn('is ready', self.log.read_text())
         self.assertFalse((self.phone / 'latest').exists())
         self.assertTrue((self.phone / 'last-failure.log').exists())
         again = self.run_build('--if-changed')
@@ -336,6 +424,25 @@ class ListenerRuleTests(unittest.TestCase):
         self.assertFalse(facing(self.pr('Test that a Build 29 Library keeps completion',
                                         'App/SpokenMarginsAppTests/D.swift', 'App/SpokenMarginsApp/Sources/E.swift')))
 
+    def test_lane_work_is_not_listener_facing(self):
+        # #374 (stream:A1) touched fifteen SessionKit sources, all to build them on Linux (#504).
+        linux = self.pr("Run SessionKit's core tests on Linux (T1) and on every PR into next",
+                        'Packages/SessionKit/Sources/SessionKit/SessionEngine.swift', 'scripts/verify-tests.py')
+        self.assertTrue(self.module.listener_facing(linux))  # the paths alone would count it
+        linux['labels'] = {'nodes': [{'name': 'stream:A1'}, {'name': 'automerge'}]}
+        self.assertFalse(self.module.listener_facing(linux))
+
+    def test_owner_check_none_is_no_check(self):
+        # #124 says "**Owner check:** none." and the 9b0d275 plan printed "Check: none." (#504).
+        none = {'body': '**Where:** cloud.\n**Owner check:** none.\n**Taken by:** nobody yet.'}
+        self.assertIsNone(self.module.owner_check({'body': '', 'issues': [none]}))
+        self.assertIsNone(self.module.owner_check({'body': 'Owner check: n/a', 'issues': []}))
+        self.assertEqual(self.module.owner_check({'body': 'Owner check: open a chapter list.', 'issues': [none]}),
+                         'open a chapter list.')
+        self.assertIsNone(self.module.owner_check({'body': 'Owner check: nothing (lane only)', 'issues': []}))
+        real = {'body': '**Owner check:** Nothing plays twice after a call.\n'}
+        self.assertEqual(self.module.owner_check({'body': '', 'issues': [real]}), 'Nothing plays twice after a call.')
+
     def test_owner_check_prefers_the_issue(self):
         pr = {'body': 'Owner check: from the PR', 'issues': [{'body': 'x\n**Owner check:** from the issue\nmore'}]}
         self.assertEqual(self.module.owner_check(pr), 'from the issue')
@@ -346,6 +453,87 @@ class ListenerRuleTests(unittest.TestCase):
         issue = {'body': '**Steps:** open an article.\n**Expected:** a label that fits.\n'}
         self.assertEqual(self.module.owner_check({'body': '', 'issues': [issue]}),
                          'open an article. Expected: a label that fits.')
+
+
+class VerdictTests(unittest.TestCase):
+    """#444: the plan looked for the verdict on #337, but the integration run and the Test Desk post their
+    reports on #184, so a commit that passed read "No integration run has reported on this commit yet"."""
+
+    # Recorded from #184 on 2026-09-30 (bodies cut after their first lines).
+    RECORDED = [
+        {'user': {'login': 'uncomposed'}, 'created_at': '2026-09-30T13:58:52Z',
+         'body': "```text\nLane report integration-ebf1185 — PASS\ncommit ebf11851 (next's tip) · integration run: "
+                 '--plan app · simulator SM Lane Desk erase-approval (1330F268), iOS 26.5, erased first · about 15 min\n'
+                 'ran: --plan app (pass: 566 of 566 tests, 0 failures; build 47 s)\n```'},
+        {'user': {'login': 'uncomposed'}, 'created_at': '2026-09-30T15:26:25Z',
+         'body': "```text\nLane report integration-828597e — PASS\ncommit 828597e7 (next's tip) · integration run: "
+                 '--plan app · simulator SM Lane Desk erase-approval (1330F268), iOS 26.5, erased first · about 16 min '
+                 '(11:09–11:25)\nrun by: Test Desk\nran: --plan app (pass: 566 of 566 tests)\n```'},
+        {'user': {'login': 'uncomposed'}, 'created_at': '2026-09-30T15:41:23Z',
+         'body': '```text\nLane report journeys-828597e — PASS\ncommit 828597e7 · attended journeys after '
+                 'integration-828597e PASS\n```'},
+        {'user': {'login': 'uncomposed'}, 'created_at': '2026-09-30T15:50:00Z',
+         'body': '## Test Desk hand-off\n\nLane report integration-828597e — FAIL is not a first line.'},
+    ]
+
+    def setUp(self):
+        self.module = load_phone_build()
+        self.calls = []
+
+        def gh(*args):
+            self.calls.append(args)
+            # jq's @json leaves non-ASCII as is, U+2028 included
+            return ''.join(json.dumps(c['body'], ensure_ascii=False) + '\n' for c in self.RECORDED)
+        self.module.gh = gh
+
+    def test_the_integration_report_on_184_for_the_commit_is_found(self):
+        self.assertEqual(self.module.latest_verdict('828597e7' + '0' * 32), 'Lane report integration-828597e — PASS')
+        self.assertEqual(self.calls[0][1], 'repos/uncomposed/spoken-margins-native/issues/184/comments')
+
+    def test_a_report_for_another_commit_is_not_found(self):
+        self.assertIsNone(self.module.latest_verdict('1234567' + '0' * 33))
+        self.assertIsNone(self.module.latest_verdict('828597f' + '0' * 33))
+        self.assertEqual(self.module.latest_verdict('ebf11851' + '0' * 32), 'Lane report integration-ebf1185 — PASS')
+
+    def test_the_newest_report_for_the_commit_wins(self):
+        rerun = {'body': '```text\nLane report integration-828597e — FAIL\n```'}
+        self.RECORDED = self.RECORDED[:2] + [rerun]
+        self.assertEqual(self.module.latest_verdict('828597e' + '0' * 33), 'Lane report integration-828597e — FAIL')
+
+    def test_the_plan_shows_the_integration_and_journeys_reports(self):
+        module = self.module
+        module.plan_base = lambda sha: (None, 'the start')
+        module.merged_prs = lambda base, sha: {}
+        with tempfile.TemporaryDirectory() as folder:
+            plan = module.write_plan(Path(folder), '828597e7' + '0' * 32, 'host tests').read_text()
+        self.assertIn('Latest integration run for this commit: Lane report integration-828597e — PASS.', plan)
+        self.assertIn('Latest journeys run for this commit: Lane report journeys-828597e — PASS.', plan)
+        self.assertEqual(len(self.calls), 1)  # one read of #184 for both lines
+
+    def test_without_github_the_plan_says_the_verdict_is_unknown(self):
+        module = self.module
+        module.gh = lambda *args: None
+        module.plan_base = lambda sha: (None, 'the start')
+        module.merged_prs = lambda base, sha: {}
+        with tempfile.TemporaryDirectory() as folder:
+            plan = module.write_plan(Path(folder), '828597e7' + '0' * 32, 'host tests').read_text()
+        self.assertIn('GitHub could not be reached, so the integration verdict (on #184) is unknown.', plan)
+        self.assertNotIn('No integration run has reported', plan)  # it may have: nobody could look
+        self.assertNotIn('journeys run', plan)
+
+    def test_with_no_report_yet_the_plan_says_so(self):
+        self.RECORDED = self.RECORDED[:1]
+        self.module.plan_base = lambda sha: (None, 'the start')
+        self.module.merged_prs = lambda base, sha: {}
+        with tempfile.TemporaryDirectory() as folder:
+            plan = self.module.write_plan(Path(folder), '828597e7' + '0' * 32, 'host tests').read_text()
+        self.assertIn('No integration run has reported on this commit yet.', plan)
+
+    def test_odd_bodies_are_skipped_not_fatal(self):
+        line_separator = {'body': 'a note\u2028with a line separator'}
+        self.RECORDED = [{'body': None}, line_separator] + self.RECORDED
+        self.assertEqual(self.module.latest_verdict('828597e' + '0' * 33), 'Lane report integration-828597e — PASS')
+        self.assertEqual(self.module.report_comments()[0], 'a note\u2028with a line separator')  # None skipped
 
 
 class PlanGroupingTests(unittest.TestCase):
@@ -386,7 +574,7 @@ class PlanGroupingTests(unittest.TestCase):
         module.plan_base = lambda sha: (None, 'the start')
         module.merged_prs = lambda base, sha: {n: f'Merge pull request #{n}' for n in prs}
         module.fetch_prs = lambda numbers: prs
-        module.latest_verdict = lambda sha: None
+        module.report_comments = lambda: []
         with tempfile.TemporaryDirectory() as folder:
             plan = module.write_plan(Path(folder), 'a' * 40, 'host tests').read_text()
         self.assertEqual(plan.count('Follow a site with a feed and one without.'), 1, plan)
@@ -395,6 +583,64 @@ class PlanGroupingTests(unittest.TestCase):
         self.assertIn('1. **Follow sites without a feed** (found on your phone)', plan)
         self.assertIn('2. **Library wording**', plan)
         self.assertNotIn('3. ', plan)
+
+    def write(self, prs):
+        module = self.module
+        module.plan_base = lambda sha: (None, 'the start')
+        module.merged_prs = lambda base, sha: {n: f'Merge pull request #{n}' for n in prs}
+        module.fetch_prs = lambda numbers: prs
+        module.report_comments = lambda: []
+        with tempfile.TemporaryDirectory() as folder:
+            return module.write_plan(Path(folder), 'a' * 40, 'host tests').read_text()
+
+    def test_only_what_the_owner_can_check_is_in_the_ten_minutes(self):
+        # The 828597e plan (#504): one checkable item, one he couldn't judge, one that can't be seen on a phone.
+        linux = self.pr(374, "Run SessionKit's core tests on Linux (T1) and on every PR into next")
+        linux['labels'] = {'nodes': [{'name': 'stream:A1'}]}
+        chapters = self.pr(497, 'Article import: give closing notes one chapter', [
+            {'number': 124, 'title': 'Notes', 'url': 'https://example/issue/124', 'labels': {'nodes': []},
+             'body': '**Owner check:** none.\n'}])
+        fixed = self.pr(401, 'Voice keeps going after a call', [
+            {'number': 90, 'title': 'Voice stops', 'url': 'https://example/issue/90', 'body': 'It stopped.',
+             'labels': {'nodes': [{'name': 'found-on-phone'}]}}])
+        plan = self.write({
+            424: self.pr(424, "Show the build's commit in Settings", [self.issue(384, 'Double-click the Desktop icon.')]),
+            366: self.pr(366, 'Take the rendered speech cache out of the offline storage ledger'),
+            374: linux, 497: chapters, 401: fixed})
+        ten_minutes = plan.split('## Try these')[1].split('## ')[0]
+        self.assertIn("**Show the build's commit in Settings**", ten_minutes)
+        self.assertIn('Double-click the Desktop icon.', ten_minutes)
+        self.assertIn('**Voice keeps going after a call** (found on your phone)', ten_minutes)
+        self.assertIn('repeat what you did when you found it', ten_minutes)
+        self.assertNotIn('storage ledger', ten_minutes)
+        self.assertNotIn('closing notes', ten_minutes)
+        unchecked = plan.split('## Also changed (no phone check written)')[1].split('Behind the scenes')[0]
+        self.assertIn('- Take the rendered speech cache out of the offline storage ledger ([#366]', unchecked)
+        self.assertIn('- Article import: give closing notes one chapter ([#497]', unchecked)
+        self.assertNotIn('Linux', plan)
+        self.assertIn('5 pull requests merged; 4 change something you see or hear.', plan)
+        self.assertIn('Behind the scenes: 1 more pull requests', plan)
+        self.assertNotIn('Check: none', plan)
+        self.assertNotIn('look for what the title describes', plan)
+
+    def test_a_phone_found_bug_whose_check_says_none_is_not_in_the_ten_minutes(self):
+        # The 5d1e1d5 plan: #283 was found on the phone, but its fix shows only in a diagnostics export,
+        # so the issue says "Owner check: none." The plan still told the owner to repeat what found it.
+        diagnostics = self.pr(494, "Diagnostics: stop reporting the previous item's failure on a new item", [
+            self.issue(283, 'none. Optionally, in a later diagnostics export, a second item shows `failure: none`.',
+                       phone=True)])
+        plan = self.write({494: diagnostics})
+        ten_minutes = plan.split('## Try these')[1].split('## ')[0]
+        self.assertNotIn('Diagnostics', ten_minutes)
+        self.assertNotIn('repeat what you did', plan)
+        unchecked = plan.split('## Also changed (no phone check written)')[1]
+        self.assertIn("- Diagnostics: stop reporting the previous item's failure on a new item ([#494]", unchecked)
+
+    def test_with_no_written_checks_the_plan_says_so(self):
+        plan = self.write({366: self.pr(366, 'Take the rendered speech cache out of the offline storage ledger')})
+        self.assertIn('No phone checks were written for this build', plan)
+        self.assertNotIn('Use the app as usual', plan)
+        self.assertNotIn('1. ', plan)
 
 
 if __name__ == '__main__':

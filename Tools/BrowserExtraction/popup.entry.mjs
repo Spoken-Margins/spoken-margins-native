@@ -1,7 +1,8 @@
 import {
-  capturePageText,
+  capturePage,
   openNativeApp,
-  storePayload
+  storePayload,
+  storeRemotePDF
 } from "./popupCore.mjs";
 
 (function attachSpokenMarginsPopup(globalRef) {
@@ -21,8 +22,10 @@ import {
     readablePageButton.hidden = true;
     setStatus("Sending to Spoken Margins...");
     try {
-      const payload = await capturePageText(extensionAPI);
-      const openURL = await storePayload(extensionAPI, nativeApplicationID, payload);
+      const capture = await capturePage(extensionAPI);
+      const openURL = capture.pdfURL
+        ? await storeRemotePDF(extensionAPI, nativeApplicationID, capture.pdfURL)
+        : await storePayload(extensionAPI, nativeApplicationID, capture.payload);
       await openNativeApp(extensionAPI, openURL);
       setStatus("Opening Spoken Margins.");
     } catch (error) {

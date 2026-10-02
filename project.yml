@@ -173,6 +173,7 @@ targets:
         buildPhase: resources
       - path: App/SharedResources/Defuddle-LICENSE.txt
         buildPhase: resources
+      - path: App/Gate2Shared/Sources/SourceLinkHandoff.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.browsertext

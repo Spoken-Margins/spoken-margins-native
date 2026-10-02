@@ -28,6 +28,11 @@ public struct ParsedFeedItem: Equatable, Sendable {
     public var summary: String?
     public var publishedAt: Date?
     public var audioURL: String?
+    /// Episode length from `itunes:duration`, when the feed gives one.
+    public var durationMs: Int? = nil
+    /// The item's `<guid>`, Atom `id` or JSON Feed `id` as written, without the display cleanup
+    /// `id` gets; nil when the feed gives none (`id` then falls back to the link).
+    public var guid: String? = nil
 }
 
 public struct ParsedFeed: Equatable, Sendable {
@@ -124,7 +129,8 @@ public final class FeedParser: @unchecked Sendable {
                 author: author.map(sanitize),
                 summary: rawSummary.map(sanitize),
                 publishedAt: item.date_published.flatMap(formatter.date(from:)),
-                audioURL: audio
+                audioURL: audio,
+                guid: item.id?.nilIfEmpty
             )
         }
         return ParsedFeed(format: .json, title: sanitize(decoded.title), homePageURL: decoded.home_page_url, feedURL: decoded.feed_url, items: items)
@@ -181,10 +187,15 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
             switch name {
             case "title": item?.title = value
             case "link": if format == .rss && item?.url == nil { item?.url = value }
-            case "guid", "id": item?.id = value
+            case "guid", "id":
+                item?.id = value
+                // Kept as written: display cleanup would turn `episode&lt;42&gt;` into `episode`,
+                // while the direct RSS import keeps `episode<42>`, and the GUIDs must match.
+                item?.guid = text.trimmingCharacters(in: .whitespacesAndNewlines)
             case "description", "summary", "content", "encoded": item?.summary = value
             case "author", "creator", "name": if item?.author == nil { item?.author = value }
             case "pubdate", "published", "updated": item?.published = value
+            case "duration": item?.duration = value
             default: break
             }
         } else {
@@ -205,12 +216,14 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
 
 private struct ItemBuilder {
     var id: String?
+    var guid: String?
     var title: String?
     var url: String?
     var author: String?
     var summary: String?
     var published: String?
     var audioURL: String?
+    var duration: String?
     func build() -> ParsedFeedItem? {
         // Podcast feeds, paid ones especially, often give episodes audio and a GUID but no
         // <link> (#179). The enclosure then stands in for the link, so identity falls back to
@@ -228,8 +241,27 @@ private struct ItemBuilder {
             author: author?.nilIfEmpty,
             summary: summary?.nilIfEmpty,
             publishedAt: published.flatMap { formatter.date(from: $0) ?? rssFormatter.date(from: $0) },
-            audioURL: audioURL?.nilIfEmpty
+            audioURL: audioURL?.nilIfEmpty,
+            durationMs: duration.flatMap(FeedDuration.milliseconds(from:)),
+            guid: guid?.nilIfEmpty
         )
+    }
+}
+
+/// Parses `itunes:duration`, which feeds write as `hh:mm:ss`, `mm:ss` or plain seconds.
+enum FeedDuration {
+    static func milliseconds(from value: String) -> Int? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let parts = trimmed.split(separator: ":", omittingEmptySubsequences: false)
+        guard (1...3).contains(parts.count) else { return nil }
+        var seconds = 0.0
+        for part in parts {
+            guard let number = Double(part), number >= 0 else { return nil }
+            seconds = seconds * 60 + number
+        }
+        guard seconds.isFinite, seconds > 0, seconds < 1_000_000 else { return nil }
+        return Int((seconds * 1_000).rounded())
     }
 }
 

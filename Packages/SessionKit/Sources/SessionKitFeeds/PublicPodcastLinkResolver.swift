@@ -1,9 +1,14 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+#if canImport(FoundationXML)
+import FoundationXML
+#endif
 import SessionKit
-import SessionKitFeeds
 
-struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
-    typealias Fetch = @Sendable (URL) throws -> Data
+public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
+    public typealias Fetch = @Sendable (URL) throws -> Data
 
     private struct EpisodeEvidence {
         var title: String
@@ -32,13 +37,13 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
     private let fetch: Fetch
     private let asynchronousFetch: (@Sendable (URL) async throws -> Data)?
 
-    init(fetch: @escaping Fetch = PublicPodcastLinkResolver.fetchSynchronously,
+    public init(fetch: @escaping Fetch = PublicPodcastLinkResolver.fetchSynchronously,
          asynchronousFetch: (@Sendable (URL) async throws -> Data)? = nil) {
         self.fetch = fetch
         self.asynchronousFetch = asynchronousFetch
     }
 
-    func canonicalFeedURL(for url: URL) throws -> URL? {
+    public func canonicalFeedURL(for url: URL) throws -> URL? {
         guard url.scheme?.lowercased() == "https" else { return nil }
         if isApplePodcastsURL(url), let showId = appleShowId(in: url) {
             let data = try fetch(appleLookupURL(showId: showId))
@@ -65,7 +70,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         return nil
     }
 
-    func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
+    public func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
         let trimmed = request.inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), url.scheme?.lowercased() == "https" else {
             return unsupported(request: request, reason: "invalid_url")
@@ -113,7 +118,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         return try metadataOnlyResult(request: request, url: url, provider: url.host, reason: "audio_enclosure_not_found")
     }
 
-    func resolveAsync(
+    public func resolveAsync(
         _ request: LinkResolutionRequest,
         requestTimeoutSeconds: TimeInterval = 8,
         overallTimeoutSeconds: TimeInterval = 20
@@ -390,6 +395,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             showTitle: showTitle,
             durationMs: durationMs,
             publishedAt: publishedAt,
+            episodeGUID: episode["episodeGuid"] as? String,
             audioURL: audioURL,
             confidence: score
         )
@@ -660,6 +666,8 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 title: title ?? "Apple Podcasts Episode",
                 showTitle: episode["collectionName"] as? String,
                 durationMs: (episode["trackTimeMillis"] as? NSNumber)?.intValue,
+                publishedAt: episode["releaseDate"] as? String,
+                episodeGUID: episode["episodeGuid"] as? String,
                 audioURL: episodeURL,
                 publisherChapterCollections: appleDescriptionChapters(episode),
                 confidence: 0.95
@@ -715,6 +723,8 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 title: title ?? "Apple Podcasts Episode",
                 showTitle: episode["collectionName"] as? String,
                 durationMs: (episode["trackTimeMillis"] as? NSNumber)?.intValue,
+                publishedAt: episode["releaseDate"] as? String,
+                episodeGUID: episode["episodeGuid"] as? String,
                 audioURL: episodeURL,
                 publisherChapterCollections: appleDescriptionChapters(episode),
                 confidence: 0.95
@@ -816,6 +826,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             showTitle: selected.feedTitle,
             durationMs: selected.durationMs,
             publishedAt: selected.publishedAt,
+            episodeGUID: selected.guid,
             audioURL: audioURL,
             transcriptLinks: selected.transcriptLinks,
             chapterLinks: selected.chapterLinks,
@@ -855,6 +866,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             showTitle: selected.feedTitle,
             durationMs: selected.durationMs,
             publishedAt: selected.publishedAt,
+            episodeGUID: selected.guid,
             audioURL: audioURL,
             transcriptLinks: selected.transcriptLinks,
             chapterLinks: selected.chapterLinks,
@@ -993,6 +1005,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             showTitle: item.feedTitle,
             durationMs: item.durationMs,
             publishedAt: item.publishedAt,
+            episodeGUID: item.guid,
             audioURL: item.enclosureURL,
             transcriptLinks: item.transcriptLinks,
             chapterLinks: item.chapterLinks,
@@ -1379,7 +1392,9 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         return Int(text[valueRange])
     }
 
-    private static func fetchSynchronously(_ url: URL) throws -> Data {
+    // Internal, not private: a public initializer's default argument must be usable from inlinable code.
+    @usableFromInline
+    static func fetchSynchronously(_ url: URL) throws -> Data {
         var request = URLRequest(url: url)
         request.timeoutInterval = 8
         request.setValue("SpokenMargins/0.1", forHTTPHeaderField: "User-Agent")
@@ -1462,6 +1477,13 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
     private var isInItem = false
     private var isInPodloveChapters = false
 
+    /// Substack lists each text post's cover image as an `image/jpeg` enclosure, so a shared text post looked like an
+    /// episode whose audio was a picture (#223). An enclosure without a type stays: some podcast feeds omit it.
+    static func mayBePlayable(enclosureType: String?) -> Bool {
+        let type = (enclosureType ?? "").lowercased()
+        return !type.hasPrefix("image/") && !type.hasPrefix("text/")
+    }
+
     func parse(data: Data) -> [RSSFeedItem] {
         let parser = XMLParser(data: data)
         parser.shouldProcessNamespaces = true
@@ -1478,7 +1500,7 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
         if element == "item" || element == "entry" {
             isInItem = true
             currentItem = RSSFeedItem(feedTitle: feedTitle)
-        } else if isInItem, element == "enclosure" {
+        } else if isInItem, element == "enclosure", Self.mayBePlayable(enclosureType: attributeDict["type"]) {
             currentItem?.enclosureURL = attributeDict["url"]
         } else if isInItem, element == "link", let href = attributeDict["href"], currentItem?.link == nil {
             currentItem?.link = href

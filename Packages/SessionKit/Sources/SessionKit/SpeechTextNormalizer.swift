@@ -102,7 +102,68 @@ public enum SpeechTextNormalizer {
             rendered = speakReferenceMarkers(in: rendered)
             rendered = speakDefangedDomains(in: rendered)
         }
-        return removeLinks(in: rendered)
+        rendered = removeLinks(in: rendered)
+        if speakIdentifiers {
+            rendered = speakLinkAndEmailFragments(in: rendered)
+        }
+        return rendered
+    }
+
+    /// Characters that can be part of one URL or address token. Brackets and quotes end it, so
+    /// "(portal/content/acl-code-ethics)" keeps its parentheses around the replacement.
+    private static let addressTokenCharacters = #"[^\s()\[\]<>"“”]"#
+
+    /// URLs and addresses that survive link removal, usually because PDF extraction dropped
+    /// their first line, were read as words ("portal content, ACL code ethics") (#358). A token
+    /// holding "@" before a letter or digit is spoken as "email"; a token with two or more "/"
+    /// and a letter (not a date like 1/2/2024) as "link". Trailing sentence punctuation stays.
+    /// Parentheses or brackets left empty by removed links are dropped.
+    private static func speakLinkAndEmailFragments(in input: [MappedCharacter]) -> [MappedCharacter] {
+        let token = addressTokenCharacters
+        var rendered = replace(pattern: "\(token)*@[A-Za-z0-9]\(token)*", in: input) { match, text, characters in
+            spokenAddress("email", match: match, text: text, characters: characters)
+        }
+        rendered = replace(pattern: "\(token)*/\(token)*/\(token)*", in: rendered) { match, text, characters in
+            guard let range = Range(match.range, in: text), looksLikeURLPath(String(text[range])) else {
+                return matchedCharacters(match, text: text, characters: characters)
+            }
+            return spokenAddress("link", match: match, text: text, characters: characters)
+        }
+        return replace(pattern: #"\(\s*\)|\[\s*\]"#, in: rendered, replacement: spaceReplacement)
+    }
+
+    /// A slash-separated token that reads as a URL, not as prose: it names a domain
+    /// ("royalsocietypublishing.org/journal/rsos") or is a lowercase path with a hyphen, dot or
+    /// underscore ("portal/content/acl-code-ethics"). Lists and units in papers stay words:
+    /// "T/NK/ILC", "p53/Mdm2/Mdmx", "Live/CD31−/CD45−", "v/cm/mm", "102905/Z/13/Z".
+    static func looksLikeURLPath(_ token: String) -> Bool {
+        let trimmed = token.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?"))
+        if trimmed.range(of: #"[A-Za-z0-9]\.[A-Za-z]{2,}"#, options: .regularExpression) != nil { return true }
+        let segments = trimmed.split(separator: "/").map(String.init)
+        guard segments.count >= 2,
+              segments.allSatisfy({ $0.range(of: #"^[a-z0-9._~%-]+$"#, options: .regularExpression) != nil }),
+              segments.contains(where: { $0.contains(where: { "-._".contains($0) }) }),
+              trimmed.contains(where: \.isLetter) else { return false }
+        return true
+    }
+
+    private static func spokenAddress(
+        _ word: String,
+        match: NSTextCheckingResult,
+        text: String,
+        characters: [MappedCharacter]
+    ) -> [MappedCharacter] {
+        let matched = matchedCharacters(match, text: text, characters: characters)
+        guard let first = matched.first else { return [] }
+        let trailing = matched.reversed().prefix { ".,;:!?".contains($0.character) }.reversed()
+        return mappedCharacters(word, sourceOffset: first.sourceOffset) + trailing
+    }
+
+    private static func matchedCharacters(_ match: NSTextCheckingResult, text: String, characters: [MappedCharacter]) -> [MappedCharacter] {
+        guard let range = Range(match.range, in: text) else { return [] }
+        let lower = text.distance(from: text.startIndex, to: range.lowerBound)
+        let upper = text.distance(from: text.startIndex, to: range.upperBound)
+        return Array(characters[lower..<upper])
     }
 
     private static func speakReferenceMarkers(in input: [MappedCharacter]) -> [MappedCharacter] {
@@ -311,18 +372,7 @@ public enum SpeechTextNormalizer {
     }
 
     private static func removeLinks(in input: [MappedCharacter]) -> [MappedCharacter] {
-        var rendered = input
-
-        let markdownPattern = #"\[([^\]]+)\]\((https?://[^)\s]+|www\.[^)\s]+|[^)\s]+\.[^)\s]+)\)"#
-        rendered = replace(pattern: markdownPattern, in: rendered) { match, text, characters in
-            guard match.numberOfRanges > 1,
-                  let range = Range(match.range(at: 1), in: text) else {
-                return []
-            }
-            let lower = text.distance(from: text.startIndex, to: range.lowerBound)
-            let upper = text.distance(from: text.startIndex, to: range.upperBound)
-            return Array(characters[lower..<upper])
-        }
+        var rendered = removeMarkdownLinks(in: input, onlyEmptyDestinations: false)
 
         let rawURLPattern = #"(?i)\b(?:https?://|www\.)[^\s<>()]+"#
         rendered = replace(pattern: rawURLPattern, in: rendered) { _, _, _ in [] }
@@ -334,6 +384,43 @@ public enum SpeechTextNormalizer {
         rendered = replace(pattern: bareDomainPattern, in: rendered) { _, _, _ in [] }
 
         return rendered
+    }
+
+    /// Removes the links that imports before #560 left in an item's text with their title and no
+    /// URL, `[book]( "Book")`. Display text such as a Margin note's context runs through this;
+    /// nothing else in the text changes, so notes without those links stay byte-for-byte the same.
+    /// The other remnant, `margins "Margin (typography)")` from a URL with parentheses, can't be
+    /// told apart from a quoted title in prose, so it stays until the article is shared again.
+    static func removingLinkTitleRemnants(from text: String) -> String {
+        let mapped = text.enumerated().map { MappedCharacter(character: $0.element, sourceOffset: $0.offset) }
+        return String(removeMarkdownLinks(in: mapped, onlyEmptyDestinations: true).map(\.character))
+    }
+
+    /// A Markdown link keeps only its text. The destination may hold parentheses
+    /// (`https://en.wikipedia.org/wiki/Margin_(typography)`) and may be followed by a title
+    /// (`[book](https://en.wikipedia.org/wiki/Book "Book")`), which Wikipedia gives nearly every
+    /// link; the title was read aloud after the link text (#560). A destination that doesn't look
+    /// like a link (`[1](2)`) is left as written, unless it is empty and has a title: that is a
+    /// link whose URL an earlier import already removed.
+    private static func removeMarkdownLinks(in input: [MappedCharacter], onlyEmptyDestinations: Bool) -> [MappedCharacter] {
+        let destination = #"(?:[^()\s"]|\([^()\s"]*\)|\()*"#
+        let title = #"\s+(?:"[^"\n]*"|'[^'\n]*')"#
+        let pattern = #"\[([^\]]+)\]\(\s*("# + destination + #")("# + title + #")?\s*\)"#
+        return replace(pattern: pattern, in: input) { match, text, characters in
+            guard let textRange = Range(match.range(at: 1), in: text),
+                  let destinationRange = Range(match.range(at: 2), in: text) else {
+                return matchedCharacters(match, text: text, characters: characters)
+            }
+            let target = text[destinationRange]
+            let hasTitle = match.range(at: 3).location != NSNotFound
+            let isLink = target.isEmpty
+                ? hasTitle
+                : !onlyEmptyDestinations && target.range(of: #"^(?:https?://|www\.)\S|\S\.\S"#, options: .regularExpression) != nil
+            guard isLink else { return matchedCharacters(match, text: text, characters: characters) }
+            let lower = text.distance(from: text.startIndex, to: textRange.lowerBound)
+            let upper = text.distance(from: text.startIndex, to: textRange.upperBound)
+            return Array(characters[lower..<upper])
+        }
     }
 
     private static func finish(_ input: [MappedCharacter], sourceLength: Int) -> NormalizedSpeechText {

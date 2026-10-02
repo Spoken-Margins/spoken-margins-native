@@ -11,6 +11,8 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     private static let sessionScopedRecordKinds: Set<String> = ["interjection", "turn", "ai_job"]
     private var db: OpaquePointer?
     private let connectionLock = NSRecursiveLock()
+    /// How many `withTransaction` calls are open on this connection. Guarded by `connectionLock`.
+    private var transactionDepth = 0
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
@@ -535,6 +537,16 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
 
     public func deleteOwnedOfflineAsset(id: String) throws { try deleteRecord(kind: "owned_offline_asset", id: id) }
 
+    @discardableResult
+    public func updateOwnedOfflineAsset(id: String, _ change: (inout OwnedOfflineAsset) -> Void) throws -> OwnedOfflineAsset? {
+        try withTransaction {
+            guard var asset: OwnedOfflineAsset = try loadOptional(kind: "owned_offline_asset", id: id) else { return nil }
+            change(&asset)
+            try saveOwnedOfflineAsset(asset)
+            return asset
+        }
+    }
+
     public func saveOfflineStorageReservation(_ reservation: OfflineStorageReservation) throws {
         try save(kind: "offline_storage_reservation", id: reservation.id, sessionId: nil, itemId: nil, value: reservation)
     }
@@ -547,6 +559,25 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
 
     public func saveFeedSubscription(_ subscription: FeedSubscription) throws {
         try save(kind: "feed_subscription", id: subscription.id, sessionId: nil, itemId: nil, value: subscription)
+    }
+
+    /// Collections are their own record kind with no item_id, so Build 29 (which reads every
+    /// record by an explicit kind) never sees them, and deleting an item never deletes one (#489).
+    public func saveItemCollection(_ collection: ItemCollection) throws {
+        try save(kind: "item_collection", id: collection.id, sessionId: nil, itemId: nil, value: collection)
+    }
+
+    /// Oldest first, so the listener's collections keep a stable order.
+    public func loadItemCollections() throws -> [ItemCollection] {
+        let collections: [ItemCollection] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;",
+            ["item_collection"]
+        )
+        return collections.sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
+    }
+
+    public func deleteItemCollection(id: String) throws {
+        try deleteRecord(kind: "item_collection", id: id)
     }
 
     public func loadFeedSubscriptions() throws -> [FeedSubscription] {
@@ -943,9 +974,16 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         }
     }
 
+    /// Runs `operation` in one transaction. A call made inside another joins the open transaction, because
+    /// SQLite can't nest them: a read inside `updateOwnedOfflineAsset` that meets a malformed row quarantines
+    /// it in the update's transaction (#529 audit). If anything in the outer transaction throws, all of it
+    /// rolls back, the quarantine included, and the next read quarantines the row again.
     private func withTransaction<T>(_ operation: () throws -> T) throws -> T {
         try withConnectionLock {
+            guard transactionDepth == 0 else { return try operation() }
             try execute("BEGIN IMMEDIATE TRANSACTION;")
+            transactionDepth += 1
+            defer { transactionDepth -= 1 }
             do {
                 let result = try operation()
                 try execute("COMMIT;")

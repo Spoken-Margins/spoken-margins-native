@@ -5,9 +5,15 @@
 # over the app already on the one iPhone plugged into this Mac. Installing over the app keeps its
 # Library and recordings. It never uninstalls or deletes the app. Then it records the installed
 # commit in ~/SpokenMargins-phone/installed.txt, so the next build's test plan starts from here,
-# and opens this build's test-plan.md.
+# and opens this build's test-plan.md. It also copies the plan to iCloud Drive (folder "Spoken Margins
+# test plans", the newest five kept), so the owner can read it on the phone away from the Mac.
 #
-# Tests: SM_PHONE_DIR replaces ~/SpokenMargins-phone; scripts/tests put a fake xcrun on PATH.
+# If installed.txt already names the newest build, it says so and changes nothing, unless the
+# owner types R to reinstall (#500). It also says whether a newer build is being made right now
+# (a scratch folder in ~/SpokenMargins-phone/.work) or the newest attempt failed (last-attempt.json).
+#
+# Tests: SM_PHONE_DIR replaces ~/SpokenMargins-phone, SM_PHONE_ICLOUD the iCloud Drive folder;
+# scripts/tests put a fake xcrun on PATH.
 set -u
 
 phone_dir="${SM_PHONE_DIR:-$HOME/SpokenMargins-phone}"
@@ -34,7 +40,83 @@ app="$latest/SpokenMarginsApp.app"
 sha=$(/usr/bin/plutil -extract sha raw -o - "$latest/build.json" 2>/dev/null)
 built=$(/usr/bin/plutil -extract built_at raw -o - "$latest/build.json" 2>/dev/null)
 [[ "$sha" == [0-9a-f]* && ${#sha} -eq 40 ]] || stop "The newest build's build.json has no commit. Make a fresh build with scripts/phone-build."
-print -r -- "Build: commit ${sha[1,7]}, built ${built:-at an unknown time}."
+# First line: "same" when installed.txt names this build, else "new". Then the lines to show.
+build_status=$(/usr/bin/python3 - "$phone_dir" "$sha" "$built" <<'PY'
+import datetime, json, re, sys
+from pathlib import Path
+
+phone, sha, built = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+now = datetime.datetime.now()
+
+def when(at):
+    if at.date() == now.date():
+        return f'today at {at:%H:%M}'
+    if at.date() == (now - datetime.timedelta(days=1)).date():
+        return f'yesterday at {at:%H:%M}'
+    return f'{at:%b %-d} at {at:%H:%M}'
+
+def parse(stamp):
+    try:
+        return datetime.datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return None
+
+# A build running now keeps a scratch folder named <date-time>-<sha7>; older than 90 minutes is a leftover.
+progress = None
+work = phone / '.work'
+for folder in sorted(work.iterdir(), reverse=True) if work.is_dir() else []:
+    found = re.fullmatch(r'(\d{8}-\d{6})-([0-9a-f]{7})', folder.name)
+    started = found and datetime.datetime.strptime(found.group(1), '%Y%m%d-%H%M%S')
+    if started and found.group(2) != sha[:7] and now - started < datetime.timedelta(minutes=90):
+        progress = (f'A newer build is being made right now: commit {found.group(2)}, started {when(started)}. '
+                    'It takes about 5 to 15 minutes, and a Mac notification says when it is ready.')
+        break
+if progress is None:
+    try:
+        attempt = json.loads((phone / 'last-attempt.json').read_text())
+    except (OSError, ValueError):
+        attempt = {}
+    result = str(attempt.get('result', ''))
+    if attempt.get('sha') and attempt['sha'] != sha and result.startswith('failed'):
+        at = parse(attempt.get('at'))
+        progress = (f'The newest attempt, commit {attempt["sha"][:7]}, failed{" " + when(at) if at else ""}: '
+                    f'{result[len("failed"):].lstrip(": ")}. The next change on next gets a fresh try.')
+
+try:
+    words = (phone / 'installed.txt').read_text().split()
+except OSError:
+    words = []
+at = parse(built)
+print('same' if words and words[0] == sha else 'new')
+print(f'Newest build: commit {sha[:7]}, built {when(at) if at else "at an unknown time"}.')
+if words and words[0] == sha:
+    at = parse(words[1] if len(words) > 1 else None)
+    name = ' '.join(words[2:]) or 'Your iPhone'
+    print(f'{name} already has this build: commit {sha[:7]}, installed {when(at) if at else "earlier"}.')
+    print(progress or 'No newer build yet. One starts within about 10 minutes of a change landing on next, '
+          'and a Mac notification says when it is ready.')
+else:
+    if words and re.fullmatch(r'[0-9a-f]{7,40}', words[0]):
+        at = parse(words[1] if len(words) > 1 else None)
+        print(f'Your phone has commit {words[0][:7]}{", installed " + when(at) if at else ""}. This build is newer.')
+    else:
+        print('No install is recorded on this Mac yet.')
+    if progress:
+        print(progress)
+PY
+)
+if [[ "${build_status%%$'\n'*}" == same ]]; then
+  print -r -- "${build_status#*$'\n'}"
+  print -r -- ""
+  print -r -- "Nothing on the phone was changed."
+  print -r -- "To reinstall this build anyway (say, after installing from Xcode or TestFlight), type R and press Return. Otherwise close this window."
+  answer=""
+  read -r answer || answer=""
+  [[ "$answer" == [Rr]* ]] || exit 0
+  print -r -- ""
+else
+  print -r -- "${build_status#*$'\n'}"
+fi
 
 xcrun devicectl list devices --json-output "$work/devices.json" >"$work/list.log" 2>&1 \
   || stop "Couldn't list devices (xcrun devicectl failed). Is Xcode installed? Details: $(tail -3 "$work/list.log")"
@@ -83,4 +165,16 @@ fi
 print -r -- "$sha $(date '+%Y-%m-%dT%H:%M:%S') $name" > "$phone_dir/installed.txt"
 print -r -- ""
 print -r -- "Done: $name now runs commit ${sha[1,7]}. Opening the test plan."
+
+# The phone reads the plan from iCloud Drive (Files app > iCloud Drive > Spoken Margins test plans).
+# Only "Test plan <commit>.md" files are ours; anything else in the folder is left alone.
+icloud="${SM_PHONE_ICLOUD:-$HOME/Library/Mobile Documents/com~apple~CloudDocs/Spoken Margins test plans}"
+if [[ -f "$latest/test-plan.md" ]] && { [[ -d "$icloud" ]] || mkdir "$icloud" 2>/dev/null; } \
+    && cp "$latest/test-plan.md" "$icloud/Test plan ${sha[1,7]}.md" 2>/dev/null; then
+  old=("$icloud"/Test\ plan\ *.md(Nom[6,-1]))
+  (( ${#old} )) && rm -f -- "${old[@]}"
+  print -r -- "The test plan is also on your phone: Files > iCloud Drive > Spoken Margins test plans > Test plan ${sha[1,7]}."
+else
+  print -r -- "(I couldn't copy the test plan to iCloud Drive, so it's only on this Mac.)"
+fi
 open "$latest/test-plan.md"

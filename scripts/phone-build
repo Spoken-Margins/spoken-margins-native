@@ -29,7 +29,10 @@ pass; bugs are fine, crashes the runners would catch are not):
   gets `verify-tests.py --plan fast` and a simulator build-for-testing here first.
 - A commit that failed once isn't retried by --if-changed; a newer tip is.
 
+The owner gets a macOS notification when a new build is ready, and when signing needs him (#500).
+
 Environment (tests): SM_PHONE_DIR (default ~/SpokenMargins-phone), SM_PHONE_KEEP (3),
+SM_PHONE_NOTIFY (the notification command, default osascript; `off` skips it),
 SM_PHONE_DISK_FREE_GB (instead of measuring), SM_LANE_* (scripts/lane_slots.py, xcodebuild-lane),
 SM_PHONE_GH (the gh command), SM_PHONE_NO_FETCH=1 (skip the fetch), SM_PHONE_REPO (the repo to
 build from; default this checkout).
@@ -56,7 +59,7 @@ import lane_slots  # noqa: E402
 
 REPO = 'uncomposed/spoken-margins-native'
 BRANCH = 'next'
-STATUS_ISSUE = 337
+REPORTS_ISSUE = 184      # where the integration run and the Test Desk post their lane reports
 DISK_FLOOR_GB = 10
 DISK_PER_BUILD_GB = 4
 PLAN_CHECKS = 8          # about a minute each, plus the install: roughly ten minutes
@@ -80,6 +83,9 @@ LISTENER_PATHS = ('App/', 'Packages/SessionKit/Sources/')
 NOT_LISTENER_PATHS = ('App/SpokenMarginsAppTests/', 'App/SpokenMarginsAppUITests/', 'App/TestFixtures/')
 NOT_LISTENER_TITLE = re.compile(r'to its own file|^(tests?|docs|lane|runner|verify-tests)\b|^test ', re.I)
 FIRST_ON_PHONE = {'found-on-phone', 'regression'}
+NOT_LISTENER_LABELS = {'stream:A1'}  # the test lane: its SessionKit edits are compile guards, not behaviour
+# "Owner check: none." (or "n/a", "nothing (lane only)") isn't a check; "Nothing plays twice ..." is (#504).
+NO_CHECK = re.compile(r'^(none|n/?a|nothing)\s*(?:[.;:,(\u2014\u2013]|-\s|$)', re.I)
 
 
 # ---- small helpers ------------------------------------------------------------------------------
@@ -259,21 +265,39 @@ def fetch_prs(numbers: list[int]) -> dict[int, dict] | None:
 def listener_facing(pr: dict) -> bool:
     """Changes something a listener sees or hears: the scorecard's rule on #337, made mechanical.
 
-    App code or SessionKit sources changed (tests and fixtures don't count), and the title isn't a
-    pure move, test or tooling change.
+    App code or SessionKit sources changed (tests and fixtures don't count), the title isn't a pure
+    move, test or tooling change, and it isn't lane work (#374 touched SessionKit only to build on Linux).
     """
+    if NOT_LISTENER_LABELS & labels(pr):
+        return False
     paths = [node['path'] for node in pr['files']['nodes']]
     touches = any(p.startswith(LISTENER_PATHS) and not p.startswith(NOT_LISTENER_PATHS) for p in paths)
     return touches and not NOT_LISTENER_TITLE.search(pr['title'])
 
 
-def owner_check(pr: dict) -> str | None:
-    """The issue's "Owner check" line; else a bug report's Steps and Expected; else the PR's own."""
+def written_checks(pr: dict) -> list[str]:
+    """Every "Owner check" line, issues first, then the PR's own."""
     texts = [issue.get('body') or '' for issue in pr['issues']] + [pr.get('body') or '']
-    for text in texts:
-        found = re.search(r'\*\*Owner check:?\*\*:?\s*(.+)', text) or re.search(r'(?m)^Owner check:\s*(.+)', text)
-        if found:
-            return found.group(1).strip()
+    found = [re.search(r'\*\*Owner check:?\*\*:?\s*(.+)', text) or re.search(r'(?m)^Owner check:\s*(.+)', text)
+             for text in texts]
+    return [match.group(1).strip() for match in found if match]
+
+
+def says_no_check(pr: dict) -> bool:
+    """An issue or the PR says "Owner check: none" and nothing gives a real one."""
+    checks = written_checks(pr)
+    return bool(checks) and all(NO_CHECK.match(check) for check in checks)
+
+
+def owner_check(pr: dict) -> str | None:
+    """The issue's "Owner check" line; else a bug report's Steps and Expected; else the PR's own.
+
+    "Owner check: none" counts as no check, so it never reaches the plan as a thing to try.
+    """
+    for check in written_checks(pr):
+        if not NO_CHECK.match(check):
+            return check
+    texts = [issue.get('body') or '' for issue in pr['issues']] + [pr.get('body') or '']
     for text in texts:
         steps = re.search(r'\*\*Steps:?\*\*:?\s*(.+)', text)
         expected = re.search(r'\*\*Expected:?\*\*:?\s*(.+)', text)
@@ -305,17 +329,48 @@ def plan_entries(facing: list[dict]) -> list[list[dict]]:
     return entries
 
 
+def found_on_phone(entry: list[dict]) -> bool:
+    return any(FIRST_ON_PHONE & labels(issue) for pr in entry for issue in pr['issues'])
+
+
 def labels(item: dict) -> set[str]:
     return {node['name'] for node in item.get('labels', {}).get('nodes', [])}
 
 
-def latest_verdict(sha: str) -> str | None:
-    """The newest integration-run line on #337 that names this commit, if any."""
-    raw = gh('api', f'repos/{REPO}/issues/{STATUS_ISSUE}/comments', '--paginate', '--jq',
-             f'.[] | select(.body | contains("{sha[:7]}")) | select(.body | contains("integration run")) '
-             '| .body | split("\\n")[0]')
-    lines = [line for line in (raw or '').splitlines() if line.strip()]
-    return lines[-1].replace('**', '') if lines else None
+def report_comments() -> list[str] | None:
+    """The bodies of the comments on #184, oldest first; None when gh fails (the plan says unknown)."""
+    raw = gh('api', f'repos/{REPO}/issues/{REPORTS_ISSUE}/comments', '--paginate', '--jq', '.[] | .body | @json')
+    if raw is None:
+        return None
+    bodies = []
+    for line in raw.split('\n'):  # not splitlines(): JSON leaves U+2028 and friends unescaped
+        try:
+            body = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(body, str):
+            bodies.append(body)
+    return bodies
+
+
+def report_line(bodies: list[str], kind: str, sha: str) -> str | None:
+    """The first line of the newest `Lane report <kind>-<sha7>` report, if any.
+
+    The reports are posted inside a ```text fence, so the fence and blank lines before it are skipped.
+    """
+    wanted = f'Lane report {kind}-{sha[:7]}'
+    for body in reversed(bodies):
+        lines = [line.strip().replace('**', '') for line in body.splitlines()]
+        first = next((line for line in lines if line and not line.startswith('```')), '')
+        if first.startswith(wanted) and first[len(wanted):len(wanted) + 1] in ('', ' '):
+            return first
+    return None
+
+
+def latest_verdict(sha: str, bodies: list[str] | None = None) -> str | None:
+    """The newest integration report on #184 for this commit, whoever ran it (#444)."""
+    bodies = report_comments() if bodies is None else bodies
+    return report_line(bodies, 'integration', sha) if bodies is not None else None
 
 
 def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) -> Path:
@@ -328,9 +383,15 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
              f'Built {datetime.datetime.now().strftime("%Y-%m-%d %H:%M")} from next at `{sha[:7]}`. {where}.', '',
              f'Changes since {base_why}.', '',
              f'Checks before this build: {checks}.', '']
-    verdict = latest_verdict(sha)
+    reports = report_comments()
+    verdict = latest_verdict(sha, reports) if reports is not None else None
     lines += [f'Latest integration run for this commit: {verdict}.' if verdict else
-              'No integration run has reported on this commit yet.', '']
+              'No integration run has reported on this commit yet.' if reports is not None else
+              f'GitHub could not be reached, so the integration verdict (on #{REPORTS_ISSUE}) is unknown.']
+    journeys = report_line(reports, 'journeys', sha) if reports is not None else None
+    if journeys:
+        lines.append(f'Latest journeys run for this commit: {journeys}.')
+    lines.append('')
     path = folder / 'test-plan.md'
     if prs is None:
         lines += ['GitHub could not be reached, so here are the merges by title only:', '']
@@ -344,30 +405,41 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     facing.sort(key=lambda pr: (0 if any(FIRST_ON_PHONE & labels(i) for i in pr['issues']) else 1,
                                 0 if owner_check(pr) else 1))
     entries = plan_entries(facing)
-    budget = entries[:PLAN_CHECKS]
-    rest = entries[PLAN_CHECKS:]
+    # Only what the owner can check goes in the ten minutes: a written check, or a bug his phone found (#504),
+    # unless its issue says "Owner check: none" (#283's fix shows only in a diagnostics export).
+    checkable = [entry for entry in entries if any(map(owner_check, entry))
+                 or (found_on_phone(entry) and not all(map(says_no_check, entry)))]
+    unchecked = [entry for entry in entries if entry not in checkable]
+    budget = checkable[:PLAN_CHECKS]
+    rest = checkable[PLAN_CHECKS:]
     if not ordered:
         lines += ['Nothing new since that build: this is the same code, rebuilt.', '']
     lines += [f'{len(ordered)} pull requests merged; {len(facing)} change something you see or hear.', '',
               '## Try these (about ten minutes)', '']
     if not budget:
-        lines += ['Nothing a listener would notice changed. Use the app as usual for ten minutes.', '']
+        lines += ['No phone checks were written for this build; the changes you might notice are listed below.'
+                  if unchecked else 'Nothing a listener would notice changed. Use the app as usual for ten minutes.', '']
     for index, entry in enumerate(budget, 1):
         pr = entry[0]
         issues = list({issue['number']: issue for member in entry for issue in member['issues']}.values())
-        tag = ' (found on your phone)' if any(FIRST_ON_PHONE & labels(issue) for issue in issues) else ''
+        tag = ' (found on your phone)' if found_on_phone(entry) else ''
         check = next((found for found in map(owner_check, entry) if found), None)
         links = [f'[PR #{member["number"]}]({member["url"]})' for member in entry]
         links += [f'[issue #{issue["number"]}]({issue["url"]})' for issue in issues]
         lines += [f'{index}. **{pr["title"]}**{tag}',
-                  f'   - Check: {check or "no check was written; look for what the title describes."}',
+                  f'   - Check: {check or "repeat what you did when you found it, and see that it is fixed."}',
                   f'   - Links: {", ".join(links)}', '']
+
+    def titles(group):
+        return [f'- {entry[0]["title"]} (' + ', '.join(f'[#{pr["number"]}]({pr["url"]})' for pr in entry) + ')'
+                for entry in group]
     if rest:
-        lines += ['## Also changed (not in the ten minutes)', '']
-        lines += [f'- {entry[0]["title"]} (' + ', '.join(f'[#{pr["number"]}]({pr["url"]})' for pr in entry) + ')'
-                  for entry in rest]
-        lines += ['']
-    lines += [f'Behind the scenes: {behind} more pull requests changed only tests, scripts or docs.', '',
+        lines += ['## Also changed (not in the ten minutes)', ''] + titles(rest) + ['']
+    if unchecked:
+        lines += ['## Also changed (no phone check written)', '',
+                  "You don't need to test these. If one seems off while you use the app, open a "
+                  '`found-on-phone` issue.', ''] + titles(unchecked) + ['']
+    lines += [f'Behind the scenes: {behind} more pull requests changed only tests, scripts, docs or the test lane.', '',
               '## If something is wrong', '',
               f'Open an issue labelled `found-on-phone` and name this build: commit `{sha[:7]}`.', '']
     path.write_text('\n'.join(lines))
@@ -431,6 +503,31 @@ def point_latest(folder: Path) -> None:
         temporary.unlink()
     os.symlink(folder.name, temporary)
     os.replace(temporary, link)
+
+
+def notify(title: str, message: str) -> None:
+    """Post a macOS notification (Notification Center keeps it). Never fails the build."""
+    command = os.environ.get('SM_PHONE_NOTIFY', 'osascript')
+    if command == 'off':
+        return
+    script = ['-e', 'on run argv', '-e',
+              'display notification (item 1 of argv) with title (item 2 of argv) sound name "Glass"', '-e', 'end run']
+    try:
+        subprocess.run([*command.split(), *script, message, title], capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def notify_ready(sha: str, plan: Path) -> None:
+    try:
+        count = len(re.findall(r'(?m)^\d+\. \*\*', plan.read_text()))
+    except OSError:
+        count = 0
+    things = (f'{count} thing{"" if count == 1 else "s"} to try' if count else
+              'nothing a listener would notice changed')
+    notify('Spoken Margins: new phone build',
+           f'Commit {sha[:7]} is ready: {things}. Plug in your iPhone and double-click '
+           '"Install Spoken Margins on iPhone" on the Desktop.')
 
 
 def record_attempt(sha: str, result: str) -> None:
@@ -499,6 +596,7 @@ def build(sha: str) -> int:
         prune()
         say(f'done: {folder}')
         say(f'app {size / 1e6:.0f} MB, built in {seconds} s; test plan: {plan}')
+        notify_ready(sha, plan)
         return 0
     except (BuildFailed, RuntimeError, subprocess.CalledProcessError, OSError) as failure:
         record_attempt(sha, f'failed: {failure}')
@@ -506,6 +604,9 @@ def build(sha: str) -> int:
             shutil.copy(log, phone_dir() / 'last-failure.log')
         say(f'FAILED on {sha[:7]}: {failure}')
         say(f'log: {phone_dir() / "last-failure.log"}; its end:\n{tail(log)}')
+        if 'Signing needs the owner' in str(failure):
+            # Only signing waits on the owner; other failures clear with the next change on next.
+            notify('Spoken Margins: phone build needs you', str(failure).split('Signing needs the owner: ', 1)[-1])
         return 1
     finally:
         remove_worktree(src)

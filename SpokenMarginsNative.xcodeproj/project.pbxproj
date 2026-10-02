@@ -14,10 +14,8 @@
 		296D3E3B2A4A4E4370DB534A /* SourceLinkPreprocessor.js in Resources */ = {isa = PBXBuildFile; fileRef = C52D1CADC5773F67C398A2B2 /* SourceLinkPreprocessor.js */; };
 		3A296D8977ECA7A0803C5ADC /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = FE54D8343C9F4C1377709595 /* SessionKit */; };
 		3EB7A4EE3350ECA1902F69A8 /* SessionKitSupertonic in Frameworks */ = {isa = PBXBuildFile; productRef = BE679FFC0BC2A00A74297525 /* SessionKitSupertonic */; };
-		47247339C0A18F2F214D030E /* omny-episode-page.html in Resources */ = {isa = PBXBuildFile; fileRef = 97EBC691BBA97D01C8A53DB4 /* omny-episode-page.html */; };
 		4CF539FBC54D635647751674 /* emoji-article-crash-regression.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */; };
 		4EB9C4988DDEA400406B44F5 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 9AC0CEE299A474FCA1DE58BE /* popup.js */; };
-		53B2B7122FB63029D3F970FA /* omny-episode-page.html in Resources */ = {isa = PBXBuildFile; fileRef = 97EBC691BBA97D01C8A53DB4 /* omny-episode-page.html */; };
 		5D420626A6A49CF830E8B408 /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 9547A66336D57411F645B986 /* SessionKitAudio */; };
 		5E894548E5C48572F8F55264 /* icon-512.png in Resources */ = {isa = PBXBuildFile; fileRef = 57C1F61B420E53CF05698E57 /* icon-512.png */; };
 		65126FD4AD9AE90D96C36EC7 /* icon-256.png in Resources */ = {isa = PBXBuildFile; fileRef = 742BEE6988765C9B1F078C8B /* icon-256.png */; };
@@ -26,7 +24,6 @@
 		6C3AD65F618F4FBE42AB6A31 /* fixtures in Resources */ = {isa = PBXBuildFile; fileRef = F8F6B4F91AA36C9513801753 /* fixtures */; };
 		7F0A333F40F542B3E4C42E1A /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 8C1BFB86196C5C1BE2E52BEF /* Defuddle-LICENSE.txt */; };
 		81B60CCA76A6F0E91712933E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = EE29274792FFFC88EA74C157 /* PrivacyInfo.xcprivacy */; };
-		86019FD6952BE792F74936C5 /* omny-odd-lots-feed.xml in Resources */ = {isa = PBXBuildFile; fileRef = 94963FBCE5CD54A17B589065 /* omny-odd-lots-feed.xml */; };
 		8B40FCEFB4AFABF3E3B52486 /* SessionKitEPUB in Frameworks */ = {isa = PBXBuildFile; productRef = DAEA68EE26E46DA752778D6D /* SessionKitEPUB */; };
 		8D06E1D632D0ED8160FED0A4 /* icon-128.png in Resources */ = {isa = PBXBuildFile; fileRef = 56AD3FBAE5A4EBD7B16F6BFC /* icon-128.png */; };
 		907083EA86D05BC58D2D3A79 /* SessionKitAI in Frameworks */ = {isa = PBXBuildFile; productRef = E7C7184F382A54BFB372015B /* SessionKitAI */; };
@@ -35,13 +32,13 @@
 		AAB68653F4DD558C2D9EC643 /* traces in Resources */ = {isa = PBXBuildFile; fileRef = DA64F144F04CC7A9F436B28E /* traces */; };
 		AB149D16A2A0482B581B0847 /* SessionKitSharing in Frameworks */ = {isa = PBXBuildFile; productRef = 03B12E07A60683D31E17A8FC /* SessionKitSharing */; };
 		B401E3D73FFFC3B4CCD67491 /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 34C621C37AF71E6ED22B1045 /* SessionKitAudio */; };
+		BF4CD875E4DFA95B3AB14636 /* SourceLinkHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69050C3D4931DF4FF8E80364 /* SourceLinkHandoff.swift */; };
 		BFAB396D17668E220C6104D8 /* Supertonic in Resources */ = {isa = PBXBuildFile; fileRef = 0B8C44619E7FAF16175EC2D7 /* Supertonic */; };
 		C2A4BB4A4E23CFE6CE076AC6 /* SessionKitFeeds in Frameworks */ = {isa = PBXBuildFile; productRef = BE649F52B4257A8BB5ED3717 /* SessionKitFeeds */; };
 		C53A80476E4513D666A228D3 /* SpokenMarginsBrowserTextExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F2A6CC7522887307C67D46AE /* SpokenMarginsBrowserTextExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		CC0AD39630C14AEC9A9A8573 /* SessionKitEPUB in Frameworks */ = {isa = PBXBuildFile; productRef = 62C6DAFDEEEE7BC12B1CDE55 /* SessionKitEPUB */; };
 		CC6A33EA5ED33F43E7A818A4 /* emoji-article-crash-regression.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */; };
 		CE6654AD4A7C75198C2D1BB4 /* SessionKitFeeds in Frameworks */ = {isa = PBXBuildFile; productRef = 159EF73AA9CDF755A67A5EFA /* SessionKitFeeds */; };
-		D1A24B9BC432BF6649B1B61C /* omny-odd-lots-feed.xml in Resources */ = {isa = PBXBuildFile; fileRef = 94963FBCE5CD54A17B589065 /* omny-odd-lots-feed.xml */; };
 		D8FED511D7C45D211D991D9E /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = 1213A7465ECB99E1E9FCE12A /* popup.css */; };
 		DCD0BCAD510043A1EB4EF202 /* SpokenMarginsGate2Widget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E3D5265FADF5995640D6FB31 /* SpokenMarginsGate2Widget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		DCF2AB420A460F475B45C6AF /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D8F75089EB72A10C4E2E79E1 /* PrivacyInfo.xcprivacy */; };
@@ -116,12 +113,11 @@
 		560C4E54442E123E42855A02 /* SpokenMarginsAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SpokenMarginsAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		56AD3FBAE5A4EBD7B16F6BFC /* icon-128.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-128.png"; sourceTree = "<group>"; };
 		57C1F61B420E53CF05698E57 /* icon-512.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-512.png"; sourceTree = "<group>"; };
+		69050C3D4931DF4FF8E80364 /* SourceLinkHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceLinkHandoff.swift; sourceTree = "<group>"; };
 		742BEE6988765C9B1F078C8B /* icon-256.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-256.png"; sourceTree = "<group>"; };
 		8C1BFB86196C5C1BE2E52BEF /* Defuddle-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Defuddle-LICENSE.txt"; sourceTree = "<group>"; };
 		9028714E249043B12F2CD95D /* SpokenMarginsAppUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SpokenMarginsAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		94963FBCE5CD54A17B589065 /* omny-odd-lots-feed.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = "omny-odd-lots-feed.xml"; sourceTree = "<group>"; };
 		968283859946C995CD8FA20C /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = popup.html; sourceTree = "<group>"; };
-		97EBC691BBA97D01C8A53DB4 /* omny-episode-page.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "omny-episode-page.html"; sourceTree = "<group>"; };
 		98C26CB68BDFFFA8A1B7578B /* browserTextCapture.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = browserTextCapture.js; sourceTree = "<group>"; };
 		9AC0CEE299A474FCA1DE58BE /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
 		9FEFBCF337DFC7DB102DAD5B /* SpokenMarginsApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SpokenMarginsApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -309,6 +305,7 @@
 				460250240FDC5A068A5D5EA9 /* Resources */,
 				F509B33704F18191A362D38D /* Resources */,
 				EE2767B5F5BD53E79758E8D4 /* SharedResources */,
+				5B74E9616092FD1489F4F709 /* Sources */,
 				CA56E872559E3D6C366F3C1B /* TestFixtures */,
 				089BEE7203E243E68BBEEA0F /* v1 */,
 				FD1F64C96AF6992C79DA59C5 /* Products */,
@@ -335,6 +332,15 @@
 				1213A7465ECB99E1E9FCE12A /* popup.css */,
 			);
 			path = Styles;
+			sourceTree = "<group>";
+		};
+		5B74E9616092FD1489F4F709 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				69050C3D4931DF4FF8E80364 /* SourceLinkHandoff.swift */,
+			);
+			name = Sources;
+			path = App/Gate2Shared/Sources;
 			sourceTree = "<group>";
 		};
 		70D66176CB60056EAB2E7E56 /* Scripts */ = {
@@ -369,8 +375,6 @@
 			isa = PBXGroup;
 			children = (
 				1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */,
-				97EBC691BBA97D01C8A53DB4 /* omny-episode-page.html */,
-				94963FBCE5CD54A17B589065 /* omny-odd-lots-feed.xml */,
 			);
 			name = TestFixtures;
 			path = App/TestFixtures;
@@ -673,8 +677,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				4CF539FBC54D635647751674 /* emoji-article-crash-regression.txt in Resources */,
-				53B2B7122FB63029D3F970FA /* omny-episode-page.html in Resources */,
-				86019FD6952BE792F74936C5 /* omny-odd-lots-feed.xml in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -690,8 +692,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				CC6A33EA5ED33F43E7A818A4 /* emoji-article-crash-regression.txt in Resources */,
-				47247339C0A18F2F214D030E /* omny-episode-page.html in Resources */,
-				D1A24B9BC432BF6649B1B61C /* omny-odd-lots-feed.xml in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -738,6 +738,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BF4CD875E4DFA95B3AB14636 /* SourceLinkHandoff.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

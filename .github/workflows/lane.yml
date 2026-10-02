@@ -6,8 +6,9 @@
 # --plan fast, plus both builds when the diff reaches the app (scripts/test-scope.py), again on
 # every push while the label stays. On PASS the runner merges the PR itself (decision 3, approved by
 # the owner): it tests the exact merge commit, next first, and pushes it to next, unless the PR
-# changes .github/ or scripts/lane*, or is an audio, persistence or packet change with no Codex
-# audit yet (scripts/lane-runner.py).
+# is an audio, persistence, packet or lane change with no clean Codex audit of its head yet
+# (scripts/lane-runner.py). Lane changes, this file included, merge that way too (owner rule
+# 2026-10-01).
 #
 # Trigger: pull_request. GitHub builds these runs from the PR's merge ref, which it doesn't refresh
 # when next moves, so a PR last pushed before this file reached next gets no run (#221) until it
@@ -47,7 +48,9 @@ jobs:
     concurrency:
       group: lane-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: false
-    timeout-minutes: 150
+    # 150 minutes for the T3 itself (slot wait, boot and tests), plus room for the automerge run a T3
+    # PASS releases in this same job (#421): host tests and both builds, as in the automerge job.
+    timeout-minutes: 240
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
