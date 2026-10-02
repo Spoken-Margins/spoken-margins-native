@@ -193,6 +193,38 @@ class TickTests(unittest.TestCase):
         self.assertIn(TEST, body)
         self.assertIn('## Steps', body)
 
+    def test_app_fail_is_filed_even_when_the_journeys_plan_is_inconclusive(self):
+        # Codex audit on ee5ddbc: a later infrastructure failure suppressed a confirmed app bug.
+        self.app = manifest('failed')
+        self.journeys = manifest('failed', probation=True, interrupted=True)
+        with patch.object(self.ops, 'diagnose', return_value=desk.diagnoses('', [TEST])) as diagnosis:
+            self.assertEqual(self.tick(), 'INCONCLUSIVE')
+        self.assertEqual(diagnosis.call_args.args[2], [TEST])
+        self.assertTrue(any(c[:3] == ['gh', 'issue', 'create'] for c in self.calls))
+
+    def test_the_sha_is_recorded_before_tests_start_and_an_abandoned_run_is_not_rerun(self):
+        # Codex audit on ee5ddbc: a Mac restart mid-run left no SHA record, so it ran again.
+        seen = {}
+        def plan(wt, output, plan, fds):
+            seen[plan] = json.loads((self.ops.home / 'state.json').read_text())['results'].get(SHA)
+            return self.fake_plan(wt, output, plan, fds)
+        with patch.object(self.ops, 'test_plan', side_effect=plan):
+            desk.tick(self.ops)
+        self.assertTrue(seen['app']['in_progress'])
+        state = json.loads((self.ops.home / 'state.json').read_text())
+        self.assertNotIn('in_progress', state['results'][SHA])
+        self.assertEqual(state['results'][SHA]['verdict'], 'PASS')
+
+        state = {'last_started': 0, 'results': {SHA: {'verdict': 'INCONCLUSIVE', 'in_progress': True,
+                                                       'started': 0, 'evidence': 'x'}}}
+        (self.ops.home / 'state.json').write_text(json.dumps(state))
+        self.calls.clear()
+        self.assertEqual(self.tick(), 'held')
+        record = json.loads((self.ops.home / 'state.json').read_text())['results'][SHA]
+        self.assertNotIn('in_progress', record)
+        self.assertIn('stopped before completion', ' '.join(record['errors']))
+        self.assertFalse(any(c[:3] == ['git', 'worktree', 'add'] for c in self.calls))
+
     def test_setup_failure_posts_inconclusive_and_removes_worktree(self):
         run = self.ops.run
         def fail_setup(cmd, **kwargs):

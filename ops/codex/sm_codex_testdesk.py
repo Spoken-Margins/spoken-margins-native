@@ -82,6 +82,8 @@ def combine(results: list[dict]) -> dict:
     return {'verdict': next((v for v in ('INCONCLUSIVE', 'FAIL', 'PASS') if v in verdicts), 'INCONCLUSIVE'),
             'counts': {s: sum(r['counts'][s] for r in results) for s in ('passed', 'failed', 'skipped')},
             'failed': sorted({t for r in results for t in r['failed']}),
+            # A plan that failed conclusively is filed even when another plan was INCONCLUSIVE.
+            'confirmed_failed': sorted({t for r in results if r['verdict'] == 'FAIL' for t in r['failed']}),
             'journeys': {t: s for r in results for t, s in r['journeys'].items()},
             'errors': [e for r in results for e in r['errors']]}
 
@@ -101,7 +103,8 @@ def script_results(listing: dict, records: dict) -> dict:
 def probation_ready(state: dict, sha: str, journeys: dict, probation: list[str]) -> list[str]:
     previous = sorted((r for s, r in state.get('results', {}).items() if s != sha),
                       key=lambda r: r['started'])
-    if not previous or sha in state.get('results', {}):
+    done = state.get('results', {}).get(sha)
+    if not previous or (done and not done.get('in_progress')):
         return []
     last = previous[-1].get('journeys', {})
     return sorted(t for t in probation if journeys.get(t) == last.get(t) == 'passed')
@@ -303,6 +306,15 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
         raise ValueError('origin/next did not resolve to a full SHA')
     path = ops.home / 'state.json'
     state = json.loads(path.read_text()) if path.exists() else {'results': {}}
+    abandoned = [s for s, r in state['results'].items() if r.get('in_progress')]
+    for s in abandoned:
+        # The tick holds the slot lock for the whole run, so an in-progress record here was cut off
+        # (Mac restart, kill). Close it as INCONCLUSIVE; once-per-SHA means it is not rerun.
+        record = state['results'][s]
+        record.pop('in_progress')
+        record['errors'] = record.get('errors', []) + ['Run stopped before completion (Mac restart or killed)']
+    if abandoned and not dry_run:
+        save_state(path, state)
     why = schedule_hold(sha, state, now)
     if why:
         say('hold: ' + why)
@@ -320,12 +332,14 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
             say('hold: ' + str(error))
             return 'held'
         ops.home.mkdir(parents=True, exist_ok=True)
-        state['last_started'] = now
-        save_state(path, state)
         wt = ops.home / 'worktree'
         evidence = ops.repo_root / 'artifacts' / 'codex-testdesk' / f'{int(now)}-{sha[:7]}'
         evidence.mkdir(parents=True, exist_ok=False)
         result = summarize({'error': 'Run stopped before completion'})
+        state['last_started'] = now
+        # Recorded before any test starts, so a run cut off mid-way is never repeated on this SHA.
+        state['results'][sha] = dict(result, started=now, evidence=str(evidence), in_progress=True)
+        save_state(path, state)
         added = False
         try:
             # Recover only this job's detached scratch worktree after a previous interrupted tick.
@@ -350,11 +364,11 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
             report = ops.post_report(report_text(sha, result, evidence), evidence)
             state['results'][sha]['report'] = report
             save_state(path, state)
-            if result['verdict'] == 'FAIL':
-                ops.file_failures(ops.diagnose(wt, evidence, result['failed']), sha, report, evidence)
+            if result['confirmed_failed']:
+                ops.file_failures(ops.diagnose(wt, evidence, result['confirmed_failed']), sha, report, evidence)
             return result['verdict']
         except Exception as error:
-            if sha not in state['results']:
+            if state['results'][sha].get('in_progress'):
                 result = summarize({'error': str(error)})
                 state['results'][sha] = dict(result, started=now, evidence=str(evidence))
                 save_state(path, state)
@@ -364,7 +378,7 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
             raise
         finally:
             try:
-                if sha not in state['results']:
+                if state['results'][sha].get('in_progress'):
                     state['results'][sha] = dict(result, started=now, evidence=str(evidence))
                     save_state(path, state)
             finally:
