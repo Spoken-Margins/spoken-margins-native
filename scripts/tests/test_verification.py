@@ -2,6 +2,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -508,6 +509,38 @@ class VerificationTests(unittest.TestCase):
             self.assertTrue(inventory.scripted_journey_errors(root))
             listing.unlink()
             self.assertTrue(inventory.scripted_journey_errors(root))
+
+
+class InheritedSimulatorSlotTests(unittest.TestCase):
+    def test_cli_passes_inherited_slot_to_the_app_runner(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(verification, 'ROOT', Path(temporary)), \
+                patch.object(verification, 'validate', return_value=[]), \
+                patch.object(verification, 'input_identity', return_value='inputs'), \
+                patch.object(verification, 'Run') as factory, \
+                patch.object(sys, 'argv', ['verify-tests.py', '--plan', 'app', '--simulator-slot-fd', '8']):
+            run = factory.return_value
+            run.manifest = {'input_sha256': 'inputs'}
+            self.assertEqual(verification.main(), 0)
+            run.xcode.assert_called_once_with('app', None, False, None, [], simulator_slot_fd=8)
+
+    def test_only_a_real_locked_simulator_slot_descriptor_can_be_inherited(self):
+        import fcntl
+        import lane_slots
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}):
+            path = Path(temporary) / lane_slots.SIMULATOR_SLOT
+            with path.open('a+') as handle:
+                with self.assertRaises(ValueError):
+                    verification.inherited_simulator_slot(handle.fileno())
+                fcntl.flock(handle, fcntl.LOCK_EX)
+                borrowed = verification.inherited_simulator_slot(handle.fileno())
+                borrowed.close()
+                self.assertTrue(lane_slots.simulator_job_running())
+            self.assertFalse(lane_slots.simulator_job_running())
+            with (Path(temporary) / 'wrong.lock').open('a+') as handle:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+                with self.assertRaises(ValueError):
+                    verification.inherited_simulator_slot(handle.fileno())
 
 
 if __name__ == '__main__':

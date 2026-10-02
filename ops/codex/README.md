@@ -132,3 +132,37 @@ launchctl print gui/$(id -u)/com.spokenmargins.codex-audit | grep ops/codex
 ```
 
 Both copies share the same lock in `artifacts/ops/`, so an old run still going can't overlap a new one. The old files in `artifacts/tools/` can stay as a fallback; nothing runs them after the switch.
+
+## Codex Test Desk
+
+`sm_codex_testdesk.py` tests fresh `origin/next` at most once per SHA and once every two hours. Its 20-minute tick holds on the worker's Dial and pacing rules, under 30 GiB free disk, or any busy simulator slot. It reserves the existing simulator and decision locks without waiting; `verify-tests.py` inherits the reservation for `--plan app` followed by `--plan journeys` (gating and probation). Both plans use the dedicated Test Runner. It never selects the journey simulator or boots a device itself.
+
+It posts PASS / FAIL / INCONCLUSIVE with test counts and evidence on #184. Completed non-probation test failures get a read-only Codex diagnosis, grouped by root cause. It searches open issues for each failing method, comments on a match, or files `ready,priority,bug` for the worker. Probation failures do not turn a run red. Per-SHA journey results and the last start time live in `~/SpokenMarginsOps/codex-testdesk/state.json`; two consecutive passes are reported for the owner/Test Desk to promote, never promoted automatically. Class selectors count as passing only if every expected method passed. A flood or interrupted/stalled runner is INCONCLUSIVE and never retried on the same SHA.
+
+Evidence survives worktree removal in `~/SpokenMarginsOps/repo/artifacts/codex-testdesk/<time>-<sha7>/`. The log is `~/SpokenMarginsOps/codex-testdesk/log.txt`. A result is saved before posting or diagnosis; a GitHub error therefore requires a human to post the saved report or issue bodies, rather than another simulator run. After an abrupt process termination, the next eligible tick removes only this job's scratch worktree. Agent-driven journeys, audible content and the Lock Screen remain unverified.
+
+Dry run (reads Dial, usage and cached `origin/next`; no fetch, tests, worktree or posts):
+
+```zsh
+/usr/bin/python3 ~/SpokenMarginsOps/repo/ops/codex/sm_codex_testdesk.py --dry-run
+```
+
+Host tests:
+
+```zsh
+/usr/bin/python3 -m unittest discover -s ops/codex -p test_sm_codex_testdesk.py
+```
+
+The owner must install this autonomous job after the ops checkout has the change; agents cannot install it:
+
+```zsh
+mkdir -p ~/SpokenMarginsOps/codex-testdesk ~/Library/LaunchAgents
+cp ~/SpokenMarginsOps/repo/ops/codex/com.spokenmargins.codex-testdesk.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.codex-testdesk.plist
+```
+
+Stop new runs with Codex workers `0` on the Dial. To remove the job:
+
+```zsh
+launchctl bootout gui/$(id -u)/com.spokenmargins.codex-testdesk
+```
