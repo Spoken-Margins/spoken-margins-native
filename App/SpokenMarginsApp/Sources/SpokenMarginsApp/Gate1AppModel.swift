@@ -584,6 +584,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var snapshot = SessionSnapshot() {
         didSet {
             recordPlaybackEventState(previous: oldValue)
+            updateNarrationVoiceNotice()
             if playingImportedCommentary != nil,
                oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId
                 || oldValue.targetId != snapshot.targetId || snapshot.status.isPlaybackActive {
@@ -607,6 +608,7 @@ final class Gate1AppModel: ObservableObject {
             updateGate2CompactState()
         }
     }
+    @Published private var narrationVoiceNotice = NarrationVoiceNotice()
     private(set) var gate2CompactSnapshot: CompactControlSnapshot?
     let runtimeDiagnostics = RuntimeDiagnostics()
     var diagnostics: [String: String] {
@@ -1730,6 +1732,7 @@ final class Gate1AppModel: ObservableObject {
                         if updated != self.snapshot {
                             self.snapshot = updated
                         }
+                        self.updateNarrationVoiceNotice()
                         if previousEngagementProgress < 25,
                            updated.currentPlaybackProgressPercent >= 25,
                            let itemId = updated.itemId,
@@ -8932,6 +8935,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var playbackChapterHeaderTitle: String? {
+        if let notice = narrationVoiceNotice.chapterLine { return notice }
         let itemTitle = playbackItemHeaderTitle
         let combined = playbackHeaderTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !combined.isEmpty,
@@ -8939,6 +8943,16 @@ final class Gate1AppModel: ObservableObject {
             return nil
         }
         return combined
+    }
+
+    private func updateNarrationVoiceNotice() {
+        var notice = narrationVoiceNotice
+        let banner = notice.update(
+            snapshot: snapshot,
+            replacementTargetId: (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.replacementVoiceTargetId
+        )
+        if notice != narrationVoiceNotice { narrationVoiceNotice = notice }
+        if let banner { presentFeedback(UserFeedbackEvent(kind: .warning, message: banner)) }
     }
 
     var exportSourceTextAvailable: Bool {
