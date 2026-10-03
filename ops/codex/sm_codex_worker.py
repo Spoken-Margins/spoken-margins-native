@@ -1008,6 +1008,12 @@ def save_or_keep(ops: Ops, wt: Path, dest: Path, keep_as: str) -> tuple[Optional
     return kept, why
 
 
+def kept_where(kept: Path, wt: Path) -> str:
+    if kept == wt:  # the move failed too: say honestly that the slot's next run clears it
+        return f'its worktree is still at `{wt}`, but the next run in this slot removes it, so copy it out first'
+    return f'its worktree is at `{kept}` for a human'
+
+
 def run_child(ops: Ops, slot: int, number: int) -> str:
     """Claim, run Codex, verify, and open the PR or stop. Returns the outcome word."""
     lock = ops.home / f'slot-{slot}.lock'
@@ -1071,7 +1077,7 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
             if kept:
                 wt_added = False  # cleanup must not remove it
                 branch = None  # still checked out in the kept worktree
-                stop('none', f'could not save Codex\'s changes ({why}); its worktree is at `{kept}` for a human '
+                stop('none', f'could not save Codex\'s changes ({why}); {kept_where(kept, wt)} '
                              f'(run folder `{run_dir}`)')
                 return 'kept'
         give_up = out / 'give-up.txt'
@@ -1223,7 +1229,7 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
             kept, why = save_or_keep(ops, wt, run_dir / 'codex.diff', run_dir.name)
             if kept:
                 wt_added = False  # cleanup must not remove it
-                stop(f'could not save Codex\'s changes ({why}); its worktree is at `{kept}` for a human '
+                stop(f'could not save Codex\'s changes ({why}); {kept_where(kept, wt)} '
                      f'(run folder `{run_dir}`)')
                 return 'kept'
         if (out / 'give-up.txt').exists():

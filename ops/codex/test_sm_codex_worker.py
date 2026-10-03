@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -896,6 +897,20 @@ class ChildTests(unittest.TestCase):
         self.assertIn(f'its worktree is at `{kept}`', run.comments()[-1])
         self.assertTrue(run.has('gh', 'issue', 'edit', '42', '-R', w.REPO, '--remove-label', 'in-progress'))
         self.assertFalse((self.home / 'slot-1.lock').exists())
+
+    def test_a_worktree_that_cannot_be_moved_says_the_slot_will_clear_it(self):
+        class NoMove(FakeRun):
+            def __call__(self, cmd, cwd=None, timeout=None):
+                if [str(c) for c in cmd[:3]] == ['git', 'worktree', 'move']:
+                    self.calls.append([str(c) for c in cmd])
+                    return w.Result(1, '', 'fatal: cannot move')
+                return super().__call__(cmd, cwd=cwd, timeout=timeout)
+        run = NoMove(self, status='?? Fixture.pdf\n', diff_fails=True)
+        with unittest.mock.patch.object(w.os, 'rename', side_effect=OSError('read-only')):
+            self.assertEqual(self.child(run, fake_codex({'commit-msg.txt': 'x'})), 'kept')
+        self.assertIn('the next run in this slot removes it', run.comments()[-1])
+        self.assertTrue((self.home / 'wt-1').exists())
+        self.assertFalse(run.has('git', 'worktree', 'remove'))
 
     def test_empty_diff(self):
         run = FakeRun(self, status='')
