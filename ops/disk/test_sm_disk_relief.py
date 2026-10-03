@@ -395,15 +395,14 @@ class Moves(Base):
 
     def test_run_moves_old_evidence_and_skips_moves_without_the_mirror(self):
         self.make_repo()
-        # run() dates its folder from the fake machine's clock, unlike the direct move tests.
-        day = time.strftime('%Y-%m-%d', time.localtime(NOW))
-        primary = self.cfg.drive / 'Codex-Offload' / f'{day}-disk-relief'
         m = FakeMachine(self.cfg, base_free=99 * MiB, mounted=[self.cfg.drive])
         d.run(self.cfg, m, self.log)
         self.assertTrue(self.src.exists(), 'moved with only one copy')
         m = FakeMachine(self.cfg, base_free=99 * MiB)
         result = d.run(self.cfg, m, self.log)
         self.assertFalse(self.src.exists())
+        day = time.strftime('%Y-%m-%d', time.localtime(m.now()))
+        primary = self.cfg.drive / 'Codex-Offload' / f'{day}-disk-relief'
         self.assertTrue((primary / self.rel / 'report.md').exists())
         self.assertTrue(result.acted)
 
