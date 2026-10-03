@@ -16013,7 +16013,7 @@ final class Gate1AppModel: ObservableObject {
                 let imported: Bool
                 // Posts with the publisher's own audio (#545) and text-only posts (#641) import as articles.
                 let route = try await self.followedSourceCoordinator?.importRoute(for: entry, subscriptionKind: subscription.source.kind)
-                    ?? FollowedEntryImportRoute.route(for: entry, subscriptionKind: subscription.source.kind, playableAudioURL: entry.audioURL)
+                    ?? FollowedEntryImportRoute.route(for: entry, subscriptionKind: subscription.source.kind, audio: .stored(in: entry))
                 if case .episode(let importURL) = route {
                     let importedItemId = try await self.importSourceLinkInBackground(SourceLinkHandoff(
                         id: "quick-add-\(entry.id)",

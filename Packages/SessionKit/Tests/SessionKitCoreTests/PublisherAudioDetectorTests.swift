@@ -241,24 +241,29 @@ final class PublisherAudioDetectorTests: XCTestCase {
     /// posts. Adding one took the podcast path with the post's page as the "audio" and failed.
     func testATextOnlyPostOnAPodcastFeedImportsAsAnArticle() throws {
         let post = try XCTUnwrap(try Self.substackItems().first { $0.title == "Notes from the archive" })
+        XCTAssertNil(post.audioURL, "the feed lists it with an image enclosure only")
         let entry = FeedEntry(id: "text", subscriptionId: "s", canonicalURL: post.url, audioURL: post.audioURL, title: post.title,
                               bodyWordCount: PublisherAudioDetector.bodyWordCount(of: post), fullBody: post.content)
-        XCTAssertTrue(FollowedEntryImportRoute.needsPlayableAudioURL(for: entry, subscriptionKind: .podcastFeed), "it could be an older episode")
-        XCTAssertEqual(FollowedEntryImportRoute.route(for: entry, subscriptionKind: .podcastFeed, playableAudioURL: nil), .article,
-                       "nothing to play, not even in the feed: add its text")
-        XCTAssertEqual(FollowedEntryImportRoute.route(for: entry, subscriptionKind: .podcastFeed, playableAudioURL: "  "), .article)
+        XCTAssertTrue(FollowedEntryImportRoute.needsAudioLookup(for: entry, subscriptionKind: .podcastFeed), "it could be an older episode")
+        XCTAssertEqual(FollowedEntryImportRoute.route(for: entry, subscriptionKind: .podcastFeed, audio: .noneInFeed), .article,
+                       "the feed lists it with nothing to play: add its text")
     }
 
     func testEpisodesStillImportAsAudioIncludingOlderOnesSavedWithoutTheirEnclosure() throws {
         let item = try XCTUnwrap(try FeedParser().parse(data: Self.fixture("enclosure-only-episodes.rss")).items.first)
         let audio = try XCTUnwrap(item.audioURL)
         let episode = FeedEntry(id: "episode", subscriptionId: "s", canonicalURL: item.url, audioURL: audio, title: item.title)
-        XCTAssertEqual(FollowedEntryImportRoute.route(for: episode, subscriptionKind: .podcastFeed, playableAudioURL: audio), .episode(audioURL: audio))
+        XCTAssertEqual(FollowedEntryAudio.stored(in: episode), .found(audio))
+        XCTAssertEqual(FollowedEntryImportRoute.route(for: episode, subscriptionKind: .podcastFeed, audio: .found(audio)), .episode(audioURL: audio))
 
         var older = episode
-        older.audioURL = nil // saved before entries kept their enclosure; the feed still lists it
-        XCTAssertTrue(FollowedEntryImportRoute.needsPlayableAudioURL(for: older, subscriptionKind: .podcastFeed))
-        XCTAssertEqual(FollowedEntryImportRoute.route(for: older, subscriptionKind: .podcastFeed, playableAudioURL: audio), .episode(audioURL: audio))
+        older.audioURL = nil // saved before entries kept their enclosure
+        XCTAssertEqual(FollowedEntryAudio.stored(in: older), .unknown)
+        XCTAssertEqual(FollowedEntryImportRoute.route(for: older, subscriptionKind: .podcastFeed, audio: .found(audio)), .episode(audioURL: audio),
+                       "the feed still lists its enclosure")
+        XCTAssertEqual(FollowedEntryImportRoute.route(for: older, subscriptionKind: .podcastFeed, audio: .unknown), .episode(audioURL: item.url),
+                       "gone from the feed: the podcast path tries its page, as before")
+        XCTAssertEqual(FollowedEntryImportRoute.route(for: older, subscriptionKind: .podcastFeed, audio: .found(" ")), .episode(audioURL: item.url))
     }
 
     func testVoiceoversAndArticleFeedEntriesImportAsArticlesWithoutLookingForAudio() throws {
@@ -266,12 +271,12 @@ final class PublisherAudioDetectorTests: XCTestCase {
                                   audioURL: "https://publisher.example/post.mp3", title: "Post", bodyWordCount: 800,
                                   publisherNarrationConfirmed: true)
         XCTAssertTrue(voiceover.hasPublisherAudio)
-        XCTAssertFalse(FollowedEntryImportRoute.needsPlayableAudioURL(for: voiceover, subscriptionKind: .podcastFeed))
-        XCTAssertEqual(FollowedEntryImportRoute.route(for: voiceover, subscriptionKind: .podcastFeed, playableAudioURL: voiceover.audioURL), .article)
+        XCTAssertFalse(FollowedEntryImportRoute.needsAudioLookup(for: voiceover, subscriptionKind: .podcastFeed))
+        XCTAssertEqual(FollowedEntryImportRoute.route(for: voiceover, subscriptionKind: .podcastFeed, audio: .stored(in: voiceover)), .article)
 
         let post = FeedEntry(id: "a", subscriptionId: "s", canonicalURL: "https://blog.example/p/post", audioURL: "https://blog.example/a.mp3", title: "Post")
-        XCTAssertFalse(FollowedEntryImportRoute.needsPlayableAudioURL(for: post, subscriptionKind: .articleFeed))
-        XCTAssertEqual(FollowedEntryImportRoute.route(for: post, subscriptionKind: .articleFeed, playableAudioURL: post.audioURL), .article)
+        XCTAssertFalse(FollowedEntryImportRoute.needsAudioLookup(for: post, subscriptionKind: .articleFeed))
+        XCTAssertEqual(FollowedEntryImportRoute.route(for: post, subscriptionKind: .articleFeed, audio: .stored(in: post)), .article)
     }
 
     // MARK: Fixtures
