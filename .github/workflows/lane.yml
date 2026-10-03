@@ -87,7 +87,7 @@ jobs:
     # /lane T2 and T3 requests: main or priority runner, sharing the Mac-wide simulator slot.
     needs: route
     if: >-
-      always() && needs.route.result != 'cancelled' &&
+      !cancelled() &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       contains(github.event.pull_request.labels.*.name, 'lane:queued') &&
       (github.event.action != 'labeled' || github.event.label.name == 'lane:queued')
@@ -149,7 +149,7 @@ jobs:
     # The automerge label: host tests and builds on the build queue or priority runner.
     # The build-only runner waits for room first (lane-runner.py, wait_for_room_to_build).
     if: >-
-      always() && needs.route.result != 'cancelled' &&
+      !cancelled() &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       contains(github.event.pull_request.labels.*.name, 'automerge') &&
       (github.event.action != 'labeled' || github.event.label.name == 'automerge')

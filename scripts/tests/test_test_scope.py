@@ -293,7 +293,10 @@ class LaneRunnerRoutingTests(unittest.TestCase):
                                   ('automerge', mac_jobs.split('\n  automerge:\n')[1], 'sm-lane-build')]:
             with self.subTest(job=job):
                 self.assertIn('needs: route', text)
-                self.assertIn('always()', text)
+                # A failed or skipped route falls back to the normal queues; a cancelled run stays cancelled
+                # (always() would start a queued Mac job even after the run was cancelled).
+                self.assertIn('!cancelled() &&', text)
+                self.assertNotIn('always()', text)
                 self.assertIn(f'fromJSON(needs.route.outputs.{job} ||', text)
                 self.assertIn(f'"{normal}"', text)
 
