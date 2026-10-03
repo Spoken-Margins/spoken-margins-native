@@ -2154,19 +2154,19 @@ final class Gate1AppModel: ObservableObject {
 
     func openMarginInTimeline(_ row: MarginRow) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_margin_timeline") else { return }
-        if let activeSessionID = snapshot.sessionId,
-           activeSessionID != row.interjection.sessionId {
+        let opening = MarginTimelineOpening.decide(
+            loadedSessionID: snapshot.sessionId, marginSessionID: row.interjection.sessionId, loadedSessionIsPlaying: activePlaybackIsPlaying)
+        if opening == .keepNowPlaying {
             reportWarning("This Margin belongs to another session. Now Playing was left unchanged.")
             diagnostics["marginTimelineNavigation"] = "blocked_active_session_replacement"
             return
         }
         do {
             let store = try requireStore()
-            if snapshot.sessionId == nil {
-                guard let session = try store.loadSession(id: row.interjection.sessionId) else {
-                    throw SessionKitError.persistenceFailed("margin_session_missing")
-                }
-                openSession(session)
+            if opening == .openMarginSession {
+                guard let session = try store.loadSession(id: row.interjection.sessionId) else { throw SessionKitError.persistenceFailed("margin_session_missing") }
+                openSession(session) // A paused session (#638) is saved and stopped there, never played.
+                guard snapshot.sessionId == session.id else { return } // openSession reported why.
             }
             requestedTimelineFocusMarginID = row.id
             screen = .timeline
