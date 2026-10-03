@@ -6,11 +6,7 @@ import SessionKit
 /// tap through the app's normal follow path.
 @MainActor
 final class CatalogDrawerModel: ObservableObject {
-    enum FollowState: Equatable {
-        case following
-        case followed
-        case failed(String)
-    }
+    typealias FollowState = CatalogDrawerFollowState
 
     static let seenKey = "catalogDrawerSeenV1"
     /// Catalog entry id → followed source id, recorded when the drawer follows a show.
@@ -77,7 +73,10 @@ final class CatalogDrawerModel: ObservableObject {
         present()
     }
 
+    /// The drawer model lives for the whole app run, so each opening drops the follows it
+    /// confirmed before: the listener may have unfollowed one in Following since (#646).
     func present() {
+        followStates = FollowState.keptOnReopening(followStates)
         isPresented = true
     }
 
@@ -124,18 +123,12 @@ final class CatalogDrawerModel: ObservableObject {
     /// twice per row. Subscriptions aren't cached: they change in Following without telling
     /// the drawer.
     func followStates(for entries: [SourceCatalogEntry]) -> [String: FollowState] {
-        var states: [String: FollowState] = [:]
+        var followed: Set<String> = []
         if let catalog, entries.contains(where: { followStates[$0.id] == nil }) {
             let recorded = defaults.dictionary(forKey: Self.followedSourcesKey) as? [String: String] ?? [:]
-            let followed = CatalogFollowState.followedEntryIds(in: catalog, recordedSourceIds: recorded, subscriptions: subscriptions())
-            for entry in entries where followed.contains(entry.id) {
-                states[entry.id] = .followed
-            }
+            followed = CatalogFollowState.followedEntryIds(in: catalog, recordedSourceIds: recorded, subscriptions: subscriptions())
         }
-        for entry in entries {
-            if let state = followStates[entry.id] { states[entry.id] = state }
-        }
-        return states
+        return FollowState.merged(drawerStates: followStates, liveFollowedEntryIds: followed, entryIds: entries.map(\.id))
     }
 
     private func recordFollowedSource(_ sourceId: String, for entry: SourceCatalogEntry) {

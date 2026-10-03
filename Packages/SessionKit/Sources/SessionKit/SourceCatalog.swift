@@ -317,6 +317,40 @@ public enum CatalogFollowState {
     }
 }
 
+/// B1 M1: what the drawer shows on a row's Follow button while it is open: a follow in flight,
+/// a follow it confirmed, or a failure to show on the row.
+public enum CatalogDrawerFollowState: Equatable, Sendable {
+    case following
+    case followed
+    case failed(String)
+
+    /// The rows' states. The drawer's own state wins, so a show it just followed reads Following
+    /// before the app's subscription list catches up; other rows show Following when a live
+    /// subscription matches them. Rows with neither are left out.
+    public static func merged(
+        drawerStates: [String: Self],
+        liveFollowedEntryIds: Set<String>,
+        entryIds: [String]
+    ) -> [String: Self] {
+        var states: [String: Self] = [:]
+        for entryId in entryIds {
+            if let state = drawerStates[entryId] {
+                states[entryId] = state
+            } else if liveFollowedEntryIds.contains(entryId) {
+                states[entryId] = .followed
+            }
+        }
+        return states
+    }
+
+    /// #646: what the drawer keeps when it opens again. A follow it confirmed earlier is left to
+    /// the live subscriptions: the listener may have unfollowed that show in Following since,
+    /// and the drawer is never told. Follows still in flight and failures stay on their rows.
+    public static func keptOnReopening(_ drawerStates: [String: Self]) -> [String: Self] {
+        drawerStates.filter { $0.value != .followed }
+    }
+}
+
 /// B1 M1: when the first-run podcast drawer opens by itself. Only a fresh install sees it
 /// unasked (the Library was empty before the welcome sample was added); upgraded Libraries
 /// reach it from Following. It opens by itself once.

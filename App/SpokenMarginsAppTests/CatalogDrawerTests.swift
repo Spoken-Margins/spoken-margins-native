@@ -97,6 +97,33 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertNil(relaunched.state(for: entry), "unfollowed in Following: shows Follow again")
     }
 
+    /// #646: follow a show, unfollow it in Following, and open the drawer again in the same app
+    /// run. The one long-lived drawer still said Following and ignored a tap, because its
+    /// remembered success outranked the live subscriptions.
+    func testAShowUnfollowedInFollowingCanBeFollowedAgainWithoutARelaunch() async throws {
+        let log = FollowLog()
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: log)
+        drawer.present()
+        await drawer.load()
+        let entry = try XCTUnwrap(drawer.entries.first)
+        drawer.toggleFollow(entry)
+        for _ in 0..<100 where drawer.followedCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(drawer.state(for: entry), .followed)
+
+        drawer.isPresented = false
+        drawer.markSeen()
+        log.subscriptions.removeAll() // unfollowed in Following
+        drawer.present()
+
+        XCTAssertNil(drawer.state(for: entry), "shows Follow again")
+        XCTAssertNil(drawer.followStates(for: drawer.entries)[entry.id])
+        drawer.toggleFollow(entry)
+        for _ in 0..<100 where drawer.followedCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.feeds, [entry.feedURL, entry.feedURL], "the second tap really follows it again")
+        XCTAssertEqual(log.subscriptions.count, 1)
+        XCTAssertEqual(drawer.state(for: entry), .followed)
+    }
+
     /// #246 (found on the phone): the drawer stuttered while scrolling. Every row worked out its
     /// follow state twice per render, and each time read the recorded follows from UserDefaults and
     /// every subscription again. One pass over the whole catalog now reads subscriptions once.
