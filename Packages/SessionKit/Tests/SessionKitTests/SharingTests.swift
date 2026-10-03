@@ -971,7 +971,9 @@ final class SharingTests: XCTestCase {
         XCTAssertNil(wrongEpisode["inside-intro"]?.localMediaTimeMs)
         XCTAssertEqual(wrongEpisode["inside-intro"]?.evidenceClass, .unresolved)
         XCTAssertEqual(wrongEpisode["inside-intro"]?.algorithmVersion, "podcast-anchor-edition-unconfirmed.v1")
-        XCTAssertEqual(wrongEpisode["deep-content"], unresolved)
+        // Unplaced Margins carry the verdict too, so later evidence can't place them on this edition.
+        XCTAssertEqual(wrongEpisode["deep-content"]?.algorithmVersion, "podcast-anchor-edition-unconfirmed.v1")
+        XCTAssertTrue(wrongEpisode.values.allSatisfy(PodcastAcousticAnchorResolver.isEditionRejection))
 
         // One of three Margins inside a replaced ad: most evidence still found the edition.
         XCTAssertEqual(PodcastAcousticAnchorResolver.requiringEditionConfirmation(
@@ -981,6 +983,55 @@ final class SharingTests: XCTestCase {
         XCTAssertEqual(PodcastAcousticAnchorResolver.requiringEditionConfirmation(
             ["only": placed], matchedFlanks: 2, declaredFlanks: 2
         ), ["only": placed])
+    }
+
+    /// The wrong-episode verdict (#456) survives the app's pipeline. The shared intro's words match the
+    /// recipient's transcript, and fusion alone would place that Margin from the transcript; the final
+    /// resolutions carry the verdict instead. A verified placement stored by an earlier pass on the same
+    /// edition is withdrawn too, while a listener's own confirmation stays.
+    func testEditionRejectionSurvivesTranscriptFusionAndStoredPlacements() throws {
+        let placed = ImportedAnchorResolution(
+            evidenceClass: .fused, localMediaTimeMs: 10_000, confidence: 0.95, algorithmVersion: "podcast-anchor.v1"
+        )
+        let unresolved = ImportedAnchorResolution(evidenceClass: .unresolved, algorithmVersion: "podcast-anchor.v1")
+        let acoustic = PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+            ["inside-intro": placed, "after-intro": unresolved, "deep-content": unresolved],
+            matchedFlanks: 2, declaredFlanks: 6
+        )
+        let introTranscript = ImportedAnchorResolution(
+            evidenceClass: .transcriptVerified, localMediaTimeMs: 10_200, confidence: 0.9,
+            algorithmVersion: "podcast-transcript-anchor.v1"
+        )
+        let fused = acoustic.mapValues { acousticResolution in
+            PodcastAnchorFusionResolver.fuse(transcript: introTranscript, acoustic: acousticResolution)
+        }
+        XCTAssertNotNil(fused["inside-intro"]?.localMediaTimeMs, "fusion alone places the intro Margin")
+
+        let final = PodcastAnchorFusionResolver.enforcingEditionRejection(acoustic: acoustic, resolutions: fused)
+        for (id, resolution) in final {
+            XCTAssertNil(resolution.localMediaTimeMs, id)
+            XCTAssertTrue(PodcastAcousticAnchorResolver.isEditionRejection(resolution), id)
+        }
+        // Without the verdict, fusion's result passes through unchanged.
+        XCTAssertEqual(PodcastAnchorFusionResolver.enforcingEditionRejection(acoustic: ["m": placed], resolutions: fused), fused)
+
+        let rejection = try XCTUnwrap(acoustic["inside-intro"])
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
+            previous: placed, proposed: rejection, previousEdition: "edition-b", currentEdition: "edition-b",
+            hasTranscript: false
+        ), rejection, "a stored machine placement on the rejected edition is withdrawn")
+        let confirmed = ImportedAnchorResolution(
+            evidenceClass: .recipientConfirmed, localMediaTimeMs: 10_000, confidence: 1, algorithmVersion: "recipient.v1"
+        )
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
+            previous: confirmed, proposed: rejection, previousEdition: "edition-b", currentEdition: "edition-b",
+            hasTranscript: false
+        ), confirmed, "a listener's confirmation stays")
+        // An ordinary unresolved pass still keeps the stored placement.
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
+            previous: placed, proposed: unresolved, previousEdition: "edition-b", currentEdition: "edition-b",
+            hasTranscript: false
+        ), placed)
     }
 
     /// The same rule end to end, on audio that never repeats: a 7 s ad inserted right at the Margin, between

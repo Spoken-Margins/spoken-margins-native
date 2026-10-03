@@ -16149,13 +16149,8 @@ final class Gate1AppModel: ObservableObject {
         previous: ImportedAnchorResolution, proposed: ImportedAnchorResolution,
         previousEdition: String?, currentEdition: String?, hasTranscript: Bool
     ) -> ImportedAnchorResolution {
-        let sameEdition = currentEdition != nil && currentEdition == previousEdition
-        let verified = isInlinePodcastResolution(previous)
-            && previous.evidenceClass != .timestampFallback && previous.evidenceClass != .mapInterpolated
-        let weaker = proposed.evidenceClass == .unresolved || proposed.evidenceClass == .absentFromRecipientEdition
-            || (!hasTranscript && proposed.evidenceClass == .ambiguous
-                && (previous.evidenceClass == .transcriptVerified || previous.evidenceClass == .fused))
-        return sameEdition && verified && weaker ? previous : proposed
+        PodcastAnchorFusionResolver.preservingVerifiedPlacement(previous: previous, proposed: proposed,
+            previousEdition: previousEdition, currentEdition: currentEdition, hasTranscript: hasTranscript)
     }
 
     private func resolveImportedPodcastCommentary(
@@ -16260,9 +16255,9 @@ final class Gate1AppModel: ObservableObject {
                         queries: queries,
                         resolutions: monotonicResolutions
                     )
-                    let fusedResolutions = PodcastAnchorFusionResolver.enforcingMonotonicOrder(
-                        queries: queries,
-                        resolutions: projectedResolutions
+                    let fusedResolutions = PodcastAnchorFusionResolver.enforcingEditionRejection(
+                        acoustic: resolutions,
+                        resolutions: PodcastAnchorFusionResolver.enforcingMonotonicOrder(queries: queries, resolutions: projectedResolutions)
                     )
                     var updated = records
                     for index in updated.indices {
@@ -16383,14 +16378,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private nonisolated static func isInlinePodcastResolution(_ resolution: ImportedAnchorResolution) -> Bool {
-        guard resolution.localMediaTimeMs != nil else { return false }
-        switch resolution.evidenceClass {
-        case .exactEdition, .transcriptVerified, .acousticVerified, .fused,
-             .mapInterpolated, .timestampFallback, .recipientConfirmed:
-            return true
-        case .articleTextVerified, .ambiguous, .absentFromRecipientEdition, .unresolved:
-            return false
-        }
+        PodcastAnchorFusionResolver.isInlinePlacement(resolution)
     }
 
     private func scheduleEmbeddedPublisherChapterImport(itemId: String, localURL: URL) {

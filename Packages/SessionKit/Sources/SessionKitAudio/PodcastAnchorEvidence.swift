@@ -604,6 +604,17 @@ public enum PodcastAcousticAnchorResolver {
     /// and nothing is placed. A packet with fewer flanks than `minimumFlanksForEditionCheck` (one Margin)
     /// can't tell the difference and is left as it is.
     static let minimumFlanksForEditionCheck = 4
+    public static let editionUnconfirmedAlgorithmVersion = "podcast-anchor-edition-unconfirmed.v1"
+    static let editionRejection = ImportedAnchorResolution(
+        evidenceClass: .unresolved,
+        algorithmVersion: editionUnconfirmedAlgorithmVersion
+    )
+
+    /// The packet-level verdict that the recipient has a different edition. Fusion and the app's
+    /// re-resolution keep it (`PodcastAnchorFusionResolver.enforcingEditionRejection`).
+    public static func isEditionRejection(_ resolution: ImportedAnchorResolution) -> Bool {
+        resolution.evidenceClass == .unresolved && resolution.algorithmVersion == editionUnconfirmedAlgorithmVersion
+    }
 
     static func requiringEditionConfirmation(
         _ resolutions: [String: ImportedAnchorResolution],
@@ -613,13 +624,15 @@ public enum PodcastAcousticAnchorResolver {
         guard declaredFlanks >= minimumFlanksForEditionCheck, matchedFlanks * 2 <= declaredFlanks else {
             return resolutions
         }
-        return resolutions.mapValues { resolution in
-            guard resolution.localMediaTimeMs != nil else { return resolution }
-            return ImportedAnchorResolution(
-                evidenceClass: .unresolved,
-                algorithmVersion: "podcast-anchor-edition-unconfirmed.v1"
-            )
-        }
+        // Every Margin carries the verdict, placed or not, so other evidence (a transcript of the shared intro)
+        // can't place one on this edition either. An ambiguous Margin can't be placed already and stays so.
+        return resolutions.mapValues(withdrawingPlacementForRejectedEdition)
+    }
+
+    static func withdrawingPlacementForRejectedEdition(
+        _ resolution: ImportedAnchorResolution
+    ) -> ImportedAnchorResolution {
+        resolution.evidenceClass == .ambiguous && resolution.localMediaTimeMs == nil ? resolution : editionRejection
     }
 
     /// A high-confidence single flank remains useful direct evidence, but it
@@ -984,6 +997,49 @@ public enum PodcastAnchorFusionResolver {
             evidenceClass: .unresolved,
             algorithmVersion: "podcast-anchor-fusion.v1"
         )
+    }
+
+    /// When the acoustic pass found the packet on a different edition (#456), nothing places a Margin on it:
+    /// not a transcript match of the shared intro, and not interpolation. Apply to the final resolutions.
+    public static func enforcingEditionRejection(
+        acoustic: [String: ImportedAnchorResolution],
+        resolutions: [String: ImportedAnchorResolution]
+    ) -> [String: ImportedAnchorResolution] {
+        guard acoustic.values.contains(where: PodcastAcousticAnchorResolver.isEditionRejection) else {
+            return resolutions
+        }
+        return resolutions.mapValues(PodcastAcousticAnchorResolver.withdrawingPlacementForRejectedEdition)
+    }
+
+    /// The resolution a re-resolution stores: a verified placement on the same recipient edition survives a
+    /// weaker result, so a pass without a transcript doesn't undo one with it. An edition rejection (#456)
+    /// isn't weaker: it withdraws the machine placements it finds. A listener's own confirmation stays.
+    public static func preservingVerifiedPlacement(
+        previous: ImportedAnchorResolution, proposed: ImportedAnchorResolution,
+        previousEdition: String?, currentEdition: String?, hasTranscript: Bool
+    ) -> ImportedAnchorResolution {
+        let sameEdition = currentEdition != nil && currentEdition == previousEdition
+        if PodcastAcousticAnchorResolver.isEditionRejection(proposed) {
+            return sameEdition && previous.evidenceClass == .recipientConfirmed ? previous : proposed
+        }
+        let verified = isInlinePlacement(previous)
+            && previous.evidenceClass != .timestampFallback && previous.evidenceClass != .mapInterpolated
+        let weaker = proposed.evidenceClass == .unresolved || proposed.evidenceClass == .absentFromRecipientEdition
+            || (!hasTranscript && proposed.evidenceClass == .ambiguous
+                && (previous.evidenceClass == .transcriptVerified || previous.evidenceClass == .fused))
+        return sameEdition && verified && weaker ? previous : proposed
+    }
+
+    /// Whether a podcast Margin plays inline at a recipient position.
+    public static func isInlinePlacement(_ resolution: ImportedAnchorResolution) -> Bool {
+        guard resolution.localMediaTimeMs != nil else { return false }
+        switch resolution.evidenceClass {
+        case .exactEdition, .transcriptVerified, .acousticVerified, .fused,
+             .mapInterpolated, .timestampFallback, .recipientConfirmed:
+            return true
+        case .articleTextVerified, .ambiguous, .absentFromRecipientEdition, .unresolved:
+            return false
+        }
     }
 
     public static func enforcingMonotonicOrder(
