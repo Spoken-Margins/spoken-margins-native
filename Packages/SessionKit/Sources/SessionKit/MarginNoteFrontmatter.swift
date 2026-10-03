@@ -19,6 +19,10 @@ public struct MarginNoteFrontmatter: Equatable {
     public var marginKind: InterjectionCaptureKind
     public var target: Target
     public var tags: [String] = ["spoken-margins"]
+    /// A paper's identifier, authors, year and page, so Zotero or a citation plugin can
+    /// match the note to its library entry (#206). Nil leaves the block as it was.
+    public var bibliography: PDFBibliography?
+    public var page: Int?
 
     public init(export: SessionExport, margin: ExportInterjection, created: String) {
         title = export.item.title
@@ -31,6 +35,13 @@ public struct MarginNoteFrontmatter: Equatable {
         // Exports from before written Margins carry no kind; those were all recordings.
         marginKind = margin.captureKind ?? .audio
         target = margin.targetType == InterjectionTargetType.item.rawValue ? .source : .aiReply
+        bibliography = export.item.bibliography
+        page = bibliography == nil ? nil : margin.page
+        // A PDF imported from Files has no link of its own; the DOI or arXiv page is the paper's.
+        if source == nil, let bibliography {
+            source = bibliography.doi.map { "https://doi.org/" + $0 }
+                ?? bibliography.arxivId.map { "https://arxiv.org/abs/" + $0 }
+        }
     }
 
     /// `---`, one `key: value` line per property, `---`, then a blank line before the body.
@@ -38,6 +49,15 @@ public struct MarginNoteFrontmatter: Equatable {
         var properties: [(String, String)] = [("title", Self.quoted(title))]
         if let source { properties.append(("source", Self.quoted(source))) }
         if let author { properties.append(("author", Self.quoted(author))) }
+        if let bibliography {
+            if let doi = bibliography.doi { properties.append(("doi", Self.quoted(doi))) }
+            if let arxivId = bibliography.arxivId { properties.append(("arxiv_id", Self.quoted(arxivId))) }
+            if !bibliography.authors.isEmpty {
+                properties.append(("authors", "[" + bibliography.authors.map(Self.quoted).joined(separator: ", ") + "]"))
+            }
+            if let year = bibliography.year { properties.append(("year", String(year))) }
+            if let page { properties.append(("page", String(page))) }
+        }
         properties += [
             ("created", created),
             ("item_id", Self.quoted(itemID)),

@@ -34,17 +34,24 @@ public enum MarginMarkdownShare {
     /// A file name may be 255 UTF-8 bytes; the title's share leaves room for `Margin - … - 1h02m03s.md`.
     static let maximumTitleBytes = 150
 
-    /// Whether a Margin gets a note: active, with something written or transcribed, as in the notes folder.
+    /// Whether a Margin gets a note, as in the notes folder: active, and spoken or with something written (#171).
     public static func hasNote(_ margin: Interjection) -> Bool {
-        margin.status == "active"
-            && !(margin.cleanedTranscript ?? margin.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        margin.status == "active" && SessionExportMarkdownRenderer.writesMarginNote(
+            captureKind: margin.captureKind, text: margin.cleanedTranscript ?? margin.transcript
+        )
+    }
+
+    /// The notes folder's note for one Margin, dated as the folder dates it (#624).
+    static func note(for margin: Interjection, engine: SessionEngine) throws -> (SessionExport, String) {
+        let export = try engine.buildExport(options: .marginNote(sessionId: margin.sessionId, marginId: margin.id))
+        let recordedAt = margin.recordedAt(in: try engine.loadSession(id: margin.sessionId))
+        return (export, SessionExportMarkdownRenderer.renderMargin(export, createdAt: recordedAt))
     }
 
     /// One Margin's note, named `Margin - <item title> - <position>.md`. Nil when it has no note.
     public static func file(for margin: Interjection, engine: SessionEngine) throws -> MarginMarkdownFile? {
         guard hasNote(margin) else { return nil }
-        let export = try engine.buildExport(options: .marginNote(sessionId: margin.sessionId, marginId: margin.id))
-        let markdown = SessionExportMarkdownRenderer.renderMargin(export, createdAt: margin.createdAt)
+        let (export, markdown) = try note(for: margin, engine: engine)
         guard !markdown.isEmpty, let note = export.interjections.first else { return nil }
         return MarginMarkdownFile(
             fileName: "Margin - \(safeName(export.item.title)) - \(position(of: note)).md",
@@ -62,8 +69,7 @@ public enum MarginMarkdownShare {
         var title: String?
         var notes: [String] = []
         for margin in ordered {
-            let export = try engine.buildExport(options: .marginNote(sessionId: margin.sessionId, marginId: margin.id))
-            let markdown = SessionExportMarkdownRenderer.renderMargin(export, createdAt: margin.createdAt)
+            let (export, markdown) = try note(for: margin, engine: engine)
             guard !markdown.isEmpty else { continue }
             title = title ?? export.item.title
             notes.append(markdown)

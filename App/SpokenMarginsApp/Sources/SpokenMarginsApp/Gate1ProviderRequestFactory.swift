@@ -1,5 +1,14 @@
 import Foundation
 
+/// Keeps the job's origin while the listener reviews data-sharing consent.
+struct PendingProviderJob {
+    let kind: String
+    let itemId: String
+    let turnId: String
+    let messages: [String]
+    let force: Bool
+}
+
 struct Gate1ProviderRequestFactory {
     static func makeChatCompletionsRequest(
         baseURL: String,

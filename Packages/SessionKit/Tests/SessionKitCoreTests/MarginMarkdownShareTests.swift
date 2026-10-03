@@ -33,16 +33,34 @@ final class MarginMarkdownShareTests: XCTestCase {
             margin("late", item: item, mediaTimeMs: nil, percent: 80),
             margin("early", item: item, mediaTimeMs: nil, percent: 10),
             margin("deleted", item: item, mediaTimeMs: nil, percent: 20, status: "deleted"),
-            margin("blank", item: item, mediaTimeMs: nil, percent: 30, transcript: "  \n"),
+            margin("untranscribed", item: item, mediaTimeMs: nil, percent: 30, transcript: "  \n"),
+            margin("blank", item: item, mediaTimeMs: nil, percent: 40, transcript: "  \n", captureKind: .written),
         ]
         let file = try XCTUnwrap(try MarginMarkdownShare.file(forItemMargins: margins, engine: engine(item: item, margins: margins)))
 
         XCTAssertEqual(file.fileName, "Margins - An essay.md")
         let notes = file.markdown.components(separatedBy: MarginMarkdownShare.separator)
-        XCTAssertEqual(notes.count, 2, "deleted and empty Margins have no note, as in the notes folder")
+        XCTAssertEqual(notes.count, 3, "deleted and empty written Margins have no note, as in the notes folder (#171)")
         XCTAssertTrue(notes[0].contains("Thought early."))
-        XCTAssertTrue(notes[1].contains("Thought late."))
+        XCTAssertTrue(notes[1].contains(SessionExportMarkdownRenderer.transcriptNotAvailableYet), notes[1])
+        XCTAssertTrue(notes[2].contains("Thought late."))
         XCTAssertFalse(file.markdown.contains("Thought deleted."))
+    }
+
+    /// A Margin saved before #624 stores a counter as its date; the shared note is dated as the notes folder dates it.
+    func testAPlaceholderDateIsReadAgainstTheSessionStart() throws {
+        let item = item(title: "An essay")
+        var margin = margin("old", item: item, mediaTimeMs: nil, percent: 10)
+        margin.createdAt = Date(timeIntervalSince1970: 2)
+        let engine = engine(item: item, margins: [margin], sessionCreatedAt: createdAt)
+        let session = try XCTUnwrap(try engine.loadSession(id: margin.sessionId))
+        let file = try XCTUnwrap(try MarginMarkdownShare.file(for: margin, engine: engine))
+
+        XCTAssertEqual(file.markdown, SessionExportMarkdownRenderer.renderMargin(
+            try engine.buildExport(options: .marginNote(sessionId: margin.sessionId, marginId: margin.id)),
+            createdAt: margin.recordedAt(in: session)
+        ))
+        XCTAssertTrue(file.markdown.contains(ISO8601DateFormatter().string(from: createdAt.addingTimeInterval(2))), file.markdown)
     }
 
     func testAnItemWithNoMarginsHasNothingToShare() throws {
@@ -131,7 +149,8 @@ final class MarginMarkdownShareTests: XCTestCase {
              externalReference: "https://example.com/essay", status: "ready")
     }
 
-    private func margin(_ id: String, item: Item, mediaTimeMs: Int?, percent: Int, status: String = "active", transcript: String? = nil) -> Interjection {
+    private func margin(_ id: String, item: Item, mediaTimeMs: Int?, percent: Int, status: String = "active", transcript: String? = nil,
+                        captureKind: InterjectionCaptureKind? = nil) -> Interjection {
         Interjection(
             id: id, itemId: item.id, sessionId: "session-1", targetType: .item, targetId: item.id,
             createdAt: createdAt, roughPercent: percent,
@@ -139,12 +158,12 @@ final class MarginMarkdownShareTests: XCTestCase {
                            anchorBefore: "Before.", anchorAfter: "After.", mediaTimeMs: mediaTimeMs),
             audioPath: nil, audioStatus: "saved",
             transcriptionStatus: "transcribed", transcript: transcript ?? "Thought \(id).", cleanedTranscript: nil,
-            displayText: transcript ?? "Thought \(id).", status: status
+            displayText: transcript ?? "Thought \(id).", status: status, captureKind: captureKind
         )
     }
 
-    private func engine(item: Item, margins: [Interjection]) -> SessionEngine {
-        let session = Session(id: "session-1", itemId: item.id, status: "in_progress", phase: .itemPlayback,
+    private func engine(item: Item, margins: [Interjection], sessionCreatedAt: Date? = nil) -> SessionEngine {
+        let session = Session(id: "session-1", itemId: item.id, createdAt: sessionCreatedAt, status: "in_progress", phase: .itemPlayback,
                               currentTargetType: .itemTextTTS, currentTargetId: item.id,
                               position: Position(), completionPercent: 0, playbackRate: 1)
         let repository = InMemorySessionRepository(

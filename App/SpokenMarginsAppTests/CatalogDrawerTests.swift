@@ -12,6 +12,7 @@ final class CatalogDrawerTests: XCTestCase {
         /// Feeds that settle on another URL once followed.
         var moves: [String: String] = [:]
         var failing = false
+        var subscriptionReads = 0
     }
 
     private func makeDrawer(defaults: UserDefaults, log: FollowLog) throws -> CatalogDrawerModel {
@@ -25,7 +26,10 @@ final class CatalogDrawerTests: XCTestCase {
         return CatalogDrawerModel(
             store: store,
             defaults: defaults,
-            subscriptions: { log.subscriptions },
+            subscriptions: {
+                log.subscriptionReads += 1
+                return log.subscriptions
+            },
             follow: { feedURL in
                 if log.failing { throw URLError(.timedOut) }
                 log.feeds.append(feedURL)
@@ -93,6 +97,65 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertNil(relaunched.state(for: entry), "unfollowed in Following: shows Follow again")
     }
 
+    /// #246 (found on the phone): the drawer stuttered while scrolling. Every row worked out its
+    /// follow state twice per render, and each time read the recorded follows from UserDefaults and
+    /// every subscription again. One pass over the whole catalog now reads subscriptions once.
+    func testOnePassOverTheCatalogReadsSubscriptionsOnce() async throws {
+        let log = FollowLog()
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: log)
+        await drawer.load()
+        let entries = drawer.entries
+        XCTAssertGreaterThanOrEqual(entries.count, 100)
+        drawer.toggleFollow(entries[0])
+        for _ in 0..<100 where drawer.followedCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        log.subscriptions.append(FeedSubscription(
+            id: "subscription-elsewhere",
+            source: SourceIdentity(id: "source-elsewhere", kind: .podcastFeed, canonicalURL: entries[2].feedURL, host: "example")
+        ))
+
+        log.subscriptionReads = 0
+        let states = drawer.followStates(for: entries)
+        XCTAssertLessThanOrEqual(log.subscriptionReads, 1, "one pass over \(entries.count) rows")
+        XCTAssertEqual(states[entries[0].id], .followed, "followed from the drawer")
+        XCTAssertNil(states[entries[1].id])
+        XCTAssertEqual(states[entries[2].id], .followed, "followed another way")
+        XCTAssertEqual(states.count, 2)
+    }
+
+    /// #470: a Writers entry follows through the same path as a podcast and is stored as an
+    /// article feed, so its posts arrive in Following.
+    func testFollowingAWriterCreatesAnArticleFeedSubscription() async throws {
+        let repository = InMemorySessionRepository()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SubstackFeedURLProtocol.self]
+        let coordinator = FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration))
+        let bundled = try XCTUnwrap(Bundle.main.url(forResource: "catalog", withExtension: "json"))
+        let cache = FileManager.default.temporaryDirectory.appending(path: "catalog-drawer-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: cache) }
+        let drawer = CatalogDrawerModel(
+            store: SourceCatalogStore(bundledCatalogURL: bundled, cacheDirectory: cache) { _, _ in throw URLError(.notConnectedToInternet) },
+            defaults: try freshDefaults(),
+            subscriptions: { (try? repository.loadFeedSubscriptions()) ?? [] },
+            follow: { feedURL in
+                guard let candidate = try await coordinator.discover(urlString: feedURL).first else { throw FollowedSourceError.noFeedCandidates }
+                return try await coordinator.follow(candidate: candidate).source.id
+            }
+        )
+        await drawer.load()
+        XCTAssertTrue(drawer.subjects.contains { $0.id == "writers" })
+        drawer.selectedSubject = "writers"
+        let entry = try XCTUnwrap(drawer.entries.first)
+        XCTAssertEqual(entry.contentKind, .newsletter)
+        drawer.toggleFollow(entry)
+        for _ in 0..<150 where drawer.state(for: entry) != .followed { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(drawer.state(for: entry), .followed)
+
+        let subscription = try XCTUnwrap(repository.loadFeedSubscriptions().first)
+        XCTAssertEqual(subscription.source.kind, .articleFeed)
+        XCTAssertEqual(subscription.source.canonicalURL, entry.feedURL)
+        XCTAssertEqual(try repository.loadFeedEntries(subscriptionId: subscription.id).map(\.title), ["A first post"])
+    }
+
     func testSubjectFilterAndFailedFollowStayOnTheRow() async throws {
         let log = FollowLog()
         let drawer = try makeDrawer(defaults: try freshDefaults(), log: log)
@@ -123,4 +186,34 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.present()
         XCTAssertTrue(drawer.isPresented)
     }
+}
+
+/// A Substack-style RSS feed with one text post, served for any URL on the stubbed session.
+private final class SubstackFeedURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.scheme == "https" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let host = request.url?.host ?? "example.substack.com"
+        let data = Data("""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0"><channel>
+        <title>A Writer</title><link>https://\(host)</link><description>Posts</description>
+        <item><title>A first post</title><link>https://\(host)/p/a-first-post</link>
+        <guid isPermaLink="false">https://\(host)/p/a-first-post</guid>
+        <pubDate>Wed, 30 Sep 2026 12:00:00 GMT</pubDate><description>Hello.</description></item>
+        </channel></rss>
+        """.utf8)
+        guard let url = request.url, let response = HTTPURLResponse(
+            url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/rss+xml; charset=utf-8", "Content-Length": "\(data.count)"]
+        ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse)); return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

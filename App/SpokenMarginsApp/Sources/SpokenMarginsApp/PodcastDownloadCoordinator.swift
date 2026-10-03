@@ -217,14 +217,16 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         // and paused playback, and transfer it only when the active item changes.
         let activePath = itemId.flatMap { recordsByItemId[$0]?.localRelativePath }
             .map { "PodcastAudio/\($0)" }
-        for var asset in (try? store.loadOwnedOfflineAssets()) ?? [] where asset.category == .podcast {
+        for asset in (try? store.loadOwnedOfflineAssets()) ?? [] where asset.category == .podcast {
             let isActive = itemId != nil && (asset.itemId == itemId
                 || (activePath != nil && asset.relativePath == activePath))
             let wasActive = asset.protections.contains(.activePlayback)
             guard isActive != wasActive else { continue }
-            if isActive { asset.protections.insert(.activePlayback) }
-            else { asset.protections.remove(.activePlayback) }
-            try? store.saveOwnedOfflineAsset(asset)
+            // One atomic row update, so a ledger reconcile can't write back a copy without it (#287).
+            _ = try? store.updateOwnedOfflineAsset(id: asset.id) { current in
+                if isActive { current.protections.insert(.activePlayback) }
+                else { current.protections.remove(.activePlayback) }
+            }
         }
         guard let itemId, var record = recordsByItemId[itemId] else { return }
         record.lastPlayedAt = Date()
