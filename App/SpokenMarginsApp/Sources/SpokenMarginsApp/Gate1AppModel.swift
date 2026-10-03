@@ -9831,8 +9831,6 @@ final class Gate1AppModel: ObservableObject {
         reportConfirmation("Imported item and Listening Map. Audio prepares separately; playback has not started.")
     }
 
-
-
     func importListeningEditionFile(_ url: URL) {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
@@ -12434,6 +12432,7 @@ final class Gate1AppModel: ObservableObject {
             generateListeningMap()
         }
         retrySourceWindowContexts(itemId: itemId)
+        if let store { CommunityMapUploadService.shared.transcriptAttached(itemId: itemId, store: store) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
         if let localURL = importedPodcastRecipientLocalURLs[itemId]
             ?? podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
             resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
