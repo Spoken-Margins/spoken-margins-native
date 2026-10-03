@@ -78,6 +78,31 @@ final class SharedArticleLinkTests: XCTestCase {
         XCTAssertEqual(extractor.requested.count, 1)
     }
 
+    /// The app's call: an injected resolver (UI tests) answers instead of the public resolver, and its no-audio
+    /// result still reaches the article fallback.
+    @MainActor
+    func testInjectedResolverAnswersBeforeTheArticleFallback() async throws {
+        struct Resolver: LinkResolutionClient {
+            let result: LinkResolutionResult
+            func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult { result }
+        }
+        let extractor = StubExtractor(.success(Self.article))
+        let read = try await LinkArticleFallback.resolve(
+            Self.request(), url: URL(string: Self.postURL)!, resolver: Resolver(result: Self.noAudio),
+            allowsArticle: true, using: extractor, record: { _ in }
+        )
+        guard case .article = read else { return XCTFail("A page with no audio is read as an article") }
+        var playable = Self.noAudio
+        playable.status = .playable
+        let kept = try await LinkArticleFallback.resolve(
+            Self.request(), url: URL(string: Self.postURL)!, resolver: Resolver(result: playable),
+            allowsArticle: true, using: extractor, record: { _ in }
+        )
+        guard case .podcast(let result) = kept else { return XCTFail("The resolver's podcast stays first") }
+        XCTAssertEqual(result.status, .playable)
+        XCTAssertEqual(extractor.requested, [URL(string: Self.postURL)!])
+    }
+
     @MainActor
     func testBackgroundResolutionDoesNotExtractTransportFailuresOrFeedEntries() async throws {
         let extractor = StubExtractor(.success(Self.article))
