@@ -958,7 +958,7 @@ final class SharingTests: XCTestCase {
 
     /// The wrong-episode rule (#456) on its own: when at most half of a packet's flanks found the recipient's
     /// edition, even a Margin whose two flanks agree is not placed. A majority, or a single Margin, is unchanged.
-    func testAcousticResolverPlacesNothingWhenMostEvidenceMissesTheEdition() {
+    func testAcousticResolverPlacesNothingWhenMostEvidenceMissesTheEdition() throws {
         let placed = ImportedAnchorResolution(
             evidenceClass: .fused, localMediaTimeMs: 10_000, confidence: 0.95, algorithmVersion: "podcast-anchor.v1"
         )
@@ -966,7 +966,7 @@ final class SharingTests: XCTestCase {
         let packet = ["inside-intro": placed, "after-intro": unresolved, "deep-content": unresolved]
 
         let wrongEpisode = PodcastAcousticAnchorResolver.requiringEditionConfirmation(
-            packet, matchedFlanks: 3, declaredFlanks: 6
+            packet, matchedFlanks: 3, answeredFlanks: 6
         )
         XCTAssertNil(wrongEpisode["inside-intro"]?.localMediaTimeMs)
         XCTAssertEqual(wrongEpisode["inside-intro"]?.evidenceClass, .unresolved)
@@ -977,12 +977,24 @@ final class SharingTests: XCTestCase {
 
         // One of three Margins inside a replaced ad: most evidence still found the edition.
         XCTAssertEqual(PodcastAcousticAnchorResolver.requiringEditionConfirmation(
-            packet, matchedFlanks: 4, declaredFlanks: 6
+            packet, matchedFlanks: 4, answeredFlanks: 6
         ), packet)
         // A single Margin can't show the edition is wrong, so it keeps its placement.
         XCTAssertEqual(PodcastAcousticAnchorResolver.requiringEditionConfirmation(
-            ["only": placed], matchedFlanks: 2, declaredFlanks: 2
+            ["only": placed], matchedFlanks: 2, answeredFlanks: 2
         ), ["only": placed])
+        // No flank matched: no shared audio to guard against, so the transcript still decides.
+        XCTAssertEqual(PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+            packet, matchedFlanks: 0, answeredFlanks: 6
+        ), packet)
+        // An ambiguous Margin carries the verdict too, so it can't keep an earlier placement.
+        let ambiguous = ImportedAnchorResolution(evidenceClass: .ambiguous, isAmbiguous: true)
+        XCTAssertTrue(PodcastAcousticAnchorResolver.isEditionRejection(try XCTUnwrap(
+            PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+                ["intro-theme": ambiguous, "after-intro": unresolved, "deep-content": unresolved],
+                matchedFlanks: 2, answeredFlanks: 6
+            )["intro-theme"]
+        )))
     }
 
     /// The wrong-episode verdict (#456) survives the app's pipeline. The shared intro's words match the
@@ -996,7 +1008,7 @@ final class SharingTests: XCTestCase {
         let unresolved = ImportedAnchorResolution(evidenceClass: .unresolved, algorithmVersion: "podcast-anchor.v1")
         let acoustic = PodcastAcousticAnchorResolver.requiringEditionConfirmation(
             ["inside-intro": placed, "after-intro": unresolved, "deep-content": unresolved],
-            matchedFlanks: 2, declaredFlanks: 6
+            matchedFlanks: 2, answeredFlanks: 6
         )
         let introTranscript = ImportedAnchorResolution(
             evidenceClass: .transcriptVerified, localMediaTimeMs: 10_200, confidence: 0.9,
@@ -1032,6 +1044,41 @@ final class SharingTests: XCTestCase {
             previous: placed, proposed: unresolved, previousEdition: "edition-b", currentEdition: "edition-b",
             hasTranscript: false
         ), placed)
+    }
+
+    /// Flanks ShazamKit can't answer for say nothing about the edition. Evidence recorded before Build 29 is
+    /// 12 s and every query errors; an unreadable signature is skipped. Such a packet on the right episode must
+    /// not be rejected as a different edition, or its transcript placements would be withdrawn.
+    func testUnanswerableEvidenceDoesNotRejectTheEdition() async throws {
+        #if canImport(AVFoundation)
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recipientURL = root.appendingPathComponent("recipient.m4a")
+        try SeededNoiseAudio.write(to: recipientURL, seconds: 40)
+        let queries = (1...3).map { index in
+            PodcastPortableAnchorQuery(
+                packageScopedId: "margin-\(index)",
+                senderMediaTimeMs: index * 10_000,
+                evidence: [
+                    PodcastAcousticEvidenceQuery(id: "pre-\(index)", signatureData: Data([1, 2, 3]), anchorOffsetMs: 11_500),
+                    PodcastAcousticEvidenceQuery(id: "post-\(index)", signatureData: Data([4, 5, 6]), anchorOffsetMs: -500)
+                ]
+            )
+        }
+        let resolutions = try await PodcastAcousticAnchorResolver.resolve(
+            queries: queries,
+            recipientAudioURL: recipientURL,
+            senderExactEditionSHA256: nil,
+            senderDurationMs: 40_000,
+            strongSourceIdentity: true
+        )
+        XCTAssertEqual(resolutions.count, 3)
+        for (id, resolution) in resolutions {
+            XCTAssertFalse(PodcastAcousticAnchorResolver.isEditionRejection(resolution), id)
+        }
+        #else
+        throw XCTSkip("AVFoundation is required")
+        #endif
     }
 
     /// The same rule end to end, on audio that never repeats: a 7 s ad inserted right at the Margin, between

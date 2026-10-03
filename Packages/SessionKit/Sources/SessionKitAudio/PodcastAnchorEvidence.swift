@@ -290,12 +290,11 @@ public enum PodcastAcousticAnchorResolver {
         }
 
         var resolutions: [String: ImportedAnchorResolution] = [:]
-        var declaredFlanks = 0
+        var answeredFlanks = 0
         var matchedFlanks = 0
         var repeatProbe: RepeatedAudioProbe?
         var repeatProbeTried = false
         for query in queries {
-            declaredFlanks += query.evidence.count
             var candidates: [(timeMs: Int, confidence: Double)] = []
             var matchedAnchorOffsets: [Int] = []
             var matchedRepeatedAudio = false
@@ -310,6 +309,7 @@ public enum PodcastAcousticAnchorResolver {
                 switch await session.result(from: signature) {
                 case .match(let match):
                     guard let item = match.mediaItems.first else { continue }
+                    answeredFlanks += 1
                     let matchedStartMs = absoluteStartMs(of: item)
                     let confidence = matchConfidence(of: item)
                     // A flank whose audio also plays elsewhere in this edition (a theme, sting or bumper) can match
@@ -329,8 +329,10 @@ public enum PodcastAcousticAnchorResolver {
                     }
                     candidates.append((matchedStartMs + evidence.anchorOffsetMs, confidence))
                     matchedAnchorOffsets.append(evidence.anchorOffsetMs)
-                case .noMatch, .error:
-                    continue
+                case .noMatch:
+                    answeredFlanks += 1
+                case .error:
+                    continue // Not an answer about this edition: pre-Build 29 evidence (12 s) always errors.
                 }
             }
             resolutions[query.packageScopedId] = resolveCandidates(
@@ -348,7 +350,7 @@ public enum PodcastAcousticAnchorResolver {
         return requiringEditionConfirmation(
             corroboratePartialFlanks(queries: queries, resolutions: resolutions),
             matchedFlanks: matchedFlanks,
-            declaredFlanks: declaredFlanks
+            answeredFlanks: answeredFlanks
         )
         #else
         return Dictionary(uniqueKeysWithValues: queries.map { query in
@@ -601,8 +603,10 @@ public enum PodcastAcousticAnchorResolver {
     /// A different episode of the same show can share the sender's intro or outro. A Margin there matches
     /// perfectly, on both flanks, although nothing else in the packet does (#456). So a placement counts only
     /// when more than half of the packet's evidence found this edition. Below that, the edition is unconfirmed
-    /// and nothing is placed. A packet with fewer flanks than `minimumFlanksForEditionCheck` (one Margin)
-    /// can't tell the difference and is left as it is.
+    /// and nothing is placed. Only flanks ShazamKit answered count (a match or no match): an unreadable
+    /// signature or a query error says nothing about the edition. The rule needs at least one match, the
+    /// shared audio it guards against; with none, other evidence (the transcript) decides as before. A packet
+    /// with fewer answered flanks than `minimumFlanksForEditionCheck` (one Margin) is left as it is.
     static let minimumFlanksForEditionCheck = 4
     public static let editionUnconfirmedAlgorithmVersion = "podcast-anchor-edition-unconfirmed.v1"
     static let editionRejection = ImportedAnchorResolution(
@@ -619,20 +623,15 @@ public enum PodcastAcousticAnchorResolver {
     static func requiringEditionConfirmation(
         _ resolutions: [String: ImportedAnchorResolution],
         matchedFlanks: Int,
-        declaredFlanks: Int
+        answeredFlanks: Int
     ) -> [String: ImportedAnchorResolution] {
-        guard declaredFlanks >= minimumFlanksForEditionCheck, matchedFlanks * 2 <= declaredFlanks else {
+        guard answeredFlanks >= minimumFlanksForEditionCheck, matchedFlanks >= 1,
+              matchedFlanks * 2 <= answeredFlanks else {
             return resolutions
         }
-        // Every Margin carries the verdict, placed or not, so other evidence (a transcript of the shared intro)
-        // can't place one on this edition either. An ambiguous Margin can't be placed already and stays so.
-        return resolutions.mapValues(withdrawingPlacementForRejectedEdition)
-    }
-
-    static func withdrawingPlacementForRejectedEdition(
-        _ resolution: ImportedAnchorResolution
-    ) -> ImportedAnchorResolution {
-        resolution.evidenceClass == .ambiguous && resolution.localMediaTimeMs == nil ? resolution : editionRejection
+        // Every Margin carries the verdict, placed, ambiguous or not, so neither other evidence (a transcript of
+        // the shared intro) nor an earlier placement on this edition puts one back.
+        return resolutions.mapValues { _ in editionRejection }
     }
 
     /// A high-confidence single flank remains useful direct evidence, but it
@@ -1008,7 +1007,7 @@ public enum PodcastAnchorFusionResolver {
         guard acoustic.values.contains(where: PodcastAcousticAnchorResolver.isEditionRejection) else {
             return resolutions
         }
-        return resolutions.mapValues(PodcastAcousticAnchorResolver.withdrawingPlacementForRejectedEdition)
+        return resolutions.mapValues { _ in PodcastAcousticAnchorResolver.editionRejection }
     }
 
     /// The resolution a re-resolution stores: a verified placement on the same recipient edition survives a
