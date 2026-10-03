@@ -75,6 +75,23 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
 
     // #287: the ledger reconciles sizes from a read taken before it checks every file, while the
     // app toggles protections on the same rows. The size update must not undo the toggle.
+    /// A malformed row met inside the update's transaction is still quarantined, as the old load-then-save
+    /// path did. Quarantine used to start a second transaction, which SQLite rejects (#529 audit).
+    func testOwnedOfflineAssetUpdateQuarantinesAMalformedRow() throws {
+        let path = temporaryDatabasePath()
+        let store = try SQLiteSessionStore(path: path)
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &database), SQLITE_OK)
+        defer { sqlite3_close(database) }
+        let sql = "INSERT INTO records(kind,id,payload) VALUES('owned_offline_asset','episode','{not-json');"
+        XCTAssertEqual(sqlite3_exec(database, sql, nil, nil, nil), SQLITE_OK)
+
+        let updated = try store.updateOwnedOfflineAsset(id: "episode") { $0.protections.insert(.activePlayback) }
+        XCTAssertNil(updated)
+        XCTAssertEqual(try store.quarantinedRecordCount(), 1)
+        XCTAssertFalse(try recordExists(path: path, kind: "owned_offline_asset", id: "episode"))
+    }
+
     func testOwnedOfflineAssetUpdateKeepsAProtectionSavedAfterTheCallersRead() throws {
         let store = try SQLiteSessionStore(path: temporaryDatabasePath())
         try assertOwnedOfflineAssetUpdateKeepsALaterProtection(store)

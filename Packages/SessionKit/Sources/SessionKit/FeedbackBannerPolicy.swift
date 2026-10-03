@@ -47,7 +47,9 @@ public struct ItemFailureLog: Equatable, Sendable {
 
     public init() {}
 
-    public mutating func record(_ message: String, itemId: String, at date: Date = Date()) {
+    /// Async work names its originating item. Only failures without an origin use the visible item.
+    public mutating func record(_ message: String, itemId: String?, visibleItemId: String = "", at date: Date = Date()) {
+        let itemId = itemId ?? visibleItemId
         guard !itemId.isEmpty else { return }
         entries[itemId] = Entry(message: message, occurredAt: date)
     }

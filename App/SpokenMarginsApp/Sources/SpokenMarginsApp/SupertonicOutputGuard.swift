@@ -40,6 +40,13 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
         guard let problem = SupertonicOutputCheck.problem(
             text: text, durationSeconds: rendered.duration, speed: Double(speed)
         ) else { return rendered }
+        // A render nobody waits for any more (a timeout handed the text to the live iOS voice, or a
+        // stop) must not start another speech synthesizer: writing one while the iOS voice speaks
+        // is the likely reason that voice went silent while it said it was playing (#288).
+        if Task.isCancelled {
+            await inner.discardGeneratedAudio(at: rendered.audioURL)
+            throw CancellationError()
+        }
         let replacementURL = rendered.audioURL.deletingLastPathComponent()
             .appending(path: "system-voice-\(UUID().uuidString).wav")
         do {
