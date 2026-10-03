@@ -13161,8 +13161,8 @@ final class Gate1AppModel: ObservableObject {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_export") else { return }
         do {
             selectedItem = try loadItemDetail(id: itemID, store: requireStore())
-            let sessionID = selectedItem.sessionRows.first { $0.interjectionCount > 0 }?.id
-            openExport(sessionId: sessionID)
+            exportSessionId = selectedItem.sessionRows.first { $0.interjectionCount > 0 }?.id
+            prepareExportShareInterjections() // #147: straight to the Share Margins sheet, not the Share/Export screen.
         } catch { reportFailure(error, context: "Open item export failed") }
     }
 

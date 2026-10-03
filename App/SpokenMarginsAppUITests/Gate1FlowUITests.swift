@@ -15,7 +15,7 @@ final class Gate1FlowUITests: XCTestCase {
         app.launch()
     }
 
-    func testMarginsItemShareOpensItemExportAndChapterJumpUpdatesTimeline() throws {
+    func testMarginsItemShareOpensShareSheetAndChapterJumpUpdatesTimeline() throws {
         app.buttons["queue.start.item-pill"].tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         pausePlaybackIfNeeded()
@@ -39,10 +39,10 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(share.waitForExistence(timeout: 5))
         captureScreen(named: "qol-item-share-action")
         share.tap()
-        XCTAssertTrue(element("export.screen").waitForExistence(timeout: 5))
-        XCTAssertTrue(element("export.session.picker").exists)
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Share Margins (")).firstMatch.isEnabled)
-        captureScreen(named: "qol-item-export")
+        // #147: straight to the Share Margins sheet, with Review pinned at the bottom.
+        XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("build23.sender.select.continue").waitForExistence(timeout: 5))
+        captureScreen(named: "qol-item-share-sheet")
     }
 
     func testListeningEditionPreviewShowsSuppliedScenesBeforeImport() throws {
