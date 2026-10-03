@@ -4,6 +4,8 @@ import WebKit
 
 enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
     case invalidURL
+    /// The page moved to an address that isn't HTTPS while it loaded (#144).
+    case pageLeftHTTPS
     case oversizedHTML
     case tooManyRedirects
     case missingExtractor
@@ -14,6 +16,7 @@ enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .invalidURL: "Article URLs must use HTTPS."
+        case .pageLeftHTTPS: "The article page moved to an address that isn't secure (HTTPS)."
         case .oversizedHTML: "The article exceeds the 1 MB safety limit."
         case .tooManyRedirects: "The article redirected more than five times."
         case .missingExtractor: "The bundled readable-page extractor is unavailable."
@@ -123,7 +126,7 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
         case .skipFrame:
             return .cancel
         case .refuse(.pageLeftHTTPS):
-            finish(.failure(ReadablePageExtractionError.invalidURL))
+            finish(.failure(ReadablePageExtractionError.pageLeftHTTPS))
             return .cancel
         case .refuse(.tooManyRedirects):
             finish(.failure(ReadablePageExtractionError.tooManyRedirects))
