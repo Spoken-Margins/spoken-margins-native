@@ -33,6 +33,7 @@ import (
 	"spokenmargins.dev/bridge/internal/config"
 	"spokenmargins.dev/bridge/internal/manifest"
 	"spokenmargins.dev/bridge/internal/maps"
+	"spokenmargins.dev/bridge/internal/tokens"
 	"spokenmargins.dev/bridge/internal/store"
 )
 
@@ -130,6 +131,12 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Anonymous tokens (#737). Keys are made on first use, so with the
+	// tokens switch off this only creates two empty directories.
+	issuer, err := tokens.Open(filepath.Join(*stateDir, "tokens"))
+	if err != nil {
+		return err
+	}
 	srv := &api.Server{
 		Verifier:          &appattest.Verifier{Roots: pool, AppID: *appID, AllowDevelopment: *allowDev},
 		Store:             st,
@@ -140,6 +147,7 @@ func serve(args []string) error {
 		TrustForwardedFor: *behindProxy,
 		MapStore:          mapStore,
 		Maps:              mapService,
+		Tokens:            issuer,
 	}
 	httpServer := &http.Server{
 		Addr:              *listen,
@@ -178,6 +186,11 @@ func serve(args []string) error {
 				log.Printf("purge failed: %v", err)
 			} else if n > 0 {
 				log.Printf("purged %d idle install records", n)
+			}
+			if n, err := issuer.Prune(time.Now()); err != nil {
+				log.Printf("tokens: prune failed: %v", err)
+			} else if n > 0 {
+				log.Printf("tokens: pruned %d expired key months", n)
 			}
 			if _, err := store.PruneHourLog(filepath.Join(*stateDir, "abuse.log"), time.Now(), abuseLogDays); err != nil {
 				log.Printf("abuse log prune failed: %v", err)

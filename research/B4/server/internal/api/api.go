@@ -37,6 +37,7 @@ import (
 	"spokenmargins.dev/bridge/internal/config"
 	"spokenmargins.dev/bridge/internal/maps"
 	"spokenmargins.dev/bridge/internal/store"
+	"spokenmargins.dev/bridge/internal/tokens"
 )
 
 // Version is reported by the health check.
@@ -95,6 +96,9 @@ type Server struct {
 	MapStore *maps.Store
 	Maps     *maps.Service
 
+	// Tokens issues anonymous tokens (DESIGN.md §11). Nil answers 503.
+	Tokens *tokens.Issuer
+
 	// Per-hour limits. Zero means the defaults below.
 	ChallengesPerIPPerHour  int
 	RequestsPerInstallPerHr int
@@ -109,6 +113,7 @@ type Server struct {
 	uploadSlots   chan struct{}
 	keyWindow     window
 	logMu         sync.Mutex
+	tokenQuota    dayQuota
 	requestCounts map[logKey]int
 	abuseCounts   map[abuseKey]int
 }
@@ -165,6 +170,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/ping", s.attested(s.ping))
 	mux.HandleFunc("POST "+PathMapTranscripts, s.uploadTranscript)
 	mux.HandleFunc("GET "+pathMapsPrefix+"{key}", s.getMap)
+	mux.HandleFunc("GET "+PathTokenKeys, s.tokensOn(s.tokenKeys))
+	mux.HandleFunc("POST "+PathTokens, s.tokensOn(s.attested(s.issueTokens)))
 	return s.logRequests(mux)
 }
 
@@ -173,7 +180,7 @@ func (s *Server) Handler() http.Handler {
 var loggedRoutes = map[string]bool{
 	"/api/v1/health": true, PathConfig: true, PathManifest: true,
 	"/api/v1/attest/challenge": true, "/api/v1/attest/register": true, "/api/v1/ping": true,
-	PathMapTranscripts: true,
+	PathMapTranscripts: true, PathTokens: true, PathTokenKeys: true,
 }
 
 // logRoute is the route name the request log may record for path.
