@@ -144,6 +144,7 @@ Add a section:
 - `internal/config`: the kill switch.
 - `internal/manifest`: the I3 gate.
 - `internal/maps`: listening maps made from uploaded transcripts (§10).
+- `internal/tokens`: anonymous blind-signed tokens (§11).
 - `cmd/smserver`: serve plus the admin CLI, including `publish-manifest`.
 - `cmd/smclient`: the test client.
 - `scripts/demo.sh`: runs the whole M1 path locally.
@@ -156,7 +157,7 @@ It's deployed from `research/B4/` today. Before M2 adds the watcher, I suggest m
 2. ~~**Monthly ceiling**~~: decided, $10/month once there are users. **Still needed:** the VPS plan's monthly transfer allowance, so the 50% alert has a number.
 3. **How new sites get bridged:** the owner approves each one (the brief's recommendation, and the design above assumes it).
 4. **Privacy page and label:** approve the draft text in §7 and the Device ID declaration. They publish before any attested feature ships, and they're not needed for a bridge that only reads.
-5. **Unlinkable submissions:** confirm §3 (tokens, blocking at issuance) as the rule E3 and F1 inherit, rather than linking submissions to install keys.
+5. **Unlinkable submissions:** confirm §3 (tokens, blocking at issuance) as the rule E3 and F1 inherit, rather than linking submissions to install keys. *Default taken 2026-10-03 (#737): the tokens are built, switched off, and nothing requires them yet, so this stays open until a feature asks for a token. #736 proposes them as the way a paid tier works without accounts.*
 
 ## 10. Listening maps (#551)
 
@@ -171,3 +172,14 @@ An opted-in phone uploads one episode's transcript to `POST /api/v1/maps/transcr
 - **Logs** name the route `/api/v1/maps/*`, never an episode key. The worker's log lines say what failed (an HTTP status, a check that didn't pass), never which episode or file. Caddy's error log, which records the path of a failed request, rewrites map paths to `/api/v1/maps/*` too (`deploy/caddy-global.caddy`, checked by `test-edit-caddyfile.sh` against Caddy 2.10.2).
 - **Cost:** with Claude Haiku 4.5 at $1 and $5 per million input and output tokens, an hour-long episode is about 13,000 tokens in and 2,000 out, about 2 cents.
 - **Known limit:** because uploads are anonymous, the first uploader of an episode decides its map, and a bad actor could upload a misleading transcript first. The checks keep a map short and in the provider's own words; takedown is the remedy. If this happens in practice, the next step is §3's unlinkable tokens.
+
+## 11. Anonymous tokens (#737)
+
+§3's tokens, built and switched off (`tokens` in `config.json`). Nothing requires a token yet; the first users would be map uploads (§10's known limit) and a paid tier without accounts (#736).
+
+- **Scheme.** Privacy Pass token type 2 (RFC 9578): `token_type, nonce, challenge_digest, token_key_id, authenticator`, signed with RSABSSA-SHA384-PSS-Deterministic (RFC 9474) and a 2048-bit key. `internal/tokens` implements it on the standard library and reproduces RFC 9474's test vectors byte for byte. The app's side (blind, then finalize) is a later slice; `tokens.Pending` is the Go reference for its bytes.
+- **Purpose.** The challenge digest names this issuer and a purpose such as `maps`, so a token made for one feature can't be spent on another.
+- **Issuing.** `POST /api/v1/tokens` is attested and takes up to 10 blinded messages, plus the key id the phone blinded against (`409 stale_key` if that isn't this month's). An install gets at most 10 tokens a UTC day; the count is in memory and forgotten when the day ends, and going over writes the install's tag to the abuse log like any other limit. A blocked install gets `403 refused`, which is how blocking works with tokens: it stops issuance. The server signs values it can't read and keeps nothing about which install got which signature.
+- **Keys.** One per UTC month, made on first use (`/var/lib/smserver/tokens/keys/YYYY-MM.pem`, mode 0600). A month's key signs during that month; its tokens spend until the end of the next. `GET /api/v1/tokens/keys` returns the same document to everyone, so phones can compare notes and notice a key made just for them. A key file that can't be read is an error and is never replaced, since replacing it would void every token already out.
+- **Spending.** `Issuer.Redeem` checks the key, the purpose and the signature, then records the nonce under `tokens/spent/YYYY-MM/` with an exclusive create, so a token spends once even across two racing requests or a restart. The daily prune deletes keys and spent records once their month's tokens have expired.
+- **Timing.** `math/big` isn't constant-time, so signing blinds the private-key operation with a fresh random value and checks its own result before answering (RFC 9474 §7.1, §4.3).
