@@ -10,7 +10,11 @@ import SessionKitPersistence
 @MainActor
 final class ReadwiseHighlightSync: ObservableObject {
     @Published var enabled = UserDefaults.standard.bool(forKey: "readwiseHighlightsEnabled")
-    @Published private(set) var status = ""
+    @Published private(set) var status = "" {
+        didSet { statusIsFailure = false }
+    }
+    /// A failure is drawn with the failure icon, not as ordinary status (#308).
+    @Published private(set) var statusIsFailure = false
     private var storeProvider: (@MainActor () -> SQLiteSessionStore?)?
     private var task: Task<Void, Never>?
     private var isSending = false
@@ -74,8 +78,10 @@ final class ReadwiseHighlightSync: ObservableObject {
         } catch ReadwiseHighlightError.tokenRejected {
             rejectedTokenDigest = tokenDigest
             status = ReadwiseHighlightError.tokenRejected.errorDescription ?? ""
+            statusIsFailure = true
         } catch {
             status = "Sending needs attention: \(error.localizedDescription)"
+            statusIsFailure = true
         }
     }
 }
