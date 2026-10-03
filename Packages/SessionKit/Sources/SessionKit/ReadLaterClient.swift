@@ -39,6 +39,9 @@ public struct ReadLaterClient: Sendable {
             switch response.statusCode {
             case 401, 403: throw EditionError.invalid("Access was rejected. Reconnect with a valid token.")
             case 429: throw EditionError.invalid("The service rate limit was reached. Wait before refreshing again.")
+            // Readwise answers a wrong token with 401, so a 404 from the Reader list means the token
+            // works but this account has no Reader (#621). Highlights use a different API.
+            case 404 where service == .reader: throw EditionError.invalid(Self.readerUnavailableMessage)
             default: throw EditionError.invalid("The service returned HTTP \(response.statusCode). Try again later.")
             }
         }
@@ -64,6 +67,23 @@ public struct ReadLaterClient: Sendable {
             return ReadLaterDocument(id: "raindrop:\(doc._id)", title: doc.title, url: url, html: nil)
         }, nextCursor: page.items.count == 50 ? String((Int(cursor ?? "0") ?? 0) + 1) : nil)
     }
+    public static let readerUnavailableMessage = "Reader isn’t available on this Readwise account, so there are no Later articles to list. Sending Margins to Readwise as highlights can still work."
+
+    /// The line under Choose Articles when it lists nothing, so the section never shows a bare
+    /// heading (#621). Nil while there are articles to show.
+    public static func emptyArticlesLine(
+        service: ReadLaterService, connected: Bool, isLoading: Bool, loaded: Bool, failure: String?, documentCount: Int
+    ) -> String? {
+        guard documentCount == 0 else { return nil }
+        if isLoading { return "Fetching articles…" }
+        guard connected else { return "Connect \(service.title) above to list its articles here." }
+        if let failure { return "No articles loaded. \(failure)" }
+        guard loaded else { return "Tap Refresh to list your articles." }
+        return service == .reader
+            ? "No articles to show. Your Reader Later list has no articles with text."
+            : "No articles to show. Your Raindrop bookmarks list is empty."
+    }
+
     private static func webURL(_ value: String) -> String? {
         guard let url = URL(string: value), ["https", "http"].contains(url.scheme?.lowercased() ?? ""), url.host != nil, url.user == nil, url.password == nil else { return nil }
         return value

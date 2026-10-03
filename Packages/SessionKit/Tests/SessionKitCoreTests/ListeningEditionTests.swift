@@ -90,6 +90,40 @@ final class ReadLaterClientTests: XCTestCase {
         do { _ = try await client.page(service: .reader, token: "x"); XCTFail("Must fail") }
         catch { XCTAssertTrue(error.localizedDescription.contains("rate limit")) }
     }
+    func testReaderNotFoundSaysTheAccountHasNoReader() async {
+        // #621: a working token on a Readwise account without Reader gets 404 from /api/v3/list/.
+        let client = ReadLaterClient { request in
+            (Data(), HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!)
+        }
+        do { _ = try await client.page(service: .reader, token: "x"); XCTFail("Must fail") }
+        catch {
+            XCTAssertEqual(error.localizedDescription, ReadLaterClient.readerUnavailableMessage)
+            XCTAssertTrue(error.localizedDescription.contains("Reader isn’t available on this Readwise account"))
+            XCTAssertTrue(error.localizedDescription.contains("highlights can still work"))
+            XCTAssertFalse(error.localizedDescription.contains("Try again later"))
+        }
+    }
+    func testOtherStatusCodesKeepTheirMessages() async {
+        for (service, code, expected) in [(ReadLaterService.reader, 401, "Access was rejected"), (.reader, 500, "HTTP 500. Try again later"), (.raindrop, 404, "HTTP 404. Try again later")] {
+            let client = ReadLaterClient { request in
+                (Data(), HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: nil, headerFields: nil)!)
+            }
+            do { _ = try await client.page(service: service, token: "x"); XCTFail("Must fail") }
+            catch { XCTAssertTrue(error.localizedDescription.contains(expected), "\(service) \(code): \(error.localizedDescription)") }
+        }
+    }
+    func testEmptyArticleListAlwaysSaysWhy() {
+        func line(_ service: ReadLaterService = .reader, connected: Bool = true, isLoading: Bool = false, loaded: Bool = false, failure: String? = nil, count: Int = 0) -> String? {
+            ReadLaterClient.emptyArticlesLine(service: service, connected: connected, isLoading: isLoading, loaded: loaded, failure: failure, documentCount: count)
+        }
+        XCTAssertNil(line(loaded: true, count: 2))
+        XCTAssertEqual(line(isLoading: true), "Fetching articles…")
+        XCTAssertEqual(line(connected: false), "Connect Readwise Reader above to list its articles here.")
+        XCTAssertEqual(line(failure: ReadLaterClient.readerUnavailableMessage), "No articles loaded. " + ReadLaterClient.readerUnavailableMessage)
+        XCTAssertEqual(line(), "Tap Refresh to list your articles.")
+        XCTAssertEqual(line(loaded: true), "No articles to show. Your Reader Later list has no articles with text.")
+        XCTAssertEqual(line(.raindrop, loaded: true), "No articles to show. Your Raindrop bookmarks list is empty.")
+    }
     func testRaindropUsesBookmarksNotPaidCachedCopies() async throws {
         let client = ReadLaterClient { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer local-token")
