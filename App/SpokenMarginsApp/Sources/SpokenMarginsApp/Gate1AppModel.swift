@@ -833,9 +833,9 @@ final class Gate1AppModel: ObservableObject {
     var sourceFollowSuggestionCandidates: [SourceCandidateEvidence] {
         guard sourceFollowSuggestionItemId == selectedItem.id,
               screen != .playback || sourceFollowSuggestionItemId == snapshot.itemId else { return [] }
+        let row = libraryItems.first(where: { $0.id == selectedItem.id })
         guard !FollowedSourceMatching.isSourceAlreadyFollowed(
-            sourceURL: libraryItems.first(where: { $0.id == selectedItem.id })?.sourceURL,
-            sourceTitle: libraryItems.first(where: { $0.id == selectedItem.id })?.sourceTitle,
+            sourceURL: row?.sourceURL, sourceTitle: row?.sourceTitle, sourceReference: row?.sourceReference,
             subscriptions: feedSubscriptions
         ) else { return [] }
         return FollowedSourceMatching.uniqueUnfollowedCandidates(storedSourceFollowSuggestionCandidates, subscriptions: feedSubscriptions)
@@ -15620,6 +15620,7 @@ final class Gate1AppModel: ObservableObject {
                 self.followedSourceCandidates = []
                 self.followedSourceURL = ""
                 await self.refreshFollowedSources(force: true)
+                self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
             } catch {
                 await self.recordFollowFailure(error)
@@ -15630,11 +15631,9 @@ final class Gate1AppModel: ObservableObject {
 
     /// #244: a failed Follow said only "FollowedSourceError". Record the case, host and steps.
     private func recordFollowFailure(_ error: Error) async {
-        guard let coordinator = followedSourceCoordinator else {
-            diagnostics["followSourceFailure"] = FollowedSourceCoordinator.diagnosticCode(for: error)
-            return
-        }
-        diagnostics["followSourceFailure"] = await coordinator.failureDiagnostic(for: error)
+        var line = FollowedSourceCoordinator.diagnosticCode(for: error)
+        if let coordinator = followedSourceCoordinator { line = await coordinator.failureDiagnostic(for: error) }
+        diagnostics["followSourceFailure"] = FollowedSourceMatching.stampedDiagnostic(line)
     }
 
     /// B1 drawer: follows a catalog feed (always a public https feed) in one tap. Throws so the
@@ -15653,6 +15652,7 @@ final class Gate1AppModel: ObservableObject {
         } else {
             sourceId = try await coordinator.follow(candidate: candidate).source.id
         }
+        diagnostics["followSourceFailure"] = nil
         await refreshFollowedSources(force: false)
         return sourceId
     }
@@ -15668,6 +15668,7 @@ final class Gate1AppModel: ObservableObject {
                 self.followedSourceCandidates = []
                 self.followedSourceURL = ""
                 await self.refreshFollowedSources(force: true)
+                self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
             } catch {
                 self.reportFailure(error, context: "Follow source failed")
@@ -15686,6 +15687,7 @@ final class Gate1AppModel: ObservableObject {
         return !FollowedSourceMatching.isSourceAlreadyFollowed(
             sourceURL: row?.sourceURL,
             sourceTitle: row?.sourceTitle,
+            sourceReference: row?.sourceReference,
             subscriptions: feedSubscriptions
         )
     }
@@ -15716,19 +15718,16 @@ final class Gate1AppModel: ObservableObject {
         guard followOffers[itemId] == nil,
               let item = try? store.loadItem(id: itemId),
               let url = ManualFollowPolicy.discoveryURL(for: item),
-              !FollowedSourceMatching.isSourceAlreadyFollowed(
-                sourceURL: item.sourceURL, sourceTitle: item.sourceTitle, subscriptions: feedSubscriptions
-              ) else { return }
+              !FollowedSourceMatching.isItemAlreadyFollowed(item, subscriptions: feedSubscriptions) else { return }
         Task { [weak self] in
             guard let self else { return }
             let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
             self.followedSourceCoordinator = coordinator
-            do {
-                let candidates = try await self.sharedFollowDiscovery(item: item, preferredURL: url, coordinator: coordinator)
-                self.diagnostics["followOffer"] = candidates.isEmpty ? "none:empty" : "found:\(candidates.count)"
-            } catch {
-                self.diagnostics["followOffer"] = "none:\(String(describing: type(of: error)))"
-            }
+            var candidates: [SourceCandidateEvidence]?, failure = "none:empty"
+            do { candidates = try await self.sharedFollowDiscovery(item: item, preferredURL: url, coordinator: coordinator) } catch { failure = "none:" + FollowedSourceCoordinator.diagnosticCode(for: error) }
+            self.diagnostics["followOffer"] = FollowedSourceMatching.discoveryDiagnostic(
+                item: item, candidates: candidates, failure: failure, subscriptions: (try? store.loadFeedSubscriptions()) ?? self.feedSubscriptions
+            )
         }
     }
 
@@ -15799,6 +15798,7 @@ final class Gate1AppModel: ObservableObject {
                 }
                 self.feedSubscriptions = try store.loadFeedSubscriptions()
                 await self.refreshFollowedSources(force: true)
+                self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
             } catch {
                 await self.recordFollowFailure(error)
@@ -15828,10 +15828,7 @@ final class Gate1AppModel: ObservableObject {
             do {
                 let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
                 self.followedSourceCoordinator = coordinator
-                guard !FollowedSourceMatching.isSourceAlreadyFollowed(
-                    sourceURL: item.sourceURL, sourceTitle: item.sourceTitle,
-                    subscriptions: try store.loadFeedSubscriptions()
-                ) else { return }
+                guard !FollowedSourceMatching.isItemAlreadyFollowed(item, subscriptions: try store.loadFeedSubscriptions()) else { return }
                 let candidates = try await self.sharedFollowDiscovery(
                     item: item,
                     preferredURL: url,
@@ -15843,25 +15840,20 @@ final class Gate1AppModel: ObservableObject {
                       current.sourceURL == item.sourceURL,
                       current.externalReference == item.externalReference,
                       current.media?.url == item.media?.url else {
-                    self.diagnostics["sourceFollowSuggestion"] = "discarded_stale_origin"
+                    self.diagnostics["sourceFollowSuggestion"] = FollowedSourceMatching.stampedDiagnostic("discarded_stale_origin")
                     return
                 }
                 // Following may finish while network discovery is suspended.
                 let subscriptions = try store.loadFeedSubscriptions()
                 self.feedSubscriptions = subscriptions
-                guard !FollowedSourceMatching.isSourceAlreadyFollowed(
-                    sourceURL: current.sourceURL, sourceTitle: current.sourceTitle,
-                    subscriptions: subscriptions
-                ) else { return }
-                let now = Date()
-                let eligible = try FollowedSourceMatching.uniqueUnfollowedCandidates(candidates, subscriptions: subscriptions).filter { candidate in
-                    guard let decision = try store.loadSourceSuggestionDecision(sourceId: candidate.source.id) else { return true }
-                    if decision.decision == .accepted || decision.decision == .neverSuggest { return false }
-                    if let suppressUntil = decision.suppressUntil, suppressUntil > now { return false }
-                    if let lastPromptAt = decision.lastPromptAt,
-                       now.timeIntervalSince(lastPromptAt) < 30 * 24 * 60 * 60 { return false }
-                    return true
+                let unfollowed = FollowedSourceMatching.uniqueUnfollowedCandidates(candidates, subscriptions: subscriptions)
+                guard !FollowedSourceMatching.isItemAlreadyFollowed(current, subscriptions: subscriptions),
+                      !unfollowed.isEmpty || candidates.isEmpty else {
+                    self.diagnostics["sourceFollowSuggestion"] = FollowedSourceMatching.stampedDiagnostic("already_followed")
+                    return
                 }
+                let now = Date()
+                let eligible = try FollowedSourceMatching.suggestible(unfollowed, now: now) { try store.loadSourceSuggestionDecision(sourceId: $0) }
                 guard !eligible.isEmpty else { return }
                 for candidate in eligible {
                     try store.saveSourceSuggestionDecision(SourceSuggestionDecision(
@@ -15874,10 +15866,12 @@ final class Gate1AppModel: ObservableObject {
                 }
                 self.sourceFollowSuggestionItemId = itemId
                 self.storedSourceFollowSuggestionCandidates = eligible
-                self.diagnostics["sourceFollowSuggestion"] = "offered:\(eligible.count)"
-            } catch {
-                self.diagnostics["sourceFollowSuggestion"] = "unavailable:\(String(describing: type(of: error)))"
-                await self.recordFollowFailure(error)
+                self.diagnostics["sourceFollowSuggestion"] = FollowedSourceMatching.stampedDiagnostic("offered:\(eligible.count)")
+            } catch { // #539: a background check, not a Follow tap, so no followSourceFailure line.
+                self.diagnostics["sourceFollowSuggestion"] = FollowedSourceMatching.discoveryDiagnostic(
+                    item: item, candidates: nil, failure: "unavailable:" + FollowedSourceCoordinator.diagnosticCode(for: error),
+                    subscriptions: (try? store.loadFeedSubscriptions()) ?? self.feedSubscriptions
+                )
             }
         }
     }
@@ -15934,6 +15928,7 @@ final class Gate1AppModel: ObservableObject {
                 try store.saveSourceSuggestionDecision(SourceSuggestionDecision(sourceId: candidate.source.id, decision: .accepted, lastPromptAt: Date()))
                 self.storedSourceFollowSuggestionCandidates = []
                 await self.refreshFollowedSources(force: true)
+                self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
             } catch {
                 self.reportFailure(error, context: "Follow suggestion failed")
