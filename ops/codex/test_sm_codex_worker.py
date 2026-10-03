@@ -503,7 +503,7 @@ class FinishChildTests(unittest.TestCase):
 
     def run_finish(self, fast_rc=0, fail=(), codex_ok=True, rearmed=False, moved=False, conflict=False,
                    push_rc=0, arm_failure=False, no_request=False, needs_mac_only=False, empty=False,
-                   audit_only=False, checked_text=None, stage_failure=False):
+                   audit_only=False, checked_text=None, stage_failure=False, evidence=()):
         data = pull(labels=['needs-mac', 'automerge'], comments=[lane(),
                     {'body': '/lane T3\ntests: SpokenMarginsAppTests/PlaybackTests',
                      'createdAt': '2026-10-01T11:00:00Z'}])
@@ -568,7 +568,7 @@ class FinishChildTests(unittest.TestCase):
                     return w.Result(0, 'Playback.swift\n' if conflict else '')
                 return super().__call__(cmd, cwd, timeout)
 
-        run = Run(test, status='' if empty else ' M Playback.swift\n', fast_rc=fast_rc, fail=fail)
+        run = Run(test, status='' if empty else ' M Playback.swift\n', fast_rc=fast_rc, fail=fail, evidence=evidence)
         codex = fake_codex({'commit-msg.txt': 'Fix resume\n\nThe test lost its anchor; preserve it.',
                             'pr-body.md': ('Finding is wrong: the anchor is already preserved.' if empty and audit_only
                                            else 'Preserved the playback anchor.')}, ok=codex_ok)
@@ -629,6 +629,17 @@ class FinishChildTests(unittest.TestCase):
                 self.assertFalse(run.has('git', 'push'))
                 self.assertEqual(set(data['labels']), {'needs-mac'})
                 self.assertIn('stopping:', run.comments()[-1])
+
+    def test_finish_fast_plan_timeout_keeps_its_evidence_after_the_worktree_goes(self):
+        # #707: observed on PR #644's finishing run.
+        outcome, run, _, _ = self.run_finish(fast_rc=124, evidence=('manifest.json', 'runner-tests.log'))
+        self.assertEqual(outcome, 'fast-failed')
+        self.assertFalse(run.has('git', 'push'))
+        run_dir, = (self.home / 'runs').glob('pr-73-*')
+        for name in ('manifest.json', 'runner-tests.log'):
+            self.assertEqual((run_dir / 'fast-evidence' / name).read_text(), f'partial {name}\n')
+        self.assertIn(f'Evidence folder: {run_dir / "fast-evidence"}', (run_dir / 'fast-plan.txt').read_text())
+        self.assertFalse((self.home / 'wt-1').exists())
 
     def test_lane_audit_fix_gets_findings_and_rearms_after_passing_push(self):
         outcome, run, data, codex = self.run_finish(audit_only=True)
@@ -759,8 +770,9 @@ class FinishChildTests(unittest.TestCase):
 class FakeRun:
     """Records every command; answers by the first matching rule."""
 
-    def __init__(self, test, wt=None, status='', fast_rc=0, issue_data=None, fail=()):
+    def __init__(self, test, wt=None, status='', fast_rc=0, issue_data=None, fail=(), evidence=()):
         self.test, self.wt, self.status, self.fast_rc = test, wt, status, fast_rc
+        self.evidence = evidence  # files the fake fast plan writes before it ends (#707)
         self.issue_data = issue_data or issue(42, title='Fix the thing')
         self.fail = fail
         self.calls = []
@@ -791,7 +803,14 @@ class FakeRun:
         if cmd[:2] == ['git', 'diff']:
             return w.Result(0, 'diff --git a/x b/x\n')
         if 'verify-tests.py' in joined:
-            return w.Result(self.fast_rc, 'fast plan output')
+            # Like verify-tests: evidence goes to --output, else to a folder inside the worktree.
+            out = (Path(cmd[cmd.index('--output') + 1]) if '--output' in cmd else
+                   Path(cwd) / 'artifacts/test-runs/20261002-105028-876259-fast')
+            if self.evidence:
+                out.mkdir(parents=True)
+                for name in self.evidence:
+                    (out / name).write_text(f'partial {name}\n')
+            return w.Result(self.fast_rc, f'fast plan output\nEvidence: {out / "manifest.json"}\n')
         return w.Result(0)
 
     def gh_writes(self):
@@ -903,7 +922,9 @@ class ChildTests(unittest.TestCase):
         self.assertIn('Read AGENTS.md', codex.prompt)
         # The wrapper itself ran the fast plan in the worktree.
         fast = next(c for c in run.calls if 'verify-tests.py' in ' '.join(c))
-        self.assertEqual(fast, ['.venv/bin/python', 'scripts/verify-tests.py', '--plan', 'fast'])
+        run_dir, = (self.home / 'runs').glob('42-*')
+        self.assertEqual(fast, ['.venv/bin/python', 'scripts/verify-tests.py', '--plan', 'fast',
+                                '--output', str(run_dir / 'fast-evidence')])
         add = next(c for c in run.calls if c[:2] == ['git', 'add'])
         self.assertIn(':(exclude).codex-out', add)
         commit = next(c for c in run.calls if c[:2] == ['git', 'commit'])
@@ -926,6 +947,35 @@ class ChildTests(unittest.TestCase):
         self.assertLess(idx(lambda c: c[:2] == ['git', 'commit']), idx(lambda c: c[:2] == ['git', 'push']))
         self.assertLess(idx(lambda c: c[:2] == ['git', 'push']), idx(lambda c: c[:3] == ['gh', 'pr', 'create']))
         self.assert_cleaned(run)
+
+    def assert_evidence_kept(self, run_glob, names):
+        run_dir, = (self.home / 'runs').glob(run_glob)
+        for name in names:
+            self.assertEqual((run_dir / 'fast-evidence' / name).read_text(), f'partial {name}\n')
+        self.assertIn(f'Evidence folder: {run_dir / "fast-evidence"}', (run_dir / 'fast-plan.txt').read_text())
+
+    def test_fast_plan_timeout_keeps_its_evidence_after_the_worktree_goes(self):
+        # #707: the evidence was written inside the temporary worktree, and removing it deleted
+        # the manifest and the timed-out child's log; only the console summary was left.
+        run = FakeRun(self, status=' M x.swift\n', fast_rc=124, evidence=('manifest.json', 'runner-tests.log'))
+        self.assertEqual(self.child(run, fake_codex({'commit-msg.txt': 'Fix X\n\nWhy.'})), 'fast-failed')
+        self.assert_cleaned(run)
+        self.assert_evidence_kept('42-*', ('manifest.json', 'runner-tests.log'))
+        add = next(c for c in run.calls if c[:2] == ['git', 'add'])
+        self.assertFalse(any('fast-evidence' in a for a in add))
+
+    def test_a_plan_cut_off_before_its_manifest_keeps_the_partial_log(self):
+        run = FakeRun(self, status=' M x.swift\n', fast_rc=124, evidence=('runner-tests.log',))
+        self.assertEqual(self.child(run, fake_codex({'commit-msg.txt': 'Fix X\n\nWhy.'})), 'fast-failed')
+        self.assert_cleaned(run)
+        self.assert_evidence_kept('42-*', ('runner-tests.log',))
+
+    def test_a_passing_plan_keeps_its_evidence_too(self):
+        run = FakeRun(self, status=' M x.swift\n', evidence=('manifest.json', 'runner-tests.log'))
+        codex = fake_codex({'commit-msg.txt': 'Keep X\n\nWhy.', 'pr-body.md': 'Fixes it.'})
+        self.assertEqual(self.child(run, codex), 'pr')
+        self.assert_cleaned(run)
+        self.assert_evidence_kept('42-*', ('manifest.json', 'runner-tests.log'))
 
     def test_recheck_before_claim(self):
         run = FakeRun(self, issue_data=issue(42, labels=('ready', 'in-progress')))

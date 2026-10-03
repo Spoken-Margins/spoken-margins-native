@@ -68,6 +68,7 @@ MODEL = 'gpt-6.1-sol'
 EFFORT = 'high'
 CODEX_TIMEOUT_S = 60 * 60
 FAST_PLAN_TIMEOUT_S = 45 * 60
+FAST_EVIDENCE_DIR = 'fast-evidence'  # in the run folder, outside the worktree (#707)
 LIMITS_TIMEOUT_S = 30
 
 MAX_WORKERS = 3
@@ -966,6 +967,21 @@ def check_staged_changes(ops: Ops, wt: Path) -> None:
               '-indent-with-non-tab,-tab-in-indent', 'diff', '--cached', '--check'], cwd=wt)
 
 
+def run_fast_plan(ops: Ops, wt: Path, run_dir: Path) -> Result:
+    """The wrapper's own --plan fast in the worktree, its evidence written to the run folder.
+
+    Without --output, verify-tests writes its manifest and step logs under the worktree's
+    artifacts/, and removing the worktree deleted them, even after a timeout (#707). The run
+    folder is outside the worktree, so the evidence is never staged and survives cleanup, and
+    each step's log is there from the moment the step starts."""
+    evidence = run_dir / FAST_EVIDENCE_DIR
+    fast = ops.run(['.venv/bin/python', 'scripts/verify-tests.py', '--plan', 'fast', '--output', str(evidence)],
+                   cwd=wt, timeout=FAST_PLAN_TIMEOUT_S)
+    (run_dir / 'fast-plan.txt').write_text((fast.stdout or '') + (fast.stderr or '')
+                                           + f'\nEvidence folder: {evidence}\n')
+    return fast
+
+
 def save_diff(ops: Ops, wt: Path, dest: Path) -> None:
     """Save everything Codex changed, new files included, before the worktree is removed.
 
@@ -1049,9 +1065,7 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
             stop('none', 'Codex made no changes')
             return 'empty'
 
-        fast = ops.run(['.venv/bin/python', 'scripts/verify-tests.py', '--plan', 'fast'], cwd=wt,
-                       timeout=FAST_PLAN_TIMEOUT_S)
-        (run_dir / 'fast-plan.txt').write_text((fast.stdout or '') + (fast.stderr or ''))
+        fast = run_fast_plan(ops, wt, run_dir)
 
         msg_file = run_dir / 'commit-msg.txt'
         raw_msg = (out / 'commit-msg.txt').read_text(errors='replace') if (out / 'commit-msg.txt').exists() else ''
@@ -1202,9 +1216,7 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
             return 'empty'
         # Staging the resolutions does not hide accidentally retained conflict markers.
         check_staged_changes(ops, wt)
-        fast = ops.run(['.venv/bin/python', 'scripts/verify-tests.py', '--plan', 'fast'], cwd=wt,
-                       timeout=FAST_PLAN_TIMEOUT_S)
-        (run_dir / 'fast-plan.txt').write_text((fast.stdout or '') + (fast.stderr or ''))
+        fast = run_fast_plan(ops, wt, run_dir)
         if fast.returncode != 0:
             stop('fast plan failed; no commit or push. Evidence kept in ' + str(run_dir / 'fast-plan.txt'))
             return 'fast-failed'
