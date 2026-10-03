@@ -238,9 +238,37 @@ My pick: ask the attorney. If the answer isn't clear before submission, use the 
 
 Data bundled in the app that isn't open-source software:
 
-- **Starter podcast catalog.** `Site/onboarding/catalog/v1/catalog.json` is bundled (`project.yml:33-34`). It was built from Apple's Top Charts RSS feeds (`provenance` in the file) and points at Apple-hosted artwork. Apple's terms for that feed and its artwork decide whether bundling it is allowed, not an open-source license. That's unclear: #632.
+- **Starter podcast catalog.** `Site/onboarding/catalog/v1/catalog.json` is bundled (`project.yml:33-34`). It was built from Apple's Top Charts RSS feeds (`provenance` in the file) and points at Apple-hosted artwork. Apple's terms for that feed and its artwork decide whether bundling it is allowed, not an open-source license. They don't clearly allow it: see "The starter podcast catalog" below (#632).
 - **Test fixtures and traces.** `Contracts/fixtures` (about 2 MB, including iTunes Search responses and OPML from real feeds) and `Contracts/traces` are bundled (`project.yml:35-38`) only for the test hooks. #517 already plans to stop shipping the test hooks; these folders should leave the Release build with them.
 
 No bundled license forbids App Store distribution or conflicts with Apple's Standard EULA. None is GPL or LGPL, and the only copyleft is Eigen's file-level MPL-2.0, satisfied by the source pointer above.
 
 Follow-up issues: #630 (notices for Defuddle's bundled dependencies, a modified-files notice beside the model, and an in-app screen for every license) and #632 (the starter catalog's terms).
+
+### The starter podcast catalog (#632)
+
+Checked 2026-10-03 on `next` at `b26e133`. This is research, not legal advice.
+
+**Short answer: not clearly allowed.** No Apple term grants a right to bundle a list built from the Top Charts feeds in an app. The artwork terms that do exist allow it only beside a link to Apple's store, which the drawer doesn't have. So the question goes to the attorney (Q19 in `docs/legal/attorney-questions.md`, #455).
+
+**What ships.** `catalog.json` (content version 2) has 200 shows:
+- **192 from Apple.** They come from 12 US Top Charts genre feeds on the legacy iTunes RSS endpoint (`https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=<id>/json`), filled in through the iTunes Lookup API (`provenance` ids `apple-top-us-*` and `itunes-lookup`).
+  - Each row bundles the title, author, the publisher's feed URL, the Apple Podcasts id, the chart rank and the explicit flag (48 of the 192 are explicit).
+  - Each row also bundles an `artworkURL` on Apple's image server (`is1-ssl.mzstatic.com`). The image isn't in the bundle: the drawer loads it from Apple at runtime (`CatalogDrawer.swift:269`). The drawer shows no Apple attribution and no link to Apple Podcasts.
+- **8 hand-picked** Substack publications (`hand-picked-writers`), with Substack-hosted artwork. They are not affected.
+
+**The terms that apply.**
+
+1. **The chart feeds carry no license.** The feeds themselves say only `"rights": "Copyright 2008 Apple Inc."` (legacy endpoint) or `"copyright": "Copyright © 2026 Apple Inc. All rights reserved."` (the current `rss.marketingtools.apple.com` API), as fetched 2026-10-03. Apple's marketing-tools page describes the RSS Feed Generator only as: "You can add these feeds to your website or view them using a standard RSS feed reader." ([Marketing Resources & Tools](https://performance-partners.apple.com/tools)). The generator site links no terms of its own.
+2. **Apple's website Terms of Use cover the rest.** They say: "Except as expressly provided in these Terms of Use, no part of the Site and no Content may be copied, reproduced, republished, uploaded, posted, publicly displayed, encoded, translated, transmitted or distributed in any way (including "mirroring") to any other computer, server, Web site or other medium for publication or distribution or for any commercial enterprise, without Apple's express prior written consent." "Content" includes "the design, structure, selection, coordination, expression, "look and feel" and arrangement of such Content" ([Apple Website Terms of Use](https://www.apple.com/legal/internet-services/terms/site.html)). A ranked chart is a selection and arrangement.
+3. **Artwork and Lookup data come under the Search API's Promo Content terms.** "Developers may use promotional content in the API, including previews of songs, music videos, album art and App icons only to promote store content and not for entertainment purposes." In full, Promo Content may be used "for the purposes of promoting the subject of the Promo Content; provided such Promo Content: (i) is placed only on pages that promote the content on which the Promo Content is based; (ii) is proximate to a "Download on iTunes" or "Download on App Store" badge (as approved by Apple) that acts as a link directly to pages within iTunes where consumers can purchase the promoted content; [...] (v) is not used for independent entertainment value apart from its promotional purpose; and (vi) is not used to promote any other goods or services." ([iTunes Search API, Legal](https://performance-partners.apple.com/search-api)). The drawer shows Apple-hosted artwork with no Apple badge or link, inside an app that is not Apple Podcasts.
+4. **App Review checks for permission.** Guideline 5.2.2: "If your app uses, accesses, monetizes access to, or displays content from a third-party service, ensure that you are specifically permitted to do so under the service's terms of use. Authorization must be provided upon request." Guideline 5.2.1: "Don't use protected third-party material such as trademarks, copyrighted works, or patented ideas in your app without permission" ([App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)). We have no authorization to show.
+
+**What is probably fine.** Plain facts, such as a show's title, author and feed URL, are generally not protected one by one, and podcast apps routinely show the artwork a publisher puts in its own public feed (`<itunes:image>`). Rebuilding the rows from each publisher's feed avoids Apple's terms for everything except the choice of shows.
+
+**Options for the attorney question:**
+1. **Keep it as built.** Nothing changes. It relies on the terms above not reaching a bundled list, and on App Review not asking for authorization.
+2. **Fetch it only from the server.** The app stops bundling `catalog.json` and downloads it on first run. This doesn't change the answer: the server, a public website, would republish the same Apple-derived list and artwork links. It also leaves first-run onboarding empty when the network is down.
+3. **Rebuild it from the publishers' own feeds.** The catalog build reads each show's title, author and artwork from its own RSS feed. It drops the Apple chart ranks and the `mzstatic` artwork URLs, and picks the shows by hand per subject, informed by several public lists rather than copied from one chart. The drawer code doesn't change. This costs one build-script change and a curation pass.
+
+**My pick: option 3** before submission, whatever the attorney says about option 1. It costs little and leaves nothing to show App Review under 5.2.2. The attorney question is still worth asking: whether choosing shows while looking at Apple's charts is a problem, and whether option 1 is safe for the TestFlight beta in the meantime.
