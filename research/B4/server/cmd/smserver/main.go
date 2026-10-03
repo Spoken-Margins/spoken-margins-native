@@ -8,6 +8,7 @@
 //	smserver validate-manifest FILE
 //	smserver publish-manifest -public DIR FILE   the only way the manifest should change
 //	smserver takedown-map -state DIR EPISODEKEY   delete a listening map at once and keep it down
+//	smserver takedown -state DIR LINKID   delete a share link at once (the id, or the whole /l/ link)
 //	smserver make-test-ca DIR            a fake Apple CA for local testing
 //
 // Admin is CLI-only, on the box: there is no remote admin endpoint to attack.
@@ -31,6 +32,7 @@ import (
 	"spokenmargins.dev/bridge/internal/appattest"
 	"spokenmargins.dev/bridge/internal/appattest/fakeattest"
 	"spokenmargins.dev/bridge/internal/config"
+	"spokenmargins.dev/bridge/internal/links"
 	"spokenmargins.dev/bridge/internal/manifest"
 	"spokenmargins.dev/bridge/internal/maps"
 	"spokenmargins.dev/bridge/internal/store"
@@ -38,6 +40,9 @@ import (
 
 const (
 	defaultAppID = "J8SWC6J3VY.com.spokenmargins.native"
+	// defaultInstallURL is the public site until there is a public
+	// TestFlight or App Store link; -links-install-url changes it.
+	defaultInstallURL = "https://spokenmargins.proximitytoprogress.com/"
 	// abuseLogDays bounds how long an over-limit install's tag is kept.
 	abuseLogDays = 30
 )
@@ -65,6 +70,8 @@ func main() {
 		err = makeTestCA(args)
 	case "takedown-map":
 		err = takedownMap(args)
+	case "takedown":
+		err = takedownLink(args)
 	default:
 		usage()
 	}
@@ -75,7 +82,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown-map [flags]")
+	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown-map|takedown [flags]")
 	os.Exit(2)
 }
 
@@ -95,6 +102,8 @@ func serve(args []string) error {
 	idleDays := fs.Int("idle-days", 90, "delete install records unused for this many days")
 	var mf mapsFlags
 	mf.register(fs)
+	linksMaxMB := fs.Int64("links-max-mb", 1024, "cap on the share-link directory's total size; uploads get 503 past it")
+	installURL := fs.String("links-install-url", defaultInstallURL, "where a share-link page's install button goes")
 	fs.Parse(args)
 
 	rootPEM := appattest.AppleRootPEM()
@@ -130,6 +139,11 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	linkStore, err := links.OpenStore(linksDir(*stateDir))
+	if err != nil {
+		return err
+	}
+	linkStore.MaxBytes = *linksMaxMB << 20
 	srv := &api.Server{
 		Verifier:          &appattest.Verifier{Roots: pool, AppID: *appID, AllowDevelopment: *allowDev},
 		Store:             st,
@@ -140,6 +154,8 @@ func serve(args []string) error {
 		TrustForwardedFor: *behindProxy,
 		MapStore:          mapStore,
 		Maps:              mapService,
+		LinkStore:         linkStore,
+		InstallURL:        *installURL,
 	}
 	httpServer := &http.Server{
 		Addr:              *listen,
@@ -181,6 +197,12 @@ func serve(args []string) error {
 			}
 			if _, err := store.PruneHourLog(filepath.Join(*stateDir, "abuse.log"), time.Now(), abuseLogDays); err != nil {
 				log.Printf("abuse log prune failed: %v", err)
+			}
+			// Share links last 30 days; their files go at the first sweep after.
+			if n, err := linkStore.Sweep(time.Now()); err != nil {
+				log.Printf("links: sweep failed: %v", err)
+			} else if n > 0 {
+				log.Printf("links: swept %d expired files", n)
 			}
 		}
 		purgeOnce()
@@ -366,6 +388,40 @@ func takedownMap(args []string) error {
 		fmt.Println("map deleted; no new map will be made for this episode")
 	} else {
 		fmt.Println("no map was stored; no map will be made for this episode")
+	}
+	return nil
+}
+
+func linksDir(stateDir string) string { return filepath.Join(stateDir, "links") }
+
+// linkID accepts a bare id or a whole share link, as a report or an email
+// would show it, and returns the id.
+func linkID(arg string) string {
+	if _, rest, ok := strings.Cut(arg, "/l/"); ok {
+		arg, _, _ = strings.Cut(rest, "/")
+	}
+	return strings.TrimSpace(arg)
+}
+
+func takedownLink(args []string) error {
+	fs := flag.NewFlagSet("takedown", flag.ExitOnError)
+	stateDir := fs.String("state", "state", "state directory")
+	fs.Parse(args)
+	if fs.NArg() != 1 {
+		return errors.New("usage: smserver takedown -state DIR LINKID")
+	}
+	ls, err := links.OpenStore(linksDir(*stateDir))
+	if err != nil {
+		return err
+	}
+	deleted, err := ls.Takedown(linkID(fs.Arg(0)))
+	if err != nil {
+		return err
+	}
+	if deleted {
+		fmt.Println("link deleted; its page and packet are gone")
+	} else {
+		fmt.Println("no such link (it may have expired already)")
 	}
 	return nil
 }

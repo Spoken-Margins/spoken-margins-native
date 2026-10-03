@@ -7,8 +7,10 @@
 //   - Client IPs are used only in memory, keyed through an HMAC with a
 //     per-process secret, for rate limiting the unauthenticated endpoints.
 //   - The abuse log holds hour, install tag, reason and a count, only for
-//     over-limit installs, so the owner has something to block. It is also
-//     written at the hourly flush.
+//     over-limit installs, so the owner has something to block, and hour,
+//     link id, reason and a count for share links someone reported from
+//     their page, so the owner can take them down. It is also written at
+//     the hourly flush.
 //   - Public documents (config, bridge manifest) are identical for everyone
 //     and need no attestation, so fetching them reveals nothing but "an app
 //     is running".
@@ -35,6 +37,7 @@ import (
 
 	"spokenmargins.dev/bridge/internal/appattest"
 	"spokenmargins.dev/bridge/internal/config"
+	"spokenmargins.dev/bridge/internal/links"
 	"spokenmargins.dev/bridge/internal/maps"
 	"spokenmargins.dev/bridge/internal/store"
 )
@@ -66,6 +69,17 @@ const (
 	// routeMaps is how the request log names every map fetch, so an
 	// episode key is never written to disk.
 	routeMaps = "/api/v1/maps/*"
+
+	// Share links (#486). The page and packet paths name a link, so the
+	// request log records them as routeLink and its two sub-routes.
+	PathLinks       = "/api/v1/links"
+	pathLinkPrefix  = "/l/"
+	routeLink       = "/l/*"
+	linkUploadSlots = 4
+	// linkUploadTime is how long a share-link upload may take to arrive: a
+	// 20 MB packet over a slow phone connection needs more than the
+	// server's 30-second read timeout.
+	linkUploadTime = 3 * time.Minute
 )
 
 // ClientData is what the app signs for an attested request. It binds the
@@ -95,10 +109,17 @@ type Server struct {
 	MapStore *maps.Store
 	Maps     *maps.Service
 
+	// LinkStore holds share links; nil answers 503 like a switched-off
+	// service. InstallURL is where the link page's install button goes.
+	LinkStore  *links.Store
+	InstallURL string
+
 	// Per-hour limits. Zero means the defaults below.
 	ChallengesPerIPPerHour  int
 	RequestsPerInstallPerHr int
 	MapUploadsPerIPPerHour  int
+	LinkUploadsPerIPPerHour int
+	LinkReportsPerIPPerHour int
 
 	once          sync.Once
 	ipSecret      []byte
@@ -107,6 +128,9 @@ type Server struct {
 	ipWindow      window
 	mapWindow     window
 	uploadSlots   chan struct{}
+	linkWindow    window
+	reportWindow  window
+	linkSlots     chan struct{}
 	keyWindow     window
 	logMu         sync.Mutex
 	requestCounts map[logKey]int
@@ -132,7 +156,14 @@ func (s *Server) init() {
 		if s.MapUploadsPerIPPerHour == 0 {
 			s.MapUploadsPerIPPerHour = 30
 		}
+		if s.LinkUploadsPerIPPerHour == 0 {
+			s.LinkUploadsPerIPPerHour = 30
+		}
+		if s.LinkReportsPerIPPerHour == 0 {
+			s.LinkReportsPerIPPerHour = 30
+		}
 		s.uploadSlots = make(chan struct{}, maxConcurrentUploads)
+		s.linkSlots = make(chan struct{}, linkUploadSlots)
 	})
 }
 
@@ -165,6 +196,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/ping", s.attested(s.ping))
 	mux.HandleFunc("POST "+PathMapTranscripts, s.uploadTranscript)
 	mux.HandleFunc("GET "+pathMapsPrefix+"{key}", s.getMap)
+	mux.HandleFunc("POST "+PathLinks, s.createLink)
+	mux.HandleFunc("GET "+pathLinkPrefix+"{id}", s.linkPage)
+	mux.HandleFunc("GET "+pathLinkPrefix+"{id}/packet", s.linkPacket)
+	mux.HandleFunc("POST "+pathLinkPrefix+"{id}/report", s.reportLink)
 	return s.logRequests(mux)
 }
 
@@ -173,7 +208,7 @@ func (s *Server) Handler() http.Handler {
 var loggedRoutes = map[string]bool{
 	"/api/v1/health": true, PathConfig: true, PathManifest: true,
 	"/api/v1/attest/challenge": true, "/api/v1/attest/register": true, "/api/v1/ping": true,
-	PathMapTranscripts: true,
+	PathMapTranscripts: true, PathLinks: true,
 }
 
 // logRoute is the route name the request log may record for path.
@@ -183,6 +218,13 @@ func logRoute(path string) string {
 		return path
 	case strings.HasPrefix(path, pathMapsPrefix):
 		return routeMaps
+	case strings.HasPrefix(path, pathLinkPrefix):
+		// Never the id: /l/*, /l/*/packet or /l/*/report.
+		parts := strings.Split(strings.TrimPrefix(path, pathLinkPrefix), "/")
+		if len(parts) == 2 && (parts[1] == "packet" || parts[1] == "report") {
+			return routeLink + "/" + parts[1]
+		}
+		return routeLink
 	default:
 		return "other"
 	}
@@ -215,7 +257,9 @@ type logKey struct {
 	status                       int
 }
 
-type abuseKey struct{ hour, tag, reason string }
+// abuseKey is one row of the abuse log: an over-limit install (tag) or a
+// reported share link (link), never both.
+type abuseKey struct{ hour, tag, link, reason string }
 
 func (s *Server) count(k logKey) {
 	s.logMu.Lock()
@@ -252,7 +296,13 @@ func (s *Server) Flush() error {
 		})
 	}
 	for k, n := range abuse {
-		s.writeLine(s.AbuseLog, map[string]any{"hour": k.hour, "tag": k.tag, "reason": k.reason, "count": n})
+		line := map[string]any{"hour": k.hour, "reason": k.reason, "count": n}
+		if k.link != "" {
+			line["link"] = k.link
+		} else {
+			line["tag"] = k.tag
+		}
+		s.writeLine(s.AbuseLog, line)
 	}
 	return s.Store.Flush()
 }

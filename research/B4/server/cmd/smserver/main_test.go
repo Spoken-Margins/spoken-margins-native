@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"spokenmargins.dev/bridge/internal/config"
+	"spokenmargins.dev/bridge/internal/links"
 	"spokenmargins.dev/bridge/internal/maps"
 )
 
@@ -182,5 +184,40 @@ func TestTakedownMapCommand(t *testing.T) {
 	}
 	if err := takedownMap([]string{"-state", state, "nope"}); err == nil {
 		t.Fatal("takedown-map accepted a bad key")
+	}
+}
+
+// `smserver takedown` deletes a share link's page and packet at once, given
+// the id or the whole link as a report would show it.
+func TestTakedownLink(t *testing.T) {
+	state := t.TempDir()
+	ls, err := links.OpenStore(linksDir(state))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := links.ParsePreview([]byte(`{"schema":"spokenmargins.link-preview.v1","source":{"title":"T"},"margins":[{"text":"m"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	byID, _ := ls.Create(strings.NewReader("PK\x03\x04rest"), preview, now)
+	byURL, _ := ls.Create(strings.NewReader("PK\x03\x04rest"), preview, now)
+
+	if err := takedownLink([]string{"-state", state, byID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := takedownLink([]string{"-state", state, "https://spokenmargins.proximitytoprogress.com/l/" + byURL + "/packet"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{byID, byURL} {
+		if _, err := ls.Get(id, now); !errors.Is(err, links.ErrNotFound) {
+			t.Fatalf("%s still there: %v", id, err)
+		}
+	}
+	if entries, _ := os.ReadDir(linksDir(state)); len(entries) != 0 {
+		t.Fatalf("files left: %v", entries)
+	}
+	if err := takedownLink([]string{"-state", state, "../../etc"}); err == nil {
+		t.Fatal("takedown accepted a path")
 	}
 }
