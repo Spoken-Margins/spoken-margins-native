@@ -386,6 +386,49 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(step['errors'], [])
             self.assertEqual(step['test_evidence'], 'log+xcresult')
 
+    def test_failed_probation_exports_media_even_with_false_failure_flags(self):
+        # #706: J1 failed but all nine attachments had isAssociatedWithFailure=false.
+        identifier = 'App/ExportTests/testIsolation'
+        url = 'test://com.apple.xcode/Project/App/ExportTests/testIsolation'
+        evidence = self.xcresult_payload('Failed', nodeIdentifierURL=url,
+                                         hasMediaAttachments=False)
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'journeys')
+            bundle = run.output / 'tests.xcresult'
+            bundle.mkdir()
+            exports = []
+
+            def export(args, **kwargs):
+                exports.append(args)
+                output = Path(args[args.index('--output-path') + 1])
+                attachments = []
+                for n in range(9):
+                    name = f'{n}.mp4' if n == 8 else f'{n}.txt'
+                    (output / name).write_bytes(b'retained evidence')
+                    attachments.append({'exportedFileName': name, 'isAssociatedWithFailure': False})
+                (output / 'manifest.json').write_text(json.dumps([
+                    {'testIdentifierURL': url, 'attachments': attachments}]))
+                return subprocess.CompletedProcess(args, 0)
+
+            with patch.object(verification.subprocess, 'check_output', return_value=json.dumps(evidence)), \
+                    patch.object(verification.subprocess, 'run', side_effect=export):
+                run.command('xcode-tests', [sys.executable, '-c', 'raise SystemExit(65)',
+                            '-resultBundlePath', str(bundle)], tests=True,
+                            expected={identifier}, probation={identifier})
+            step = run.manifest['steps'][-1]
+            self.assertEqual(len(exports), 1)
+            self.assertNotIn('--only-failures', exports[0])
+            self.assertEqual(exports[0][exports[0].index('--test-id') + 1], url)
+            recovered = step['attachments'][0]
+            self.assertEqual(recovered['test'], identifier)
+            self.assertEqual(len(recovered['files']), 9)
+            self.assertTrue(all(Path(p).is_file() for p in recovered['files']))
+            self.assertTrue(Path(recovered['manifest']).is_file())
+            self.assertEqual(step['tests'][identifier]['status'], 'failed')
+            self.assertEqual(step['probation'], {identifier: 'failed'})
+            self.assertEqual(step['counts'], {'passed': 0, 'failed': 1, 'skipped': 0})
+            self.assertEqual(step['errors'], [])
+
     def xcresult_payload(self, result='Passed', **fields):
         case = {'nodeType': 'Test Case', 'nodeIdentifier': 'ExportTests/testIsolation()',
                 'result': result, 'durationInSeconds': 0.125, **fields}

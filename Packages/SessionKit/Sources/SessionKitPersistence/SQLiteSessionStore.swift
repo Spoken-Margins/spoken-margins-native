@@ -1126,3 +1126,18 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         }
     }
 }
+
+/// Publisher audio (#545) lives in the records table as kind "publisher_audio", one row per
+/// item, keyed and linked by the item id. No table or column changes, and schema_version stays
+/// 5: Build 29 selects records by kind and never reads this one, and deleting the item removes it.
+extension SQLiteSessionStore: PublisherAudioRepository {
+    static let publisherAudioKind = "publisher_audio"
+
+    public func savePublisherAudio(_ audio: PublisherAudio) throws {
+        try save(kind: Self.publisherAudioKind, id: audio.itemId, sessionId: nil, itemId: audio.itemId, value: audio)
+    }
+
+    public func loadPublisherAudio(itemId: String) throws -> PublisherAudio? {
+        try loadOptional(kind: Self.publisherAudioKind, id: itemId)
+    }
+}
