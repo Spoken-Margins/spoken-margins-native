@@ -11,15 +11,15 @@ Steps, stopping at the first failure:
    each one is in the candidate commit (a PR that isn't in doesn't stop the cut).
 2. Push `release/build-<N>` at origin/next's tip, or at `--commit`. Refuse if the branch already
    exists at another commit.
-3. Hold the rolling phone-build job (`launchctl bootout`), so nothing moves ~/SpokenMargins-phone/latest
-   off the candidate, then run `scripts/phone-build --commit <sha>` and check latest/build.json names it.
+3. Hold the rolling phone-build job (`launchctl bootout` and `disable`, so a restart doesn't load it
+   again and move ~/SpokenMargins-phone/latest off the candidate), then run `scripts/phone-build --commit <sha>` and check latest/build.json names it.
 4. Append a "Build N candidate" section (the waited-for PRs and the `--known-issues` file) to that
    build's test-plan.md, and copy it to iCloud Drive "Spoken Margins test plans".
 5. Ask the Test Desk for T5 on #184, post the candidate note on #337 (with the command that turns the
    phone-build job back on), and send a Mac notification.
 
-On a failure it turns the phone-build job back on if it held it, posts what stopped on #337 and
-notifies. It never retries, and it never bumps the version, archives, uploads, tags or touches `main`.
+On a failure it posts what stopped on #337 and notifies. A held phone-build job is turned back on only
+if the build hadn't finished; after a good build it stays held, so `latest` keeps the candidate. It never retries, and it never bumps the version, archives, uploads, tags or touches `main`.
 A finished or stopped cut leaves ~/SpokenMarginsOps/release/build-<N>.json; a second run for the same
 build does nothing unless given `--again`. `--dry-run` prints the plan and changes nothing.
 
@@ -152,6 +152,9 @@ class Cut:
     pulls: List[PullState] = field(default_factory=list)
     sha: str = ''
     held_job: bool = False
+    built: bool = False
+    start_at: Optional[dt.datetime] = None
+    deadline: Optional[dt.datetime] = None
     deadline_text: str = ''
     build_folder: Optional[Path] = None
     plan_copy: Optional[Path] = None
@@ -217,7 +220,8 @@ class Cut:
 
     @property
     def enable_command(self) -> str:
-        return f'launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/{PHONE_JOB}.plist'
+        return (f'launchctl enable gui/$(id -u)/{PHONE_JOB} && '
+                f'launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/{PHONE_JOB}.plist')
 
     @property
     def branch(self) -> str:
@@ -244,14 +248,30 @@ class Cut:
         return PullState(number, merged=bool(data.get('merged_at')), merge_sha=data.get('merge_commit_sha') or '',
                          merged_at=data.get('merged_at') or '')
 
+    def read_times(self) -> None:
+        """Read `--at` and `--deadline` once, at the start: an HH:MM deadline is its next occurrence after the
+        start time, so a Mac that slept past both, or a late `--again`, doesn't wait until tomorrow."""
+        now = self.clock()
+        self.start_at = parse_when(self.args.at, now) if self.args.at else None
+        if self.args.deadline:
+            self.deadline = parse_when(self.args.deadline, (self.start_at or now) - dt.timedelta(seconds=1))
+            self.deadline_text = self.deadline.strftime('%Y-%m-%d %H:%M')
+
     def wait_for_pulls(self, wait: bool) -> None:
         numbers = pr_numbers(self.args.wait_for or [])
         if not numbers:
             return
-        deadline = parse_when(self.args.deadline, self.clock()) if self.args.deadline else self.clock()
-        self.deadline_text = deadline.strftime('%Y-%m-%d %H:%M')
+        deadline = self.deadline or self.clock()
         while True:
-            states = [self.read_pull(number) for number in numbers]
+            try:
+                states = [self.read_pull(number) for number in numbers]
+            except CutFailed as failure:
+                # One failed read (a network blip, a rate limit) doesn't end a long wait; the last one does.
+                if not wait or self.clock() >= deadline:
+                    raise
+                self.out(f'{failure}; trying again at the next poll')
+                self.sleep(min(self.settings.pr_poll_seconds, max(1.0, (deadline - self.clock()).total_seconds())))
+                continue
             if all(state.merged for state in states) or not wait or self.clock() >= deadline:
                 break
             waiting = ', '.join(f'#{state.number}' for state in states if not state.merged)
@@ -294,6 +314,10 @@ class Cut:
         if self.launchctl('bootout', self.job_target) != 0:
             raise CutFailed(f'launchctl bootout {self.job_target} failed, so the rolling build could move `latest`')
         self.held_job = True
+        # Disabled too, so a restart or login doesn't load it again and move `latest` off the candidate.
+        if self.launchctl('disable', self.job_target) != 0:
+            raise CutFailed(f'launchctl disable {self.job_target} failed, so a restart would turn the rolling build '
+                            'back on')
         self.step(f'held the rolling phone-build job ({PHONE_JOB})')
 
     def wait_for_phone_lock(self) -> None:
@@ -334,6 +358,7 @@ class Cut:
         if info.get('sha') != self.sha:
             raise CutFailed(f'{latest}/build.json names {str(info.get("sha"))[:7]}, not {self.sha[:7]}')
         self.build_folder = latest.resolve()
+        self.built = True
         version = info.get('bundle_version')
         self.step(f'built {self.sha[:7]} for the phone: {self.build_folder}'
                   + (f' (bundle version {version})' if version else ''))
@@ -403,8 +428,9 @@ class Cut:
 
     def dry_run(self) -> int:
         self.out(f'dry run for Build {self.args.build}; nothing is pushed, built, held, copied or posted')
-        if self.args.at:
-            self.out(f'would wait until {parse_when(self.args.at, self.clock()):%Y-%m-%d %H:%M}')
+        self.read_times()
+        if self.start_at:
+            self.out(f'would wait until {self.start_at:%Y-%m-%d %H:%M}')
         self.fetch()
         self.wait_for_pulls(wait=False)
         for state in self.pulls:
@@ -443,10 +469,10 @@ class Cut:
                      'nothing to do. Run again with --again.')
             return 0
         try:
-            if self.args.at:
-                when = parse_when(self.args.at, self.clock())
-                self.out(f'waiting until {when:%Y-%m-%d %H:%M}')
-                self.wait_until(when)
+            self.read_times()
+            if self.start_at:
+                self.out(f'waiting until {self.start_at:%Y-%m-%d %H:%M}')
+                self.wait_until(self.start_at)
             self.fetch()
             self.wait_for_pulls(wait=True)
             self.resolve_commit()
@@ -471,17 +497,23 @@ class Cut:
     def stopped(self, failure: Exception) -> int:
         reason = str(failure) if isinstance(failure, CutFailed) else f'{type(failure).__name__}: {failure}'
         self.out(f'STOPPED: {reason}')
-        if self.held_job and self.launchctl('bootstrap', f'gui/{os.getuid()}',
-                                            str(Path.home() / f'Library/LaunchAgents/{PHONE_JOB}.plist')) == 0:
+        # Before the build, a stop gives the rolling build back. After it, `latest` is a good candidate, and the
+        # job's RunAtLoad would replace it at once, so it stays held.
+        if self.held_job and not self.built and self.launchctl('enable', self.job_target) == 0 and self.launchctl(
+                'bootstrap', f'gui/{os.getuid()}', str(Path.home() / f'Library/LaunchAgents/{PHONE_JOB}.plist')) == 0:
             self.held_job = False
             self.step('turned the rolling phone-build job back on')
         lines = [f'**Build {self.args.build} cut stopped** (release cut script, #687): {reason}', '']
         if self.done:
             lines += ['Done before it stopped:'] + [f'{n}. {text}' for n, text in enumerate(self.done, 1)] + ['']
         if self.held_job:
-            lines += [f'The rolling phone build is still held. Turn it back on with `{self.enable_command}`', '']
+            self.out(f'the rolling phone build is still held; to turn it back on: {self.enable_command}')
+            lines += [f'The rolling phone build is still held, so `latest` stays on the build above. Turn it back on '
+                      f'with `{self.enable_command}`', '']
+        # Once release/build-N is pushed, next moves on; a retry must name the same commit or the push refuses.
+        pinned = f' --commit {self.sha}' if self.sha and not self.args.commit else ''
         lines.append(f'Nothing was retried. To try again after fixing it: `python3 ops/release/cut_candidate.py '
-                     f'--build {self.args.build} --again` with the same options.')
+                     f'--build {self.args.build} --again{pinned}` with the same other options.')
         try:
             self.post(STATUS_ISSUE, '\n'.join(lines))
         except CutFailed as posting:

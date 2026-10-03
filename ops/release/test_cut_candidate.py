@@ -37,6 +37,8 @@ if "-X" in args and args[args.index("-X") + 1] == "POST":
     print(f"https://github.com/example/issues/{number}#issuecomment-1")
     sys.exit(0)
 match = re.match(r"repos/[^/]+/[^/]+/pulls/(\d+)$", path)
+if match and os.path.exists(os.environ["FAKE_PULLS"] + ".fail"):
+    sys.exit(1)
 if match:
     pulls = json.load(open(os.environ["FAKE_PULLS"]))
     print(json.dumps(pulls.get(match.group(1), {"merged_at": None, "merge_commit_sha": None})))
@@ -67,7 +69,8 @@ if link.is_symlink():
 os.symlink(folder.name, link)
 '''
 
-# `print` succeeds while FAKE_LOADED exists; bootout removes it, bootstrap creates it.
+# `print` succeeds while FAKE_LOADED exists; bootout removes it, bootstrap creates it. Like launchd,
+# bootstrap refuses a disabled job (FAKE_LOADED.disabled, made by disable, removed by enable).
 FAKE_LAUNCHCTL = r'''#!/usr/bin/env python3
 import json, os, sys
 args = sys.argv[1:]
@@ -78,7 +81,13 @@ if args[0] == "print":
     sys.exit(0 if os.path.exists(loaded) else 113)
 if args[0] == "bootout":
     os.remove(loaded)
+if args[0] == "disable":
+    open(loaded + ".disabled", "w").close()
+if args[0] == "enable" and os.path.exists(loaded + ".disabled"):
+    os.remove(loaded + ".disabled")
 if args[0] == "bootstrap":
+    if os.path.exists(loaded + ".disabled"):
+        sys.exit(5)
     open(loaded, "w").close()
 '''
 
@@ -213,7 +222,8 @@ class FullCutTests(CutTestCase):
         self.assertEqual(sh('git', 'ls-remote', '--tags', str(self.origin), cwd=self.tmp), '')
         self.assertEqual(self.calls('phone-build')[0]['args'], ['--commit', sha])
         self.assertFalse(self.loaded.exists(), 'the rolling phone-build job should be held')
-        self.assertIn('bootout', [entry['args'][0] for entry in self.calls('launchctl')])
+        self.assertEqual([entry['args'][0] for entry in self.calls('launchctl')], ['print', 'bootout', 'disable'],
+                         'disabled as well, so a restart does not load it again')
 
         plan = (self.icloud / f'Build 30 test plan {sha[:7]}.md').read_text()
         self.assertIn('## Build 30 candidate', plan)
@@ -225,7 +235,8 @@ class FullCutTests(CutTestCase):
         self.assertEqual(list(posts), [184, 337], 'T5 request first, then the candidate note')
         self.assertTrue(posts[184].startswith(f'/lane T5\ncommit: {sha[:7]}\n'), posts[184])
         self.assertIn(f'`release/build-30` at `{sha}`', posts[337])
-        self.assertIn('launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.phone-build.plist',
+        self.assertIn('launchctl enable gui/$(id -u)/com.spokenmargins.phone-build && '
+                      'launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.phone-build.plist',
                       posts[337])
         self.assertIn('issuecomment-1', posts[337])
         self.assertIn('Build 30 candidate ready', ' '.join(self.calls('notify')[-1]['args']))
@@ -327,9 +338,30 @@ class StopTests(CutTestCase):
         self.assertEqual(self.cut(), 1)
         note = self.assert_stopped('scripts/phone-build failed (exit 1)')
         self.assertIn('pushed release/build-30', note, 'the note lists what was done before the stop')
-        self.assertEqual([entry['args'][0] for entry in self.calls('launchctl')], ['print', 'bootout', 'bootstrap'])
+        self.assertEqual([entry['args'][0] for entry in self.calls('launchctl')],
+                         ['print', 'bootout', 'disable', 'enable', 'bootstrap'])
         self.assertTrue(self.loaded.exists())
         self.assertFalse(self.icloud.exists())
+
+    def test_retry_after_a_stop_past_the_push_names_the_same_commit(self):
+        sha = self.remote('next')
+        os.environ['FAKE_BUILD_EXIT'] = '75'
+        self.assertEqual(self.cut(), 1)
+        note = self.assert_stopped('memory or disk too low')
+        self.assertIn(f'--build 30 --again --commit {sha}`', note)
+        del os.environ['FAKE_BUILD_EXIT']
+        self.merge_into_next('next moved on overnight')
+        self.assertEqual(self.cut('--again', '--commit', sha), 0, self.output)
+        self.assertEqual(self.remote('release/build-30'), sha)
+
+    def test_a_stop_after_the_build_keeps_the_job_held(self):
+        self.icloud.parent.mkdir(parents=True)
+        self.icloud.write_text('a file where the folder should be')
+        self.assertEqual(self.cut(), 1)
+        note = self.assert_stopped('could not copy the test plan to iCloud Drive')
+        self.assertEqual([entry['args'][0] for entry in self.calls('launchctl')], ['print', 'bootout', 'disable'],
+                         'turning the job back on would replace the good candidate in `latest` at once')
+        self.assertIn('still held', note)
 
     def test_build_of_another_commit_stops(self):
         os.environ['FAKE_BUILD_SHA'] = 'f' * 40
@@ -351,6 +383,46 @@ class StopTests(CutTestCase):
         self.assertGreater(len(self.calls('phone-build')), 1)
         plan = (self.phone / 'latest' / 'test-plan.md').read_text()
         self.assertEqual(plan.count('## Build 30 candidate'), 1)
+
+
+class WaitFailureTests(CutTestCase):
+    def test_one_failed_pr_read_does_not_end_the_wait(self):
+        self.set_pull(604)
+        failing = Path(str(self.pulls) + '.fail')
+        failing.touch()
+        merged = {}
+
+        def recover_then_merge(fake):
+            if failing.exists():
+                failing.unlink()
+            elif not merged:
+                merged['sha'] = self.merge_into_next('fix (#604)')
+                self.set_pull(604, merged['sha'])
+        self.time.on_sleep = recover_then_merge
+
+        self.assertEqual(self.cut('--wait-for', '604', '--deadline', '19:00'), 0, self.output)
+        self.assertIn('could not read PR #604', '\n'.join(self.output))
+        self.assertIn('#604 in', self.posts()[337])
+
+    def test_a_failed_read_at_the_deadline_stops(self):
+        self.set_pull(604)
+        Path(str(self.pulls) + '.fail').touch()
+        self.assertEqual(self.cut('--wait-for', '604', '--deadline', '18:10'), 1)
+        self.assertEqual(self.time.now, START.replace(minute=10))
+        self.assertIn('could not read PR #604', self.posts()[337])
+        self.assertEqual(self.calls('phone-build'), [])
+
+    def test_deadline_is_read_from_the_start_time_not_after_a_late_wake(self):
+        self.set_pull(604)
+
+        def mac_sleeps_past_both_times(fake):
+            if fake.now < START.replace(hour=23):
+                fake.now = START.replace(hour=23)
+        self.time.on_sleep = mac_sleeps_past_both_times
+
+        self.assertEqual(self.cut('--at', '21:00', '--wait-for', '604', '--deadline', '22:30'), 0, self.output)
+        self.assertLess(self.time.now, START.replace(hour=23, minute=5), 'it must not wait until tomorrow 22:30')
+        self.assertIn('#604 not merged by 2026-10-04 22:30', self.posts()[337])
 
 
 class DryRunTests(CutTestCase):
