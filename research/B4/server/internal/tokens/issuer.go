@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"path/filepath"
 	"sort"
@@ -45,6 +46,10 @@ type Issuer struct {
 
 	mu   sync.Mutex
 	keys map[string]*monthKey
+	// spendMu keeps Prune from deleting a month while a redemption is
+	// recording a spend in it, which could otherwise recreate the folder
+	// empty and let a token spend twice.
+	spendMu sync.RWMutex
 }
 
 type monthKey struct {
@@ -170,8 +175,8 @@ func (i *Issuer) createKey(month string) ([]byte, error) {
 	return data, nil
 }
 
-// SPKI is the key's PKIX DER, the bytes its ID hashes.
-func (k PublicKey) SPKI() ([]byte, error) { return x509.MarshalPKIXPublicKey(k.Key) }
+// SPKI is the key's RFC 9578 encoding, the bytes its ID hashes.
+func (k PublicKey) SPKI() ([]byte, error) { return SPKI(k.Key) }
 
 func (k *monthKey) public() PublicKey {
 	start, _ := time.Parse("2006-01", k.month)
@@ -212,7 +217,7 @@ func (i *Issuer) Sign(now time.Time, keyID [keyIDLen]byte, blinded [][]byte) ([]
 	// Check every message before signing any, so a bad one costs nothing.
 	size := modulusLen(&k.sk.PublicKey)
 	for _, b := range blinded {
-		if len(b) != size {
+		if len(b) != size || new(big.Int).SetBytes(b).Cmp(k.sk.N) >= 0 {
 			return nil, ErrInvalidInput
 		}
 	}
@@ -234,6 +239,8 @@ func (i *Issuer) Redeem(now time.Time, raw []byte, purpose string) error {
 	if err != nil {
 		return err
 	}
+	i.spendMu.RLock()
+	defer i.spendMu.RUnlock()
 	var k *monthKey
 	for _, m := range []string{monthName(now), monthName(monthStart(now).AddDate(0, -1, 0))} {
 		cand, err := i.key(m, false)
@@ -270,12 +277,32 @@ func (i *Issuer) Redeem(now time.Time, raw []byte, purpose string) error {
 	} else if err != nil {
 		return err
 	}
-	return f.Close()
+	// The spend must survive a power cut, or the token could spend again
+	// after a restart: sync the record and the folder that names it.
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return syncDir(dir)
+}
+
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 // Prune deletes keys and spent records older than last month: their tokens
 // are refused anyway. It returns how many months it removed.
 func (i *Issuer) Prune(now time.Time) (int, error) {
+	i.spendMu.Lock()
+	defer i.spendMu.Unlock()
 	oldest := monthName(monthStart(now).AddDate(0, -1, 0))
 	months := map[string]bool{}
 	keys, err := os.ReadDir(filepath.Join(i.dir, "keys"))

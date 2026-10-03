@@ -4,6 +4,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/binary"
 	"errors"
 )
@@ -71,9 +72,77 @@ func ChallengeDigest(purpose string) [digestLen]byte {
 	return sha256.Sum256(b)
 }
 
-// KeyID is token_key_id: SHA-256 of the public key's PKIX (SPKI) DER.
+var (
+	oidRSASSAPSS = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 10}
+	oidSHA384    = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 2}
+	oidMGF1      = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 8}
+)
+
+type hashAlgorithm struct{ Algorithm asn1.ObjectIdentifier }
+
+type mgfAlgorithm struct {
+	Algorithm asn1.ObjectIdentifier
+	Hash      hashAlgorithm
+}
+
+type pssParams struct {
+	Hash       hashAlgorithm `asn1:"explicit,tag:0"`
+	MGF        mgfAlgorithm  `asn1:"explicit,tag:1"`
+	SaltLength int           `asn1:"explicit,tag:2"`
+}
+
+type pssAlgorithm struct {
+	Algorithm  asn1.ObjectIdentifier
+	Parameters pssParams
+}
+
+type subjectPublicKeyInfo struct {
+	Algorithm pssAlgorithm
+	PublicKey asn1.BitString
+}
+
+// SPKI encodes pk as RFC 9578 §6.5 requires: a SubjectPublicKeyInfo whose
+// algorithm is id-RSASSA-PSS with SHA-384, MGF1-SHA-384 and a 48-byte salt
+// spelled out, not the plain rsaEncryption that x509 writes. Phones and
+// other Privacy Pass code hash these exact bytes to get the key id.
+func SPKI(pk *rsa.PublicKey) ([]byte, error) {
+	key := x509.MarshalPKCS1PublicKey(pk)
+	return asn1.Marshal(subjectPublicKeyInfo{
+		Algorithm: pssAlgorithm{
+			Algorithm: oidRSASSAPSS,
+			Parameters: pssParams{
+				Hash:       hashAlgorithm{oidSHA384},
+				MGF:        mgfAlgorithm{oidMGF1, hashAlgorithm{oidSHA384}},
+				SaltLength: saltLen,
+			},
+		},
+		PublicKey: asn1.BitString{Bytes: key, BitLength: 8 * len(key)},
+	})
+}
+
+// ParseSPKI reads a key encoded by SPKI, refusing any other algorithm or
+// parameters, so a phone can't be handed a key for a different scheme.
+func ParseSPKI(der []byte) (*rsa.PublicKey, error) {
+	var info subjectPublicKeyInfo
+	rest, err := asn1.Unmarshal(der, &info)
+	if err != nil || len(rest) != 0 {
+		return nil, ErrMalformed
+	}
+	pk, err := x509.ParsePKCS1PublicKey(info.PublicKey.RightAlign())
+	if err != nil {
+		return nil, ErrMalformed
+	}
+	// Re-encoding must give the same bytes: that checks every parameter.
+	again, err := SPKI(pk)
+	if err != nil || string(again) != string(der) {
+		return nil, ErrMalformed
+	}
+	return pk, nil
+}
+
+// KeyID is token_key_id: SHA-256 of SPKI(pk) (RFC 9578 §6.5).
 func KeyID(pk *rsa.PublicKey) ([keyIDLen]byte, error) {
-	der, err := x509.MarshalPKIXPublicKey(pk)
+	der, err := SPKI(pk)
 	if err != nil {
 		return [keyIDLen]byte{}, err
 	}

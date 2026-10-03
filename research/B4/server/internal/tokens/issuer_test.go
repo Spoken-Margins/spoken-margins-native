@@ -1,8 +1,10 @@
 package tokens
 
 import (
+	"bytes"
 	"crypto/rand"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -141,6 +143,16 @@ func TestSignRefusals(t *testing.T) {
 	if _, err := i.Sign(october, keys[0].ID, [][]byte{p.Blinded, p.Blinded[1:]}); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("one short message: got %v", err)
 	}
+	// One value above the modulus refuses the batch before any signing.
+	big := bytes.Repeat([]byte{0xff}, len(p.Blinded))
+	counting := &countingReader{r: rand.Reader}
+	i.Random = counting
+	if _, err := i.Sign(october, keys[0].ID, [][]byte{p.Blinded, big}); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("one value above the modulus: got %v", err)
+	}
+	if counting.n != 0 {
+		t.Errorf("signed %d bytes' worth before refusing the batch", counting.n)
+	}
 }
 
 func TestMonthlyKeysRollOverAndExpire(t *testing.T) {
@@ -250,4 +262,16 @@ func TestConcurrentRedeemSpendsOnce(t *testing.T) {
 	if ok != 1 {
 		t.Fatalf("%d redemptions succeeded, want 1", ok)
 	}
+}
+
+// countingReader counts the randomness signing draws, to show none was used.
+type countingReader struct {
+	r io.Reader
+	n int
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += n
+	return n, err
 }
