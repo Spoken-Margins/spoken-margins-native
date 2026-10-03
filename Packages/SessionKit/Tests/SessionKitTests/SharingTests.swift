@@ -922,8 +922,8 @@ final class SharingTests: XCTestCase {
     /// the resolver declines to place it. An ad inserted between the flanks does exactly this: the "pre"
     /// flank (anchor offset +11.5 s) still lands at 42 s, the "post" flank (−0.5 s) after the 7 s ad.
     ///
-    /// Two flanks that agree on the same wrong place look like agreement and are fused. The resolver
-    /// can't tell that apart from a real match; repeated theme music can cause it (C4 benchmark, #296).
+    /// Two flanks that agree on the same wrong place look like agreement here. Repeated audio can cause it
+    /// (#296), so `resolve` first looks for another copy of each flank's audio (#331; see the repeated-theme test).
     func testAcousticResolverDeclinesFlanksThatDisagreeByMoreThanTheFusionSpread() {
         let query = PodcastPortableAnchorQuery(
             packageScopedId: "margin-at-an-inserted-ad",
@@ -1061,6 +1061,104 @@ final class SharingTests: XCTestCase {
                 + " (\(resolution.algorithmVersion))"
             XCTAssertNil(resolution.localMediaTimeMs, observed)
             XCTAssertTrue([.unresolved, .ambiguous].contains(resolution.evidenceClass), observed)
+        }
+        #else
+        throw XCTSkip("AVFoundation is required")
+        #endif
+    }
+
+    /// A flank that also matches elsewhere in the edition declines the Margin, whatever the flanks agree on.
+    func testAcousticResolverDeclinesAMarginWhoseFlankRepeatsElsewhere() {
+        let query = PodcastPortableAnchorQuery(
+            packageScopedId: "margin-next-to-a-theme",
+            senderMediaTimeMs: 49_000,
+            evidence: [
+                PodcastAcousticEvidenceQuery(id: "pre", signatureData: Data([1]), anchorOffsetMs: 11_500),
+                PodcastAcousticEvidenceQuery(id: "post", signatureData: Data([2]), anchorOffsetMs: -500)
+            ]
+        )
+        let declined = PodcastAcousticAnchorResolver.resolveCandidates(
+            [(72_000, 0.97), (72_002, 0.96)],
+            query: query,
+            senderDurationMs: 120_000,
+            recipientDurationMs: 120_000,
+            strongSourceIdentity: true,
+            exactDigestContradiction: false,
+            matchedAnchorOffsets: [11_500, -500],
+            matchedRepeatedAudio: true
+        )
+        XCTAssertEqual(declined.evidenceClass, .ambiguous)
+        XCTAssertTrue(declined.isAmbiguous)
+        XCTAssertNil(declined.localMediaTimeMs)
+    }
+
+    /// Repeated audio end to end (#331): a 15 s theme opens the edition and comes back to close it. A Margin
+    /// with a flank wholly inside either copy could be placed at the other copy, so none of them is placed;
+    /// Margins whose flanks are clear of the theme still are. Sender and recipient have the same audio, but
+    /// the exact-edition shortcut is off, so every Margin goes through acoustic matching.
+    func testAcousticResolverDoesNotPlaceMarginsNextToRepeatedAudio() async throws {
+        #if canImport(AVFoundation)
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let editionURL = root.appendingPathComponent("edition.m4a")
+        let theme = SeededNoiseAudio.Section(seed: 0xA0761D6478BD642F, startSecond: 900, seconds: 15)
+        try SeededNoiseAudio.write(to: editionURL, sections: [theme, SeededNoiseAudio.Section(seconds: 70), theme])
+        // The theme plays at 0–15 s and 85–100 s. Flanks are 11 s, 0.5 s either side of the Margin.
+        let nextToRepeat = [
+            2_000,  // only a post flank (2.5–13.5 s), inside the first copy
+            14_000, // pre flank 2.5–13.5 s inside the first copy
+            86_000, // post flank 86.5–97.5 s inside the second copy
+            99_000  // only a pre flank (87.5–98.5 s), inside the second copy
+        ]
+        let controls = [40_000, 55_000, 70_000] // both flanks inside 15–85 s, which plays once
+        var queries: [PodcastPortableAnchorQuery] = []
+        for anchorMs in nextToRepeat + controls {
+            let generated = try await PodcastAnchorEvidenceGenerator.generate(
+                sourceURL: editionURL,
+                anchorMediaTimeMs: anchorMs,
+                outputDirectory: root.appendingPathComponent("evidence"),
+                idPrefix: "margin-\(anchorMs)"
+            )
+            queries.append(PodcastPortableAnchorQuery(
+                packageScopedId: "margin-\(anchorMs)",
+                senderMediaTimeMs: anchorMs,
+                evidence: try generated.map {
+                    PodcastAcousticEvidenceQuery(
+                        id: $0.id,
+                        signatureData: try Data(contentsOf: $0.fileURL),
+                        anchorOffsetMs: $0.anchorOffsetMs
+                    )
+                }
+            ))
+        }
+        let resolutions = try await PodcastAcousticAnchorResolver.resolve(
+            queries: queries,
+            recipientAudioURL: editionURL,
+            senderExactEditionSHA256: nil,
+            senderDurationMs: 100_000,
+            strongSourceIdentity: true
+        )
+        let tolerance = PodcastAcousticAnchorResolver.maximumFusionSpreadMs
+        var falseConfident: [String] = []
+        for anchorMs in nextToRepeat + controls {
+            let resolution = try XCTUnwrap(resolutions["margin-\(anchorMs)"])
+            if let placed = resolution.localMediaTimeMs, abs(placed - anchorMs) > tolerance {
+                falseConfident.append("\(anchorMs) ms placed at \(placed) ms (\(resolution.evidenceClass))")
+            }
+        }
+        XCTAssertEqual(falseConfident, [], "no Margin is placed more than 1.5 s from where it was recorded")
+        for anchorMs in nextToRepeat {
+            let resolution = try XCTUnwrap(resolutions["margin-\(anchorMs)"])
+            XCTAssertTrue(
+                resolution.evidenceClass == .ambiguous || resolution.evidenceClass == .unresolved,
+                "Margin at \(anchorMs) ms next to the repeat came back \(resolution.evidenceClass)"
+            )
+            XCTAssertNil(resolution.localMediaTimeMs, "Margin at \(anchorMs) ms next to the repeat is not placed")
+        }
+        for anchorMs in controls {
+            let resolution = try XCTUnwrap(resolutions["margin-\(anchorMs)"])
+            let placed = try XCTUnwrap(resolution.localMediaTimeMs, "control Margin at \(anchorMs) ms is placed")
+            XCTAssertLessThanOrEqual(abs(placed - anchorMs), tolerance, "control Margin at \(anchorMs) ms")
         }
         #else
         throw XCTSkip("AVFoundation is required")

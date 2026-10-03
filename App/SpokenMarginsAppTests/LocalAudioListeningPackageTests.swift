@@ -19,7 +19,9 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let routed = RoutedAudioPlaybackClient(speech: NoopAudioPlaybackClient(), media: sourcePlayer)
         let model = Gate1AppModel(audioPlaybackClient: routed, databaseURLOverride: db)
         model.resetAndSeed()
-        model.ttsVoiceSelection = .system
+        // A fresh simulator parks the improved voice as a pending first-use choice, and startItem
+        // waits for it. Earlier classes used to make that choice for this one (#286).
+        model.declineCurrentTerms()
         // The offline ledger is rooted at Application Support and reconciles
         // rows against disk, so the owned file lives where production puts it.
         let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -49,7 +51,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let prepared = try SpokenMarginsPackageBuilder.prepare(packageId: "test-local-audio", createdAt: Date(), item: identity, itemTransportSelection: .recipientSupplied, selections: [ReviewedInterjectionSelection(packageScopedId: "professor", revision: revision, anchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 1_000), representation: .textOnly)], mapProposals: [proposal], senderDisplayLabel: "AI professor")
         // A real AAC asset exercises adoption/playback without an OS voice download.
         let summaryURL = root.appending(path: "summary.m4a")
-        try writeSummaryAudio(to: summaryURL)
+        try Self.writeSummaryAudio(to: summaryURL)
         var envelope = prepared.manifest
         envelope.assets.append(SpokenMarginsAssetDescriptor(id: "supplied-summary", role: SpokenMarginsAssetRole.summaryVoice, path: "assets/audio/summary.m4a", mimeType: "audio/mp4", durationMs: 1_000, provenance: "sender_approved_tts"))
         let voiced = PreparedSpokenMarginsPackage(manifest: envelope, artifactData: prepared.artifactData, assetFiles: ["assets/audio/summary.m4a": summaryURL])
@@ -70,6 +72,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         for _ in 0..<750 where model.diagnostics["localAudioSkim:\(item.id)"] != "ready" { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(model.diagnostics["localAudioSkim:\(item.id)"], "ready")
         model.startItem(id: item.id)
+        XCTAssertFalse(model.isTermsOfUsePresented, "the first-use voice choice must not hold playback (#286)")
         // Exercise the real source adapter: nativeMediaId is an asset ID, not a URL.
         for _ in 0..<150 where (sourcePlayer.currentMediaTimeMs() ?? 0) < 200 {
             try await Task.sleep(for: .milliseconds(20))
@@ -147,12 +150,208 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         XCTAssertEqual(try store.loadImportedCommentaryLayers(itemId: item.id).count, 1)
     }
 
-    private func writeSummaryAudio(to url: URL) throws {
+    // MARK: A friend's shared map on a downloaded podcast copy (#481)
+
+    func testSharedMapOnTheSameDownloadedEditionBecomesTheItemsMap() async throws {
+        let fixture = try await importSharedPodcastMap(senderEdition: .sameAsRecipient, listenerMap: .none)
+        defer { fixture.cleanup() }
+        let projection = try XCTUnwrap(fixture.store.loadResolvedListeningMapProjection(itemId: fixture.itemId))
+        XCTAssertEqual(projection.proposalId, "friend-map", "Skim reads this projection and the layer's proposal")
+        XCTAssertEqual(projection.projectedRecipientTime(for: 5_000), 5_000)
+        XCTAssertNil(fixture.model.sharedListeningMapRefusal(itemId: fixture.itemId))
+    }
+
+    func testSkimFollowsASharedMapOnTheSameDownloadedEdition() async throws {
+        let fixture = try await importSharedPodcastMap(senderEdition: .sameAsRecipient, listenerMap: .none, summaries: true)
+        defer { fixture.cleanup() }
+        let model = fixture.model
+        model.openItem(id: fixture.itemId)
+        XCTAssertEqual(model.selectedItem.listeningMapScenes.map(\.startMs), [0, 5_000], "The item lists the friend's scenes")
+        // The summaries render through the injected preparation job once the map is placed.
+        func bridgeCount() -> Int {
+            ((try? fixture.store.loadOwnedOfflineAssets()) ?? [])
+                .filter { $0.itemId == fixture.itemId && $0.category == .summaryBridge && $0.integrity == .valid }.count
+        }
+        for _ in 0..<500 where bridgeCount() < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(bridgeCount(), 2, "One summary per eligible scene")
+        model.startItem(id: fixture.itemId)
+        let player = try XCTUnwrap(fixture.sourcePlayer)
+        for _ in 0..<150 where (player.currentMediaTimeMs() ?? 0) < 200 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThan(player.currentMediaTimeMs() ?? 0, 100, "The downloaded copy must actually play before Skim")
+        for _ in 0..<150 where !model.snapshot.canSkimForward { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(model.snapshot.canSkimForward, "Skim uses the friend's map and its summaries")
+        XCTAssertEqual(model.skimForwardDestinationMs, 5_000)
+        model.skimForward()
+        XCTAssertEqual(model.snapshot.skimBridgeState?.destinationMediaTimeMs, 5_000, "Skim heads for the friend's next scene")
+        model.pause()
+    }
+
+    func testSharedMapNeverReplacesTheListenersOwnMap() async throws {
+        let fixture = try await importSharedPodcastMap(senderEdition: .sameAsRecipient, listenerMap: .own)
+        defer { fixture.cleanup() }
+        let projection = try XCTUnwrap(fixture.store.loadResolvedListeningMapProjection(itemId: fixture.itemId))
+        XCTAssertEqual(projection.id, "my-projection")
+        XCTAssertEqual(projection.proposalId, "my-map")
+        XCTAssertEqual(try fixture.store.loadPortableListeningMapProposals(itemId: fixture.itemId).map(\.id), ["my-map"])
+    }
+
+    func testSharedMapNeverReplacesThePublishersChapters() async throws {
+        let fixture = try await importSharedPodcastMap(senderEdition: .sameAsRecipient, listenerMap: .publisherChapters)
+        defer { fixture.cleanup() }
+        XCTAssertNil(try fixture.store.loadResolvedListeningMapProjection(itemId: fixture.itemId),
+                     "The publisher's chapters stay the item's map")
+        XCTAssertNil(fixture.model.sharedListeningMapRefusal(itemId: fixture.itemId))
+    }
+
+    func testSharedMapThatCannotBePlacedOnYourCopySaysWhy() async throws {
+        let fixture = try await importSharedPodcastMap(senderEdition: .differentWithoutEvidence, listenerMap: .none)
+        defer { fixture.cleanup() }
+        XCTAssertEqual(
+            fixture.model.sharedListeningMapRefusal(itemId: fixture.itemId),
+            "The shared map has no audio to match near scene 1 (Opening)."
+        )
+        let reopened = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: fixture.databaseURL)
+        reopened.bootstrapLibraryIfNeeded()
+        XCTAssertEqual(reopened.sharedListeningMapRefusal(itemId: fixture.itemId),
+                       "The shared map has no audio to match near scene 1 (Opening).", "The reason survives a restart")
+        XCTAssertNil(try fixture.store.loadResolvedListeningMapProjection(itemId: fixture.itemId)?.proposalId,
+                     "A refused map is never activated")
+    }
+
+    private enum SenderEdition { case sameAsRecipient, differentWithoutEvidence }
+    private enum ListenerMap { case none, own, publisherChapters }
+
+    private struct SharedPodcastMapFixture {
+        let model: Gate1AppModel
+        let store: SQLiteSessionStore
+        let itemId: String
+        let databaseURL: URL
+        let sourcePlayer: AVPlayerStreamPlaybackClient?
+        let cleanup: () -> Void
+    }
+
+    /// Imports a real packet carrying a friend's map onto a podcast the listener has downloaded,
+    /// through the same import and download paths the app uses, and waits for anchor resolution.
+    /// With `summaries`, the scenes carry summaries, an injected job renders them, and the copy plays for real.
+    private func importSharedPodcastMap(
+        senderEdition: SenderEdition,
+        listenerMap: ListenerMap,
+        summaries: Bool = false
+    ) async throws -> SharedPodcastMapFixture {
+        let root = FileManager.default.temporaryDirectory.appending(path: "shared-podcast-map-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let db = root.appending(path: "library.sqlite")
+        let seeding = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: db)
+        seeding.resetAndSeed()
+        let store = try SQLiteSessionStore(path: db.path)
+        let item = Item(
+            id: "shared-map-episode", title: "Shared Map Episode",
+            mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil,
+            externalReference: "https://example.com/episodes/shared-map", status: "ready", externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/shared-map.m4a", durationMs: 10_000)
+        )
+        try store.saveItem(item)
+        // The listener's downloaded copy, where the download coordinator keeps it.
+        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let fileName = "shared-map-\(UUID().uuidString).m4a"
+        let download = support.appending(path: "PodcastAudio/\(fileName)")
+        try FileManager.default.createDirectory(at: download.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Self.writeSummaryAudio(to: download, seconds: 10)
+        let downloadBytes = try Data(contentsOf: download)
+        try store.savePodcastDownload(PodcastDownloadRecord(
+            id: "download-\(item.id)", itemId: item.id, remoteURL: "https://cdn.example.com/shared-map.m4a",
+            localRelativePath: fileName, state: .availableOffline, bytesWritten: Int64(downloadBytes.count)
+        ))
+        if listenerMap == .publisherChapters {
+            try store.saveTranscriptTimeline(SourceTranscriptTimeline(
+                id: "publisher-timeline", itemId: item.id, createdAt: Date(),
+                timeline: TranscriptTimeline(segments: [], chapters: [
+                    MediaTimelineChapter(id: "chapter-1", title: "Cold open", startMs: 0, transcriptSegmentId: "segment-1")
+                ], durationMs: 10_000)
+            ))
+        }
+        if listenerMap == .own {
+            try store.savePortableListeningMapProposal(PortableListeningMapProposalArtifact(
+                id: "my-map", createdAt: Date(), generator: "test",
+                scenes: [PortableListeningMapScene(id: "mine", order: 0, eligibility: .eligible,
+                    startAnchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 0),
+                    endAnchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 10_000))]
+            ), itemId: item.id)
+            try store.saveResolvedListeningMapProjection(EpisodeFingerprintAlignment.makeProjection(
+                id: "my-projection", itemId: item.id, proposalId: "my-map",
+                recipientEditionSHA256: try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: download),
+                matches: [], exactEdition: true
+            ))
+        }
+
+        let sourcePlayer = summaries ? AVPlayerStreamPlaybackClient() : nil
+        let model = Gate1AppModel(
+            audioPlaybackClient: sourcePlayer.map { RoutedAudioPlaybackClient(speech: NoopAudioPlaybackClient(), media: $0) }
+                ?? NoopAudioPlaybackClient(),
+            preparedTextAudioPrewarmHandler: { itemId, _, text, directory, _, _ in
+                let url = directory.appending(path: "\(itemId).m4a")
+                do { try Self.writeSummaryAudio(to: url) } catch { return .failure(error) }
+                return .success(PreparedTextAudio(
+                    normalizedText: text,
+                    media: ItemMedia(sourceType: .generatedTTSPrerendered, url: url.absoluteString, durationMs: 1_000),
+                    timeline: TranscriptTimeline(segments: [], chapters: [], durationMs: 1_000)
+                ))
+            },
+            databaseURLOverride: db
+        )
+        model.bootstrapLibraryIfNeeded()
+        // The improved voice waits on a first-use choice; summaries then render in the system voice (#286).
+        if summaries { model.declineCurrentTerms() }
+        let senderDigest = senderEdition == .sameAsRecipient
+            ? try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: download)
+            : String(repeating: "5", count: 64)
+        let spine = EditionFingerprintSpineArtifact(
+            id: "friend-spine", itemId: "friend-episode",
+            producingEditionDurationMs: 10_000, producingEditionSHA256: senderDigest, landmarks: []
+        )
+        let proposal = PortableListeningMapProposalArtifact(
+            id: "friend-map", createdAt: Date(), generator: "test",
+            scenes: (0..<2).map { index in
+                PortableListeningMapScene(
+                    id: "friend-scene-\(index)", order: index, title: index == 0 ? "Opening" : "Close",
+                    summaryText: summaries ? "A short recap." : nil, summaryProvenance: summaries ? .modelGenerated : nil,
+                    eligibility: summaries ? .eligible : .unknown,
+                    startAnchor: PortableAnchorEvidence(anchorType: .transcript, mediaTimeMs: index * 5_000),
+                    endAnchor: PortableAnchorEvidence(anchorType: .transcript, mediaTimeMs: (index + 1) * 5_000)
+                )
+            }
+        )
+        let revision = InterjectionShareRevision(id: "revision", interjectionId: "margin", itemId: "friend-episode", sessionId: "friend-session", createdAt: Date(), approvedTranscript: "Listen to this part.", anchorBefore: "", anchorAfter: "", status: .senderApproved)
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "shared-podcast-map", createdAt: Date(), item: model.localSharedItemIdentity(for: item),
+            itemTransportSelection: .reference,
+            selections: [ReviewedInterjectionSelection(packageScopedId: "friend-margin", revision: revision, anchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 2_000), representation: .textOnly)],
+            mapProposals: [proposal], fingerprintSpines: [spine], senderDisplayLabel: "Friend"
+        )
+        let url = root.appending(path: "friend.spokenmargins")
+        _ = try SpokenMarginsPackageArchive.write(prepared, to: url)
+        model.handleIncomingURL(url)
+        XCTAssertEqual(model.spokenMarginsPackageImportReview?.matchingItemId, item.id)
+        model.confirmSpokenMarginsPackageImport()
+        for _ in 0..<250 where model.isImportingSpokenMarginsPackage { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertNil(model.spokenMarginsPackageImportError)
+        let key = "importedPodcastAnchorResolution:\(item.id)"
+        for _ in 0..<500 where model.diagnostics[key]?.hasPrefix("complete") != true {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(model.diagnostics[key]?.hasPrefix("complete"), true, model.diagnostics[key] ?? "never scheduled")
+        return SharedPodcastMapFixture(model: model, store: store, itemId: item.id, databaseURL: db, sourcePlayer: sourcePlayer) {
+            try? FileManager.default.removeItem(at: download)
+            try? FileManager.default.removeItem(at: root)
+        }
+    }
+
+    nonisolated private static func writeSummaryAudio(to url: URL, seconds: Int = 1) throws {
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1))
-        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 24_000))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(24_000 * seconds)))
         buffer.frameLength = buffer.frameCapacity
         let channel = try XCTUnwrap(buffer.floatChannelData?[0])
-        for i in 0..<24_000 { channel[i] = sin(Float(i) * 0.03) * 0.02 }
+        for i in 0..<Int(buffer.frameLength) { channel[i] = sin(Float(i) * 0.03) * 0.02 }
         let file = try AVAudioFile(forWriting: url, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 24_000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000])
         try file.write(from: buffer)
     }

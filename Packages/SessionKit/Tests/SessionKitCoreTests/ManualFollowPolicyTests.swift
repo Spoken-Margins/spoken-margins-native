@@ -117,4 +117,12 @@ final class ManualFollowPolicyTests: XCTestCase {
         XCTAssertEqual(podcast.title, "Follow Podcast")
         XCTAssertEqual(podcast.symbol, "dot.radiowaves.left.and.right")
     }
+
+    func testASuggestionDecisionTakesItsIdFromItsSource() {
+        let at = Date(timeIntervalSince1970: 1)
+        XCTAssertEqual(
+            SourceSuggestionDecision(sourceId: "source-1", decision: .accepted, decidedAt: at, lastPromptAt: at),
+            SourceSuggestionDecision(id: "suggestion-source-1", sourceId: "source-1", decision: .accepted, decidedAt: at, lastPromptAt: at)
+        )
+    }
 }
