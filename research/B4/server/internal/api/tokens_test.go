@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -77,11 +76,11 @@ func currentKey(t *testing.T, h *harness) (string, *rsa.PublicKey) {
 	if sum := sha256.Sum256(der); hex.EncodeToString(sum[:]) != doc.Keys[0].ID {
 		t.Fatal("tokenKeyId is not SHA-256 of the public key")
 	}
-	pub, err := x509.ParsePKIXPublicKey(der)
+	pub, err := tokens.ParseSPKI(der)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return doc.Keys[0].ID, pub.(*rsa.PublicKey)
+	return doc.Keys[0].ID, pub
 }
 
 func issueBody(keyID string, blinded ...[]byte) []byte {

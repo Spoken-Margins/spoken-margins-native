@@ -35,22 +35,28 @@ type dayQuota struct {
 }
 
 // reserve takes n from tag's allowance, or nothing if that would pass limit.
-func (q *dayQuota) reserve(tag string, n, limit int, now time.Time) bool {
+// It returns the day it counted against, for refund.
+func (q *dayQuota) reserve(tag string, n, limit int, now time.Time) (string, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if day := now.UTC().Format("2006-01-02"); q.day != day || q.counts == nil {
 		q.day, q.counts = day, map[string]int{}
 	}
 	if q.counts[tag]+n > limit {
-		return false
+		return q.day, false
 	}
 	q.counts[tag] += n
-	return true
+	return q.day, true
 }
 
-func (q *dayQuota) refund(tag string, n int) {
+// refund gives back a reservation, unless the day has since changed and
+// the count it was taken from is already gone.
+func (q *dayQuota) refund(tag string, n int, day string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	if q.day != day {
+		return
+	}
 	if q.counts[tag] -= n; q.counts[tag] <= 0 {
 		delete(q.counts, tag)
 	}
@@ -141,14 +147,15 @@ func (s *Server) issueTokens(w http.ResponseWriter, r *http.Request, body []byte
 
 	keyIDHeader, _ := base64.StdEncoding.DecodeString(r.Header.Get(HeaderKeyID))
 	tag, now := store.Tag(keyIDHeader), s.Now()
-	if !s.tokenQuota.reserve(tag, len(blinded), tokensPerInstallPerDay, now) {
+	day, ok := s.tokenQuota.reserve(tag, len(blinded), tokensPerInstallPerDay, now)
+	if !ok {
 		s.countAbuse(abuseKey{hour: now.UTC().Format("2006-01-02T15"), tag: tag, reason: "token_quota"})
 		fail(w, http.StatusTooManyRequests, "quota")
 		return
 	}
 	sigs, err := s.Tokens.Sign(now, keyID, blinded)
 	if err != nil {
-		s.tokenQuota.refund(tag, len(blinded))
+		s.tokenQuota.refund(tag, len(blinded), day)
 		switch {
 		case errors.Is(err, tokens.ErrStaleKey):
 			fail(w, http.StatusConflict, "stale_key")
