@@ -90,6 +90,39 @@ class PureTests(unittest.TestCase):
         for word in ('Steps', 'Expected', 'Actual', TEST, SHA, 'https://github.com/report', 'Build'):
             self.assertIn(word, body)
 
+    def test_failed_probation_attachment_links_survive_summary_and_combine(self):
+        source = manifest('failed', probation=True)
+        attachments = [{'test': JOURNEY, 'manifest': '/mac/j1/manifest.json',
+                        'files': ['/mac/j1/recording.mp4', '/mac/j1/hierarchy.txt']}]
+        source['steps'][0]['attachments'] = attachments
+        result = desk.combine([desk.summarize(manifest()), desk.summarize(source)])
+        self.assertEqual(result['verdict'], 'PASS')
+        self.assertEqual(result['counts'], {'passed': 1, 'failed': 1, 'skipped': 0})
+        self.assertEqual(result['journeys'][JOURNEY], 'failed')
+        self.assertEqual(result['attachments'], attachments)
+        text = desk.report_text(SHA, result, Path('/mac/run'))
+        for path in ('/mac/j1/manifest.json', '/mac/j1/recording.mp4', '/mac/j1/hierarchy.txt'):
+            self.assertIn(f'](<{path}>)', text)
+        source['steps'][0]['attachments'][0].update(error='export timed out', export_log='/mac/j1/export.log')
+        self.assertIn('Export warning: export timed out',
+                      desk.report_text(SHA, desk.summarize(source), Path('/mac/run')))
+        self.assertEqual(desk.summarize(manifest('failed'))['verdict'], 'FAIL')
+
+    def test_large_attachment_listing_keeps_failed_report_postable(self):
+        source = manifest('failed')
+        prefix = '/mac/' + 'long-path/' * 25
+        files = [prefix + f'debug-{n}.txt' for n in range(999)] + [prefix + 'recording.mp4']
+        source['steps'][0]['attachments'] = [{'test': TEST, 'manifest': prefix + 'manifest.json',
+                                           'files': files}]
+        result = desk.summarize(source)
+        text = desk.report_text(SHA, result, Path('/mac/run'))
+        self.assertLess(len(text), 65536)
+        self.assertIn('FAIL — 0 passed, 1 failed', text)
+        self.assertIn('Failing tests: `' + TEST + '`', text)
+        self.assertIn('more file links omitted', text)
+        self.assertIn('recording.mp4', text)
+        self.assertEqual(result['attachments'][0]['files'], files)
+
     def test_dedupe_search_is_open_issues_and_uses_test_method(self):
         query = desk.dedupe_query(TEST)
         self.assertIn('is:open', query)
