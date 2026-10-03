@@ -163,6 +163,9 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             importedItem.id
         )
 
+        // On a fresh simulator the first-use voice choice is still pending, and startItem waits for it
+        // silently; earlier classes that decline it hide this in a full run (#528). Make the choice here.
+        model.declineCurrentTerms()
         model.startItem(id: importedItem.id)
         XCTAssertEqual(model.snapshot.itemId, importedItem.id)
     }
