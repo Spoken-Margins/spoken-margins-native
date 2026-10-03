@@ -40,8 +40,9 @@ public struct ReadLaterClient: Sendable {
             case 401, 403: throw EditionError.invalid("Access was rejected. Reconnect with a valid token.")
             case 429: throw EditionError.invalid("The service rate limit was reached. Wait before refreshing again.")
             // Readwise answers a wrong token with 401, so a 404 from the Reader list means the token
-            // works but this account has no Reader (#621). Highlights use a different API.
-            case 404 where service == .reader: throw EditionError.invalid(Self.readerUnavailableMessage)
+            // works but this account has no Reader (#621). Highlights use a different API. A 404 on a
+            // later page is about the cursor, not the account, so it keeps the generic message.
+            case 404 where service == .reader && cursor == nil: throw EditionError.invalid(Self.readerUnavailableMessage)
             default: throw EditionError.invalid("The service returned HTTP \(response.statusCode). Try again later.")
             }
         }

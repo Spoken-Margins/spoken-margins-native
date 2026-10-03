@@ -111,6 +111,11 @@ final class ReadLaterClientTests: XCTestCase {
             do { _ = try await client.page(service: service, token: "x"); XCTFail("Must fail") }
             catch { XCTAssertTrue(error.localizedDescription.contains(expected), "\(service) \(code): \(error.localizedDescription)") }
         }
+        let laterPage = ReadLaterClient { request in
+            (Data(), HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!)
+        }
+        do { _ = try await laterPage.page(service: .reader, token: "x", cursor: "next"); XCTFail("Must fail") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("HTTP 404. Try again later"), error.localizedDescription) }
     }
     func testEmptyArticleListAlwaysSaysWhy() {
         func line(_ service: ReadLaterService = .reader, connected: Bool = true, isLoading: Bool = false, loaded: Bool = false, failure: String? = nil, count: Int = 0) -> String? {
