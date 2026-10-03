@@ -428,6 +428,7 @@ extension InMemorySessionRepository: StructuredDocumentRepository {
 extension InMemorySessionRepository: CommunityMapUploadRepository {
     public func saveCommunityMapUpload(_ record: CommunityMapUploadRecord) throws { communityMapUploads[record.id] = record }
     public func loadCommunityMapUpload(episodeKey: String) throws -> CommunityMapUploadRecord? { communityMapUploads[episodeKey] }
+    public func loadCommunityMapUploads() throws -> [CommunityMapUploadRecord] { Array(communityMapUploads.values) }
 }
 
 extension InMemorySessionRepository: PublisherAudioRepository {

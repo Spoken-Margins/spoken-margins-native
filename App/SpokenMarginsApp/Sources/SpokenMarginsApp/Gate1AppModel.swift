@@ -1994,6 +1994,7 @@ final class Gate1AppModel: ObservableObject {
     func handleAppBecameActive() {
         openReadyListeningEdition()
         marginNotesDelivery.start(); readwiseHighlightSync.start { [weak self] in self?.store }
+        if let store { CommunityMapUploadService.shared.retryFailed(store: store) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
         supertonicRenderer?.setBackgroundInferencePacingEnabled(false)
         let refreshedAvailability = localFoundationModelClient.availability()
         if refreshedAvailability != localFoundationModelAvailability {

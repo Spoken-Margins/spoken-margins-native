@@ -1145,4 +1145,8 @@ extension SQLiteSessionStore: CommunityMapUploadRepository {
     public func loadCommunityMapUpload(episodeKey: String) throws -> CommunityMapUploadRecord? {
         try loadOptional(kind: Self.communityMapUploadKind, id: episodeKey)
     }
+
+    public func loadCommunityMapUploads() throws -> [CommunityMapUploadRecord] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", [Self.communityMapUploadKind])
+    }
 }

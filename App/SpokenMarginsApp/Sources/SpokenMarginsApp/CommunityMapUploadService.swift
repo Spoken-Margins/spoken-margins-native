@@ -16,9 +16,26 @@ final class CommunityMapUploadService {
     private lazy var bridge = BridgeService.makeStore()
     private var inFlight: Set<String> = []
 
+    /// After a transcript is attached: the first try for that episode.
     func transcriptAttached(itemId: String, store: SQLiteSessionStore, report: @escaping @MainActor (String) -> Void) {
         // Opted out: read nothing, send nothing, not even a config request.
-        guard UserDefaults.standard.bool(forKey: Self.optInKey), !inFlight.contains(itemId),
+        guard Self.optedIn else { return }
+        attempt(itemId: itemId, store: store, report: report)
+    }
+
+    /// When the app becomes active: retries uploads that failed a day or more ago (offline, busy,
+    /// switched off, at the spend cap), since a transcript is attached only once per item.
+    func retryFailed(store: SQLiteSessionStore, report: @escaping @MainActor (String) -> Void) {
+        guard Self.optedIn, let records = try? store.loadCommunityMapUploads() else { return }
+        for record in CommunityMapUploadPolicy.dueForRetry(records, now: Date()).prefix(3) {
+            attempt(itemId: record.itemId, store: store, report: report)
+        }
+    }
+
+    private static var optedIn: Bool { UserDefaults.standard.bool(forKey: optInKey) }
+
+    private func attempt(itemId: String, store: SQLiteSessionStore, report: @escaping @MainActor (String) -> Void) {
+        guard !inFlight.contains(itemId),
               let item = try? store.loadItem(id: itemId),
               let timeline = try? store.loadTranscriptTimeline(itemId: itemId)?.timeline else { return }
         let hasPublisherChapters = CommunityMapUploadPolicy.hasPublisherChapters(

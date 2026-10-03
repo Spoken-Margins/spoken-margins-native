@@ -87,16 +87,39 @@ final class CommunityMapUploadTests: XCTestCase {
     }
 
     func testAPartialTranscriptMadeForOneMarginDoesNotCount() {
-        let window = TranscriptTimeline(segments: [
-            MediaTimelineSegment(id: "w1", startMs: 540_000, endMs: 570_000, text: "Around the Margin."),
-            MediaTimelineSegment(id: "w2", startMs: 570_000, endMs: 599_000, text: "Up to the end."),
-        ], chapters: [], durationMs: 600_000)
+        let window = timed(from: 540_000, to: 600_000)
         XCTAssertEqual(decide(timeline: window), .skip(.partialTranscript))
         // 94% of the episode is not enough; 95% is.
-        let short = TranscriptTimeline(segments: [MediaTimelineSegment(id: "a", startMs: 0, endMs: 564_000, text: "Most of it.")], chapters: [], durationMs: 600_000)
-        XCTAssertEqual(decide(timeline: short), .skip(.partialTranscript))
-        let enough = TranscriptTimeline(segments: [MediaTimelineSegment(id: "a", startMs: 0, endMs: 570_000, text: "Most of it.")], chapters: [], durationMs: 600_000)
-        XCTAssertEqual(decide(timeline: enough), .upload(episodeKey: expectedKey))
+        XCTAssertEqual(decide(timeline: timed(from: 0, to: 564_000)), .skip(.partialTranscript))
+        XCTAssertEqual(decide(timeline: timed(from: 0, to: 570_000)), .upload(episodeKey: expectedKey))
+    }
+
+    /// Ten-second segments from `start` to `end` of a 600 s episode.
+    private func timed(from start: Int, to end: Int) -> TranscriptTimeline {
+        let segments = stride(from: start, to: end, by: 10_000).map {
+            MediaTimelineSegment(id: "t\($0)", startMs: $0, endMs: min($0 + 10_000, end), text: "Words at \($0).")
+        }
+        return TranscriptTimeline(segments: segments, chapters: [], durationMs: 600_000)
+    }
+
+    func testAPublisherTranscriptStoredAsOneUntimedBlockNeverUploads() {
+        // How plain-text and JSON publisher transcripts are attached: the whole text in one segment.
+        let block = TranscriptTimeline(segments: [MediaTimelineSegment(id: "all", startMs: 0, endMs: 600_000, text: "The whole episode as text.")],
+                                       chapters: [], durationMs: 600_000)
+        XCTAssertEqual(decide(timeline: block), .skip(.untimedTranscript))
+        // With no duration in the feed, the block runs 0 to 1 ms.
+        let noDuration = TranscriptTimeline(segments: [MediaTimelineSegment(id: "all", startMs: 0, endMs: 1, text: "The whole episode as text.")],
+                                            chapters: [], durationMs: 1)
+        XCTAssertEqual(decide(item: episode(durationMs: nil), timeline: noDuration), .skip(.untimedTranscript))
+        // A few sparse segments, or a ten-minute silence in the middle, are not a listened transcript either.
+        let sparse = TranscriptTimeline(segments: [
+            MediaTimelineSegment(id: "a", startMs: 0, endMs: 10_000, text: "Start."),
+            MediaTimelineSegment(id: "b", startMs: 590_000, endMs: 600_000, text: "End."),
+        ], chapters: [], durationMs: 600_000)
+        XCTAssertEqual(decide(timeline: sparse), .skip(.untimedTranscript))
+        var gapped = timed(from: 0, to: 600_000)
+        gapped.segments.removeAll { $0.startMs >= 100_000 && $0.startMs < 410_000 }
+        XCTAssertEqual(decide(timeline: gapped), .skip(.untimedTranscript))
     }
 
     func testAnEpisodeWithPublisherChaptersDoesNotUpload() {
@@ -119,6 +142,8 @@ final class CommunityMapUploadTests: XCTestCase {
         let failed = CommunityMapUploadRecord(id: expectedKey, itemId: "item-episode", state: .failed, attempts: 1, lastAttemptAt: now, lastOutcome: "failed:503")
         XCTAssertEqual(decide(previous: failed, at: now.addingTimeInterval(23 * 3_600)), .skip(.retryTooSoon))
         XCTAssertEqual(decide(previous: failed, at: now.addingTimeInterval(24 * 3_600)), .upload(episodeKey: expectedKey))
+        XCTAssertEqual(CommunityMapUploadPolicy.dueForRetry([uploaded, rejected, failed], now: now.addingTimeInterval(23 * 3_600)), [])
+        XCTAssertEqual(CommunityMapUploadPolicy.dueForRetry([uploaded, rejected, failed], now: now.addingTimeInterval(24 * 3_600)), [failed])
     }
 
     // MARK: Episode key
@@ -306,6 +331,7 @@ final class CommunityMapUploadTests: XCTestCase {
         }
         let reopened = try SQLiteSessionStore(path: path)
         XCTAssertEqual(try reopened.loadCommunityMapUpload(episodeKey: expectedKey), record)
+        XCTAssertEqual(try reopened.loadCommunityMapUploads(), [record])
         XCTAssertNil(try reopened.loadCommunityMapUpload(episodeKey: String(repeating: "0", count: 64)))
         XCTAssertEqual(try reopened.quarantinedRecordCount(), 0)
     }

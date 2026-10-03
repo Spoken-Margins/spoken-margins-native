@@ -69,6 +69,7 @@ public struct CommunityMapUploadRecord: Codable, Equatable, Sendable {
 public protocol CommunityMapUploadRepository: Sendable {
     func saveCommunityMapUpload(_ record: CommunityMapUploadRecord) throws
     func loadCommunityMapUpload(episodeKey: String) throws -> CommunityMapUploadRecord?
+    func loadCommunityMapUploads() throws -> [CommunityMapUploadRecord]
 }
 
 public enum CommunityMapUploadSkipReason: String, Equatable, Sendable {
@@ -78,6 +79,7 @@ public enum CommunityMapUploadSkipReason: String, Equatable, Sendable {
     case privateLink = "private_link"
     case noEpisodeKey = "no_episode_key"
     case partialTranscript = "partial_transcript"
+    case untimedTranscript = "untimed_transcript"
     case publisherChapters = "publisher_chapters"
     case alreadyUploaded = "already_uploaded"
     case rejectedBefore = "rejected_before"
@@ -95,6 +97,11 @@ public enum CommunityMapUploadPolicy {
     public static let minimumCoverage = 0.95
     /// At most one retry a day after a failure.
     public static let retryInterval: TimeInterval = 24 * 60 * 60
+    /// A real timed transcript has at least one spoken segment per two minutes and no silent
+    /// stretch longer than five; a publisher transcript stored as one block of text has neither.
+    static let minimumDurationMs = 60_000
+    static let maximumSegmentSpacingMs = 120_000
+    static let maximumGapMs = 300_000
 
     /// Every rule from #552, in the order a listener would care about: consent first, then the
     /// owner's switch, then what the episode is, then whether this transcript is worth sending.
@@ -112,7 +119,9 @@ public enum CommunityMapUploadPolicy {
         guard isPodcastEpisode(item) else { return .skip(.notPodcastEpisode) }
         guard linksArePublic(item) else { return .skip(.privateLink) }
         guard let episodeKey = CommunityMapEpisodeKey.key(for: item) else { return .skip(.noEpisodeKey) }
-        guard coverage(of: timeline, durationMs: durationMs(item: item, timeline: timeline)) >= minimumCoverage else {
+        let durationMs = durationMs(item: item, timeline: timeline)
+        guard hasRealTiming(timeline, durationMs: durationMs) else { return .skip(.untimedTranscript) }
+        guard coverage(of: timeline, durationMs: durationMs) >= minimumCoverage else {
             return .skip(.partialTranscript)
         }
         guard !hasPublisherChapters else { return .skip(.publisherChapters) }
@@ -153,6 +162,29 @@ public enum CommunityMapUploadPolicy {
 
     public static func durationMs(item: Item, timeline: TranscriptTimeline) -> Int? {
         [item.media?.durationMs, timeline.durationMs].compactMap { $0 }.first { $0 > 0 }
+    }
+
+    /// Failed uploads whose day has passed, for the app to try again (at most once a day).
+    public static func dueForRetry(_ records: [CommunityMapUploadRecord], now: Date) -> [CommunityMapUploadRecord] {
+        records.filter { $0.state == .failed && now.timeIntervalSince($0.lastAttemptAt) >= retryInterval }
+            .sorted { $0.lastAttemptAt < $1.lastAttemptAt }
+    }
+
+    /// Whether the transcript's times come from listening, not from one block of text spread over
+    /// the episode. The server keeps the first map made for an episode, so an untimed upload would
+    /// decide the map every other phone sees.
+    static func hasRealTiming(_ timeline: TranscriptTimeline, durationMs: Int?) -> Bool {
+        guard let durationMs, durationMs >= minimumDurationMs else { return false }
+        let spoken = timeline.segments
+            .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.startMs < $1.startMs }
+        guard spoken.count >= max(2, durationMs / maximumSegmentSpacingMs) else { return false }
+        var reached = spoken[0].endMs
+        for segment in spoken.dropFirst() {
+            if segment.startMs - reached > maximumGapMs { return false }
+            reached = max(reached, segment.endMs)
+        }
+        return true
     }
 
     /// The share of the episode between the first spoken segment and the last.
