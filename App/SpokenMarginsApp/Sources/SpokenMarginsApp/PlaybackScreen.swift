@@ -238,35 +238,16 @@ struct PlaybackScreen: View {
                 .buttonStyle(InterjectButtonStyle())
                 .accessibilityIdentifier("playback.skim.return.button")
             } else if model.snapshot.phase == .finished {
-                Button("Add a Margin", systemImage: "square.and.pencil", action: model.beginWrittenMargin)
-                    .frame(maxWidth: .infinity)
-                    .buttonStyle(InterjectButtonStyle())
-                    .accessibilityIdentifier("playback.write.button")
+                // #142: the same spoken + written row as during playback, so the flow is
+                // finish, add a recap Margin, then Share.
+                marginRow
                 Button("Share", systemImage: "square.and.arrow.up", action: model.openExport)
-                    .frame(maxWidth: .infinity)
-                    .buttonStyle(InterjectButtonStyle())
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white)
+                    .frame(minHeight: 44)
                     .accessibilityIdentifier("playback.finished.share.button")
             } else {
-                HStack(spacing: 8) {
-                    Button(action: model.beginInterjection) {
-                        Label(dynamicTypeSize.isAccessibilitySize ? "Record" : "Add a Margin", systemImage: "mic.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(InterjectButtonStyle())
-                    .accessibilityLabel("Record a Margin")
-                    .accessibilityIdentifier("playback.interject.button")
-                    Button(action: model.beginWrittenMargin) {
-                        Image(systemName: "square.and.pencil")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: dynamicTypeSize.isAccessibilitySize ? 32 : 24, height: dynamicTypeSize.isAccessibilitySize ? 32 : 24)
-                            .frame(width: 52, height: 52)
-                    }
-                    .buttonStyle(InterjectButtonStyle())
-                    .accessibilityLabel("Write a Margin")
-                    .accessibilityIdentifier("playback.write.button")
-                }
-                .disabled(!model.hasActiveSession)
+                marginRow
             }
             HStack(spacing: 18) {
                 Button(action: openTimeline) {
@@ -303,6 +284,30 @@ struct PlaybackScreen: View {
         .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.18)).frame(height: 1) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("playback.controls")
+    }
+
+    /// Add a Margin (spoken) with the pencil (written) beside it.
+    private var marginRow: some View {
+        HStack(spacing: 8) {
+            Button(action: model.beginInterjection) {
+                Label(dynamicTypeSize.isAccessibilitySize ? "Record" : "Add a Margin", systemImage: "mic.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(InterjectButtonStyle())
+            .accessibilityLabel("Record a Margin")
+            .accessibilityIdentifier("playback.interject.button")
+            Button(action: model.beginWrittenMargin) {
+                Image(systemName: "square.and.pencil")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: dynamicTypeSize.isAccessibilitySize ? 32 : 24, height: dynamicTypeSize.isAccessibilitySize ? 32 : 24)
+                    .frame(width: 52, height: 52)
+            }
+            .buttonStyle(InterjectButtonStyle())
+            .accessibilityLabel("Write a Margin")
+            .accessibilityIdentifier("playback.write.button")
+        }
+        .disabled(!model.hasActiveSession)
     }
 
     private var listeningOptionsButton: some View {
@@ -609,10 +614,7 @@ struct PlaybackScreen: View {
     private var playbackHeader: some View {
         VStack(alignment: .leading, spacing: 12) {
             Button(action: model.openCurrentPlaybackItem) {
-                Text(model.playbackItemHeaderTitle)
-                    .font(.system(.largeTitle, design: .serif).weight(.medium))
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                PlaybackHeaderTitle(title: model.playbackItemHeaderTitle)
                     .foregroundStyle(.white)
             }
             .buttonStyle(.plain)

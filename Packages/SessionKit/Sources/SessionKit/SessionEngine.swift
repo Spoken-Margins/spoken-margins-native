@@ -42,6 +42,8 @@ public final class SessionEngine {
     private var recordingTargetType: InterjectionTargetType?
     private var recordingTargetId: String?
     private var priorPhase: SessionPhase?
+    /// The Margin being recorded started on a finished source, at its end (#142).
+    private var recordingOnFinishedSource = false
     private var streamingBuffers: [String: String] = [:]
     private var spokenPrefixes: [String: Int] = [:]
     private var externallyStreamedTurnId: String?
@@ -71,6 +73,9 @@ public final class SessionEngine {
 
     /// The I14 projection of the current item's I13 document, cached by item.
     private var listenableCache: (itemId: String, textLength: Int, projection: NormalizedSpeechText?)?
+    /// The structured document a paper's Margin pages come from (#206), cached by item, so
+    /// the notes-folder gatherer decodes it once per paper rather than once per Margin.
+    private var exportPageDocumentCache: (itemId: String, text: String?, document: StructuredDocument?)?
 
     private struct PlaybackProgress {
         var sourcePercent: Int
@@ -386,10 +391,26 @@ public final class SessionEngine {
         }
         let mediaSeekFailure = try reconcilePendingMediaSeek(for: &session)
         let positionIsPending = hasPendingPlaybackPosition(for: session)
-        let playbackCompleted = positionIsPending ? false : audio.isPlaybackComplete(targetId: session.currentTargetId)
+        var playbackCompleted = positionIsPending ? false : audio.isPlaybackComplete(targetId: session.currentTargetId)
         let transportState = audio.playbackTransportState(targetId: session.currentTargetId)
         var updated = try syncCurrentPositionFromAudio(session)
-        if snapshot.status == .starting {
+        // A start from the very end (resuming after a Margin at the last second) finds the episode
+        // already over, so it never confirms. It ended: pause there. This is checked before the
+        // start's own status, whose watchdog would otherwise call it a timeout once the deadline
+        // passes (#588). The media client clears its completion when a start begins, so this
+        // completion is the new start's own.
+        let endedBeforeStartConfirmed = snapshot.status == .starting
+            && (session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia)
+            && audio.isPlaybackComplete(targetId: session.currentTargetId)
+        if endedBeforeStartConfirmed {
+            clearPlaybackStartPending()
+            pendingPlaybackPosition = nil
+            playbackCompleted = true
+            updated = try syncCurrentPositionFromAudio(session)
+            // The client still counts itself as playing (Lock Screen included) until told.
+            try audio.pause()
+            snapshot.status = .paused
+        } else if snapshot.status == .starting {
             let startStatus = playbackStartStatus(for: session.currentTargetId, attemptId: activePlaybackStartAttemptId ?? playbackStartAttemptId)
             if let recovered = currentSession, recovered.currentTargetId != session.currentTargetId {
                 // Start recovery moved playback to another target (#237); don't persist the old one.
@@ -402,6 +423,7 @@ public final class SessionEngine {
                 // requested transport position is authoritative.
                 updated = try syncCurrentPositionFromAudio(session)
                 snapshot.status = .playing
+                forgetStartFailure()
             case .pending:
                 // Startup can remain pending while a buffered speech client is
                 // already advancing or after the user seeks. Preserve that
@@ -600,6 +622,13 @@ public final class SessionEngine {
               session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
             throw SessionKitError.invalidCommandForState("seekMedia")
         }
+        // An episode that played to its end is stopped, even if its last start never confirmed:
+        // a seek leaves it paused at the new place rather than waiting on that start (#588).
+        // This holds when progress sync already showed it paused, too: an end inferred from a
+        // player that stopped short was never a listener's pause, so the client must be told,
+        // or a seek near the end is read as the end again.
+        let endedBeforeSeek = (snapshot.status.isPlaybackActive || snapshot.status == .paused)
+            && audio.isPlaybackComplete(targetId: session.currentTargetId)
         let updated = mediaSession(session, movedTo: mediaTimeMs)
         currentSession = updated
         try persistSession(updated)
@@ -616,7 +645,10 @@ public final class SessionEngine {
         // Seeking within the active target is navigation, not a new playback
         // start. Preserve the current transport status while the matching seek
         // transaction is acknowledged by the audio client.
-        publish(status: snapshot.status, phase: updated.phase)
+        if endedBeforeSeek {
+            try audio.pause()
+        }
+        publish(status: endedBeforeSeek ? .paused : snapshot.status, phase: updated.phase)
         return snapshot
     }
 
@@ -771,6 +803,7 @@ public final class SessionEngine {
         try store.saveStructuredDocument(document, itemId: itemId)
         // The cache may hold "no document" for this item's text (#220 audit 5).
         if listenableCache?.itemId == itemId { listenableCache = nil }
+        if exportPageDocumentCache?.itemId == itemId { exportPageDocumentCache = nil }
     }
 
     @discardableResult
@@ -1228,7 +1261,14 @@ public final class SessionEngine {
         guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
         let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
             || session.currentTargetType == .browserOwnedMedia
-        if usesNativeMediaClock {
+        recordingOnFinishedSource = isFinishedAtEnd(session)
+        if recordingOnFinishedSource {
+            // A recap Margin on a finished item (#142). The saved end position is
+            // authoritative: a stopped speech player reports a reset offset, so
+            // neither the session nor the anchor may sample it.
+            protectPlaybackPosition(for: session)
+            try audio.pause()
+        } else if usesNativeMediaClock {
             // Freeze native transport before sampling its clock. Sampling first
             // lets media advance before the interruption and accumulates drift.
             try audio.pause()
@@ -1566,7 +1606,7 @@ public final class SessionEngine {
             sessionId: session.id,
             targetType: targetType,
             targetId: targetId,
-            createdAt: Date(timeIntervalSince1970: Double(count)),
+            createdAt: now(),
             roughPercent: interjectionPercent(
                 for: session,
                 targetType: targetType,
@@ -1619,6 +1659,9 @@ public final class SessionEngine {
         lastScheduledTranscriptionInterjectionId = interjection.id
         snapshot.lastInterjectionAnchorType = anchor.anchorType
         snapshot.lastInterjectionTargetType = targetType
+        if returnsToFinishedSource(targetType: targetType) {
+            return try settleFinishedSourceAfterInterjection(session)
+        }
         session.phase = priorPhaseForResume(targetType: targetType)
         // beginInterjection already captured and persisted the authoritative
         // source position before pausing. Resume from that position exactly;
@@ -1641,12 +1684,16 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("cancelInterjection")
         }
         try recorder.cancelRecording()
+        let returnsToFinished = returnsToFinishedSource(targetType: recordingTargetType ?? .item)
         session.phase = priorPhase ?? priorPhaseForResume(targetType: recordingTargetType ?? .item)
         // Cancellation follows the same exact-resume policy as completion.
         // The captured position is already present in the session.
         recordingAnchor = nil
         recordingTargetType = nil
         recordingTargetId = nil
+        if returnsToFinished {
+            return try settleFinishedSourceAfterInterjection(session)
+        }
         currentSession = session
         try persistSession(session)
         if externallyStreamedTurnId == session.currentTargetId {
@@ -2267,8 +2314,11 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// Stops caller-owned inline audio before closing the source, even if teardown fails.
+    /// The callback must cancel playback without resuming the source (#651).
     @discardableResult
-    public func endSession() throws -> SessionSnapshot {
+    public func endSession(stoppingInlinePlayback: () -> Void = {}) throws -> SessionSnapshot {
+        stoppingInlinePlayback()
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("endSession")
         }
@@ -2309,6 +2359,10 @@ public final class SessionEngine {
         recordingTargetType = nil
         recordingTargetId = nil
         priorPhase = nil
+        recordingOnFinishedSource = false
+        // A protected position belongs to the session that just ended. Left set, it would
+        // pin a replay of the same target to this session's end until playback confirms.
+        pendingPlaybackPosition = nil
         externallyStreamedTurnId = nil
         streamingBuffers.removeAll()
         spokenPrefixes.removeAll()
@@ -2395,6 +2449,12 @@ public final class SessionEngine {
             : nil
         let interjections = options.includeInterjections ? scopedExportInterjections(options: options, session: session, interjections: allInterjections) : []
         let turns = options.includeTurns ? scopedExportTurns(options: options, turns: allTurns, interjections: interjections) : []
+        // The page goes with a paper's citation (#206), so the structured document is only
+        // read for an item that has one. Margins anchor into Item.text, so the page is only
+        // known when the document's text is exactly that text.
+        let pageDocument = interjections.contains { $0.targetType == .item } && item.documentStructure?.bibliography != nil
+            ? exportPageDocument(for: item)
+            : nil
         let export = SessionExport(
             item: ExportItem(
                 id: item.id,
@@ -2405,7 +2465,8 @@ public final class SessionEngine {
                 includedFullText: exposesFullSourceText,
                 text: exposesFullSourceText ? item.text : nil,
                 sourceTranscript: sourceTranscript,
-                author: item.author.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
+                author: item.author.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 },
+                bibliography: options.includeReference ? item.documentStructure?.bibliography : nil
             ),
             session: ExportSession(id: session.id, status: session.status, completionPercent: session.completionPercent),
             listeningMap: options.includeListeningMap ? try repository.loadListeningMap(itemId: item.id) : nil,
@@ -2457,12 +2518,26 @@ public final class SessionEngine {
                         ? interjection.transcript
                         : interjection.cleanedTranscript ?? interjection.transcript,
                     audioPath: nil,
-                    captureKind: interjection.captureKind
+                    captureKind: interjection.captureKind,
+                    page: interjection.targetType == .item
+                        ? pageDocument?.pageNumber(atCharacter: interjection.anchor.startChar)
+                        : nil
                 )
             }
         )
         lastExport = export
         return export
+    }
+
+    private func exportPageDocument(for item: Item) -> StructuredDocument? {
+        if let cache = exportPageDocumentCache, cache.itemId == item.id, cache.text == item.text {
+            return cache.document
+        }
+        let document = (repository as? StructuredDocumentRepository)
+            .flatMap { try? $0.loadStructuredDocument(itemId: item.id) }
+            .flatMap { $0.text == item.text ? $0 : nil }
+        exportPageDocumentCache = (item.id, item.text, document)
+        return document
     }
 
     private func isNativeAudioSource(_ item: Item) -> Bool {
@@ -2953,13 +3028,18 @@ public final class SessionEngine {
             // Explicit import also restores a trashed item, without rebuilding
             // it and discarding its existing media/transcript association.
             existing.deletedAt = nil
+            // Episode identity added since the item was first saved fills in only
+            // where it is missing; nothing already stored is replaced (#177).
+            if existing.episodeGUID == nil { existing.episodeGUID = Self.nonEmpty(candidate.episodeGUID) }
+            if existing.showTitle == nil { existing.showTitle = Self.nonEmpty(candidate.showTitle) }
+            if existing.publishedAt == nil { existing.publishedAt = Self.nonEmpty(candidate.publishedAt) }
             return existing
         } catch SessionKitError.missingFixture(let key) where key == "item:\(id)" || key == id {
             // A new identity gets a fresh record, never a legacy title-slug's
             // derivatives. Ambiguous old records remain available for recovery.
         }
         let title = candidate.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? (candidate.sourceLink.title ?? request.inputURL) : candidate.title
-        return Item(
+        var item = Item(
             id: id,
             title: title,
             mediaType: TargetType.transcriptBackedMedia.rawValue,
@@ -2977,6 +3057,15 @@ public final class SessionEngine {
             sourceURL: candidate.sourceLink.role == "canonical_feed" ? candidate.sourceLink.url : nil,
             createdAt: request.createdAt
         )
+        item.episodeGUID = Self.nonEmpty(candidate.episodeGUID)
+        item.showTitle = Self.nonEmpty(candidate.showTitle)
+        item.publishedAt = Self.nonEmpty(candidate.publishedAt)
+        return item
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return trimmed
     }
 
     private func resolvedSourceItemId(
@@ -3032,6 +3121,7 @@ public final class SessionEngine {
         activePlaybackStartAttemptId = playbackStartAttemptId
         switch playbackStartStatus(for: session.currentTargetId, attemptId: playbackStartAttemptId) {
         case .confirmed:
+            forgetStartFailure()
             publish(status: .playing, phase: phase)
         case .pending:
             publish(status: .starting, phase: phase)
@@ -3197,6 +3287,14 @@ public final class SessionEngine {
         } catch {
             clearPlaybackStartPending()
             return .failed("\(failure); recovery_failed:\(error.localizedDescription)")
+        }
+    }
+
+    /// A start that confirms supersedes an earlier failed one, so diagnostics stop reporting
+    /// that failure while the source plays normally (#588).
+    private func forgetStartFailure() {
+        if snapshot.lastFailure?.hasPrefix("playback_start_failed:") == true {
+            snapshot.lastFailure = nil
         }
     }
 
@@ -3632,6 +3730,26 @@ public final class SessionEngine {
         default:
             return (.item, session.itemId)
         }
+    }
+
+    private func isFinishedAtEnd(_ session: Session) -> Bool {
+        session.phase == .finished && session.completionPercent >= 100
+            && session.currentTargetType != .summaryTurnTTS && session.currentTargetType != .assistantTurnTTS
+    }
+
+    /// A Margin recorded on the finished source returns to the finished state instead of
+    /// resuming: there is nothing left to play, and playing again would restart or re-finish it.
+    private func returnsToFinishedSource(targetType: InterjectionTargetType) -> Bool {
+        targetType == .item && recordingOnFinishedSource
+    }
+
+    private func settleFinishedSourceAfterInterjection(_ session: Session) throws -> SessionSnapshot {
+        var session = session
+        session.phase = .finished
+        currentSession = session
+        try persistSession(session)
+        publish(status: .paused, phase: .finished)
+        return snapshot
     }
 
     private func priorPhaseForResume(targetType: InterjectionTargetType) -> SessionPhase {

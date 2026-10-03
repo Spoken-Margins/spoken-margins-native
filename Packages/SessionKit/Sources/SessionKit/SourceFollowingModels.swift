@@ -51,8 +51,10 @@ public struct FeedSubscription: Codable, Equatable, Sendable, Identifiable {
     public var lastModified: String?
     public var lastRefreshAt: Date?
     public var createdAt: Date
+    /// Nil (every subscription saved before #466) means `.letMePick`. Build 29 ignores the key.
+    public var newItemPolicy: FeedNewItemPolicy?
 
-    public init(id: String, source: SourceIdentity, state: FeedSubscriptionState = .active, etag: String? = nil, lastModified: String? = nil, lastRefreshAt: Date? = nil, createdAt: Date = Date()) {
+    public init(id: String, source: SourceIdentity, state: FeedSubscriptionState = .active, etag: String? = nil, lastModified: String? = nil, lastRefreshAt: Date? = nil, createdAt: Date = Date(), newItemPolicy: FeedNewItemPolicy? = nil) {
         self.id = id
         self.source = source
         self.state = state
@@ -60,6 +62,7 @@ public struct FeedSubscription: Codable, Equatable, Sendable, Identifiable {
         self.lastModified = lastModified
         self.lastRefreshAt = lastRefreshAt
         self.createdAt = createdAt
+        self.newItemPolicy = newItemPolicy
     }
 }
 
@@ -80,8 +83,18 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
     public var summary: String?
     public var publishedAt: Date?
     public var state: FeedEntryState
+    /// Full feed text retained for confirmed narration; Build 29 ignores the optional keys.
+    public var fullBody: String?
+    /// Feed generator used to limit provider metadata lookups to that provider.
+    public var publisherPlatform: String?
+    /// Affirmative evidence from the current post, never inferred from transcript length.
+    public var publisherNarrationConfirmed: Bool?
+    public var bodyWordCount: Int?
+    public var audioDurationMs: Int?
+    /// The feed's GUID as written; nil for entries saved before #177 until refresh.
+    public var episodeGUID: String?
 
-    public init(id: String, subscriptionId: String, canonicalURL: String, audioURL: String? = nil, title: String, author: String? = nil, summary: String? = nil, publishedAt: Date? = nil, state: FeedEntryState = .unseen) {
+    public init(id: String, subscriptionId: String, canonicalURL: String, audioURL: String? = nil, title: String, author: String? = nil, summary: String? = nil, publishedAt: Date? = nil, state: FeedEntryState = .unseen, bodyWordCount: Int? = nil, fullBody: String? = nil, publisherPlatform: String? = nil, publisherNarrationConfirmed: Bool? = nil, audioDurationMs: Int? = nil, episodeGUID: String? = nil) {
         self.id = id
         self.subscriptionId = subscriptionId
         self.canonicalURL = canonicalURL
@@ -91,6 +104,27 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
         self.summary = summary
         self.publishedAt = publishedAt
         self.state = state
+        self.fullBody = fullBody
+        self.publisherPlatform = publisherPlatform
+        self.publisherNarrationConfirmed = publisherNarrationConfirmed
+        self.bodyWordCount = bodyWordCount
+        self.audioDurationMs = audioDurationMs
+        self.episodeGUID = episodeGUID
+    }
+
+    /// Fills the episode identity an item added from this entry is missing: the GUID, the followed
+    /// show's title and the publish date. Values the item already has are kept.
+    public func fillEpisodeIdentity(of item: inout Item, showTitle: String?) {
+        if item.episodeGUID == nil { item.episodeGUID = Self.nonEmpty(episodeGUID) }
+        if item.showTitle == nil { item.showTitle = Self.nonEmpty(showTitle) }
+        if item.publishedAt == nil, let publishedAt {
+            item.publishedAt = ISO8601DateFormatter().string(from: publishedAt)
+        }
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return trimmed
     }
 }
 
@@ -142,6 +176,11 @@ public struct SourceSuggestionDecision: Codable, Equatable, Sendable, Identifiab
         self.decidedAt = decidedAt
         self.suppressUntil = suppressUntil
         self.lastPromptAt = lastPromptAt
+    }
+
+    /// One decision per source, so its id comes from the source id.
+    public init(sourceId: String, decision: SourceSuggestionDecisionKind, decidedAt: Date = Date(), suppressUntil: Date? = nil, lastPromptAt: Date? = nil) {
+        self.init(id: "suggestion-\(sourceId)", sourceId: sourceId, decision: decision, decidedAt: decidedAt, suppressUntil: suppressUntil, lastPromptAt: lastPromptAt)
     }
 }
 

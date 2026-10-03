@@ -8,6 +8,47 @@ import MediaPlayer
 
 @MainActor
 final class MediaPlaybackInterruptionTests: XCTestCase {
+    // The AudioAdapters plan runs on a simulator with the app's data removed,
+    // so the first-use voice choice is still pending and startItem() waits on
+    // the terms sheet, leaving the model idle (#599). Every test starts with
+    // the choice a listener makes when they keep the iOS voice, as in
+    // SourceLinkImportTests (#446).
+    private static let firstUseVoiceKeys = [
+        "supertonicTTSMigrationV1",
+        "supertonicVoicePendingTermsV1",
+        "ttsMode",
+        "ttsVoiceSelection",
+        SpokenMarginsTerms.acceptanceVersionKey,
+        SpokenMarginsTerms.acceptanceDateKey
+    ]
+    private var priorFirstUseVoiceDefaults: [String: Any] = [:]
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        let defaults = UserDefaults.standard
+        priorFirstUseVoiceDefaults = [:]
+        for key in Self.firstUseVoiceKeys {
+            priorFirstUseVoiceDefaults[key] = defaults.object(forKey: key)
+            defaults.removeObject(forKey: key)
+        }
+        // What declineCurrentTerms() leaves behind after the pre-1.0 migration.
+        defaults.set(true, forKey: "supertonicTTSMigrationV1")
+        defaults.set(AppTTSVoiceSelection.system.rawValue, forKey: "ttsVoiceSelection")
+        defaults.set("systemImmediate", forKey: "ttsMode")
+    }
+
+    override func tearDownWithError() throws {
+        let defaults = UserDefaults.standard
+        for key in Self.firstUseVoiceKeys {
+            if let value = priorFirstUseVoiceDefaults[key] {
+                defaults.set(value, forKey: key)
+            } else {
+                defaults.removeObject(forKey: key)
+            }
+        }
+        try super.tearDownWithError()
+    }
+
     func testResumePreservesMatchingPendingNavigationSeek() async throws {
         let audioURL = try makeTestWAV(duration: 10)
         defer { try? FileManager.default.removeItem(at: audioURL) }
