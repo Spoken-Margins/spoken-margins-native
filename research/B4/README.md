@@ -18,3 +18,5 @@ research/B4/deploy/deploy.sh --dry-run root@<vps>           # from the Mac: show
 Listening maps (#551, DESIGN.md §10) stay off until the owner, on the box: puts `ANTHROPIC_API_KEY=...` in `/etc/smserver/maps.env` (owner root, mode 0600), restarts the service, and runs `smserver switch ... maps on`. `smserver takedown-map -state /var/lib/smserver KEY` removes one map at once.
 
 Anonymous tokens (#737, DESIGN.md §11) stay off until the owner runs `smserver switch ... tokens on`. Nothing in the app uses them yet. Their keys and spent records live under `/var/lib/smserver/tokens/`; deleting that folder voids every token issued so far and is otherwise harmless.
+
+Map uploads can require one of those tokens (#743, DESIGN.md §10): `smserver switch ... mapUploadToken on`, with `tokens` also on. Leave it off until an app build sends tokens with its uploads; until then it would refuse every upload.
