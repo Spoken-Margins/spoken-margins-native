@@ -27,6 +27,9 @@ public enum PrivacyPassToken {
     /// RFC 9474's salt length for the SHA-384 PSS variants.
     static let saltLength = 48
     static let minimumModulusBits = 2048
+    /// The server makes 2048-bit keys. A much larger one would make blinding
+    /// slow enough to stall the phone, so it is refused.
+    static let maximumModulusBits = 4096
     static let nonceLength = 32
 
     public enum Failure: Error, Equatable, Sendable {
@@ -102,6 +105,7 @@ public enum PrivacyPassToken {
             let n = BlindRSAInteger(bigEndian: modulus)
             let e = BlindRSAInteger(bigEndian: exponent)
             guard n.bitWidth >= PrivacyPassToken.minimumModulusBits else { throw Failure.keyTooSmall }
+            guard n.bitWidth <= PrivacyPassToken.maximumModulusBits else { throw Failure.malformedKey }
             guard e > BlindRSAInteger(1), e.bitWidth <= 32 else { throw Failure.malformedKey }
             self.modulus = n
             self.exponent = e
@@ -151,15 +155,18 @@ public enum PrivacyPassToken {
                   !document.keys.isEmpty
             else { throw Failure.malformedResponse }
             let dates = ISO8601DateFormatter()
-            entries = try document.keys.map { item in
+            // An entry this build can't read (a future key format) is
+            // skipped rather than locking out every key in the document.
+            entries = document.keys.compactMap { item in
                 guard let spki = Data(base64Encoded: item.publicKey),
                       let notBefore = dates.date(from: item.notBefore),
-                      let notAfter = dates.date(from: item.notAfter)
-                else { throw Failure.malformedResponse }
-                let key = try PublicKey(spki: spki)
-                guard key.id.hexString == item.tokenKeyId.lowercased() else { throw Failure.malformedResponse }
+                      let notAfter = dates.date(from: item.notAfter),
+                      let key = try? PublicKey(spki: spki),
+                      key.id.hexString == item.tokenKeyId.lowercased()
+                else { return nil }
                 return Entry(key: key, notBefore: notBefore, notAfter: notAfter)
             }
+            guard !entries.isEmpty else { throw Failure.malformedResponse }
         }
 
         /// The key to blind against now: the newest one whose month has begun.
@@ -215,15 +222,21 @@ public enum PrivacyPassToken {
         var generator = SystemRandomNumberGenerator()
         let nonce = randomBytes(nonceLength, using: &generator)
         let salt = randomBytes(saltLength, using: &generator)
-        // r uniform in [1, n) with an inverse: draw modulus-length values and
-        // keep the first that fits.
+        return try prepare(key: key, nonce: nonce, challengeDigest: challengeDigest(purpose: purpose),
+                           salt: salt, blind: randomBlind(for: key))
+    }
+
+    /// r uniform in [1, n) with an inverse: draws modulus-length values and
+    /// keeps the first that fits. It stays on the phone; it is what makes
+    /// the request unlinkable to the token.
+    static func randomBlind(for key: PublicKey) throws -> BlindRSAInteger {
+        var generator = SystemRandomNumberGenerator()
+        let excessBits = key.modulusLength * 8 - key.modulus.bitWidth
         for _ in 0..<64 {
             var candidate = randomBytes(key.modulusLength, using: &generator)
-            let excessBits = key.modulusLength * 8 - key.modulus.bitWidth
             candidate[0] &= UInt8(0xff >> excessBits)
             let r = BlindRSAInteger(bigEndian: candidate)
-            guard !r.isZero, r < key.modulus, r.inverse(modulus: key.modulus) != nil else { continue }
-            return try prepare(key: key, nonce: nonce, challengeDigest: challengeDigest(purpose: purpose), salt: salt, blind: r)
+            if !r.isZero, r < key.modulus, r.inverse(modulus: key.modulus) != nil { return r }
         }
         throw Failure.randomFailure
     }

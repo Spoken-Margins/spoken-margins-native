@@ -78,6 +78,11 @@ final class PrivacyPassTokenTests: XCTestCase {
             XCTAssertEqual(request[request.startIndex + 2], key.id.last, "vector \(index): truncated key id")
             XCTAssertEqual(pending.blindedMessage, request.dropFirst(3), "vector \(index)")
             XCTAssertEqual(try pending.finish(blindSignature: bytes(vector.tokenResponse)), token, "vector \(index)")
+
+            // The same through the server's issuance answer.
+            let idHex = key.id.map { String(format: "%02x", $0) }.joined()
+            let response = Data(#"{"tokenKeyId":"\#(idHex)","blindSignatures":["\#(bytes(vector.tokenResponse).base64EncodedString())"]}"#.utf8)
+            XCTAssertEqual(try PrivacyPassToken.finish([pending], response: response), [token], "vector \(index)")
         }
     }
 
@@ -94,6 +99,10 @@ final class PrivacyPassTokenTests: XCTestCase {
             XCTAssertThrowsError(try PrivacyPassToken.PublicKey(spki: Data(bad)), name) {
                 XCTAssertEqual($0 as? PrivacyPassToken.Failure, .malformedKey, name)
             }
+        }
+        let large = Data([0xc3] + [UInt8](repeating: 0x55, count: 1023)) // 8192 bits
+        XCTAssertThrowsError(try PrivacyPassToken.PublicKey(modulus: large, exponent: Data([1, 0, 1]))) {
+            XCTAssertEqual($0 as? PrivacyPassToken.Failure, .malformedKey)
         }
         let small = Data([0xc3] + [UInt8](repeating: 0x55, count: 127)) // 1024 bits
         XCTAssertThrowsError(try PrivacyPassToken.PublicKey(modulus: small, exponent: Data([1, 0, 1]))) {
@@ -113,12 +122,13 @@ final class PrivacyPassTokenTests: XCTestCase {
         let vector = PrivacyPassVectors.blindRSA[1]
         let key = try PrivacyPassToken.PublicKey(modulus: bytes(vector.n), exponent: bytes(vector.e))
         let signature = BlindRSAInteger(bigEndian: bytes(vector.signature))
-        var seen = Set<Data>()
+        var nonces = Set<Data>(), blindedMessages = Set<Data>()
         for _ in 0..<2 {
             let pending = try PrivacyPassToken.prepare(key: key, purpose: PrivacyPassToken.mapsPurpose)
             XCTAssertEqual(pending.challengeDigest, PrivacyPassToken.challengeDigest(purpose: "maps"))
             XCTAssertEqual(pending.blindedMessage.count, key.modulusLength)
-            seen.insert(pending.nonce)
+            nonces.insert(pending.nonce)
+            blindedMessages.insert(pending.blindedMessage)
 
             // Same message and salt as the vector, fresh r.
             var bytesR = Data((0..<64).map { _ in UInt8.random(in: 0...255) })
@@ -135,7 +145,17 @@ final class PrivacyPassTokenTests: XCTestCase {
                 XCTAssertEqual($0 as? PrivacyPassToken.Failure, .invalidSignature)
             }
         }
-        XCTAssertEqual(seen.count, 2, "each token gets a fresh nonce")
+        XCTAssertEqual(nonces.count, 2, "each token gets a fresh nonce")
+        XCTAssertEqual(blindedMessages.count, 2, "each token gets a fresh blind")
+
+        // With the nonce and salt fixed, two random blinds still differ, so
+        // the server can't recognise a token request it saw before.
+        var rs = Set<Data>()
+        for _ in 0..<2 {
+            let r = try PrivacyPassToken.randomBlind(for: key)
+            rs.insert(try PrivacyPassToken.blind(key: key, message: Data([1]), salt: Data(count: 48), blind: r).blinded)
+        }
+        XCTAssertEqual(rs.count, 2)
     }
 
     // Pinned against the Go server's tokens.Challenge("maps") and its
@@ -160,6 +180,13 @@ final class PrivacyPassTokenTests: XCTestCase {
         let october = ISO8601DateFormatter().date(from: "2026-10-03T18:00:00Z")!
         XCTAssertEqual(keys.signingKey(at: october)?.spki, spki)
         XCTAssertNil(keys.signingKey(at: ISO8601DateFormatter().date(from: "2026-12-02T00:00:00Z")!))
+        var withFutureKey = try XCTUnwrap(JSONSerialization.jsonObject(with: document()) as? [String: Any])
+        var entries = try XCTUnwrap(withFutureKey["keys"] as? [[String: Any]])
+        entries.insert(["tokenKeyId": "ab", "publicKey": "AAAA", "notBefore": "2026-11-01T00:00:00Z",
+                        "notAfter": "2027-01-01T00:00:00Z"], at: 0)
+        withFutureKey["keys"] = entries
+        let skipped = try PrivacyPassToken.Keys(document: JSONSerialization.data(withJSONObject: withFutureKey))
+        XCTAssertEqual(skipped.entries.map(\.key.spki), [spki], "an unreadable entry is skipped, not fatal")
         for bad in [document(id: String(repeating: "0", count: 64)), document(issuer: "example.org"), Data("{}".utf8)] {
             XCTAssertThrowsError(try PrivacyPassToken.Keys(document: bad)) {
                 XCTAssertEqual($0 as? PrivacyPassToken.Failure, .malformedResponse)
