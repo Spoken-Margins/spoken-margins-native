@@ -235,36 +235,10 @@ func (i *Issuer) Sign(now time.Time, keyID [keyIDLen]byte, blinded [][]byte) ([]
 // is created exclusively on disk, so two requests racing with one token,
 // or a restart, can't spend it twice.
 func (i *Issuer) Redeem(now time.Time, raw []byte, purpose string) error {
-	t, err := ParseToken(raw)
-	if err != nil {
-		return err
-	}
 	i.spendMu.RLock()
 	defer i.spendMu.RUnlock()
-	var k *monthKey
-	for _, m := range []string{monthName(now), monthName(monthStart(now).AddDate(0, -1, 0))} {
-		cand, err := i.key(m, false)
-		if errors.Is(err, ErrUnknownKey) {
-			continue
-		} else if err != nil {
-			return err
-		}
-		if equal(cand.id[:], t.KeyID[:]) {
-			k = cand
-			break
-		}
-	}
-	if k == nil {
-		return ErrUnknownKey
-	}
-	want := ChallengeDigest(purpose)
-	if !equal(want[:], t.ChallengeDigest[:]) {
-		return ErrWrongPurpose
-	}
-	if len(t.Authenticator) != modulusLen(&k.sk.PublicKey) {
-		return ErrMalformed
-	}
-	if err := Verify(&k.sk.PublicKey, t.Input(), t.Authenticator); err != nil {
+	t, k, err := i.verify(now, raw, purpose)
+	if err != nil {
 		return err
 	}
 	dir := filepath.Join(i.dir, "spent", k.month)
@@ -287,6 +261,64 @@ func (i *Issuer) Redeem(now time.Time, raw []byte, purpose string) error {
 		return err
 	}
 	return syncDir(dir)
+}
+
+// Check answers what Redeem would, without spending the token: nil for a
+// valid, unspent token. A caller that may not need the token (an upload
+// that turns out to be a duplicate) checks first and redeems only when it
+// does the work. Only Redeem settles a race between two spends.
+func (i *Issuer) Check(now time.Time, raw []byte, purpose string) error {
+	i.spendMu.RLock()
+	defer i.spendMu.RUnlock()
+	t, k, err := i.verify(now, raw, purpose)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stat(filepath.Join(i.dir, "spent", k.month, hex.EncodeToString(t.Nonce[:])))
+	switch {
+	case err == nil:
+		return ErrSpent
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	default:
+		return err
+	}
+}
+
+// verify parses raw and checks its key, purpose and signature. Callers
+// hold spendMu.
+func (i *Issuer) verify(now time.Time, raw []byte, purpose string) (Token, *monthKey, error) {
+	t, err := ParseToken(raw)
+	if err != nil {
+		return t, nil, err
+	}
+	var k *monthKey
+	for _, m := range []string{monthName(now), monthName(monthStart(now).AddDate(0, -1, 0))} {
+		cand, err := i.key(m, false)
+		if errors.Is(err, ErrUnknownKey) {
+			continue
+		} else if err != nil {
+			return t, nil, err
+		}
+		if equal(cand.id[:], t.KeyID[:]) {
+			k = cand
+			break
+		}
+	}
+	if k == nil {
+		return t, nil, ErrUnknownKey
+	}
+	want := ChallengeDigest(purpose)
+	if !equal(want[:], t.ChallengeDigest[:]) {
+		return t, nil, ErrWrongPurpose
+	}
+	if len(t.Authenticator) != modulusLen(&k.sk.PublicKey) {
+		return t, nil, ErrMalformed
+	}
+	if err := Verify(&k.sk.PublicKey, t.Input(), t.Authenticator); err != nil {
+		return t, nil, err
+	}
+	return t, k, nil
 }
 
 func syncDir(dir string) error {
@@ -340,4 +372,16 @@ func (i *Issuer) Prune(now time.Time) (int, error) {
 		}
 	}
 	return len(sorted), nil
+}
+
+// Refused reports whether err from Redeem or Check is about the token
+// itself (forged, spent, made for something else, from a key we don't
+// have) rather than a fault on the server.
+func Refused(err error) bool {
+	for _, e := range []error{ErrMalformed, ErrUnknownKey, ErrWrongPurpose, ErrInvalidSignature, ErrSpent} {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	return false
 }

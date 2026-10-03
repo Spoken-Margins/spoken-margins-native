@@ -59,17 +59,22 @@ func ParseToken(b []byte) (Token, error) {
 	return t, nil
 }
 
-// ChallengeDigest is SHA-256 of an RFC 9577 TokenChallenge for this issuer,
-// with no redemption context and purpose as the origin_info. A token made
-// for one purpose (say "maps") can't be spent on another.
-func ChallengeDigest(purpose string) [digestLen]byte {
+// Challenge is the RFC 9577 TokenChallenge for this issuer, with no
+// redemption context and purpose as the origin_info. A server asking for a
+// token sends it in WWW-Authenticate.
+func Challenge(purpose string) []byte {
 	b := binary.BigEndian.AppendUint16(nil, TokenType)
 	b = binary.BigEndian.AppendUint16(b, uint16(len(IssuerName)))
 	b = append(b, IssuerName...)
 	b = append(b, 0) // redemption_context: empty
 	b = binary.BigEndian.AppendUint16(b, uint16(len(purpose)))
-	b = append(b, purpose...)
-	return sha256.Sum256(b)
+	return append(b, purpose...)
+}
+
+// ChallengeDigest is SHA-256 of Challenge(purpose). A token made for one
+// purpose (say "maps") can't be spent on another.
+func ChallengeDigest(purpose string) [digestLen]byte {
+	return sha256.Sum256(Challenge(purpose))
 }
 
 var (
