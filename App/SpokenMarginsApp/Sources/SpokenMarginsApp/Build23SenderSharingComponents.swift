@@ -325,8 +325,7 @@ struct Build23MarginEditor: View {
                     Button("Clean this Margin", systemImage: "wand.and.stars") {
                         send(.prepareCleanup(id: margin.id))
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(AppColors.evergreen)
+                    .filledActionButton()
                     .accessibilityHint("Removes proposed filler words and tightens pauses; every change remains reversible")
                     .accessibilityIdentifier("build23.sender.editor.prepare.\(margin.id)")
                 } else if margin.automaticCleanupEnabled {

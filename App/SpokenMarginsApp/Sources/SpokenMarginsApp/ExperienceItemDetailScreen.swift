@@ -160,8 +160,7 @@ struct ExperienceItemDetailScreen: View {
                 Label(model.selectedItemStartupAudioState == .preparing ? "Listen now" : primaryPlaybackLabel, systemImage: "play.fill")
                     .frame(maxWidth: .infinity, minHeight: 52)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(AppColors.evergreen)
+            .filledActionButton()
             .accessibilityIdentifier("item.start.button")
     }
 

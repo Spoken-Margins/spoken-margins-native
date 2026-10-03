@@ -304,8 +304,7 @@ private struct CatalogDrawerRow: View, Equatable {
                 .accessibilityIdentifier("catalog.follow.\(entry.id)")
         case nil:
             Button("Follow", action: toggleFollow)
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.evergreen)
+                .filledActionButton()
                 .frame(minWidth: 96, minHeight: 44)
                 .accessibilityLabel("Follow \(entry.title)")
                 .accessibilityIdentifier("catalog.follow.\(entry.id)")

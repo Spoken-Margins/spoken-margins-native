@@ -143,8 +143,7 @@ struct ExperienceTimelineRailScreen: View {
                     if !dynamicTypeSize.isAccessibilitySize { Spacer() }
                     if model.canSummarizeInterjections {
                         Button(model.canRetryLocalSummary ? "Retry summary" : "Summarize", action: model.summarize)
-                            .buttonStyle(.borderedProminent)
-                            .tint(AppColors.plum)
+                            .filledActionButton(tint: AppColors.plum)
                             .accessibilityIdentifier("timeline.summary.button")
                     }
                 }
@@ -152,9 +151,7 @@ struct ExperienceTimelineRailScreen: View {
                     responseEditorFocused = false
                     model.importPastedAssistantResponse()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.plum)
-                .foregroundStyle(AppColors.onEvergreen)
+                .filledActionButton(tint: AppColors.plum)
                 .disabled(model.pastedAssistantResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityIdentifier("timeline.reflection.import.button")
                 TextEditor(text: $model.pastedAssistantResponse)
