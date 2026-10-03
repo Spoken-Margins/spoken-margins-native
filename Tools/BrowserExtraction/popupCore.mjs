@@ -6,8 +6,21 @@ export async function activeTab(extensionAPI) {
   return tabs[0];
 }
 
+// Runs in the page, so it must not reference anything outside its own body.
+// On a PDF, Safari's tab document is its built-in PDF viewer, whose only text
+// is the viewer's own CSS (#658). Hand back the PDF's address instead.
 export function invokeInjectedCapture() {
   try {
+    const documentRef = globalThis.document;
+    const href = String(documentRef?.location?.href || documentRef?.URL || "");
+    let path = "";
+    try { path = new URL(href).pathname; } catch { path = ""; }
+    const isPDF = String(documentRef?.contentType || "").toLowerCase() === "application/pdf"
+      || /\.pdf$/i.test(path)
+      || Boolean(documentRef?.querySelector?.('embed[type="application/pdf"], #annotationContainer'));
+    if (isPDF && /^https:\/\//i.test(href)) {
+      return { ok: true, pdfURL: href };
+    }
     const capture = globalThis.SpokenMarginsBrowserTextCapture;
     if (!capture) {
       return { ok: false, error: "The page capture script did not initialize." };
@@ -16,7 +29,7 @@ export function invokeInjectedCapture() {
     if (typeof captureFunction !== "function") {
       return { ok: false, error: "The requested page capture action is unavailable." };
     }
-    const payload = captureFunction(globalThis.document);
+    const payload = captureFunction(documentRef);
     return payload
       ? { ok: true, payload }
       : { ok: false, error: "The page capture returned no content." };
@@ -28,7 +41,8 @@ export function invokeInjectedCapture() {
   }
 }
 
-export async function capturePageText(extensionAPI) {
+// Returns { payload } for page text, or { pdfURL } when the tab shows a PDF.
+export async function capturePage(extensionAPI) {
   const tab = await activeTab(extensionAPI);
   const target = { tabId: tab.id };
   try {
@@ -53,10 +67,13 @@ export async function capturePageText(extensionAPI) {
 
   const response = results?.find((entry) => entry.frameId === 0)?.result
     || results?.[0]?.result;
+  if (response?.ok && response.pdfURL) {
+    return { pdfURL: response.pdfURL };
+  }
   if (!response || !response.ok || !response.payload) {
     throw new Error(response?.error || "The page capture returned no result.");
   }
-  return response.payload;
+  return { payload: response.payload };
 }
 
 export async function storePayload(extensionAPI, nativeApplicationID, payload) {
@@ -66,6 +83,17 @@ export async function storePayload(extensionAPI, nativeApplicationID, payload) {
   });
   if (!response || !response.ok || !response.openURL) {
     throw new Error(response?.error || "Unable to store browser text payload.");
+  }
+  return response.openURL;
+}
+
+export async function storeRemotePDF(extensionAPI, nativeApplicationID, url) {
+  const response = await extensionAPI.runtime.sendNativeMessage(nativeApplicationID, {
+    action: "storeRemotePDFHandoff",
+    url
+  });
+  if (!response || !response.ok || !response.openURL) {
+    throw new Error(response?.error || "Unable to send this PDF to Spoken Margins.");
   }
   return response.openURL;
 }

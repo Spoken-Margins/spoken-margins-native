@@ -225,7 +225,8 @@ public enum StructuredDocumentBuilder {
                     id: "s\(segments.count)",
                     role: line.role,
                     range: StructuredDocument.TextRange(start: start, length: length - start),
-                    level: line.role == .heading ? line.level : nil,
+                    // A title keeps its level too: the item title is found by it (#272).
+                    level: line.role == .heading || line.role == .title ? line.level : nil,
                     pageIndex: line.pageIndex
                 ))
             }

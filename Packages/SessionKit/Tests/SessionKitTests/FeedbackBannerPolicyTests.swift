@@ -38,4 +38,35 @@ final class FeedbackBannerPolicyTests: XCTestCase {
         XCTAssertNil(log.lastFailure(itemId: "item-a"))
         XCTAssertEqual(log.lastFailure(itemId: "item-b")?.message, "Other item failed.")
     }
+
+    func testSummaryFailureKeepsItsOriginWhenNoItemIsVisible() {
+        var log = ItemFailureLog()
+        let failedAt = Date(timeIntervalSince1970: 425)
+        log.record("Summary failed.", itemId: "summary-item", visibleItemId: "", at: failedAt)
+
+        XCTAssertEqual(log.lastFailure(itemId: "summary-item"),
+                       .init(message: "Summary failed.", occurredAt: failedAt))
+        XCTAssertNil(log.lastFailure(itemId: ""))
+    }
+
+    func testSummaryFailureKeepsItsOriginWhenAnotherItemIsVisible() {
+        var log = ItemFailureLog()
+        let failedAt = Date(timeIntervalSince1970: 425)
+        log.record("Summary failed.", itemId: "summary-item", visibleItemId: "other-item", at: failedAt)
+
+        XCTAssertEqual(log.lastFailure(itemId: "summary-item"),
+                       .init(message: "Summary failed.", occurredAt: failedAt))
+        XCTAssertNil(log.lastFailure(itemId: "other-item"))
+    }
+
+    func testOnlyUnattributedFailuresUseTheVisibleItem() {
+        var log = ItemFailureLog()
+        log.record("Visible item failed.", itemId: nil, visibleItemId: "visible-item")
+        log.record("No item failed.", itemId: nil, visibleItemId: "")
+        log.record("Explicitly no item.", itemId: "", visibleItemId: "other-item")
+
+        XCTAssertEqual(log.lastFailure(itemId: "visible-item")?.message, "Visible item failed.")
+        XCTAssertNil(log.lastFailure(itemId: "other-item"))
+        XCTAssertNil(log.lastFailure(itemId: ""))
+    }
 }

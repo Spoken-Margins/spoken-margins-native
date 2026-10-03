@@ -1,0 +1,13 @@
+[Unit]
+Description=Spoken Margins dial gate (#589): wake the project only when the Dial allows
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/sm-dial/dial_gate.py
+StateDirectory=sm-dial
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/sm-dial
+PrivateTmp=true
