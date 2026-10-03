@@ -239,6 +239,14 @@ actor FollowedSourceCoordinator {
         return confirmed
     }
 
+    /// How Following adds `entry` (#641). For an entry that could be an episode, this finds its
+    /// audio, refetching the feed for an older entry saved without its enclosure.
+    func importRoute(for entry: FeedEntry, subscriptionKind: SourceIdentityKind) async throws -> FollowedEntryImportRoute {
+        guard FollowedEntryImportRoute.needsPlayableAudioURL(for: entry, subscriptionKind: subscriptionKind) else { return .article }
+        let audioURL = try await playableAudioURL(for: entry) ?? entry.audioURL
+        return FollowedEntryImportRoute.route(for: entry, subscriptionKind: subscriptionKind, playableAudioURL: audioURL)
+    }
+
     func playableAudioURL(for entry: FeedEntry) async throws -> String? {
         if let audioURL = Self.validHTTPSURL(entry.audioURL) {
             return audioURL.absoluteString
