@@ -15,6 +15,7 @@ import signal
 import subprocess
 import sys
 import time
+from lane_xcresult_attachments import export_failed_attachments
 
 from check_posterboard_repair import new_crash
 import lane_sim
@@ -414,6 +415,7 @@ class Run:
         errors = []
         if tests:
             records = test_records(text)
+            payload = None
             entry['test_evidence'] = 'log'
             if '-resultBundlePath' in args:
                 bundle = args[args.index('-resultBundlePath') + 1]
@@ -424,6 +426,8 @@ class Run:
                     entry['test_evidence'] = 'log+xcresult'
                 except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
                     errors.append(f'Could not reconcile xcresult individual tests: {error}')
+                entry['attachments'] = export_failed_attachments(
+                    bundle, records, payload, self.output / f'{name}-attachments')
             entry['tests'] = records
             entry['counts'] = {status: sum(r['status'] == status for r in records.values())
                                for status in ('passed', 'failed', 'skipped')}

@@ -3565,7 +3565,7 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    private func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws {
+    @discardableResult private func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> String {
         let store = try requireStore()
         if engine == nil {
             installEngine(try makeEngine(store: store))
@@ -3581,6 +3581,7 @@ final class Gate1AppModel: ObservableObject {
             recordPDFExtractionDiagnostics(structure)
         }
         markOnboardingSteps(onboardingSteps(for: handoff))
+        return item.id
     }
 
     private func recordPDFExtractionDiagnostics(_ structure: PDFDocumentStructure) {
@@ -5549,7 +5550,7 @@ final class Gate1AppModel: ObservableObject {
             activeItemId = id
             selectedItem = try loadItemDetail(id: id, store: store)
             prepareImportedLocalAudioBridges(itemId: id)
-            scheduleTextAudioPrewarmIfNeeded(itemId: id)
+            scheduleTextAudioPrewarmIfNeeded(itemId: id); PublisherAudioTextMapper.resume(itemId: id, store: store, transcriber: sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(id): \($0)" }
             listeningMapJSON = ""
             screen = .item
             discoverFollowOfferIfEligible(itemId: id, store: store)
@@ -15928,12 +15929,7 @@ final class Gate1AppModel: ObservableObject {
                     try self.refreshLibraryRows(store: store)
                 }
                 self.feedSubscriptions = try store.loadFeedSubscriptions()
-                try store.saveSourceSuggestionDecision(SourceSuggestionDecision(
-                    id: "suggestion-\(candidate.source.id)",
-                    sourceId: candidate.source.id,
-                    decision: .accepted,
-                    lastPromptAt: Date()
-                ))
+                try store.saveSourceSuggestionDecision(SourceSuggestionDecision(sourceId: candidate.source.id, decision: .accepted, lastPromptAt: Date()))
                 self.storedSourceFollowSuggestionCandidates = []
                 await self.refreshFollowedSources(force: true)
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
@@ -16011,8 +16007,10 @@ final class Gate1AppModel: ObservableObject {
                 guard let subscription = try store.loadFeedSubscriptions().first(where: { $0.id == entry.subscriptionId }) else {
                     throw FollowedSourceError.noFeedCandidates
                 }
+                let entry = await self.followedSourceCoordinator?.publisherAudioEntry(for: entry) ?? entry
                 let imported: Bool
-                if subscription.source.kind == .podcastFeed {
+                // A post with the publisher's own audio imports as an article (#545).
+                if subscription.source.kind == .podcastFeed, !entry.hasPublisherAudio {
                     let importURL = try await self.followedSourceCoordinator?.playableAudioURL(for: entry)
                         ?? entry.audioURL
                         ?? entry.canonicalURL
@@ -16024,15 +16022,14 @@ final class Gate1AppModel: ObservableObject {
                     ), feedEntry: entry, subscription: subscription)
                     imported = importedItemId != nil
                     if openWhenFinished, let importedItemId { self.openItem(id: importedItemId) }
-
                 } else {
-                    let handoff = try await self.readablePageExtractor.extract(url: url)
-                    self.diagnostics["followedArticleNetworkHosts"] = self.readablePageExtractor.contactedHosts.joined(separator: ",")
-                    self.diagnostics["followedArticleExtractor"] = self.readablePageExtractor.lastExtractor ?? "unknown"
-                    if openWhenFinished {
+                    let handoff = try await FollowedArticleImport.handoff(for: entry, url: url, using: self.readablePageExtractor, record: { self.diagnostics.merge($0) { _, new in new } })
+                    if openWhenFinished, !entry.hasPublisherAudio {
                         imported = self.importBrowserText(handoff)
                     } else {
-                        try self.importBrowserTextInBackground(handoff)
+                        let itemId = try self.importBrowserTextInBackground(handoff)
+                        if let audio = try PublisherAudioDetector.publisherAudio(for: entry, itemId: itemId)?.keepingTextMap(of: store.loadPublisherAudio(itemId: itemId)) { try store.savePublisherAudio(audio); PublisherAudioTextMapper.start(audio, store: store, transcriber: self.sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(itemId): \($0)" } }
+                        if openWhenFinished { self.openItem(id: itemId) }
                         imported = true
                     }
                 }

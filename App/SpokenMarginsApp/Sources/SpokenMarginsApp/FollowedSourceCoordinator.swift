@@ -225,6 +225,20 @@ actor FollowedSourceCoordinator {
         try repository.saveFeedEntry(entry)
     }
 
+    /// An ambiguous enclosure remains a podcast if corroboration fails. Public page metadata
+    /// identifies narration without extracting or replacing subscriber feed text.
+    func publisherAudioEntry(for entry: FeedEntry) async -> FeedEntry {
+        guard entry.publisherNarrationConfirmed != true, entry.publisherPlatform == "substack",
+              (entry.bodyWordCount ?? 0) >= PublisherAudioDetector.minimumBodyWords,
+              let url = Self.validHTTPSURL(entry.canonicalURL),
+              let html = try? await fetchHTML(url: url),
+              let confirmed = PublisherNarrationEvidence.confirmedEntry(entry, html: html) else { return entry }
+        // A refresh, dismissal or unfollow may finish while the page request awaits. Cache only
+        // against the unchanged entry, so corroboration cannot restore a removed/stale row.
+        try? PublisherNarrationEvidence.cache(confirmed, replacing: entry, in: repository)
+        return confirmed
+    }
+
     func playableAudioURL(for entry: FeedEntry) async throws -> String? {
         if let audioURL = Self.validHTTPSURL(entry.audioURL) {
             return audioURL.absoluteString
@@ -437,6 +451,10 @@ actor FollowedSourceCoordinator {
                 summary: item.summary,
                 publishedAt: item.publishedAt,
                 state: existing[id]?.state ?? .unseen,
+                bodyWordCount: PublisherAudioDetector.bodyWordCount(of: item),
+                fullBody: item.content,
+                publisherPlatform: item.publisherPlatform,
+                audioDurationMs: item.durationMs,
                 episodeGUID: item.guid
             )
             try repository.saveFeedEntry(entry)
