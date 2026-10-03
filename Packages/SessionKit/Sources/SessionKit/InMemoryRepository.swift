@@ -38,6 +38,7 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     public var structuredDocuments: [String: [Int: StructuredDocument]] = [:]
     /// Publisher audio by item id (#545).
     public var publisherAudio: [String: PublisherAudio] = [:]
+    public var communityMapUploads: [String: CommunityMapUploadRecord] = [:]
 
     public init(
         items: [String: Item] = [:],
@@ -422,6 +423,11 @@ extension InMemorySessionRepository: StructuredDocumentRepository {
         upgrade.sessions.forEach { sessions[$0.id] = $0 }
         try saveStructuredDocument(upgrade.document, itemId: upgrade.item.id)
     }
+}
+
+extension InMemorySessionRepository: CommunityMapUploadRepository {
+    public func saveCommunityMapUpload(_ record: CommunityMapUploadRecord) throws { communityMapUploads[record.id] = record }
+    public func loadCommunityMapUpload(episodeKey: String) throws -> CommunityMapUploadRecord? { communityMapUploads[episodeKey] }
 }
 
 extension InMemorySessionRepository: PublisherAudioRepository {
