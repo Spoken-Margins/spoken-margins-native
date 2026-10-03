@@ -84,7 +84,8 @@ enum NativePDFDocumentExtractor {
                 extractionEngine: .pdfKit,
                 analysisStatus: .partial,
                 pageCount: document.pageCount,
-                analyzedPageCount: 0
+                analyzedPageCount: 0,
+                bibliography: PDFStructuredTextExtractor.bibliography(for: document)
             )
         )
     }
@@ -139,7 +140,8 @@ enum NativePDFDocumentExtractor {
                     extractionEngine: .pdfKit,
                     analysisStatus: .resourceConstrained,
                     pageCount: document.pageCount,
-                    analyzedPageCount: 0
+                    analyzedPageCount: 0,
+                    bibliography: PDFStructuredTextExtractor.bibliography(for: document)
                 )
             )
         }
@@ -154,7 +156,8 @@ enum NativePDFDocumentExtractor {
                 extractionEngine: .pdfKit,
                 analysisStatus: .partial,
                 pageCount: document.pageCount,
-                analyzedPageCount: 0
+                analyzedPageCount: 0,
+                bibliography: PDFStructuredTextExtractor.bibliography(for: document)
             )
         )
     }
@@ -265,7 +268,8 @@ enum NativePDFDocumentExtractor {
             pageCount: document.pageCount,
             analyzedPageCount: analyzedPageCount,
             tables: allTables,
-            pageTitles: pageTitles
+            pageTitles: pageTitles,
+            bibliography: PDFStructuredTextExtractor.bibliography(for: document)
         )
 
         if baselineMarkdown != nil {

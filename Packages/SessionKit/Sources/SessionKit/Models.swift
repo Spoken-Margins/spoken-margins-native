@@ -203,6 +203,8 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
     public var showTitle: String?
     public var durationMs: Int?
     public var publishedAt: String?
+    /// The feed's `<guid>` for the episode, or Apple's `episodeGuid` (#177).
+    public var episodeGUID: String?
     public var audioURL: String?
     public var transcriptLinks: [SourceTranscriptLink]
     public var chapterLinks: [SourceChapterLink]
@@ -215,6 +217,7 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
         showTitle: String? = nil,
         durationMs: Int? = nil,
         publishedAt: String? = nil,
+        episodeGUID: String? = nil,
         audioURL: String? = nil,
         transcriptLinks: [SourceTranscriptLink] = [],
         chapterLinks: [SourceChapterLink] = [],
@@ -226,6 +229,7 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
         self.showTitle = showTitle
         self.durationMs = durationMs
         self.publishedAt = publishedAt
+        self.episodeGUID = episodeGUID
         self.audioURL = audioURL
         self.transcriptLinks = transcriptLinks
         self.chapterLinks = chapterLinks
@@ -239,6 +243,7 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
         case showTitle
         case durationMs
         case publishedAt
+        case episodeGUID
         case audioURL
         case transcriptLinks
         case chapterLinks
@@ -253,6 +258,7 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
         showTitle = try container.decodeIfPresent(String.self, forKey: .showTitle)
         durationMs = try container.decodeIfPresent(Int.self, forKey: .durationMs)
         publishedAt = try container.decodeIfPresent(String.self, forKey: .publishedAt)
+        episodeGUID = try container.decodeIfPresent(String.self, forKey: .episodeGUID)
         audioURL = try container.decodeIfPresent(String.self, forKey: .audioURL)
         transcriptLinks = try container.decodeIfPresent([SourceTranscriptLink].self, forKey: .transcriptLinks) ?? []
         chapterLinks = try container.decodeIfPresent([SourceChapterLink].self, forKey: .chapterLinks) ?? []
@@ -570,6 +576,9 @@ public struct PDFDocumentStructure: Codable, Equatable, Sendable {
     public var analyzedPageCount: Int
     public var tables: [PDFDocumentTable]
     public var pageTitles: [PDFDocumentPageTitle]
+    /// The paper's identifier for reference managers (#206). Optional and left out when
+    /// nil, so items saved before it existed decode and Build 29 ignores it.
+    public var bibliography: PDFBibliography?
 
     public init(
         schemaVersion: String = "pdf-document-structure.v1",
@@ -578,7 +587,8 @@ public struct PDFDocumentStructure: Codable, Equatable, Sendable {
         pageCount: Int,
         analyzedPageCount: Int,
         tables: [PDFDocumentTable] = [],
-        pageTitles: [PDFDocumentPageTitle] = []
+        pageTitles: [PDFDocumentPageTitle] = [],
+        bibliography: PDFBibliography? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.extractionEngine = extractionEngine
@@ -587,6 +597,25 @@ public struct PDFDocumentStructure: Codable, Equatable, Sendable {
         self.analyzedPageCount = analyzedPageCount
         self.tables = tables
         self.pageTitles = pageTitles
+        self.bibliography = bibliography
+    }
+}
+
+/// What Zotero or a citation plugin needs to match a paper to its library entry (#206):
+/// a DOI or arXiv id from the first pages, and the PDF metadata's authors, year and title.
+public struct PDFBibliography: Codable, Equatable, Sendable {
+    public var doi: String?
+    public var arxivId: String?
+    public var authors: [String]
+    public var year: Int?
+    public var title: String?
+
+    public init(doi: String? = nil, arxivId: String? = nil, authors: [String] = [], year: Int? = nil, title: String? = nil) {
+        self.doi = doi
+        self.arxivId = arxivId
+        self.authors = authors
+        self.year = year
+        self.title = title
     }
 }
 
@@ -608,6 +637,13 @@ public struct Item: Codable, Equatable, Sendable {
     public var documentStructure: PDFDocumentStructure?
     /// Source completion survives replay and independent assistant-turn playback.
     public var sourceCompletedAt: Date? = nil
+    /// A podcast episode's feed GUID, show title and publish date, stored when the episode is
+    /// added from a feed or Apple Podcasts link. Shared Margins match by GUID because every
+    /// subscriber's GUID is the same even when their audio links differ (#177). Optional and
+    /// additive, so Build 29's decoder ignores them.
+    public var episodeGUID: String? = nil
+    public var showTitle: String? = nil
+    public var publishedAt: String? = nil
 
     public init(
         id: String,
@@ -1249,6 +1285,10 @@ public struct Interjection: Codable, Equatable, Sendable {
     public var privateSharingNote: String? = nil
     /// Missing values predate written Margins and retain audio-recording semantics.
     public var captureKind: InterjectionCaptureKind? = nil
+    /// Set when this Margin answers someone's shared Margin (#472). Build 29 ignores it.
+    public var replyTo: MarginReplyLink? = nil
+    /// The packets this Margin went out in, so replies that come back link to it. Never exported.
+    public var sharedAs: [MarginPacketIdentity]? = nil
 
     public init(
         id: String,
@@ -1274,7 +1314,9 @@ public struct Interjection: Codable, Equatable, Sendable {
         podcastAnchorEvidenceFailureReason: String? = nil,
         isStarredForSharing: Bool? = nil,
         privateSharingNote: String? = nil,
-        captureKind: InterjectionCaptureKind? = nil
+        captureKind: InterjectionCaptureKind? = nil,
+        replyTo: MarginReplyLink? = nil,
+        sharedAs: [MarginPacketIdentity]? = nil
     ) {
         self.id = id
         self.itemId = itemId
@@ -1300,6 +1342,8 @@ public struct Interjection: Codable, Equatable, Sendable {
         self.isStarredForSharing = isStarredForSharing
         self.privateSharingNote = privateSharingNote
         self.captureKind = captureKind
+        self.replyTo = replyTo
+        self.sharedAs = sharedAs
     }
 }
 

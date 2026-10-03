@@ -117,6 +117,9 @@ struct ReadLaterScreen: View {
                     .font(.footnote).foregroundStyle(.secondary)
                 Text(connection.status).font(.footnote)
             }
+            if connection.service == .reader && connection.connected {
+                ReadwiseHighlightSection(sync: model.readwiseHighlightSync)
+            }
             Section("Choose Articles") {
                 ForEach(connection.documents) { document in
                     VStack(alignment: .leading, spacing: 6) {
@@ -131,6 +134,19 @@ struct ReadLaterScreen: View {
                 }
             }
         }.navigationTitle("Read Later")
+    }
+}
+
+struct ReadwiseHighlightSection: View {
+    @ObservedObject var sync: ReadwiseHighlightSync
+    var body: some View {
+        Section("Send Margins") {
+            Toggle("Send Margins to Readwise", isOn: $sync.enabled)
+                .onChange(of: sync.enabled) { _, _ in sync.enabledChanged() }
+            if !sync.status.isEmpty { Text(sync.status).font(.footnote) }
+            Text("Each Margin with text becomes a Readwise highlight: the passage around it, your Margin as the note, filed under the article or episode. Margins are checked once a minute while the app is open. Private feed links are never sent.")
+                .font(.footnote).foregroundStyle(.secondary)
+        }
     }
 }
 
