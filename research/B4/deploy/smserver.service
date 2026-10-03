@@ -4,6 +4,7 @@
 #   runuser -u smserver -- smserver switch -public @SERVER_ROOT@ attest off
 #   runuser -u smserver -- smserver publish-manifest -public @SERVER_ROOT@ FILE
 #   runuser -u smserver -- smserver takedown-map -state /var/lib/smserver EPISODEKEY
+#   runuser -u smserver -- smserver takedown -state /var/lib/smserver LINKID
 #
 # Listening maps (#551) need an AI provider key. Put one line,
 # ANTHROPIC_API_KEY=..., in /etc/smserver/maps.env, owned by root with mode

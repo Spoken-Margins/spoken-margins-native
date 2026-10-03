@@ -4,7 +4,8 @@
 	# the client IP and every request header when a handler fails (for
 	# example a 502 while smserver is down). Attested requests carry an
 	# install's key id in a header, so strip those fields from every log,
-	# and a map fetch's path names an episode, so reduce it to the route.
+	# and a map fetch's path names an episode and a share link's path is its
+	# id, so reduce those to the route.
 	# Box-wide: other sites' error logs lose client IPs and headers too.
 	log default {
 		format filter {
@@ -15,8 +16,10 @@
 				request>client_ip delete
 				request>headers delete
 				request>tls delete
-				# A listening-map path names an episode (#551).
-				request>uri regexp ^/api/v1/maps/.* /api/v1/maps/*
+				# A listening-map path names an episode (#551); a share-link
+				# path is the link's secret id (#486). One rule, since a
+				# field takes one filter.
+				request>uri regexp ^/(api/v1/maps|l)/.* /${1}/*
 			}
 		}
 	}

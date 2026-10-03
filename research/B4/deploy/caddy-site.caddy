@@ -16,6 +16,10 @@ spokenmargins.proximitytoprogress.com {
 		handle /api/* {
 			reverse_proxy 127.0.0.1:@PORT@
 		}
+		# Share-link pages, packets and reports (#486).
+		handle /l/* {
+			reverse_proxy 127.0.0.1:@PORT@
+		}
 		handle {
 			root * /srv/www/spokenmargins
 			file_server
