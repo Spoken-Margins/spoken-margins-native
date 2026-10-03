@@ -111,6 +111,25 @@ final class CoopMergeTests: XCTestCase {
         XCTAssertEqual(expectedMargins, ["Ana/margin-001", "Ben/margin-001", "Ben/margin-002", "Cleo/margin-001", "Cleo/margin-002", "Cleo/margin-003"])
     }
 
+    /// The admission rule on its own (#468). A packet naming this exact file places at the sender's times; a
+    /// podcast packet on the listener's copy of the episode is admitted for acoustic placement; anything
+    /// else, or a file whose bytes changed, is refused.
+    func testLocalAudioAdmission() {
+        let digest = String(repeating: "a", count: 64)
+        let local = SharedItemIdentity(itemType: .other, title: "Harbour Lights", durationMs: 1_800_000, exactEditionSHA256: digest)
+        let exact = SharedItemIdentity(itemType: .other, title: "Harbour Lights", durationMs: 1_800_100, exactEditionSHA256: digest)
+        let episode = SharedItemIdentity(
+            itemType: .podcast, canonicalURL: Self.episodePage, title: "Harbour Lights", enclosureURL: Self.enclosure
+        )
+        let article = SharedItemIdentity(itemType: .text, canonicalURL: Self.episodePage, title: "Harbour Lights")
+        XCTAssertEqual(LocalAudioPacketAdmission.admission(source: exact, recipient: local, actualDigest: digest), .exactEdition)
+        XCTAssertEqual(LocalAudioPacketAdmission.admission(source: episode, recipient: local, actualDigest: digest), .podcastCommentary)
+        XCTAssertNil(LocalAudioPacketAdmission.admission(source: article, recipient: local, actualDigest: digest))
+        let changedBytes = String(repeating: "b", count: 64)
+        XCTAssertNil(LocalAudioPacketAdmission.admission(source: exact, recipient: local, actualDigest: changedBytes))
+        XCTAssertNil(LocalAudioPacketAdmission.admission(source: episode, recipient: local, actualDigest: changedBytes))
+    }
+
     // MARK: Helpers
 
     private var episodesAdded = 0
@@ -134,6 +153,17 @@ final class CoopMergeTests: XCTestCase {
         )
             ?? addEpisode(named: contents.manifest.item, to: store)
         let item = try store.loadItem(id: itemId)
+        if item.mediaType == "audiobook" {
+            // The app's admission check for the listener's own file (verifyLocalAudioForImport): the bytes on
+            // disk now, against the packet and the item. A podcast packet is placed like a download.
+            let fileURL = try XCTUnwrap(item.media?.url.flatMap(URL.init(string:)))
+            let actualDigest = SHA256.hash(data: try Data(contentsOf: fileURL)).map { String(format: "%02x", $0) }.joined()
+            XCTAssertEqual(try LocalAudioPacketAdmission.admitted(
+                contents, recipient: SharedPacketItemMatcher.localIdentity(
+                    for: item, ownedAudiobookDigest: ownedAudiobookDigest(for: item, in: store)
+                ), itemId: item.id, actualDigest: actualDigest
+            ), .podcastCommentary)
+        }
         return try SpokenMarginsPackageImporter.importPackage(
             contents,
             itemId: itemId,

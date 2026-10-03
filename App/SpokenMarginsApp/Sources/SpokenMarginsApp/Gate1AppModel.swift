@@ -7876,8 +7876,8 @@ final class Gate1AppModel: ObservableObject {
                             defer { try? FileManager.default.removeItem(at: root) }
                             guard let self else { return }
                             do {
-                                try await self.verifyLocalAudioForImport(item, contents: contents)
-                                try await self.activateImportedLocalAudioMaps(item: item, contents: contents)
+                                try await self.placeOnOwnedAudio(item, contents: contents,
+                                    admission: self.verifyLocalAudioForImport(item, contents: contents))
                                 self.reportSuccess("Restored this listening package. Playback has not started.")
                             } catch { self.reportFailure(error, context: "Restoring listening package failed") }
                         }
@@ -7990,8 +7990,9 @@ final class Gate1AppModel: ObservableObject {
                 }
                 let item = try itemId.map { try store.loadItem(id: $0) }
                 let localItem = item.map(self.localSharedItemIdentity(for:))
+                var localAudioAdmission: LocalAudioPacketAdmission?
                 if let item, item.mediaType == "audiobook" {
-                    try await self.verifyLocalAudioForImport(item, contents: review.contents)
+                    localAudioAdmission = try await self.verifyLocalAudioForImport(item, contents: review.contents)
                 }
                 let itemText = item?.text
                 let disposition: ImportedCommentaryImportDisposition
@@ -8036,8 +8037,8 @@ final class Gate1AppModel: ObservableObject {
                             userInitiated: true
                         )
                     }
-                    if let item, item.mediaType == "audiobook" {
-                        try await self.activateImportedLocalAudioMaps(item: item, contents: review.contents)
+                    if let item, let localAudioAdmission {
+                        try await self.placeOnOwnedAudio(item, contents: review.contents, admission: localAudioAdmission)
                     } else if let localURL = self.podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
                         self.resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
                     }
@@ -8054,23 +8055,21 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func verifyLocalAudioForImport(_ item: Item, contents: VerifiedSpokenMarginsPackage) async throws {
+    private func verifyLocalAudioForImport(_ item: Item, contents: VerifiedSpokenMarginsPackage) async throws -> LocalAudioPacketAdmission {
         guard let url = resolvedOwnedAudiobookURL(for: item) else {
             throw SpokenMarginsPackageArchiveError.invalidManifest("Local source audio is unavailable")
         }
         let actualDigest = try await Task.detached(priority: .utility) {
             try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: url)
         }.value
-        let recipient = localSharedItemIdentity(for: item)
-        guard actualDigest == recipient.exactEditionSHA256,
-              ExactLocalAudioImport.matches(contents.manifest.item, recipient) else {
-            throw SpokenMarginsPackageArchiveError.invalidManifest("The audio bytes do not match this listening package")
-        }
-        for proposal in contents.listeningMapProposals {
-            _ = try ExactLocalAudioImport.projection(
-                proposal: proposal, source: contents.manifest.item, recipient: recipient, itemId: item.id
-            )
-        }
+        return try LocalAudioPacketAdmission.admitted(
+            contents, recipient: localSharedItemIdentity(for: item), itemId: item.id, actualDigest: actualDigest)
+    }
+
+    /// Exact maps project at the sender's times; a podcast packet on the listener's copy is placed like a download.
+    private func placeOnOwnedAudio(_ item: Item, contents: VerifiedSpokenMarginsPackage, admission: LocalAudioPacketAdmission) async throws {
+        if admission == .exactEdition { return try await activateImportedLocalAudioMaps(item: item, contents: contents) }
+        if let url = resolvedOwnedAudiobookURL(for: item) { resolveImportedPodcastCommentary(itemId: item.id, localURL: url) }
     }
 
     private func activateImportedLocalAudioMaps(item: Item, contents: VerifiedSpokenMarginsPackage) async throws {
