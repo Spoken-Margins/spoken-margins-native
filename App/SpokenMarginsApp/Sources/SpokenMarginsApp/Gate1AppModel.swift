@@ -14801,10 +14801,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func seedUITestingGeneratedTimelineIfNeeded(sessionId: String, engine: SessionEngine, store: SQLiteSessionStore) throws {
-        guard CommandLine.arguments.contains("--ui-testing"),
-              ProcessInfo.processInfo.environment[UITestPodcastSeed.environmentKey] != "1",
-              ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] == nil,
-              try store.loadTurns(sessionId: sessionId).isEmpty else {
+        guard UITestPodcastBootstrap.seedsGeneratedTimeline, try store.loadTurns(sessionId: sessionId).isEmpty else {
             return
         }
         _ = try engine.submitFollowup(text: "Can you respond to my interjection?")
