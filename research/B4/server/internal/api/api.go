@@ -559,9 +559,24 @@ func (s *Server) uploadTranscript(w http.ResponseWriter, r *http.Request) {
 	if !s.mapsOn(w, s.Maps != nil) {
 		return
 	}
+	needToken, canCheck := s.mapTokenPolicy()
+	if !canCheck {
+		fail(w, http.StatusServiceUnavailable, "disabled")
+		return
+	}
 	if !s.mapWindow.hit(s.clientKey(r), s.Now(), s.MapUploadsPerIPPerHour) {
 		fail(w, http.StatusTooManyRequests, "rate_limited")
 		return
+	}
+	// The token is checked before the body is read, and spent only when
+	// the transcript is queued (#743).
+	var spend func() error
+	if needToken {
+		token, ok := s.checkMapToken(w, r)
+		if !ok {
+			return
+		}
+		spend = func() error { return s.Tokens.Redeem(s.Now(), token, TokenPurposeMaps) }
 	}
 	select {
 	case s.uploadSlots <- struct{}{}:
@@ -580,8 +595,11 @@ func (s *Server) uploadTranscript(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	outcome, err := s.Maps.Submit(t)
+	outcome, err := s.Maps.SubmitSpending(t, spend)
 	switch {
+	case outcome == maps.SpendFailed && tokens.Refused(err):
+		// Another upload spent this token since it was checked.
+		s.askForToken(w, "token_refused")
 	case err != nil:
 		fail(w, http.StatusInternalServerError, "internal")
 	case outcome == maps.CapReached:

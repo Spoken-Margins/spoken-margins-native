@@ -25,14 +25,18 @@ const (
 	// gates listening-map uploads and fetches (#551); it is off until the
 	// owner switches it on, because Default leaves it out. Tokens gates
 	// anonymous token issuance (#737), off by default for the same reason.
-	ServiceAttest = "attest"
-	ServiceBridge = "bridge"
-	ServiceMaps   = "maps"
-	ServiceTokens = "tokens"
+	// MapUploadToken, when on, makes map uploads carry an anonymous token
+	// (#743). It is a switch of its own, not a field on maps, so an app that
+	// knows nothing of it reads it as off and nothing else changes.
+	ServiceAttest         = "attest"
+	ServiceBridge         = "bridge"
+	ServiceMaps           = "maps"
+	ServiceTokens         = "tokens"
+	ServiceMapUploadToken = "mapUploadToken"
 )
 
 // KnownServices are the switches the owner can flip.
-var KnownServices = []string{ServiceAttest, ServiceBridge, ServiceMaps, ServiceTokens}
+var KnownServices = []string{ServiceAttest, ServiceBridge, ServiceMaps, ServiceTokens, ServiceMapUploadToken}
 
 type Service struct {
 	Enabled bool `json:"enabled"`
