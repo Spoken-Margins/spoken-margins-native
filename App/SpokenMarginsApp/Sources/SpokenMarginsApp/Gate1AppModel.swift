@@ -15225,7 +15225,7 @@ final class Gate1AppModel: ObservableObject {
               ProcessInfo.processInfo.thermalState != .serious,
               ProcessInfo.processInfo.thermalState != .critical,
               hasAcceptedCurrentTerms,
-              let voice = ttsVoiceSelection.supertonicVoice else { libraryAudioTurns.stopped(caller); return false }
+              let voice = ttsVoiceSelection.supertonicVoice else { libraryAudioTurns.blocked(caller); return false } // settles until these change (#647)
         do {
             try Task.checkCancellation()
             let store = try requireStore()

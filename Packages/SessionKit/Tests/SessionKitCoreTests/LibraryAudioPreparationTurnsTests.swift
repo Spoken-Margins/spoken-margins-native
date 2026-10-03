@@ -66,6 +66,33 @@ final class LibraryAudioPreparationTurnsTests: XCTestCase {
         XCTAssertFalse(turns.foregroundShouldResume, "no restart loop once it has its own work")
     }
 
+    func testAForegroundPassBlockedByLowPowerOrHeatDoesNotRestartItself() {
+        // #647: the loop waited for the background task, the task stopped, and the next pass was
+        // refused by Low Power Mode or heat before it could select. The app restarts the loop
+        // while foregroundShouldResume holds, so a stale waiting flag made it spin.
+        var turns = LibraryAudioPreparationTurns()
+        let jobs = [whileChargingPinned, prepareNow]
+        _ = turns.select(jobs, activeItemId: nil, for: .background)
+        XCTAssertNil(turns.select(jobs, activeItemId: nil, for: .foreground))
+        turns.stopped(.background)
+        XCTAssertTrue(turns.foregroundShouldResume)
+        turns.blocked(.foreground) // the refused pass
+        turns.stopped(.foreground) // the loop's finalizer
+        XCTAssertFalse(turns.foregroundShouldResume, "a refused pass settles instead of restarting")
+        // Once Low Power Mode or heat clears, the next pass the app starts takes B.
+        XCTAssertEqual(turns.select(jobs, activeItemId: nil, for: .foreground)?.itemId, "b")
+        XCTAssertFalse(turns.foregroundShouldResume)
+    }
+
+    func testABlockedForegroundPassWhileTheBackgroundTaskRunsLeavesItsItemShowing() {
+        var turns = LibraryAudioPreparationTurns()
+        _ = turns.select([whileChargingPinned, prepareNow], activeItemId: nil, for: .background)
+        turns.blocked(.foreground)
+        XCTAssertTrue(turns.backgroundIsPreparing)
+        XCTAssertEqual(turns.preparingItemId, "a", "the background task's item keeps showing progress")
+        XCTAssertFalse(turns.foregroundShouldResume)
+    }
+
     func testAForegroundLoopSharingTheBackgroundTasksItemFollowsANewHead() {
         var turns = LibraryAudioPreparationTurns()
         _ = turns.select([prepareNow], activeItemId: nil, for: .background)
