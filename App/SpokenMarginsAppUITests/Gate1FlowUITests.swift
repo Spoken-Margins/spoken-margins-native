@@ -715,6 +715,8 @@ final class Gate1FlowUITests: XCTestCase {
 
         let finish = element("recording.finish.button")
         XCTAssertLessThan(finish.frame.maxY, app.frame.midY, "Finish must stay away from the bottom capture control")
+        // Save ignores taps for 0.5 s after the recording screen appears (#148), so wait past that window.
+        _ = XCTWaiter.wait(for: [XCTestExpectation(description: "recording save guard window")], timeout: 0.6)
         finish.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleTap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         XCTAssertFalse(element("recording.screen").exists, "A second finish tap started another Margin")
