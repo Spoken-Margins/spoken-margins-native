@@ -8,7 +8,13 @@ Replace this section when the focus changes; do not append to it.
 
 - **Baseline:** Build 29, tag `testflight/0.1-build-29` (`fcc4974`), is the last shipped build (internal TestFlight, 2026-09-25). `main` stays there; only the owner moves it.
 - **Integration:** `next` carries the Build 30 work, including the new PDF reader and the voice fixes. It goes to testers only after it passes the owner's own use: "working means not being riddled with bugs."
-- **Parallel workstreams:** streams and briefs are in [docs/workstreams/](docs/workstreams/README.md). Streams branch `ws/<id>-…` from `next`, one branch per PR, and open PRs into `next`. The owner's Claude Code project hands out work, one thread per `ready` issue, dispatches lane results every hour, and triages new issues in its daily routine (21:30 Eastern). On the Mac, the lane runner merges the `automerge` PRs it passes, the Mac tick reports the machine and runner on #337 every two hours, a scheduled Codex audit reviews sharing, persistence and audio PRs, and the standing Test Desk tests each new tip of `next`. There is no standing triage desk ("The lead session" in [kickoff.md](docs/workstreams/kickoff.md) says who does what).
+- **Parallel workstreams:** streams and briefs are in [docs/workstreams/](docs/workstreams/README.md). Streams branch `ws/<id>-…` from `next`, one branch per PR, and open PRs into `next`. The owner's Claude Code project hands out work, one thread per `ready` issue, dispatches lane results every hour, and triages new issues in its daily routine (21:30 Eastern). On the Mac, the lane runner merges the `automerge` PRs it passes, the Mac tick reports the machine and runner on #337 every two hours, a scheduled Codex audit reviews sharing, persistence, audio and lane PRs, and the standing Test Desk tests each new tip of `next`. There is no standing triage desk ("The lead session" in [kickoff.md](docs/workstreams/kickoff.md) says who does what).
+- **Codex runs the project while Claude is paused (2026-10-02, until Claude's reset Sat 07:00 EDT and the owner restarts the Claude project).** Hand-off: the newest "Codex hand-off" comment on #337.
+  - **Codex worker** (`ops/codex/sm_codex_worker.py`, launchd, `gpt-6.1-sol` high, up to 3 slots from the Dial #589). It first finishes stalled PRs (newest lane report on the head is FAIL, or `needs-mac`), then takes `ready` issues, `priority` first. It opens `automerge` PRs into `next`. It skips issues labelled `in-progress`, `where:mac`, `regression` or `blocked`, so file work for it as `ready` (plus `priority`, plus `bug` for failures).
+  - **Codex Test Desk** (`ops/codex/sm_codex_testdesk.py`, launchd): `--plan app` plus scripted journeys on each new tip of `next`, reports on #184, files real failures as `ready,priority,bug`.
+  - **Codex journey desk** (a Codex app automation with computer use, set up by the owner per #693): hands-on journeys on the tip, reports on #184.
+  - **Codex audit** (`ops/codex/sm_codex_audit.py`, launchd, `gpt-6-astra` high): audits risky and lane PRs; the runner merges those only after "No blocking findings" on the head.
+  - **Rules for Codex app threads:** build only with `scripts/xcodebuild-lane`, boot simulators only with `scripts/lane-sim-boot` (one simulator Mac-wide; Claude's lane guard does not cover Codex), never boot 1330F268, and stop on a crash flood. Don't push to a PR that carries `automerge`; never force-push; don't touch `main`, releases or the owner's data.
 - **Owner's standing calls (2026-09-29).** Don't ask again:
   - **Use the token allowance.** The subscriptions are paid for. Aim for roughly linear use of each weekly allowance, Claude and Codex, by its reset. Waste means little working output per token, not high spend.
   - **The design direction is not changing.** Build on the current look. Where the stream plan says a stream waits on D1, that gate is gone.
@@ -74,6 +80,13 @@ While parallel streams are running, pick the lowest tier that covers your change
    - An agent cannot hear audio. Audible content, Bluetooth, the Lock Screen and background behavior belong to the owner's pass on a physical device.
 
 The scripted UI route plans (`--plan ui`, `speech-canary`, `release`) are retired from routine use. They were slow, prone to crashing the simulator, and missed the failures the owner found. Use journeys instead.
+
+**Scripted journeys** are different: short UI tests that each follow one journey in [docs/journeys.md](docs/journeys.md), run by the Test Desk in the integration run on `next`'s merged tip, never as a per-PR gate and never by a stream session (owner, 2026-09-30).
+
+- A thread that changes a listener's flow may add or update the script for the journey it affects, and names that journey in the PR. The script must compile in the PR's T2 build; `scripts/test-scope.py` treats `App/SpokenMarginsAppUITests/` as compile-only.
+- A new or changed script goes on probation in `TestPlans/scripted-journeys.json`. It can't turn the integration run red until the Test Desk has seen it pass twice on the simulator, and one that flakes twice goes back on probation.
+- The Test Desk runs new scripts, fixes them, and keeps the "Writing scripted journeys" guide in [docs/journeys.md](docs/journeys.md).
+- Scripts don't cover audible content, the Lock Screen, Bluetooth, or anything that only looks wrong. Agent-driven journeys and the owner's phone keep those.
 
 **Simulator crashes: use judgment.** The real hazard is a crash flood: many identical system-process crashes within a minute, which spam the owner's screen with dialogs (once about 20 in 10 seconds).
 

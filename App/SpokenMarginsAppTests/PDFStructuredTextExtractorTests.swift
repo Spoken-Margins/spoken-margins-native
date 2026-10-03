@@ -247,6 +247,213 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertTrue(spoken.contains("A bulleted point in body text stays"))
     }
 
+    func testV2MakesNoChaptersFromTheTitleAndAuthorLines() throws {
+        // #272 on PMC13305550 (F1000Research): the two lines of a 16 pt title, the
+        // fragments of a 13 pt bold author line and a 14 pt "v1" badge each became
+        // a chapter, because display type before the abstract was left to the
+        // visual-heading rule.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9)]
+        let title: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 16)]
+        let authors: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 13)]
+        let badge: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 14)]
+        let heading: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 12)]
+        let prose = [
+            "Listening lets researchers take in papers during time that reading cannot use.",
+            "We asked twelve researchers to listen to papers during their daily commute.",
+            "Each participant kept a short diary of the sessions over four weeks of study.",
+        ]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("Listening to Papers: A Field Study of Researchers" as NSString).draw(at: CGPoint(x: 60, y: 90), withAttributes: title)
+            ("on Their Commute" as NSString).draw(at: CGPoint(x: 60, y: 120), withAttributes: title)
+            ("Ada Example1" as NSString).draw(at: CGPoint(x: 60, y: 160), withAttributes: authors)
+            (", Ben Sample2" as NSString).draw(at: CGPoint(x: 160, y: 160), withAttributes: authors)
+            (", Cy Third3" as NSString).draw(at: CGPoint(x: 260, y: 160), withAttributes: authors)
+            ("v1" as NSString).draw(at: CGPoint(x: 520, y: 200), withAttributes: badge)
+            // At heading size: on the simulator a 9 pt bold "Abstract" wasn't read as a
+            // heading, and this test is about the title page, not bold detection.
+            ("Abstract" as NSString).draw(at: CGPoint(x: 60, y: 236), withAttributes: heading)
+            for (offset, line) in prose.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 256 + CGFloat(offset) * 12), withAttributes: body)
+            }
+            context.beginPage()
+            ("Introduction" as NSString).draw(at: CGPoint(x: 60, y: 90), withAttributes: heading)
+            for (offset, line) in prose.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 110 + CGFloat(offset) * 12), withAttributes: body)
+            }
+        }
+        let pdf = try XCTUnwrap(PDFDocument(data: data))
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        let characters = Array(document.text)
+        func text(_ segment: StructuredDocument.Segment) -> String {
+            String(characters[segment.range.start..<segment.range.end])
+        }
+
+        XCTAssertEqual(document.segments.filter { $0.role == .heading }.map(text), ["Abstract", "Introduction"])
+        let titles = document.segments.filter { $0.role == .title }
+        XCTAssertEqual(titles.count, 1, "a two-line title is one segment, read once")
+        XCTAssertEqual(titles.first.map(text)?.split(whereSeparator: \.isNewline).joined(separator: " "),
+                       "Listening to Papers: A Field Study of Researchers on Their Commute")
+        let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ")
+        XCTAssertTrue(spoken.contains("Ada Example"), "author names are read (owner, #191)")
+        XCTAssertFalse(spoken.contains("v1"))
+
+        // The item keeps v1's title, so a PDF imported under v1 and re-imported under
+        // v2 is the same item and the edition guard applies.
+        let v1Title = try PDFStructuredTextExtractor.markdown(from: pdf)
+            .split(separator: "\n").first { $0.hasPrefix("# ") }.map { String($0.dropFirst(2)) }
+        XCTAssertEqual(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: document), try XCTUnwrap(v1Title))
+    }
+
+    func testV2SkipsFootnoteTextAtTheFootOfAPage() throws {
+        // #250: v2 never gave a line the footnote role, so a page's footnote was read
+        // where PDFKit placed it, often between the halves of a body sentence.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10)]
+        let marker: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 7)]
+        let note: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 8)]
+        let legend: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 7)]
+        let cited = NSMutableAttributedString(string: "Participants kept a short diary of every session,", attributes: body)
+        cited.append(NSAttributedString(string: "1", attributes: marker))
+        cited.append(NSAttributedString(string: " and read it back to us weekly.", attributes: body))
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("We asked twelve researchers to listen to papers during their commute." as NSString).draw(at: CGPoint(x: 60, y: 80), withAttributes: body)
+            context.beginPage()
+            cited.draw(at: CGPoint(x: 60, y: 80))
+            ("Most sessions happened before nine in the morning on weekdays." as NSString).draw(at: CGPoint(x: 60, y: 96), withAttributes: body)
+            ("Participants said the figures were the hardest part to follow by ear." as NSString).draw(at: CGPoint(x: 60, y: 112), withAttributes: body)
+            ("1 The diaries were kept on paper and transcribed later by two of the authors," as NSString).draw(at: CGPoint(x: 60, y: 650), withAttributes: note)
+            ("who checked each entry against the recorded session logs." as NSString).draw(at: CGPoint(x: 60, y: 660), withAttributes: note)
+            ("3 Samples were collected at three sites in the spring of that year." as NSString).draw(at: CGPoint(x: 60, y: 700), withAttributes: legend)
+        }
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: data)))
+        let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ")
+        XCTAssertFalse(spoken.contains("diaries were kept"))
+        XCTAssertFalse(spoken.contains("checked each entry"))
+        XCTAssertTrue(document.segments.contains { $0.role == .footnote })
+        XCTAssertTrue(spoken.contains("and read it back to us weekly"))
+        XCTAssertTrue(spoken.contains("Most sessions happened before nine"))
+        // Small print starting with a number that no body superscript points to stays.
+        XCTAssertTrue(spoken.contains("Samples were collected at three sites"))
+    }
+
+    func testV2JudgesAFootnoteLineByItsMainTypeSizeNotItsFirstCharacter() throws {
+        // #592 on arXiv 2609.31218 (POPT), sizes from PyMuPDF: body 10 pt, footnote text
+        // 8 pt, footnote markers 6 pt, math subscripts 7 pt. A line's size was its first
+        // character's, so a body line opening with a 7 pt subscript "m" read as small print
+        // and was skipped as a footnote, and a footnote whose 6 pt marker differs from its
+        // 8 pt text lost only its first line.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10)]
+        let script: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 7)]
+        let marker: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 6)]
+        let note: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 8)]
+        func line(_ pieces: [(String, [NSAttributedString.Key: Any])]) -> NSAttributedString {
+            let line = NSMutableAttributedString()
+            for (text, attributes) in pieces { line.append(NSAttributedString(string: text, attributes: attributes)) }
+            return line
+        }
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("We place one reflecting surface between the base station and the user." as NSString).draw(at: CGPoint(x: 60, y: 80), withAttributes: body)
+            ("Its elements are tuned so that the reflected beam reaches the receiver." as NSString).draw(at: CGPoint(x: 60, y: 96), withAttributes: body)
+            context.beginPage()
+            line([("The transmitter steers its beam toward the surface in practice,", body), ("1", marker), (" as is usual.", body)])
+                .draw(at: CGPoint(x: 60, y: 80))
+            ("The received signal is the sum of the direct path and the reflected one." as NSString).draw(at: CGPoint(x: 60, y: 96), withAttributes: body)
+            line([("where P is the transmit power and the gain is h", body), ("m", script), (" for each element,", body)])
+                .draw(at: CGPoint(x: 60, y: 500))
+            line([("m", script), (" (xi) depicts the channel of the surface to the user, while h", body)])
+                .draw(at: CGPoint(x: 60, y: 516))
+            line([("m", script), (" the single-bounce NLoS component. The total gain follows.", body)])
+                .draw(at: CGPoint(x: 60, y: 532))
+            line([("1", marker), (" In practice, directional transmit and receive antenna patterns", note)])
+                .draw(at: CGPoint(x: 60, y: 690))
+            ("are used at both ends of the link in every deployment we measured." as NSString).draw(at: CGPoint(x: 60, y: 700), withAttributes: note)
+        }
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: data)))
+        let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ")
+        XCTAssertTrue(spoken.contains("depicts the channel of the surface"), spoken)
+        XCTAssertTrue(spoken.contains("the single-bounce NLoS component"), spoken)
+        XCTAssertFalse(spoken.contains("directional transmit and receive"), spoken)
+        XCTAssertFalse(spoken.contains("are used at both ends of the link"), spoken)
+        XCTAssertTrue(spoken.contains("as is usual"), spoken)
+    }
+
+    func testV2KeepsBodyLinesThatEndInNumbersOffAContentsPage() throws {
+        // #354 on arXiv 2608.09666: a page with several lines ending in a number was
+        // taken for a table of contents, and "clear: it attains at least 80% Within-1
+        // accuracy on 13 of the 15" was skipped as front matter.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10)]
+        let heading: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 16)]
+        let numbered = [
+            "The advantage is clear: it attains at least 80% accuracy on 13 of the 15",
+            "tasks we tested, and it matches the raters on 9 of the 10",
+            "settings in the second group, falling short by a margin of 2",
+            "points on average across the remaining settings, of which there are 4",
+            "in total, each run with three different random seeds.",
+        ]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("1 Introduction" as NSString).draw(at: CGPoint(x: 60, y: 80), withAttributes: heading)
+            ("We asked twelve researchers to listen to papers during their daily commute." as NSString).draw(at: CGPoint(x: 60, y: 110), withAttributes: body)
+            context.beginPage()
+            for (offset, line) in numbered.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 80 + CGFloat(offset) * 14), withAttributes: body)
+            }
+        }
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: XCTUnwrap(PDFDocument(data: data)))
+        let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ")
+        for line in numbered {
+            XCTAssertTrue(spoken.contains(line), line)
+        }
+    }
+
+    func testV2KeepsTwoSubsectionsWithTheSameName() throws {
+        // #354 on arXiv 2608.09666: "4.1.1 Experimental Setup" (page 5) shares its name
+        // with the outline's "4.3.2 Experimental Setup" (page 8), so it counted as a
+        // contents entry pointing elsewhere and was skipped.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10)]
+        let heading: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 12)]
+        let sections = [
+            ["4.1.1 Experimental Setup", "4.1.2 Results", "4.1.3 Discussion"],
+            ["4.3.1 Experimental Setup", "4.3.2 Results", "4.3.3 Discussion"],
+        ]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            for headings in sections {
+                context.beginPage()
+                var y: CGFloat = 80
+                for title in headings {
+                    (title as NSString).draw(at: CGPoint(x: 60, y: y), withAttributes: heading)
+                    ("Each participant listened for four weeks and kept a short diary of sessions." as NSString).draw(at: CGPoint(x: 60, y: y + 20), withAttributes: body)
+                    y += 60
+                }
+            }
+        }
+        let pdf = try XCTUnwrap(PDFDocument(data: data))
+        let root = PDFOutline()
+        for (pageIndex, headings) in sections.enumerated() {
+            let page = try XCTUnwrap(pdf.page(at: pageIndex))
+            for title in headings {
+                let entry = PDFOutline()
+                entry.label = title
+                entry.destination = PDFDestination(page: page, at: CGPoint(x: 0, y: 792))
+                root.insertChild(entry, at: root.numberOfChildren)
+            }
+        }
+        pdf.outlineRoot = root
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        let characters = Array(document.text)
+        let headings = document.segments.filter { $0.role == .heading }.map {
+            String(characters[$0.range.start..<$0.range.end])
+        }
+        XCTAssertEqual(headings, sections.flatMap { $0 })
+    }
+
     func testV2TakesTheArXivSideStampForPageFurniture() {
         // #220 T4 and #162: "arXiv:2607.28282v1 [cs.CL] 30 Jul 2026", printed rotated
         // in the left margin of every arXiv paper, was read as the first sentence.

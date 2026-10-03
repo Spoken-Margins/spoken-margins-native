@@ -21,7 +21,7 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 **Three test levels** (owner's decision, 2026-09-29). These replace per-milestone T3 and T4 and "T5 once per candidate":
 
 1. **Per PR:** host tests plus both builds (`--plan fast` and T2), before merge. T3 only for audio session, storage and packet changes.
-2. **Per batch:** the integration run on `next`'s merged tip: `--plan app`, a screen tour for the critics, and every journey on a library shaped like the owner's and upgraded from Build 29. The standing Test Desk runs it on each new tip (Starting the Test Desk). A real failure is reverted first: the desk opens a "Revert #N" PR for the culprit merge and files a `ready` + `regression` issue to re-land the change. Persistence, migration, packet-format and lane changes aren't reverted; the desk reports those to the owner on #184.
+2. **Per batch:** the integration run on `next`'s merged tip: `--plan app`, a screen tour for the critics, the scripted journeys (below), and every journey on a library shaped like the owner's and upgraded from Build 29. The standing Test Desk runs it on each new tip (Starting the Test Desk). A real failure is reverted first: the desk opens a "Revert #N" PR for the culprit merge and files a `ready` + `regression` issue to re-land the change. Persistence, migration, packet-format and lane changes aren't reverted; the desk reports those to the owner on #184.
 3. **Per candidate:** the owner's phone. The latest green integration run is the candidate.
 
 **Rules of thumb**
@@ -32,6 +32,18 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 - **Never escalate to T5 on a stream branch.** Full regression runs on `next`'s merged tip, in the integration run.
 - A new regression test must be run once **without** the fix and seen to fail (`AGENTS.md`). That run counts as T1, not an extra tier.
 - When unsure, ask the lane for the tier (A1 ships `scripts/test-scope.py`, which maps a diff to its minimum tier and suggested test filters). If the tool and your judgment disagree, take the higher tier and say why in the request.
+
+## Scripted journeys
+
+Scripted journeys are UI tests in `App/SpokenMarginsAppUITests/` that each follow one journey from `docs/journeys.md` (owner's decision, 2026-09-30, #445). Threads draft them, the Test Desk proves them, and they count only after probation.
+
+- **Where they run.** Only in the integration run on `next`'s merged tip, never as a per-PR gate. Per PR, a script only has to compile: `scripts/test-scope.py` puts `App/SpokenMarginsAppUITests/` at T2 and never adds its classes to a T3 request.
+- **Who writes them.** A thread that changes a listener's flow may add or update the script for the journey it affects, and names that journey in the PR.
+- **Probation.** `TestPlans/scripted-journeys.json` is the one list the integration run reads. A new or changed script goes under `probation` in the same PR. It runs and is reported, but can't turn the integration run red. The Test Desk moves it to `gating` after seeing it pass twice on the simulator, and moves a gating script that flakes twice back to `probation`. `scripts/test_inventory.py` rejects an entry that names no real UI test or no journey.
+- **What they don't cover.** Audible content, the Lock Screen, Bluetooth, and anything that only looks wrong. Agent-driven journeys and the owner's phone keep those.
+- **How this differs from the retired plans.** `--plan ui`, `speech-canary` and `release` ran a broad route suite as a gate and stay retired (`AGENTS.md`). Scripted journeys are one short script per journey, each earning its place on probation.
+
+A week after the first script gates, the desk's daily hand-off on #184 counts two things: regressions a script caught that the owner would otherwise have found on the phone, and simulator crashes or flakes the scripts caused. If the scripts caught nothing, or cost more desk time than they saved, that is the sign this was a mistake.
 
 ## The lane
 
@@ -62,13 +74,15 @@ Post as a PR comment. Keep it short; the Test Desk needs intent, not narrative.
 
 **A finished PR needs no request comment.** Label it `automerge` when its "Done when" is met. The runner then runs what the diff needs, by the base branch's `scripts/test-scope.py`, and runs again on every push while the label stays:
 - T0 (docs, research, the server): nothing.
-- T1: `--plan fast`.
+- T1: `--plan fast`. Besides `scripts/tests`, it runs the tests in each `ops/` folder (`ops/dial`, and `ops/codex` once it has tests), so a diff that only touches `ops/` stops here, with no app build.
 - T2 or higher: `--plan fast` and both builds.
 Simulator tests (T3) still need a request. The lane check is green only on PASS.
 
 Every lane job that posts a report and doesn't merge the PR, T2, T3 or automerge, ends by removing and re-adding `lane:done`, after its last report (the released automerge run's, when a T3 PASS starts one). Each job then makes a new `labeled` event, which is what the Hourly dispatch wakes on. An automerge run leaves `lane:queued` and `lane:running` alone.
 
 A PR with a T3 request merges only on a T3 PASS (#410). While its newest T3 report is FAIL or INCONCLUSIVE, or its newest T3 request has no report yet, the automerge run reports FAIL or INCONCLUSIVE and doesn't merge, even when its own checks pass. A FAIL on an earlier commit holds later commits too, until a newer T3 passes. When a T3 then passes on the PR's current head, the lane job that reports it runs the held automerge run itself, in the same job (#421), and posts its report as `<id>-auto`; nobody needs to push or re-label. It runs there because a label the runner re-added with the workflow's token would start no new run.
+
+While a `/lane T3` request whose `commit:` names the PR's head is still waiting (`lane:queued` or `lane:running`, no report yet), the automerge run doesn't run its own host tests and builds: it reports INCONCLUSIVE, held for T3, straight away, because the lane job that reports the T3 PASS runs them on the merge commit before it merges. A T3 request for an older head, or one with no `commit:` line, doesn't count, so a push after the request still gets the automerge checks.
 
 A T3 run covers at least the app test classes the diff calls for. The runner adds every class the base branch's `scripts/test-scope.py` suggests for the PR's diff to the request's `tests:`, and the report lists what it added, with the test count and how long each plan took. A method you name inside an added class runs with its class. A diff touching `Gate1AppModel.swift` therefore runs all of `Gate1AppModelWorkflowTests` (151 tests), about 15 minutes with the boot.
 
@@ -123,7 +137,13 @@ When next's tip has no integration report on #184, run one job on that tip, in t
    scripts/verify-tests.py --plan app --device <udid>. Post "Lane report
    integration-<sha7> — PASS | FAIL | INCONCLUSIVE" on #184, with the line
    "run by: Test Desk".
-2. Only after a PASS: the screen tour, if the repo has one.
+2. Only after a PASS: the screen tour, if the repo has one, then the scripted journeys in
+   TestPlans/scripted-journeys.json (gating, then probation). They launch with --ui-testing,
+   which resets the app's library, so they run before step 3 builds the journey library. A
+   probation failure goes in the report but doesn't make it FAIL. Move a script to gating
+   after two passes, and back to probation after two flakes, in a PR into next. Run them
+   with scripts/verify-tests.py --plan journeys --device <udid>; its manifest's gating and
+   probation maps give each script's result.
 3. Then the journeys in docs/journeys.md. Erase the standing device again first, because the
    app tests wrote to its app data, and build a library shaped like the owner's and upgraded
    from Build 29 (lane-build29) before installing the candidate over it. Post
@@ -208,6 +228,8 @@ Two self-hosted GitHub Actions runners on the owner's Mac run `.github/workflows
 | `.env` | `SM_LANE_EVIDENCE_DIR`, `SM_LANE_TOOLS` | the same, plus `SM_LANE_RUNNER_ROLE=build` |
 
 - **Build runner gate.** With `SM_LANE_RUNNER_ROLE=build`, an automerge job waits up to 90 minutes for three things: no simulator job running, normal memory pressure, and 20 GB of free disk. Otherwise it reports INCONCLUSIVE and says why.
+  - **Trial (2026-10-01): host-only work beside a simulator.** A job whose diff needs no app build (T0 or T1 by next's `test-scope.py`) may start while a simulator job runs, if the kernel reads memory pressure as normal (`kern.memorystatus_vm_pressure_level`, the level `memory_pressure` reports) and more than 30 GiB of disk is free. Its report says "ran beside a simulator job (trial)", and each such job adds one line (time, request id, PR) to `beside-simulator.log` in the lane state folder, to count simulator crashes against. The way back is reverting the PR that added it.
+  - **Trial (2026-10-01): builds beside a simulator.** The build runner still spent 6.9 of its 12.7 busy hours in a day (54%) waiting for simulator jobs, because most automerge jobs build. A job that builds (T2: simulator and device builds through the build slot, no simulator boot) may now start beside one simulator job on the same terms (memory pressure read as normal when it starts, more than 30 GiB free), if the one build slot `lane_slots` leaves during a simulator job is free; never beside two. Each build checks again as it takes its build slot, because a second simulator job can start during the host tests: the runner sets `SM_LANE_BUILD_NEEDS_ROOM` for the build runner's builds, and `lane_slots` then gives no build slot beside two simulator jobs, or beside one unless memory pressure reads normal, deciding under the simulator-slot decision lock. `lane_slots` still allows only one build while a simulator job runs. The runner looks up any `lane_slots` helper newer than this trial by name, so a branch that hasn't merged `next` since then waits for no simulator job instead of crashing. Its report says "built beside a simulator job (trial)", and it is logged in `beside-simulator.log` like the host-only trial. Signs it's wrong: memory pressure reaching warn, or simulator crashes during one of those builds; then revert the PR that added it.
 - **Check both:** `gh api repos/uncomposed/spoken-margins-native/actions/runners --jq '.runners[] | "\(.name) \(.status) busy=\(.busy)"'`. On the Mac, `./svc.sh status` in a runner's folder.
 - **Restart one:** `./svc.sh stop`, then `./svc.sh start`, in its folder. Its logs are in `_diag/`, and the job workspace is `_work/spoken-margins-native/spoken-margins-native`.
 - **Remove one:** `./svc.sh uninstall`, then `./config.sh remove --token <token>`. Get the token from `gh api -X POST repos/uncomposed/spoken-margins-native/actions/runners/remove-token --jq .token`.
@@ -222,11 +244,16 @@ Two self-hosted GitHub Actions runners on the owner's Mac run `.github/workflows
   - At most two caches are kept per runner. Below 15 GB of free disk the job builds cold, and its report says so.
   - If a build error disappears on a cold rebuild, delete `warm-build/` while no job runs.
 - **Merging.** An `automerge` PASS is merged by the runner itself (`scripts/lane-runner.py`, `run_auto`):
-  - It tests the exact merge commit (next first), posts "**Merge check (triage desk)", then does a plain push. A push refused because next moved leads to a re-test, up to 3 times.
-  - It never merges `.github/` or `scripts/lane*` changes; those need a person.
-  - An audio, persistence or packet diff merges only when the newest Codex audit that names the PR's head commit (the heading "**Codex audit (Astra) on `<sha7>`**") opens its verdict (the first line after the heading) with "No blocking findings" (#441). An audit of an older commit, or one with findings, holds it, and the report says which. It reads the comments again after testing, so an audit that lands during the run counts. An older manual "## Codex audit" counts only if its heading names the head commit.
+  - It tests the exact merge commit (next first), posts "**Merge check (triage desk)", then does a plain push. A push refused because next moved leads to a re-test, up to 3 times, unless next's commits since the tested one touch none of the PR's files and no build inputs (`project.yml`, any `.xcodeproj` or `.xcconfig`, `Config/`, `Package.swift` and `Package.resolved`, `package.json` and its lock, `.github/`, `scripts/`, `Contracts/schemas/`). Then it merges onto the new next and pushes without testing again, the owner's standing call being that the Test Desk tests next's merged tip end to end. The report says which way it went and lists the commits it didn't re-test against, and that merge check doesn't say "Pushing `<sha7>`", so `scripts/phone-build` runs its own checks on that tip.
+  - Lane changes merge like any other, with the audit below (owner rule 2026-10-01). The lane paths are the ones `scripts/test-scope.py` lists in `LANE_PREFIXES` and `LANE_FILES`: the workflows, the runner and its helpers, the policies it loads from next, `verify-tests.py`, and the two T3 test plans. A lane PR's own run uses its own workflow and helpers, so its PASS proves less than usual; the Codex audit is the check that matters.
+  - An audio, persistence, packet or lane diff merges only when the newest Codex audit that names the PR's head commit (the heading "**Codex audit (Astra) on `<sha7>`**") opens its verdict (the first line after the heading) with "No blocking findings" (#441). An audit of an older commit, or one with findings, holds it, and the report says which. It reads the comments again after testing, so an audit that lands during the run counts. An older manual "## Codex audit" counts only if its heading names the head commit.
   - After each merge it runs `merge_audit.py --sweep-hours 2`, because pushes made with the workflow token start no workflow. `merge-audit.yml`'s hourly schedule runs only once that file is on the default branch (`main`).
 - **Stale merge refs.** GitHub builds a PR's run from its merge ref, and a label event doesn't refresh it. A PR opened before a `lane.yml` change keeps the old jobs until it merges next and pushes (#221).
+- **Auto-revert of a lane change** (owner rule 2026-10-01). Every lane job on `next` starts by finding the newest merge into `next` that touched lane paths (`scripts/test-scope.py`, `LANE_PREFIXES` and `LANE_FILES`). If the first two lane reports on PRs after it, from jobs that tested a `next` containing it, were both runner faults, the runner reverts that merge with `git revert -m 1`, pushes it like a merge, files a `ready` + `regression` issue to re-land it, and posts a comment starting "Lane auto-revert:" on #337 naming the PR, the two reports and the revert commit.
+  - A runner fault is an INCONCLUSIVE report for a lane reason (a failed boot, the build runner's room wait, a crash in the runner, a missing tool or runtime, a timeout), or a job that stopped before reporting. A merge conflict, a T3 hold, a request with no tests and any FAIL are not.
+  - A report counts only if its "(tested merged with next at `<sha7>`)" names `next`, not a `lane-check/**` base, at a commit containing the lane change. A stopped-job note carries the same words when the job had fetched its base before it stopped; one without them doesn't count.
+  - Only once per lane change, and never a merge that didn't touch lane paths or that is itself a revert of a lane change. A revert is recognized by git's "This reverts commit `<sha>`" line in the merge's own commits, naming a lane change already on `next`, not by the PR title. A revert that doesn't apply cleanly is posted on #337 ("Lane auto-revert failed:") and left for a person.
+  - It can't catch a lane change that stops the runner before the check runs (a broken `lane.yml`, or a `lane-runner.py` that doesn't start): no job reports, so nothing triggers it. The Mac tick on #337 is the watch for that.
 - **Mac-wide state** is in `~/Library/Caches/SpokenMarginsLane/`: the slot locks, `boot-events.log`, `unsafe-simulators.json`, and the lane guard's `guard.log`. The guard hook is `~/.claude/hooks/spoken-margins-lane-guard.py`; reinstall it with `scripts/install-lane-guard.py`, and use `--check` to see drift.
 
 ## What the owner sees

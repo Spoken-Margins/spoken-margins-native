@@ -113,6 +113,28 @@ class TestScopeTests(unittest.TestCase):
         self.assertIn('SpokenMarginsAppTests/Gate1AppModelWorkflowTests', result['lane_request'])
         self.assertEqual(result['app_tests'], ['Gate1AppModelWorkflowTests'])  # the lane runner adds these (#351)
 
+    def test_ui_test_scripts_are_compile_only_and_add_nothing_to_t3(self):
+        # #445: scripted journeys run in the integration run, never as a per-PR gate. Before, a UI test file
+        # fell through to the app rules, so a name with "Playback" in it asked for a T3.
+        ui = 'App/SpokenMarginsAppUITests/'
+        for path in (ui + 'EmojiArticlePlaybackUITests.swift', ui + 'SharePacketJourneyUITests.swift',
+                     ui + 'Gate1FlowUITests.swift', ui + 'Fixtures/emoji-article-crash-regression.txt'):
+            with self.subTest(path=path):
+                result = self.classify(path)
+                self.assertEqual(result['tier'], 'T2')
+                self.assertEqual(result['why'], ['UI test scripts (compile only)'])
+                self.assertIsNone(result['lane_request'])
+                self.assertEqual(result['app_tests'], [])
+                self.assertEqual(sum('scripts/xcodebuild-lane' in c for c in result['run']), 2)
+                self.assertTrue(any('integration run' in note for note in result['notes']))
+        (self.root / ui).mkdir(parents=True)
+        (self.root / ui / 'MixedPlaybackAudioSessionJourneyUITests.swift').write_text(
+            'import XCTest\nfinal class MixedPlaybackAudioSessionJourneyUITests: XCTestCase {}\n')
+        result = self.classify(APP + 'MixedPlaybackAudioSession.swift', ui + 'MixedPlaybackAudioSessionJourneyUITests.swift')
+        self.assertEqual(result['tier'], 'T3')  # the app change still asks for its own app tests
+        self.assertEqual(result['app_tests'], ['MixedPlaybackAudioSessionTests'])
+        self.assertNotIn('UITests', result['lane_request'])
+
     def test_mixed_diff_takes_the_highest_tier_and_keeps_every_suggestion(self):
         result = self.classify('docs/testing.md', KIT + 'SessionKit/ListeningEdition.swift',
                                APP + 'ExperienceLibraryScreen.swift')
@@ -122,6 +144,34 @@ class TestScopeTests(unittest.TestCase):
     def test_scripts_run_runner_tests_unless_the_build_uses_them(self):
         self.assertEqual(self.classify('scripts/test-scope.py')['tier'], 'T1')
         self.assertEqual(self.classify('scripts/normalize-embedded-framework-minimum-os.sh')['tier'], 'T2')
+
+    def test_ops_tools_get_their_own_host_tests_not_a_compile(self):
+        # ops/ (the VPS Dial gate, the Mac's Codex audit) fell to "unclassified" and a simulator and device build.
+        result = self.classify('ops/dial/dial_gate.py', 'ops/dial/deploy.sh', 'ops/codex/audit.py')
+        self.assertEqual(result['tier'], 'T1')
+        self.assertEqual(result['why'], ['VPS and Mac ops tools, with their own Python tests'])
+        self.assertIn('.venv/bin/python -m unittest discover -s ops/dial', result['run'])
+        self.assertIn('.venv/bin/python -m unittest discover -s ops/codex', result['run'])
+        self.assertFalse(any('xcodebuild' in command for command in result['run']))
+        self.assertEqual(self.classify('ops/README.md')['tier'], 'T0')
+
+    def test_lane_paths_are_listed_so_the_runner_holds_them_for_an_audit(self):
+        # Owner rule 2026-10-01: a lane PR merges on PASS plus a clean Codex audit, like a packet change.
+        lane = ['.github/workflows/lane.yml', '.github/workflows/linux-t1.yml', 'scripts/lane-runner.py',
+                'scripts/lane_sim.py', 'scripts/lane_slots.py', 'scripts/lane_guard.py', 'scripts/lane-sim-boot',
+                'scripts/xcodebuild-lane', 'scripts/host-test-lane', 'scripts/install-lane-guard.py',
+                'scripts/test-scope.py', 'scripts/hot_file_ratchet.py', 'scripts/merge_audit.py',
+                'scripts/verify-tests.py', 'TestPlans/AppBehavior.xctestplan', 'TestPlans/AudioAdapters.xctestplan']
+        result = self.classify(*lane)
+        self.assertEqual(result['lane_paths'], sorted(lane))
+        self.assertTrue(any(note.startswith('Lane change:') for note in result['notes']))
+        # Ordinary PRs stay off it: the lane's tests, the Test Desk's journey list, other scripts, docs.
+        ordinary = ['scripts/tests/test_lane_runner.py', 'TestPlans/scripted-journeys.json', 'scripts/phone-build',
+                    'scripts/validate-contracts.py', 'docs/workstreams/test-lane.md', '.github/ISSUE_TEMPLATE/bug.md',
+                    '.claude/skills/lane-request/SKILL.md', 'ops/codex/sm_codex_worker.py', APP + 'PlaybackScreen.swift']
+        result = self.classify(*ordinary)
+        self.assertEqual(result['lane_paths'], [])
+        self.assertFalse(any(note.startswith('Lane change:') for note in result['notes']))
 
     def test_unknown_paths_default_to_a_compile(self):
         self.assertEqual(self.classify('NewTopLevel/thing.swift')['tier'], 'T2')

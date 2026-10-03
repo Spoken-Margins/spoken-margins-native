@@ -132,7 +132,7 @@ public struct CanonicalSourcePackage: Codable, Equatable, Sendable, Identifiable
         return ListeningMap(
             id: "canonical-navigation-\(itemId)",
             itemId: itemId,
-            overview: "Authored navigation from \(title).",
+            overview: ListeningMapOverviewText.appGenerated(title: title, chapterCount: chapters.count),
             chapters: chapters
         )
     }

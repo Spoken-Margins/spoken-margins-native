@@ -113,17 +113,9 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
         return ListeningMap(
             id: "map-\(itemId)-markdown",
             itemId: itemId,
-            overview: listeningMapOverview(chapterCount: chapters.count, policy: policy),
+            overview: ListeningMapOverviewText.appGenerated(title: title, chapterCount: chapters.count),
             chapters: chapters
         )
-    }
-
-    private func listeningMapOverview(
-        chapterCount: Int,
-        policy: DeterministicListeningMapPolicy
-    ) -> String {
-        let structure = policy == .canonicalHeadings ? "canonical document headings" : "the Markdown hierarchy"
-        return "Structured into \(chapterCount) listening chapter\(chapterCount == 1 ? "" : "s") from \(structure) in \(title)."
     }
 
     private func normalizedContentHeadings() -> [ParsedMarkdownHeading] {
