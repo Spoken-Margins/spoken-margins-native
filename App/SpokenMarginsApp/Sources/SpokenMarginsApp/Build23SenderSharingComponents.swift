@@ -32,6 +32,13 @@ enum Build23SenderPresentation {
         return included.first.map { [$0] } ?? []
     }
 
+    /// #536: a failed share used to just sit there. Episode matching data is what can fail to pack,
+    /// and the Margins can travel without it, so a failure offers that while it's included.
+    static func offersShareWithoutMatching(previewState: Build23SharingPreviewState, includesAcousticEvidence: Bool) -> Bool {
+        guard includesAcousticEvidence, case .failed = previewState else { return false }
+        return true
+    }
+
     static func stageOwnsDetailedEditor(_ stage: Build23SharingStage) -> Bool {
         stage == .review
     }

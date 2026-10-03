@@ -38,6 +38,23 @@ struct Build23SenderSharingExperience: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("build23.sender.share.error")
                 }
+                if Build23SenderPresentation.offersShareWithoutMatching(
+                    previewState: snapshot.previewState, includesAcousticEvidence: snapshot.includesAcousticEvidence
+                ) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("You can still share these Margins without episode matching. Your recipient's copy places each one by its time instead.")
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Share without episode matching", systemImage: "square.and.arrow.up") {
+                            coordinator.send(.setIncludesAcousticEvidence(false))
+                            shareVerifiedPackage()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(AppColors.evergreen)
+                        .accessibilityIdentifier("build23.sender.share.without-matching")
+                    }
+                }
                 stageContent(snapshot)
             }
             .frame(maxWidth: 960, alignment: .leading)

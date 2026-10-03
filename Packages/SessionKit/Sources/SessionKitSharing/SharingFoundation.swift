@@ -98,7 +98,10 @@ public enum SpokenMarginsPackageBuilder {
         suggestedRevealMode: ImportedCommentaryRevealMode? = nil
     ) throws -> PreparedSpokenMarginsPackage {
         let item = removingPrivateLinks(from: item)
-        let fingerprintSpines = fingerprintSpines.map(removingPrivateLinks(from:))
+        let signatureAssetIDs = Set(machineEvidence.map(\.id))
+        let fingerprintSpines = fingerprintSpines.map(removingPrivateLinks(from:)).compactMap {
+            FingerprintSpineExportRepair.repaired($0, item: item, signatureAssetIDs: signatureAssetIDs)
+        }
         let scopedIds = selections.map(\.packageScopedId)
         if let duplicate = Dictionary(grouping: scopedIds, by: { $0 }).first(where: { $0.value.count > 1 })?.key {
             throw InterjectionPackagePreparationError.duplicatePackageScopedId(duplicate)

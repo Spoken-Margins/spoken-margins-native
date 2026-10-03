@@ -348,6 +348,118 @@ final class SharingTests: XCTestCase {
         XCTAssertTrue(verified.extractedAssetURLs.isEmpty)
     }
 
+    /// #536: sharing a streamed podcast's Margins failed with "episode fingerprint spine is out of
+    /// bounds". The stored spine named the feed's http:// link, held more than 500 landmarks from
+    /// long periodic capture, and one landmark whose signature file was gone. The writer now repairs
+    /// the spine, and Build 29's reader (exportPacket) imports the packet.
+    func testAStreamedEpisodeSpineThePacketRulesRejectIsRepairedOnExport() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("patterned-source.m4a")
+        try writePatternedM4A(to: sourceURL, durationSeconds: 30)
+        let evidence = try XCTUnwrap(try await PodcastAnchorEvidenceGenerator.generate(
+            sourceURL: sourceURL,
+            anchorMediaTimeMs: 15_000,
+            outputDirectory: root.appendingPathComponent("generated-evidence"),
+            idPrefix: "evidence"
+        ).first)
+        func landmark(_ index: Int, asset: String) -> EpisodeFingerprintLandmark {
+            EpisodeFingerprintLandmark(
+                id: "landmark-\(index)", order: index,
+                sourceMediaStartMs: index * 6_000, sourceMediaEndMs: index * 6_000 + 11_000,
+                anchorMediaTimeMs: index * 6_000 + 5_500, continuityEpoch: 1,
+                trigger: .periodicPlayback, provenance: .observedDecodedPlayback, signatureAssetId: asset
+            )
+        }
+        let captured = (0..<620).map { landmark($0, asset: evidence.id) } + [landmark(620, asset: "episode-signature-missing")]
+        let spine = EditionFingerprintSpineArtifact(
+            id: "episode-spine-streamed", itemId: "item-source-v2-streamed",
+            canonicalURL: "http://example.com/episodes/one", episodeGUID: "episode-one",
+            producingEditionDurationMs: podcastItem.durationMs, createdAt: fixedDate, landmarks: captured
+        )
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "streamed-package", createdAt: fixedDate, item: podcastItem, itemTransportSelection: .reference,
+            selections: [.init(
+                packageScopedId: "margin-001", revision: approvedRevision(),
+                anchor: .init(anchorType: .media, mediaTimeMs: 401_000, machineEvidenceAssetIds: [evidence.id]),
+                representation: .textOnly
+            )],
+            fingerprintSpines: [spine],
+            machineEvidence: [.init(
+                id: evidence.id, path: evidence.archivePath, sourceURL: evidence.fileURL,
+                durationMs: evidence.durationMs, anchorOffsetMs: evidence.anchorOffsetMs,
+                provenance: PodcastAnchorEvidenceProvenance.decodedPlaybackStream.rawValue
+            )]
+        )
+        let url = root.appendingPathComponent("streamed.spokenmargins")
+        _ = try exportPacket(prepared, to: url)
+        let shared = try XCTUnwrap(try SpokenMarginsPackageArchive.read(
+            from: url, extractingAssetsTo: root.appendingPathComponent("assets")
+        ).editionFingerprintSpines.first)
+        XCTAssertNil(shared.canonicalURL, "packets carry https links only")
+        XCTAssertEqual(shared.episodeGUID, "episode-one")
+        XCTAssertEqual(shared.landmarks.count, FingerprintSpineExportRepair.maximumLandmarks)
+        XCTAssertEqual(shared.landmarks.map(\.order), Array(0..<FingerprintSpineExportRepair.maximumLandmarks))
+        XCTAssertEqual(shared.landmarks.first?.id, "landmark-0")
+        XCTAssertEqual(shared.landmarks.last?.id, "landmark-619", "spread over the whole episode")
+        XCTAssertFalse(shared.landmarks.contains { $0.signatureAssetId == "episode-signature-missing" })
+    }
+
+    /// #536: a spine naming another episode is left out, and the Margins still share.
+    func testASpineForAnotherEpisodeIsLeftOutAndTheMarginsStillShare() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let spine = EditionFingerprintSpineArtifact(
+            id: "episode-spine-other", itemId: "item-other", episodeGUID: "episode-two", createdAt: fixedDate, landmarks: []
+        )
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "other-package", createdAt: fixedDate, item: podcastItem, itemTransportSelection: .reference,
+            selections: [.init(
+                packageScopedId: "margin-001", revision: approvedRevision(),
+                anchor: .init(anchorType: .media, mediaTimeMs: 5_000), representation: .textOnly
+            )],
+            fingerprintSpines: [spine]
+        )
+        let url = root.appendingPathComponent("other.spokenmargins")
+        _ = try exportPacket(prepared, to: url)
+        let verified = try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appendingPathComponent("assets"))
+        XCTAssertTrue(verified.editionFingerprintSpines.isEmpty)
+        XCTAssertEqual(verified.commentaryLayers.first?.interjections.map(\.packageScopedId), ["margin-001"])
+    }
+
+    /// #536: the validator's one message covered nine rules. It now names the rule, so diagnostics
+    /// (lastSharedPackageFailure) say which one failed.
+    func testASpineThePacketRejectsNamesTheRuleThatFailed() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "named-rule", createdAt: fixedDate, item: podcastItem, itemTransportSelection: .reference,
+            selections: [.init(
+                packageScopedId: "margin-001", revision: approvedRevision(),
+                anchor: .init(anchorType: .media, mediaTimeMs: 5_000), representation: .textOnly
+            )],
+            fingerprintSpines: [EditionFingerprintSpineArtifact(
+                id: "spine-1", itemId: "episode-one", canonicalURL: "https://example.com/episodes/one",
+                createdAt: fixedDate, landmarks: []
+            )]
+        )
+        // Bypass the export repair, as an older writer would have.
+        let spinePath = try XCTUnwrap(prepared.manifest.artifacts.first {
+            $0.kind == SpokenMarginsArtifactKind.editionFingerprintSpine
+        }?.path)
+        var data = prepared.artifactData
+        var spine = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(data[spinePath])) as? [String: Any])
+        spine["canonicalURL"] = "http://example.com/episodes/one"
+        data[spinePath] = try JSONSerialization.data(withJSONObject: spine)
+        let malformed = PreparedSpokenMarginsPackage(manifest: prepared.manifest, artifactData: data, assetFiles: prepared.assetFiles)
+        XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(malformed, to: root.appendingPathComponent("named.spokenmargins"))) { error in
+            XCTAssertEqual(
+                error as? SpokenMarginsPackageArchiveError,
+                .invalidManifest("episode fingerprint spine is out of bounds: canonical_url")
+            )
+        }
+    }
+
     func testPortableListeningMapProposalAndPodcastEvidenceImportWithoutActivatingMap() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

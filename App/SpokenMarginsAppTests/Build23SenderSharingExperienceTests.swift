@@ -65,6 +65,15 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         XCTAssertEqual(coordinator.snapshot.stage, .review)
     }
 
+    /// #536: a failed share offers "Share without episode matching" while matching data is included.
+    func testAFailedShareOffersSharingWithoutEpisodeMatching() {
+        let failed = Build23SharingPreviewState.failed("episode fingerprint spine is out of bounds: canonical_url")
+        XCTAssertTrue(Build23SenderPresentation.offersShareWithoutMatching(previewState: failed, includesAcousticEvidence: true))
+        XCTAssertFalse(Build23SenderPresentation.offersShareWithoutMatching(previewState: failed, includesAcousticEvidence: false))
+        XCTAssertFalse(Build23SenderPresentation.offersShareWithoutMatching(previewState: .ready, includesAcousticEvidence: true))
+        XCTAssertFalse(Build23SenderPresentation.offersShareWithoutMatching(previewState: .notBuilt, includesAcousticEvidence: true))
+    }
+
     func testPresentationReturnsExactlyOneExpandedEditorForTheSelectedMargin() {
         let coordinator = makeCoordinator(marginCount: 2)
         coordinator.send(.begin)
