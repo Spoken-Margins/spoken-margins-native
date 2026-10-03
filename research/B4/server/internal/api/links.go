@@ -36,10 +36,18 @@ func (s *Server) createLink(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusServiceUnavailable, "disabled")
 		return
 	}
-	if !s.linkWindow.hit(s.clientKey(r), s.Now(), s.LinkUploadsPerIPPerHour) {
+	client := s.networkKey(r)
+	if !s.linkWindow.hit(client, s.Now(), s.LinkUploadsPerIPPerHour) {
 		fail(w, http.StatusTooManyRequests, "rate_limited")
 		return
 	}
+	// One upload at a time per client, so one slow sender can't hold every
+	// slot and lock everyone else out.
+	if !s.startLinkUpload(client) {
+		fail(w, http.StatusTooManyRequests, "one_at_a_time")
+		return
+	}
+	defer s.endLinkUpload(client)
 	select {
 	case s.linkSlots <- struct{}{}:
 		defer func() { <-s.linkSlots }()
@@ -47,9 +55,11 @@ func (s *Server) createLink(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusServiceUnavailable, "busy")
 		return
 	}
-	// A slow phone needs longer than the server-wide read timeout for 20 MB.
-	// Best effort: the test server has no deadline to extend.
-	http.NewResponseController(w).SetReadDeadline(time.Now().Add(linkUploadTime))
+	// A slow phone needs longer than the server-wide timeouts for 20 MB,
+	// and the answer with the id must still reach it after the body has.
+	rc := http.NewResponseController(w)
+	rc.SetReadDeadline(time.Now().Add(linkUploadTime))
+	rc.SetWriteDeadline(time.Now().Add(linkUploadTime + 30*time.Second))
 	if mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mediaType != "multipart/form-data" {
 		fail(w, http.StatusBadRequest, "bad_request")
 		return
@@ -114,6 +124,25 @@ func (s *Server) createLink(w http.ResponseWriter, r *http.Request) {
 		"path":      pathLinkPrefix + id,
 		"expiresAt": now.UTC().Add(links.Lifetime).Format(time.RFC3339),
 	})
+}
+
+func (s *Server) startLinkUpload(client string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.linkUploads == nil {
+		s.linkUploads = map[string]bool{}
+	}
+	if s.linkUploads[client] {
+		return false
+	}
+	s.linkUploads[client] = true
+	return true
+}
+
+func (s *Server) endLinkUpload(client string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.linkUploads, client)
 }
 
 // htmlHeaders keep the page private to whoever opens it: no caching (so a
@@ -196,6 +225,8 @@ func (s *Server) linkPacket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
+	// Up to 20 MB to a recipient on a slow connection.
+	http.NewResponseController(w).SetWriteDeadline(time.Now().Add(linkDownloadTime))
 	h := w.Header()
 	h.Set("Content-Type", "application/vnd.spokenmargins.package+zip")
 	h.Set("Content-Disposition", `attachment; filename="Shared Margins.spokenmargins"`)
@@ -212,7 +243,7 @@ func (s *Server) reportLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := s.Now()
-	if !s.reportWindow.hit(s.clientKey(r), now, s.LinkReportsPerIPPerHour) {
+	if !s.reportWindow.hit(s.networkKey(r), now, s.LinkReportsPerIPPerHour) {
 		s.notice(w, http.StatusTooManyRequests, "Too many reports", "Please try again in an hour.")
 		return
 	}

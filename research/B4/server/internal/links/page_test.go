@@ -11,7 +11,7 @@ func render(t *testing.T, p Preview) string {
 	t.Helper()
 	var b bytes.Buffer
 	err := RenderPage(&b, Page{
-		ID:         "AAAAAAAAAAAAAAAAAAAAAA",
+		ID:         "0123456789abcdef0123456789abcdef",
 		Link:       Link{CreatedAt: time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC), Preview: p},
 		InstallURL: "https://spokenmargins.example/",
 	})
@@ -41,7 +41,7 @@ func TestPageShowsMarginsExcerptsAndAttribution(t *testing.T) {
 		"Quoted from <cite>The Long Walk</cite>, Field Notes",
 		`<a href="https://example.com/episodes/long-walk" rel="noopener noreferrer">The Long Walk</a>`,
 		`href="https://spokenmargins.example/"`,
-		`<form method="post" action="/l/AAAAAAAAAAAAAAAAAAAAAA/report">`,
+		`<form method="post" action="/l/0123456789abcdef0123456789abcdef/report">`,
 		"Report this link",
 		"A spoken Margin. Open it in Spoken Margins to hear it.",
 		"stops working on 2 November 2026",

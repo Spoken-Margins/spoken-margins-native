@@ -3,7 +3,7 @@ package links
 import (
 	"bytes"
 	"crypto/rand"
-	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -29,7 +29,9 @@ var (
 // keeps the endpoint from becoming a general file drop.
 var zipMagic = []byte("PK\x03\x04")
 
-// idBytes is 128 random bits, written as 22 base64url characters.
+// idBytes is 128 random bits, written as 32 lowercase hex characters: easy
+// to read out or retype, and never starting with "-" (which the takedown
+// command would take for a flag).
 const idBytes = 16
 
 // NewID makes an unguessable link id.
@@ -38,17 +40,17 @@ func NewID() (string, error) {
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	return hex.EncodeToString(b), nil
 }
 
 // ValidID reports whether id has the shape NewID makes, so nothing else is
 // ever used as a file name.
 func ValidID(id string) bool {
-	if len(id) != base64.RawURLEncoding.EncodedLen(idBytes) {
+	if len(id) != 2*idBytes {
 		return false
 	}
 	for _, c := range id {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+		if !(c >= 'a' && c <= 'f' || c >= '0' && c <= '9') {
 			return false
 		}
 	}
@@ -196,7 +198,7 @@ func (s *Store) OpenPacket(id string, now time.Time) (*os.File, error) {
 // Takedown deletes a link at once. It reports whether there was one.
 func (s *Store) Takedown(id string) (bool, error) {
 	if !ValidID(id) {
-		return false, errors.New("links: a link id is the 22 characters after /l/")
+		return false, errors.New("links: a link id is the 32 characters after /l/")
 	}
 	errRecord := os.Remove(s.recordPath(id))
 	errPacket := os.Remove(s.packetPath(id))

@@ -78,8 +78,10 @@ const (
 	linkUploadSlots = 4
 	// linkUploadTime is how long a share-link upload may take to arrive: a
 	// 20 MB packet over a slow phone connection needs more than the
-	// server's 30-second read timeout.
-	linkUploadTime = 3 * time.Minute
+	// server's 30-second read timeout. linkDownloadTime is the same for
+	// sending a packet to a recipient.
+	linkUploadTime   = 3 * time.Minute
+	linkDownloadTime = 5 * time.Minute
 )
 
 // ClientData is what the app signs for an attested request. It binds the
@@ -131,6 +133,7 @@ type Server struct {
 	linkWindow    window
 	reportWindow  window
 	linkSlots     chan struct{}
+	linkUploads   map[string]bool
 	keyWindow     window
 	logMu         sync.Mutex
 	requestCounts map[logKey]int
@@ -239,6 +242,10 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
 }
+
+// Unwrap lets http.NewResponseController reach the connection, so a handler
+// can extend its own deadlines.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 func latencyBucket(d time.Duration) string {
 	switch {
@@ -396,6 +403,27 @@ func (s *Server) enabled(w http.ResponseWriter) bool {
 }
 
 func (s *Server) clientKey(r *http.Request) string {
+	return s.hashAddress(s.clientAddress(r))
+}
+
+// networkKey is clientKey for limits a client could dodge by hopping
+// addresses: an IPv6 client counts as its whole /64, which one phone or
+// one home network normally holds.
+func (s *Server) networkKey(r *http.Request) string {
+	host := s.clientAddress(r)
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		host = ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
+	}
+	return s.hashAddress(host)
+}
+
+func (s *Server) hashAddress(host string) string {
+	m := hmac.New(sha256.New, s.ipSecret)
+	m.Write([]byte(host))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
+func (s *Server) clientAddress(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
@@ -408,9 +436,7 @@ func (s *Server) clientKey(r *http.Request) string {
 			}
 		}
 	}
-	m := hmac.New(sha256.New, s.ipSecret)
-	m.Write([]byte(host))
-	return hex.EncodeToString(m.Sum(nil))
+	return host
 }
 
 func (s *Server) challenge(w http.ResponseWriter, r *http.Request) {

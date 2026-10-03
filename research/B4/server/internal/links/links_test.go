@@ -131,11 +131,10 @@ func TestIDsAreUnguessable(t *testing.T) {
 		}
 		seen[id] = true
 	}
-	// 22 base64url characters carry 132 bits, of which 128 are random.
 	if idBytes*8 < 128 {
 		t.Fatalf("ids carry %d random bits, want at least 128", idBytes*8)
 	}
-	for _, id := range []string{"", "short", "../../etc/passwd", strings.Repeat("a", 21) + "/", strings.Repeat("a", 23)} {
+	for _, id := range []string{"", "short", "../../etc/passwd", strings.Repeat("a", 31) + "/", strings.Repeat("a", 33), strings.Repeat("A", 32), "-" + strings.Repeat("a", 31)} {
 		if ValidID(id) {
 			t.Errorf("ValidID(%q) = true", id)
 		}

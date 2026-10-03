@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -228,7 +229,7 @@ func TestExpiredLinkAnswers410(t *testing.T) {
 			t.Errorf("%s after 30 days: %d", path, resp.StatusCode)
 		}
 	}
-	if resp, _ := h.get(t, "/l/AAAAAAAAAAAAAAAAAAAAAA"); resp.StatusCode != 404 {
+	if resp, _ := h.get(t, "/l/0123456789abcdef0123456789abcdef"); resp.StatusCode != 404 {
 		t.Errorf("unknown id: %d", resp.StatusCode)
 	}
 }
@@ -270,8 +271,146 @@ func TestLinkReportAndLogsNeverNameTheID(t *testing.T) {
 	}
 
 	// Reporting a link that doesn't exist records nothing.
-	resp, _ = http.PostForm(h.http.URL+"/l/AAAAAAAAAAAAAAAAAAAAAA/report", url.Values{"reason": {"spam"}})
+	resp, _ = http.PostForm(h.http.URL+"/l/0123456789abcdef0123456789abcdef/report", url.Values{"reason": {"spam"}})
 	if resp.StatusCode != 404 {
 		t.Fatalf("report on unknown link: %d", resp.StatusCode)
+	}
+}
+
+// timedServer runs the handler under the production server's 30-second
+// timeouts, shrunk to one second, so a test can be slower than them.
+func timedServer(t *testing.T, h *linksHarness) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: h.srv.Handler(), ReadTimeout: time.Second, WriteTimeout: time.Second}
+	go srv.Serve(l)
+	t.Cleanup(func() { srv.Close() })
+	return "http://" + l.Addr().String()
+}
+
+// trickle sends data in pieces spread over about d.
+func trickle(data []byte, d time.Duration) io.Reader {
+	pr, pw := io.Pipe()
+	go func() {
+		const pieces = 10
+		step := (len(data) + pieces - 1) / pieces
+		for i := 0; i < len(data); i += step {
+			time.Sleep(d / pieces)
+			pw.Write(data[i:min(i+step, len(data))])
+		}
+		pw.Close()
+	}()
+	return pr
+}
+
+// A phone slower than the server's timeouts still gets its link's id.
+func TestSlowUploadStillGetsItsID(t *testing.T) {
+	h := newLinksHarness(t)
+	base := timedServer(t, h)
+	body, ctype := multipartBody(linkPreview(nil), zipPacket(64<<10))
+	req, _ := http.NewRequest(http.MethodPost, base+"/api/v1/links", trickle(body.Bytes(), 2500*time.Millisecond))
+	req.Header.Set("Content-Type", ctype)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("slow upload lost its answer: %v", err)
+	}
+	var out map[string]any
+	decodeJSON(t, resp, &out)
+	if resp.StatusCode != 201 || !links.ValidID(fmt.Sprint(out["id"])) {
+		t.Fatalf("slow upload: %d %v", resp.StatusCode, out)
+	}
+}
+
+// A recipient reading slower than the server's timeouts gets the whole packet.
+func TestSlowPacketDownloadIsComplete(t *testing.T) {
+	h := newLinksHarness(t)
+	packet := zipPacket(links.MaxPacketBytes)
+	_, out := h.upload(t, linkPreview(nil), packet, "")
+	base := timedServer(t, h)
+	resp, err := http.Get(base + "/l/" + out["id"].(string) + "/packet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var got bytes.Buffer
+	buf := make([]byte, 1<<20)
+	for {
+		n, err := resp.Body.Read(buf)
+		got.Write(buf[:n])
+		if err != nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if sha256.Sum256(got.Bytes()) != sha256.Sum256(packet) {
+		t.Fatalf("slow download got %d of %d bytes", got.Len(), len(packet))
+	}
+}
+
+// One upload at a time per client, so one slow sender can't hold every slot.
+func TestOneLinkUploadAtATimePerClient(t *testing.T) {
+	h := newLinksHarness(t)
+	h.srv.TrustForwardedFor = true
+	pr, pw := io.Pipe()
+	body, ctype := multipartBody(linkPreview(nil), zipPacket(100))
+	first := make(chan int, 1)
+	go func() {
+		req, _ := http.NewRequest(http.MethodPost, h.http.URL+"/api/v1/links", pr)
+		req.Header.Set("Content-Type", ctype)
+		req.Header.Set("X-Forwarded-For", "203.0.113.9")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			first <- 0
+			return
+		}
+		resp.Body.Close()
+		first <- resp.StatusCode
+	}()
+	pw.Write(body.Bytes()[:200]) // the upload has started and is still sending
+	time.Sleep(200 * time.Millisecond)
+
+	if status, out := h.upload(t, linkPreview(nil), zipPacket(100), "203.0.113.9"); status != 429 || out["error"] != "one_at_a_time" {
+		t.Fatalf("second upload from the same client: %d %v", status, out)
+	}
+	if status, _ := h.upload(t, linkPreview(nil), zipPacket(100), "198.51.100.4"); status != 201 {
+		t.Fatalf("another client: %d", status)
+	}
+	pw.Write(body.Bytes()[200:])
+	pw.Close()
+	if status := <-first; status != 201 {
+		t.Fatalf("first upload: %d", status)
+	}
+}
+
+// An IPv6 client counts as its /64, so hopping addresses doesn't buy uploads.
+func TestLinkLimitsCountAnIPv6NetworkOnce(t *testing.T) {
+	h := newLinksHarness(t)
+	h.srv.TrustForwardedFor = true
+	h.srv.LinkUploadsPerIPPerHour = 1
+	if status, _ := h.upload(t, linkPreview(nil), zipPacket(100), "2001:db8:0:7::1"); status != 201 {
+		t.Fatalf("first: %d", status)
+	}
+	if status, _ := h.upload(t, linkPreview(nil), zipPacket(100), "2001:db8:0:7::2"); status != 429 {
+		t.Fatalf("same /64: %d", status)
+	}
+	if status, _ := h.upload(t, linkPreview(nil), zipPacket(100), "2001:db8:0:8::1"); status != 201 {
+		t.Fatalf("another /64: %d", status)
+	}
+}
+
+func TestReportWithLinksOff(t *testing.T) {
+	h := newLinksHarness(t)
+	_, out := h.upload(t, linkPreview(nil), zipPacket(100), "")
+	config.Set(h.configPath, config.ServiceLinks, false)
+	resp, _ := http.PostForm(h.http.URL+"/l/"+out["id"].(string)+"/report", url.Values{"reason": {"spam"}})
+	if resp.StatusCode != 503 {
+		t.Fatalf("report with links off: %d", resp.StatusCode)
+	}
+	h.srv.Flush()
+	if h.abuseLog.String() != "" {
+		t.Fatalf("report with links off was logged: %s", h.abuseLog.String())
 	}
 }

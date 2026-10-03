@@ -101,7 +101,7 @@ if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   curl -s -X POST -H 'X-SM-Key-Id: SECRETKEYID' http://127.0.0.1:18443/api/v1/ping >/dev/null
   mapkey=5ec2e7a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
   [[ "$(code http://127.0.0.1:18443/api/v1/maps/${mapkey})" == 502 ]] || die "map fetch should 502 with smserver down"
-  linkid=L1nkS3cretAAAAAAAAAAA
+  linkid=11c5ec7e7a1a1a1a1a1a1a1a1a1a1a1a
   [[ "$(code http://127.0.0.1:18443/l/${linkid})" == 502 ]] || die "share-link page should 502 with smserver down"
   [[ "$(code http://127.0.0.1:18443/api/v1/health)" == 502 ]] || die "api should 502 with smserver down"
   "${SMSERVER}" serve -listen 127.0.0.1:8795 -state "${work}/state" -public "${root}" >/dev/null 2>&1 &
