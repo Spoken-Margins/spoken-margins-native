@@ -13,9 +13,9 @@ launchd runs `sm_codex_worker.py` every 10 minutes. Each run (a tick) reads:
 
 If a slot is free and nothing holds, it picks one job and starts one detached child, then exits. It starts at most one child per tick. PR finishing and issue runs share the same slots, Dial and pacing.
 
-**PR finishing comes first:** open non-draft PRs into `next`, with a branch in this repo and either `needs-mac` or a newest lane report that names the current head and reports a test or compile FAIL. An older-head FAIL, a newer PASS or INCONCLUSIVE, and runner faults do not qualify as code failures. PRs touching `LANE_PREFIXES`/`LANE_FILES` in `scripts/test-scope.py`, protected branches, live-slot PRs and PRs with a `Thread "Codex worker N" finishing #PR` comment in the last 24 hours are skipped. Oldest eligible PR goes first; the child rechecks before claiming.
+**PR finishing comes first:** open non-draft PRs into `next`, with a branch in this repo and either `needs-mac`, a newest lane report that names the current head and reports a test or compile FAIL, or a newest ``**Codex audit (Astra) on `<sha7>`**`` comment that names the head and does not open with "No blocking findings". An older-head FAIL, a newer PASS or INCONCLUSIVE, and runner faults do not qualify as code failures. PRs touching `LANE_PREFIXES`/`LANE_FILES` in `scripts/test-scope.py` qualify only for audit findings on the head. Protected branches and live-slot PRs are skipped. Each `Thread "Codex worker N" finishing #PR` comment counts as a round, including failed attempts and earlier heads: at most two rounds per PR in a rolling 24 hours. At the limit the worker comments once in that window and leaves the PR for a human. Oldest eligible PR goes first; the child rechecks before claiming.
 
-**The finisher** posts that finishing comment, removes `automerge`, and checks it is gone. It checks out the PR head in a detached worktree (leaving the author's local branch alone), merges `origin/next` with `--no-commit --no-ff`, and gives Codex the lane report and a summary of failures, evidence paths and merge conflicts. Codex uses the same sandbox and output files as issue jobs. The wrapper runs `--plan fast` outside the sandbox. On a pass it commits the fix and merge, rechecks that the PR has neither moved nor been re-armed, and pushes `HEAD` to the existing PR branch with an ordinary push. A rejected push stops; there is no force retry. It comments the change, removes `needs-mac`, repeats the newest `/lane T3` request with its original `tests:` line and `lane:queued` when applicable, then adds `automerge`. Queueing precedes arming so the runner sees the pending T3 immediately. On any stop it posts why and leaves the original labels except `automerge`; failed work is not pushed. Finisher evidence stays in `codex-worker/runs/pr-<PR>-<time>/`.
+**The finisher** posts that finishing comment, removes `automerge`, and checks it is gone. It checks out the PR head in a detached worktree (leaving the author's local branch alone), merges `origin/next` with `--no-commit --no-ff`, and gives Codex the lane report, current-head audit findings and a summary of failures, evidence paths and merge conflicts. For each audit finding the prompt asks for a fix with a regression test shown to fail first, or an evidence-backed explanation in `.codex-out/pr-body.md` of why the finding is wrong. The wrapper posts that explanation as a PR comment even if no code changes are needed; without a push it leaves `automerge` removed. Codex uses the same sandbox and output files as issue jobs. The wrapper runs `--plan fast` outside the sandbox. On a pass it commits the fix and merge, rechecks that the PR has neither moved nor been re-armed, and pushes `HEAD` to the existing PR branch with an ordinary push. A rejected push stops; there is no force retry. It comments the change, removes `needs-mac`, repeats the newest `/lane T3` request with its original `tests:` line and `lane:queued` when applicable, then adds `automerge`. The audit script audits the new head on its next tick. Queueing precedes arming so the runner sees the pending T3 immediately. On any stop it posts why and leaves the original labels except `automerge`; failed work is not pushed. Finisher evidence stays in `codex-worker/runs/pr-<PR>-<time>/`.
 
 **Issue choice:** open, labelled `ready`, and not labelled `in-progress`, `where:mac`, `regression` or `blocked`. No `Claimed by project thread "` comment in the last 24 hours. Issues labelled `priority` go first; within that, issues that name SessionKit paths or host tests go first, then oldest first. The child checks again just before it claims.
 
@@ -149,3 +149,37 @@ launchctl print gui/$(id -u)/com.spokenmargins.codex-audit | grep ops/codex
 ```
 
 Both copies share the same lock in `artifacts/ops/`, so an old run still going can't overlap a new one. The old files in `artifacts/tools/` can stay as a fallback; nothing runs them after the switch.
+
+## Codex Test Desk
+
+`sm_codex_testdesk.py` tests fresh `origin/next` at most once per SHA and once every two hours. Its 20-minute tick holds on the worker's Dial and pacing rules, under 30 GiB free disk, or any busy simulator slot. It reserves the existing simulator and decision locks without waiting; `verify-tests.py` inherits the reservation for `--plan app` followed by `--plan journeys` (gating and probation). Both plans use the dedicated Test Runner. It never selects the journey simulator or boots a device itself.
+
+It posts PASS / FAIL / INCONCLUSIVE with test counts and evidence on #184. Completed non-probation test failures get a read-only Codex diagnosis, grouped by root cause. It searches open issues for each failing method, comments on a match, or files `ready,priority,bug` for the worker. Probation failures do not turn a run red. Per-SHA journey results and the last start time live in `~/SpokenMarginsOps/codex-testdesk/state.json`; two consecutive passes are reported for the owner/Test Desk to promote, never promoted automatically. Class selectors count as passing only if every expected method passed. A flood or interrupted/stalled runner is INCONCLUSIVE and never retried on the same SHA.
+
+Evidence survives worktree removal in `~/SpokenMarginsOps/repo/artifacts/codex-testdesk/<time>-<sha7>/`. The log is `~/SpokenMarginsOps/codex-testdesk/log.txt`. A result is saved before posting or diagnosis; a GitHub error therefore requires a human to post the saved report or issue bodies, rather than another simulator run. After an abrupt process termination, the next eligible tick removes only this job's scratch worktree. Agent-driven journeys, audible content and the Lock Screen remain unverified.
+
+Dry run (reads Dial, usage and cached `origin/next`; no fetch, tests, worktree or posts):
+
+```zsh
+/usr/bin/python3 ~/SpokenMarginsOps/repo/ops/codex/sm_codex_testdesk.py --dry-run
+```
+
+Host tests:
+
+```zsh
+/usr/bin/python3 -m unittest discover -s ops/codex -p test_sm_codex_testdesk.py
+```
+
+The owner must install this autonomous job after the ops checkout has the change; agents cannot install it:
+
+```zsh
+mkdir -p ~/SpokenMarginsOps/codex-testdesk ~/Library/LaunchAgents
+cp ~/SpokenMarginsOps/repo/ops/codex/com.spokenmargins.codex-testdesk.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.codex-testdesk.plist
+```
+
+Stop new runs with Codex workers `0` on the Dial. To remove the job:
+
+```zsh
+launchctl bootout gui/$(id -u)/com.spokenmargins.codex-testdesk
+```

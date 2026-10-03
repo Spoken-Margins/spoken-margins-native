@@ -5,8 +5,9 @@ launchd runs this every 10 minutes with no arguments (a "tick"). A tick never wa
 it reads the Dial, Codex usage, free disk and the live slots, and when a slot is free and
 pacing allows it spawns ONE detached child (`--slot N --pr M` or `--issue M`) and exits.
 
-PR finishing goes first: needs-mac or the newest lane report is a code FAIL on the head.
-Drafts, forks, lane changes and recent finishing claims are excluded. The child disarms
+PR finishing goes first: needs-mac, a code lane FAIL, or Codex audit findings on the head.
+Drafts and forks are excluded; lane changes qualify only for audit findings. At most two
+finishing rounds per PR per 24 h. The child disarms
 automerge, merges next without rewriting history, runs Codex and the host fast plan, and
 only on a pass pushes normally and re-arms (repeating the newest T3 request if present).
 A stopped finisher leaves the PR's labels as found, except automerge stays removed.
@@ -417,6 +418,10 @@ _scope = importlib.util.module_from_spec(_scope_spec)
 _scope_spec.loader.exec_module(_scope)
 LANE_REPORT_RE = re.compile(r'^Lane report \S+ — (PASS|FAIL|INCONCLUSIVE)\b')
 FINISH_MARK_RE = re.compile(r'Thread "Codex worker \d+" finishing #\d+')
+AUDIT_REPORT_RE = re.compile(r'^\*\*Codex audit \(Astra\) on `([0-9a-f]{7,40})`\*\*\s*$')
+MAX_FINISH_ROUNDS = 2
+FINISH_LIMIT_REASON = 'two finishing rounds in the last 24 h; leaving this PR for a human'
+FINISH_LIMIT_MARK = 'Codex finisher round limit reached.'
 RUNNER_FAULT_RE = re.compile(
     r"runner fault|lane error|lane itself failed|lane's fault|not this PR|not the PR|"
     r'PermissionError|Operation not permitted|No space left on device|device (?:lost|vanished)', re.I)
@@ -449,6 +454,38 @@ def failing_head_report(pr: dict) -> Optional[dict]:
     return report
 
 
+def audit_findings_on_head(pr: dict) -> Optional[dict]:
+    """Newest Astra audit only: its header must name the head and its verdict must not be clean."""
+    reports = [c for c in pr.get('comments') or []
+               if AUDIT_REPORT_RE.match((c.get('body') or '').strip().split('\n', 1)[0])]
+    report = max(reports, key=comment_time, default=None)
+    if not report:
+        return None
+    header, _, verdict = report['body'].strip().partition('\n')
+    head = pr.get('headRefOid') or ''
+    if not head.startswith(AUDIT_REPORT_RE.match(header).group(1)):
+        return None
+    if verdict.lstrip().startswith('No blocking findings'):
+        return None
+    return report
+
+
+def recent_finish_rounds(comments: list, now: dt.datetime) -> int:
+    """Count starts, including failed rounds and earlier heads. Undated starts hold spending."""
+    rounds = 0
+    for c in comments:
+        if not FINISH_MARK_RE.search(c.get('body') or ''):
+            continue
+        try:
+            if not comment_time(c):
+                return MAX_FINISH_ROUNDS
+            if now - parse_time(comment_time(c)) < CLAIM_WINDOW:
+                rounds += 1
+        except ValueError:
+            return MAX_FINISH_ROUNDS
+    return rounds
+
+
 def finish_eligible(pr: dict, now: dt.datetime, held: set = frozenset()) -> tuple[bool, str]:
     if pr.get('state') != 'OPEN' or pr.get('baseRefName') != BASE_BRANCH or pr.get('isDraft'):
         return False, 'not an open non-draft PR into next'
@@ -460,22 +497,20 @@ def finish_eligible(pr: dict, now: dt.datetime, held: set = frozenset()) -> tupl
         return False, 'protected branch belongs to the owner'
     if pr['number'] in held:
         return False, 'held by a live Codex slot'
-    if any(_scope.is_lane_path(f['path']) for f in pr.get('files') or []):
+    audit = audit_findings_on_head(pr)
+    if not audit and any(_scope.is_lane_path(f['path']) for f in pr.get('files') or []):
         return False, 'touches lane machinery'
-    for c in pr.get('comments') or []:
-        if FINISH_MARK_RE.search(c.get('body') or ''):
-            try:
-                if not comment_time(c) or now - parse_time(comment_time(c)) < CLAIM_WINDOW:
-                    return False, 'finishing claim in the last 24 h'
-            except ValueError:
-                return False, 'undated finishing claim'
-    if 'needs-mac' in label_names(pr) or failing_head_report(pr):
-        return True, 'needs-mac' if 'needs-mac' in label_names(pr) else 'lane FAIL on head'
-    return False, 'no needs-mac or code failure on head'
+    if audit or 'needs-mac' in label_names(pr) or failing_head_report(pr):
+        if recent_finish_rounds(pr.get('comments') or [], now) >= MAX_FINISH_ROUNDS:
+            return False, FINISH_LIMIT_REASON
+        return True, ('Codex audit findings on head' if audit else
+                      'needs-mac' if 'needs-mac' in label_names(pr) else 'lane FAIL on head')
+    return False, 'no needs-mac, code failure or Codex audit findings on head'
 
 
 def choose_finish(prs: list, details_for: Callable[[int], dict], now: dt.datetime,
-                  held: set = frozenset()) -> tuple[Optional[dict], list]:
+                  held: set = frozenset(),
+                  on_limit: Optional[Callable[[dict], None]] = None) -> tuple[Optional[dict], list]:
     skipped = []
     for pr in sorted(prs, key=lambda p: (p.get('createdAt') or '', p['number'])):
         if pr.get('isDraft') or pr['number'] in held:
@@ -484,6 +519,8 @@ def choose_finish(prs: list, details_for: Callable[[int], dict], now: dt.datetim
         ok, why = finish_eligible(pr, now, held)
         if ok:
             return pr, skipped
+        if why == FINISH_LIMIT_REASON and on_limit:
+            on_limit(pr)
         skipped.append((pr['number'], why))
     return None, skipped
 
@@ -746,6 +783,23 @@ class Ops:
 # Tick (the launchd run)
 # ---------------------------------------------------------------------------
 
+def note_finish_limit(ops: Ops, pr: dict, now: dt.datetime) -> None:
+    """Post once per rolling window, without changing labels or spending another round."""
+    for c in pr.get('comments') or []:
+        if not (c.get('body') or '').startswith(FINISH_LIMIT_MARK):
+            continue
+        try:
+            if not comment_time(c) or now - parse_time(comment_time(c)) < CLAIM_WINDOW:
+                return
+        except ValueError:
+            return
+    try:
+        ops.comment(pr['number'], f'{FINISH_LIMIT_MARK} Two rounds started in the last 24 h. '
+                    'Leaving this PR for a human; no further finisher round until the window clears.')
+    except Exception as exc:
+        ops.log(f"PR #{pr['number']}: could not post finisher limit note: {exc}")
+
+
 def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> dict:
     """Decide and maybe start one child. Returns the decision for logging and tests."""
     now = ops.now()
@@ -809,7 +863,8 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
     if decision['why'] is None or dry_run:
         try:
             held_prs = {int(i['pr']) for i in live.values() if i.get('pr')}
-            pr, skipped = choose_finish(ops.open_prs(), ops.pull, now, held_prs)
+            pr, skipped = choose_finish(ops.open_prs(), ops.pull, now, held_prs,
+                                       on_limit=None if dry_run else lambda p: note_finish_limit(ops, p, now))
             held = {int(i.get('issue')) for i in live.values() if i.get('issue')}
             if pr is None:
                 issue, issue_skipped = choose_issue(ops.ready_issues(), lambda n: ops.issue(n).get('comments') or [],
@@ -880,13 +935,44 @@ def pick_branch(ops: Ops, number: int, title: str) -> str:
     raise RuntimeError(f'no free branch name for {base}')
 
 
+def stage_changes(ops: Ops, wt: Path) -> None:
+    """Trim trailing blank lines in changed text files before staging, including new files."""
+    paths = ['--', '.', f':(exclude){OUT_DIR_NAME}']
+    tracked = ops.must(['git', 'diff', '--name-only', '-z', 'HEAD', *paths], cwd=wt).stdout
+    untracked = ops.must(['git', 'ls-files', '--others', '--exclude-standard', '-z', *paths], cwd=wt).stdout
+    for name in sorted(set((tracked + untracked).split('\0')) - {''}):
+        path = wt / name
+        if path.is_symlink() or not path.is_file():
+            continue
+        data = path.read_bytes()
+        if b'\0' in data:
+            continue
+        try:
+            data.decode('utf-8')
+        except UnicodeDecodeError:
+            continue
+        lines = data.splitlines(keepends=True)
+        while lines and not lines[-1].strip(b' \t\r\n'):
+            lines.pop()
+        trimmed = b''.join(lines)
+        if trimmed != data:
+            path.write_bytes(trimmed)
+    ops.must(['git', 'add', '-A', *paths], cwd=wt)
+
+
+def check_staged_changes(ops: Ops, wt: Path) -> None:
+    """Reject conflict markers and Git errors, but never reject whitespace warnings."""
+    ops.must(['git', '-c', 'core.whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab,'
+              '-indent-with-non-tab,-tab-in-indent', 'diff', '--cached', '--check'], cwd=wt)
+
+
 def save_diff(ops: Ops, wt: Path, dest: Path) -> None:
     """Save everything Codex changed, new files included, before the worktree is removed.
 
     Plain `git diff` leaves out untracked files, so a give-up or failed run lost every file Codex
     created (#64). Staging first is safe: the commit step stages the same paths again.
     """
-    ops.run(['git', 'add', '-A', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt)
+    stage_changes(ops, wt)
     diff = ops.run(['git', 'diff', '--cached', '--binary'], cwd=wt).stdout
     dest.write_text(diff or '')
 
@@ -970,7 +1056,7 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
         msg_file = run_dir / 'commit-msg.txt'
         raw_msg = (out / 'commit-msg.txt').read_text(errors='replace') if (out / 'commit-msg.txt').exists() else ''
         msg_file.write_text(commit_message(raw_msg, number, issue.get('title') or ''))
-        ops.must(['git', 'add', '-A', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt)
+        stage_changes(ops, wt)
         ops.must(['git', 'commit', '--quiet', '-F', str(msg_file)], cwd=wt)
 
         if fast.returncode != 0:
@@ -1041,6 +1127,8 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
         pr = ops.pull(number)
         ok, why = finish_eligible(pr, now)
         if not ok:
+            if why == FINISH_LIMIT_REASON:
+                note_finish_limit(ops, pr, now)
             ops.log(f'PR #{number}: not claimed on re-check: {why}')
             return 'skipped'
         original_labels = label_names(pr)
@@ -1070,12 +1158,19 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
         if merge.returncode != 0 and not conflicts:
             raise RuntimeError(f'merge failed without resolvable conflicts: {merge.stderr or merge.stdout}')
         report = failing_head_report(pr) or newest_lane_report(pr.get('comments') or [])
-        report_text = report['body'] if report else '(no lane report; labelled needs-mac)'
+        report_text = report['body'] if report else '(no lane report)'
+        audit = audit_findings_on_head(pr)
+        audit_text = audit['body'] if audit else '(no Codex audit findings on head)'
         summary = '\n'.join(line for line in report_text.splitlines()
                             if 'evidence:' in line or 'observed:' in line or line.startswith('ran:'))
         summary += f'\nMerge next output:\n{merge.stdout}\n{merge.stderr}\nConflicts:\n{conflicts or "none"}'
         context = (f"Finish PR #{number}: {pr['title']}\n\n{pr.get('body') or ''}\n\n"
                    f'Lane report:\n{report_text}\n\nEvidence summary:\n{summary}\n\n'
+                   f'Codex audit findings:\n{audit_text}\n\n'
+                   'For each audit finding, fix it with a regression test that you run first to show '
+                   'it fails without the fix, or explain with evidence why the finding is wrong in '
+                   '.codex-out/pr-body.md. The wrapper posts that explanation as a PR comment, even '
+                   'if no code change is needed. Do not post comments yourself. '
                    'Fix the reported code failure or resolve the merge conflicts. The wrapper has merged '
                    'origin/next with --no-commit; leave resolved files uncommitted. Do not run git merge, '
                    'rebase, reset, push, or change labels. Explain the cause and fix in the output files.')
@@ -1098,10 +1193,15 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
             return 'codex-failed'
         merge_pending = ops.run(['git', 'rev-parse', '--verify', '--quiet', 'MERGE_HEAD'], cwd=wt).returncode == 0
         if not changes.strip() and not merge_pending:
+            if audit and (out / 'pr-body.md').exists():
+                explanation = (out / 'pr-body.md').read_text(errors='replace').strip()
+                if explanation:
+                    ops.comment(number, f'Thread "Codex worker {slot}" response to audit on `{head[:7]}`.\n\n'
+                                + explanation)
             stop('Codex made no changes and next is already merged; no push')
             return 'empty'
         # Staging the resolutions does not hide accidentally retained conflict markers.
-        ops.must(['git', 'diff', '--cached', '--check'], cwd=wt)
+        check_staged_changes(ops, wt)
         fast = ops.run(['.venv/bin/python', 'scripts/verify-tests.py', '--plan', 'fast'], cwd=wt,
                        timeout=FAST_PLAN_TIMEOUT_S)
         (run_dir / 'fast-plan.txt').write_text((fast.stdout or '') + (fast.stderr or ''))
@@ -1112,11 +1212,12 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
         raw_msg = (out / 'commit-msg.txt').read_text(errors='replace') if (out / 'commit-msg.txt').exists() else ''
         if not raw_msg.strip() or not (out / 'pr-body.md').exists():
             raise RuntimeError('Codex did not leave a cause/fix and change summary; no push')
-        subject = f'Fix lane FAIL on #{number}' if failing_head_report(pr) else 'Merge next and resolve conflicts'
+        subject = (f'Address Codex audit findings on #{number}' if audit else
+                   f'Fix lane FAIL on #{number}' if failing_head_report(pr) else 'Merge next and resolve conflicts')
         msg = run_dir / 'commit-msg.txt'
         msg.write_text(commit_message(f'{subject}\n\n{raw_msg.strip()}', number, pr['title']))
-        ops.must(['git', 'add', '-A', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt)
-        ops.must(['git', 'diff', '--cached', '--check'], cwd=wt)
+        stage_changes(ops, wt)
+        check_staged_changes(ops, wt)
         ops.must(['git', 'commit', '--quiet', '-F', str(msg)], cwd=wt)
         fresh = ops.pull(number)
         if (fresh['state'] != 'OPEN' or fresh.get('isDraft') or fresh['baseRefName'] != BASE_BRANCH
