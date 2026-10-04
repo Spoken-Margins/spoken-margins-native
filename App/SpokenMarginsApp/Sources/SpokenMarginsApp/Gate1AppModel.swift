@@ -968,7 +968,7 @@ final class Gate1AppModel: ObservableObject {
     ]
 
     private var engine: SessionEngine?
-    private var store: SQLiteSessionStore?
+    private(set) var store: SQLiteSessionStore?
     private var databaseURLOverride: URL?
     private let gate2CompactControls: Gate2CompactControlController
     private let featureFlags: SpokenMarginsFeatureFlags
@@ -989,7 +989,7 @@ final class Gate1AppModel: ObservableObject {
     private let browserTextHandoffStore: Gate5BrowserTextHandoffStore?
     private let audioPlaybackClientOverride: AudioPlaybackClient?
     private var mediaPlaybackClient: AVPlayerStreamPlaybackClient?
-    private var podcastDownloadCoordinator: PodcastDownloadCoordinator?
+    private(set) var podcastDownloadCoordinator: PodcastDownloadCoordinator?
     /// Shared by the podcast downloader and the pre-play offline check (#779).
     let connectivity = ConnectivityMonitor()
     private var requestedPodcastTransportReplacements: Set<String> = []
@@ -6190,31 +6190,6 @@ final class Gate1AppModel: ObservableObject {
         reportSuccess("Rendered speech cache limit set to \(renderedSpeechCacheLimitMB) MB.")
     }
 
-    func stopStalledPodcastStart(itemID: String) {
-        guard snapshot.itemId == itemID, snapshot.status == .starting,
-              selectedPodcastDownloadState != nil else { return }
-        pause()
-        // A saved file, even one that turns out broken, is what "Download Again" can replace.
-        reportFailure(OfflinePlayability.episodeStalledMessage(
-            hasSavedAudio: podcastDownloadRecords[itemID]?.localRelativePath != nil,
-            isOffline: connectivity.isOffline
-        ))
-    }
-
-    /// A streamed-only episode started with no signal says so, instead of trying and stalling (#779).
-    /// Returns true when it reported that and the caller must not start playback.
-    private func blockOfflineEpisodeStart(itemId: String) -> Bool {
-        guard connectivity.isOffline,
-              let item = try? store?.loadItem(id: itemId),
-              item.media?.sourceType == .remoteStream,
-              let message = OfflinePlayability.episodeStartBlockedMessage(
-                  hasSavedAudio: podcastDownloadCoordinator?.validatedLocalURL(for: itemId) != nil,
-                  isOffline: true
-              ) else { return false }
-        reportFailure(message, itemId: itemId)
-        return true
-    }
-
     func redownloadSelectedPodcast() {
         guard let coordinator = podcastDownloadCoordinator else { return }
         requestedPodcastTransportReplacements.insert(selectedItem.id)
@@ -6222,15 +6197,6 @@ final class Gate1AppModel: ObservableObject {
             prioritizeOfflinePreparation(id: selectedItem.id)
         } else { coordinator.redownload(itemId: selectedItem.id) }
         reportConfirmation("Downloading a fresh copy of the podcast.")
-    }
-
-    func retrySelectedPodcastDownload() {
-        guard !selectedItem.id.isEmpty, podcastDownloadCoordinator != nil else {
-            reportFailure("Podcast download retry is unavailable.")
-            return
-        }
-        podcastDownloadCoordinator?.retry(itemId: selectedItem.id)
-        reportSuccess("Retrying podcast download.")
     }
 
     func downloadSelectedPodcastNow() {
@@ -14707,7 +14673,7 @@ final class Gate1AppModel: ObservableObject {
         return (normalized, indices)
     }
 
-    private func reportSuccess(_ message: String) {
+    func reportSuccess(_ message: String) {
         statusMessage = message
         lastError = nil
         diagnostics["lastStatus"] = message
@@ -14744,7 +14710,7 @@ final class Gate1AppModel: ObservableObject {
         reportFailure([context, message].compactMap { $0 }.joined(separator: ": "), itemId: itemId, retry: retry)
     }
 
-    private func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
+    func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
         statusMessage = "Error"
         lastError = message
         presentFeedback(UserFeedbackEvent(kind: .error, message: message, retry: retry))
