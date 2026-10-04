@@ -10,8 +10,13 @@ public final class SessionEngine {
     private static let mediaClockBackwardToleranceMs = 2_000
     public private(set) var profile: RuntimeCapabilityProfile
     public private(set) var snapshot = SessionSnapshot()
-    public private(set) var currentSession: Session?
-    public private(set) var currentItem: Item?
+    public private(set) var currentSession: Session? {
+        didSet { if oldValue?.itemId != currentSession?.itemId { syncHeldItems() } }
+    }
+    public private(set) var currentItem: Item? {
+        didSet { if oldValue?.id != currentItem?.id { syncHeldItems() } }
+    }
+    let heldItems = HeldItems()
     public private(set) var currentMap: ListeningMap?
     public private(set) var lastExport: SessionExport?
     public private(set) var lastSummaryCandidates: [Interjection] = []
@@ -760,7 +765,7 @@ public final class SessionEngine {
     @discardableResult
     public func importBrowserText(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> SessionSnapshot {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
-        let (item, deterministicMap, document) = try BrowserTextImporter(repository: repository, excludingItemId: currentSession?.itemId)
+        let (item, deterministicMap, document, _) = try BrowserTextImporter(repository: repository, excludingItemId: currentSession?.itemId)
             .importRecords(handoff, structuredDocument: structuredDocument)
         if document != nil { invalidateStructuredDocumentCaches(itemId: item.id) }
         forgetFailure(unlessItemIs: item.id)
@@ -786,7 +791,7 @@ public final class SessionEngine {
     @discardableResult
     public func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> Item {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
-        let (item, _, document) = try BrowserTextImporter(repository: repository, excludingItemId: currentSession?.itemId)
+        let (item, _, document, _) = try BrowserTextImporter(repository: repository, excludingItemId: currentSession?.itemId)
             .importRecords(handoff, structuredDocument: structuredDocument)
         if document != nil { invalidateStructuredDocumentCaches(itemId: item.id) }
         return item
@@ -796,10 +801,30 @@ public final class SessionEngine {
     @MainActor
     public func importBrowserTextInBackgroundAsync(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) async throws -> Item {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
-        let importer = BrowserTextImporter(repository: repository, excludingItemId: currentSession?.itemId)
-        let item = try await importer.importInBackground(handoff, structuredDocument: structuredDocument)
+        let importer = BrowserTextImporter(repository: repository, heldItems: heldItems)
+        let (item, upgraded) = try await importer.importReportingUpgrade(handoff, structuredDocument: structuredDocument)
         if structuredDocument != nil { invalidateStructuredDocumentCaches(itemId: item.id) }
+        if upgraded { try reloadAfterUpgrade(item) }
         return item
+    }
+
+    private func syncHeldItems() {
+        heldItems.set(Set([currentItem?.id, currentSession?.itemId].compactMap { $0 }))
+    }
+
+    /// The upgrade committed while the engine didn't hold the item, but the listener
+    /// may have opened it since, from rows read before the commit. Storage has the
+    /// moved item, map and session, so take those instead (#344 audit 2).
+    func reloadAfterUpgrade(_ upgraded: Item) throws {
+        guard currentItem?.id == upgraded.id || currentSession?.itemId == upgraded.id else { return }
+        if snapshot.status.isPlaybackActive { _ = try pause() }
+        currentItem = try repository.loadItem(id: upgraded.id)
+        currentMap = try repository.loadListeningMap(itemId: upgraded.id)
+        if let session = currentSession, session.itemId == upgraded.id,
+           let stored = try repository.loadSession(id: session.id) {
+            currentSession = stored
+        }
+        publish(status: snapshot.status, phase: currentSession?.phase ?? snapshot.phase)
     }
 
     private func invalidateStructuredDocumentCaches(itemId: String) {

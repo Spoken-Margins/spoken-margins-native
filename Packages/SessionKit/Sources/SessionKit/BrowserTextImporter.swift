@@ -10,19 +10,34 @@ import Foundation
 public struct BrowserTextImporter: Sendable {
     private let repository: any SessionRepository
     private let excludingItemId: String?
+    private let heldItems: HeldItems?
 
     public init(repository: any SessionRepository, excludingItemId: String? = nil) {
         self.repository = repository
         self.excludingItemId = excludingItemId
+        self.heldItems = nil
+    }
+
+    /// The engine's held items are read when the upgrade commits, not when the import starts.
+    init(repository: any SessionRepository, heldItems: HeldItems) {
+        self.repository = repository
+        self.excludingItemId = nil
+        self.heldItems = heldItems
     }
 
     public func importInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) async throws -> Item {
+        try await importReportingUpgrade(handoff, structuredDocument: structuredDocument).0
+    }
+
+    /// The imported item, and whether it was an existing item moved to the new extraction.
+    func importReportingUpgrade(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) async throws -> (Item, Bool) {
         try await Task.detached(priority: .userInitiated) {
-            try self.importRecords(handoff, structuredDocument: structuredDocument).0
+            let (item, _, _, upgraded) = try self.importRecords(handoff, structuredDocument: structuredDocument)
+            return (item, upgraded)
         }.value
     }
 
-    func importRecords(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> (Item, ListeningMap?, StructuredDocument?) {
+    func importRecords(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> (Item, ListeningMap?, StructuredDocument?, upgraded: Bool) {
         let (item, map, document, persisted) = try records(handoff, structuredDocument: structuredDocument)
         // A completed upgrade has already saved everything atomically. Saving it a
         // second time could overwrite changes that arrived just after its commit.
@@ -52,7 +67,24 @@ public struct BrowserTextImporter: Sendable {
                 try save()
             }
         }
-        return (item, map, document)
+        return (item, map, document, persisted)
+    }
+
+    /// Commits the upgrade unless the engine picked the item up while it was being
+    /// planned; the engine then holds the old text, so the new one becomes an edition.
+    private func commitUnlessHeld(
+        _ upgrade: StructuredDocumentUpgrade,
+        store: any (SessionRepository & StructuredDocumentRepository)
+    ) throws -> Bool {
+        let commit = { () throws -> Bool in
+            if heldItems?.contains(upgrade.item.id) == true { return false }
+            try store.applyStructuredDocumentUpgrade(upgrade)
+            return true
+        }
+        if let transactional = store as? any SessionRepositoryTransaction {
+            return try transactional.withSessionTransaction(commit)
+        }
+        return try commit()
     }
 
     private func records(
@@ -103,8 +135,9 @@ public struct BrowserTextImporter: Sendable {
                        repository: store
                    ) {
                     do {
-                        try store.applyStructuredDocumentUpgrade(upgrade)
-                        return (upgrade.item, upgrade.listeningMap, document, true)
+                        if try commitUnlessHeld(upgrade, store: store) {
+                            return (upgrade.item, upgrade.listeningMap, document, true)
+                        }
                     } catch StructuredDocumentUpgrader.StalePlan.changedInputs {
                         // Preserve newer listener changes and import a separate edition.
                     }

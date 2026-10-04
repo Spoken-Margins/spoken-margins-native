@@ -243,6 +243,44 @@ final class PDFReimportAuditTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testSessionOpenedWhileTheUpgradeIsPlannedKeepsItsText() async throws {
+        // #344 audit 2 on 921487b: the awaited import captured the open item before
+        // planning, so a session opened meanwhile was upgraded under the engine, which
+        // kept the old item and offsets.
+        let store = HookedRepository()
+        let engine = engine(store)
+        let old = try engine.importBrowserTextInBackground(handoff("Paper\nWe measured sleep in adults."))
+        let session = Session(id: "session", itemId: old.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: old.id, position: .init(charOffset: 6), completionPercent: 10, playbackRate: 1)
+        try store.saveSession(session)
+        // Planning reads the item's Margins; the listener opens the session then.
+        nonisolated(unsafe) let opening = engine
+        store.afterLoadInterjections = { _ = try opening.inspectSession(sessionId: session.id) }
+        let imported = try await engine.importBrowserTextInBackgroundAsync(handoff(document.text), structuredDocument: document)
+        XCTAssertNotEqual(imported.id, old.id, "the new text becomes its own edition")
+        XCTAssertEqual(try store.loadItem(id: old.id).text, old.text)
+        XCTAssertEqual(try store.loadSession(id: session.id), session)
+        XCTAssertEqual(engine.currentItem?.text, old.text)
+    }
+
+    func testEngineTakesTheMovedRecordsOfAnItemOpenedAsItsUpgradeCommitted() throws {
+        // The narrow case audit 2's guard can't see: the session is opened from rows read
+        // just before the commit. The awaited import reloads what storage moved.
+        let store = InMemorySessionRepository()
+        let engine = engine(store)
+        let old = try engine.importBrowserTextInBackground(handoff("Paper\nWe measured sleep in adults."))
+        let session = Session(id: "session", itemId: old.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: old.id, position: .init(charOffset: 6), completionPercent: 10, playbackRate: 1)
+        try store.saveSession(session)
+        try engine.inspectSession(sessionId: session.id)
+        let result = try StructuredDocumentUpgrader.plan(existing: try store.loadItem(id: old.id), document: document, listeningMap: nil, repository: store)
+        guard case .success(let plan) = result else { return XCTFail("Fixture must upgrade") }
+        try store.applyStructuredDocumentUpgrade(plan)
+        try engine.reloadAfterUpgrade(try store.loadItem(id: old.id))
+        XCTAssertEqual(engine.currentItem?.text, document.text)
+        XCTAssertEqual(engine.currentSession, try store.loadSession(id: session.id))
+        XCTAssertEqual(engine.currentSession?.position.charOffset, document.text.range(of: "We measured").map { document.text.distance(from: document.text.startIndex, to: $0.lowerBound) })
+    }
+
     func testIdenticalTextReimportRetiresPlainTextPreparation() throws {
         // #344 audit 4 on 921487b: adopting a document without a text change kept the
         // plain text's preparation, which can no longer commit, so its job ran forever.
@@ -266,6 +304,7 @@ final class PDFReimportAuditTests: XCTestCase {
 /// Runs a hook once, just after a read returns, to land a change between two steps.
 private class HookedRepository: InMemorySessionRepository, @unchecked Sendable {
     var afterLoadStructuredDocument: (() throws -> Void)?
+    var afterLoadInterjections: (() throws -> Void)?
     override var structuredDocuments: [String: [Int: StructuredDocument]] {
         get {
             let documents = super.structuredDocuments
@@ -273,6 +312,11 @@ private class HookedRepository: InMemorySessionRepository, @unchecked Sendable {
             return documents
         }
         set { super.structuredDocuments = newValue }
+    }
+    override func loadInterjections(sessionId: String) throws -> [Interjection] {
+        let found = try super.loadInterjections(sessionId: sessionId)
+        if let hook = afterLoadInterjections { afterLoadInterjections = nil; try hook() }
+        return found
     }
 }
 
