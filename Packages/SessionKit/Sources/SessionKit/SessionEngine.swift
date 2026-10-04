@@ -629,7 +629,7 @@ public final class SessionEngine {
         // or a seek near the end is read as the end again.
         let endedBeforeSeek = (snapshot.status.isPlaybackActive || snapshot.status == .paused)
             && audio.isPlaybackComplete(targetId: session.currentTargetId)
-        let updated = mediaSession(session, movedTo: mediaTimeMs)
+        let updated = reopeningIfMovedBeforeTheEnd(mediaSession(session, movedTo: mediaTimeMs))
         currentSession = updated
         try persistSession(updated)
         do {
@@ -664,7 +664,7 @@ public final class SessionEngine {
               session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
             throw SessionKitError.invalidCommandForState("stagePausedMediaPosition")
         }
-        let updated = mediaSession(session, movedTo: mediaTimeMs)
+        let updated = reopeningIfMovedBeforeTheEnd(mediaSession(session, movedTo: mediaTimeMs))
         currentSession = updated
         try persistSession(updated)
         protectPlaybackPosition(for: updated)
@@ -4167,7 +4167,7 @@ public final class SessionEngine {
         } else {
             previous = current - 15_000
         }
-        updated = mediaSession(updated, movedTo: previous)
+        updated = reopeningIfMovedBeforeTheEnd(mediaSession(updated, movedTo: previous))
         if snapshot.status == .playing {
             return try seekMedia(toMediaTimeMs: updated.position.mediaTimeMs ?? 0)
         }
@@ -4231,6 +4231,18 @@ public final class SessionEngine {
             return mediaSession(session, movedTo: mediaTimeMs, package: package)
         }
         return mediaSession(session, movedTo: mediaTimeMs, durationMs: mediaDurationMs(for: session))
+    }
+
+    /// A listener who moves a finished episode back from its end has picked where to listen
+    /// next, so it is no longer finished. The app replays a finished session from 0:00 in a
+    /// new session, and used to do that even after a scrub back (#643). Skipping text back
+    /// (skipBack) and reopening a session below 100% (inspectSession) follow the same rule.
+    private func reopeningIfMovedBeforeTheEnd(_ session: Session) -> Session {
+        guard session.phase == .finished, session.completionPercent < 100 else { return session }
+        var reopened = session
+        reopened.phase = .itemPlayback
+        reopened.status = "in_progress"
+        return reopened
     }
 
     /// With no known duration the position moves but the percent stays as it was. It

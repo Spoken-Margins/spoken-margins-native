@@ -88,7 +88,7 @@ struct ExperienceSourcesScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("sources.manageFeeds")
-        .accessibilityHint("Follow a feed, browse podcasts, or manage the feeds you follow.")
+        .accessibilityHint("Follow a feed, browse podcasts and writers, or manage the feeds you follow.")
     }
 
     private var manageFeedsTitle: String {
@@ -297,7 +297,7 @@ private struct ManageFeedsScreen: View {
                 Button {
                     catalogDrawer.present()
                 } label: {
-                    Label("Browse top podcasts", systemImage: "square.grid.2x2")
+                    Label("Browse podcasts and writers", systemImage: "square.grid.2x2")
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 }
                 .accessibilityIdentifier("sources.browseCatalog")
