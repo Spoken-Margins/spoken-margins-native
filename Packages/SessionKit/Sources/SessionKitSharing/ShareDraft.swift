@@ -128,12 +128,53 @@ public struct ShareDraft: Equatable, Sendable {
     }
 }
 
+extension ShareDraft {
+    /// The files the app holds for one Margin when the listener taps Send.
+    public struct Files: Equatable, Sendable {
+        public var originalURL: URL?
+        public var originalDurationMs: Int?
+        public var cleanedURL: URL?
+
+        public init(originalURL: URL? = nil, originalDurationMs: Int? = nil, cleanedURL: URL? = nil) {
+            self.originalURL = originalURL
+            self.originalDurationMs = originalDurationMs
+            self.cleanedURL = cleanedURL
+        }
+    }
+
+    /// Settles each moment's voice to what its files can send, so the Includes line and the
+    /// packet agree. Call it before showing the Includes line or building. A Margin missing from
+    /// `files` has no files.
+    public mutating func settleVoices(_ files: [String: Files]) {
+        for index in moments.indices {
+            moments[index].voice = moments[index].effectiveVoice(files[moments[index].marginID] ?? Files())
+        }
+    }
+}
+
 extension ShareDraft.Moment {
-    /// The builder's representation for this moment's voice, from the files the app holds.
-    /// A voice whose file is missing falls back to the next one, as the default would.
-    public func representation(originalURL: URL?, originalDurationMs: Int?, cleanedURL: URL?) -> ReviewedRepresentationSelection {
-        if voice == .cleaned, let cleanedURL { return .cleanedAudio(sourceURL: cleanedURL) }
-        if voice != .textOnly, let originalURL, let originalDurationMs { return .originalAudio(sourceURL: originalURL, durationMs: originalDurationMs) }
+    /// The voice these files can send. A voice whose file is missing falls back to the next one,
+    /// as the default would.
+    public func effectiveVoice(_ files: ShareDraft.Files) -> ShareDraft.Voice {
+        if voice == .cleaned, files.cleanedURL != nil { return .cleaned }
+        if voice != .textOnly, files.originalURL != nil, files.originalDurationMs != nil { return .original }
         return .textOnly
+    }
+
+    /// The builder's representation for this moment's voice, from the files the app holds.
+    public func representation(_ files: ShareDraft.Files) -> ReviewedRepresentationSelection {
+        switch effectiveVoice(files) {
+        case .cleaned:
+            if let url = files.cleanedURL { return .cleanedAudio(sourceURL: url) }
+        case .original:
+            if let url = files.originalURL, let ms = files.originalDurationMs { return .originalAudio(sourceURL: url, durationMs: ms) }
+        case .textOnly:
+            break
+        }
+        return .textOnly
+    }
+
+    public func representation(originalURL: URL?, originalDurationMs: Int?, cleanedURL: URL?) -> ReviewedRepresentationSelection {
+        representation(ShareDraft.Files(originalURL: originalURL, originalDurationMs: originalDurationMs, cleanedURL: cleanedURL))
     }
 }

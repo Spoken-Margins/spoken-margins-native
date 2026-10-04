@@ -56,6 +56,19 @@ final class ShareDraftTests: XCTestCase {
         }
     }
 
+    func testSettledVoicesKeepTheIncludesLineTrueToWhatGoes() {
+        var draft = ShareDraft(scope: .item, candidates: [margin("a")], audio: ["a": .originalAndCleaned])
+        XCTAssertEqual(draft.includesLine, "Your voice, 1 short quote")
+        draft.settleVoices([:])
+        XCTAssertEqual(draft.moments.map(\.voice), [.textOnly])
+        XCTAssertEqual(draft.includesLine, "Your words, 1 short quote", "with no files left the packet holds only text")
+
+        var withOriginal = ShareDraft(scope: .item, candidates: [margin("a")], audio: ["a": .originalAndCleaned])
+        withOriginal.settleVoices(["a": .init(originalURL: URL(fileURLWithPath: "/tmp/o.m4a"), originalDurationMs: 4_000)])
+        XCTAssertEqual(withOriginal.moments.map(\.voice), [.original])
+        XCTAssertEqual(withOriginal.includesLine, "Your voice, 1 short quote")
+    }
+
     // MARK: Name and link
 
     func testARememberedNameIsUsedAndAMissingOneIsAskedForOnce() {
