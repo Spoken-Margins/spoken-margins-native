@@ -244,13 +244,9 @@ public enum ListeningSignalContext {
         subscriptions: [FeedSubscription],
         entries: [FeedEntry]
     ) -> (source: ListeningSignalSource, item: ListeningSignalItem)? {
-        let itemKeys = Set([item.externalReference, item.media?.url].compactMap(FollowedSourceMatching.normalizedFollowSourceURL))
-        let entry = entries.first { entry in
-            guard subscriptions.contains(where: { $0.id == entry.subscriptionId }) else { return false }
-            return [entry.canonicalURL, entry.audioURL]
-                .compactMap(FollowedSourceMatching.normalizedFollowSourceURL)
-                .contains(where: itemKeys.contains)
-        }
+        let entry = importedEntry(for: item, among: entries.filter { entry in
+            subscriptions.contains(where: { $0.id == entry.subscriptionId })
+        })
         guard let subscription = entry.flatMap({ entry in subscriptions.first { $0.id == entry.subscriptionId } })
                 ?? followedSubscription(for: item, subscriptions: subscriptions) else { return nil }
         let duration = item.media?.durationMs.map { Double($0) / 1_000 }
@@ -261,6 +257,27 @@ public enum ListeningSignalContext {
             durationSeconds: duration
         )
         return (source(for: subscription), signalItem)
+    }
+
+    /// The feed entry an item was imported from. An episode GUID or audio URL names one episode;
+    /// a webpage several episodes share decides only when one entry has it, so signals are never
+    /// filed under whichever of them the feed listed first.
+    static func importedEntry(for item: Item, among entries: [FeedEntry]) -> FeedEntry? {
+        let itemKeys = Set([item.externalReference, item.media?.url].compactMap(FollowedSourceMatching.normalizedFollowSourceURL))
+        let guid = nonEmpty(item.episodeGUID)
+        let matchesGUID: (FeedEntry) -> Bool = { guid != nil && nonEmpty($0.episodeGUID) == guid }
+        let matchesAudio: (FeedEntry) -> Bool = {
+            FollowedSourceMatching.normalizedFollowSourceURL($0.audioURL).map(itemKeys.contains) ?? false
+        }
+        let matchesPage: (FeedEntry) -> Bool = {
+            FollowedSourceMatching.normalizedFollowSourceURL($0.canonicalURL).map(itemKeys.contains) ?? false
+        }
+        var candidates = entries.filter { matchesGUID($0) || matchesAudio($0) || matchesPage($0) }
+        for narrower in [matchesGUID, matchesAudio, matchesPage] where candidates.count > 1 {
+            let narrowed = candidates.filter(narrower)
+            if !narrowed.isEmpty { candidates = narrowed }
+        }
+        return candidates.count == 1 ? candidates[0] : nil
     }
 
     static func followedSubscription(for item: Item, subscriptions: [FeedSubscription]) -> FeedSubscription? {

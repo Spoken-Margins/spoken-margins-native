@@ -212,6 +212,37 @@ final class ListeningSignalRecorderTests: XCTestCase {
                      "an orphaned feed entry must not manufacture a followed source")
     }
 
+    func testEpisodesSharingAWebpageMatchByAudioOrGUIDNotByPageOrder() throws {
+        let subscription = FeedSubscription(id: "subscription", source: SourceIdentity(
+            id: "source", kind: .podcastFeed, canonicalURL: "https://show.example/feed",
+            host: "show.example", title: "Show"))
+        let page = "https://show.example/episodes"
+        let first = FeedEntry(id: "entry-a", subscriptionId: subscription.id, canonicalURL: page,
+                              audioURL: "https://cdn.show.example/a.mp3", title: "A", episodeGUID: "guid-a")
+        let second = FeedEntry(id: "entry-b", subscriptionId: subscription.id, canonicalURL: page,
+                               audioURL: "https://cdn.show.example/b.mp3", title: "B", episodeGUID: "guid-b")
+        let entries = [first, second]
+
+        let streamed = Item(id: "streamed", title: "B", mediaType: "podcast", text: "",
+                            externalReference: page, status: "ready",
+                            media: ItemMedia(sourceType: .remoteStream, url: second.audioURL!))
+        XCTAssertEqual(ListeningSignalContext.context(for: streamed, subscriptions: [subscription], entries: entries)?.item.id,
+                       second.id, "the exact audio URL wins over a webpage another episode shares")
+
+        var downloaded = Item(id: "downloaded", title: "B", mediaType: "podcast", text: "",
+                              externalReference: page, status: "ready",
+                              media: ItemMedia(sourceType: .nativeMediaFile, url: "file:///var/mobile/b.mp3"),
+                              sourceURL: subscription.source.canonicalURL)
+        downloaded.episodeGUID = "guid-b"
+        XCTAssertEqual(ListeningSignalContext.context(for: downloaded, subscriptions: [subscription], entries: entries)?.item.id,
+                       second.id, "the episode GUID wins once the audio is a local file")
+
+        downloaded.episodeGUID = nil
+        let ambiguous = try XCTUnwrap(ListeningSignalContext.context(for: downloaded, subscriptions: [subscription], entries: entries))
+        XCTAssertEqual(ambiguous.item.id, "library-downloaded", "a webpage two episodes share names neither")
+        XCTAssertEqual(ambiguous.source.id, "source")
+    }
+
     func testItemsMatchTheirFollowedSourceByURLOrTitleOnly() {
         let subscription = FeedSubscription(
             id: "subscription-source-1",
