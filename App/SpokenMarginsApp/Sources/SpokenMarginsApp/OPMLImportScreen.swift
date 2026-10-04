@@ -321,8 +321,7 @@ struct OPMLImportScreen: View {
         Button(action: action) {
             Text(title).font(.headline).frame(maxWidth: .infinity, minHeight: 44)
         }
-        .buttonStyle(.borderedProminent)
-        .tint(AppColors.evergreen)
+        .filledActionButton()
         .accessibilityIdentifier(id)
     }
 
