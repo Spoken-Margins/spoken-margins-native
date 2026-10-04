@@ -2648,7 +2648,7 @@ final class Gate1AppModel: ObservableObject {
             if startListening {
                 startItem(id: item.id)
             } else {
-                reportConfirmation("Added \(item.title) to Library without changing Now Playing.")
+                reportAddedToLibrary(title: item.title, itemId: item.id)
             }
         } catch {
             reportFailure(error, context: "Import failed")
@@ -2691,7 +2691,7 @@ final class Gate1AppModel: ObservableObject {
                     self.screen = .item
                     self.reportConfirmation("Imported \(item.title).")
                 } else {
-                    self.reportConfirmation("Added \(item.title) to Library without changing Now Playing.")
+                    self.reportAddedToLibrary(title: item.title, itemId: item.id)
                 }
             } catch {
                 self.reportFailure(error, context: "EPUB import failed")
@@ -2715,7 +2715,7 @@ final class Gate1AppModel: ObservableObject {
                     self.screen = .item
                     self.reportConfirmation("Imported \(item.title).")
                 } else {
-                    self.reportConfirmation("Added \(item.title) to Library without changing Now Playing.")
+                    self.reportAddedToLibrary(title: item.title, itemId: item.id)
                 }
             } catch {
                 self.reportFailure(error, context: "Audiobook import failed")
@@ -3269,7 +3269,7 @@ final class Gate1AppModel: ObservableObject {
                     ))
                     return false
                 }
-                reportConfirmation("Added \(item.title) to Library without changing Now Playing.")
+                reportAddedToLibrary(title: item.title, itemId: item.id)
                 return true
             }
             let store = try requireStore()
@@ -3663,8 +3663,8 @@ final class Gate1AppModel: ObservableObject {
     func importBrowserText(_ handoff: BrowserTextHandoff) -> Bool {
         do {
             if hasActiveSession {
-                try importBrowserTextInBackground(handoff)
-                reportConfirmation("Added \(handoff.source.title) to Library without changing Now Playing.")
+                let itemId = try importBrowserTextInBackground(handoff)
+                reportAddedToLibrary(title: handoff.source.title, itemId: itemId)
                 return true
             }
             let store = try requireStore()
@@ -14655,9 +14655,9 @@ final class Gate1AppModel: ObservableObject {
 
     /// Records a successful outcome and presents it only when the result is not
     /// otherwise apparent from the current interface.
-    func reportConfirmation(_ message: String) {
+    func reportConfirmation(_ message: String, action: UserFeedbackEvent.Action? = nil) {
         reportSuccess(message)
-        presentFeedback(UserFeedbackEvent(kind: .success, message: message))
+        presentFeedback(UserFeedbackEvent(kind: .success, message: message, action: action))
     }
 
     /// Presents degraded-but-successful behavior without styling it as either a
