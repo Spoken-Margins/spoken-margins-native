@@ -37,6 +37,7 @@ import (
 	"spokenmargins.dev/bridge/internal/config"
 	"spokenmargins.dev/bridge/internal/maps"
 	"spokenmargins.dev/bridge/internal/store"
+	"spokenmargins.dev/bridge/internal/tokens"
 )
 
 // Version is reported by the health check.
@@ -95,6 +96,9 @@ type Server struct {
 	MapStore *maps.Store
 	Maps     *maps.Service
 
+	// Tokens issues anonymous tokens (DESIGN.md §11). Nil answers 503.
+	Tokens *tokens.Issuer
+
 	// Per-hour limits. Zero means the defaults below.
 	ChallengesPerIPPerHour  int
 	RequestsPerInstallPerHr int
@@ -109,6 +113,7 @@ type Server struct {
 	uploadSlots   chan struct{}
 	keyWindow     window
 	logMu         sync.Mutex
+	tokenQuota    dayQuota
 	requestCounts map[logKey]int
 	abuseCounts   map[abuseKey]int
 }
@@ -165,6 +170,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/ping", s.attested(s.ping))
 	mux.HandleFunc("POST "+PathMapTranscripts, s.uploadTranscript)
 	mux.HandleFunc("GET "+pathMapsPrefix+"{key}", s.getMap)
+	mux.HandleFunc("GET "+PathTokenKeys, s.tokensOn(s.tokenKeys))
+	mux.HandleFunc("POST "+PathTokens, s.tokensOn(s.attested(s.issueTokens)))
 	return s.logRequests(mux)
 }
 
@@ -173,7 +180,7 @@ func (s *Server) Handler() http.Handler {
 var loggedRoutes = map[string]bool{
 	"/api/v1/health": true, PathConfig: true, PathManifest: true,
 	"/api/v1/attest/challenge": true, "/api/v1/attest/register": true, "/api/v1/ping": true,
-	PathMapTranscripts: true,
+	PathMapTranscripts: true, PathTokens: true, PathTokenKeys: true,
 }
 
 // logRoute is the route name the request log may record for path.
@@ -552,9 +559,24 @@ func (s *Server) uploadTranscript(w http.ResponseWriter, r *http.Request) {
 	if !s.mapsOn(w, s.Maps != nil) {
 		return
 	}
+	needToken, canCheck := s.mapTokenPolicy()
+	if !canCheck {
+		fail(w, http.StatusServiceUnavailable, "disabled")
+		return
+	}
 	if !s.mapWindow.hit(s.clientKey(r), s.Now(), s.MapUploadsPerIPPerHour) {
 		fail(w, http.StatusTooManyRequests, "rate_limited")
 		return
+	}
+	// The token is checked before the body is read, and spent only when
+	// the transcript is queued (#743).
+	var spend func() error
+	if needToken {
+		token, ok := s.checkMapToken(w, r)
+		if !ok {
+			return
+		}
+		spend = func() error { return s.Tokens.Redeem(s.Now(), token, TokenPurposeMaps) }
 	}
 	select {
 	case s.uploadSlots <- struct{}{}:
@@ -573,8 +595,11 @@ func (s *Server) uploadTranscript(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	outcome, err := s.Maps.Submit(t)
+	outcome, err := s.Maps.SubmitSpending(t, spend)
 	switch {
+	case outcome == maps.SpendFailed && tokens.Refused(err):
+		// Another upload spent this token since it was checked.
+		s.askForToken(w, "token_refused")
 	case err != nil:
 		fail(w, http.StatusInternalServerError, "internal")
 	case outcome == maps.CapReached:

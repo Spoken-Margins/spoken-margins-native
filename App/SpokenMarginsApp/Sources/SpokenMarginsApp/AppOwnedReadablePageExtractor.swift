@@ -4,6 +4,8 @@ import WebKit
 
 enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
     case invalidURL
+    /// The page moved to an address that isn't HTTPS while it loaded (#144).
+    case pageLeftHTTPS
     case oversizedHTML
     case tooManyRedirects
     case missingExtractor
@@ -14,6 +16,7 @@ enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .invalidURL: "Article URLs must use HTTPS."
+        case .pageLeftHTTPS: "The article page moved to an address that isn't secure (HTTPS)."
         case .oversizedHTML: "The article exceeds the 1 MB safety limit."
         case .tooManyRedirects: "The article redirected more than five times."
         case .missingExtractor: "The bundled readable-page extractor is unavailable."
@@ -30,12 +33,10 @@ enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
 @MainActor
 final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, ReadablePageExtracting {
     private static let maximumHTMLBytes: Int64 = 1 * 1_024 * 1_024
-    private static let maximumRedirects = 5
     private var webView: WKWebView?
     private var continuation: CheckedContinuation<BrowserTextHandoff, Error>?
-    private var redirectCount = 0
-    private var requestedURL: URL?
-    private(set) var contactedHosts: [String] = []
+    private var navigationRules: ReadablePageNavigationRules?
+    var contactedHosts: [String] { navigationRules?.contactedHosts ?? [] }
     private(set) var lastExtractor: String?
     private let queue = ReadablePageQueue()
     /// Counts pages stopped by the time limit, so a stopped page still compiling its rules gives up.
@@ -83,10 +84,8 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
         self.webView = webView
-        redirectCount = 0
-        requestedURL = url
+        navigationRules = ReadablePageNavigationRules(requestedURL: url)
         lastExtractor = nil
-        contactedHosts = [url.host!.lowercased()]
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30))
@@ -114,23 +113,25 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction
     ) async -> WKNavigationActionPolicy {
-        guard navigationAction.targetFrame?.isMainFrame != false,
-              let url = navigationAction.request.url,
-              url.scheme?.lowercased() == "https",
-              let host = url.host?.lowercased() else {
-            finish(.failure(ReadablePageExtractionError.invalidURL))
+        guard var rules = navigationRules else { return .cancel }
+        let decision = rules.decide(
+            url: navigationAction.request.url,
+            targetIsMainFrame: navigationAction.targetFrame?.isMainFrame,
+            isRedirect: navigationAction.navigationType == .other
+        )
+        navigationRules = rules
+        switch decision {
+        case .load:
+            return .allow
+        case .skipFrame:
+            return .cancel
+        case .refuse(.pageLeftHTTPS):
+            finish(.failure(ReadablePageExtractionError.pageLeftHTTPS))
+            return .cancel
+        case .refuse(.tooManyRedirects):
+            finish(.failure(ReadablePageExtractionError.tooManyRedirects))
             return .cancel
         }
-        if !contactedHosts.contains(host) { contactedHosts.append(host) }
-        if navigationAction.navigationType == .other, url != requestedURL {
-            redirectCount += 1
-            requestedURL = url
-            if redirectCount > Self.maximumRedirects {
-                finish(.failure(ReadablePageExtractionError.tooManyRedirects))
-                return .cancel
-            }
-        }
-        return .allow
     }
 
     nonisolated static func failingHTTPStatus(_ response: URLResponse) -> Int? {
