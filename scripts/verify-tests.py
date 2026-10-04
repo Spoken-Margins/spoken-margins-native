@@ -328,11 +328,15 @@ def ops_test_folders(root=None):
 
 
 def stop_process_group(process):
-    os.killpg(process.pid, signal.SIGTERM)
+    # The group may already be gone (or, on macOS, hold only zombies, which gives EPERM); that
+    # must not replace the error that brought us here.
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(process.pid, signal.SIGTERM)
     try:
         process.wait(timeout=10)
     except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(process.pid, signal.SIGKILL)
         process.wait()
 
 

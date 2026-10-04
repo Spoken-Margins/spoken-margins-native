@@ -125,6 +125,11 @@ class VerificationTests(unittest.TestCase):
             with self.assertRaises(ProcessLookupError):
                 os.kill(int(pid_file.read_text()), 0)
 
+    def test_stopping_a_command_that_already_exited_does_not_raise(self):
+        process = subprocess.Popen([sys.executable, '-c', 'pass'], start_new_session=True)
+        process.wait()
+        verification.stop_process_group(process)  # its group is gone; the runner's own error must survive
+
     def test_the_host_plan_runs_each_ops_folder_s_own_tests(self):
         # ops/dial and ops/codex carry their own Python tests, which no lane plan ran.
         with tempfile.TemporaryDirectory() as temporary:

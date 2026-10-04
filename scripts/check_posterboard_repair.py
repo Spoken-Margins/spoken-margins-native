@@ -95,7 +95,7 @@ def main():
     reports = Path.home() / 'Library/Logs/DiagnosticReports'
     if not reports.is_dir():
         parser.error('Crash-report directory is unavailable; refusing an unobserved boot.')
-    baseline = {p: (p.stat().st_mtime_ns, p.stat().st_size) for p in reports.glob('*.ips')}
+    baseline = crash_snapshot(reports)
     store = Path(selected[0]['dataPath']) / 'Library/Application Support/PRBPosterExtensionDataStore'
     args.output.mkdir(parents=True, exist_ok=False)
     process = None
