@@ -842,6 +842,8 @@ final class Gate1AppModel: ObservableObject {
     }
     @Published private(set) var followedSourceEntries: [FeedEntry] = [] { didSet { cachedQuickAddCandidates = nil } }
     @Published private(set) var feedSubscriptions: [FeedSubscription] = [] { didSet { cachedQuickAddCandidates = nil } }
+    /// Following rows' show artwork (#773), from the coordinator's side file.
+    @Published private(set) var followingArtwork = FollowingArtworkCache()
     @Published private(set) var isRefreshingFollowedSources = false
     @Published private(set) var importingFollowedSourceEntryIds: Set<String> = []
     @Published private(set) var isFollowingSelectedSource = false
@@ -15484,7 +15486,10 @@ final class Gate1AppModel: ObservableObject {
             ledger: ledger,
             applicationSupportDirectory: support
         )
-        followedSourceCoordinator = FollowedSourceCoordinator(repository: store)
+        followedSourceCoordinator = FollowedSourceCoordinator(
+            repository: store,
+            artworkFile: support.appending(path: FollowingArtworkCache.fileName)
+        )
         guidedOnboardingCoordinator = GuidedOnboardingCoordinator(
             directory: support.appending(path: "GuidedOnboarding", directoryHint: .isDirectory),
             ledger: ledger
@@ -15939,11 +15944,18 @@ final class Gate1AppModel: ObservableObject {
             for entry in await coordinator.refreshStale(force: force) { importFollowedSourceEntry(entry) } // "Add every new item" (#466)
             feedSubscriptions = try store.loadFeedSubscriptions()
             followedSourceEntries = try await coordinator.entries()
+            followingArtwork = await coordinator.followingArtwork()
             diagnostics["followedSourceCount"] = "\(feedSubscriptions.count)"
             diagnostics["followedSourceEntryCount"] = "\(followedSourceEntries.count)"
         } catch {
             diagnostics["followedSourceRefresh"] = "failed:\(String(describing: type(of: error)))"
         }
+    }
+
+    /// Following shows the catalog's artwork for followed shows it lists (#773).
+    func recordFollowingCatalogArtwork(_ catalog: SourceCatalog?) async {
+        guard let catalog, let coordinator = followedSourceCoordinator else { return }
+        followingArtwork = await coordinator.followingArtwork(catalog: catalog)
     }
 
     func dismissFollowedSourceEntry(id: String) {
