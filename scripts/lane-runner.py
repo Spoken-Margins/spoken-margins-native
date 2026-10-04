@@ -1154,6 +1154,10 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
         ran.append(f'{", ".join(s.split("/", 1)[1] for s in selectors)} ({summary["passed"]} passed'
                    f'{", " + str(len(summary["failed"])) + " failed" if summary["failed"] else ""}'
                    f'; {plan} plan, build and tests, {duration(took)})')
+        attachments = [a for step in manifest.get('steps', []) for a in step.get('attachments', [])]
+        if attachments:  # older PR checkouts have no exporter/helper; load only when evidence exists
+            from lane_xcresult_attachments import report_lines
+            details.extend(report_lines(attachments))
         for test in summary['failed'][:10]:
             details.append(f'{test} — expected: passes. observed: failed. evidence: {output}/tests.xcresult')
         if summary['out_of_time']:
