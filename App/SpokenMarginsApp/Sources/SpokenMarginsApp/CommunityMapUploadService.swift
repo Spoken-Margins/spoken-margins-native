@@ -73,8 +73,9 @@ final class CommunityMapUploadService {
         // Chapters embedded in the audio are imported only once the file is read, which can
         // finish after the transcript is attached, so they are read here too.
         let audioFile = localAudio(itemId)
-        // The source transcriber listens in the device's language (`SpeechTranscriber` with `Locale.current`).
-        let language = Locale.current.identifier(.bcp47)
+        // Transcripts don't record their language (a publisher's VTT can be in any language), and
+        // the device's would mislabel them, so the server is told it's unknown.
+        let language = "und"
         let bridge = self.bridge
         let uploader = self.uploader
         inFlight.insert(episodeKey)

@@ -284,7 +284,8 @@ public struct CommunityMapTranscriptUpload: Codable, Equatable, Sendable {
 
     /// A publisher's transcript can read "visit https://example.com/promo"; the body carries no
     /// URL of any kind, so web addresses are cut out of the text and the spaces around them
-    /// closed up: anything with a scheme or `www.`, and any run of dotted words with no space
+    /// closed up: anything with a scheme (`https://`, `tel:`, `mailto:` and the like) or `www.`,
+    /// email addresses, and any run of dotted words with no space
     /// after a dot whose last part has two or more letters ("example.ai", "shop.example.co.uk",
     /// "example.net/deal"). Abbreviations whose parts are single letters ("e.g.", "U.S.",
     /// "Ph.D.") and numbers ("3.30", "2.5") are kept.
@@ -295,7 +296,7 @@ public struct CommunityMapTranscriptUpload: Codable, Equatable, Sendable {
     }
 
     private static let linkPattern = try! NSRegularExpression(
-        pattern: #"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.)\S+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/\S*|\b)"#
+        pattern: #"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.|(?:tel|mailto|sms|file|data|urn|geo|magnet|callto|facetime|skype|bitcoin):)\S+|\S+@(?:[a-z0-9-]+\.)+[a-z]{2,}\S*|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/\S*|\b)"#
     )
 
     public func encoded() throws -> Data {
@@ -393,8 +394,12 @@ public struct CommunityMapUploader: Sendable {
         guard chapters != nil else {
             return save(.failed("chapters_unchecked"), episodeKey: episodeKey, item: item, previous: previous, now: now, repository: repository)
         }
-        // Recorded before any request, so an app that is closed mid-upload still retries it.
-        _ = save(.failed("interrupted"), episodeKey: episodeKey, item: item, previous: previous, now: now, repository: repository)
+        // Recorded before any request, so an app that is closed mid-upload still retries it. If
+        // the attempt can't be recorded (storage full), nothing is sent: an unrecorded attempt
+        // would let the next launch send again, past the once-a-day limit.
+        guard (try? repository.saveCommunityMapUpload(record(.failed("interrupted"), episodeKey: episodeKey, item: item, previous: previous, now: now))) != nil else {
+            return .failed("storage")
+        }
         guard (await mapsState()).isOn else {
             return save(.failed(CommunityMapUploadSkipReason.mapsOff.rawValue), episodeKey: episodeKey, item: item, previous: previous, now: now, repository: repository)
         }
@@ -422,18 +427,27 @@ public struct CommunityMapUploader: Sendable {
         now: Date,
         repository: CommunityMapUploadRepository
     ) -> CommunityMapUploadOutcome {
+        try? repository.saveCommunityMapUpload(record(outcome, episodeKey: episodeKey, item: item, previous: previous, now: now))
+        return outcome
+    }
+
+    private func record(
+        _ outcome: CommunityMapUploadOutcome,
+        episodeKey: String,
+        item: Item,
+        previous: CommunityMapUploadRecord?,
+        now: Date
+    ) -> CommunityMapUploadRecord {
         let state: CommunityMapUploadRecord.State
         switch outcome {
         case .uploaded: state = .uploaded
         case .rejected: state = .rejected
         case .failed, .skipped: state = .failed
         }
-        let record = CommunityMapUploadRecord(
+        return CommunityMapUploadRecord(
             id: episodeKey, itemId: item.id, state: state, attempts: (previous?.attempts ?? 0) + 1,
             lastAttemptAt: now, lastOutcome: outcome.diagnostic
         )
-        try? repository.saveCommunityMapUpload(record)
-        return outcome
     }
 
     /// A retry that finds the episode no longer qualifies (chapters found in the downloaded file,

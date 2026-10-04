@@ -328,6 +328,8 @@ final class CommunityMapUploadTests: XCTestCase {
                                      text: "Go to BetterHelp.com today or example.co.uk, e.g. Mr. Smith in the U.S. at 3.30."),
                 MediaTimelineSegment(id: "e", startMs: 9_000, endMs: 9_500,
                                      text: "Try example.ai or shop.example.dev; a Ph.D. at 2.5x speed, i.e. 1.5x/day."),
+                MediaTimelineSegment(id: "f", startMs: 9_600, endMs: 9_900,
+                                     text: "Call tel:+15551234567, email hello@example.com or mailto:hi@example.org, open file:/tmp/x. Note: done."),
             ], chapters: [])
         ))
         XCTAssertEqual(upload.segments.map(\.text), [
@@ -335,8 +337,9 @@ final class CommunityMapUploadTests: XCTestCase {
             "Write to podcast:feed or",
             "Go to today or , e.g. Mr. Smith in the U.S. at 3.30.",
             "Try or ; a Ph.D. at 2.5x speed, i.e. 1.5x/day.",
+            "Call email or open Note: done.",
         ])
-        XCTAssertEqual(upload.segments.map(\.startMs), [1_000, 5_000, 7_000, 9_000])
+        XCTAssertEqual(upload.segments.map(\.startMs), [1_000, 5_000, 7_000, 9_000, 9_600])
 
         XCTAssertNil(CommunityMapTranscriptUpload.make(episodeKey: expectedKey, durationMs: 10_000, language: "en",
                                                        timeline: TranscriptTimeline(segments: [], chapters: [])))
@@ -418,6 +421,19 @@ final class CommunityMapUploadTests: XCTestCase {
         let final = try XCTUnwrap(repository.loadCommunityMapUpload(episodeKey: expectedKey))
         XCTAssertEqual(final.state, .uploaded)
         XCTAssertEqual(final.attempts, 1)
+    }
+
+    func testNothingIsSentWhenTheAttemptCanNotBeRecorded() async {
+        // Storage full: an unrecorded attempt would let every launch that day send again.
+        let due = CommunityMapUploadRecord(id: expectedKey, itemId: "item-episode", state: .failed, attempts: 1,
+                                           lastAttemptAt: now.addingTimeInterval(-2 * 86_400), lastOutcome: "failed:503")
+        let posted = PostedBodies()
+        let uploader = CommunityMapUploader { url, body in await posted.append(url, body); return 202 }
+        let outcome = await upload(uploader, repository: FullStorage(record: due))
+        XCTAssertEqual(outcome, .failed("storage"))
+        XCTAssertEqual(outcome.diagnostic, "failed:storage")
+        let postCount = await posted.bodies.count
+        XCTAssertEqual(postCount, 0)
     }
 
     func testAnEpisodeIsHeldUntilItsAudioCanBeCheckedForEmbeddedChapters() async throws {
@@ -542,6 +558,15 @@ private actor PostedBodies {
         urls.append(url)
         bodies.append(body)
     }
+}
+
+/// A store that can read but not write, as when the device's storage is full.
+private struct FullStorage: CommunityMapUploadRepository {
+    let record: CommunityMapUploadRecord
+
+    func saveCommunityMapUpload(_ record: CommunityMapUploadRecord) throws { throw CocoaError(.fileWriteOutOfSpace) }
+    func loadCommunityMapUpload(episodeKey: String) throws -> CommunityMapUploadRecord? { record }
+    func loadCommunityMapUploads() throws -> [CommunityMapUploadRecord] { [record] }
 }
 
 private actor RecordSeen {
