@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -453,6 +454,23 @@ class FinishSelectionTests(unittest.TestCase):
         for at in ('', 'invalid'):
             self.assertFalse(self.eligible(pull(labels=['needs-mac'], comments=[dict(c, createdAt=at)])))
 
+    def test_other_finishers_claims_hold_for_two_hours(self):
+        for text in ('Finisher two taking this.', 'Mac finisher taking this PR.',
+                     'Finisher one taking this.\n\nMerging next first.', '**Mac finisher taking this PR.**'):
+            claim = {'body': text, 'createdAt': '2026-10-01T11:30:00Z'}
+            for trigger in (pull(labels=['needs-mac']), pull(comments=[lane()]), pull(comments=[audit()])):
+                trigger['comments'] += [claim]
+                self.assertEqual(w.finish_eligible(trigger, NOW), (False, w.OTHER_FINISHER_REASON), text)
+            # Exactly two hours old no longer holds.
+            self.assertTrue(self.eligible(pull(labels=['needs-mac'], comments=[dict(claim, createdAt='2026-10-01T11:00:00Z')])))
+            for at in ('', 'invalid'):
+                self.assertFalse(self.eligible(pull(labels=['needs-mac'], comments=[dict(claim, createdAt=at)])))
+        # Codex's own claim, a quoted claim mid-comment, and a hand-off to a finisher do not hold.
+        for text in ('Finisher Codex taking this.\n\nThread "Codex worker 1" finishing #73',
+                     'Note: "Finisher two taking this." was posted yesterday.',
+                     'Handing to the Mac finisher: build fails.'):
+            self.assertTrue(self.eligible(pull(labels=['needs-mac'], comments=[{'body': text, 'createdAt': '2026-10-01T12:30:00Z'}])), text)
+
     def test_newest_audit_must_name_head_and_open_with_findings(self):
         self.assertTrue(self.eligible(pull(comments=[audit()])))
         self.assertFalse(self.eligible(pull(comments=[audit(head='9876543')])))
@@ -593,7 +611,8 @@ class FinishChildTests(unittest.TestCase):
                     now=lambda: NOW, alive=lambda pid: False, echo=False)
         outcome = w.run_finish_child(ops, 1, 73)
         self.assertFalse((self.home / 'slot-1.lock').exists())
-        self.assertTrue(run.has('git', 'worktree', 'remove', '--force'))
+        # A run whose changes couldn't be saved keeps its worktree for a human (#710).
+        self.assertEqual(run.has('git', 'worktree', 'remove', '--force'), outcome != 'kept')
         self.assertFalse(run.has('git', 'branch', '-D'))
         for command in run.calls:
             if command[:2] == ['git', 'push']:
@@ -689,11 +708,16 @@ class FinishChildTests(unittest.TestCase):
 
     def test_real_staging_failure_stops_before_validation_or_push(self):
         outcome, run, data, _ = self.run_finish(checked_text='let anchor = 1\n', stage_failure=True)
-        self.assertEqual(outcome, 'error')
+        # Staging failed, so nothing was saved: the worktree with Codex's edit is kept, not removed (#710).
+        self.assertEqual(outcome, 'kept')
         self.assertFalse(any('verify-tests.py' in ' '.join(c) for c in run.calls))
         self.assertFalse(run.has('git', 'push'))
         self.assertNotIn('automerge', data['labels'])
         self.assertIn('index.lock', run.comments()[-1])
+        kept = next((self.home / 'kept').iterdir())
+        self.assertTrue(kept.name.startswith('pr-73-'))
+        self.assertEqual((kept / 'Playback.swift').read_text(), 'let anchor = 1\n')
+        self.assertIn(f'its worktree is at `{kept}`', run.comments()[-1])
 
     def test_rearmed_or_moved_pr_never_pushes(self):
         for options in ({'rearmed': True}, {'moved': True}):
@@ -770,11 +794,13 @@ class FinishChildTests(unittest.TestCase):
 class FakeRun:
     """Records every command; answers by the first matching rule."""
 
-    def __init__(self, test, wt=None, status='', fast_rc=0, issue_data=None, fail=(), evidence=()):
+    def __init__(self, test, wt=None, status='', fast_rc=0, issue_data=None, fail=(), diff_fails=False,
+                 evidence=()):
         self.test, self.wt, self.status, self.fast_rc = test, wt, status, fast_rc
         self.evidence = evidence  # files the fake fast plan writes before it ends (#707)
         self.issue_data = issue_data or issue(42, title='Fix the thing')
         self.fail = fail
+        self.diff_fails = diff_fails
         self.calls = []
 
     def __call__(self, cmd, cwd=None, timeout=None):
@@ -798,9 +824,18 @@ class FakeRun:
         if cmd[:3] == ['git', 'worktree', 'remove']:
             shutil.rmtree(cmd[-1], ignore_errors=True)
             return w.Result(0)
+        if cmd[:3] == ['git', 'worktree', 'move']:
+            shutil.move(cmd[-2], cmd[-1])
+            return w.Result(0)
         if cmd[:2] == ['git', 'status']:
             return w.Result(0, self.status)
         if cmd[:2] == ['git', 'diff']:
+            if self.diff_fails and '--cached' in cmd:
+                return w.Result(128, '', 'fatal: could not write the patch')
+            output = next((c[len('--output='):] for c in cmd if c.startswith('--output=')), None)
+            if output:  # save_diff: git writes the patch file itself
+                Path(output).write_text('diff --git a/x b/x\n')
+                return w.Result(0)
             return w.Result(0, 'diff --git a/x b/x\n')
         if 'verify-tests.py' in joined:
             # Like verify-tests: evidence goes to --output, else to a folder inside the worktree.
@@ -885,6 +920,34 @@ class ChildTests(unittest.TestCase):
         saved = list((self.home / 'runs').glob('42-*/codex.diff'))
         self.assertEqual([p.read_text() for p in saved], ['diff --git a/x b/x\n'])
         self.assert_cleaned(run)
+
+    def test_a_diff_that_cannot_be_saved_keeps_the_worktree(self):
+        # #710: saving the diff raised, and cleanup then removed the worktree with Codex's finished work.
+        run = FakeRun(self, status='?? Fixture.pdf\n', diff_fails=True)
+        self.assertEqual(self.child(run, fake_codex({'commit-msg.txt': 'x'})), 'kept')
+        kept = next((self.home / 'kept').iterdir())
+        self.assertTrue(kept.name.startswith('42-'))
+        self.assertFalse(run.has('git', 'worktree', 'remove'))
+        self.assertFalse(run.has('git', 'branch', '-D'))
+        self.assertFalse(run.has('git', 'commit'))
+        self.assertFalse((self.home / 'wt-1').exists())
+        self.assertIn(f'its worktree is at `{kept}`', run.comments()[-1])
+        self.assertTrue(run.has('gh', 'issue', 'edit', '42', '-R', w.REPO, '--remove-label', 'in-progress'))
+        self.assertFalse((self.home / 'slot-1.lock').exists())
+
+    def test_a_worktree_that_cannot_be_moved_says_the_slot_will_clear_it(self):
+        class NoMove(FakeRun):
+            def __call__(self, cmd, cwd=None, timeout=None):
+                if [str(c) for c in cmd[:3]] == ['git', 'worktree', 'move']:
+                    self.calls.append([str(c) for c in cmd])
+                    return w.Result(1, '', 'fatal: cannot move')
+                return super().__call__(cmd, cwd=cwd, timeout=timeout)
+        run = NoMove(self, status='?? Fixture.pdf\n', diff_fails=True)
+        with unittest.mock.patch.object(w.os, 'rename', side_effect=OSError('read-only')):
+            self.assertEqual(self.child(run, fake_codex({'commit-msg.txt': 'x'})), 'kept')
+        self.assertIn('the next run in this slot removes it', run.comments()[-1])
+        self.assertTrue((self.home / 'wt-1').exists())
+        self.assertFalse(run.has('git', 'worktree', 'remove'))
 
     def test_empty_diff(self):
         run = FakeRun(self, status='')
@@ -1050,6 +1113,37 @@ class SaveDiffTests(unittest.TestCase):
         self.assertIn('b/Sources/PreparationChunkGate.swift', diff)
         self.assertIn('+struct Gate {}', diff)
         self.assertNotIn('give-up.txt', diff)
+
+
+    def test_saved_diff_keeps_bytes_that_are_not_utf8(self):
+        # #710: a new PDF fixture with byte 0x93 and no NUL is a text diff to Git; decoding it as UTF-8 raised
+        # and the finished run was lost. The saved patch must hold the original bytes and rebuild the file.
+        if not shutil.which('git'):
+            self.skipTest('git not installed')
+        tmp = Path(tempfile.mkdtemp(prefix='cw-git-'))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        wt = tmp / 'wt'
+        wt.mkdir()
+        git = lambda *a, cwd=wt: w.default_run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', *a], cwd=cwd)
+        git('init', '--quiet')
+        (wt / 'README').write_text('base\n')
+        git('add', '-A')
+        git('commit', '--quiet', '-m', 'base')
+        fixture = b'%PDF-1.4\n(\x93A short walk\x94) Tj\n%%EOF\n'
+        (wt / 'Fixture.pdf').write_bytes(fixture)
+        ops = w.Ops(home=tmp, repo_root=tmp, now=lambda: NOW, alive=lambda pid: False, echo=False)
+        w.save_diff(ops, wt, tmp / 'codex.diff')
+        patch = (tmp / 'codex.diff').read_bytes()
+        self.assertIn(b'\x93A short walk\x94', patch)
+        self.assertNotIn('\ufffd'.encode(), patch)
+        fresh = tmp / 'fresh'
+        self.assertEqual(git('clone', '--quiet', str(wt), str(fresh), cwd=tmp).returncode, 0)
+        self.assertEqual(git('apply', str(tmp / 'codex.diff'), cwd=fresh).returncode, 0)
+        self.assertEqual((fresh / 'Fixture.pdf').read_bytes(), fixture)
+
+    def test_command_output_that_is_not_utf8_does_not_raise(self):
+        res = w.default_run([sys.executable, '-c', 'import sys; sys.stdout.buffer.write(b"a\\x93b")'])
+        self.assertEqual((res.returncode, res.stdout), (0, 'a\ufffdb'))
 
 
 class StageChangesTests(unittest.TestCase):

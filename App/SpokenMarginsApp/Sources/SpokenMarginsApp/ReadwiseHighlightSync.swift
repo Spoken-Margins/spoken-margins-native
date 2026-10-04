@@ -59,11 +59,15 @@ final class ReadwiseHighlightSync: ObservableObject {
                 guard let http = response as? HTTPURLResponse else { throw ReadwiseHighlightError.httpStatus(0) }
                 return (data, http)
             }
+            let service = ReadLaterModel.credentialService, account = ReadLaterService.reader.rawValue
             let work = Task.detached(priority: .utility) {
                 let highlights = try ReadwiseHighlightGatherer.highlights(
                     sessions: store.loadSessions(), repository: store, skipping: ledger.sentKeys()
                 )
-                return try await ReadwiseHighlightSyncPass.run(highlights, token: token, client: client, ledger: ledger)
+                // #642: Disconnect (or a new token) ends the pass before its next batch.
+                return try await ReadwiseHighlightSyncPass.run(highlights, token: token, client: client, ledger: ledger) {
+                    KeychainStore.load(service: service, account: account) == $0
+                }
             }
             // stop() cancels the loop; this carries that into the detached pass so no further batch goes out.
             let sent = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }

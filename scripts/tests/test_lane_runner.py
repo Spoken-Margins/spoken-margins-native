@@ -1486,8 +1486,8 @@ class MainFlowTests(unittest.TestCase):
                 self.run_main(github, HEAD, verdict)
             return dict(line.split('=', 1) for line in outputs.read_text().splitlines())
 
-    def test_the_workflow_gets_the_verdict_so_the_check_is_green_only_on_pass(self):
-        # lane.yml's Verdict step fails unless verdict=PASS; reported=true keeps the tidy step quiet.
+    def test_the_workflow_gets_the_verdict_so_the_check_is_red_on_fail(self):
+        # lane.yml's Verdict step fails on verdict=FAIL; reported=true keeps the tidy step quiet.
         for verdict in ('PASS', 'FAIL', 'INCONCLUSIVE'):
             with self.subTest(verdict=verdict):
                 github = FakeGitHub(comments=[comment('/lane T2')])
@@ -1512,8 +1512,42 @@ class MainFlowTests(unittest.TestCase):
         self.assertEqual(workflow.count('lfs: true'), 2)
         self.assertEqual(workflow.count('persist-credentials: false'), 2)
         self.assertIn("if: steps.run.outputs.reported == 'true'", workflow)
-        self.assertIn('if [ "$VERDICT" != PASS ]; then', workflow)
         self.assertIn("if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'", workflow)
+
+    @staticmethod
+    def verdict_steps() -> list[str]:
+        """The shell script of each job's Verdict step in lane.yml."""
+        workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/lane.yml').read_text()
+        scripts = []
+        for step in workflow.split('      - name: Verdict\n')[1:]:
+            lines = []
+            for line in step.split('        run: |\n', 1)[1].splitlines():
+                if line.strip() and not line.startswith(' ' * 10):
+                    break
+                lines.append(line[10:])
+            scripts.append('\n'.join(lines))
+        return scripts
+
+    def test_the_check_is_red_only_on_fail(self):
+        # Project threads wake when a check on their PR fails. A FAIL is the PR's code; an INCONCLUSIVE report
+        # (held for T3, no simulator, XCTest never connected, a flood, a conflict with next) isn't, so its check
+        # stays green with a warning, and the report and the lane:done relabel carry it to the dispatcher.
+        # In 13 hours on 2026-09-30, 29 of the lane's 46 red checks were INCONCLUSIVE, 20 of them held for T3.
+        scripts = self.verdict_steps()
+        self.assertEqual(len(scripts), 2)  # the lane job's and the automerge job's
+        for job, script in zip(('lane', 'automerge'), scripts):
+            for verdict, code, annotation in (('PASS', 0, None), ('INCONCLUSIVE', 0, '::warning title=Lane INCONCLUSIVE'),
+                                              ('FAIL', 1, '::error title=Lane FAIL')):
+                with self.subTest(job=job, verdict=verdict):
+                    # GitHub runs a step's script with bash -e when the step names no shell.
+                    done = subprocess.run(['bash', '-e', '-c', script], env=dict(os.environ, VERDICT=verdict),
+                                          capture_output=True, text=True)
+                    self.assertEqual(done.returncode, code, done.stdout + done.stderr)
+                    self.assertIn(f'Lane verdict: {verdict}', done.stdout)
+                    if annotation:
+                        self.assertIn(annotation, done.stdout)
+                    else:
+                        self.assertNotIn('::', done.stdout)
 
     def run_automerge_main(self, github, verdict='PASS', details=()):
         # run_auto does real git in the runner's tree; here it is faked, so the tree is never touched.
