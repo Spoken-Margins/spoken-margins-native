@@ -11,11 +11,23 @@ extension Gate1AppModel {
             let file = asItem ? try MarginMarkdownShare.file(forItemMargins: margins, engine: engine)
                 : try margins.first.flatMap { try MarginMarkdownShare.file(for: $0, engine: engine) }
             guard let file else { return reportFailure("There's no written or transcribed Margin to share yet.") }
-            // One share sheet at a time, so the previous share's file can go.
-            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MarginMarkdown", isDirectory: true)
-            try? FileManager.default.removeItem(at: directory)
-            url = try MarginMarkdownShare.write(file, under: directory)
+            url = try MarginMarkdownShare.write(file, under: MarginMarkdownShare.shareDirectory)
         }
         return url
+    }
+}
+
+extension MarginMarkdownShare {
+    /// Each share's file sits in its own folder here until its share sheet closes. iPad windows
+    /// can each have a share sheet open, so a new share never clears the others' files.
+    static var shareDirectory: URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("MarginMarkdown", isDirectory: true)
+    }
+
+    /// Removes one share's folder once its sheet has closed. Leaves any other file alone.
+    static func discardShare(_ url: URL) {
+        let folder = url.deletingLastPathComponent()
+        guard folder.deletingLastPathComponent().standardizedFileURL.path == shareDirectory.standardizedFileURL.path else { return }
+        try? FileManager.default.removeItem(at: folder)
     }
 }
