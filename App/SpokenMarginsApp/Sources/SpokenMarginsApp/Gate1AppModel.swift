@@ -2194,6 +2194,7 @@ final class Gate1AppModel: ObservableObject {
             let detail = try loadItemDetail(id: session.itemId, store: store)
             if engine == nil { installEngine(try makeEngine(store: store)) }
             guard let engine else { return false }
+            if blockOfflineEpisodeStart(itemId: session.itemId) { return false }
             // URL registration is separate from selection; the engine owns exact
             // target validation and the reversible playback transaction.
             try prepareSourceMediaPlayback(itemId: session.itemId)
@@ -3769,10 +3770,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func start() {
-        if let message = offlineEpisodeStartBlockedMessage(itemId: activeItemId) {
-            reportFailure(message, itemId: activeItemId)
-            return
-        }
+        guard !blockOfflineEpisodeStart(itemId: activeItemId) else { return }
         guard !requireTermsDecisionBeforePlayback(.startCurrentItem) else { return }
         if !hasActiveSession {
             resetMixWithOtherAudioForNewSession()
@@ -4061,6 +4059,7 @@ final class Gate1AppModel: ObservableObject {
             reportFailure("There is no listening session to resume.")
             return
         }
+        if let itemId = snapshot.itemId, blockOfflineEpisodeStart(itemId: itemId) { return }
         guard !requireTermsDecisionBeforePlayback(.resumeSession(sessionId)) else { return }
         stopSpeechPreviews()
         streamingSpeechQueue.relinquishToCanonicalPlayback()
@@ -5553,6 +5552,8 @@ final class Gate1AppModel: ObservableObject {
 
     func startNewSession(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_new_session") else { return }
+        // Before ending what's playing: a blocked start must not stop a downloaded episode.
+        guard !blockOfflineEpisodeStart(itemId: id) else { return }
         resetMixWithOtherAudioForNewSession()
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         cancelSleepTimer()
@@ -5608,6 +5609,7 @@ final class Gate1AppModel: ObservableObject {
 
     func resumeSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("resume_session") else { return }
+        guard !blockOfflineEpisodeStart(itemId: session.itemId) else { return }
         resetMixWithOtherAudioForNewSession()
         cancelSleepTimer()
         announcedImportedInterjectionIDs.removeAll()
@@ -6221,14 +6223,17 @@ final class Gate1AppModel: ObservableObject {
     }
 
     /// A streamed-only episode started with no signal says so, instead of trying and stalling (#779).
-    private func offlineEpisodeStartBlockedMessage(itemId: String) -> String? {
+    /// Returns true when it reported that and the caller must not start playback.
+    private func blockOfflineEpisodeStart(itemId: String) -> Bool {
         guard connectivity.isOffline,
               let item = try? store?.loadItem(id: itemId),
-              item.media?.sourceType == .remoteStream else { return nil }
-        return OfflinePlayability.episodeStartBlockedMessage(
-            hasSavedAudio: podcastDownloadCoordinator?.validatedLocalURL(for: itemId) != nil,
-            isOffline: true
-        )
+              item.media?.sourceType == .remoteStream,
+              let message = OfflinePlayability.episodeStartBlockedMessage(
+                  hasSavedAudio: podcastDownloadCoordinator?.validatedLocalURL(for: itemId) != nil,
+                  isOffline: true
+              ) else { return false }
+        reportFailure(message, itemId: itemId)
+        return true
     }
 
     func redownloadSelectedPodcast() {

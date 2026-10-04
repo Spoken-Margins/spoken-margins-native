@@ -58,6 +58,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     private let directory: URL
     private let connectivity: ConnectivityMonitor
     private var connectivityObserver: UUID?
+    private var isShutDown = false
     private var cacheLimit: PodcastCacheLimitGB
     private var activeItemId: String?
     private var activeTaskItemIds: Set<String> = []
@@ -145,7 +146,9 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     }
 
     func shutdown() {
-        // The monitor is shared and outlives this coordinator; only stop listening to it.
+        // The monitor is shared and outlives this coordinator; only stop listening to it. A cancelled
+        // private monitor used to make a late start a no-op; isShutDown does that now.
+        isShutDown = true
         if let connectivityObserver { connectivity.removeObserver(connectivityObserver) }
         connectivityObserver = nil
         session.invalidateAndCancel()
@@ -390,7 +393,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     }
 
     private func startNetworkMonitor() {
-        guard connectivityObserver == nil else { return }
+        guard !isShutDown, connectivityObserver == nil else { return }
         connectivityObserver = connectivity.addObserver { [weak self] transport in
             self?.networkChanged(to: transport)
         }
