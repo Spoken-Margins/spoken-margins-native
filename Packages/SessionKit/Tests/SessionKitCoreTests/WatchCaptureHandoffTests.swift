@@ -23,8 +23,8 @@ final class WatchCaptureHandoffTests: XCTestCase {
         )
     }
 
-    private func request(_ id: String = "cap-1", observed: WatchCaptureSource? = nil, generation: Int? = 7) -> WatchCaptureRequest {
-        WatchCaptureRequest(captureId: id, observedSource: observed ?? episode, observedTransportGeneration: generation, requestedAt: t0)
+    private func request(_ id: String = "cap-1", observed: WatchCaptureSource? = nil, generation: Int? = 7, playing: Bool? = true) -> WatchCaptureRequest {
+        WatchCaptureRequest(captureId: id, observedSource: observed ?? episode, observedTransportGeneration: generation, observedPlaying: playing, requestedAt: t0)
     }
 
     func testStartWhilePlayingPausesAndAnchorsExactlyAtThePhonePosition() {
@@ -148,6 +148,33 @@ final class WatchCaptureHandoffTests: XCTestCase {
         XCTAssertEqual(ack.anchor.anchor?.approximateReason, .requestArrivedLate)
     }
 
+    func testWithoutAWatchSnapshotTheAnchorIsNeverExact() {
+        var handoff = WatchCaptureHandoff()
+        let blind = WatchCaptureRequest(captureId: "cap-1", observedSource: nil, observedTransportGeneration: nil, requestedAt: t0)
+        guard case .start(let ack) = handoff.begin(blind, reading: reading(playing: false), now: t0) else {
+            return XCTFail("expected a start")
+        }
+        XCTAssertEqual(ack.anchor.anchor?.precision, .approximate)
+        XCTAssertEqual(ack.anchor.anchor?.approximateReason, .noWatchSnapshot)
+    }
+
+    func testALateRequestIsApproximateWhenPlaybackStoppedWithoutATransportCommand() {
+        // Playing at the press; an interruption stopped it before the queued request arrived.
+        var handoff = WatchCaptureHandoff()
+        let stopped = reading(playing: false, at: 30)
+        guard case .start(let ack) = handoff.begin(request(playing: true), reading: stopped, now: stopped.readAt) else {
+            return XCTFail("expected a start")
+        }
+        XCTAssertEqual(ack.anchor.anchor?.approximateReason, .requestArrivedLate)
+
+        // Paused at the press and still paused: the position can't have moved, so it stays exact.
+        var paused = WatchCaptureHandoff()
+        guard case .start(let pausedAck) = paused.begin(request(playing: false), reading: stopped, now: stopped.readAt) else {
+            return XCTFail("expected a start")
+        }
+        XCTAssertEqual(pausedAck.anchor.anchor?.precision, .exact)
+    }
+
     func testStaleOrMissingPhonePositionNeverFabricatesAnAnchor() {
         var stale = WatchCaptureHandoff()
         guard case .start(let staleAck) = stale.begin(request(), reading: reading(at: 0), now: t0.addingTimeInterval(WatchCaptureHandoff.readingTolerance + 0.5)) else {
@@ -182,7 +209,7 @@ final class WatchCaptureHandoffTests: XCTestCase {
         var handoff = WatchCaptureHandoff()
         _ = handoff.begin(request("lost"), reading: reading(), now: t0)
         let later = t0.addingTimeInterval(WatchCaptureHandoff.openCaptureTimeout + 60)
-        let nextRequest = WatchCaptureRequest(captureId: "cap-2", observedSource: episode, observedTransportGeneration: 7, requestedAt: later)
+        let nextRequest = WatchCaptureRequest(captureId: "cap-2", observedSource: episode, observedTransportGeneration: 7, observedPlaying: false, requestedAt: later)
         let pausedReading = PhonePlaybackReading(source: episode, positionMs: 61_000, isPlaying: false, transportGeneration: 7, readAt: later)
         _ = handoff.begin(nextRequest, reading: pausedReading, now: later)
         XCTAssertEqual(handoff.end(captureId: "cap-2", as: .saved, reading: pausedReading), .resumePlayback)

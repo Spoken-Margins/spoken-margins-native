@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 #if canImport(CryptoKit)
 import CryptoKit
 #else
@@ -78,18 +83,24 @@ public enum WatchMarginStoreError: Error, Equatable {
 
 /// Folder-per-capture storage shared by the Watch outbox and the phone inbox.
 ///
-/// A capture is staged in a hidden folder and renamed into place in one step, so after a crash a
-/// capture is either complete or absent. Leftover staging folders are removed on open.
+/// A capture is staged in a hidden folder, flushed to storage and renamed into place in one step,
+/// so after a crash or power loss a capture is either complete or absent. Staging folders left by
+/// a crash are removed on open once they are older than `abandonedStagingAge`, so a second store
+/// opened on the same folder can't remove a save still in progress. Open one store per folder.
 struct WatchMarginFolderStore<Entry: Codable> {
     static var entryFileName: String { "entry.json" }
+    static var abandonedStagingAge: TimeInterval { 60 }
     let directory: URL
 
-    init(directory: URL) throws {
+    init(directory: URL, now: Date = Date()) throws {
         self.directory = directory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
         for name in names where name.hasPrefix(".staging-") {
-            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+            let url = directory.appendingPathComponent(name)
+            let modified = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate]) as? Date
+            if let modified, now.timeIntervalSince(modified) < Self.abandonedStagingAge { continue }
+            try? FileManager.default.removeItem(at: url)
         }
     }
 
@@ -121,9 +132,15 @@ struct WatchMarginFolderStore<Entry: Codable> {
         let staging = directory.appendingPathComponent(".staging-\(captureId)-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
         do {
-            try FileManager.default.copyItem(at: audio, to: staging.appendingPathComponent(audioFileName))
-            try Self.encoder.encode(entry).write(to: staging.appendingPathComponent(Self.entryFileName), options: .atomic)
+            let audioCopy = staging.appendingPathComponent(audioFileName)
+            let entryFile = staging.appendingPathComponent(Self.entryFileName)
+            try FileManager.default.copyItem(at: audio, to: audioCopy)
+            try Self.encoder.encode(entry).write(to: entryFile, options: .atomic)
+            try Self.flush(audioCopy)
+            try Self.flush(entryFile)
+            try Self.flush(staging)
             try FileManager.default.moveItem(at: staging, to: folder(captureId))
+            try Self.flush(directory)
         } catch {
             try? FileManager.default.removeItem(at: staging)
             throw error
@@ -131,7 +148,18 @@ struct WatchMarginFolderStore<Entry: Codable> {
     }
 
     func write(_ captureId: String, entry: Entry) throws {
-        try Self.encoder.encode(entry).write(to: folder(captureId).appendingPathComponent(Self.entryFileName), options: .atomic)
+        let file = folder(captureId).appendingPathComponent(Self.entryFileName)
+        try Self.encoder.encode(entry).write(to: file, options: .atomic)
+        try Self.flush(file)
+        try Self.flush(folder(captureId))
+    }
+
+    /// Forces a file's or folder's contents to storage, so "Saved" survives the Watch powering off.
+    static func flush(_ url: URL) throws {
+        let descriptor = open(url.path, O_RDONLY)
+        guard descriptor >= 0 else { throw CocoaError(.fileReadUnknown, userInfo: [NSFilePathErrorKey: url.path]) }
+        defer { _ = close(descriptor) }
+        guard fsync(descriptor) == 0 else { throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path]) }
     }
 
     func loadAll() throws -> [String: Entry] {
@@ -317,6 +345,11 @@ public final class WatchMarginInbox {
         /// The Margin made from it, once incorporated.
         public var marginId: String?
 
+        /// The id the Margin made from this capture must use. It depends only on the capture, so
+        /// if the phone stops after saving the Margin but before `markIncorporated`, the retry
+        /// saves over the same Margin instead of making a second one.
+        public var marginIdToUse: String { "watch-margin-\(metadata.captureId)" }
+
         public var captureId: String { metadata.captureId }
         var audioFileName: String { "audio.\(metadata.audioFileExtension)" }
     }
@@ -366,17 +399,17 @@ public final class WatchMarginInbox {
         return WatchMarginReceipt(captureId: metadata.captureId, sha256: sha256, status: .stored)
     }
 
-    /// The Margin was made. Returns false if this capture was already incorporated, so the caller
-    /// doesn't make a second one.
+    /// The Margin was saved under the entry's `marginIdToUse`. Returns false if this capture was
+    /// already incorporated, so the caller doesn't make a second one.
     @discardableResult
-    public func markIncorporated(_ captureId: String, marginId: String) throws -> Bool {
+    public func markIncorporated(_ captureId: String) throws -> Bool {
         guard let entry = entries[captureId] else { throw WatchMarginStoreError.unknownCapture(captureId) }
         guard entry.state != .incorporated else { return false }
         try update(captureId) { entry in
             entry.state = .incorporated
             entry.transcriptionAttempts += 1
             entry.lastError = nil
-            entry.marginId = marginId
+            entry.marginId = entry.marginIdToUse
         }
         return true
     }

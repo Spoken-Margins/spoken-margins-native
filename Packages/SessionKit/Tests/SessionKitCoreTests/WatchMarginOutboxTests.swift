@@ -64,6 +64,8 @@ final class WatchMarginOutboxTests: XCTestCase {
         let staging = watchFolder.appendingPathComponent(".staging-cap-9-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         try Data([1, 2, 3]).write(to: staging.appendingPathComponent("audio.m4a"))
+        let crashTime = Date().addingTimeInterval(-120)
+        try FileManager.default.setAttributes([.modificationDate: crashTime], ofItemAtPath: staging.path)
 
         let reopened = try WatchMarginOutbox(directory: watchFolder)
         XCTAssertNil(reopened.entry("cap-9"))
@@ -131,11 +133,11 @@ final class WatchMarginOutboxTests: XCTestCase {
         XCTAssertEqual(again.status, .duplicate)
         XCTAssertEqual(restarted.needingTranscription.map(\.captureId), ["cap-1"])
 
-        XCTAssertTrue(try restarted.markIncorporated("cap-1", marginId: "margin-1"))
-        XCTAssertFalse(try restarted.markIncorporated("cap-1", marginId: "margin-2"), "a second Margin is never made")
+        XCTAssertTrue(try restarted.markIncorporated("cap-1"))
+        XCTAssertFalse(try restarted.markIncorporated("cap-1"), "a second Margin is never made")
         XCTAssertEqual(try restarted.receive(file: try deliveredCopy(of: audio), metadata: metadata).status, .duplicate)
         XCTAssertTrue(restarted.needingTranscription.isEmpty)
-        XCTAssertEqual(try WatchMarginInbox(directory: phoneFolder).entry("cap-1")?.marginId, "margin-1")
+        XCTAssertEqual(try WatchMarginInbox(directory: phoneFolder).entry("cap-1")?.marginId, "watch-margin-cap-1")
 
         // A duplicate receipt still confirms delivery to the Watch.
         XCTAssertTrue(try outbox.apply(again))
@@ -177,9 +179,29 @@ final class WatchMarginOutboxTests: XCTestCase {
         let stored = try XCTUnwrap(restarted.audioURL("cap-1"))
         XCTAssertEqual(try Data(contentsOf: stored), try Data(contentsOf: audio))
 
-        XCTAssertTrue(try restarted.markIncorporated("cap-1", marginId: "margin-1"))
+        XCTAssertTrue(try restarted.markIncorporated("cap-1"))
         XCTAssertEqual(restarted.entry("cap-1")?.transcriptionAttempts, 2)
         XCTAssertTrue(FileManager.default.fileExists(atPath: stored.path), "the original stays after incorporation too")
+    }
+
+    func testAStopBetweenSavingTheMarginAndMarkingItReusesTheSameMarginId() throws {
+        let outbox = try WatchMarginOutbox(directory: watchFolder)
+        try outbox.save(captureId: "cap-1", recording: try recording(), durationMs: 3_000, recordedAt: recordedAt, anchor: anchor)
+        let (audio, metadata) = try outbox.beginTransfer("cap-1")
+        let inbox = try WatchMarginInbox(directory: phoneFolder)
+        _ = try inbox.receive(file: try deliveredCopy(of: audio), metadata: metadata)
+        let firstTry = try XCTUnwrap(inbox.entry("cap-1")?.marginIdToUse)
+        // The phone saved the Margin under firstTry, then stopped before markIncorporated.
+        let restarted = try WatchMarginInbox(directory: phoneFolder)
+        XCTAssertEqual(restarted.needingTranscription.map(\.marginIdToUse), [firstTry], "the retry saves over the same Margin")
+    }
+
+    func testAnotherStoreOpeningTheFolderLeavesARecentSaveInProgressAlone() throws {
+        _ = try WatchMarginOutbox(directory: watchFolder)
+        let inProgress = watchFolder.appendingPathComponent(".staging-cap-5-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: inProgress, withIntermediateDirectories: true)
+        _ = try WatchMarginOutbox(directory: watchFolder)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: inProgress.path))
     }
 
     func testSavingTheSameCaptureTwiceKeepsTheFirstRecording() throws {

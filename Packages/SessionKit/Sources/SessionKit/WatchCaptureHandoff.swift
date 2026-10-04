@@ -40,14 +40,25 @@ public struct WatchCaptureRequest: Codable, Equatable, Sendable {
     public var captureId: String
     /// What the Watch last saw playing, from the phone's snapshot, if it saw anything.
     public var observedSource: WatchCaptureSource?
-    /// The phone's transport generation in that snapshot.
+    /// The phone's transport generation in that snapshot. Without it nothing shows that playback
+    /// stayed put between the press and the reading, so the anchor can't be exact.
     public var observedTransportGeneration: Int?
+    /// Whether that snapshot showed playback running. Nil counts as running.
+    public var observedPlaying: Bool?
+    /// The Watch's clock. Paired devices keep close time; a skewed clock can hide lateness.
     public var requestedAt: Date
 
-    public init(captureId: String, observedSource: WatchCaptureSource?, observedTransportGeneration: Int?, requestedAt: Date) {
+    public init(
+        captureId: String,
+        observedSource: WatchCaptureSource?,
+        observedTransportGeneration: Int?,
+        observedPlaying: Bool? = nil,
+        requestedAt: Date
+    ) {
         self.captureId = captureId
         self.observedSource = observedSource
         self.observedTransportGeneration = observedTransportGeneration
+        self.observedPlaying = observedPlaying
         self.requestedAt = requestedAt
     }
 }
@@ -67,6 +78,8 @@ public struct WatchCaptureAnchor: Codable, Equatable, Sendable {
         /// Playback ran on for longer than `WatchCaptureHandoff.lateRequestTolerance` before the
         /// request arrived, so the reading is later than the press.
         case requestArrivedLate
+        /// The Watch had no snapshot from the phone, so nothing shows playback stayed put.
+        case noWatchSnapshot
     }
 
     public var source: WatchCaptureSource
@@ -266,10 +279,16 @@ public struct WatchCaptureHandoff: Sendable {
         if let observed = request.observedSource, observed != source {
             return .unavailable(.sourceChanged)
         }
-        if let observedGeneration = request.observedTransportGeneration, observedGeneration != reading.transportGeneration {
+        guard let observedGeneration = request.observedTransportGeneration else {
+            return .anchored(WatchCaptureAnchor(source: source, positionMs: positionMs, precision: .approximate, approximateReason: .noWatchSnapshot))
+        }
+        if observedGeneration != reading.transportGeneration {
             return .anchored(WatchCaptureAnchor(source: source, positionMs: positionMs, precision: .approximate, approximateReason: .transportChangedDuringRequest))
         }
-        if reading.isPlaying, reading.readAt.timeIntervalSince(request.requestedAt) > Self.lateRequestTolerance {
+        // Playback may have run on and then stopped without a transport command (an interruption,
+        // the item ending), so lateness counts whenever it was running at the press or now.
+        let mayHaveRunOn = reading.isPlaying || request.observedPlaying != false
+        if mayHaveRunOn, reading.readAt.timeIntervalSince(request.requestedAt) > Self.lateRequestTolerance {
             return .anchored(WatchCaptureAnchor(source: source, positionMs: positionMs, precision: .approximate, approximateReason: .requestArrivedLate))
         }
         return .anchored(WatchCaptureAnchor(source: source, positionMs: positionMs, precision: .exact))
