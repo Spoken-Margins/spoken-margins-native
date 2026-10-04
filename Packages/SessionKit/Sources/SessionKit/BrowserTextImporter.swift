@@ -31,6 +31,18 @@ public struct BrowserTextImporter: Sendable {
                 try repository.saveItem(item)
                 if let map { try repository.saveListeningMap(map) }
                 if let document, let store = repository as? any StructuredDocumentRepository {
+                    // An item with a document is spoken through it, so preparation of its
+                    // plain text can't commit any more; retire it as an upgrade does, or its
+                    // job is picked again forever. This is the identical-text re-import, whose
+                    // positions don't move (#344 audit 4).
+                    if try store.loadStructuredDocument(itemId: item.id) == nil {
+                        for manifest in try repository.loadPreparedAudioManifests(itemId: item.id) {
+                            try repository.deletePreparedAudioManifest(id: manifest.id)
+                        }
+                        for job in try repository.loadAudioPreparationJobs() where job.itemId == item.id {
+                            try repository.deleteAudioPreparationJob(id: job.id)
+                        }
+                    }
                     try store.saveStructuredDocument(document, itemId: item.id)
                 }
             }

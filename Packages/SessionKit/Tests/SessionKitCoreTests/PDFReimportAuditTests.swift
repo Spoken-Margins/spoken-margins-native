@@ -206,6 +206,25 @@ final class PDFReimportAuditTests: XCTestCase {
         XCTAssertEqual(try store.loadStructuredDocument(itemId: item.id), document)
         XCTAssertEqual(try store.loadSession(id: session.id)?.position.charOffset, document.text.range(of: "We measured").map { document.text.distance(from: document.text.startIndex, to: $0.lowerBound) })
     }
+
+    func testIdenticalTextReimportRetiresPlainTextPreparation() throws {
+        // #344 audit 4 on 921487b: adopting a document without a text change kept the
+        // plain text's preparation, which can no longer commit, so its job ran forever.
+        let path = FileManager.default.temporaryDirectory.appending(path: "audit-\(UUID()).sqlite")
+        defer { try? FileManager.default.removeItem(at: path) }
+        let store = try SQLiteSessionStore(path: path.path)
+        let engine = engine(store)
+        let old = try engine.importBrowserTextInBackground(handoff(document.text))
+        XCTAssertEqual(old.text, document.text, "exercise an identical-text re-import")
+        let prepared = manifest(old)
+        try store.savePreparedAudioManifest(prepared)
+        try store.saveAudioPreparationJob(.init(id: "job", itemId: old.id, manifestId: prepared.id, policy: .whileCharging))
+        let reimported = try engine.importBrowserTextInBackground(handoff(document.text), structuredDocument: document)
+        XCTAssertEqual(reimported.id, old.id)
+        XCTAssertEqual(try store.loadStructuredDocument(itemId: old.id), document)
+        XCTAssertTrue(try store.loadPreparedAudioManifests(itemId: old.id).isEmpty)
+        XCTAssertTrue(try store.loadAudioPreparationJobs().isEmpty)
+    }
 }
 
 private final class ThreadCheckingRepository: InMemorySessionRepository, @unchecked Sendable {
