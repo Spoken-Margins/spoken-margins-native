@@ -24,7 +24,7 @@ struct ExperienceRecordingView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     status
                     recordingTime
-                    anchor
+                    if !showsMicrophonePrimer { anchor }
                     feedback
                 }
                 .padding(24)
@@ -32,7 +32,10 @@ struct ExperienceRecordingView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) { finishControl.padding(24) }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            // While the microphone line is up, VoiceOver goes from the line straight to Continue (#783).
+            finishControl.padding(24).accessibilityHidden(showsMicrophonePrimer)
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) { actionDock }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("recording.screen")
@@ -134,7 +137,11 @@ struct ExperienceRecordingView: View {
     private var actionDock: some View {
         VStack(spacing: 8) {
             if showsMicrophonePrimer {
-                Button(action: model.continueMicrophonePrimer) {
+                Button {
+                    // The second tap of a double tap on Add a Margin must not skip the line (#148).
+                    guard saveTapGuard.accepts(tapAt: Date()) else { return }
+                    model.continueMicrophonePrimer()
+                } label: {
                     Text("Continue")
                         .frame(maxWidth: .infinity, minHeight: 52)
                 }
