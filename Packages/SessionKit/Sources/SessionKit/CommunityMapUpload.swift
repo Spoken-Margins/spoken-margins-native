@@ -41,7 +41,8 @@ public struct CommunityMapUploadRecord: Codable, Equatable, Sendable {
     public enum State: String, Codable, Equatable, Sendable {
         /// The server took it (202) or already has a map (200). Never sent again.
         case uploaded
-        /// Offline, busy, rate-limited, switched off or at the spend cap. Retried after a day.
+        /// Offline, busy, rate-limited, switched off, at the spend cap, or the audio file wasn't
+        /// there to check for embedded chapters. Retried after a day.
         case failed
         /// The server refused the body (4xx other than 429). Sending it again won't help.
         case rejected
@@ -77,6 +78,7 @@ public enum CommunityMapUploadSkipReason: String, Equatable, Sendable {
     case mapsOff = "maps_off"
     case notPodcastEpisode = "not_podcast_episode"
     case privateLink = "private_link"
+    case unverifiedFeed = "unverified_feed"
     case noEpisodeKey = "no_episode_key"
     case partialTranscript = "partial_transcript"
     case untimedTranscript = "untimed_transcript"
@@ -103,11 +105,12 @@ public enum CommunityMapUploadPolicy {
     static let maximumSegmentSpacingMs = 120_000
     static let maximumGapMs = 300_000
 
-    /// Every rule from #552, in the order a listener would care about: consent first, then the
-    /// owner's switch, then what the episode is, then whether this transcript is worth sending.
+    /// Every rule from #552 that the phone can check on its own: consent first, then what the
+    /// episode is, then whether this transcript is worth sending. The owner's switch is read
+    /// afterwards by `CommunityMapUploader`, so a phone asks for the server config only when it
+    /// has something to send.
     public static func decide(
         optedIn: Bool,
-        mapsState: ServerFeatureState,
         item: Item,
         timeline: TranscriptTimeline,
         hasPublisherChapters: Bool,
@@ -115,9 +118,9 @@ public enum CommunityMapUploadPolicy {
         now: Date
     ) -> CommunityMapUploadDecision {
         guard optedIn else { return .skip(.optedOut) }
-        guard mapsState.isOn else { return .skip(.mapsOff) }
         guard isPodcastEpisode(item) else { return .skip(.notPodcastEpisode) }
         guard linksArePublic(item) else { return .skip(.privateLink) }
+        guard feedIsVerified(item) else { return .skip(.unverifiedFeed) }
         guard let episodeKey = CommunityMapEpisodeKey.key(for: item) else { return .skip(.noEpisodeKey) }
         let durationMs = durationMs(item: item, timeline: timeline)
         guard hasRealTiming(timeline, durationMs: durationMs) else { return .skip(.untimedTranscript) }
@@ -151,6 +154,14 @@ public enum CommunityMapUploadPolicy {
     public static func linksArePublic(_ item: Item) -> Bool {
         let links = [item.media?.url, item.sourceURL, item.externalReference].compactMap { $0 }
         return links.allSatisfy { ShareableLinkPolicy.shareableLink($0) != nil }
+    }
+
+    /// The episode's feed must be known, not just its audio link: a private feed can serve its
+    /// audio from a public-looking address. Items added from a followed show or a feed link
+    /// store the feed as `sourceURL`; ones without it never upload.
+    public static func feedIsVerified(_ item: Item) -> Bool {
+        guard let feed = item.sourceURL?.trimmingCharacters(in: .whitespacesAndNewlines), !feed.isEmpty else { return false }
+        return ShareableLinkPolicy.shareableLink(feed) != nil
     }
 
     /// Whether publisher chapters are stored for the item, as a map from
@@ -219,14 +230,14 @@ public struct CommunityMapTranscriptUpload: Codable, Equatable, Sendable {
     public var language: String
     public var segments: [Segment]
 
-    /// Builds a body the server accepts, or nil when the transcript can't make one. Segments
-    /// are sorted, ones sharing a start are joined so starts strictly increase, and long
-    /// transcripts are merged into at most `maximumSegments` runs.
+    /// Builds a body the server accepts, or nil when the transcript can't make one. Links are
+    /// removed from the text, segments are sorted, ones sharing a start are joined so starts
+    /// strictly increase, and long transcripts are merged into at most `maximumSegments` runs.
     public static func make(episodeKey: String, durationMs: Int, language: String, timeline: TranscriptTimeline) -> Self? {
         guard durationMs > 0, durationMs <= maximumDurationMs else { return nil }
         var segments: [Segment] = []
         for source in timeline.segments.sorted(by: { $0.startMs < $1.startMs }) {
-            let text = source.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = withoutLinks(source.text)
             guard !text.isEmpty else { continue }
             let start = min(max(0, source.startMs), durationMs)
             let end = min(max(start, source.endMs), maximumDurationMs)
@@ -252,6 +263,19 @@ public struct CommunityMapTranscriptUpload: Codable, Equatable, Sendable {
         guard let body = try? upload.encoded(), body.count <= maximumBytes else { return nil }
         return upload
     }
+
+    /// A publisher's transcript can read "visit https://example.com/promo"; the body carries no
+    /// URL of any kind, so web addresses (with a scheme, `www.`, or a domain followed by a path)
+    /// are cut out of the text and the spaces around them closed up.
+    static func withoutLinks(_ text: String) -> String {
+        let range = NSRange(text.startIndex..., in: text)
+        let stripped = linkPattern.stringByReplacingMatches(in: text, range: range, withTemplate: " ")
+        return stripped.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    private static let linkPattern = try! NSRegularExpression(
+        pattern: #"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.)\S+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}/\S*"#
+    )
 
     public func encoded() throws -> Data {
         let encoder = JSONEncoder()
@@ -299,25 +323,34 @@ public struct CommunityMapUploader: Sendable {
         self.post = post
     }
 
-    /// Uploads the transcript once if every rule allows it, and records the attempt. The server
-    /// switch is read only after the listener has opted in, so an opted-out phone sends nothing,
-    /// not even a config request. Never throws: failures are recorded and shown in diagnostics.
+    /// Uploads the transcript once if every rule allows it, and records the attempt. Never
+    /// throws: failures are recorded and shown in diagnostics.
+    ///
+    /// - `optedIn` is read first and again just before the body is sent, so turning the setting
+    ///   off while the server config loads still stops the upload.
+    /// - `publisherChapters` answers whether the publisher has chapters, or nil when that can't be
+    ///   checked yet (the audio file isn't on the phone to read embedded chapters from).
+    /// - `mapsState` is read only for an otherwise eligible episode, so an opted-out phone, or one
+    ///   with nothing to send, makes no request at all.
+    ///
+    /// An eligible episode held back by something that can change (no file to check, maps off,
+    /// no config) is recorded as failed, so the app tries it again a day later.
     public func uploadIfEligible(
         item: Item,
         timeline: TranscriptTimeline,
-        hasPublisherChapters: Bool,
-        optedIn: Bool,
         language: String,
         repository: CommunityMapUploadRepository,
         now: Date = Date(),
+        optedIn: @Sendable () async -> Bool,
+        publisherChapters: @Sendable () async -> Bool?,
         mapsState: @Sendable () async -> ServerFeatureState
     ) async -> CommunityMapUploadOutcome {
-        guard optedIn else { return .skipped(.optedOut) }
-        let serverState = await mapsState()
+        guard await optedIn() else { return .skipped(.optedOut) }
         let previous = CommunityMapEpisodeKey.key(for: item).flatMap { try? repository.loadCommunityMapUpload(episodeKey: $0) }
+        let chapters = await publisherChapters()
         let decision = CommunityMapUploadPolicy.decide(
-            optedIn: optedIn, mapsState: serverState, item: item, timeline: timeline,
-            hasPublisherChapters: hasPublisherChapters, previous: previous, now: now
+            optedIn: true, item: item, timeline: timeline,
+            hasPublisherChapters: chapters ?? false, previous: previous, now: now
         )
         guard case .upload(let episodeKey) = decision else {
             if case .skip(let reason) = decision { return .skipped(reason) }
@@ -330,18 +363,26 @@ public struct CommunityMapUploader: Sendable {
         }
         let outcome: CommunityMapUploadOutcome
         let recordState: CommunityMapUploadRecord.State
-        do {
-            let status = try await post(url, body)
-            switch status {
-            case 200, 202:
-                (outcome, recordState) = (.uploaded(status: status), .uploaded)
-            case 400..<500 where status != 429:
-                (outcome, recordState) = (.rejected(status: status), .rejected)
-            default:
-                (outcome, recordState) = (.failed(String(status)), .failed)
+        if chapters == nil {
+            (outcome, recordState) = (.failed("chapters_unchecked"), .failed)
+        } else if !(await mapsState()).isOn {
+            (outcome, recordState) = (.failed(CommunityMapUploadSkipReason.mapsOff.rawValue), .failed)
+        } else if !(await optedIn()) {
+            return .skipped(.optedOut)
+        } else {
+            do {
+                let status = try await post(url, body)
+                switch status {
+                case 200, 202:
+                    (outcome, recordState) = (.uploaded(status: status), .uploaded)
+                case 400..<500 where status != 429:
+                    (outcome, recordState) = (.rejected(status: status), .rejected)
+                default:
+                    (outcome, recordState) = (.failed(String(status)), .failed)
+                }
+            } catch {
+                (outcome, recordState) = (.failed("network"), .failed)
             }
-        } catch {
-            (outcome, recordState) = (.failed("network"), .failed)
         }
         let record = CommunityMapUploadRecord(
             id: episodeKey, itemId: item.id, state: recordState, attempts: (previous?.attempts ?? 0) + 1,

@@ -35,7 +35,6 @@ final class CommunityMapUploadTests: XCTestCase {
 
     private func decide(
         optedIn: Bool = true,
-        mapsState: ServerFeatureState = .on,
         item: Item? = nil,
         timeline: TranscriptTimeline? = nil,
         hasPublisherChapters: Bool = false,
@@ -43,8 +42,25 @@ final class CommunityMapUploadTests: XCTestCase {
         at time: Date? = nil
     ) -> CommunityMapUploadDecision {
         CommunityMapUploadPolicy.decide(
-            optedIn: optedIn, mapsState: mapsState, item: item ?? episode(), timeline: timeline ?? fullTranscript(),
+            optedIn: optedIn, item: item ?? episode(), timeline: timeline ?? fullTranscript(),
             hasPublisherChapters: hasPublisherChapters, previous: previous, now: time ?? now
+        )
+    }
+
+    /// Runs the uploader the way the app does, with each answer it asks for supplied here.
+    private func upload(
+        _ uploader: CommunityMapUploader,
+        item: Item? = nil,
+        timeline: TranscriptTimeline? = nil,
+        repository: CommunityMapUploadRepository,
+        at time: Date? = nil,
+        optedIn: @escaping @Sendable () async -> Bool = { true },
+        publisherChapters: @escaping @Sendable () async -> Bool? = { false },
+        mapsState: @escaping @Sendable () async -> ServerFeatureState = { .on }
+    ) async -> CommunityMapUploadOutcome {
+        await uploader.uploadIfEligible(
+            item: item ?? episode(), timeline: timeline ?? fullTranscript(), language: "en", repository: repository,
+            now: time ?? now, optedIn: optedIn, publisherChapters: publisherChapters, mapsState: mapsState
         )
     }
 
@@ -60,10 +76,22 @@ final class CommunityMapUploadTests: XCTestCase {
         XCTAssertEqual(decide(optedIn: false), .skip(.optedOut))
     }
 
-    func testNothingUploadsWhileTheMapsServiceIsOff() {
-        XCTAssertEqual(decide(mapsState: .off(.switchedOff)), .skip(.mapsOff))
-        XCTAssertEqual(decide(mapsState: .off(.noConfig)), .skip(.mapsOff))
-        XCTAssertEqual(decide(mapsState: .off(.staleConfig)), .skip(.mapsOff))
+    func testNothingUploadsWhileTheMapsServiceIsOffAndTheEpisodeIsTriedAgainADayLater() async throws {
+        for state: ServerFeatureState in [.off(.switchedOff), .off(.noConfig), .off(.staleConfig)] {
+            let repository = InMemorySessionRepository()
+            let posted = PostedBodies()
+            let uploader = CommunityMapUploader { url, body in await posted.append(url, body); return 202 }
+            let held = await upload(uploader, repository: repository, mapsState: { state })
+            XCTAssertEqual(held, .failed("maps_off"))
+            XCTAssertEqual(try repository.loadCommunityMapUpload(episodeKey: expectedKey)?.state, .failed)
+            let postCount = await posted.bodies.count
+            XCTAssertEqual(postCount, 0)
+            // Kept for the app's daily retry, which sends it once the switch is on.
+            let records = try repository.loadCommunityMapUploads()
+            XCTAssertEqual(CommunityMapUploadPolicy.dueForRetry(records, now: now.addingTimeInterval(86_400)).map(\.itemId), ["item-episode"])
+            let nextDay = await upload(uploader, repository: repository, at: now.addingTimeInterval(86_400))
+            XCTAssertEqual(nextDay, .uploaded(status: 202))
+        }
     }
 
     func testOnlyPodcastEpisodesUpload() {
@@ -84,6 +112,14 @@ final class CommunityMapUploadTests: XCTestCase {
             decide(item: episode(enclosure: "https://cdn.example.com/episode-7.mp3?token=0123456789abcdef0123456789abcdef")),
             .skip(.privateLink)
         )
+    }
+
+    func testAnEpisodeWhoseFeedIsUnknownNeverUploads() {
+        // The audio link alone can look public while the feed it came from is private.
+        XCTAssertEqual(decide(item: episode(feed: nil)), .skip(.unverifiedFeed))
+        var linkless = episode(feed: nil)
+        linkless.externalReference = nil
+        XCTAssertEqual(decide(item: linkless), .skip(.unverifiedFeed))
     }
 
     func testAPartialTranscriptMadeForOneMarginDoesNotCount() {
@@ -191,9 +227,12 @@ final class CommunityMapUploadTests: XCTestCase {
             await posted.append(url, body)
             return 202
         }
+        // A publisher transcript can read out its sponsor's web address.
+        var timeline = fullTranscript()
+        timeline.segments[0].text = "Sponsored by https://sponsor.example.com/code and www.sponsor.example.com, or sponsor.example.com/deal."
         let outcome = await uploader.uploadIfEligible(
-            item: item, timeline: fullTranscript(), hasPublisherChapters: false, optedIn: true,
-            language: "en_US", repository: repository, now: now, mapsState: { .on }
+            item: item, timeline: timeline, language: "en_US", repository: repository, now: now,
+            optedIn: { true }, publisherChapters: { false }, mapsState: { .on }
         )
         XCTAssertEqual(outcome, .uploaded(status: 202))
         let bodies = await posted.bodies
@@ -216,7 +255,7 @@ final class CommunityMapUploadTests: XCTestCase {
 
         let text = try XCTUnwrap(String(data: body, encoding: .utf8))
         for forbidden in ["http", "://", "www.", "feeds.example.com", "cdn.example.com", "podtrac", "Library", ".mp3", ".m4a",
-                          "MARGIN-PRIVATE-WORDS", "margin-1", "item-episode", "Episode Seven", "The Show", "guid-123"] {
+                          "MARGIN-PRIVATE-WORDS", "margin-1", "item-episode", "Episode Seven", "The Show", "guid-123", "sponsor.example"] {
             XCTAssertFalse(text.contains(forbidden), "The upload must not carry \(forbidden)")
         }
 
@@ -253,6 +292,19 @@ final class CommunityMapUploadTests: XCTestCase {
         XCTAssertEqual(upload.segments.map(\.text).joined(separator: " ").split(separator: " ").count, 7_001)
         XCTAssertEqual(upload.language, "und")
 
+        // Web addresses are cut from the text; a segment that was only a link is dropped.
+        upload = try XCTUnwrap(CommunityMapTranscriptUpload.make(
+            episodeKey: expectedKey, durationMs: 10_000, language: "en",
+            timeline: TranscriptTimeline(segments: [
+                MediaTimelineSegment(id: "a", startMs: 1_000, endMs: 2_000,
+                                     text: "Visit HTTPS://Example.com/promo now, or www.example.org and example.net/deal today. Version 2.5 is out."),
+                MediaTimelineSegment(id: "b", startMs: 3_000, endMs: 4_000, text: "  https://example.com  "),
+                MediaTimelineSegment(id: "c", startMs: 5_000, endMs: 6_000, text: "Write to podcast:feed or ftp://files.example.com/x"),
+            ], chapters: [])
+        ))
+        XCTAssertEqual(upload.segments.map(\.text), ["Visit now, or and today. Version 2.5 is out.", "Write to podcast:feed or"])
+        XCTAssertEqual(upload.segments.map(\.startMs), [1_000, 5_000])
+
         XCTAssertNil(CommunityMapTranscriptUpload.make(episodeKey: expectedKey, durationMs: 10_000, language: "en",
                                                        timeline: TranscriptTimeline(segments: [], chapters: [])))
         XCTAssertNil(CommunityMapTranscriptUpload.make(episodeKey: expectedKey, durationMs: 0, language: "en",
@@ -265,9 +317,9 @@ final class CommunityMapUploadTests: XCTestCase {
         let posted = PostedBodies()
         let uploader = CommunityMapUploader { url, body in await posted.append(url, body); return 202 }
         let asked = PostedBodies()
-        let outcome = await uploader.uploadIfEligible(
-            item: episode(), timeline: fullTranscript(), hasPublisherChapters: false, optedIn: false,
-            language: "en", repository: InMemorySessionRepository(), now: now,
+        let outcome = await upload(
+            uploader, repository: InMemorySessionRepository(), optedIn: { false },
+            publisherChapters: { await asked.append(CommunityMapUploader.transcriptsURL, Data()); return false },
             mapsState: { await asked.append(CommunityMapUploader.transcriptsURL, Data()); return .on }
         )
         XCTAssertEqual(outcome, .skipped(.optedOut))
@@ -277,39 +329,71 @@ final class CommunityMapUploadTests: XCTestCase {
         XCTAssertEqual(askCount, 0)
     }
 
+    func testTurningTheSettingOffWhileTheServerConfigLoadsStopsTheUpload() async throws {
+        let repository = InMemorySessionRepository()
+        let posted = PostedBodies()
+        let uploader = CommunityMapUploader { url, body in await posted.append(url, body); return 202 }
+        let setting = OptInSetting()
+        let outcome = await upload(
+            uploader, repository: repository, optedIn: { await setting.isOn },
+            mapsState: { await setting.turnOff(); return .on }
+        )
+        XCTAssertEqual(outcome, .skipped(.optedOut))
+        let postCount = await posted.bodies.count
+        XCTAssertEqual(postCount, 0)
+        XCTAssertNil(try repository.loadCommunityMapUpload(episodeKey: expectedKey))
+    }
+
+    func testAnEpisodeIsHeldUntilItsAudioCanBeCheckedForEmbeddedChapters() async throws {
+        let repository = InMemorySessionRepository()
+        let posted = PostedBodies()
+        let asked = PostedBodies()
+        let uploader = CommunityMapUploader { url, body in await posted.append(url, body); return 202 }
+        let unchecked = await upload(
+            uploader, repository: repository, publisherChapters: { nil },
+            mapsState: { await asked.append(CommunityMapUploader.transcriptsURL, Data()); return .on }
+        )
+        XCTAssertEqual(unchecked, .failed("chapters_unchecked"))
+        XCTAssertEqual(try repository.loadCommunityMapUpload(episodeKey: expectedKey)?.state, .failed)
+        let askCount = await asked.bodies.count
+        XCTAssertEqual(askCount, 0)
+
+        // A day later the file is there and its embedded chapters are found: never sent.
+        let chaptered = await upload(uploader, repository: repository, at: now.addingTimeInterval(86_400), publisherChapters: { true })
+        XCTAssertEqual(chaptered, .skipped(.publisherChapters))
+        let postCount = await posted.bodies.count
+        XCTAssertEqual(postCount, 0)
+    }
+
     func testFailuresAreRecordedAndRetriedADayLaterWhileRefusalsAreNot() async throws {
         let repository = InMemorySessionRepository()
         let statuses = StatusQueue([503, 202])
         let uploader = CommunityMapUploader { _, _ in try await statuses.next() }
-        func upload(at time: Date) async -> CommunityMapUploadOutcome {
-            await uploader.uploadIfEligible(item: episode(), timeline: fullTranscript(), hasPublisherChapters: false, optedIn: true,
-                                            language: "en", repository: repository, now: time, mapsState: { .on })
+        func attempt(at time: Date) async -> CommunityMapUploadOutcome {
+            await upload(uploader, repository: repository, at: time)
         }
-        let failed = await upload(at: now)
+        let failed = await attempt(at: now)
         XCTAssertEqual(failed, .failed("503"))
         XCTAssertEqual(try repository.loadCommunityMapUpload(episodeKey: expectedKey)?.state, .failed)
-        let tooSoon = await upload(at: now.addingTimeInterval(3_600))
+        let tooSoon = await attempt(at: now.addingTimeInterval(3_600))
         XCTAssertEqual(tooSoon, .skipped(.retryTooSoon))
-        let nextDay = await upload(at: now.addingTimeInterval(86_400))
+        let nextDay = await attempt(at: now.addingTimeInterval(86_400))
         XCTAssertEqual(nextDay, .uploaded(status: 202))
         XCTAssertEqual(try repository.loadCommunityMapUpload(episodeKey: expectedKey)?.attempts, 2)
-        let later = await upload(at: now.addingTimeInterval(9 * 86_400))
+        let later = await attempt(at: now.addingTimeInterval(9 * 86_400))
         XCTAssertEqual(later, .skipped(.alreadyUploaded))
         let remaining = await statuses.remaining
         XCTAssertEqual(remaining, 0)
 
         let refused = InMemorySessionRepository()
         let refusing = CommunityMapUploader { _, _ in 400 }
-        let first = await refusing.uploadIfEligible(item: episode(), timeline: fullTranscript(), hasPublisherChapters: false, optedIn: true,
-                                                    language: "en", repository: refused, now: now, mapsState: { .on })
+        let first = await upload(refusing, repository: refused)
         XCTAssertEqual(first, .rejected(status: 400))
-        let again = await refusing.uploadIfEligible(item: episode(), timeline: fullTranscript(), hasPublisherChapters: false, optedIn: true,
-                                                    language: "en", repository: refused, now: now.addingTimeInterval(30 * 86_400), mapsState: { .on })
+        let again = await upload(refusing, repository: refused, at: now.addingTimeInterval(30 * 86_400))
         XCTAssertEqual(again, .skipped(.rejectedBefore))
 
         let offline = CommunityMapUploader { _, _ in throw URLError(.notConnectedToInternet) }
-        let lost = await offline.uploadIfEligible(item: episode(), timeline: fullTranscript(), hasPublisherChapters: false, optedIn: true,
-                                                  language: "en", repository: InMemorySessionRepository(), now: now, mapsState: { .on })
+        let lost = await upload(offline, repository: InMemorySessionRepository())
         XCTAssertEqual(lost, .failed("network"))
         XCTAssertEqual(lost.diagnostic, "failed:network")
     }
@@ -345,6 +429,12 @@ private actor PostedBodies {
         urls.append(url)
         bodies.append(body)
     }
+}
+
+private actor OptInSetting {
+    private(set) var isOn = true
+
+    func turnOff() { isOn = false }
 }
 
 private actor StatusQueue {

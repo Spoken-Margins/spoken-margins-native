@@ -1994,7 +1994,7 @@ final class Gate1AppModel: ObservableObject {
     func handleAppBecameActive() {
         openReadyListeningEdition()
         marginNotesDelivery.start(); readwiseHighlightSync.start { [weak self] in self?.store }
-        if let store { CommunityMapUploadService.shared.retryFailed(store: store) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
+        if let store { CommunityMapUploadService.shared.retryFailed(store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
         supertonicRenderer?.setBackgroundInferencePacingEnabled(false)
         let refreshedAvailability = localFoundationModelClient.availability()
         if refreshedAvailability != localFoundationModelAvailability {
@@ -12433,7 +12433,7 @@ final class Gate1AppModel: ObservableObject {
             generateListeningMap()
         }
         retrySourceWindowContexts(itemId: itemId)
-        if let store { CommunityMapUploadService.shared.transcriptAttached(itemId: itemId, store: store) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
+        if let store { CommunityMapUploadService.shared.transcriptAttached(itemId: itemId, store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
         if let localURL = importedPodcastRecipientLocalURLs[itemId]
             ?? podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
             resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
