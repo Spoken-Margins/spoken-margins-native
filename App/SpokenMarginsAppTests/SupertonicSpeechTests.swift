@@ -878,7 +878,10 @@ final class SupertonicSpeechTests: XCTestCase {
         let started = try engine.startSession(itemId: item.id)
         XCTAssertEqual(started.targetType, TargetType.transcriptBackedMedia.rawValue, "the narration plays")
         let sessionId = try XCTUnwrap(started.sessionId)
-        for (time, note) in [(5, "During the methods"), (durationMs - 5, "During the appendix")] {
+        // Inside the appendix's own audio: the narration ends in a transition silence no segment covers.
+        let appendixOffset = itemText.distance(from: itemText.startIndex, to: try XCTUnwrap(itemText.range(of: "Supplementary methods")).lowerBound)
+        let appendixAudio = try XCTUnwrap(narration.timeline.segments.first { ($0.endChar ?? 0) > appendixOffset })
+        for (time, note) in [(5, "During the methods"), ((appendixAudio.startMs + appendixAudio.endMs) / 2, "During the appendix")] {
             audio.mediaTimeMs = time
             let capture = try engine.beginWrittenInterjection()
             _ = try engine.saveWrittenInterjection(captureId: capture.id, text: note)
