@@ -357,12 +357,13 @@ final class SharingTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let sourceURL = root.appendingPathComponent("patterned-source.m4a")
         try writePatternedM4A(to: sourceURL, durationSeconds: 30)
-        let evidence = try XCTUnwrap(try await PodcastAnchorEvidenceGenerator.generate(
+        let generatedEvidence = try await PodcastAnchorEvidenceGenerator.generate(
             sourceURL: sourceURL,
             anchorMediaTimeMs: 15_000,
             outputDirectory: root.appendingPathComponent("generated-evidence"),
             idPrefix: "evidence"
-        ).first)
+        )
+        let evidence = try XCTUnwrap(generatedEvidence.first)
         func landmark(_ index: Int, asset: String) -> EpisodeFingerprintLandmark {
             EpisodeFingerprintLandmark(
                 id: "landmark-\(index)", order: index,
