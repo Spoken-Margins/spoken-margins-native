@@ -9,6 +9,10 @@
     {
       "test": "SpokenMarginsAppUITests/J2PodcastSurvivesRelaunchJourneyUITests",
       "journey": "J2"
+    },
+    {
+      "test": "SpokenMarginsAppUITests/J7PDFJourneyUITests",
+      "journey": "J7"
     }
   ]
 }
