@@ -1641,7 +1641,9 @@ public final class SessionEngine {
                 captureDelayMs: SparseFingerprintSchedule.seekDebounceMs
             )
             let capturedPreWindow = audio.captureBufferedPreInterjectionAudioSample(evidenceRequest)
-            let armedPostWindow = audio.armPostResumeAudioSample(evidenceRequest)
+            // A paused source has no resume to sample: an armed window would time out over a long
+            // call (#771), so only the window before the Margin runs.
+            let armedPostWindow = resumesSource && audio.armPostResumeAudioSample(evidenceRequest)
             if !capturedPreWindow && !armedPostWindow {
                 interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
                 interjection.podcastAnchorEvidenceFailureReason = "decoded_playback_sample_unavailable"
@@ -1650,7 +1652,7 @@ public final class SessionEngine {
             } else if !capturedPreWindow || !armedPostWindow {
                 // One window still runs; record the one that didn't so a later success can't hide it.
                 interjection.podcastAnchorEvidenceFailureReason = PodcastAnchorCaptureDiagnostics.appendingFailureReason(
-                    capturedPreWindow ? "post_window_not_armed" : "pre_window_not_captured",
+                    capturedPreWindow ? (resumesSource ? "post_window_not_armed" : "post_window_skipped_source_paused") : "pre_window_not_captured",
                     to: interjection.podcastAnchorEvidenceFailureReason
                 )
                 try repository.saveInterjection(interjection)

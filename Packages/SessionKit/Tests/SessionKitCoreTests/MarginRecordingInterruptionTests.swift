@@ -7,48 +7,57 @@ import XCTest
 final class MarginRecordingInterruptionTests: XCTestCase {
     func testACallAfterFiveSecondsSavesTheMarginCutShort() {
         var policy = MarginRecordingInterruptionPolicy()
-        XCTAssertEqual(policy.handle(.interruptionBegan, recordedSeconds: 5, sourceIsPaused: true), .saveCutShort)
+        XCTAssertEqual(policy.handle(.interruptionBegan, recordedSeconds: 5, sourceAwaitsResume: true), .saveCutShort)
     }
 
     func testACallInTheFirstSecondDiscardsIt() {
         var policy = MarginRecordingInterruptionPolicy()
-        XCTAssertEqual(policy.handle(.interruptionBegan, recordedSeconds: 0.4, sourceIsPaused: true), .discard)
+        XCTAssertEqual(policy.handle(.interruptionBegan, recordedSeconds: 0.4, sourceAwaitsResume: true), .discard)
     }
 
     func testTheSourceResumesOnlyWhenTheCallEndsWithShouldResume() {
         var resuming = MarginRecordingInterruptionPolicy()
-        _ = resuming.handle(.interruptionBegan, recordedSeconds: 5, sourceIsPaused: true)
-        XCTAssertEqual(resuming.handle(.interruptionEnded(shouldResume: true), recordedSeconds: nil, sourceIsPaused: true), .resumeSource)
+        _ = resuming.handle(.interruptionBegan, recordedSeconds: 5, sourceAwaitsResume: true)
+        XCTAssertEqual(resuming.handle(.interruptionEnded(shouldResume: true), recordedSeconds: nil, sourceAwaitsResume: true), .resumeSource)
 
         var staying = MarginRecordingInterruptionPolicy()
-        _ = staying.handle(.interruptionBegan, recordedSeconds: 5, sourceIsPaused: true)
-        XCTAssertEqual(staying.handle(.interruptionEnded(shouldResume: false), recordedSeconds: nil, sourceIsPaused: true), .none)
+        _ = staying.handle(.interruptionBegan, recordedSeconds: 5, sourceAwaitsResume: true)
+        XCTAssertEqual(staying.handle(.interruptionEnded(shouldResume: false), recordedSeconds: nil, sourceAwaitsResume: true), .none)
     }
 
     func testRemovedHeadphonesSaveAndTheSourceStaysPaused() {
         var policy = MarginRecordingInterruptionPolicy()
-        XCTAssertEqual(policy.handle(.routeLost, recordedSeconds: 5, sourceIsPaused: true), .saveCutShort)
-        XCTAssertEqual(policy.handle(.interruptionEnded(shouldResume: true), recordedSeconds: nil, sourceIsPaused: true), .none,
+        XCTAssertEqual(policy.handle(.routeLost, recordedSeconds: 5, sourceAwaitsResume: true), .saveCutShort)
+        XCTAssertEqual(policy.handle(.interruptionEnded(shouldResume: true), recordedSeconds: nil, sourceAwaitsResume: true), .none,
                        "nothing resumes from the speaker")
     }
 
     func testEventsWithoutARecordingChangeNothing() {
         var policy = MarginRecordingInterruptionPolicy()
-        XCTAssertEqual(policy.handle(.interruptionBegan, recordedSeconds: nil, sourceIsPaused: false), .none)
-        XCTAssertEqual(policy.handle(.routeLost, recordedSeconds: nil, sourceIsPaused: false), .none)
-        XCTAssertEqual(policy.handle(.interruptionEnded(shouldResume: true), recordedSeconds: nil, sourceIsPaused: true), .none,
+        XCTAssertEqual(policy.handle(.interruptionBegan, recordedSeconds: nil, sourceAwaitsResume: false), .none)
+        XCTAssertEqual(policy.handle(.routeLost, recordedSeconds: nil, sourceAwaitsResume: false), .none)
+        XCTAssertEqual(policy.handle(.interruptionEnded(shouldResume: true), recordedSeconds: nil, sourceAwaitsResume: true), .none,
                        "an interruption that didn't stop a Margin isn't this policy's to resume")
+    }
+
+    /// iOS doesn't promise an end for every interruption. A later one with no Margin recording
+    /// replaces it, so its end can't resume a source the listener paused.
+    func testALostEndIsReplacedByTheNextInterruption() {
+        var policy = MarginRecordingInterruptionPolicy()
+        _ = policy.handle(.interruptionBegan, recordedSeconds: 5, sourceAwaitsResume: true)
+        XCTAssertEqual(policy.handle(.interruptionBegan, recordedSeconds: nil, sourceAwaitsResume: true), .none)
+        XCTAssertEqual(policy.handle(.interruptionEnded(shouldResume: true), recordedSeconds: nil, sourceAwaitsResume: true), .none)
     }
 
     func testAResumeIsDroppedOnceTheListenerActed() {
         var played = MarginRecordingInterruptionPolicy()
-        _ = played.handle(.interruptionBegan, recordedSeconds: 5, sourceIsPaused: true)
-        XCTAssertEqual(played.handle(.interruptionEnded(shouldResume: true), recordedSeconds: nil, sourceIsPaused: false), .none,
+        _ = played.handle(.interruptionBegan, recordedSeconds: 5, sourceAwaitsResume: true)
+        XCTAssertEqual(played.handle(.interruptionEnded(shouldResume: true), recordedSeconds: nil, sourceAwaitsResume: false), .none,
                        "the listener already pressed Play")
 
         var recordingAgain = MarginRecordingInterruptionPolicy()
-        _ = recordingAgain.handle(.interruptionBegan, recordedSeconds: 5, sourceIsPaused: true)
-        XCTAssertEqual(recordingAgain.handle(.interruptionEnded(shouldResume: true), recordedSeconds: 2, sourceIsPaused: true), .none,
+        _ = recordingAgain.handle(.interruptionBegan, recordedSeconds: 5, sourceAwaitsResume: true)
+        XCTAssertEqual(recordingAgain.handle(.interruptionEnded(shouldResume: true), recordedSeconds: 2, sourceAwaitsResume: true), .none,
                        "a new Margin is recording")
     }
 

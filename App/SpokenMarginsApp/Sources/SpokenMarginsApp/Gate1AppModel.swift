@@ -6448,7 +6448,9 @@ final class Gate1AppModel: ObservableObject {
     /// stray start dropped) without resuming the source; the policy resumes it when a call ends.
     private func handleMarginRecordingInterruption(_ event: MarginRecordingInterruptionEvent, recordedSeconds: TimeInterval?) {
         let seconds = snapshot.isRecording ? (recordedSeconds ?? 0) : nil
-        let action = marginRecordingInterruptionPolicy.handle(event, recordedSeconds: seconds, sourceIsPaused: snapshot.status == .paused)
+        let action = marginRecordingInterruptionPolicy.handle(
+            event, recordedSeconds: seconds, sourceAwaitsResume: snapshot.status == .paused && snapshot.phase != .finished
+        )
         let cause = event == .routeLost ? "headphones_disconnected" : "call_or_siri"
         recordDeveloperDiagnostic("margin.interruption", [
             "event": "\(event)", "action": "\(action)", "recordedSeconds": seconds.map { String(format: "%.1f", $0) } ?? "none",

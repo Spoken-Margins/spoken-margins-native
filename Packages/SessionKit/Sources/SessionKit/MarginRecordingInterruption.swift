@@ -36,15 +36,16 @@ public struct MarginRecordingInterruptionPolicy: Equatable, Sendable {
 
     /// - Parameters:
     ///   - recordedSeconds: how long the Margin has been recording, or nil when none is.
-    ///   - sourceIsPaused: whether the source is paused now; a source the listener already
-    ///     restarted is left alone.
+    ///   - sourceAwaitsResume: whether the source is paused part-way; a source the listener
+    ///     already restarted, or a finished item (#142), is left alone.
     public mutating func handle(
         _ event: MarginRecordingInterruptionEvent,
         recordedSeconds: TimeInterval?,
-        sourceIsPaused: Bool
+        sourceAwaitsResume: Bool
     ) -> MarginRecordingInterruptionAction {
         switch event {
         case .interruptionBegan:
+            // A later interruption with no Margin recording replaces the one whose end never came.
             guard let recordedSeconds else {
                 resumesWhenInterruptionEnds = false
                 return .none
@@ -57,7 +58,7 @@ public struct MarginRecordingInterruptionPolicy: Equatable, Sendable {
             return Self.keeps(recordedSeconds) ? .saveCutShort : .discard
         case .interruptionEnded(let shouldResume):
             defer { resumesWhenInterruptionEnds = false }
-            guard resumesWhenInterruptionEnds, shouldResume, recordedSeconds == nil, sourceIsPaused else { return .none }
+            guard resumesWhenInterruptionEnds, shouldResume, recordedSeconds == nil, sourceAwaitsResume else { return .none }
             return .resumeSource
         }
     }

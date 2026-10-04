@@ -3419,7 +3419,9 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
                   let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
             switch type {
             case .began:
-                guard self.recordingStartedAt != nil else { return }
+                // While waiting for an end that may never come, a new interruption is reported
+                // too, so the app drops the stale resume.
+                guard self.recordingStartedAt != nil || self.awaitsInterruptionEnd else { return }
                 self.awaitsInterruptionEnd = true
                 self.onInterruption?(.interruptionBegan, self.recordedSeconds)
             case .ended:

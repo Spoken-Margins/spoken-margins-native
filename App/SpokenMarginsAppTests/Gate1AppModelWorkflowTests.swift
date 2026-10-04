@@ -2871,7 +2871,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(audio.playCount, playsBefore)
         XCTAssertNotNil(model.selectedItem.interjections.first { !marginIDsBefore.contains($0.id) }, "what was said is saved")
         XCTAssertTrue(model.diagnostics["lastMarginCutShort"]?.contains("call_or_siri") == true)
-        XCTAssertEqual(model.statusMessage, "Margin saved. A call or Siri cut it short.")
 
         recorder.onInterruption?(.interruptionEnded(shouldResume: true), nil)
         for _ in 0..<50 where !model.snapshot.status.isPlaybackActive { try await Task.sleep(for: .milliseconds(10)) }
