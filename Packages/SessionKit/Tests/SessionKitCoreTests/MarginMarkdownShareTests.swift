@@ -48,6 +48,21 @@ final class MarginMarkdownShareTests: XCTestCase {
     }
 
     /// A Margin saved before #624 stores a counter as its date; the shared note is dated as the notes folder dates it.
+    func testTextMarginsInTheSamePercentFollowTheirCharacterNotTheirRecordingTime() throws {
+        // Recorded at character 1,080, then the listener rewinds and records at 1,020:
+        // both sit at 10%, and the later recording comes first in the source.
+        let item = item(title: "A long article")
+        let margins = [
+            margin("first-recorded", item: item, mediaTimeMs: nil, percent: 10, startChar: 1_080, createdAt: createdAt),
+            margin("rewound", item: item, mediaTimeMs: nil, percent: 10, startChar: 1_020, createdAt: createdAt.addingTimeInterval(60)),
+        ]
+        let file = try XCTUnwrap(try MarginMarkdownShare.file(forItemMargins: margins, engine: engine(item: item, margins: margins)))
+        let notes = file.markdown.components(separatedBy: MarginMarkdownShare.separator)
+        XCTAssertEqual(notes.count, 2)
+        XCTAssertTrue(notes[0].contains("Thought rewound."), file.markdown)
+        XCTAssertTrue(notes[1].contains("Thought first-recorded."), file.markdown)
+    }
+
     func testAPlaceholderDateIsReadAgainstTheSessionStart() throws {
         let item = item(title: "An essay")
         var margin = margin("old", item: item, mediaTimeMs: nil, percent: 10)
@@ -150,11 +165,11 @@ final class MarginMarkdownShareTests: XCTestCase {
     }
 
     private func margin(_ id: String, item: Item, mediaTimeMs: Int?, percent: Int, status: String = "active", transcript: String? = nil,
-                        captureKind: InterjectionCaptureKind? = nil) -> Interjection {
+                        captureKind: InterjectionCaptureKind? = nil, startChar: Int = 0, createdAt: Date? = nil) -> Interjection {
         Interjection(
             id: id, itemId: item.id, sessionId: "session-1", targetType: .item, targetId: item.id,
-            createdAt: createdAt, roughPercent: percent,
-            anchor: Anchor(anchorType: mediaTimeMs == nil ? .text : .media, startChar: 0, endChar: 7,
+            createdAt: createdAt ?? self.createdAt, roughPercent: percent,
+            anchor: Anchor(anchorType: mediaTimeMs == nil ? .text : .media, startChar: startChar, endChar: startChar + 7,
                            anchorBefore: "Before.", anchorAfter: "After.", mediaTimeMs: mediaTimeMs),
             audioPath: nil, audioStatus: "saved",
             transcriptionStatus: "transcribed", transcript: transcript ?? "Thought \(id).", cleanedTranscript: nil,

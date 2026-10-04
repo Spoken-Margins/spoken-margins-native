@@ -62,9 +62,15 @@ public enum MarginMarkdownShare {
     /// Every active Margin of one item, in the order they sit in the source, as one file named
     /// `Margins - <item title>.md`. Nil when the item has no Margin with a note.
     public static func file(forItemMargins margins: [Interjection], engine: SessionEngine) throws -> MarginMarkdownFile? {
+        // The percent is coarse: two Margins in the same percent follow their media time, or
+        // for a text anchor its character, before when they were recorded.
+        func sourceOrder(_ margin: Interjection) -> (Int, Int, Int) {
+            let anchor = margin.anchor
+            return (margin.roughPercent, anchor.mediaTimeMs ?? 0, anchor.anchorType == .text ? anchor.startChar : 0)
+        }
         let ordered = margins.filter(hasNote).sorted {
-            ($0.roughPercent, $0.anchor.mediaTimeMs ?? 0, $0.createdAt, $0.id)
-                < ($1.roughPercent, $1.anchor.mediaTimeMs ?? 0, $1.createdAt, $1.id)
+            let (lhs, rhs) = (sourceOrder($0), sourceOrder($1))
+            return lhs != rhs ? lhs < rhs : ($0.createdAt, $0.id) < ($1.createdAt, $1.id)
         }
         var title: String?
         var notes: [String] = []
