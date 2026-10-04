@@ -42,7 +42,11 @@ final class SharedLinkVoiceover {
         } catch {
             return report("\(itemId): failed:\(error.localizedDescription)")
         }
-        guard let found = PublisherNarrationEvidence.publisherAudio(postPage: page.html, finalURL: page.finalURL, itemId: itemId) else {
+        // Parse off the main thread: a post page can run to a few hundred KB.
+        let parsed = await Task.detached(priority: .utility) {
+            PublisherNarrationEvidence.publisherAudio(postPage: page.html, finalURL: page.finalURL, itemId: itemId)
+        }.value
+        guard let found = parsed else {
             return report("\(itemId): none")
         }
         do {

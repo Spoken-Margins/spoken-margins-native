@@ -36,6 +36,7 @@ final class SourceLinkShareFallbackTests: XCTestCase {
         )
         model.resetAndSeed()
         model.readablePageExtractor = extractor
+        model.sharedLinkVoiceover.fetchPage = { _ in throw URLError(.notConnectedToInternet) } // stay offline (#810)
 
         model.importPendingSourceLinkHandoffs()
         try await waitFor("shared post import") {
