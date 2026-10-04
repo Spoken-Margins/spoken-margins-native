@@ -16,8 +16,11 @@ LID_CLOSED = '  |   "AppleClamshellCausesSleep" = Yes\n  |   "AppleClamshellStat
 LID_CLOSED_EXTERNAL_DISPLAY = '  |   "AppleClamshellCausesSleep" = No\n  |   "AppleClamshellState" = Yes\n'
 
 
-def runner(name='sm-lane-mac', running=True, worker=None):
-    return g.Runner(g.RUNNER_PREFIX + name, f'/Users/x/actions-runner-{name}', running, worker)
+def runner(name='sm-lane-mac', running=True, worker=None, listener_job=False):
+    return g.Runner(g.RUNNER_PREFIX + name, f'/Users/x/actions-runner-{name}', running, worker, listener_job)
+
+
+PAUSED_BY_GUARD = [g.RUNNER_PREFIX + 'sm-lane-mac']
 
 
 class AwakeState(unittest.TestCase):
@@ -40,26 +43,49 @@ class AwakeState(unittest.TestCase):
 
 class Decide(unittest.TestCase):
     def test_idle_runner_is_paused_on_battery(self):
-        actions = g.decide(False, 'on battery', [runner()], [])
+        actions = g.decide(False, 'on battery', [runner()], [], [])
         self.assertEqual([(a.kind, a.runner.name) for a in actions], [('stop', 'sm-lane-mac')])
         self.assertEqual(actions[0].note, 'sm-lane-mac: paused (on battery)')
 
     def test_busy_runner_is_held_not_stopped(self):
-        actions = g.decide(False, 'on battery', [runner(worker=4242)], [])
+        actions = g.decide(False, 'on battery', [runner(worker=4242)], [], [])
         self.assertEqual([a.kind for a in actions], ['hold'])
 
     def test_busy_runner_is_held_once(self):
-        self.assertEqual(g.decide(False, 'lid closed', [runner(worker=4242)], [4242]), [])
+        self.assertEqual(g.decide(False, 'lid closed', [runner(worker=4242)], [4242], []), [])
 
     def test_paused_runner_stays_paused_on_battery(self):
-        self.assertEqual(g.decide(False, 'on battery', [runner(running=False)], []), [])
+        self.assertEqual(g.decide(False, 'on battery', [runner(running=False)], [], PAUSED_BY_GUARD), [])
 
     def test_paused_runner_restarts_on_power(self):
-        actions = g.decide(True, 'on power', [runner(running=False), runner('sm-lane-mac-2')], [])
+        actions = g.decide(True, 'on power', [runner(running=False), runner('sm-lane-mac-2')], [], PAUSED_BY_GUARD)
         self.assertEqual([(a.kind, a.runner.name) for a in actions], [('start', 'sm-lane-mac')])
 
+    def test_runner_stopped_by_someone_else_is_left_alone(self):
+        # A lane freeze by hand, or a runner that exited after a session conflict.
+        self.assertEqual(g.decide(True, 'on power', [runner(running=False)], [], []), [])
+
+    def test_listener_that_just_took_a_job_is_not_stopped(self):
+        # Worker not started yet; stopping the listener now would cancel the job.
+        self.assertEqual(g.decide(False, 'on battery', [runner(listener_job=True)], [], []), [])
+
     def test_nothing_to_do_on_power_when_running(self):
-        self.assertEqual(g.decide(True, 'on power', [runner(worker=1), runner('sm-lane-mac-2')], []), [])
+        self.assertEqual(g.decide(True, 'on power', [runner(worker=1), runner('sm-lane-mac-2')], [], []), [])
+
+
+class ListenerHasJob(unittest.TestCase):
+    STARTED = '[2026-10-04 12:59:47Z INFO Terminal] WRITE LINE: 2026-10-04 12:59:47Z: Running job: automerge\n'
+    FINISHED = ('[2026-10-04 12:59:45Z INFO Terminal] WRITE LINE: 2026-10-04 12:59:45Z: '
+                'Job automerge completed with result: Succeeded\n')
+
+    def test_job_started_after_the_last_finish(self):
+        self.assertTrue(g.listener_has_job(self.FINISHED + self.STARTED))
+
+    def test_job_finished(self):
+        self.assertFalse(g.listener_has_job(self.STARTED + self.FINISHED))
+
+    def test_empty_log(self):
+        self.assertFalse(g.listener_has_job(''))
 
 
 if __name__ == '__main__':

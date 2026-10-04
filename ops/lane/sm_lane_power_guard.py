@@ -9,13 +9,15 @@ posted. On 2026-10-02 to 10-04 the Mac was unplugged for 42 hours and lost about
 
 Every 15 seconds this checks the power source and the lid:
 
-- Mac can stay awake (on power, lid open or an external display keeps it awake): start any lane
-  runner service that isn't running.
-- Mac can't stay awake, runner idle: stop the runner service. Queued jobs wait on GitHub until it's
-  back on power, instead of being taken and lost.
-- Mac can't stay awake, a job already running: leave it, and hold a `caffeinate` assertion until the
-  job's worker exits. On battery with the lid open that keeps idle sleep away; nothing can keep a
-  closed lid awake. The runner is stopped on the first check after the job ends.
+- Mac can stay awake (on power, lid open or an external display keeps it awake): start the runners
+  this guard paused. A runner stopped some other way (by hand, or after a session conflict) is left
+  alone.
+- Mac can't stay awake, runner idle: stop the runner service and remember that the guard paused it.
+  Queued jobs wait on GitHub until it's back on power, instead of being taken and lost.
+- Mac can't stay awake, a job already running (a worker process, or the listener's log shows a job
+  started and not finished): leave it, and hold a `caffeinate` assertion until the job's worker
+  exits, then check again at once so the runner is paused before it takes the next queued job. On
+  battery with the lid open that keeps idle sleep away; nothing can keep a closed lid awake.
 
 It finds the runners from their launchd plists (actions.runner.uncomposed-spoken-margins-native.*)
 in ~/Library/LaunchAgents. It logs only changes, to ~/SpokenMarginsOps/lane-power-guard/log.txt.
@@ -30,6 +32,7 @@ import datetime as dt
 import os
 import plistlib
 import re
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -39,7 +42,9 @@ from typing import List, Optional, Tuple
 HOME = Path.home()
 LAUNCH_AGENTS = HOME / 'Library' / 'LaunchAgents'
 RUNNER_PREFIX = 'actions.runner.uncomposed-spoken-margins-native.'
-LOG = HOME / 'SpokenMarginsOps' / 'lane-power-guard' / 'log.txt'
+STATE_DIR = HOME / 'SpokenMarginsOps' / 'lane-power-guard'
+LOG = STATE_DIR / 'log.txt'
+PAUSED = STATE_DIR / 'paused'  # one runner label per line: the runners this guard stopped
 
 
 @dataclass(frozen=True)
@@ -48,6 +53,11 @@ class Runner:
     directory: str
     service_running: bool
     worker_pid: Optional[int]
+    listener_has_job: bool = False
+
+    @property
+    def busy(self) -> bool:
+        return self.worker_pid is not None or self.listener_has_job
 
     @property
     def name(self) -> str:
@@ -72,14 +82,25 @@ def awake_state(power_line: str, clamshell: str) -> Tuple[bool, str]:
     return True, 'on power'
 
 
-def decide(can_stay_awake: bool, reason: str, runners: List[Runner], held_pids: List[int]) -> List[Action]:
+def listener_has_job(runner_log_tail: str) -> bool:
+    """Whether the listener has taken a job it hasn't finished, from the end of its Runner_*.log.
+
+    Covers the moment between the listener accepting a job and its worker process starting, when a
+    stop would cancel the job."""
+    started = runner_log_tail.rfind('Running job:')
+    finished = runner_log_tail.rfind('completed with result:')
+    return started > finished
+
+
+def decide(can_stay_awake: bool, reason: str, runners: List[Runner], held_pids: List[int],
+           paused_labels: List[str]) -> List[Action]:
     actions: List[Action] = []
     for runner in runners:
         if can_stay_awake:
-            if not runner.service_running:
+            if not runner.service_running and runner.label in paused_labels:
                 actions.append(Action('start', runner, f'{runner.name}: started ({reason})'))
-        elif runner.worker_pid is not None:
-            if runner.worker_pid not in held_pids:
+        elif runner.busy:
+            if runner.worker_pid is not None and runner.worker_pid not in held_pids:
                 actions.append(Action('hold', runner,
                                       f'{runner.name}: {reason} with a job running (worker {runner.worker_pid}); '
                                       'holding the Mac awake until it ends'))
@@ -108,8 +129,34 @@ def find_runners(uid: int) -> List[Runner]:
         state = run(['/bin/launchctl', 'print', f'gui/{uid}/{label}'])
         service_running = re.search(r'^\tstate = running$', state, re.MULTILINE) is not None
         workers = run(['/usr/bin/pgrep', '-f', f'{directory}/bin/Runner.Worker']).split()
-        runners.append(Runner(label, directory, service_running, int(workers[0]) if workers else None))
+        runners.append(Runner(label, directory, service_running, int(workers[0]) if workers else None,
+                              listener_has_job(runner_log_tail(Path(directory) / '_diag'))))
     return runners
+
+
+def runner_log_tail(diag: Path, size: int = 256 * 1024) -> str:
+    logs = sorted(diag.glob('Runner_*.log'))
+    if not logs:
+        return ''
+    try:
+        with logs[-1].open('rb') as handle:
+            handle.seek(max(0, logs[-1].stat().st_size - size))
+            return handle.read().decode('utf-8', 'replace')
+    except OSError:
+        return ''
+
+
+def paused_labels() -> List[str]:
+    try:
+        return [line for line in PAUSED.read_text().split() if line]
+    except OSError:
+        return []
+
+
+def set_paused(label: str, paused: bool) -> None:
+    labels = [l for l in paused_labels() if l != label] + ([label] if paused else [])
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    PAUSED.write_text(''.join(l + '\n' for l in labels))
 
 
 def held_worker_pids() -> List[int]:
@@ -126,12 +173,18 @@ def apply(action: Action, uid: int) -> None:
     target = f'gui/{uid}/{action.runner.label}'
     if action.kind == 'start':
         subprocess.run(['/bin/launchctl', 'kickstart', target], timeout=20)
+        set_paused(action.runner.label, False)
     elif action.kind == 'stop':
         # runsvc.sh turns TERM into INT, which stops the listener cleanly. The plist has no
         # KeepAlive, so it stays stopped until the next 'start'.
         subprocess.run(['/bin/launchctl', 'kill', 'TERM', target], timeout=20)
+        set_paused(action.runner.label, True)
     elif action.kind == 'hold':
-        subprocess.Popen(['/usr/bin/caffeinate', '-ims', '-w', str(action.runner.worker_pid)],
+        # Hold the Mac awake until the worker exits, then run the guard again straight away so the
+        # runner is paused before its listener takes the next queued job.
+        script = (f'/usr/bin/caffeinate -ims -w {action.runner.worker_pid}; '
+                  f'exec /usr/bin/python3 {shlex.quote(str(Path(__file__).resolve()))}')
+        subprocess.Popen(['/bin/sh', '-c', script],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 
@@ -151,12 +204,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     can_stay_awake, reason = awake_state(run(['/usr/bin/pmset', '-g', 'ps']),
                                          run(['/usr/sbin/ioreg', '-r', '-k', 'AppleClamshellState', '-d', '4']))
     runners = find_runners(uid)
-    actions = decide(can_stay_awake, reason, runners, held_worker_pids())
+    actions = decide(can_stay_awake, reason, runners, held_worker_pids(), paused_labels())
     if args.dry_run:
         print(f'Mac {"can" if can_stay_awake else "cannot"} stay awake ({reason}); '
               f'{len(runners)} runner(s): ' + ', '.join(
                   f'{r.name} {"running" if r.service_running else "stopped"}'
-                  + (f' with worker {r.worker_pid}' if r.worker_pid else '') for r in runners))
+                  + (f' with worker {r.worker_pid}' if r.worker_pid else '')
+                  + (' (listener holds a job)' if r.listener_has_job else '') for r in runners))
         for action in actions:
             print('would ' + action.note)
         if not actions:
