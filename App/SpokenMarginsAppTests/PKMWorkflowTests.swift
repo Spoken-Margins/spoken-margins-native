@@ -23,10 +23,9 @@ final class PKMWorkflowTests: XCTestCase {
         _ = try await restarted.deliver([.init(id: note.id, markdown: "Updated transcript")], to: folder, destinationID: "vault")
         XCTAssertEqual(try String(contentsOf: files[0], encoding: .utf8), "Updated transcript")
         try Data("My Obsidian edit".utf8).write(to: files[0])
-        do {
-            _ = try await restarted.deliver([.init(id: note.id, markdown: "Another transcript"), .init(id: "unaffected", markdown: "Another independent Margin")], to: folder, destinationID: "vault")
-            XCTFail("An external edit must prevent overwrite")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("edited outside")) }
+        // #581: the edit is kept and counted, not reported as a failure.
+        let summary = try await restarted.deliver([.init(id: note.id, markdown: "Another transcript"), .init(id: "unaffected", markdown: "Another independent Margin")], to: folder, destinationID: "vault")
+        XCTAssertEqual(summary, MarginNoteDelivery.Summary(saved: 1, keptEdits: 1))
         XCTAssertEqual(try String(contentsOf: files[0], encoding: .utf8), "My Obsidian edit")
         let delivered = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
         XCTAssertEqual(delivered.count, 2, "One conflict must not prevent independent delivery")
@@ -65,10 +64,8 @@ final class PKMWorkflowTests: XCTestCase {
         try Data("My Obsidian edit".utf8).write(to: file("session-a:m2"))
 
         let upgraded = AutomaticMarginWriter(journalURL: journal)
-        do {
-            _ = try await upgraded.deliver(current, to: folder, destinationID: "vault")
-            XCTFail("The edited note must be reported, not overwritten")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("edited outside")) }
+        let summary = try await upgraded.deliver(current, to: folder, destinationID: "vault")
+        XCTAssertEqual(summary, MarginNoteDelivery.Summary(saved: 1, keptEdits: 1), "The edited note is kept, not overwritten")
         XCTAssertEqual(try String(contentsOf: file("session-a:m1"), encoding: .utf8), current[0].markdown)
         XCTAssertEqual(try String(contentsOf: file("session-a:m2"), encoding: .utf8), "My Obsidian edit")
 

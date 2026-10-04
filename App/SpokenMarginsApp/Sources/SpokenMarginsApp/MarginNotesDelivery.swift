@@ -120,11 +120,13 @@ final class MarginNotesDelivery {
 
     /// Sends a sample note so the listener can check the folder before turning delivery on.
     func sendTestNote(to folder: URL, destinationID: String) async throws -> MarginOutputStatus {
-        _ = try await currentWriter().deliver(
+        let summary = try await currentWriter().deliver(
             [.init(id: "sample-margin", markdown: "# Spoken Margins test\n\nYour thoughts will arrive here as Markdown, with source context and anchors.\n")],
             to: folder, destinationID: destinationID
         )
-        return MarginOutputStatus("Test note saved. Open Margin-\(ListeningEdition.digest("sample-margin")).md in your notes app.")
+        let file = "Margin-\(ListeningEdition.digest("sample-margin")).md"
+        if summary.keptEdits > 0 { return MarginOutputStatus("The test note \(file) is already in this folder and you edited it, so it was left as is.") }
+        return MarginOutputStatus("Test note saved. Open \(file) in your notes app.")
     }
 
     private func deliverOnce() async {
@@ -133,8 +135,11 @@ final class MarginNotesDelivery {
             // Built on a background task (#161); the main actor only waits.
             let gathered = try await AutomaticMarginNoteGatherer.gather(store: target.store)
             recordGather(gathered.elapsedMs, gathered.sessionCount, gathered.notes.count)
-            let count = try await currentWriter().deliver(gathered.notes, to: target.folder, destinationID: target.destinationID)
-            report(MarginOutputStatus("\(count) Margins saved to \(target.folder.lastPathComponent). Last checked \(Date().formatted(date: .omitted, time: .shortened))."))
+            let summary = try await currentWriter().deliver(gathered.notes, to: target.folder, destinationID: target.destinationID)
+            report(MarginOutputStatus(MarginNoteDelivery.statusLine(
+                summary, folderName: target.folder.lastPathComponent,
+                checkedAt: Date().formatted(date: .omitted, time: .shortened)
+            )))
         } catch {
             report(.failure("Delivery needs attention: \(error.localizedDescription)"))
         }

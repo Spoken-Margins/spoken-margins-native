@@ -4,7 +4,7 @@ import CryptoKit
 import Foundation
 import XCTest
 import SessionKit
-import SessionKitAudio
+@testable import SessionKitAudio
 
 /// #465 through real files: generated recordings written with AVFoundation (float WAV and AAC in
 /// .m4a, as Margins are recorded), decoded and leveled by `MarginLoudnessLeveler`.
@@ -93,45 +93,96 @@ final class MarginLoudnessLevelerTests: XCTestCase {
         XCTAssertEqual(try Self.hash(source), before)
     }
 
-    func testOnlyMonoAndStereoWithinTheMemoryBudgetAreLeveled() throws {
-        XCTAssertNoThrow(try MarginLoudnessLeveler.checkCanLevel(frames: 44_100 * 120, channels: 1))
-        XCTAssertNoThrow(try MarginLoudnessLeveler.checkCanLevel(frames: 48_000 * 60, channels: 2))
+    func testOnlyMonoAndStereoAreLeveled() throws {
+        XCTAssertNoThrow(try MarginLoudnessLeveler.checkCanLevel(channels: 1))
+        XCTAssertNoThrow(try MarginLoudnessLeveler.checkCanLevel(channels: 2))
         for channels in [0, 3, 6] {
-            XCTAssertThrowsError(try MarginLoudnessLeveler.checkCanLevel(frames: 48_000, channels: channels)) { error in
+            XCTAssertThrowsError(try MarginLoudnessLeveler.checkCanLevel(channels: channels)) { error in
                 XCTAssertEqual(error as? MarginLoudnessLeveler.LevelerError, .unsupportedChannelCount(channels))
             }
         }
-        // The audit's case: ten minutes of stereo at 192 kHz.
-        XCTAssertThrowsError(try MarginLoudnessLeveler.checkCanLevel(frames: 192_000 * 600, channels: 2))
-        XCTAssertThrowsError(try MarginLoudnessLeveler.checkCanLevel(frames: 44_100 * 600, channels: 1))
-        XCTAssertEqual(MarginLoudnessLeveler.estimatedWorkingBytes(frames: .max, channels: 2), .max)
     }
 
-    func testARecordingOverTheBudgetIsRefusedBeforeItIsDecoded() throws {
-        // 200 s of mono 44.1 kHz silence, written 10 s at a time as 16-bit PCM (about 18 MB).
+    func testAMarginLongerThanTheOldMemoryBudgetIsLeveled() throws {
+        // #731: 200 s of mono 44.1 kHz, which the whole-file leveler refused for needing over
+        // 512 MiB. Each 10 s: 5 s of a 1 kHz tone at -30 dBFS, then 5 s of silence. Written as
+        // 16-bit PCM (about 18 MB).
+        let rate = 44_100.0
         let url = folder.appendingPathComponent("long.wav")
-        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
-        let settings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 44_100.0, AVNumberOfChannelsKey: 1,
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1))
+        let settings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: rate, AVNumberOfChannelsKey: 1,
                                        AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false]
         let file = try AVAudioFile(forWriting: url, settings: settings)
         let chunk = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 441_000))
         chunk.frameLength = 441_000
-        chunk.floatChannelData![0].update(repeating: 0, count: 441_000)
+        let amplitude = pow(10, -30.0 / 20)
+        for frame in 0..<441_000 {
+            chunk.floatChannelData![0][frame] = frame < 220_500 ? Float(amplitude * sin(2 * .pi * 1_000 * Double(frame) / rate)) : 0
+        }
         for _ in 0..<20 { try file.write(from: chunk) }
         file.close()
-
-        XCTAssertThrowsError(try MarginLoudnessLeveler.measure(fileAt: url)) { error in
-            guard case .tooLarge? = error as? MarginLoudnessLeveler.LevelerError else { return XCTFail("\(error)") }
-        }
+        let before = try Self.hash(url)
         let destination = folder.appendingPathComponent("long-leveled.caf")
-        XCTAssertThrowsError(try MarginLoudnessLeveler.renderLeveledCopy(of: url, to: destination))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+
+        let result = try MarginLoudnessLeveler.renderLeveledCopy(of: url, to: destination)
+
+        XCTAssertEqual(try Self.hash(url), before)
+        XCTAssertEqual(result.plan.limit, .target, "a clean tone over silence gets the full gain")
+        // `output` is measured from the samples as they were written.
+        XCTAssertEqual(try XCTUnwrap(result.output.integratedLUFS), LoudnessLeveling.defaultTargetLUFS, accuracy: 0.5)
+        XCTAssertLessThanOrEqual(result.output.truePeakDBTP, LoudnessLeveling.truePeakCeilingDBTP)
+        XCTAssertEqual(try AVAudioFile(forReading: destination).length, 200 * 44_100, "every frame is in the copy")
+    }
+
+    func testSmallChunksWriteTheSameCopyAsOneChunk() throws {
+        // Quiet speech with clicks, so the limiter works across chunk boundaries.
+        var speech = Self.speechLike(seed: 5, lufs: -30)
+        for click in stride(from: 10_000, to: speech.count - 1, by: 37_000) {
+            speech[click] = 0.3
+            speech[click + 1] = -0.3
+        }
+        let source = folder.appendingPathComponent("clicks.wav")
+        try Self.write([speech, Self.speechLike(seed: 6, lufs: -32)], to: source, aac: false)
+        let small = folder.appendingPathComponent("small-chunks.caf")
+        let whole = folder.appendingPathComponent("one-chunk.caf")
+
+        let smallResult = try MarginLoudnessLeveler.renderLeveledCopy(of: source, to: small, chunkFrames: 1_000)
+        let wholeResult = try MarginLoudnessLeveler.renderLeveledCopy(of: source, to: whole, chunkFrames: 1_000_000)
+
+        XCTAssertGreaterThan(wholeResult.plan.limiterReductionDB, 1, "the limiter has work to do")
+        XCTAssertEqual(smallResult, wholeResult)
+        let smallSamples = try Self.read(small), wholeSamples = try Self.read(whole)
+        XCTAssertEqual(smallSamples[0].count, speech.count)
+        XCTAssertEqual(smallSamples, wholeSamples)
+        XCTAssertEqual(try MarginLoudnessLeveler.measure(fileAt: small, chunkFrames: 999), wholeResult.output)
+    }
+
+    func testTheTrimPassScalesTheCopyExactly() throws {
+        // The third pass runs only when the limiter leaves a copy a hair over the ceiling, which
+        // generated signals don't reach, so it is tested on its own.
+        let source = folder.appendingPathComponent("untrimmed.caf")
+        try Self.write([Self.speechLike(seed: 7, lufs: -16)], to: source, aac: false)
+        let trimmed = folder.appendingPathComponent("trimmed.caf")
+
+        let measured = try MarginLoudnessLeveler.writeScaledCopy(of: source, by: 0.5, to: trimmed, chunkFrames: 4_096)
+
+        let original = try Self.read(source), halved = try Self.read(trimmed)
+        XCTAssertEqual(halved, original.map { $0.map { $0 * 0.5 } })
+        XCTAssertEqual(measured, try MarginLoudnessLeveler.measure(fileAt: trimmed))
     }
 
     // MARK: Helpers
 
     private static func hash(_ url: URL) throws -> String {
         SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func read(_ url: URL) throws -> [[Float]] {
+        let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)))
+        try file.read(into: buffer)
+        let frames = Int(buffer.frameLength)
+        return (0..<Int(file.processingFormat.channelCount)).map { Array(UnsafeBufferPointer(start: buffer.floatChannelData![$0], count: frames)) }
     }
 
     private static func write(_ channels: [[Float]], to url: URL, aac: Bool) throws {
