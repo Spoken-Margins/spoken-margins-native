@@ -121,7 +121,9 @@ struct UserFeedbackBanner: View {
         .allowsHitTesting(feedback.kind == .error || feedback.action != nil)
         .task(id: feedback.id) {
             #if canImport(UIKit)
-            UIAccessibility.post(notification: .announcement, argument: feedback.message)
+            // A VoiceOver listener hears that the banner holds a button, not only its message (#784).
+            let announcement = feedback.action.map { "\(feedback.message) \($0.title) is available." } ?? feedback.message
+            UIAccessibility.post(notification: .announcement, argument: announcement)
             #endif
             guard let seconds = FeedbackBannerPolicy.autoDismissSeconds(
                 for: feedback.kind,
