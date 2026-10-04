@@ -116,8 +116,8 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         SMRemoteProviderExperienceEnabled: false
         UILaunchScreen: {}
-        NSMicrophoneUsageDescription: Spoken Margins records spoken interjections during listening sessions.
-        NSSpeechRecognitionUsageDescription: Spoken Margins may transcribe spoken interjections when enabled.
+        NSMicrophoneUsageDescription: Spoken Margins records your spoken Margins while you listen. Recordings stay on your phone.
+        NSSpeechRecognitionUsageDescription: Spoken Margins turns your spoken Margins into text so you can search and copy them.
         NSSupportsLiveActivities: true
         UIBackgroundModes:
           - audio
