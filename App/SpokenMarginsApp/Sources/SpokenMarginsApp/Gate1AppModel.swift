@@ -15637,25 +15637,20 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["followSourceFailure"] = await coordinator.failureDiagnostic(for: error)
     }
 
-    /// B1 drawer: follows a catalog feed (always a public https feed) in one tap. Throws so the
-    /// drawer can show the failure on the row.
-    /// Returns the followed source's id, which the drawer keeps: the feed can settle on another URL.
-    func followCatalogFeed(_ feedURL: String) async throws -> String {
+    /// B1 drawer and OPML import (#463): follows a public https feed link. Throws so the caller
+    /// can show the failure on the row. Returns the followed source's id, which the drawer keeps:
+    /// the feed can settle on another URL. An import refreshes once at the end, not per feed.
+    func followCatalogFeed(_ feedURL: String, refreshAfter: Bool = true) async throws -> String {
         let store = try requireStore()
         let coordinator = followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
         followedSourceCoordinator = coordinator
-        guard let candidate = try await coordinator.discover(urlString: feedURL).first else {
-            throw FollowedSourceError.noFeedCandidates
-        }
-        let sourceId: String
-        if let existing = try store.loadFeedSubscriptions().first(where: { $0.source.id == candidate.source.id }) {
-            sourceId = existing.source.id
-        } else {
-            sourceId = try await coordinator.follow(candidate: candidate).source.id
-        }
-        await refreshFollowedSources(force: false)
+        let sourceId = try await coordinator.followFeed(urlString: feedURL).source.id
+        if refreshAfter { await refreshFollowedSources(force: false) }
         return sourceId
     }
+
+    /// Read from the store: `feedSubscriptions` lags a follow until its refresh lands (#463).
+    func storedFeedSubscriptions() -> [FeedSubscription] { (try? store?.loadFeedSubscriptions()) ?? feedSubscriptions }
 
     func followSourceCandidate(_ candidate: SourceCandidateEvidence) {
         Task { [weak self] in
