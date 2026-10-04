@@ -117,4 +117,56 @@ final class StructuredDocumentUpgradeSessionTests: XCTestCase {
         XCTAssertEqual(String(Array(upgradedText)[moved.position.charOffset...].prefix(10)), "The effect",
                        "the saved place, not render B's words at the same time")
     }
+
+    func testReimportKeepsTheSavedPlaceAfterANewerRenderIsDetached() throws {
+        // #344 audit 3 on 921487b: once render B is detached the item has no media, and
+        // the upgrade took that as proof the timeline B left behind describes render A.
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let store = try SQLiteSessionStore(path: path)
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "pdf", displayName: "PDF", capabilities: ["sync": ["canonical_persistence"]]), repository: store)
+        let url = "shared-file://share-sheet/Paper.pdf"
+        let v1 = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: "Paper"),
+            text: "# Paper\n\n## Methods\n\nWe measured sleep in adults.\nThe effect held across cohorts.",
+            contentFormat: .markdown
+        ))
+        let text = try XCTUnwrap(v1.text)
+        let measured = text.distance(from: text.startIndex, to: try XCTUnwrap(text.range(of: "We measured")).lowerBound)
+        let effect = text.distance(from: text.startIndex, to: try XCTUnwrap(text.range(of: "The effect")).lowerBound)
+        // Render B's timeline stays after B is detached (storage eviction), so the item
+        // has no media: at 30 s, B is on "We measured".
+        XCTAssertNil(v1.media)
+        try store.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: "timeline-344-b", itemId: v1.id, createdAt: Date(timeIntervalSince1970: 2),
+            timeline: TranscriptTimeline(segments: [
+                MediaTimelineSegment(id: "1", startMs: 0, endMs: 60_000, startChar: measured, endChar: measured, text: "We measured"),
+            ], chapters: [], durationMs: 60_000)
+        ))
+        // The session was saved on render A at "The effect".
+        let session = Session(id: "session-344-a", itemId: v1.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .transcriptBackedMedia, currentTargetId: "file:///tmp/narration-344-a.caf", position: Position(charOffset: effect, mediaTimeMs: 30_000), completionPercent: 20, playbackRate: 1)
+        try store.saveSession(session)
+
+        let document = StructuredDocumentBuilder.build(lines: [
+            StructuredDocumentLine(text: "Paper", role: .title, pageIndex: 0),
+            StructuredDocumentLine(text: "J Biol 12 (2020) 1-9", role: .pageHeader, pageIndex: 0),
+            StructuredDocumentLine(text: "Methods", role: .heading, pageIndex: 0, level: 2),
+            StructuredDocumentLine(text: "We measured sleep in adults.", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "The effect held across cohorts.", role: .body, pageIndex: 0),
+        ], engine: "pdfkit_baseline", version: 2, pageCount: 1)
+        let reimported = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: "Paper"),
+            text: document.text,
+            contentFormat: .plainText
+        ), structuredDocument: document)
+
+        XCTAssertEqual(reimported.id, v1.id, "one item, upgraded in place")
+        let upgradedText = try XCTUnwrap(try store.loadItem(id: v1.id).text)
+        let moved = try XCTUnwrap(try store.loadSession(id: session.id))
+        XCTAssertEqual(moved.currentTargetType, .itemTextTTS)
+        XCTAssertEqual(String(Array(upgradedText)[moved.position.charOffset...].prefix(10)), "The effect",
+                       "the saved place, not render B's words at the same time")
+    }
 }

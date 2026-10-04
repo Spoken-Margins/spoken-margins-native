@@ -64,10 +64,11 @@ public enum StructuredDocumentUpgrader {
             // A session playing the rendered narration goes back to reading the text, at
             // the place its media time had reached; then it moves like any other. The stored
             // timeline describes the item's current render only: a session on an older one
-            // (#277) keeps its saved character offset, as SessionEngine.readText does (#344).
+            // (#277) keeps its saved character offset (#344). So does every session once the
+            // narration is detached, since the timeline left behind can be a newer render's
+            // than the session's, and nothing records which (#344 audit 3).
             guard PreparedNarrationFallback.canReadText(instead: session, item: existing) else { return session }
-            let timelineDescribesTarget = existing.media == nil
-                || PreparedNarrationFallback.media(existing.media, isTarget: session.currentTargetId)
+            let timelineDescribesTarget = PreparedNarrationFallback.media(existing.media, isTarget: session.currentTargetId)
             return PreparedNarrationFallback.liveSpeechSession(
                 from: session, item: existing, timeline: timelineDescribesTarget ? timeline : nil
             )
