@@ -482,6 +482,7 @@ class Run:
         if not (ROOT / 'node_modules').exists():
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         self.command('browser', ['npm', 'run', 'test:browser-extraction'])
+        self.command('share-link', ['npm', 'run', 'test:share-link'])
         expected = set()
         for target in ('SessionKitCoreTests', 'SessionKitTests', 'SessionKitTraceTests'):
             expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))
