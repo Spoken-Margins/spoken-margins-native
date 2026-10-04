@@ -138,15 +138,21 @@ public enum ReadwiseHighlightSyncPass {
     /// Sends every highlight the ledger hasn't recorded, a batch at a time, and records each batch
     /// once Readwise accepts it. A failure stops the pass; the next pass sends only what's left.
     /// Returns how many highlights were sent.
+    ///
+    /// `tokenIsCurrent` is asked before each batch (#642): once the listener disconnects or saves a
+    /// different token, the pass stops with a CancellationError instead of sending the next batch
+    /// with the token it started with. Batches Readwise already accepted stay in the ledger.
     public static func run(
         _ highlights: [ReadwiseHighlight], token: String, client: ReadwiseHighlightClient,
-        ledger: ReadwiseSentLedger, batchSize: Int = 50
+        ledger: ReadwiseSentLedger, batchSize: Int = 50,
+        tokenIsCurrent: @Sendable (String) -> Bool = { _ in true }
     ) async throws -> Int {
         var seen = try ledger.sentKeys()
         let pending = highlights.filter { seen.insert($0.marginKey).inserted }
         var sent = 0
         for start in stride(from: 0, to: pending.count, by: max(1, batchSize)) {
             try Task.checkCancellation()
+            guard tokenIsCurrent(token) else { throw CancellationError() }
             let batch = Array(pending[start..<min(start + max(1, batchSize), pending.count)])
             try await client.send(batch, token: token)
             try ledger.record(batch.map(\.marginKey))
