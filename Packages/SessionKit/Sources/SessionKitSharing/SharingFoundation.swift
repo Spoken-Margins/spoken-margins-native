@@ -84,9 +84,10 @@ public enum ReviewedItemTransportSelection: Sendable {
 }
 
 public enum SpokenMarginsPackageBuilder {
-    /// `localSourceText` is the item's own text on this device. Map proposals are checked against
-    /// it however the source travels, so a scene summary that quotes the source is dropped even
-    /// when the source goes by reference. It is never written into the packet.
+    /// `localSourceText` is the item's own text on this device, and an episode's transcript when it
+    /// has one. Map proposals are checked against it however the source travels, so a scene summary
+    /// that quotes the source is dropped even when the source goes by reference. It is never written
+    /// into the packet.
     public static func prepare(
         packageId: String,
         createdAt: Date,
