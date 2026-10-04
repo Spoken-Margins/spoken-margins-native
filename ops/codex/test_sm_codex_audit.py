@@ -6,7 +6,9 @@ The comment fixtures are shaped like GitHub's REST issue comments and copy the
 real first lines seen on PRs #344, #366, #374 and #418 on 2026-09-30.
 """
 
+import ast
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -76,9 +78,17 @@ class ShaInComment(unittest.TestCase):
     def test_audit_on_old_head_does_not_count_for_new_head(self):
         self.assertFalse(A.audited_on(FIXTURE["comments_audited_old_head"], HEAD))
 
-    def test_any_wording_naming_the_head_counts(self):
-        # "#366 was audited twice" lesson: the gpt-6-astra wording must count.
+    def test_astra_heading_naming_the_head_counts(self):
         self.assertTrue(A.audited_on(FIXTURE["comments_audited_old_head"], OLD))
+
+    def test_wording_the_runner_does_not_accept_does_not_count(self):
+        # The runner won't merge on a "**Codex audit (gpt-6-astra, …)" comment, so it isn't an audit here either.
+        c = [FIXTURE["comments_audited_old_head"][0]]
+        self.assertFalse(A.audited_on(c, OLD))
+
+    def test_older_manual_heading_counts(self):
+        c = [{"created_at": "x", "body": "## Codex audit on `68fc333`\n\nNo blocking findings."}]
+        self.assertTrue(A.audited_on(c, HEAD))
 
     def test_longer_prefix_counts(self):
         c = [{"created_at": "x", "body": "**Codex audit (Astra) on `68fc3337b3`**"}]
@@ -88,10 +98,20 @@ class ShaInComment(unittest.TestCase):
         c = [{"created_at": "x", "body": "**Codex audit (Astra) on `1ec94f3`**\n\nre-checked at 68fc333"}]
         self.assertFalse(A.audited_on(c, HEAD))
 
-    def test_fix_sha_on_first_line_counts_as_named(self):
-        # First line names both shas; the fixed sha counts as named. Documented behaviour.
-        self.assertTrue(A.audited_on(FIXTURE["comments_fixed_in_later_sha"],
-                                     "34c8906" + "0" * 33))
+    def test_finisher_reply_naming_the_fix_is_not_an_audit_of_it(self):
+        # #812: a reply to an audit that names the new head is not an audit of that head.
+        self.assertFalse(A.audited_on(FIXTURE["comments_fixed_in_later_sha"],
+                                      "34c8906" + "0" * 33))
+        reply = {"created_at": "x", "body": "**Codex audit on `a919a79` (P2): fixed in `68fc333`** and pushed."}
+        self.assertFalse(A.audited_on([reply], HEAD))
+        self.assertFalse(A.is_audit_comment(reply))
+        self.assertIsNone(A.head_audit([reply], HEAD))
+
+    def test_audit_headings_match_the_lane_runner(self):
+        runner = (Path(__file__).resolve().parents[2] / "scripts" / "lane-runner.py").read_text()
+        m = re.search(r"^AUDITS = .*$", runner, re.M)
+        self.assertIsNotNone(m, "scripts/lane-runner.py no longer defines AUDITS on one line")
+        self.assertEqual(ast.literal_eval(ast.parse(m.group(0)).body[0].value), A.AUDIT_HEADINGS)
 
     def test_comment_not_starting_with_codex_audit_is_ignored(self):
         c = [{"created_at": "x", "body": "Thanks. **Codex audit (Astra) on `68fc333`** next"}]

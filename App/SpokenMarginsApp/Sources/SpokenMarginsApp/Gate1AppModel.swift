@@ -833,8 +833,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private var storedSourceFollowSuggestionCandidates: [SourceCandidateEvidence] = []
     private var sourceFollowSuggestionItemId: String?
     var sourceFollowSuggestionCandidates: [SourceCandidateEvidence] {
-        guard sourceFollowSuggestionItemId == selectedItem.id,
-              screen != .playback || sourceFollowSuggestionItemId == snapshot.itemId else { return [] }
+        guard sourceFollowSuggestionItemId == selectedItem.id else { return [] }
         guard !FollowedSourceMatching.isSourceAlreadyFollowed(
             sourceURL: libraryItems.first(where: { $0.id == selectedItem.id })?.sourceURL,
             sourceTitle: libraryItems.first(where: { $0.id == selectedItem.id })?.sourceTitle,
@@ -1821,19 +1820,12 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             libraryAccessError = nil
             purgeExpiredEpisodeMapPreparationJobs(store: store)
-            if let fixtureText = ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"],
-               CommandLine.arguments.contains("--ui-testing") {
-                try resetAndSeedUITestingText(
-                    store: store,
-                    title: ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] ?? "UI Test Text",
-                    text: fixtureText,
-                    reference: ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SOURCE_URL"] ?? "ui-test"
-                )
-                return
-            }
-            if CommandLine.arguments.contains("--ui-testing") {
-                resetAndSeed()
-                return
+            switch UITestingLaunchSeed.current {
+            case .none, .keepLibrary: break
+            case .fixture: resetAndSeed(); return
+            case .importedPDF: resetAndSeed(); try importObsidianMarkdownFiles(urls: [UITestingLaunchSeedWriter.writePDF()]); return
+            case .text, .offlinePodcast:
+                try seedUITesting(store: store, item: UITestingLaunchSeedWriter.write(.current, into: store)); return
             }
             var rows = try loadLibraryRows(store: store)
             libraryWasEmptyAtLaunch = rows.isEmpty
@@ -1919,27 +1911,13 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func resetAndSeedUITestingText(
-        store: SQLiteSessionStore,
-        title: String,
-        text: String,
-        reference: String
-    ) throws {
-        try store.reset()
-        let item = Item(
-            id: "item-ui-text-regression",
-            title: title,
-            mediaType: "text",
-            text: text,
-            externalReference: reference,
-            status: "needs_listening_map"
-        )
-        try store.seed(item: item)
+    /// Finishes a `--ui-testing` launch whose seed writer has reset the store and added `item`.
+    private func seedUITesting(store: SQLiteSessionStore, item: Item) throws {
         self.store = store
         try configurePodcastDownloads(store: store)
         installEngine(try makeEngine(store: store))
         activeItemId = item.id
-        liveSpeechFallbackItemIds.insert(item.id)
+        if item.mediaType == "text" { liveSpeechFallbackItemIds.insert(item.id) }
         snapshot = SessionSnapshot()
         libraryItems = try loadLibraryRows(store: store)
         recentlyDeletedItems = []
@@ -1951,7 +1929,7 @@ final class Gate1AppModel: ObservableObject {
             "uiTestFixture": item.id,
             "speechRate": String(format: "%.2f", speechRate)
         ]
-        reportSuccess("Loaded simulator speech regression article.")
+        reportSuccess("Loaded UI test item \(item.title).")
     }
 
     static func shouldSeedWelcomeSample(
@@ -7869,8 +7847,8 @@ final class Gate1AppModel: ObservableObject {
                             defer { try? FileManager.default.removeItem(at: root) }
                             guard let self else { return }
                             do {
-                                try await self.verifyLocalAudioForImport(item, contents: contents)
-                                try await self.activateImportedLocalAudioMaps(item: item, contents: contents)
+                                try await self.placeOnOwnedAudio(item, contents: contents,
+                                    admission: self.verifyLocalAudioForImport(item, contents: contents))
                                 self.reportSuccess("Restored this listening package. Playback has not started.")
                             } catch { self.reportFailure(error, context: "Restoring listening package failed") }
                         }
@@ -7983,8 +7961,9 @@ final class Gate1AppModel: ObservableObject {
                 }
                 let item = try itemId.map { try store.loadItem(id: $0) }
                 let localItem = item.map(self.localSharedItemIdentity(for:))
+                var localAudioAdmission: LocalAudioPacketAdmission?
                 if let item, item.mediaType == "audiobook" {
-                    try await self.verifyLocalAudioForImport(item, contents: review.contents)
+                    localAudioAdmission = try await self.verifyLocalAudioForImport(item, contents: review.contents)
                 }
                 let itemText = item?.text
                 let disposition: ImportedCommentaryImportDisposition
@@ -8029,8 +8008,8 @@ final class Gate1AppModel: ObservableObject {
                             userInitiated: true
                         )
                     }
-                    if let item, item.mediaType == "audiobook" {
-                        try await self.activateImportedLocalAudioMaps(item: item, contents: review.contents)
+                    if let item, let localAudioAdmission {
+                        try await self.placeOnOwnedAudio(item, contents: review.contents, admission: localAudioAdmission)
                     } else if let localURL = self.podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
                         self.resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
                     }
@@ -8047,23 +8026,21 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func verifyLocalAudioForImport(_ item: Item, contents: VerifiedSpokenMarginsPackage) async throws {
+    private func verifyLocalAudioForImport(_ item: Item, contents: VerifiedSpokenMarginsPackage) async throws -> LocalAudioPacketAdmission {
         guard let url = resolvedOwnedAudiobookURL(for: item) else {
             throw SpokenMarginsPackageArchiveError.invalidManifest("Local source audio is unavailable")
         }
         let actualDigest = try await Task.detached(priority: .utility) {
             try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: url)
         }.value
-        let recipient = localSharedItemIdentity(for: item)
-        guard actualDigest == recipient.exactEditionSHA256,
-              ExactLocalAudioImport.matches(contents.manifest.item, recipient) else {
-            throw SpokenMarginsPackageArchiveError.invalidManifest("The audio bytes do not match this listening package")
-        }
-        for proposal in contents.listeningMapProposals {
-            _ = try ExactLocalAudioImport.projection(
-                proposal: proposal, source: contents.manifest.item, recipient: recipient, itemId: item.id
-            )
-        }
+        return try LocalAudioPacketAdmission.admitted(
+            contents, recipient: localSharedItemIdentity(for: item), itemId: item.id, actualDigest: actualDigest)
+    }
+
+    /// Exact maps project at the sender's times; a podcast packet on the listener's copy is placed like a download.
+    private func placeOnOwnedAudio(_ item: Item, contents: VerifiedSpokenMarginsPackage, admission: LocalAudioPacketAdmission) async throws {
+        if admission == .exactEdition { return try await activateImportedLocalAudioMaps(item: item, contents: contents) }
+        if let url = resolvedOwnedAudiobookURL(for: item) { resolveImportedPodcastCommentary(itemId: item.id, localURL: url) }
     }
 
     private func activateImportedLocalAudioMaps(item: Item, contents: VerifiedSpokenMarginsPackage) async throws {
@@ -8322,14 +8299,12 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["uiTestSharedSourceMiss"] = "forced_once"
             return nil
         }
-        let matches = try store.listItems().filter { item in
-            ImportedItemResolver.canRepresentSameWork(itemIdentity, localSharedItemIdentity(for: item))
-        }
-        return matches.count == 1 ? matches[0].id : nil
+        return SharedPacketItemMatcher.matchingItemId(
+            for: itemIdentity, among: try store.listItems(), ownedAudiobookDigest: localAudiobookDigest(for:))
     }
 
     func localSharedItemIdentity(for item: Item) -> SharedItemIdentity {
-        SharedItemIdentityBuilder.localIdentity(for: item, localAudioDigest: localAudiobookDigest(for: item))
+        SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: localAudiobookDigest(for: item))
     }
 
     private func localAudiobookDigest(for item: Item) -> String? {
@@ -13916,7 +13891,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func sharedItemType(for item: Item) -> SharedItemType {
-        SharedItemIdentityBuilder.itemType(for: item)
+        SharedPacketItemMatcher.itemType(for: item)
     }
 
     private func portableAnchor(
@@ -14794,8 +14769,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func seedUITestingGeneratedTimelineIfNeeded(sessionId: String, engine: SessionEngine, store: SQLiteSessionStore) throws {
-        guard CommandLine.arguments.contains("--ui-testing"),
-              ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] == nil,
+        guard UITestingLaunchSeed.current.seedsGeneratedTimeline,
               try store.loadTurns(sessionId: sessionId).isEmpty else {
             return
         }
