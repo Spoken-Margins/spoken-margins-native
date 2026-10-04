@@ -1478,7 +1478,17 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func requireTermsDecisionBeforePlayback(_ action: PendingPlaybackAfterTerms) -> Bool {
-        guard !hasAcceptedCurrentTerms, pendingTermsVoiceSelection?.supertonicVoice != nil else {
+        let itemId: String? = switch action {
+        case .startCurrentItem: activeItemId
+        case .resumeSession(let sessionId): (try? store?.loadSession(id: sessionId))?.itemId
+        case .jumpToChapter, .playSourceFromBeginning: selectedItem.id
+        }
+        let item = itemId.flatMap { id in try? store?.loadItem(id: id) }
+        // Only text read by James or Lily needs the Terms; a podcast never does (#781).
+        guard PlaybackTermsGate.requiresTerms(
+            for: item, termsAccepted: hasAcceptedCurrentTerms,
+            bundledVoicePending: pendingTermsVoiceSelection?.supertonicVoice != nil
+        ) else {
             return false
         }
         pendingPlaybackAfterTerms = action
