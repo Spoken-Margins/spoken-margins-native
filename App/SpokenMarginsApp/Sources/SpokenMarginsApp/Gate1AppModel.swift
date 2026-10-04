@@ -10795,12 +10795,8 @@ final class Gate1AppModel: ObservableObject {
                         self.diagnostics["supertonicFallbackRestored"] = itemId
                     }
                 },
-                onStall: { [weak self] kind, fields in
-                    Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) }
-                },
-                onSystemPause: { [weak self] kind, fields in
-                    Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) }
-                },
+                onStall: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
+                onSystemPause: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
                 onResumeDecision: { [weak self] fields in
                     Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) }
                 }
