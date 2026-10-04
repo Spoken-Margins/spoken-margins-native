@@ -13855,7 +13855,7 @@ final class Gate1AppModel: ObservableObject {
                 item: itemIdentity,
                 itemTransportSelection: itemTransport,
                 selections: selections,
-                mapProposals: mapProposals,
+                mapProposals: mapProposals, localSourceText: item.text,
                 fingerprintSpines: fingerprintSpines,
                 phraseSketches: phraseSketches,
                 machineEvidence: machineEvidence,

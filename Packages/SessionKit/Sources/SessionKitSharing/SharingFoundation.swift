@@ -84,6 +84,9 @@ public enum ReviewedItemTransportSelection: Sendable {
 }
 
 public enum SpokenMarginsPackageBuilder {
+    /// `localSourceText` is the item's own text on this device. Map proposals are checked against
+    /// it however the source travels, so a scene summary that quotes the source is dropped even
+    /// when the source goes by reference. It is never written into the packet.
     public static func prepare(
         packageId: String,
         createdAt: Date,
@@ -91,6 +94,7 @@ public enum SpokenMarginsPackageBuilder {
         itemTransportSelection: ReviewedItemTransportSelection,
         selections: [ReviewedInterjectionSelection],
         mapProposals: [PortableListeningMapProposalArtifact] = [],
+        localSourceText: String? = nil,
         fingerprintSpines: [EditionFingerprintSpineArtifact] = [],
         phraseSketches: [TranscriptPhraseSketchArtifact] = [],
         machineEvidence: [ReviewedMachineEvidenceAsset] = [],
@@ -218,7 +222,7 @@ public enum SpokenMarginsPackageBuilder {
         // outside the app, so drop what breaks the scene rules rather than refuse the Margins (#480).
         var embeddedItemText: String?
         if case .embeddedText(let text, _, _) = itemTransportSelection { embeddedItemText = text }
-        let mapProposals = PortableListeningMapContract.forSharing(mapProposals, itemText: embeddedItemText)
+        let mapProposals = PortableListeningMapContract.forSharing(mapProposals, itemText: embeddedItemText ?? localSourceText)
         for (index, proposal) in mapProposals.enumerated() {
             let path = String(format: "artifacts/listening-map-proposal-%04d.json", index + 1)
             artifactData[path] = try encodeArtifact(proposal)

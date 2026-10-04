@@ -178,6 +178,55 @@ final class ListeningMapPacketTests: XCTestCase {
         }
     }
 
+    /// Codex audit on cf3e810: a Listening Edition with an HTTPS source is shared by reference, and its
+    /// prepared-audio map anchors carry only offsets and times. With no embedded text to check against,
+    /// a scene summary copying the source travelled in the packet. The builder now checks proposals
+    /// against the device's own copy of the source, whatever the transport, without sending it.
+    func testAListeningEditionSharedByReferenceDropsAQuotedSceneSummaryWithoutSendingItsText() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = "The committee met at dawn and agreed that the old bridge must close before winter storms arrive."
+        for (name, summary, keepsMap) in [
+            ("quoted", "In short, the committee met at dawn and agreed that the old bridge must close.", false),
+            ("paraphrased", "Officials vote to shut the ageing crossing.", true),
+        ] {
+            let edition = try ListeningEdition.decode(ListeningEdition(
+                title: "Bridge Minutes", sourceURL: "https://example.com/bridge", text: source,
+                generator: "External model", overview: "A town considers its crossing.",
+                scenes: [.init(title: "Decision", description: "The bridge's future.", summary: summary, startBlock: 1, endBlock: 1)]
+            ).encoded())
+            // The map prepared audio gives a Listening Edition: anchors without source text.
+            let timeline = TranscriptTimeline(segments: [
+                .init(id: "segment-1", startMs: 0, endMs: 12_000, startChar: 0, endChar: source.count, text: source)
+            ], chapters: [], durationMs: 12_000)
+            let (map, _) = try edition.audioMap(timeline: timeline)
+            XCTAssertNil(map.scenes.first?.startAnchor.exactText, "precondition: the anchors quote nothing")
+            for (transportName, transport) in [("reference", ReviewedItemTransportSelection.reference), ("recipient", .recipientSupplied)] {
+                let item = SharedItemIdentity(itemType: .text, canonicalURL: transportName == "reference" ? edition.sourceURL : nil, title: edition.title)
+                let prepared = try SpokenMarginsPackageBuilder.prepare(
+                    packageId: "edition-\(name)-\(transportName)", createdAt: fixedDate, item: item,
+                    itemTransportSelection: transport,
+                    selections: [.init(packageScopedId: "margin-001", revision: revision(before: "", after: ""),
+                                       anchor: .init(anchorType: .media, mediaTimeMs: 5_000), representation: .textOnly)],
+                    mapProposals: [map], localSourceText: edition.text
+                )
+                let label = "\(name) by \(transportName)"
+                XCTAssertEqual(prepared.manifest.artifacts.contains { $0.kind == SpokenMarginsArtifactKind.listeningMapProposal }, keepsMap, label)
+                let url = root.appending(path: "\(name)-\(transportName).spokenmargins")
+                _ = try exportPacket(prepared, to: url)
+                let imported = try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appending(path: "\(name)-\(transportName)"))
+                XCTAssertEqual(imported.listeningMapProposals.map(\.id), keepsMap ? [map.id] : [], label)
+                XCTAssertEqual(imported.commentaryLayers.first?.interjections.map(\.packageScopedId), ["margin-001"], "the Margin still travels")
+                // Nothing in the archive, manifest and preview included, carries a run of the source.
+                let entries = try readRawArchive(url)
+                XCTAssertFalse(entries.keys.contains { $0.contains("embedded-item") }, label)
+                for (path, data) in entries {
+                    XCTAssertFalse(PortableListeningMapContract.sharesRun(String(decoding: data, as: UTF8.self), source), "\(label): \(path)")
+                }
+            }
+        }
+    }
+
     // MARK: Transcript leak check (Done when 4)
 
     /// A podcast with an internal transcript, its scene map and phrase sketch, shared with two Margins.
