@@ -130,7 +130,8 @@ public protocol OfflineStorageRepository {
     func updateOwnedOfflineAsset(id: String, _ change: (inout OwnedOfflineAsset) -> Void) throws -> OwnedOfflineAsset?
     /// Deletes the row only if `shouldDelete` accepts it as it is now, with no other write in between
     /// (#530): a protection saved after the caller's earlier read keeps the row. Returns whether a row
-    /// was deleted. `shouldDelete` must not call the repository, for the same reason as `change` above.
+    /// was deleted. `shouldDelete` must not call the repository, for the same reason as `change` above;
+    /// it may remove the row's file, so no reader sees the row gone while the file is still there.
     @discardableResult
     func deleteOwnedOfflineAsset(id: String, if shouldDelete: (OwnedOfflineAsset) -> Bool) throws -> Bool
     func saveOfflineStorageReservation(_ reservation: OfflineStorageReservation) throws

@@ -485,6 +485,53 @@ final class OfflineStorageLedgerTests: XCTestCase {
         coordinator.shutdown()
     }
 
+    // #530, Codex P1 on 3ff22d0: the row was deleted before its file, so playback starting in
+    // between installed no protection, got the file's URL, and then lost the file.
+    func testAnEvictedRowIsNeverVisibleWhileItsFileStillExists() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "offline-ledger-unlink-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = RowDeletionObservingRepository()
+        try repository.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 7))
+        let ledger = OfflineStorageLedger(repository: repository, rootDirectory: root)
+        let file = try writeAsset(Fixture(root: root, repository: repository, ledger: ledger),
+                                  relativePath: "PodcastAudio/episode.m4a", category: .podcast)
+        repository.afterRowDeleted = { _ in
+            // Playback starting now finds no row to protect, so it must find no file either.
+            repository.fileExistedWhenRowWasDeleted = FileManager.default.fileExists(atPath: file.path)
+        }
+
+        _ = try await ledger.reserve(ownerId: "other-download", byteCount: 7)
+
+        XCTAssertEqual(repository.fileExistedWhenRowWasDeleted, false,
+                       "the file must be gone by the time its row's deletion is visible")
+    }
+
+    // #530, Codex P2 on 3ff22d0: a file that couldn't be removed lost its row anyway, so its bytes
+    // stopped counting and the next download could go over the budget.
+    func testAFileThatCannotBeRemovedStaysCharged() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "offline-ledger-unremovable-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = InMemorySessionRepository()
+        try repository.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 7))
+        let ledger = OfflineStorageLedger(repository: repository, rootDirectory: root, fileManager: UnremovableFileManager())
+        let file = try writeAsset(Fixture(root: root, repository: repository, ledger: ledger),
+                                  relativePath: "PodcastAudio/episode.m4a", category: .podcast)
+
+        for attempt in 1...2 {
+            do {
+                _ = try await ledger.reserve(ownerId: "other-download-\(attempt)", byteCount: 7)
+                XCTFail("Attempt \(attempt): nothing could be freed, so the reservation must be refused")
+            } catch OfflineStorageLedgerError.insufficientSpace {}
+        }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        let inventory = try await ledger.inventoryBytes()
+        XCTAssertEqual(inventory, 7, "the file that stayed on disk is still charged")
+        XCTAssertTrue(try repository.loadOfflineStorageReservations().isEmpty)
+    }
+
     private func writeAsset(_ fixture: Fixture, relativePath: String, category: OfflineAssetCategory) throws -> URL {
         let file = fixture.root.appending(path: relativePath)
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -577,5 +624,25 @@ private final class EvictionHookFileManager: FileManager, @unchecked Sendable {
             hook()
         }
         return super.fileExists(atPath: path)
+    }
+}
+
+/// Reports each conditional row deletion as soon as it commits, which is when the app's main actor
+/// could next read the store.
+private final class RowDeletionObservingRepository: InMemorySessionRepository, @unchecked Sendable {
+    var afterRowDeleted: ((String) -> Void)?
+    var fileExistedWhenRowWasDeleted: Bool?
+
+    override func deleteOwnedOfflineAsset(id: String, if shouldDelete: (OwnedOfflineAsset) -> Bool) throws -> Bool {
+        let deleted = try super.deleteOwnedOfflineAsset(id: id, if: shouldDelete)
+        if deleted { afterRowDeleted?(id) }
+        return deleted
+    }
+}
+
+/// A file system that refuses every removal, as a locked or permission-denied file would.
+private final class UnremovableFileManager: FileManager, @unchecked Sendable {
+    override func removeItem(at URL: URL) throws {
+        throw CocoaError(.fileWriteNoPermission)
     }
 }

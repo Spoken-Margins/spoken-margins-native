@@ -307,12 +307,17 @@ actor OfflineStorageLedger {
             guard try releaseReferences(to: url, references: &references) else { continue }
             let hasFile = fileManager.fileExists(atPath: url.path)
             // `assets` is an earlier read, and the app protects rows from the main actor meanwhile
-            // (an episode starts playing). The row is judged as it is now and deleted in the same
-            // step, before its file, so a protected file is never deleted (#530).
-            guard try repository.deleteOwnedOfflineAsset(id: id, if: {
-                $0.isAutomaticallyEvictable && $0.relativePath == asset.relativePath
-            }) else { continue }
-            if hasFile { try fileManager.removeItem(at: url) }
+            // (an episode starts playing). The row is judged as it is now, and its file is removed
+            // inside the same store step (#530). A protection saved first keeps both; playback that
+            // starts after finds no row and no file, never a URL about to vanish. A file that can't
+            // be removed keeps its row, so its bytes stay charged and the shortfall refuses the
+            // reservation.
+            let deleted = try repository.deleteOwnedOfflineAsset(id: id, if: { current in
+                guard current.isAutomaticallyEvictable, current.relativePath == asset.relativePath else { return false }
+                guard hasFile, fileManager.fileExists(atPath: url.path) else { return true }
+                return (try? fileManager.removeItem(at: url)) != nil
+            })
+            guard deleted else { continue }
             reclaimed += asset.byteCount
         }
         return reclaimed
