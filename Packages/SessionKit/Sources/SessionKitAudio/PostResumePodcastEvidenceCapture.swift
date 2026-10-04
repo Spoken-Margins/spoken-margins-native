@@ -229,6 +229,11 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                let mediaTimeMs,
                let copy = Self.copy(buffer) {
                 let durationMs = Int((Double(frameCount) / format.sampleRate * 1_000).rounded())
+                // Playback moved back without a noted seek (a Margin's rejoin step-back, #776): drop the first
+                // copy of the audio that is about to replay, so evidence windows never hold it twice.
+                if let last = ring.last, last.startMediaTimeMs >= mediaTimeMs {
+                    ring.removeAll { $0.startMediaTimeMs >= mediaTimeMs }
+                }
                 ring.append(RingChunk(
                     buffer: copy,
                     startMediaTimeMs: mediaTimeMs,

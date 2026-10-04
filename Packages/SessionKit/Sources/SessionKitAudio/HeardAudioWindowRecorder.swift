@@ -68,6 +68,8 @@ public struct HeardAudioWindowRecorder: Sendable {
     public static let afterMs = 60_000
     /// Chunks further apart than this aren't one contiguous run (a seek or a dropped buffer).
     static let contiguityToleranceMs = 250
+    /// Rounding slack when deciding whether a chunk only replays audio a window already holds.
+    static let replayToleranceMs = 10
 
     private struct Chunk: Sendable {
         let startMediaTimeMs: Int
@@ -79,6 +81,9 @@ public struct HeardAudioWindowRecorder: Sendable {
         let before: [Chunk]
         var after: [Chunk] = []
         var afterSampleCount = 0
+        /// The end of the audio this window already holds. A Margin rejoins a few seconds before its anchor
+        /// (#776), so the first seconds after resuming replay the end of `before`; they aren't collected twice.
+        var heardUntilMs: Int
     }
 
     public let sampleRate: Double
@@ -99,15 +104,24 @@ public struct HeardAudioWindowRecorder: Sendable {
     public mutating func append(samples: [Float], startMediaTimeMs: Int) -> [HeardAudioWindow] {
         guard !samples.isEmpty else { return [] }
         let chunk = Chunk(startMediaTimeMs: startMediaTimeMs, samples: samples)
+        // Playback moved back without a seek being noted (a Margin's rejoin step-back, #776): the chunks from
+        // here on are about to play again, so the rolling minute drops its first copy of them.
+        if let last = ring.last, last.startMediaTimeMs >= startMediaTimeMs {
+            ring.removeAll { $0.startMediaTimeMs >= startMediaTimeMs }
+            ringSampleCount = ring.reduce(0) { $0 + $1.samples.count }
+        }
         ring.append(chunk)
         ringSampleCount += samples.count
         while let first = ring.first, ringSampleCount - first.samples.count >= beforeCapacity {
             ring.removeFirst()
             ringSampleCount -= first.samples.count
         }
+        let chunkEndMs = endMs(of: chunk)
         var finished: [HeardAudioWindow] = []
         for key in Array(collecting.keys) {
             guard var window = collecting[key] else { continue }
+            guard chunkEndMs > window.heardUntilMs + Self.replayToleranceMs else { continue }
+            window.heardUntilMs = max(window.heardUntilMs, chunkEndMs)
             window.after.append(chunk)
             window.afterSampleCount += samples.count
             if window.afterSampleCount >= afterCapacity {
@@ -125,7 +139,11 @@ public struct HeardAudioWindowRecorder: Sendable {
     public mutating func begin(_ request: PostResumeAudioSampleRequest) {
         let key = Self.key(request)
         let before = ring.filter { $0.startMediaTimeMs < request.anchorMediaTimeMs }
-        collecting[key] = Collecting(request: request, before: before)
+        collecting[key] = Collecting(
+            request: request,
+            before: before,
+            heardUntilMs: before.map(endMs(of:)).max() ?? Int.min
+        )
     }
 
     /// A seek ends every window in progress with what it has, and empties the rolling minute.
@@ -139,6 +157,10 @@ public struct HeardAudioWindowRecorder: Sendable {
         let windows = collecting.values.map { makeWindow($0, endReason: reason) }
         collecting.removeAll()
         return windows
+    }
+
+    private func endMs(of chunk: Chunk) -> Int {
+        chunk.startMediaTimeMs + Int((Double(chunk.samples.count) / sampleRate * 1_000).rounded())
     }
 
     public static func key(_ request: PostResumeAudioSampleRequest) -> String {

@@ -83,6 +83,39 @@ final class HeardAudioWindowRecorderTests: XCTestCase {
         XCTAssertEqual(second.map(\.request.interjectionId), ["ij-002"])
     }
 
+    /// #776: a Margin rejoins 3 s before its anchor. Those 3 s replay the end of the minute before, and used to
+    /// become a second, overlapping segment, so the source context repeated the words at the anchor.
+    func testTheRejoinStepBackIsNotCollectedTwice() throws {
+        var recorder = HeardAudioWindowRecorder(sampleRate: rate)
+        _ = play(&recorder, fromMs: 0, durationMs: 300_000)
+        recorder.begin(request(anchorMs: 300_000))
+        XCTAssertTrue(play(&recorder, fromMs: 297_000, durationMs: 62_500).isEmpty, "the replay doesn't count")
+        let window = try XCTUnwrap(play(&recorder, fromMs: 359_500, durationMs: 500).first)
+        XCTAssertEqual(window.segments.count, 1)
+        let run = try XCTUnwrap(window.segments.first)
+        XCTAssertEqual(run.startMediaTimeMs, 240_000)
+        XCTAssertEqual(window.durationMs(of: run), 120_000, "each moment is held once")
+    }
+
+    /// The rolling minute drops its first copy of the replayed seconds, so the next Margin's minute before is
+    /// one run without a repeat.
+    func testTheRollingMinuteKeepsOneCopyAfterAStepBack() throws {
+        var recorder = HeardAudioWindowRecorder(sampleRate: rate)
+        _ = play(&recorder, fromMs: 0, durationMs: 100_000)
+        recorder.begin(request(anchorMs: 100_000, id: "ij-001"))
+        _ = play(&recorder, fromMs: 97_000, durationMs: 20_000)
+        recorder.begin(request(anchorMs: 117_000, id: "ij-002"))
+        let windows = recorder.finishAll(reason: "stopped")
+        let second = try XCTUnwrap(windows.first { $0.request.interjectionId == "ij-002" })
+        XCTAssertEqual(second.segments.count, 1)
+        let run = try XCTUnwrap(second.segments.first)
+        XCTAssertEqual(run.startMediaTimeMs, 57_000)
+        XCTAssertEqual(second.durationMs(of: run), 60_000)
+        let first = try XCTUnwrap(windows.first { $0.request.interjectionId == "ij-001" })
+        XCTAssertEqual(first.segments.map(\.startMediaTimeMs), [40_000])
+        XCTAssertEqual(first.durationMs(of: try XCTUnwrap(first.segments.first)), 77_000)
+    }
+
     func testTimelinesAreShiftedIntoEpisodeTime() {
         let part = MediaTimeline(segments: [
             MediaTimelineSegment(id: "s1", startMs: 1_000, endMs: 4_000, text: "Nice job, Joe."),
