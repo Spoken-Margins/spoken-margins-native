@@ -460,6 +460,42 @@ final class SharingTests: XCTestCase {
         }
     }
 
+    func testALandmarkWithAnOverflowingSourceRangeIsRejectedNotATrap() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "overflowing-range", createdAt: fixedDate, item: podcastItem, itemTransportSelection: .reference,
+            selections: [.init(
+                packageScopedId: "margin-001", revision: approvedRevision(),
+                anchor: .init(anchorType: .media, mediaTimeMs: 5_000), representation: .textOnly
+            )],
+            fingerprintSpines: [EditionFingerprintSpineArtifact(
+                id: "spine-1", itemId: "episode-one", canonicalURL: "https://example.com/episodes/one",
+                createdAt: fixedDate, landmarks: []
+            )]
+        )
+        // Decoding skips the clamping initializer, so a hostile packet can carry this range. Checking the
+        // duration rule before the range rule computes 0 - Int.min, which traps.
+        let spinePath = try XCTUnwrap(prepared.manifest.artifacts.first {
+            $0.kind == SpokenMarginsArtifactKind.editionFingerprintSpine
+        }?.path)
+        var data = prepared.artifactData
+        var spine = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(data[spinePath])) as? [String: Any])
+        spine["landmarks"] = [[
+            "id": "landmark-1", "order": 0, "sourceMediaStartMs": Int.min, "sourceMediaEndMs": 0,
+            "anchorMediaTimeMs": 0, "continuityEpoch": 0, "trigger": "initial_playback",
+            "provenance": "observed_decoded_playback", "signatureAssetId": "missing", "generatorVersion": "v1",
+        ]]
+        data[spinePath] = try JSONSerialization.data(withJSONObject: spine)
+        let malformed = PreparedSpokenMarginsPackage(manifest: prepared.manifest, artifactData: data, assetFiles: prepared.assetFiles)
+        XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(malformed, to: root.appendingPathComponent("overflow.spokenmargins"))) { error in
+            XCTAssertEqual(
+                error as? SpokenMarginsPackageArchiveError,
+                .invalidManifest("episode fingerprint landmark is invalid: source_range")
+            )
+        }
+    }
+
     func testPortableListeningMapProposalAndPodcastEvidenceImportWithoutActivatingMap() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

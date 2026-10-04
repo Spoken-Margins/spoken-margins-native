@@ -679,34 +679,36 @@ public enum SpokenMarginsPackageArchive {
         assetsByID: [String: SpokenMarginsAssetDescriptor],
         item: SharedItemIdentity
     ) throws {
-        // #536: name the rule that failed, so diagnostics say which one.
-        let rules: [(String, Bool)] = [
-            ("item_id", (1...500).contains(spine.itemId.count)),
-            ("landmark_count", spine.landmarks.count <= 500),
-            ("generator_version", spine.generatorVersion.count <= 200),
-            ("canonical_url", spine.canonicalURL.map(validHTTPSURL) ?? true),
-            ("episode_guid", spine.episodeGUID.map({ $0.count <= 1_000 }) ?? true),
-            ("duration", spine.producingEditionDurationMs.map({ $0 >= 0 }) ?? true),
-            ("edition_sha256", spine.producingEditionSHA256.map(isSHA256) ?? true),
-            ("landmark_ids", Set(spine.landmarks.map(\.id)).count == spine.landmarks.count),
-            ("landmark_order", spine.landmarks.map(\.order) == Array(0..<spine.landmarks.count)),
+        // #536: name the rule that failed, so diagnostics say which one. Rules run in order and stop at
+        // the first failure, so a later rule can rely on the earlier ones having held.
+        let rules: [(String, () -> Bool)] = [
+            ("item_id", { (1...500).contains(spine.itemId.count) }),
+            ("landmark_count", { spine.landmarks.count <= 500 }),
+            ("generator_version", { spine.generatorVersion.count <= 200 }),
+            ("canonical_url", { spine.canonicalURL.map(validHTTPSURL) ?? true }),
+            ("episode_guid", { spine.episodeGUID.map({ $0.count <= 1_000 }) ?? true }),
+            ("duration", { spine.producingEditionDurationMs.map({ $0 >= 0 }) ?? true }),
+            ("edition_sha256", { spine.producingEditionSHA256.map(isSHA256) ?? true }),
+            ("landmark_ids", { Set(spine.landmarks.map(\.id)).count == spine.landmarks.count }),
+            ("landmark_order", { spine.landmarks.map(\.order) == Array(0..<spine.landmarks.count) }),
         ]
-        if let failed = rules.first(where: { !$0.1 })?.0 {
+        if let failed = rules.first(where: { !$0.1() })?.0 {
             throw SpokenMarginsPackageArchiveError.invalidManifest("episode fingerprint spine is out of bounds: \(failed)")
         }
         if let expected = item.episodeGUID, let actual = spine.episodeGUID, expected != actual {
             throw SpokenMarginsPackageArchiveError.invalidManifest("episode fingerprint spine identity conflicts with the item")
         }
         for landmark in spine.landmarks {
-            let rules: [(String, Bool)] = [
-                ("source_range", landmark.sourceMediaStartMs >= 0 && landmark.sourceMediaEndMs >= landmark.sourceMediaStartMs),
-                ("duration", landmark.sourceMediaEndMs - landmark.sourceMediaStartMs <= 30_000),
-                ("anchor_time", landmark.anchorMediaTimeMs >= 0),
-                ("continuity_epoch", landmark.continuityEpoch >= 0),
-                ("generator_version", landmark.generatorVersion.count <= 200),
-                ("signature_asset", assetsByID[landmark.signatureAssetId]?.role == SpokenMarginsAssetRole.acousticSignature),
+            // "duration" subtracts, which only can't overflow once "source_range" has held.
+            let rules: [(String, () -> Bool)] = [
+                ("source_range", { landmark.sourceMediaStartMs >= 0 && landmark.sourceMediaEndMs >= landmark.sourceMediaStartMs }),
+                ("duration", { landmark.sourceMediaEndMs - landmark.sourceMediaStartMs <= 30_000 }),
+                ("anchor_time", { landmark.anchorMediaTimeMs >= 0 }),
+                ("continuity_epoch", { landmark.continuityEpoch >= 0 }),
+                ("generator_version", { landmark.generatorVersion.count <= 200 }),
+                ("signature_asset", { assetsByID[landmark.signatureAssetId]?.role == SpokenMarginsAssetRole.acousticSignature }),
             ]
-            if let failed = rules.first(where: { !$0.1 })?.0 {
+            if let failed = rules.first(where: { !$0.1() })?.0 {
                 throw SpokenMarginsPackageArchiveError.invalidManifest("episode fingerprint landmark is invalid: \(failed)")
             }
         }
