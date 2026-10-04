@@ -348,7 +348,40 @@ function response(bytes, { ok = true, contentLength = bytes.length } = {}) {
   return {
     ok,
     headers: { get: (name) => (name.toLowerCase() === "content-length" ? String(contentLength) : null) },
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
+      }
+    }),
     arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+  };
+}
+
+// A PDF answer with no content-length that keeps sending 1 MB chunks, counting what was read.
+function endlessPDFResponse({ ok = true } = {}) {
+  const stats = { chunksRead: 0, cancelled: false, arrayBufferCalled: false };
+  const chunk = new Uint8Array(1024 * 1024);
+  chunk.set(new TextEncoder().encode("%PDF-1.7"));
+  return {
+    stats,
+    response: {
+      ok,
+      headers: { get: () => null },
+      body: new ReadableStream({
+        pull(controller) {
+          stats.chunksRead += 1;
+          controller.enqueue(chunk.slice());
+        },
+        cancel() {
+          stats.cancelled = true;
+        }
+      }),
+      arrayBuffer: async () => {
+        stats.arrayBufferCalled = true;
+        throw new Error("the whole body must never be buffered");
+      }
+    }
   };
 }
 
@@ -380,6 +413,30 @@ test("#271: an HTML answer, a failed fetch or an oversized PDF leaves only the l
   const oversized = new TextEncoder().encode("%PDF-1.7");
   const oversizedPayload = await runPreprocessorOnPDF(async () => response(oversized, { contentLength: 16 * 1024 * 1024 }));
   assert.equal(oversizedPayload.pdfBase64, undefined);
+});
+
+test("#271: an oversized PDF without a declared length is cut off at the cap", async () => {
+  const { stats, response: endless } = endlessPDFResponse();
+  const payload = await runPreprocessorOnPDF(async () => endless);
+
+  assert.equal(payload.pdfBase64, undefined);
+  assert.equal(stats.cancelled, true);
+  assert.equal(stats.arrayBufferCalled, false);
+  assert.ok(stats.chunksRead <= 17, `read ${stats.chunksRead} MB before stopping`);
+});
+
+test("#271: a rejected answer releases its body without reading it", async () => {
+  const failed = endlessPDFResponse({ ok: false });
+  const failedPayload = await runPreprocessorOnPDF(async () => failed.response);
+  assert.equal(failedPayload.pdfBase64, undefined);
+  assert.equal(failed.stats.cancelled, true);
+  assert.equal(failed.stats.arrayBufferCalled, false);
+
+  const declared = endlessPDFResponse();
+  declared.response.headers = { get: (name) => (name.toLowerCase() === "content-length" ? String(16 * 1024 * 1024) : null) };
+  const declaredPayload = await runPreprocessorOnPDF(async () => declared.response);
+  assert.equal(declaredPayload.pdfBase64, undefined);
+  assert.equal(declared.stats.cancelled, true);
 });
 
 test("#271: a web page share never fetches its page again", async () => {

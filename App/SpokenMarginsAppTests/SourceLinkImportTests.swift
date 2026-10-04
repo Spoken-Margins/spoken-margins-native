@@ -404,6 +404,87 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(copied.lastPathComponent, "f1000research-12-157633.pdf")
     }
 
+    func testSafariPageResultsOnASeparateAttachmentComeBeforeTheLink() throws {
+        // #271 audit: with the link and the page results on separate attachments, the
+        // page results (which can carry the PDF's bytes) must be tried before the link.
+        let linkProvider = NSItemProvider(object: Self.pmcPDFURL as NSURL)
+        let pageProvider = makePageResultsProvider(pdf: nil)
+
+        let candidates = ShareSheetRepresentationOrder.candidates(
+            from: [linkProvider, pageProvider],
+            conforms: { $0.hasItemConformingToTypeIdentifier($1) },
+            additionalIdentifiers: { _, _ in [] }
+        )
+
+        let pageIndex = try XCTUnwrap(candidates.firstIndex {
+            $0.provider === pageProvider && $0.identifier == ShareSheetRepresentationOrder.propertyListIdentifier
+        })
+        let linkIndex = try XCTUnwrap(candidates.firstIndex {
+            $0.provider === linkProvider && $0.identifier == ShareSheetRepresentationOrder.urlIdentifier
+        })
+        XCTAssertLessThan(pageIndex, linkIndex)
+    }
+
+    func testSafariPDFShareTriesThePageResultsBeforeTheLink() throws {
+        let provider = makeSharedPDFProvider(url: Self.pmcPDFURL)
+        provider.registerItem(forTypeIdentifier: ShareSheetRepresentationOrder.propertyListIdentifier) { completion, _, _ in
+            completion?([:] as NSDictionary, nil)
+        }
+
+        let identifiers = rankedShareIdentifiers([provider])
+
+        let pageIndex = try XCTUnwrap(identifiers.firstIndex(of: ShareSheetRepresentationOrder.propertyListIdentifier))
+        let urlIndex = try XCTUnwrap(identifiers.firstIndex(of: ShareSheetRepresentationOrder.urlIdentifier))
+        XCTAssertLessThan(pageIndex, urlIndex)
+        XCTAssertEqual(identifiers.last, ShareSheetRepresentationOrder.urlIdentifier)
+    }
+
+    func testPageBytesOnALaterAttachmentWinOverAnEarlierLink() throws {
+        // #271 audit: a link found first (page results without bytes, or a URL) waits
+        // while other attachments are untried, so the PDF bytes become a local file.
+        let pdf = Data("%PDF-1.7 PubMed Central".utf8)
+        let linkOnlyPage = makePageResultsProvider(pdf: nil)
+        let bytesPage = makePageResultsProvider(pdf: pdf)
+        let linkProvider = NSItemProvider(object: Self.pmcPDFURL as NSURL)
+        let candidates = ShareSheetRepresentationOrder.candidates(
+            from: [linkProvider, linkOnlyPage, bytesPage],
+            conforms: { $0.hasItemConformingToTypeIdentifier($1) },
+            additionalIdentifiers: { _, _ in [] }
+        )
+        let store = makePayloadStore()
+
+        let handoff = try firstShareHandoff(candidates) { candidate in
+            if candidate.provider === bytesPage {
+                let pagePDF = try XCTUnwrap(SourceLinkShareRepresentation.pagePDF(fromPageResults: [
+                    "documentURL": Self.pmcPDFURL.absoluteString,
+                    SourceLinkShareRepresentation.pagePDFKey: pdf.base64EncodedString()
+                ]))
+                let copied = try store.savePDF(data: pagePDF.data, suggestedFilename: pagePDF.suggestedFilename)
+                return (copied, "share_sheet_pdf_file")
+            }
+            return (Self.pmcPDFURL, "share_sheet_pdf")
+        }
+
+        XCTAssertEqual(handoff.surface, "share_sheet_pdf_file")
+        XCTAssertTrue(store.isManagedPDFURL(handoff.url))
+        XCTAssertEqual(try Data(contentsOf: handoff.url), pdf)
+    }
+
+    func testLinkIsStillHandedOffWhenNoAttachmentCarriesThePDF() throws {
+        let linkProvider = NSItemProvider(object: Self.pmcPDFURL as NSURL)
+        let pageProvider = makePageResultsProvider(pdf: nil)
+        let candidates = ShareSheetRepresentationOrder.candidates(
+            from: [linkProvider, pageProvider],
+            conforms: { $0.hasItemConformingToTypeIdentifier($1) },
+            additionalIdentifiers: { _, _ in [] }
+        )
+
+        let handoff = try firstShareHandoff(candidates) { _ in (Self.pmcPDFURL, "share_sheet_pdf") }
+
+        XCTAssertEqual(handoff.surface, "share_sheet_pdf")
+        XCTAssertEqual(handoff.url, Self.pmcPDFURL)
+    }
+
     func testSafariPageResultsWithoutPDFBytesFallBackToTheLink() {
         let html = Data("<html>Preparing to download</html>".utf8).base64EncodedString()
 
@@ -424,6 +505,36 @@ final class SourceLinkImportTests: XCTestCase {
             return nil
         }
         return provider
+    }
+
+    private func makePageResultsProvider(pdf: Data?) -> NSItemProvider {
+        var results: [String: Any] = ["documentURL": Self.pmcPDFURL.absoluteString, "isPDFDocument": true]
+        results[SourceLinkShareRepresentation.pagePDFKey] = pdf?.base64EncodedString()
+        let item = ["NSExtensionJavaScriptPreprocessingResultsKey": results] as NSDictionary
+        let provider = NSItemProvider()
+        provider.registerItem(forTypeIdentifier: ShareSheetRepresentationOrder.propertyListIdentifier) { completion, _, _ in
+            completion?(item, nil)
+        }
+        return provider
+    }
+
+    /// Walks the candidates the way the share extension does: a link waits in
+    /// `ShareSheetLinkFallback` while non-link candidates remain. `handoff` returns the
+    /// URL and handoff surface a candidate yields; `share_sheet_pdf_file` is a local copy.
+    private func firstShareHandoff(
+        _ candidates: [ShareSheetRepresentationOrder.Candidate<NSItemProvider>],
+        handoff: (ShareSheetRepresentationOrder.Candidate<NSItemProvider>) throws -> (URL, String)
+    ) throws -> (url: URL, surface: String) {
+        var fallback = ShareSheetLinkFallback<(url: URL, surface: String)>()
+        let identifiers = candidates.map(\.identifier)
+        for (index, candidate) in candidates.enumerated() {
+            let found = try handoff(candidate)
+            let isLink = found.1 != "share_sheet_pdf_file"
+            if let accepted = fallback.accept((found.0, found.1), isLink: isLink, at: index, in: identifiers) {
+                return accepted
+            }
+        }
+        return try XCTUnwrap(fallback.deferredLink)
     }
 
     private func rankedShareIdentifiers(_ providers: [NSItemProvider]) -> [String] {

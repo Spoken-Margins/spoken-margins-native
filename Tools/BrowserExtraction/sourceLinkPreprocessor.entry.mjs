@@ -25,6 +25,46 @@ function base64FromBytes(bytes) {
   return btoa(binary);
 }
 
+function cancelQuietly(stream) {
+  try {
+    stream?.cancel?.()?.catch?.(() => {});
+  } catch {
+    // Already closed or locked: nothing left to release.
+  }
+}
+
+// Reads at most the cap, so an oversized or endless answer never fills the page's memory.
+async function boundedBody(response) {
+  const body = response.body;
+  if (!body || typeof body.getReader !== "function") {
+    // No stream to count while reading: trust only a declared length under the cap.
+    const declaredLength = Number(response.headers?.get?.("content-length") || 0);
+    if (declaredLength <= 0 || declaredLength > maximumPagePDFBytes) return null;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return bytes.length > maximumPagePDFBytes ? null : bytes;
+  }
+  const reader = body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maximumPagePDFBytes) {
+      cancelQuietly(reader);
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 async function pagePDFBase64(documentURL) {
   if (typeof fetch !== "function" || typeof btoa !== "function") return null;
   const controller = typeof AbortController === "function" ? new AbortController() : null;
@@ -35,11 +75,13 @@ async function pagePDFBase64(documentURL) {
       cache: "force-cache",
       signal: controller?.signal
     });
-    if (!response.ok) return null;
     const declaredLength = Number(response.headers?.get?.("content-length") || 0);
-    if (declaredLength > maximumPagePDFBytes) return null;
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.length === 0 || bytes.length > maximumPagePDFBytes || !hasPDFSignature(bytes)) return null;
+    if (!response.ok || declaredLength > maximumPagePDFBytes) {
+      cancelQuietly(response.body);
+      return null;
+    }
+    const bytes = await boundedBody(response);
+    if (!bytes || bytes.length === 0 || !hasPDFSignature(bytes)) return null;
     return base64FromBytes(bytes);
   } catch {
     return null;

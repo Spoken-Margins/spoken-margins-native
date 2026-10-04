@@ -36,11 +36,21 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         case localPDF(String)
         case browserText(BrowserTextSharePayload)
         case spokenMarginsPackage
+
+        /// A link the app would download again, rather than content the share carried.
+        var isLink: Bool {
+            switch self {
+            case .sourceLink, .remotePDF: true
+            case .localPDF, .browserText, .spokenMarginsPackage: false
+            }
+        }
     }
 
     private var didProcess = false
     /// Each attachment's registered types, for the share diagnostics (#271).
     private var sharedAttachmentTypes: [[String]] = []
+    /// A link found while files, PDFs or page results were still untried (#271).
+    private var linkFallback = ShareSheetLinkFallback<SharedImport>()
     private var didCompleteRequest = false
     private typealias ExtractionCompletion = @Sendable (Result<SharedImport, Error>) -> Void
     private let cardView = UIView()
@@ -80,7 +90,8 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         // Safari's PDF viewer offers the PDF it is showing as well as its URL.
         // The PDF comes first: a re-download of the link can return an HTML
         // page instead (#271). The file is only copied here, never parsed.
-        // Ordinary webpages still prefer the readable-page property list.
+        // Ordinary webpages still prefer the readable-page property list, and
+        // links wait until every other representation has been tried.
         let candidates = ShareSheetRepresentationOrder.candidates(
             from: providers,
             conforms: { $0.hasItemConformingToTypeIdentifier($1) },
@@ -100,6 +111,10 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         completion: @escaping ExtractionCompletion
     ) {
         guard index < candidates.count else {
+            if let deferredLink = linkFallback.deferredLink {
+                completion(.success(deferredLink))
+                return
+            }
             let identifiers = Array(Set(candidates.map(\.identifier))).sorted().joined(separator: ", ")
             completion(.failure(SourceLinkShareError.unsupportedInput(identifiers)))
             return
@@ -188,7 +203,13 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                     suggestedName: candidate.provider.suggestedName
                 )
             if let sharedImport {
-                completion(.success(sharedImport))
+                guard sharedImport.isLink else {
+                    completion(.success(sharedImport))
+                    return
+                }
+                DispatchQueue.main.async {
+                    self?.acceptLink(sharedImport, candidates: candidates, index: index, completion: completion)
+                }
             } else if presentsPDF {
                 candidate.provider.loadDataRepresentation(forTypeIdentifier: candidate.identifier) { data, _ in
                     if let data,
@@ -208,6 +229,20 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                     self?.loadFirstSharedImport(candidates, index: index + 1, completion: completion)
                 }
             }
+        }
+    }
+
+    /// Hands off a link only once no file, PDF or page result is left to try (#271).
+    private func acceptLink(
+        _ link: SharedImport,
+        candidates: [ProviderCandidate],
+        index: Int,
+        completion: @escaping ExtractionCompletion
+    ) {
+        if let accepted = linkFallback.accept(link, isLink: true, at: index, in: candidates.map(\.identifier)) {
+            completion(.success(accepted))
+        } else {
+            loadFirstSharedImport(candidates, index: index + 1, completion: completion)
         }
     }
 
