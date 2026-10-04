@@ -15227,21 +15227,6 @@ final class Gate1AppModel: ObservableObject {
             }
             attemptedJob = job
             recordDeveloperDiagnostic("preparation.selected", ["item": DeveloperDiagnosticRecording.token(job.itemId), "policy": String(describing: job.policy), "nextChunk": String(job.nextChunkIndex)])
-            let sourceSessions = try store.loadSessions(itemId: item.id)
-            let gate = PreparationChunkGate.decide(policy: job.policy, thermal: device.thermal, isLowPowerModeEnabled: device.isLowPowerModeEnabled,
-                                                   itemAlreadyListened: item.sourceCompletedAt != nil || PreparationChunkGate.itemAlreadyListened(sourceSessions))
-            if let state = PreparationChunkGate.manifestState(after: gate, current: manifest.state) { // a heat pause keeps committed chunks
-                (manifest.state, manifest.updatedAt) = (state, Date())
-                try store.savePreparedAudioManifest(manifest)
-                try refreshLibraryRows(store: store)
-            }
-            if gate == .dropListenedItem {
-                // Removing speculative work must never invalidate committed audio.
-                try store.deleteAudioPreparationJob(id: job.id)
-                diagnostics["automaticAudioPreparation:\(item.id)"] = "cancelled_existing_progress"
-                return try hasMoreMatchingJobs()
-            }
-            guard gate == .render else { diagnostics["backgroundAudioPreparation"] = gate.rawValue; return false }
             let support = try applicationSupportDirectory()
             guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
                 return !foregroundDemandOnly
@@ -15272,6 +15257,22 @@ final class Gate1AppModel: ObservableObject {
                 rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
             )
             preparedAudioCoordinator = coordinator
+            let sourceSessions = try store.loadSessions(itemId: item.id)
+            let atRender = preparationSeams.deviceConditions() // read again here: heat can rise during the setup above (Codex audit on 27fd1bd)
+            let gate = PreparationChunkGate.decide(policy: job.policy, thermal: atRender.thermal, isLowPowerModeEnabled: atRender.isLowPowerModeEnabled,
+                                                   itemAlreadyListened: item.sourceCompletedAt != nil || PreparationChunkGate.itemAlreadyListened(sourceSessions))
+            if let state = PreparationChunkGate.manifestState(after: gate, current: manifest.state) { // a heat pause keeps committed chunks
+                (manifest.state, manifest.updatedAt) = (state, Date())
+                try store.savePreparedAudioManifest(manifest)
+                try refreshLibraryRows(store: store)
+            }
+            if gate == .dropListenedItem {
+                // Removing speculative work must never invalidate committed audio.
+                try store.deleteAudioPreparationJob(id: job.id)
+                diagnostics["automaticAudioPreparation:\(item.id)"] = "cancelled_existing_progress"
+                return try hasMoreMatchingJobs()
+            }
+            guard gate == .render else { diagnostics["backgroundAudioPreparation"] = gate.rawValue; return false }
             guard let next = eligiblePlan.first(where: { !completedIndexes.contains($0.index) }) else {
                 // All chunks are intact but nothing is assembled (#278): assemble now, because it
                 // otherwise happens only right after the last chunk is committed.
@@ -15295,7 +15296,7 @@ final class Gate1AppModel: ObservableObject {
             do {
                 try Task.checkCancellation()
                 renderStarted = Date()
-                recordDeveloperDiagnostic("preparation.render.begin", ["item": DeveloperDiagnosticRecording.token(item.id), "chunk": String(next.index), "thermal": device.thermal.rawValue])
+                recordDeveloperDiagnostic("preparation.render.begin", ["item": DeveloperDiagnosticRecording.token(item.id), "chunk": String(next.index), "thermal": atRender.thermal.rawValue])
                 // The render is discarded once committed (copied), or on any failure.
                 try await supertonicOutputGuard(wrapping: pacedRenderer, systemVoice: speechVoiceIdentifier).render(
                     text: next.text, voice: voice, language: "en", speed: 1, synthesisSteps: 8

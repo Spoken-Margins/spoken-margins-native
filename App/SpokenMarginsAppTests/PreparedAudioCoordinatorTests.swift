@@ -438,7 +438,7 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         let renderer = HeatTestRenderer(templateURL: template)
         let heat = HeatReading()
         model.preparationSeams = PreparationPassSeams(
-            deviceConditions: { SpeechEngineConditions(thermal: heat.thermal) },
+            deviceConditions: { SpeechEngineConditions(thermal: heat.read()) },
             renderer: { renderer }
         )
         func saved() throws -> PreparedAudioManifest { try XCTUnwrap(try store.loadPreparedAudioManifest(id: manifest.id)) }
@@ -468,6 +468,15 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         XCTAssertEqual(try saved().state, .preparing)
         XCTAssertEqual(try saved().chunks.map(\.index), [0, 1])
         XCTAssertEqual(try saved().chunks.first { $0.index == 0 }?.checksumSHA256, first.checksumSHA256)
+
+        // Cool when the pass starts, hot by the time it would render (Codex audit on 27fd1bd): the
+        // pass reads the heat again just before rendering, so chunk 2 waits and the pause is saved.
+        heat.warmsAfterReads = 1
+        _ = await model.performBackgroundAudioPreparationPass()
+        texts = await renderer.texts
+        XCTAssertEqual(texts.count, 2, "heat that rises during setup still stops the render")
+        XCTAssertEqual(try saved().state, .pausedForThermal)
+        XCTAssertEqual(try saved().chunks.map(\.index), [0, 1])
     }
 
     private func makeHeatTestWAV() throws -> URL {
@@ -499,7 +508,18 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
     }
 }
 
-@MainActor private final class HeatReading { var thermal = SpeechThermalLevel.nominal }
+@MainActor private final class HeatReading {
+    var thermal = SpeechThermalLevel.nominal
+    /// Serious heat after this many more reads, as if the phone warmed up while the pass set up.
+    var warmsAfterReads: Int?
+
+    func read() -> SpeechThermalLevel {
+        if let reads = warmsAfterReads {
+            if reads == 0 { thermal = .serious; warmsAfterReads = nil } else { warmsAfterReads = reads - 1 }
+        }
+        return thermal
+    }
+}
 
 /// Copies a short WAV for each chunk and reports a duration the output check accepts, so the
 /// preparation pass commits it as Supertonic audio without loading the model.
