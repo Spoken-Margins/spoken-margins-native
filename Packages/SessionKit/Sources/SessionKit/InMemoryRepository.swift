@@ -36,6 +36,8 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     public var sourceSuggestionDecisions: [String: SourceSuggestionDecision]
     /// I13 documents by item id, then extraction version.
     public var structuredDocuments: [String: [Int: StructuredDocument]] = [:]
+    /// Publisher audio by item id (#545).
+    public var publisherAudio: [String: PublisherAudio] = [:]
 
     public init(
         items: [String: Item] = [:],
@@ -431,4 +433,9 @@ extension InMemorySessionRepository: StructuredDocumentRepository {
         upgrade.sessions.forEach { sessions[$0.id] = $0 }
         try saveStructuredDocument(upgrade.document, itemId: upgrade.item.id)
     }
+}
+
+extension InMemorySessionRepository: PublisherAudioRepository {
+    public func savePublisherAudio(_ audio: PublisherAudio) throws { publisherAudio[audio.itemId] = audio }
+    public func loadPublisherAudio(itemId: String) throws -> PublisherAudio? { publisherAudio[itemId] }
 }
