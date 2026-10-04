@@ -41,7 +41,8 @@ final class J7PDFJourneyUITests: XCTestCase {
             XCTAssertTrue(start.waitForExistence(timeout: 5), "The PDF's start control is missing")
             start.tap()
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
-            XCTAssertFalse(app.buttons["playback.itemTitle.button"].label.isEmpty, "The PDF has no title")
+            let title = app.buttons["playback.itemTitle.button"].label
+            XCTAssertTrue(title.contains("Walking Notes"), "A different item is playing: \(title)")
             try waitUntilPlaying("The PDF never reached the playing state")
             let first = try percent()
             waitUntil("The PDF's position did not advance while playing", timeout: 15) {
@@ -63,12 +64,13 @@ final class J7PDFJourneyUITests: XCTestCase {
         }
 
         try XCTContext.runActivity(named: "J7 step 2b: Move away, then reopen the Margin at its passage") { _ in
+            // Without moving away, the passage check below would pass even if reopening never seeks.
             let scrubber = element("playback.scrubber")
-            if scrubber.exists, scrubber.isEnabled {
-                scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.5)).tap()
-                waitUntil("Scrubbing did not move away from the Margin", timeout: 10) {
-                    self.currentPercent().map { $0 >= marginPercent + 20 } ?? false
-                }
+            XCTAssertTrue(scrubber.waitForExistence(timeout: 5), "No scrubber to move away from the Margin with")
+            XCTAssertTrue(scrubber.isEnabled, "The scrubber is disabled")
+            scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.5)).tap()
+            waitUntil("Scrubbing did not move away from the Margin", timeout: 10) {
+                self.currentPercent().map { $0 >= marginPercent + 20 } ?? false
             }
             tap("playback.timeline.button")
             XCTAssertTrue(element("timeline.screen").waitForExistence(timeout: 5), "Timeline did not open")

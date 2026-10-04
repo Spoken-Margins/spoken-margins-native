@@ -65,7 +65,7 @@ enum UITestingLaunchSeedWriter {
     /// running header, a "Downloaded on" stamp and page numbers on every page.
     static func writePDF() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appending(path: "J7 Walking Notes.pdf")
-        let body = UIFont.systemFont(ofSize: 13)
+        let body = UIFont.systemFont(ofSize: 10)
         let small = UIFont.systemFont(ofSize: 9)
         let paragraphs = [
             "The first walk began at the river, where the path bends under the old willows and the water runs slow and brown.",
@@ -80,7 +80,8 @@ enum UITestingLaunchSeedWriter {
                 if page == 0 {
                     ("Walking Notes" as NSString).draw(at: CGPoint(x: 40, y: 70), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 24)])
                 }
-                let text = Array(repeating: paragraph, count: 6).joined(separator: " ")
+                // Long pages keep one sentence under 1.5% of the text, so a percent check can be tight.
+                let text = Array(repeating: paragraph, count: 18).joined(separator: " ")
                 (text as NSString).draw(in: CGRect(x: 40, y: 120, width: 532, height: 560), withAttributes: [.font: body])
                 ("Downloaded on 25 September 2026" as NSString).draw(at: CGPoint(x: 40, y: 760), withAttributes: [.font: small])
                 ("\(page + 1)" as NSString).draw(at: CGPoint(x: 560, y: 760), withAttributes: [.font: small])
@@ -89,4 +90,3 @@ enum UITestingLaunchSeedWriter {
         return url
     }
 }
-
