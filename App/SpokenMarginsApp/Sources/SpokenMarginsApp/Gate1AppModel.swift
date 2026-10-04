@@ -969,7 +969,7 @@ final class Gate1AppModel: ObservableObject {
     ]
 
     private var engine: SessionEngine?
-    private var store: SQLiteSessionStore?
+    private(set) var store: SQLiteSessionStore?
     private var databaseURLOverride: URL?
     private let gate2CompactControls: Gate2CompactControlController
     private let featureFlags: SpokenMarginsFeatureFlags
@@ -1015,7 +1015,7 @@ final class Gate1AppModel: ObservableObject {
     #if SPOKEN_MARGINS_WATCH
     private var gate3WatchDispatcher: CompactControlDispatcher?
     #endif
-    private var activeItemId = "item-pill"
+    private(set) var activeItemId = "item-pill"
     private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     private var playbackProgressTask: Task<Void, Never>?
     private var sleepTimerTask: Task<Void, Never>?
@@ -1070,8 +1070,8 @@ final class Gate1AppModel: ObservableObject {
     private var pendingMapGenerationItemId: String?
     private var pendingProviderJobForConsent: PendingProviderJob?
     private var pendingMapGenerationAfterConsent = false
-    private var pendingTermsVoiceSelection: AppTTSVoiceSelection?
-    private var pendingPlaybackAfterTerms: PendingPlaybackAfterTerms?
+    private(set) var pendingTermsVoiceSelection: AppTTSVoiceSelection?
+    var pendingPlaybackAfterTerms: PendingPlaybackAfterTerms?
     #if SPOKEN_MARGINS_WATCH
     private var activeWatchPackageRenderItemIds: Set<String> = []
     private var failedWatchPackageRenderItemIds: Set<String> = []
@@ -1095,7 +1095,7 @@ final class Gate1AppModel: ObservableObject {
         return encoder
     }()
 
-    private enum PendingPlaybackAfterTerms {
+    enum PendingPlaybackAfterTerms {
         case startCurrentItem
         case resumeSession(String)
         case jumpToChapter(String, fromTimeline: Bool)
@@ -1476,17 +1476,6 @@ final class Gate1AppModel: ObservableObject {
         saveSpeechSettings()
         reportSuccess("The iOS system voice remains enabled.")
         continuePlaybackAfterTerms(pendingPlayback)
-    }
-
-    private func requireTermsDecisionBeforePlayback(_ action: PendingPlaybackAfterTerms) -> Bool {
-        guard !hasAcceptedCurrentTerms, pendingTermsVoiceSelection?.supertonicVoice != nil else {
-            return false
-        }
-        pendingPlaybackAfterTerms = action
-        isTermsOfUsePresented = true
-        diagnostics["termsGate"] = "presented_for_first_playback"
-        statusMessage = "Choose whether to enable the improved on-device voice before playback begins."
-        return true
     }
 
     private func continuePlaybackAfterTerms(_ action: PendingPlaybackAfterTerms?) {
