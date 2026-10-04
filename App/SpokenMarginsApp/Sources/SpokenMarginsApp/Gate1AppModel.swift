@@ -15058,9 +15058,11 @@ final class Gate1AppModel: ObservableObject {
             }
             let ownsLoop = self.foregroundAudioPreparationGeneration == generation
             if ownsLoop || self.foregroundAudioPreparationTask == nil {
-                self.libraryAudioTurns.stopped(.foreground) // also when cancelled between passes: its item stops showing progress (#281)
+                // Also when cancelled between passes: its item stops showing progress (#281).
+                let resume = ownsLoop ? self.libraryAudioTurns.foregroundLoopEnded() : false
+                if !ownsLoop { self.libraryAudioTurns.stopped(.foreground) }
                 if ownsLoop { self.foregroundAudioPreparationTask = nil }
-                if ownsLoop, Task.isCancelled || self.libraryAudioTurns.foregroundShouldResume, self.canPrepareLibraryAudio {
+                if ownsLoop, Task.isCancelled || resume, self.canPrepareLibraryAudio {
                     self.startForegroundAudioPreparationIfNeeded()
                 }
                 if let store = self.store {
