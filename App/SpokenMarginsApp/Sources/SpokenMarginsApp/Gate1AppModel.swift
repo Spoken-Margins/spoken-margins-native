@@ -386,7 +386,7 @@ private struct ObsidianImportBatch: Sendable {
     let failures: [String]
 }
 
-private enum SourceFileImportError: LocalizedError {
+enum SourceFileImportError: LocalizedError {
     case pdfHasNoExtractableText
     case pdfImportUnavailable
     case remotePDFInvalidResponse
@@ -1176,7 +1176,7 @@ final class Gate1AppModel: ObservableObject {
         completedOnboardingSteps.contains(step)
     }
 
-    private func markOnboardingSteps(_ steps: Set<OnboardingStep>) {
+    func markOnboardingSteps(_ steps: Set<OnboardingStep>) {
         let updated = completedOnboardingSteps.union(steps)
         guard updated != completedOnboardingSteps else { return }
         completedOnboardingSteps = updated
@@ -3168,6 +3168,7 @@ final class Gate1AppModel: ObservableObject {
         )
         do {
             let result = try await PublicPodcastLinkResolver().resolveAsync(request)
+            if result.isPDFDocument { return try await importPDFFromLinkField(url) }
             if let article = await readLinkAsArticleOrOfferSafari(url, after: result, startSession: shouldStartSession) {
                 return importBrowserText(article)
             }
@@ -3450,6 +3451,7 @@ final class Gate1AppModel: ObservableObject {
             result = try await PublicPodcastLinkResolver().resolveAsync(request)
         }
         guard result.status == .playable else {
+            if feedEntry == nil, result.isPDFDocument { try await importRemotePDFInBackground(url: url); return nil } // #758
             if feedEntry == nil, let article = try await LinkArticleFallback.article(for: url, after: result, startSession: false, using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }) {
                 try importBrowserTextInBackground(article); return nil
             }
@@ -3534,45 +3536,7 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    private func importRemotePDFInBackground(url: URL) async throws {
-        #if canImport(PDFKit)
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 30
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let pdfHeader = Data("%PDF-".utf8)
-        guard let response = response as? HTTPURLResponse,
-              (200..<300).contains(response.statusCode),
-              data.prefix(1_024).range(of: pdfHeader) != nil else {
-            throw SourceFileImportError.remotePDFInvalidResponse
-        }
-        guard data.count <= 50 * 1_024 * 1_024 else {
-            throw SourceFileImportError.remotePDFTooLarge
-        }
-        let extracted = try await Task.detached(priority: .userInitiated) {
-            try NativePDFDocumentExtractor.extractStructured(from: data)
-        }.value
-        let decodedName = url.deletingPathExtension().lastPathComponent.removingPercentEncoding
-            ?? url.deletingPathExtension().lastPathComponent
-        let fileTitle = decodedName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let handoff = BrowserTextHandoff(
-            captureMode: .markdownFile,
-            source: BrowserTextSource(
-                url: url.absoluteString,
-                title: extracted.title ?? (fileTitle.isEmpty ? "Shared PDF" : fileTitle)
-            ),
-            text: extracted.document.text,
-            contentFormat: .plainText,
-            documentStructure: extracted.documentStructure
-        )
-        try importBrowserTextInBackground(handoff, structuredDocument: extracted.document)
-        diagnostics["lastRemotePDFImport"] = url.absoluteString
-        markOnboardingSteps([.addedOwnSource, .addedFromSafari])
-        #else
-        throw SourceFileImportError.pdfImportUnavailable
-        #endif
-    }
-
-    @discardableResult private func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> String {
+    @discardableResult func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> String {
         let store = try requireStore()
         if engine == nil {
             installEngine(try makeEngine(store: store))
@@ -11559,6 +11523,8 @@ final class Gate1AppModel: ObservableObject {
             return "Apple Podcasts did not expose a playable public audio stream for that episode."
         case "audio_enclosure_not_found":
             return "I found the page or feed, but not a playable podcast/audio file."
+        case "pdf_document":
+            return "That link is a PDF document, not a podcast or audio file."
         case "rss_episode_ambiguous":
             return "I found the feed, but could not identify one episode to play."
         case "unsupported_link_type":
@@ -14730,7 +14696,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Records a successful outcome and presents it only when the result is not
     /// otherwise apparent from the current interface.
-    private func reportConfirmation(_ message: String) {
+    func reportConfirmation(_ message: String) {
         reportSuccess(message)
         presentFeedback(UserFeedbackEvent(kind: .success, message: message))
     }
@@ -15597,25 +15563,20 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["followSourceFailure"] = await coordinator.failureDiagnostic(for: error)
     }
 
-    /// B1 drawer: follows a catalog feed (always a public https feed) in one tap. Throws so the
-    /// drawer can show the failure on the row.
-    /// Returns the followed source's id, which the drawer keeps: the feed can settle on another URL.
-    func followCatalogFeed(_ feedURL: String) async throws -> String {
+    /// B1 drawer and OPML import (#463): follows a public https feed link. Throws so the caller
+    /// can show the failure on the row. Returns the followed source's id, which the drawer keeps:
+    /// the feed can settle on another URL. An import refreshes once at the end, not per feed.
+    func followCatalogFeed(_ feedURL: String, refreshAfter: Bool = true) async throws -> String {
         let store = try requireStore()
         let coordinator = followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
         followedSourceCoordinator = coordinator
-        guard let candidate = try await coordinator.discover(urlString: feedURL).first else {
-            throw FollowedSourceError.noFeedCandidates
-        }
-        let sourceId: String
-        if let existing = try store.loadFeedSubscriptions().first(where: { $0.source.id == candidate.source.id }) {
-            sourceId = existing.source.id
-        } else {
-            sourceId = try await coordinator.follow(candidate: candidate).source.id
-        }
-        await refreshFollowedSources(force: false)
+        let sourceId = try await coordinator.followFeed(urlString: feedURL).source.id
+        if refreshAfter { await refreshFollowedSources(force: false) }
         return sourceId
     }
+
+    /// Read from the store: `feedSubscriptions` lags a follow until its refresh lands (#463).
+    func storedFeedSubscriptions() -> [FeedSubscription] { (try? store?.loadFeedSubscriptions()) ?? feedSubscriptions }
 
     func followSourceCandidate(_ candidate: SourceCandidateEvidence) {
         Task { [weak self] in
@@ -15971,11 +15932,10 @@ final class Gate1AppModel: ObservableObject {
                 }
                 let entry = await self.followedSourceCoordinator?.publisherAudioEntry(for: entry) ?? entry
                 let imported: Bool
-                // A post with the publisher's own audio imports as an article (#545).
-                if subscription.source.kind == .podcastFeed, !entry.hasPublisherAudio {
-                    let importURL = try await self.followedSourceCoordinator?.playableAudioURL(for: entry)
-                        ?? entry.audioURL
-                        ?? entry.canonicalURL
+                // Posts with the publisher's own audio (#545) and text-only posts (#641) import as articles.
+                let route = try await self.followedSourceCoordinator?.importRoute(for: entry, subscriptionKind: subscription.source.kind)
+                    ?? FollowedEntryImportRoute.route(for: entry, subscriptionKind: subscription.source.kind, audio: .stored(in: entry))
+                if case .episode(let importURL) = route {
                     let importedItemId = try await self.importSourceLinkInBackground(SourceLinkHandoff(
                         id: "quick-add-\(entry.id)",
                         inputURL: importURL,
