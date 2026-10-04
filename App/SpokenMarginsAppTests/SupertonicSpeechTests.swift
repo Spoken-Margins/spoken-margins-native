@@ -2972,6 +2972,7 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
     private(set) var renderCount = 0
     private(set) var discardCount = 0
     private(set) var requestedSpeeds: [Float] = []
+    private var generatedURLs: Set<URL> = []
 
     init(
         templateURL: URL,
@@ -3012,6 +3013,7 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "counting-render-\(UUID().uuidString).wav")
         try FileManager.default.copyItem(at: templateURL, to: url)
+        generatedURLs.insert(url)
         let audio = try AVAudioFile(forReading: url)
         return SupertonicNarrationResult(
             audioURL: url,
@@ -3022,9 +3024,13 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
         )
     }
 
+    /// Deletes only what this fake rendered, as SupertonicNarrationRenderer does (#258). The client
+    /// also discards prepared chunks it played; deleting those raced the assembly after a stop.
     func discardGeneratedAudio(at url: URL) async {
         discardCount += 1
-        try? FileManager.default.removeItem(at: url)
+        if generatedURLs.remove(url) != nil {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }
 
