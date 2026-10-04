@@ -21,6 +21,17 @@ final class ListeningTimeDisplayTests: XCTestCase {
         XCTAssertEqual(ListeningTimeEstimator.libraryTotalText(textCharacterCount: 300, playbackSpeed: 1), "under 1 min")
     }
 
+    func testTheLibraryCountsTheSameCharactersAsThePlayer() {
+        // Codex audit on #832: the Library counted UTF-16 units while the player counts characters,
+        // so 21 000 decomposed "é" (42 000 units) showed "about 50 min" in Library and 25 in the player.
+        let decomposed = String(repeating: "e\u{301}", count: 21_000)
+        XCTAssertEqual(ListeningTimeEstimator.characterCount(of: decomposed), decomposed.count)
+        XCTAssertEqual(ListeningTimeEstimator.libraryTotalText(
+            textCharacterCount: ListeningTimeEstimator.characterCount(of: decomposed), playbackSpeed: 1), "about 25 min")
+        XCTAssertEqual(ListeningTimeEstimator.characterCount(of: "Café 🇨🇦"), 6)
+        XCTAssertNil(ListeningTimeEstimator.characterCount(of: nil))
+    }
+
     func testAnItemWithNoTextShowsNoEstimate() {
         XCTAssertNil(ListeningTimeEstimator.libraryTotalText(textCharacterCount: nil, playbackSpeed: 1), "a podcast keeps its own clock")
         XCTAssertNil(ListeningTimeEstimator.libraryTotalText(textCharacterCount: 0, playbackSpeed: 1))

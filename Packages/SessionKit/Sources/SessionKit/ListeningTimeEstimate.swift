@@ -142,6 +142,12 @@ extension ListeningTimeEstimate {
 extension ListeningTimeEstimator {
     /// A Library row's length for a text item at the listener's speed: "about 25 min". Nil for an
     /// item with no text, such as a podcast, which shows no estimate.
+    /// A text item's length in the units the player counts: `String.count`, the same characters
+    /// its position and scrubber use, so the Library total and the time left agree (#305).
+    public static func characterCount(of text: String?) -> Int? {
+        text?.count
+    }
+
     public static func libraryTotalText(textCharacterCount: Int?, playbackSpeed: Double) -> String? {
         guard let textCharacterCount else { return nil }
         return estimate(totalCharacters: textCharacterCount, charactersHeard: 0, playbackSpeed: playbackSpeed)?.totalText

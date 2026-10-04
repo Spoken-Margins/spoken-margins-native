@@ -11020,7 +11020,7 @@ final class Gate1AppModel: ObservableObject {
             )
             row.usesNewReader = data.structuredDocumentItemIds.contains(item.id)
             row.canMarkUnfinished = item.sourceCompletedAt != nil && !Self.itemIsCompleted(sessions)
-            row.textCharacterCount = row.hasNativeAudio ? nil : item.text?.utf16.count  // UTF-16: constant time for ASCII text
+            row.textCharacterCount = row.hasNativeAudio ? nil : ListeningTimeEstimator.characterCount(of: item.text)
             return row
         }
     }
