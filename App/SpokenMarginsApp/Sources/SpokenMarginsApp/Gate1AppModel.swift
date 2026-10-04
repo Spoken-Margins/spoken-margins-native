@@ -997,6 +997,7 @@ final class Gate1AppModel: ObservableObject {
     /// A fresh install: the Library was empty before the welcome sample was added (B1 drawer).
     private(set) var libraryWasEmptyAtLaunch = false
     var readablePageExtractor: any ReadablePageExtracting = AppOwnedReadablePageExtractor() // tests replace it (#223)
+    let sharedLinkVoiceover = SharedLinkVoiceover() // tests replace its page fetch (#810)
     private var sourceSuggestionChecks: Set<String> = []
     private var followDiscoveries: [String: Task<[SourceCandidateEvidence], Error>] = [:]
     @Published private var followOffers: [String: FollowOffer] = [:]
@@ -3162,7 +3163,9 @@ final class Gate1AppModel: ObservableObject {
         do {
             let result = try await PublicPodcastLinkResolver().resolveAsync(request)
             if let article = await readLinkAsArticleOrOfferSafari(url, after: result, startSession: shouldStartSession) {
-                return importBrowserText(article)
+                guard let itemId = importBrowserTextItem(article) else { return false }
+                rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId)
+                return true
             }
             return importResolvedSourceLink(request: request, result: result, startSession: shouldStartSession)
         } catch {
@@ -3444,7 +3447,9 @@ final class Gate1AppModel: ObservableObject {
         }
         guard result.status == .playable else {
             if feedEntry == nil, let article = try await LinkArticleFallback.article(for: url, after: result, startSession: false, using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }) {
-                try importBrowserTextInBackground(article); return nil
+                let itemId = try importBrowserTextInBackground(article)
+                rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId)
+                return nil
             }
             let provider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
             diagnostics["lastSourceLinkFailureCategory"] = result.failureReason
@@ -3716,11 +3721,16 @@ final class Gate1AppModel: ObservableObject {
 
     @discardableResult
     func importBrowserText(_ handoff: BrowserTextHandoff) -> Bool {
+        importBrowserTextItem(handoff) != nil
+    }
+
+    /// `importBrowserText`, returning the new item's id, or nil when the import failed.
+    private func importBrowserTextItem(_ handoff: BrowserTextHandoff) -> String? {
         do {
             if hasActiveSession {
-                try importBrowserTextInBackground(handoff)
+                let itemId = try importBrowserTextInBackground(handoff)
                 reportConfirmation("Added \(handoff.source.title) to Library without changing Now Playing.")
-                return true
+                return itemId
             }
             let store = try requireStore()
             let engine = try makeEngine(store: store)
@@ -3745,10 +3755,23 @@ final class Gate1AppModel: ObservableObject {
                 screen = .item
                 reportConfirmation("Imported browser text from \(handoff.source.title).")
             }
-            return true
+            return importedItemId
         } catch {
             reportFailure(error, context: "Browser text import failed")
-            return false
+            return nil
+        }
+    }
+
+    /// A shared or pasted Substack post keeps its voiceover beside the article (#810). Runs after the import,
+    /// so a slow page never holds up the share.
+    private func rememberSharedLinkVoiceover(sharedURL: URL, article: BrowserTextHandoff, itemId: String) {
+        guard let store = try? requireStore() else { return }
+        let transcriber = sourceTranscriptionClient
+        let voiceover = sharedLinkVoiceover
+        Task { [weak self] in
+            await voiceover.remember(sharedURL: sharedURL, article: article, itemId: itemId, store: store, transcriber: transcriber) {
+                self?.diagnostics["sharedLinkVoiceover"] = $0
+            }
         }
     }
 
