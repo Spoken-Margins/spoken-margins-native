@@ -456,7 +456,7 @@ class FinishSelectionTests(unittest.TestCase):
 
     def test_other_finishers_claims_hold_for_two_hours(self):
         for text in ('Finisher two taking this.', 'Mac finisher taking this PR.',
-                     'Finisher one taking this.\n\nMerging next first.'):
+                     'Finisher one taking this.\n\nMerging next first.', '**Mac finisher taking this PR.**'):
             claim = {'body': text, 'createdAt': '2026-10-01T11:30:00Z'}
             for trigger in (pull(labels=['needs-mac']), pull(comments=[lane()]), pull(comments=[audit()])):
                 trigger['comments'] += [claim]

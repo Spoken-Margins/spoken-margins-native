@@ -426,7 +426,7 @@ FINISH_LIMIT_MARK = 'Codex finisher round limit reached.'
 # The Claude finishers claim a PR with a first line like "Finisher two taking this." or
 # "Mac finisher taking this PR." and skip one another's claims for two hours. Codex honours
 # the same rule and posts the same kind of line, so no two finishers push one branch.
-OTHER_FINISHER_CLAIM_RE = re.compile(r'^\s*(?!Finisher Codex\b)(?:[\w-]+ )?finisher(?: [\w-]+)? taking this\b', re.I)
+OTHER_FINISHER_CLAIM_RE = re.compile(r'^[\s>*_]*(?!Finisher Codex\b)(?:[\w-]+ )?finisher(?: [\w-]+)? taking this\b', re.I)
 CODEX_FINISHER_CLAIM = 'Finisher Codex taking this.'
 OTHER_FINISHER_HOLD = dt.timedelta(hours=2)
 OTHER_FINISHER_REASON = 'another finisher claimed it in the last 2 h'
