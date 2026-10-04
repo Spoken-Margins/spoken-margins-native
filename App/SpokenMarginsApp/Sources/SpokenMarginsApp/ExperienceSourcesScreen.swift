@@ -21,6 +21,8 @@ struct ExperienceSourcesScreen: View {
     /// Feed management lives on its own screen so Following opens on the new entries (#141).
     @State private var isManagingFeeds = false
     @State private var focusFeedURLOnManage = false
+    /// Each followed show's artwork (#773), read from the coordinator's side file.
+    @State private var artwork = FollowingArtworkCache()
 
     var body: some View {
         NavigationStack {
@@ -65,12 +67,15 @@ struct ExperienceSourcesScreen: View {
             }
             .task { model.refreshQuickAddFeed(force: false) }
             // The catalog tags followed shows with a kind and subjects (I2), and gives their artwork (#773).
-            .task {
-                await catalogDrawer.loadSnapshot()
-                await model.recordFollowingCatalogArtwork(catalogDrawer.catalog)
-            }
-            .onChange(of: model.feedSubscriptions.map(\.id)) { _, _ in
-                Task { await model.recordFollowingCatalogArtwork(catalogDrawer.catalog) }
+            .task { await catalogDrawer.loadSnapshot() }
+            // Re-read the artwork when the shows, the catalog or a refresh changes it (#773).
+            .task(id: ArtworkKey(
+                subscriptionIDs: model.feedSubscriptions.map(\.id),
+                hasCatalog: catalogDrawer.catalog != nil,
+                isRefreshing: model.isRefreshingFollowedSources
+            )) {
+                guard let coordinator = model.followedSourceCoordinator else { return }
+                artwork = await coordinator.followingArtwork(catalog: catalogDrawer.catalog)
             }
         }
     }
@@ -190,7 +195,7 @@ struct ExperienceSourcesScreen: View {
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
             } else {
                 ForEach(filteredCandidates) { candidate in
-                    SourceInboxRow(candidate: candidate)
+                    SourceInboxRow(candidate: candidate, artwork: artwork)
                         .listRowInsets(EdgeInsets(
                             top: 0,
                             leading: horizontalSizeClass == .regular ? 28 : 16,
@@ -228,6 +233,12 @@ struct ExperienceSourcesScreen: View {
     }
 
     private var isNarrowed: Bool { kind != nil || subject != nil }
+
+    private struct ArtworkKey: Equatable {
+        var subscriptionIDs: [String]
+        var hasCatalog: Bool
+        var isRefreshing: Bool
+    }
 
     private var hiddenSubjects: Set<String> {
         Set(hiddenSubjectsStorage.split(separator: "\n").map(String.init))
@@ -464,6 +475,7 @@ private struct FollowCandidateChoices: View {
 private struct SourceInboxRow: View {
     @EnvironmentObject private var model: Gate1AppModel
     let candidate: QuickAddCandidate
+    let artwork: FollowingArtworkCache
 
     var body: some View {
         Button(action: addAndOpen) {
@@ -553,7 +565,7 @@ private struct SourceInboxRow: View {
         return FollowingEntryRow(
             entry: entry,
             showTitle: showTitle(of: entry),
-            artworkURL: model.followingArtwork.artworkURL(for: entry.subscriptionId),
+            artworkURL: artwork.artworkURL(for: entry.subscriptionId),
             rate: model.speechPlaybackRateMultiplier
         )
     }
