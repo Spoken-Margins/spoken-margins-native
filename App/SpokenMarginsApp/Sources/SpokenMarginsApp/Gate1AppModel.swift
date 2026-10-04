@@ -1699,48 +1699,47 @@ final class Gate1AppModel: ObservableObject {
         playbackProgressTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 500_000_000)
-                await MainActor.run {
-                    guard let self else { return }
-                    guard self.snapshot.status.isPlaybackActive else {
-                        self.stopPlaybackProgressTicker()
-                        return
-                    }
-                    guard let engine = self.engine else { return }
-                    do {
-                        self.synchronizeStreamingSpeechAnchorIfNeeded()
-                        let previousSnapshot = self.snapshot
-                        let previousStatus = self.snapshot.status
-                        let previousTargetId = self.snapshot.targetId
-                        let previousEngagementProgress = self.snapshot.currentPlaybackProgressPercent
-                        let updated = self.snapshotReflectingTextAudioPrewarmStatus(
-                            try engine.syncPlaybackProgress(),
-                            itemId: self.activeItemId
-                        )
-                        self.recordMediaSeekEvidence(from: engine)
-                        let completedCurrentAudio = previousStatus.isPlaybackActive &&
-                            updated.status == .paused &&
-                            previousTargetId == updated.targetId &&
-                            updated.currentPlaybackProgressPercent >= 100
-                        if updated != self.snapshot {
-                            self.snapshot = updated
-                        }
-                        if previousEngagementProgress < 25,
-                           updated.currentPlaybackProgressPercent >= 25,
-                           let itemId = updated.itemId,
-                           let store = self.store {
-                            self.offerFollowSuggestionIfEligible(itemId: itemId, store: store)
-                        }
-                        self.reconcileImportedCommentary(previous: previousSnapshot, current: updated)
-                        self.observeMarginMoment(updated)
-                        let playedPendingTurn = self.playPendingTurnIfReady(completedCurrentAudio: completedCurrentAudio)
-                        if completedCurrentAudio && !playedPendingTurn {
-                            self.closeCompletedSessionIfReady()
-                        }
-                    } catch {
-                        self.diagnostics["playbackProgressSyncError"] = String(describing: error)
-                    }
-                }
+                await MainActor.run { self?.tickPlaybackProgress() }
             }
+        }
+    }
+
+    /// One progress tick. The start cue (#357) also calls it to check the player before its chime.
+    func tickPlaybackProgress() {
+        guard snapshot.status.isPlaybackActive else { stopPlaybackProgressTicker(); return }
+        guard let engine = self.engine else { return }
+        do {
+            self.synchronizeStreamingSpeechAnchorIfNeeded()
+            let previousSnapshot = self.snapshot
+            let previousStatus = self.snapshot.status
+            let previousTargetId = self.snapshot.targetId
+            let previousEngagementProgress = self.snapshot.currentPlaybackProgressPercent
+            let updated = self.snapshotReflectingTextAudioPrewarmStatus(
+                try engine.syncPlaybackProgress(),
+                itemId: self.activeItemId
+            )
+            self.recordMediaSeekEvidence(from: engine)
+            let completedCurrentAudio = previousStatus.isPlaybackActive &&
+                updated.status == .paused &&
+                previousTargetId == updated.targetId &&
+                updated.currentPlaybackProgressPercent >= 100
+            if updated != self.snapshot {
+                self.snapshot = updated
+            }
+            if previousEngagementProgress < 25,
+               updated.currentPlaybackProgressPercent >= 25,
+               let itemId = updated.itemId,
+               let store = self.store {
+                self.offerFollowSuggestionIfEligible(itemId: itemId, store: store)
+            }
+            self.reconcileImportedCommentary(previous: previousSnapshot, current: updated)
+            self.observeMarginMoment(updated)
+            let playedPendingTurn = self.playPendingTurnIfReady(completedCurrentAudio: completedCurrentAudio)
+            if completedCurrentAudio && !playedPendingTurn {
+                self.closeCompletedSessionIfReady()
+            }
+        } catch {
+            self.diagnostics["playbackProgressSyncError"] = String(describing: error)
         }
     }
 

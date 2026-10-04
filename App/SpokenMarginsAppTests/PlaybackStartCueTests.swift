@@ -136,4 +136,23 @@ final class PlaybackStartCueTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["firstAudioMs:article"], "0")
         XCTAssertEqual(model.diagnostics["lastFirstAudioMs"], "0")
     }
+
+    /// Audit of #580: a start that resolves before the cue is due leaves no pending check behind.
+    func testQuickStartRunsNoExtraCheck() async throws {
+        var checks = 0
+        let cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            playChime: { [unowned self] in self.chimes += 1; return "played" },
+            checkNow: { checks += 1 },
+            record: { [unowned self] key, value in self.recorded[key] = value }
+        )
+
+        cue.observe(snapshot("podcast", .starting))
+        clock += 0.3
+        cue.observe(snapshot("podcast", .playing))
+        try await Task.sleep(for: .seconds(1.2))
+
+        XCTAssertEqual(checks, 0)
+        XCTAssertEqual(chimes, 0)
+    }
 }

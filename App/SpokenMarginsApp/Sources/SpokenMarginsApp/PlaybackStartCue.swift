@@ -10,7 +10,8 @@ import SessionKit
 /// `.playback` category, and otherwise the start stays silent, as before.
 ///
 /// The model checks the player only every 500 ms, so a snapshot can still say "starting" after speech has begun.
-/// Before chiming, the cue asks for a fresh check (`checkNow`), so the chime doesn't land on the first words.
+/// Before chiming, the cue asks for a fresh check (`checkNow`), so the chime doesn't land on the first words. In the
+/// app that check is one extra regular progress tick, so shared Margins and other per-tick work still see every step.
 /// Times to first audio are measured to the snapshot that shows playing, which can be up to 500 ms late.
 @MainActor
 final class PlaybackStartCue: ObservableObject {
@@ -20,7 +21,7 @@ final class PlaybackStartCue: ObservableObject {
     private let now: () -> Date
     /// Tests replace the chime; it returns what the cue did.
     private let playChime: (@MainActor () -> String)?
-    /// Brings the snapshot up to date with the player before the cue decides; in the app, the model's lifecycle sync.
+    /// Brings the snapshot up to date with the player before the cue decides; in the app, one model progress tick.
     private let checkNow: (@MainActor () -> Void)?
     /// Writes one diagnostic (key, value), normally into the model's diagnostics.
     private let record: @MainActor (String, String) -> Void
@@ -50,7 +51,7 @@ final class PlaybackStartCue: ObservableObject {
     /// Refresh Diagnostics doesn't drop the measurements (audit of #580).
     convenience init(model: Gate1AppModel, pinned: PinnedDiagnostics) {
         self.init(snapshots: model.$snapshot.eraseToAnyPublisher(),
-                  checkNow: { [weak model] in model?.syncPlaybackProgressForLifecycle() },
+                  checkNow: { [weak model] in model?.tickPlaybackProgress() },
                   record: { key, value in pinned.set(key, value) })
     }
 
@@ -66,7 +67,13 @@ final class PlaybackStartCue: ObservableObject {
                 record("lastPlaybackStartEnded", "\(itemId):\(status.rawValue):\(milliseconds)")
             }
         }
-        guard let waiting = watch.waitingItemId, waiting != wasWaiting else { return }
+        guard let waiting = watch.waitingItemId else {
+            // The start resolved: no cue, and no extra check (audit of #580).
+            cueTask?.cancel()
+            cueTask = nil
+            return
+        }
+        guard waiting != wasWaiting else { return }
         cueTask?.cancel()
         let delay = watch.cueDelay
         cueTask = Task { [weak self] in
