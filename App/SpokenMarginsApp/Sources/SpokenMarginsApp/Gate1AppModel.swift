@@ -1819,6 +1819,7 @@ final class Gate1AppModel: ObservableObject {
             switch UITestingLaunchSeed.current {
             case .none, .keepLibrary: break
             case .fixture: resetAndSeed(); return
+            case .importedPDF: resetAndSeed(); try importObsidianMarkdownFiles(urls: [UITestingLaunchSeedWriter.writePDF()]); return
             case .text, .offlinePodcast:
                 try seedUITesting(store: store, item: UITestingLaunchSeedWriter.write(.current, into: store)); return
             }
