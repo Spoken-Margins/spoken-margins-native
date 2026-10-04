@@ -352,6 +352,10 @@ struct SettingsScreen: View {
                         SupertonicLegalView()
                     }
                     .accessibilityIdentifier("settings.legal.supertonic.link")
+                    NavigationLink("Legal · Open-Source Licenses") {
+                        OpenSourceLicensesView()
+                    }
+                    .accessibilityIdentifier("settings.legal.openSource.link")
                     Button {
                         model.copyDiagnosticsExport()
                         copiedDiagnostics = true

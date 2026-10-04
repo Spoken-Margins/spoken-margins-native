@@ -236,6 +236,36 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertNil(PublisherAudioDetector.publisherAudio(for: episode, itemId: "item"))
     }
 
+    /// #641: following a publication with some voiceovers makes it a podcast feed, and Add on one
+    /// of its text-only posts took the podcast path with the post's page as the audio, which
+    /// failed. With nothing to play, even after rechecking the feed, the post imports as an article.
+    func testATextOnlyPostOnAFollowedPodcastFeedImportsAsAnArticle() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [VoiceoverFeedURLProtocol.self]
+        let repository = InMemorySessionRepository()
+        let coordinator = FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration))
+        let subscription = try await coordinator.follow(urlString: "https://voiceovers.example/feed")
+        XCTAssertEqual(subscription.source.kind, .podcastFeed)
+        let entries = try repository.loadFeedEntries(subscriptionId: subscription.id)
+
+        let post = try XCTUnwrap(entries.first { $0.title == "A text-only post" })
+        XCTAssertNil(post.audioURL)
+        let postRoute = try await coordinator.importRoute(for: post, subscriptionKind: subscription.source.kind)
+        XCTAssertEqual(postRoute, .article)
+
+        // An older episode saved without its enclosure still finds it in the feed and imports as audio.
+        var episode = try XCTUnwrap(entries.first { $0.title == "An episode" })
+        episode.audioURL = nil
+        try repository.saveFeedEntry(episode)
+        let episodeRoute = try await coordinator.importRoute(for: episode, subscriptionKind: subscription.source.kind)
+        XCTAssertEqual(episodeRoute, .episode(audioURL: "https://cdn.voiceovers.example/episode.mp3"))
+
+        // One no longer in the feed may still be an episode: the podcast path tries its page, as before.
+        let gone = FeedEntry(id: "gone", subscriptionId: subscription.id, canonicalURL: "https://voiceovers.example/p/gone", title: "Gone")
+        let goneRoute = try await coordinator.importRoute(for: gone, subscriptionKind: subscription.source.kind)
+        XCTAssertEqual(goneRoute, .episode(audioURL: gone.canonicalURL))
+    }
+
     func testPublisherNarrationImportsSubscriberFeedBodyWithoutPublicPageExtraction() async throws {
         for openWhenFinished in [false, true] {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1625,6 +1655,9 @@ private final class VoiceoverFeedURLProtocol: URLProtocol, @unchecked Sendable {
     <item><title>An episode</title><link>https://voiceovers.example/p/episode</link><guid>episode</guid>
     <description>Subtitle.</description><enclosure url="https://cdn.voiceovers.example/episode.mp3" type="audio/mpeg"/>
     <content:encoded><![CDATA[<p>Show notes for the episode.</p>]]></content:encoded></item>
+    <item><title>A text-only post</title><link>https://voiceovers.example/p/text-only</link><guid>text-only</guid>
+    <description>Subtitle.</description>
+    <content:encoded><![CDATA[<p>\(String(repeating: "Notes from the archive. ", count: 40))</p>]]></content:encoded></item>
     </channel></rss>
     """.utf8)
 
