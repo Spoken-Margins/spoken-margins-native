@@ -39,7 +39,17 @@ final class CommunityMapUploadService {
         report: @escaping @MainActor (String) -> Void
     ) {
         guard Self.optedIn, let records = try? store.loadCommunityMapUploads() else { return }
-        for record in CommunityMapUploadPolicy.dueForRetry(records, now: Date()).prefix(3) {
+        for var record in CommunityMapUploadPolicy.dueForRetry(records, now: Date()).prefix(3) {
+            guard (try? store.loadItem(id: record.itemId)) != nil,
+                  (try? store.loadTranscriptTimeline(itemId: record.itemId)) != nil else {
+                // The item or its transcript is gone for good: close the record so it stops
+                // coming back first in every retry.
+                record.state = .rejected
+                record.lastAttemptAt = Date()
+                record.lastOutcome = "skipped:item_gone"
+                try? store.saveCommunityMapUpload(record)
+                continue
+            }
             attempt(itemId: record.itemId, store: store, localAudio: localAudio, report: report)
         }
     }

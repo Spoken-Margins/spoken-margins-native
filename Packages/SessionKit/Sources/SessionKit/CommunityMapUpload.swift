@@ -86,6 +86,7 @@ public enum CommunityMapUploadSkipReason: String, Equatable, Sendable {
     case alreadyUploaded = "already_uploaded"
     case rejectedBefore = "rejected_before"
     case retryTooSoon = "retry_too_soon"
+    case tooManyAttempts = "too_many_attempts"
     case unusableTranscript = "unusable_transcript"
 }
 
@@ -99,6 +100,9 @@ public enum CommunityMapUploadPolicy {
     public static let minimumCoverage = 0.95
     /// At most one retry a day after a failure.
     public static let retryInterval: TimeInterval = 24 * 60 * 60
+    /// A week of daily tries, then the episode is left alone (for example one that is only
+    /// ever streamed, so its audio file is never there to check for embedded chapters).
+    public static let maximumAttempts = 7
     /// A real timed transcript has at least one spoken segment per two minutes and no silent
     /// stretch longer than five; a publisher transcript stored as one block of text has neither.
     static let minimumDurationMs = 60_000
@@ -134,6 +138,7 @@ public enum CommunityMapUploadPolicy {
             case .rejected: return .skip(.rejectedBefore)
             case .failed:
                 guard now.timeIntervalSince(previous.lastAttemptAt) >= retryInterval else { return .skip(.retryTooSoon) }
+                guard previous.attempts < maximumAttempts else { return .skip(.tooManyAttempts) }
             }
         }
         return .upload(episodeKey: episodeKey)
@@ -265,8 +270,9 @@ public struct CommunityMapTranscriptUpload: Codable, Equatable, Sendable {
     }
 
     /// A publisher's transcript can read "visit https://example.com/promo"; the body carries no
-    /// URL of any kind, so web addresses (with a scheme, `www.`, or a domain followed by a path)
-    /// are cut out of the text and the spaces around them closed up.
+    /// URL of any kind, so web addresses (with a scheme, `www.`, a domain followed by a path, or
+    /// a bare domain on a common ending such as `.com`) are cut out of the text and the spaces
+    /// around them closed up.
     static func withoutLinks(_ text: String) -> String {
         let range = NSRange(text.startIndex..., in: text)
         let stripped = linkPattern.stringByReplacingMatches(in: text, range: range, withTemplate: " ")
@@ -274,7 +280,7 @@ public struct CommunityMapTranscriptUpload: Codable, Equatable, Sendable {
     }
 
     private static let linkPattern = try! NSRegularExpression(
-        pattern: #"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.)\S+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}/\S*"#
+        pattern: #"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.)\S+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}/\S*|\b(?:[a-z0-9-]+\.)+(?:com|org|net|io|co|fm|ly|tv|app|us|uk|ca|au|de)\b"#
     )
 
     public func encoded() throws -> Data {
@@ -353,13 +359,14 @@ public struct CommunityMapUploader: Sendable {
             hasPublisherChapters: chapters ?? false, previous: previous, now: now
         )
         guard case .upload(let episodeKey) = decision else {
-            if case .skip(let reason) = decision { return .skipped(reason) }
-            return .skipped(.unusableTranscript)
+            let reason: CommunityMapUploadSkipReason
+            if case .skip(let skipped) = decision { reason = skipped } else { reason = .unusableTranscript }
+            return settle(previous, skipped: reason, now: now, repository: repository)
         }
         guard let durationMs = CommunityMapUploadPolicy.durationMs(item: item, timeline: timeline),
               let upload = CommunityMapTranscriptUpload.make(episodeKey: episodeKey, durationMs: durationMs, language: language, timeline: timeline),
               let body = try? upload.encoded() else {
-            return .skipped(.unusableTranscript)
+            return settle(previous, skipped: .unusableTranscript, now: now, repository: repository)
         }
         let outcome: CommunityMapUploadOutcome
         let recordState: CommunityMapUploadRecord.State
@@ -390,5 +397,23 @@ public struct CommunityMapUploader: Sendable {
         )
         try? repository.saveCommunityMapUpload(record)
         return outcome
+    }
+
+    /// A retry that finds the episode no longer qualifies (chapters found in the downloaded file,
+    /// moved to the Trash, a week of tries used up) closes its record, so it stops coming back
+    /// first in every retry and holding the others up.
+    private func settle(
+        _ previous: CommunityMapUploadRecord?,
+        skipped reason: CommunityMapUploadSkipReason,
+        now: Date,
+        repository: CommunityMapUploadRepository
+    ) -> CommunityMapUploadOutcome {
+        if var record = previous, record.state == .failed, reason != .retryTooSoon {
+            record.state = .rejected
+            record.lastAttemptAt = now
+            record.lastOutcome = CommunityMapUploadOutcome.skipped(reason).diagnostic
+            try? repository.saveCommunityMapUpload(record)
+        }
+        return .skipped(reason)
     }
 }

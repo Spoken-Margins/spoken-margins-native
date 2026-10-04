@@ -300,10 +300,16 @@ final class CommunityMapUploadTests: XCTestCase {
                                      text: "Visit HTTPS://Example.com/promo now, or www.example.org and example.net/deal today. Version 2.5 is out."),
                 MediaTimelineSegment(id: "b", startMs: 3_000, endMs: 4_000, text: "  https://example.com  "),
                 MediaTimelineSegment(id: "c", startMs: 5_000, endMs: 6_000, text: "Write to podcast:feed or ftp://files.example.com/x"),
+                MediaTimelineSegment(id: "d", startMs: 7_000, endMs: 8_000,
+                                     text: "Go to BetterHelp.com today or example.co.uk, e.g. Mr. Smith in the U.S. at 3.30."),
             ], chapters: [])
         ))
-        XCTAssertEqual(upload.segments.map(\.text), ["Visit now, or and today. Version 2.5 is out.", "Write to podcast:feed or"])
-        XCTAssertEqual(upload.segments.map(\.startMs), [1_000, 5_000])
+        XCTAssertEqual(upload.segments.map(\.text), [
+            "Visit now, or and today. Version 2.5 is out.",
+            "Write to podcast:feed or",
+            "Go to today or , e.g. Mr. Smith in the U.S. at 3.30.",
+        ])
+        XCTAssertEqual(upload.segments.map(\.startMs), [1_000, 5_000, 7_000])
 
         XCTAssertNil(CommunityMapTranscriptUpload.make(episodeKey: expectedKey, durationMs: 10_000, language: "en",
                                                        timeline: TranscriptTimeline(segments: [], chapters: [])))
@@ -363,6 +369,26 @@ final class CommunityMapUploadTests: XCTestCase {
         XCTAssertEqual(chaptered, .skipped(.publisherChapters))
         let postCount = await posted.bodies.count
         XCTAssertEqual(postCount, 0)
+        // The record is closed, so it doesn't come back first in every retry.
+        let settled = try XCTUnwrap(repository.loadCommunityMapUpload(episodeKey: expectedKey))
+        XCTAssertEqual(settled.state, .rejected)
+        XCTAssertEqual(settled.lastOutcome, "skipped:publisher_chapters")
+        XCTAssertEqual(CommunityMapUploadPolicy.dueForRetry([settled], now: now.addingTimeInterval(30 * 86_400)), [])
+    }
+
+    func testAHeldEpisodeIsLeftAloneAfterAWeekOfTries() async throws {
+        let repository = InMemorySessionRepository()
+        let uploader = CommunityMapUploader { _, _ in 202 }
+        for day in 0..<CommunityMapUploadPolicy.maximumAttempts {
+            let held = await upload(uploader, repository: repository, at: now.addingTimeInterval(Double(day) * 86_400), publisherChapters: { nil })
+            XCTAssertEqual(held, .failed("chapters_unchecked"))
+        }
+        XCTAssertEqual(try repository.loadCommunityMapUpload(episodeKey: expectedKey)?.attempts, CommunityMapUploadPolicy.maximumAttempts)
+        let eighth = await upload(uploader, repository: repository, at: now.addingTimeInterval(7 * 86_400), publisherChapters: { nil })
+        XCTAssertEqual(eighth, .skipped(.tooManyAttempts))
+        let records = try repository.loadCommunityMapUploads()
+        XCTAssertEqual(records.map(\.state), [.rejected])
+        XCTAssertEqual(CommunityMapUploadPolicy.dueForRetry(records, now: now.addingTimeInterval(30 * 86_400)), [])
     }
 
     func testFailuresAreRecordedAndRetriedADayLaterWhileRefusalsAreNot() async throws {
