@@ -12,8 +12,12 @@ reaches 60 GiB:
    Idle means no process has its working directory inside the worktree, no xcodebuild,
    swift-build or verify-tests command names it, no live agent holds its worktree lock, and
    nothing under the cache changed in the last 30 minutes.
-2. iOS DeviceSupport folders except the newest one.
-3. Moves to /Volumes/SlawBulk/Codex-Offload/<date>-disk-relief/<path relative to home>, with a
+2. Scratch folders of Claude Code sessions that ended: /private/tmp/claude-<uid>/<project>/<session id>/.
+   Ended means the session isn't in Claude Code's live session list (~/.claude/sessions/<pid>.json
+   with a live pid), no process names the session id or has a file or working directory inside the
+   folder, nothing in it changed in the last 12 hours, and it isn't this process's own session.
+3. iOS DeviceSupport folders except the newest one.
+4. Moves to /Volumes/SlawBulk/Codex-Offload/<date>-disk-relief/<path relative to home>, with a
    second copy on the separate mirror disk (/Volumes/SlawArchiveMirror/Current/SlawBulk/...),
    each copied under a `.partial` name and checked by size and file count before the source is
    deleted: `artifacts/` folders in the main checkout untouched for 2 days, older phone builds in
@@ -33,6 +37,7 @@ import argparse
 import datetime as dt
 import fcntl
 import glob
+import json
 import os
 import plistlib
 import re
@@ -51,6 +56,8 @@ CACHE_IDLE_SECONDS = 30 * 60
 ARTIFACT_AGE_SECONDS = 2 * 86400
 SESSION_LOG_AGE_SECONDS = 3 * 86400
 PHONE_KEEP_NEWEST = 2
+SESSION_SCRATCH_IDLE_SECONDS = 12 * 3600
+SESSION_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 BUSY_COMMAND_WORDS = ('xcodebuild', 'swift-build', 'verify-tests')
 PHONE_BUILD_NAME = re.compile(r'^\d{8}-\d{6}-[0-9a-f]{7}$')
 
@@ -76,6 +83,10 @@ class Config:
     launch_agents: Path = HOME / 'Library/LaunchAgents'
     claude_projects: Path = HOME / '.claude/projects'
     codex_sessions: Path = HOME / '.codex/sessions'
+    # Claude Code's per-session scratch (scratchpad/, tasks/ …) and its list of running sessions.
+    claude_tmp: Path = Path(f'/private/tmp/claude-{os.getuid()}')
+    claude_sessions: Path = HOME / '.claude/sessions'
+    own_session: Optional[str] = field(default_factory=lambda: os.environ.get('CLAUDE_CODE_SESSION_ID'))
     trigger_bytes: int = 35 * GiB
     target_bytes: int = 60 * GiB
     extra_protected: List[Path] = field(default_factory=list)
@@ -230,6 +241,22 @@ class Machine:
             elif line.startswith('n') and pid is not None:
                 procs.setdefault(pid, Proc(pid, None, '')).cwd = line[1:]
         return list(procs.values())
+
+    def open_files(self) -> Optional[List[Tuple[int, str]]]:
+        """(pid, path) for every file, folder and working directory this user's processes hold
+        open. None when lsof fails: then nothing may count as unused."""
+        try:
+            done = subprocess.run(['lsof', '-nP', '-u', str(os.getuid()), '-Fpn'], capture_output=True,
+                                  text=True, errors='replace', timeout=120)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        found, pid = [], None
+        for line in done.stdout.splitlines():
+            if line.startswith('p') and line[1:].isdigit():
+                pid = int(line[1:])
+            elif line.startswith('n/') and pid is not None:
+                found.append((pid, line[1:]))
+        return found or None
 
     def pid_alive(self, pid: int) -> bool:
         try:
@@ -392,10 +419,12 @@ def busy_paths(paths: List[Path], procs: List[Proc]) -> set:
 
 @dataclass
 class Candidate:
-    step: str            # 'cache', 'device-support' or 'move'
+    step: str            # 'cache', 'session-scratch', 'device-support' or 'move'
     path: Path
     size: int            # bytes on disk it frees
     why: str
+    # Asked again just before acting; a reason means keep it after all.
+    recheck: Optional[Callable[[], Optional[str]]] = None
 
 
 @dataclass
@@ -443,6 +472,105 @@ def plan_caches(cfg: Config, machine: Machine, trees: List[Worktree], busy: dict
             stats = tree_stats(d)
             if stats.disk_bytes:
                 found.append(Candidate('cache', d, stats.disk_bytes, 'build cache in an idle worktree'))
+    plan.candidates += sorted(found, key=lambda c: -c.size)
+
+
+@dataclass
+class SessionSignals:
+    live: set                      # session ids of running Claude Code sessions
+    open_paths: List[Tuple[int, str]]  # (pid, path) under the scratch root: open files and cwds
+    procs: List[Proc]
+
+
+def live_session_ids(cfg: Config, machine: Machine) -> set:
+    """Session ids in ~/.claude/sessions/<pid>.json whose pid is alive (read only)."""
+    live = set()
+    for entry in sorted(cfg.claude_sessions.glob('*.json')) if cfg.claude_sessions.is_dir() else []:
+        try:
+            data = json.loads(entry.read_text())
+            pid, session = int(data['pid']), str(data['sessionId'])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if machine.pid_alive(pid):
+            live.add(session)
+    return live
+
+
+def session_signals(cfg: Config, machine: Machine, procs: List[Proc]) -> Optional[SessionSignals]:
+    open_files = machine.open_files()
+    if open_files is None:
+        return None
+    roots = [cfg.claude_tmp, real(cfg.claude_tmp)]
+    held = [(pid, path) for pid, path in open_files + [(p.pid, p.cwd) for p in procs if p.cwd]
+            if any(inside(Path(path), r) for r in roots)]
+    return SessionSignals(live_session_ids(cfg, machine), held, procs)
+
+
+def session_scratch_in_use(cfg: Config, folder: Path, signals: SessionSignals, idle_since: float) -> Optional[str]:
+    """Why this session's scratch folder may still be in use, or None when its session ended."""
+    session = folder.name
+    if session == cfg.own_session:
+        return "this process's own session"
+    if session in signals.live:
+        return 'its Claude Code session is running'
+    for proc in signals.procs:
+        if session in proc.command:
+            return f'process {proc.pid} names the session'
+    roots = [folder, real(folder)]
+    for pid, path in signals.open_paths:
+        if any(inside(Path(path), r) for r in roots):
+            return f'process {pid} has {path} open'
+    if tree_stats(folder, stop_if_newer_than=idle_since).newest_mtime > idle_since:
+        return 'changed in the last 12 hours'
+    return None
+
+
+def session_scratch_folders(cfg: Config) -> List[Path]:
+    """<claude_tmp>/<project slug>/<session id>/ folders. Project slugs are cwd paths with '/'
+    turned into '-', so they start with '-'; nothing else there is touched."""
+    found = []
+    root = cfg.claude_tmp
+    if not root.is_dir():
+        return found
+    for project in sorted(root.iterdir()):
+        if not project.name.startswith('-') or project.is_symlink() or not project.is_dir():
+            continue
+        for folder in sorted(project.iterdir()):
+            if SESSION_ID.match(folder.name) and folder.is_dir() and not folder.is_symlink() \
+                    and inside(real(folder), real(root)):
+                found.append(folder)
+    return found
+
+
+def plan_session_scratch(cfg: Config, machine: Machine, procs: List[Proc], protected: List[Path],
+                         plan: Plan) -> None:
+    folders = session_scratch_folders(cfg)
+    if not folders:
+        return
+    signals = session_signals(cfg, machine, procs)
+    if signals is None:
+        plan.skipped.append(f'session scratch in {cfg.claude_tmp}: could not list open files')
+        return
+    idle_since = machine.now() - SESSION_SCRATCH_IDLE_SECONDS
+    found, recent = [], 0
+    for folder in folders:
+        if is_protected(folder, protected):
+            continue
+        reason = session_scratch_in_use(cfg, folder, signals, idle_since)
+        if reason == 'changed in the last 12 hours':
+            recent += 1
+        elif reason:
+            plan.skipped.append(f'{folder}: {reason}')
+        else:
+            def recheck(folder=folder):
+                fresh = session_signals(cfg, machine, procs)
+                if fresh is None:
+                    return 'could not list open files'
+                return session_scratch_in_use(cfg, folder, fresh, machine.now() - SESSION_SCRATCH_IDLE_SECONDS)
+            found.append(Candidate('session-scratch', folder, tree_stats(folder).disk_bytes,
+                                   'scratch of an ended Claude Code session', recheck))
+    if recent:
+        plan.skipped.append(f'{recent} session scratch folder(s) in {cfg.claude_tmp}: changed in the last 12 hours')
     plan.candidates += sorted(found, key=lambda c: -c.size)
 
 
@@ -580,6 +708,7 @@ def make_plan(cfg: Config, machine: Machine) -> Plan:
     trees = list_worktrees(cfg, machine)
     busy = busy_worktrees(trees, procs, machine)
     plan_caches(cfg, machine, trees, busy, protected, plan)
+    plan_session_scratch(cfg, machine, procs, protected, plan)
     plan_device_support(cfg, procs, protected, plan)
     plan_moves(cfg, machine, procs, protected, plan)
     plan.stale_worktrees = stale_worktrees(cfg, machine, trees, protected, busy)
@@ -771,6 +900,10 @@ def execute(cfg: Config, machine: Machine, plan: Plan, log: Log, start: int) -> 
                 continue
             if not (c.path.exists() or c.path.is_symlink()):
                 continue
+            busy_now = c.recheck() if c.recheck else None
+            if busy_now:
+                log(f'skip {c.path}: {busy_now}')
+                continue
             if c.step == 'move':
                 if mirror_problem and cfg.require_mirror:
                     continue
@@ -787,7 +920,7 @@ def execute(cfg: Config, machine: Machine, plan: Plan, log: Log, start: int) -> 
             else:
                 try:
                     machine.remove(c.path)
-                    ok, message = True, 'deleted (regenerable)'
+                    ok, message = True, 'deleted' if c.step == 'session-scratch' else 'deleted (regenerable)'
                 except OSError as error:
                     ok, message = False, f'delete failed: {error}'
             if ok:

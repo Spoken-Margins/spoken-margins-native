@@ -35,9 +35,11 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   comment (the prefix scripts/merge_audit.py looks for) and pushes that commit to next with a plain
   push; if next moved meanwhile, the push is refused and it tests again on the newest next (up to
   MERGE_ATTEMPTS), unless next's new commits touch none of the PR's files and no build inputs: then
-  it re-merges onto the newest next and pushes without testing again (untested_moves). It won't merge a PR that changes .github/ or scripts/lane* (a PR can change the
-  workflow that tests it), or an audio, persistence or packet change without a Codex audit comment:
-  those pass or fail as usual, and a person merges them. A PR someone asked T3 for merges only on a
+  it re-merges onto the newest next and pushes without testing again (untested_moves). It won't merge an audio, persistence, packet or lane change
+  (test-scope.py's lane_paths) until a Codex audit of its head says "No blocking findings": those pass
+  or fail as usual, and the audit script re-arms automerge after a clean audit. Lane changes no longer
+  wait for a person (owner rule 2026-10-01); the audit checks them, because a lane PR's own run uses
+  its own workflow and helpers. A PR someone asked T3 for merges only on a
   T3 PASS (#410): while its newest T3 report is FAIL or INCONCLUSIVE, or its newest T3 request has
   no report yet, the automerge run reports that verdict (INCONCLUSIVE while waiting) and doesn't merge.
   When a T3 then passes, the lane job that reported it runs the held automerge run itself, in the
@@ -61,6 +63,13 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   automerge job first waits for room: no simulator job, normal memory pressure, and enough free disk.
   Trial (2026-10-01): a host-only job (T0/T1) there may start beside a simulator job while memory
   pressure reads normal and BESIDE_SIMULATOR_FREE_DISK is free; each one is logged for the owner.
+- Auto-revert of a lane change that broke the lane (owner rule 2026-10-01, auto_revert). Each job on
+  next starts by finding the newest merge into next that touched the lane (test-scope.py's lane
+  paths). If the first two lane reports on PRs after it, from jobs that tested a next with it, were
+  both runner faults (INCONCLUSIVE for a lane reason, or a job that stopped before reporting; not a
+  merge conflict, a T3 hold or a FAIL), it reverts that merge with `git revert -m 1`, pushes like a
+  merge, files a `ready` + `regression` issue to re-land it, and posts "Lane auto-revert:" on #337.
+  Once per lane change; a revert that doesn't apply cleanly is reported on #337 and left for a person.
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
 default ~/Library/Caches/SpokenMarginsLane/evidence), SM_LANE_TOOLS (a checkout whose .venv and
@@ -71,6 +80,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import functools
 import hashlib
 import json
 import os
@@ -95,6 +105,8 @@ BUILD_RUNNER_FREE_DISK = 20 * 10**9
 # Trial (2026-10-01): host-only jobs on the build runner may run beside a simulator job, with this much disk.
 BESIDE_SIMULATOR_FREE_DISK = 30 * 2**30
 BESIDE_SIMULATOR_LOG = 'beside-simulator.log'  # in the lane state folder: one line per job, to count crashes against
+# Read by the tree's lane_slots.py (spelled here so this runner never needs a name from that copy, lane_slots_helper).
+BUILD_NEEDS_ROOM_ENV = 'SM_LANE_BUILD_NEEDS_ROOM'
 WARM_FREE_FLOOR = 15 * 10**9
 PROJECT_FILE = 'SpokenMarginsNative.xcodeproj/project.pbxproj'  # its layout names Xcode's VFS folders (#405)
 # How the T3 gate's hold reads in an automerge report, now and before #421 (PRs held by an older runner).
@@ -102,7 +114,6 @@ HELD_FOR_T3 = ('not merged: held for T3', 'after a T3 PASS, push or remove and r
 NOT_VERIFIED = 'journeys and anything a listener notices (T4), audible content (owner)'
 MERGE_CHECK = '**Merge check (triage desk)'  # the prefix scripts/merge_audit.py requires
 AUDITS = ('**Codex audit (Astra)', '## Codex audit')  # how an audit comment starts: the hourly task's, or an older manual one
-DESK_ONLY = ('.github/', 'scripts/lane')
 AUDITED = {'audio': 'the audio session', 'persistence': 'persistence', 'packet': 'packets'}
 BOT = ('github-actions[bot]', '41898282+github-actions[bot]@users.noreply.github.com')
 RUNNER_TIERS = ('T2', 'T3')
@@ -242,8 +253,19 @@ def report(request_id: str, verdict: str, head: str, base: str, tier: str, where
 
 def pr_code_env() -> dict:
     """The environment for the PR's own code (builds, tests): without the GitHub token, so nothing the
-    PR changes can use the lane's write access."""
-    return {name: value for name, value in os.environ.items() if name not in ('GH_TOKEN', 'GITHUB_TOKEN')}
+    PR changes can use the lane's write access. Nor BUILD_NEEDS_ROOM_ENV: that is for the T2 builds alone
+    (pr_build_env), and host tests that take build slots or test lane_slots mustn't inherit it."""
+    return {name: value for name, value in os.environ.items()
+            if name not in ('GH_TOKEN', 'GITHUB_TOKEN', BUILD_NEEDS_ROOM_ENV)}
+
+
+def pr_build_env() -> dict:
+    """pr_code_env for the T2 builds. On the build runner it sets BUILD_NEEDS_ROOM_ENV, so each xcodebuild-lane
+    checks the build runner's rules again as it takes its build slot (lane_slots.py)."""
+    env = pr_code_env()
+    if os.environ.get('SM_LANE_RUNNER_ROLE') == 'build':
+        env[BUILD_NEEDS_ROOM_ENV] = '1'
+    return env
 
 
 def git_with_token(tree: Path) -> list[str]:
@@ -256,7 +278,7 @@ def git_with_token(tree: Path) -> list[str]:
     return ['git', '-C', str(tree), '-c', f'http.https://github.com/.extraheader=AUTHORIZATION: basic {basic}']
 
 
-def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUPT_GRACE) -> int | None:
+def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUPT_GRACE, env=None) -> int | None:
     """Run in a new process group and return its exit code, or None if it timed out.
 
     On timeout the whole group gets SIGINT first, so verify-tests.py and xcodebuild-lane stop their
@@ -265,7 +287,7 @@ def run_bounded(command: list[str], log, timeout: float, grace: float = INTERRUP
     # The child gets default SIGINT handling even if this process was started with it ignored (as
     # background jobs are), or the interrupt below would be silently ignored all the way down.
     process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
-                               env=pr_code_env(), preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+                               env=env or pr_code_env(), preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
     try:
         return process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -300,7 +322,8 @@ def first_errors(log: Path, limit: int = 5) -> list[str]:
     return list(dict.fromkeys(found))[:limit]
 
 
-def run_t2(evidence: Path, runner=run_bounded) -> tuple[str, str, list[str]]:
+def run_t2(evidence: Path, runner=None) -> tuple[str, str, list[str]]:
+    runner = runner or (lambda command, log, timeout: run_bounded(command, log, timeout, env=pr_build_env()))
     results, details = [], []
     for name, args in T2_BUILDS:
         log = evidence / f't2-{name}.log'
@@ -454,13 +477,13 @@ def audit_blocker(comments: list[dict], head: str) -> str | None:
 
 
 def merge_blockers(scope: dict, comments: list[dict], head: str) -> list[str]:
-    """Why the runner won't merge this PR itself even on PASS; the desk merges those."""
+    """Why the runner won't merge this PR yet even on PASS: an audited kind of change without a clean Codex
+    audit of its head. Lane changes are one of those kinds; they no longer wait for a person (owner rule
+    2026-10-01). The audit script re-arms automerge after a clean audit, and that run merges."""
     reasons = []
-    desk = [f['path'] for f in scope['files'] if f['path'].startswith(DESK_ONLY)]
-    if desk:
-        reasons.append(f'it changes the lane or its workflows ({", ".join(desk[:5])}), and a PR can change '
-                       'what tests it')
     risky = sorted({AUDITED[f['category']] for f in scope['files'] if f['category'] in AUDITED})
+    if scope.get('lane_paths'):  # owner rule 2026-10-01: lane changes need the audit too (test-scope.py)
+        risky.append('the lane')
     audit = audit_blocker(comments, head) if risky else None
     if audit:
         reasons.append(f'it touches {" and ".join(risky)}, and {audit}' if audit.startswith('the ')
@@ -654,9 +677,15 @@ def merge_check(head: str, merge_sha: str, base: str, base_sha: str, ran: str) -
             '_Posted by the lane runner (scripts/lane-runner.py)._')
 
 
+class AutoRunContext:
+    """The base of the latest merge/check attempt, available even if that attempt raises."""
+    def __init__(self, tested_base: str):
+        self.tested_base = tested_base
+
+
 def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, evidence: Path,
              comments: list[dict], labels=(), attempts: int = MERGE_ATTEMPTS,
-             room_for_builds=None) -> tuple[str, str, str, list[str]]:
+             room_for_builds=None, context: AutoRunContext | None = None) -> tuple[str, str, str, list[str]]:
     """The automerge run: test the merge commit, and push it to <base> on PASS unless something blocks it.
 
     room_for_builds: for a job that started as host-only beside a simulator job. If the merge commit needs
@@ -665,6 +694,9 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
     notes: list[str] = []
     tested_base, skipped = None, None  # the next the last test ran on; next's commits since, when they can't matter
     for attempt in range(1, attempts + 1):
+        if context is not None:
+            context.tested_base = base_sha
+        remember_tested(base, base_sha)
         # Each retry gets its own folder: verify-tests.py refuses an --output folder that exists (#404).
         tried = evidence if attempt == 1 else evidence / f'attempt-{attempt}'
         merge_sha, conflicts = build_merge_commit(ROOT, base, head, pr, pull.get('title', ''))
@@ -694,8 +726,8 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             return held[0], where, ran, details + [f'not merged: {held[1]}.']
         blockers = merge_blockers(scope, latest, head)
         if blockers:
-            return verdict, where, ran, details + [f'not merged by the runner: {b}. The desk merges it.'
-                                                   for b in blockers]
+            return verdict, where, ran, details + [f'not merged by the runner: {b}. It merges once a Codex audit '
+                                                   'of its head says "No blocking findings".' for b in blockers]
         now = github.pull()
         if now['head']['sha'] != head or AUTOMERGE not in {label['name'] for label in now.get('labels', [])} \
                 or now.get('state', 'open') != 'open':  # another run merged it meanwhile, or someone closed it
@@ -753,14 +785,18 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
     evidence.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     started_by = [f'{why}; the automerge run on {head[:7]} was held for T3']
+    context = AutoRunContext(base_sha)
     try:
         clean_tree(ROOT)  # the T3 ran in this tree; the merge commit checks out next over it
         base_sha = fetch_base(ROOT, base)
-        verdict, where, ran, details = run_auto(github, pull, pr, base, head, base_sha, evidence, comments, labels)
+        remember_tested(base, base_sha)
+        verdict, where, ran, details = run_auto(github, pull, pr, base, head, base_sha, evidence, comments, labels,
+                                               context=context)
     except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
         verdict, where, ran = 'INCONCLUSIVE', 'lane error', 'nothing'
         details = [f'The lane itself failed: {error!r}. evidence: {evidence}. Remove and re-add automerge to '
                    'run it again.']
+    base_sha = context.tested_base
     body = report(request_id, verdict, head, base_sha, 'auto', where, time.monotonic() - started, ran,
                   started_by + details, 'none', str(evidence), NOT_VERIFIED, identity('auto', head, base_sha, []),
                   base_name=base)
@@ -888,31 +924,37 @@ def _cache_busy(cache: Path) -> bool:
 
 def wait_for_room_to_build(out=sys.stdout, max_wait: float = BUILD_RUNNER_WAIT, poll: float = 30,
                            clock=time.monotonic, sleep=time.sleep, simulator_jobs=None, pressure=None,
-                           free=lambda: shutil.disk_usage(Path.home()).free) -> str | None:
-    """The second runner builds only while the Mac has room: no simulator job, normal memory pressure,
-    and BUILD_RUNNER_FREE_DISK free. Returns None when there's room, or why it gave up waiting."""
-    if simulator_jobs is None or pressure is None:
-        from lane_slots import memory_pressure_level, simulator_jobs_running
-        simulator_jobs = simulator_jobs or simulator_jobs_running
-        pressure = pressure or memory_pressure_level
-    started, last_note = clock(), None
-    while True:
-        busy = []
-        if simulator_jobs():
-            busy.append('a simulator job is running')
-        if pressure() not in (1, None):
-            busy.append('memory pressure is above normal')
-        if free() < BUILD_RUNNER_FREE_DISK:
-            busy.append(f'less than {BUILD_RUNNER_FREE_DISK // 10**9} GB of disk is free')
-        if not busy:
-            return None
-        waited = clock() - started
-        if waited >= max_wait:
-            return f'the build runner waited {duration(waited)} for room: {"; ".join(busy)}'
-        if last_note is None or clock() - last_note >= 300:
-            print(f'[lane] build runner waiting ({duration(waited)} so far): {"; ".join(busy)}', file=out, flush=True)
-            last_note = clock()
-        sleep(poll)
+                           free=lambda: shutil.disk_usage(Path.home()).free, builds=None, note=None) -> str | None:
+    """The second runner builds only while the Mac has room: normal memory pressure and BUILD_RUNNER_FREE_DISK
+    free. Returns None when there's room, or why it gave up waiting.
+
+    Trial, extended 2026-10-01: sm-lane-mac-2 spent 6.9 of its 12.7 busy hours in a day waiting here for a
+    simulator job (mostly the Test Desk's) while the Mac was ~60% idle, and the host-only trial covered few
+    jobs because most automerge jobs build. A build may now start beside one simulator job on the host-only
+    terms (pressure read as normal now, BESIDE_SIMULATOR_FREE_DISK free) while the one build slot lane_slots
+    leaves during a simulator job is free; note(text) is called when it does. Never beside two. This is the
+    check when the job starts; each build checks again as it takes its slot (BUILD_NEEDS_ROOM_ENV).
+    """
+    from lane_slots import memory_pressure_level, simulator_jobs_running
+    builds = builds or lane_slots_helper('build_jobs_running', lambda: None)
+    problem, beside = wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs or simulator_jobs_running,
+                                    pressure or memory_pressure_level, free, builds)
+    if beside and note:
+        note(beside)
+    return problem
+
+
+def lane_slots_helper(name: str, fallback):
+    """lane_slots.<name>, or fallback when the tree's copy of lane_slots.py predates it.
+
+    The workflow runs next's lane-runner.py, but lane_slots comes from the PR's checkout (main() puts the
+    tree's scripts/ first on sys.path, and the module stays loaded after the merge commit is checked out).
+    A branch that hasn't merged next since a helper landed lacks it, and a plain import raised ImportError
+    before the job could report (#656 audit). Every lane_slots name newer than #656 is looked up here, with
+    a fallback that keeps the older, more careful behaviour.
+    """
+    import lane_slots
+    return getattr(lane_slots, name, fallback)
 
 
 def pressure_is_normal(level) -> bool:
@@ -929,12 +971,17 @@ def wait_for_room_to_test_on_host(out=sys.stdout, max_wait: float = BUILD_RUNNER
     Trial (2026-10-01): the build runner sat idle whenever any simulator job ran, the Test Desk's included
     (394 minutes in a day). A host-only job may now start beside one while the kernel reads memory pressure
     as normal and more than BESIDE_SIMULATOR_FREE_DISK is free. With no simulator job, the build runner's
-    usual rules hold. Builds still wait in wait_for_room_to_build.
+    usual rules hold. Builds wait in wait_for_room_to_build.
     """
-    if simulator_jobs is None or pressure is None:
-        from lane_slots import memory_pressure_level, simulator_jobs_running
-        simulator_jobs = simulator_jobs or simulator_jobs_running
-        pressure = pressure or memory_pressure_level
+    from lane_slots import memory_pressure_level, simulator_jobs_running
+    return wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs or simulator_jobs_running,
+                         pressure or memory_pressure_level, free)
+
+
+def wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs, pressure, free, builds=None) -> tuple:
+    """(None or why it gave up, a note when there's room beside a simulator job). builds, for a job that builds:
+    how many build slots are held (None: can't tell, so it doesn't build beside a simulator job); beside a
+    simulator job, it needs the one slot left then, and one simulator."""
     started, last_note = clock(), None
     while True:
         jobs, level, room = simulator_jobs(), pressure(), free()
@@ -946,14 +993,22 @@ def wait_for_room_to_test_on_host(out=sys.stdout, max_wait: float = BUILD_RUNNER
             if room < BESIDE_SIMULATOR_FREE_DISK:
                 busy.append(f'a simulator job is running and less than {BESIDE_SIMULATOR_FREE_DISK // 2**30} GiB '
                             'of disk is free')
+            held = builds() if builds and jobs == 1 else 0
+            if builds and jobs > 1:
+                busy.append('two simulator jobs are running')
+            elif held is None:
+                busy.append('a simulator job is running, and this checkout\'s lane_slots.py can\'t count build '
+                            'slots (merge next into the branch to build beside one)')
+            elif held:
+                busy.append('a simulator job is running and the one build slot it leaves is taken')
         else:
             if level not in (1, None):
                 busy.append('memory pressure is above normal')
             if room < BUILD_RUNNER_FREE_DISK:
                 busy.append(f'less than {BUILD_RUNNER_FREE_DISK // 10**9} GB of disk is free')
         if not busy:
-            return None, (f'ran beside a simulator job (trial): memory pressure normal, {room // 2**30} GiB free'
-                          if jobs else None)
+            return None, (f'{"built" if builds else "ran"} beside a simulator job (trial): memory pressure normal, '
+                          f'{room // 2**30} GiB free' if jobs else None)
         waited = clock() - started
         if waited >= max_wait:
             return f'the build runner waited {duration(waited)} for room: {"; ".join(busy)}', None
@@ -1099,6 +1154,10 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
         ran.append(f'{", ".join(s.split("/", 1)[1] for s in selectors)} ({summary["passed"]} passed'
                    f'{", " + str(len(summary["failed"])) + " failed" if summary["failed"] else ""}'
                    f'; {plan} plan, build and tests, {duration(took)})')
+        attachments = [a for step in manifest.get('steps', []) for a in step.get('attachments', [])]
+        if attachments:  # older PR checkouts have no exporter/helper; load only when evidence exists
+            from lane_xcresult_attachments import report_lines
+            details.extend(report_lines(attachments))
         for test in summary['failed'][:10]:
             details.append(f'{test} — expected: passes. observed: failed. evidence: {output}/tests.xcresult')
         if summary['out_of_time']:
@@ -1307,6 +1366,273 @@ class GitHub:
             self.api('-X', 'POST', f'repos/{self.repo}/issues/{self.pr}/labels', '-f', f'labels[]={add}')
 
 
+# ---- Auto-revert of a lane change that broke the lane (owner rule 2026-10-01) ---------------------
+
+OPS_ISSUE = 337
+AUTO_REVERT = 'Lane auto-revert'  # how both the revert comment and the could-not-revert comment on #337 start
+STOPPED = 'stopped before reporting'  # cleanup()'s note when a job died before its report
+MERGE_SUBJECT = re.compile(r'^Merge pull request #(\d+)(?::\s*(.*)| from \S+)')
+TESTED_ON = re.compile(r'\(tested merged with (\S+) at ([0-9a-f]{7,40})\)')
+REVERTS = re.compile(r'^This reverts commit ([0-9a-f]{40})', re.M)  # git revert's own line
+# INCONCLUSIVE reports that are the PR's or the request's own doing, not the lane's.
+NOT_LANE_FAULTS = (('does not merge cleanly', 'a merge conflict'),
+                   ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'))
+PENDING_T3_HOLD = re.compile(r'^not merged: held for T3:', re.M)
+LANE_MERGE_LOOKBACK = 300
+
+
+def utc(stamp: str):
+    """A git or GitHub ISO 8601 time as an aware datetime (Python 3.9 can't read a trailing Z)."""
+    import datetime
+    return datetime.datetime.fromisoformat(stamp.replace('Z', '+00:00')).astimezone(datetime.timezone.utc)
+
+
+def lane_merge(tree: Path, base: str, is_lane, lookback: int = LANE_MERGE_LOOKBACK) -> dict | None:
+    """The newest merge into <base> (first-parent history) whose changes touch the lane, or None.
+
+    Returns {'sha', 'parent', 'time', 'pr', 'title', 'subject', 'paths'}: paths are the lane paths it
+    changed against next before it, title is None when the subject doesn't carry it (a GitHub merge).
+    """
+    log = subprocess.check_output(['git', '-C', str(tree), 'log', '--first-parent', '--merges',
+                                   '--diff-merges=first-parent', '--name-only', f'-n{lookback}',
+                                   '--format=@@%H %P|%cI|%s', f'origin/{base}'], text=True)
+    merge = None
+    for line in log.splitlines() + ['@@']:
+        if line.startswith('@@'):
+            if merge and merge['paths']:
+                return merge
+            if line == '@@':
+                return None
+            shas, stamp, subject = line[2:].split('|', 2)
+            sha, parent = shas.split()[:2]
+            pr = MERGE_SUBJECT.match(subject)
+            merge = {'sha': sha, 'parent': parent, 'time': stamp, 'subject': subject,
+                     'pr': int(pr.group(1)) if pr else None, 'title': pr.group(2) if pr else None, 'paths': []}
+        elif line.strip() and merge is not None and is_lane(line.strip()):
+            merge['paths'].append(line.strip())
+    return None
+
+
+def lane_report_verdict(body: str) -> tuple[bool, str] | None:
+    """For a runner comment: (whether it is a runner fault, why), or None if it isn't a lane report.
+
+    A runner fault is an INCONCLUSIVE report for a lane reason (a boot failure, the build runner's room
+    wait, a crash in the runner, a missing tool or runtime, a timeout), or a job that stopped before it
+    could report. A merge conflict, a T3 hold or a malformed request is not, and neither is FAIL.
+    """
+    if NOTE in body and STOPPED in body:
+        return True, 'the job stopped before it could report'
+    verdict = REPORT.search(body)
+    if not verdict or not MARKER.search(body):
+        return None
+    if verdict.group(1) != 'INCONCLUSIVE':
+        return False, verdict.group(1)
+    if PENDING_T3_HOLD.search(body):
+        return False, 'INCONCLUSIVE (held for T3)'
+    for text, why in NOT_LANE_FAULTS:
+        if text in body:
+            return False, f'INCONCLUSIVE ({why})'
+    lines = [line.strip() for line in body.splitlines()[3:] if line.strip() and not line.startswith('<!--')]
+    return True, 'INCONCLUSIVE: ' + (lines[0][:200] if lines else 'no reason given')
+
+
+def lane_reports_after(tree: Path, merge: dict, comments, base: str = 'next') -> list[dict]:
+    """The runner's lane reports on PRs from after the lane merge, oldest first, at most two.
+
+    `comments` is the repository's issue comments, oldest first. A report counts only if it says it
+    tested <base> (not a lane-check/** branch, which tests some other lane change) at a commit that
+    already had the merge in it, so a job that started before the merge landed doesn't count. A
+    stopped-job note counts on the same terms, from the base cleanup() found recorded; one that names
+    no tested commit (the job stopped before it fetched one, or a runner from before 2026-10-01's
+    audit fix) doesn't count.
+    """
+    since, found = utc(merge['time']), []
+    for comment in comments:
+        body = comment.get('body') or ''
+        if (comment.get('user') or {}).get('login') not in BOT or '/pull/' not in (comment.get('html_url') or ''):
+            continue
+        if utc(comment.get('created_at') or '1970-01-01T00:00:00Z') <= since:
+            continue
+        judged = lane_report_verdict(body)
+        if judged is None:
+            continue
+        tested = TESTED_ON.search(body)
+        if not tested or tested.group(1) != base:
+            continue
+        if subprocess.run(['git', '-C', str(tree), 'merge-base', '--is-ancestor', merge['sha'], tested.group(2)],
+                          capture_output=True).returncode != 0:
+            continue
+        found.append({'url': comment.get('html_url'), 'fault': judged[0], 'why': judged[1]})
+        if len(found) == 2:
+            break
+    return found
+
+
+def reverts_on_base(tree: Path, merge: dict, is_lane) -> list[str]:
+    """The lane changes on <base> before the merge that the merge's own commits revert, by git revert's
+    "This reverts commit <sha>" line, not by any title. A commit the PR branch reverted that was never
+    on <base> (a branch undoing its own first try), or a reverted commit that touched no lane path,
+    doesn't make the merge a revert of a lane change."""
+    git = ['git', '-C', str(tree)]
+    log = subprocess.check_output(git + ['log', '--format=%B%x00', f'{merge["parent"]}..{merge["sha"]}'], text=True)
+    undone = []
+    for sha in dict.fromkeys(REVERTS.findall(log)):
+        if subprocess.run(git + ['merge-base', '--is-ancestor', sha, merge['parent']],
+                          capture_output=True).returncode != 0:
+            continue
+        changed = subprocess.run(git + ['diff', '--name-only', f'{sha}^1', sha], capture_output=True, text=True)
+        if changed.returncode == 0 and any(is_lane(path) for path in changed.stdout.splitlines()):
+            undone.append(sha)
+    return undone
+
+
+def reverted_by(tree: Path, base: str, sha: str) -> str | None:
+    """The commit on <base> whose message says it reverts <sha> (git revert's own line), if any."""
+    found = subprocess.run(['git', '-C', str(tree), 'log', '--format=%H', '-n1', '--fixed-strings',
+                            f'--grep=This reverts commit {sha}', f'origin/{base}'], capture_output=True, text=True)
+    return found.stdout.strip() or None
+
+
+def revert_merge(tree: Path, base: str, merge: dict, message: str,
+                 attempts: int = MERGE_ATTEMPTS) -> tuple[str | None, str]:
+    """git revert -m 1 the merge on the newest <base> and push it the way the runner pushes merges.
+
+    Returns (the revert commit, '') or (None, why not). Leaves the tree checked out where it was.
+    """
+    git = ['git', '-C', str(tree)]
+    name, email = BOT
+    start = subprocess.check_output(git + ['rev-parse', 'HEAD'], text=True).strip()
+    try:
+        for _ in range(attempts):
+            done = reverted_by(tree, base, merge['sha'])
+            if done:
+                return None, f'{base} already reverts it ({done[:7]})'
+            subprocess.run(git + ['checkout', '--quiet', '--force', '--detach', f'origin/{base}'], check=True,
+                           capture_output=True)
+            undone = subprocess.run(git + ['revert', '--no-commit', '-m', '1', merge['sha']], capture_output=True,
+                                    text=True)
+            if undone.returncode != 0:
+                conflicts = subprocess.run(git + ['diff', '--name-only', '--diff-filter=U'], capture_output=True,
+                                           text=True).stdout.split()
+                subprocess.run(git + ['revert', '--abort'], capture_output=True)
+                return None, ('git revert -m 1 does not apply cleanly on the newest '
+                              f'{base} ({", ".join(conflicts[:10]) or undone.stderr.strip()[:200]})')
+            if subprocess.run(git + ['diff', '--cached', '--quiet'], capture_output=True).returncode == 0:
+                subprocess.run(git + ['revert', '--abort'], capture_output=True)
+                return None, f'reverting it changes nothing: {base} already undoes it'
+            subprocess.run(git + ['-c', f'user.name={name}', '-c', f'user.email={email}', 'commit', '--quiet',
+                                  '-m', message], check=True, capture_output=True)
+            sha = subprocess.check_output(git + ['rev-parse', 'HEAD'], text=True).strip()
+            pushed, why = push_merge(tree, sha, base)
+            if pushed:
+                return sha, ''
+            if not next_moved(why):
+                return None, f'the push to {base} failed ({why})'
+            fetch_base(tree, base)
+        return None, f'{base} kept moving ({attempts} attempts)'
+    finally:
+        subprocess.run(git + ['checkout', '--quiet', '--force', '--detach', start], capture_output=True)
+
+
+class Repo:
+    """The repository-wide GitHub calls the auto-revert needs (GitHub above is one PR's)."""
+
+    def __init__(self, repo: str):
+        self.repo = repo
+
+    def api(self, *args: str) -> str:
+        return subprocess.check_output(['gh', 'api', *args], text=True)
+
+    def comments_since(self, since: str):
+        """Every issue and PR comment created since <since>, oldest first, a page at a time."""
+        page = 1
+        while True:
+            batch = json.loads(self.api(f'repos/{self.repo}/issues/comments?since={since}&sort=created'
+                                        f'&direction=asc&per_page=100&page={page}'))
+            yield from batch
+            if len(batch) < 100:
+                return
+            page += 1
+
+    def issue_comments(self, number: int) -> list[dict]:
+        lines = self.api('--paginate', '--jq', '.[] | @json', f'repos/{self.repo}/issues/{number}/comments')
+        return [json.loads(line) for line in lines.splitlines() if line.strip()]
+
+    def comment(self, number: int, body: str) -> str:
+        return json.loads(self.api(f'repos/{self.repo}/issues/{number}/comments', '-f', f'body={body}'))['html_url']
+
+    def title(self, number: int) -> str:
+        return json.loads(self.api(f'repos/{self.repo}/pulls/{number}')).get('title', '')
+
+    def open_issue(self, title: str, body: str, labels: list[str]) -> str:
+        args = [f'repos/{self.repo}/issues', '-f', f'title={title}', '-f', f'body={body}']
+        for label in labels:
+            args += ['-f', f'labels[]={label}']
+        return json.loads(self.api(*args))['html_url']
+
+
+def auto_revert(tree: Path, base: str, repo, policy=None) -> str:
+    """At the start of a lane job: revert the newest lane change on <base> if the two lane reports after
+    it were both runner faults (owner rule 2026-10-01). Returns what it did, for the job log.
+
+    Only a merge that touched the lane (test-scope.py's lane paths) is ever reverted, and each only once:
+    a revert already on <base>, or an earlier "Lane auto-revert" comment on #337 naming it, stops it.
+    A revert that doesn't apply cleanly is reported on #337 and left for a person.
+    """
+    fetch_base(tree, base)
+    policy = policy or base_policy(tree, base, 'scripts/test-scope.py')
+    if policy is None or not hasattr(policy, 'is_lane_path'):
+        return 'no lane path list on the base yet'
+    merge = lane_merge(tree, base, policy.is_lane_path)
+    if merge is None:
+        return 'no lane change in recent merges'
+    label = f'#{merge["pr"]}' if merge['pr'] else merge['sha'][:7]
+    undone = reverts_on_base(tree, merge, policy.is_lane_path)
+    if undone:  # reverting a revert would bring the broken change back
+        return (f'the newest lane change ({label}) is itself a revert (of '
+                f'{", ".join(sha[:7] for sha in undone)}); left alone')
+    reports = lane_reports_after(tree, merge, repo.comments_since(utc(merge['time']).strftime('%Y-%m-%dT%H:%M:%SZ')),
+                                 base)
+    if len(reports) < 2 or not all(report['fault'] for report in reports):
+        return f'the newest lane change ({label}) is fine so far: ' + (
+            '; '.join(f'{r["url"]} {r["why"]}' for r in reports) or 'no lane report since')
+    done = reverted_by(tree, base, merge['sha'])
+    if done:
+        return f'{label} was already reverted ({done[:7]})'
+    if any((c.get('body') or '').startswith(AUTO_REVERT) and merge['sha'][:7] in (c.get('body') or '')
+           for c in repo.issue_comments(OPS_ISSUE)):
+        return f'{label} was already handled (#{OPS_ISSUE})'
+    title = merge['title'] or (repo.title(merge['pr']) if merge['pr'] else merge['subject'])
+    evidence = '\n'.join(f'{n}. {r["url"]}: {r["why"]}' for n, r in enumerate(reports, 1))
+    message = (f'Revert {label}: {title} (lane auto-revert)\n\n'
+               f'The two lane reports after this lane change were both runner faults:\n{evidence}\n\n'
+               'Reverted by the lane runner (owner rule 2026-10-01).\n\n'
+               f'This reverts commit {merge["sha"]}, reversing\nchanges made to {merge["parent"]}.')
+    sha, problem = revert_merge(tree, base, merge, message)
+    if not sha:
+        repo.comment(OPS_ISSUE, f'{AUTO_REVERT} failed: {label} (`{merge["sha"][:7]}`, a lane change) was not '
+                                f'reverted on {base}: {problem}. The two lane reports after it were both runner '
+                                f'faults:\n{evidence}\nNothing was pushed. A person needs to look; the runner won\'t '
+                                f'try this change again.\n_Posted by the lane runner (scripts/lane-runner.py)._')
+        return f'could not revert {label}: {problem}'
+    issue = ''
+    try:
+        issue = repo.open_issue(
+            f'Re-land {label} after a lane auto-revert: {title}',
+            f'The lane runner reverted {label} on {base} as `{sha[:7]}` (owner rule 2026-10-01), because the two '
+            f'lane reports after it were both runner faults:\n{evidence}\n\n'
+            f'**Done when:** the change lands again in a new PR into {base}, with the cause of those faults '
+            'fixed, and the two lane reports after it are not both runner faults.\n\n'
+            '**Must not break:** the lane jobs of other PRs while the re-land is tested.\n\n'
+            '_Filed by the lane runner (scripts/lane-runner.py)._', ['ready', 'regression'])
+    except Exception as error:  # noqa: BLE001 - the #337 comment still says what happened
+        issue = f'not filed ({error!r})'
+    repo.comment(OPS_ISSUE, f'{AUTO_REVERT}: reverted {label} (`{merge["sha"][:7]}`, a lane change) on {base} as '
+                            f'`{sha[:7]}`. The two lane reports after it were both runner faults:\n{evidence}\n'
+                            f'Re-land issue: {issue}\n_Posted by the lane runner (scripts/lane-runner.py)._')
+    return f'reverted {label} as {sha[:7]}'
+
+
 # ---- Main ---------------------------------------------------------------------------------------
 
 def runner_device_claim(name: str) -> Path:
@@ -1363,16 +1689,42 @@ def sweep_runner_simulators() -> None:
                 print(f'Deleted leftover simulator {device["name"]}')
 
 
+TESTED_RECORD: Path | None = None  # main() sets it to a file in this job's RUNNER_TEMP
+
+
+def remember_tested(base: str, sha: str) -> None:
+    """Note which base this job is testing, so cleanup() can name it if the job stops before its report:
+    the auto-revert counts a stopped job only against a lane change that the tested base contained."""
+    if TESTED_RECORD is None:
+        return
+    try:
+        TESTED_RECORD.write_text(json.dumps({'base': base, 'sha': sha}))
+    except OSError as error:
+        print(f'Could not note the tested base: {error!r}')
+
+
+def tested_note() -> str:
+    """' (tested merged with <base> at <sha>)' from remember_tested(), in a report's words, or ''."""
+    try:
+        tested = json.loads(TESTED_RECORD.read_text()) if TESTED_RECORD else None
+    except (OSError, ValueError):
+        tested = None
+    if not isinstance(tested, dict) or not tested.get('base') or not re.fullmatch(r'[0-9a-f]{40}', tested.get('sha') or ''):
+        return ''
+    return f' (tested merged with {tested["base"]} at {tested["sha"][:7]})'
+
+
 def cleanup(github: GitHub, run_url: str, mode: str = 'any') -> int:
     """After a failed or cancelled job: remove leftovers, say so on the PR, and free the labels."""
     sweep_runner_simulators()
+    tested = tested_note()
     if mode == 'auto':  # lane:queued and lane:running belong to /lane requests
-        github.comment(f'Lane: the automerge run stopped before reporting ({run_url}). Push again, or remove and '
-                       f're-add automerge, to run it again.\n{NOTE}')
+        github.comment(f'Lane: the automerge run stopped before reporting ({run_url}){tested}. Push again, or '
+                       f'remove and re-add automerge, to run it again.\n{NOTE}')
         return 0
     _, desk_waiting = pending_requests(github.comments())
-    github.comment(f'Lane: the runner stopped before reporting ({run_url}). If it is still needed, comment '
-                   f'the request again and add lane:queued.\n{NOTE}')
+    github.comment(f'Lane: the runner stopped before reporting ({run_url}){tested}. If it is still needed, '
+                   f'comment the request again and add lane:queued.\n{NOTE}')
     github.relabel(RUNNING, None)
     if not desk_waiting:
         github.relabel(QUEUED, None)
@@ -1427,7 +1779,7 @@ def link_tools(source: Path) -> None:
 
 
 def main(argv=None) -> int:
-    global ROOT
+    global ROOT, TESTED_RECORD
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--pr', type=int, required=True)
     parser.add_argument('--event-head', required=True, help='head SHA the triggering event saw')
@@ -1443,8 +1795,16 @@ def main(argv=None) -> int:
     repo = os.environ['GH_REPO']
     github = GitHub(repo, args.pr)
     run_url = f'{os.environ.get("GITHUB_SERVER_URL", "https://github.com")}/{repo}/actions/runs/{args.run_id}'
+    if os.environ.get('RUNNER_TEMP'):  # one job's own folder, shared by its run and its cleanup step
+        TESTED_RECORD = Path(os.environ['RUNNER_TEMP']) / \
+            f'sm-lane-tested-{args.run_id}-{os.environ.get("GITHUB_RUN_ATTEMPT") or "1"}.json'
     if args.cleanup:
         return cleanup(github, run_url, args.mode)
+    if args.base == 'next':  # lane-check/** bases test lane changes; only next gets reverted
+        try:
+            print(f'Lane auto-revert check: {auto_revert(ROOT, args.base, Repo(repo))}')
+        except Exception as error:  # noqa: BLE001 - the check must never stop the job it runs in
+            print(f'Lane auto-revert check skipped: {error!r}')
     sweep_runner_simulators()
     pull = github.pull()
     head = pull['head']['sha']
@@ -1472,6 +1832,7 @@ def main(argv=None) -> int:
         print('No unanswered T2/T3 request; nothing to do.')
         return 0
     base_sha = fetch_base(ROOT, args.base)
+    remember_tested(args.base, base_sha)
     wanted = identity(request['tier'], head, base_sha, request['tests'])
     # An automerge run always runs: after an earlier PASS that didn't merge (no audit yet, next moved),
     # re-adding the label is how to try again.
@@ -1517,19 +1878,23 @@ def main(argv=None) -> int:
     t3_first = t3_request_for_head(comments, labels, head) if request['tier'] == 'auto' else None
     no_room, beside, room_for_builds = None, None, None
     if request['tier'] == 'auto' and not t3_first and os.environ.get('SM_LANE_RUNNER_ROLE') == 'build':
-        if host_only_scope(ROOT, args.base):  # the trial: host-only work may run beside a simulator job
+        if host_only_scope(ROOT, args.base):  # the trial: work may run beside a simulator job, builds too
             no_room, beside = wait_for_room_to_test_on_host()
-            room_for_builds = wait_for_room_to_build
-            if beside:
-                print(f'[lane] {beside}', flush=True)
-                note_beside_simulator(request_id, args.pr, beside)
+            room_for_builds = functools.partial(wait_for_room_to_build, note=lambda text: (
+                print(f'[lane] {text}', flush=True), note_beside_simulator(request_id, args.pr, text)))
         else:
-            no_room = wait_for_room_to_build()
+            noted = []
+            no_room = wait_for_room_to_build(note=noted.append)
+            beside = noted[0] if noted else None
+        if beside:
+            print(f'[lane] {beside}', flush=True)
+            note_beside_simulator(request_id, args.pr, beside)
     started = time.monotonic()
     requested = request.get('commit', '')
     moved = [f'requested {requested[:7]}, tested the newest commit {head[:7]}'] \
         if requested and not head.startswith(requested) else []
     cc = ''
+    context = AutoRunContext(base_sha)
     try:
         conflicts = [] if request['tier'] == 'auto' else merge_base_branch(ROOT, args.base)
         if t3_first:
@@ -1543,7 +1908,8 @@ def main(argv=None) -> int:
             details = [f'{no_room}. Push again, or remove and re-add automerge, to try again.']
         elif request['tier'] == 'auto':
             verdict, where, ran, details = run_auto(github, pull, args.pr, args.base, head, base_sha, evidence,
-                                                    comments, labels, room_for_builds=room_for_builds)
+                                                    comments, labels, room_for_builds=room_for_builds,
+                                                    context=context)
             details = ([beside] if beside else []) + details
             crashes = 'none'
         elif conflicts:
@@ -1562,6 +1928,9 @@ def main(argv=None) -> int:
     except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
         verdict, where, ran, crashes = 'INCONCLUSIVE', 'lane error', 'nothing', 'unknown'
         details = [f'The lane itself failed: {error!r}. evidence: {evidence}']
+    if request['tier'] == 'auto':
+        base_sha = context.tested_base
+        wanted = identity('auto', head, base_sha, request['tests'])
     body = report(request_id, verdict, head, base_sha, request['tier'], where, time.monotonic() - started,
                   ran, moved + details, crashes, str(evidence),
                   NOT_VERIFIED, wanted, cc, args.base)

@@ -28,7 +28,7 @@ final class MarginNoteFrontmatterTests: XCTestCase {
         XCTAssertEqual(properties["target"], .plain("source"))
         XCTAssertEqual(properties["tags"], .list(["spoken-margins"]))
         XCTAssertEqual(Array(properties.keys).sorted(), ["author", "created", "item_id", "margin_id", "margin_kind", "source", "tags", "target", "title"])
-        XCTAssertTrue(note.contains("Position: 754000 ms"))
+        XCTAssertTrue(note.contains("\nPosition: 12:34\n"), note)
     }
 
     func testArticleMarginWithoutAuthorOmitsAuthorAndMarksWrittenKind() throws {
@@ -104,7 +104,8 @@ final class MarginNoteFrontmatterTests: XCTestCase {
         XCTAssertNil(frontmatter.source)
     }
 
-    func testBodyBelowTheBlockIsTheBuild29Note() throws {
+    /// Build 29's body plus the clock position and the link back (#171); the writer rewrites unedited notes once.
+    func testBodyBelowTheBlock() throws {
         let item = Item(id: "item-body", title: "Body", mediaType: "text", text: "Source.",
                         externalReference: "https://example.com/body", status: "ready")
         let note = try renderNote(item: item, margin: margin(item: item, kind: nil, mediaTimeMs: nil))
@@ -118,6 +119,7 @@ final class MarginNoteFrontmatterTests: XCTestCase {
         Session: session-item-body
         Margin: margin
         Position: 0%
+        [Open this Margin in Spoken Margins](spokenmargins://margin?session=session-item-body&margin=margin)
 
         ## Listener Margin
 
@@ -132,6 +134,49 @@ final class MarginNoteFrontmatterTests: XCTestCase {
         After.
 
         """)
+    }
+
+    // MARK: - Every spoken Margin, with a way back (#171)
+
+    func testMediaPositionsReadAsAClock() throws {
+        let item = Item(id: "item-long", title: "Long episode", mediaType: "audio", text: nil,
+                        externalReference: "https://example.com/long", status: "ready")
+        XCTAssertTrue(try renderNote(item: item, margin: margin(item: item, kind: nil, mediaTimeMs: 65_400)).contains("\nPosition: 01:05\n"))
+        XCTAssertTrue(try renderNote(item: item, margin: margin(item: item, kind: nil, mediaTimeMs: 3_723_999)).contains("\nPosition: 1:02:03\n"))
+        XCTAssertEqual(MarginDeepLink.clockPosition(ms: 0), "00:00")
+        XCTAssertEqual(MarginDeepLink.clockPosition(ms: -5), "00:00")
+    }
+
+    func testTheNoteLinksBackToItsOwnMargin() throws {
+        let item = Item(id: "item-link", title: "Linked", mediaType: "audio", text: nil,
+                        externalReference: "https://example.com/linked", status: "ready")
+        let note = try renderNote(item: item, margin: margin(item: item, kind: nil, mediaTimeMs: 1_000))
+        let line = try XCTUnwrap(note.components(separatedBy: "\n").first { $0.hasPrefix("[Open this Margin in Spoken Margins](") })
+        let link = try XCTUnwrap(MarginDeepLink(url: try XCTUnwrap(URL(string: String(line.dropFirst("[Open this Margin in Spoken Margins](".count).dropLast())))))
+        XCTAssertEqual(link, MarginDeepLink(sessionId: "session-item-link", marginId: "margin"))
+    }
+
+    func testSpokenMarginWithoutATranscriptStillGetsANoteThatSaysSo() throws {
+        let item = Item(id: "item-untranscribed", title: "Untranscribed", mediaType: "audio", text: nil,
+                        externalReference: "https://example.com/u", status: "ready")
+        var spoken = margin(item: item, kind: .audio, mediaTimeMs: 2_000)
+        spoken.transcript = nil
+        spoken.displayText = nil
+        spoken.transcriptionStatus = "failed"
+        let note = try renderNote(item: item, margin: spoken)
+        XCTAssertTrue(note.contains("## Listener Margin\n\nTranscript not available yet.\n"), note)
+        XCTAssertTrue(SessionExportMarkdownRenderer.writesMarginNote(captureKind: .audio, text: nil))
+        XCTAssertTrue(SessionExportMarkdownRenderer.writesMarginNote(captureKind: nil, text: "  "))
+
+        // When the transcript arrives, the same note id renders the words instead.
+        spoken.transcript = "Arrived later."
+        spoken.transcriptionStatus = "transcribed"
+        XCTAssertTrue(try renderNote(item: item, margin: spoken).contains("## Listener Margin\n\nArrived later.\n"))
+    }
+
+    func testAWrittenMarginWithNoWordsGetsNoNote() {
+        XCTAssertFalse(SessionExportMarkdownRenderer.writesMarginNote(captureKind: .written, text: " \n"))
+        XCTAssertTrue(SessionExportMarkdownRenderer.writesMarginNote(captureKind: .written, text: "Words."))
     }
 
     // MARK: - A paper's citation (#206)
@@ -219,6 +264,21 @@ final class MarginNoteFrontmatterTests: XCTestCase {
             )
         )
         return (item, document)
+    }
+
+    /// #560: a Margin on a Wikipedia article imported before the fix captured link titles in its
+    /// context; the note shows the context as read (the stored anchor isn't touched).
+    func testNoteContextFromAnEarlierWikipediaImportDropsLinkTitles() throws {
+        let stored = LinkTitleSpeechTests.storedBeforeFix
+        let item = Item(id: "item-wiki", title: "Marginalia", mediaType: "text", text: stored + " Next sentence.",
+                        externalReference: "https://en.wikipedia.org/wiki/Marginalia", status: "ready")
+        var onWiki = margin(item: item, kind: .written, mediaTimeMs: nil)
+        onWiki.anchor.anchorBefore = stored
+        onWiki.anchor.anchorAfter = "of a [book]( \"Book\") or other document."
+        let note = try renderNote(item: item, margin: onWiki)
+
+        XCTAssertTrue(note.contains("## Context before\n\n" + LinkTitleSpeechTests.storedAsNowRead + "\n"), note)
+        XCTAssertTrue(note.contains("## Context after\n\nof a book or other document.\n"), note)
     }
 
     private func margin(item: Item, kind: InterjectionCaptureKind?, mediaTimeMs: Int?, startChar: Int = 0) -> Interjection {

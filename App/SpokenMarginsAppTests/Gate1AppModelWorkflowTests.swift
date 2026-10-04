@@ -2816,6 +2816,39 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         )
     }
 
+    /// #142: a spoken recap Margin at the end saves at the end and returns to the finished state.
+    func testSpokenMarginOnAFinishedItemSavesAtTheEndAndStaysFinished() throws {
+        let audio = WorkflowCompletionAudioClient()
+        // A finished speech player reports offset 0, the position #142 saved the Margin at.
+        audio.reportsZeroOffsetAfterCompletion = true
+        let model = Gate1AppModel(audioPlaybackClient: audio, recordingClient: NoopRecordingClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId)
+        audio.completeCurrentTarget()
+        XCTAssertEqual(audio.currentCharOffset(), 0)
+        model.syncPlaybackProgressForLifecycle()
+        XCTAssertEqual(model.snapshot.phase, .finished)
+        let marginIDsBefore = Set(model.selectedItem.interjections.map(\.id))
+        let playsBefore = audio.playCount
+
+        model.beginInterjection()
+        XCTAssertTrue(model.snapshot.isRecording)
+        model.finishInterjection()
+
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertEqual(model.snapshot.phase, .finished)
+        XCTAssertEqual(model.snapshot.sessionId, sessionID)
+        XCTAssertFalse(model.snapshot.status.isPlaybackActive)
+        XCTAssertEqual(audio.playCount, playsBefore, "the source must not restart")
+        XCTAssertNil(model.lastError)
+        let margin = try XCTUnwrap(model.selectedItem.interjections.first { !marginIDsBefore.contains($0.id) })
+        XCTAssertEqual(margin.sessionId, sessionID)
+        XCTAssertEqual(margin.anchor.startChar, model.selectedItem.text.count, "saved at the end, not at the stopped player's 0")
+        XCTAssertEqual(margin.roughPercent, 100)
+        XCTAssertEqual(model.selectedItem.sessions.first { $0.id == sessionID }?.status, "finished")
+    }
+
     func testItemReplayStartsANewSessionAndPreservesTheCompletedSession() throws {
         let audio = WorkflowCompletionAudioClient()
         let model = Gate1AppModel(audioPlaybackClient: audio)
@@ -3583,6 +3616,12 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             inputURL: "https://example.com/download",
             sourceSurface: "share_sheet_pdf",
             startSession: false
+        )))
+        XCTAssertTrue(Gate1AppModel.isRemotePDFHandoff(SourceLinkHandoff(
+            id: "safari-extension",
+            inputURL: "https://arxiv.org/pdf/2609.31218v1",
+            sourceSurface: SourceLinkHandoff.safariExtensionPDFSurface,
+            startSession: true
         )))
         XCTAssertTrue(Gate1AppModel.isRemotePDFHandoff(SourceLinkHandoff(
             id: "extension",
@@ -4413,6 +4452,9 @@ private final class WorkflowCompletionAudioClient: AudioPlaybackClient {
     private var activeTargetId: String?
     private var completedTargetId: String?
     private var currentOffset = 0
+    private(set) var playCount = 0
+    /// Like a real speech player, report offset 0 once the target has finished.
+    var reportsZeroOffsetAfterCompletion = false
 
     func prepareSpeechText(_ text: String) throws -> String {
         let normalized = SpeechTextNormalizer.normalize(text)
@@ -4431,6 +4473,7 @@ private final class WorkflowCompletionAudioClient: AudioPlaybackClient {
         activeTargetId = targetId
         completedTargetId = nil
         currentOffset = charOffset
+        playCount += 1
         lock.unlock()
     }
 
@@ -4459,7 +4502,7 @@ private final class WorkflowCompletionAudioClient: AudioPlaybackClient {
 
     func completeCurrentTarget() {
         lock.lock()
-        currentOffset = preparedText.count
+        currentOffset = reportsZeroOffsetAfterCompletion ? 0 : preparedText.count
         completedTargetId = activeTargetId
         lock.unlock()
     }
