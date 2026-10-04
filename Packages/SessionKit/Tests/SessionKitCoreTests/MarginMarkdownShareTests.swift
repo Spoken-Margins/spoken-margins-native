@@ -30,11 +30,11 @@ final class MarginMarkdownShareTests: XCTestCase {
     func testAnItemsMarginsAreJoinedInSourceOrder() throws {
         let item = item(title: "An essay")
         let margins = [
-            margin("late", item: item, mediaTimeMs: nil, percent: 80),
-            margin("early", item: item, mediaTimeMs: nil, percent: 10),
-            margin("deleted", item: item, mediaTimeMs: nil, percent: 20, status: "deleted"),
-            margin("untranscribed", item: item, mediaTimeMs: nil, percent: 30, transcript: "  \n"),
-            margin("blank", item: item, mediaTimeMs: nil, percent: 40, transcript: "  \n", captureKind: .written),
+            margin("late", item: item, mediaTimeMs: nil, percent: 80, startChar: 8_000),
+            margin("early", item: item, mediaTimeMs: nil, percent: 10, startChar: 1_000),
+            margin("deleted", item: item, mediaTimeMs: nil, percent: 20, status: "deleted", startChar: 2_000),
+            margin("untranscribed", item: item, mediaTimeMs: nil, percent: 30, transcript: "  \n", startChar: 3_000),
+            margin("blank", item: item, mediaTimeMs: nil, percent: 40, transcript: "  \n", captureKind: .written, startChar: 4_000),
         ]
         let file = try XCTUnwrap(try MarginMarkdownShare.file(forItemMargins: margins, engine: engine(item: item, margins: margins)))
 
@@ -91,6 +91,24 @@ final class MarginMarkdownShareTests: XCTestCase {
         XCTAssertEqual(notes.count, 2)
         XCTAssertTrue(notes[0].contains("Thought earlier-in-episode."), notes[0])
         XCTAssertTrue(notes[1].contains("Thought later-in-episode."), notes[1])
+    }
+
+    func testARecordingsMarginsFollowMediaTimeAcrossSessionsWithStalePercents() throws {
+        // An older session didn't know the episode's length and saved 0% at 30 minutes;
+        // a later one saved 20% at 10 minutes.
+        let item = Item(
+            id: "item-1", title: "A long episode", mediaType: "audio", text: nil, externalReference: nil, status: "ready",
+            media: ItemMedia(sourceType: .nativeMediaFile, url: "file:///episode.mp3")
+        )
+        let margins = [
+            margin("thirty-minutes", item: item, mediaTimeMs: 1_800_000, percent: 0, sessionId: "session-old"),
+            margin("ten-minutes", item: item, mediaTimeMs: 600_000, percent: 20, sessionId: "session-new"),
+        ]
+        let notes = try XCTUnwrap(try MarginMarkdownShare.file(forItemMargins: margins, engine: engine(item: item, margins: margins)))
+            .markdown.components(separatedBy: MarginMarkdownShare.separator)
+        XCTAssertEqual(notes.count, 2)
+        XCTAssertTrue(notes[0].contains("Thought ten-minutes."), notes[0])
+        XCTAssertTrue(notes[1].contains("Thought thirty-minutes."), notes[1])
     }
 
     func testAPlaceholderDateIsReadAgainstTheSessionStart() throws {
@@ -196,9 +214,10 @@ final class MarginMarkdownShareTests: XCTestCase {
     }
 
     private func margin(_ id: String, item: Item, mediaTimeMs: Int?, percent: Int, status: String = "active", transcript: String? = nil,
-                        captureKind: InterjectionCaptureKind? = nil, startChar: Int = 0, createdAt: Date? = nil) -> Interjection {
+                        captureKind: InterjectionCaptureKind? = nil, startChar: Int = 0, createdAt: Date? = nil,
+                        sessionId: String = "session-1") -> Interjection {
         Interjection(
-            id: id, itemId: item.id, sessionId: "session-1", targetType: .item, targetId: item.id,
+            id: id, itemId: item.id, sessionId: sessionId, targetType: .item, targetId: item.id,
             createdAt: createdAt ?? self.createdAt, roughPercent: percent,
             anchor: Anchor(anchorType: mediaTimeMs == nil ? .text : .media, startChar: startChar, endChar: startChar + 7,
                            anchorBefore: "Before.", anchorAfter: "After.", mediaTimeMs: mediaTimeMs),
@@ -209,11 +228,13 @@ final class MarginMarkdownShareTests: XCTestCase {
     }
 
     private func engine(item: Item, margins: [Interjection], sessionCreatedAt: Date? = nil) -> SessionEngine {
-        let session = Session(id: "session-1", itemId: item.id, createdAt: sessionCreatedAt, status: "in_progress", phase: .itemPlayback,
-                              currentTargetType: .itemTextTTS, currentTargetId: item.id,
-                              position: Position(), completionPercent: 0, playbackRate: 1)
+        let sessions = Set(["session-1"] + margins.map(\.sessionId)).map {
+            Session(id: $0, itemId: item.id, createdAt: sessionCreatedAt, status: "in_progress", phase: .itemPlayback,
+                    currentTargetType: .itemTextTTS, currentTargetId: item.id,
+                    position: Position(), completionPercent: 0, playbackRate: 1)
+        }
         let repository = InMemorySessionRepository(
-            items: [item.id: item], sessions: [session.id: session],
+            items: [item.id: item], sessions: Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) }),
             interjections: Dictionary(uniqueKeysWithValues: margins.map { ($0.id, $0) })
         )
         return SessionEngine(

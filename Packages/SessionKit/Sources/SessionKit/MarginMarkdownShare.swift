@@ -85,10 +85,14 @@ public enum MarginMarkdownShare {
         AudioSourceType.nativeMediaFile.rawValue, AudioSourceType.browserOwnedMedia.rawValue, AudioSourceType.remoteStream.rawValue,
     ]
 
-    /// The percent is coarse: within one, a recording's Margins follow media time and a text's
-    /// Margins their start character, whether or not narration gave them a media time.
+    /// Where a Margin sits in the item: media time in a recording, start character in a text,
+    /// whether or not narration gave it a media time. A saved percent can be stale (a session
+    /// that didn't know the recording's length saved 0%), so it only orders Margins with
+    /// neither position, after the rest.
     static func sourceOrder(_ margin: Interjection, timed: Bool) -> (Int, Int) {
-        (margin.roughPercent, timed ? margin.anchor.mediaTimeMs ?? 0 : margin.anchor.startChar)
+        guard margin.targetType == .item else { return (1, margin.roughPercent) }
+        guard timed else { return (0, margin.anchor.startChar) }
+        return margin.anchor.mediaTimeMs.map { (0, $0) } ?? (1, margin.roughPercent)
     }
 
     /// Writes the file into a fresh folder under `directory`, so two shares with the same name
