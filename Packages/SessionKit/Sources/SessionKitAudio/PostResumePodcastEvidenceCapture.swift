@@ -68,9 +68,20 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         var appendedFrames: Int64 = 0
         var skippedFrames: Int64 = 0
         var firstMediaTimeMs: Int?
+        /// The start of the last decoded buffer this window saw, to notice playback moving back.
+        var lastBufferStartMs: Int?
 
         init(request: PostResumeAudioSampleRequest) {
             self.request = request
+        }
+
+        /// Starts the window again, capture delay included, as after a seek.
+        func restart() {
+            generator = SHSignatureGenerator()
+            appendedFrames = 0
+            skippedFrames = 0
+            firstMediaTimeMs = nil
+            lastBufferStartMs = nil
         }
     }
 
@@ -177,10 +188,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             pendingStablePostSeekStartMs = nil
             ring.removeAll(keepingCapacity: true)
             for accumulator in accumulators.values {
-                accumulator.generator = SHSignatureGenerator()
-                accumulator.appendedFrames = 0
-                accumulator.skippedFrames = 0
-                accumulator.firstMediaTimeMs = nil
+                accumulator.restart()
             }
         }
     }
@@ -254,6 +262,15 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                 heardFinished = heardRecorder?.append(samples: mono, startMediaTimeMs: mediaTimeMs) ?? []
             }
             for (id, accumulator) in accumulators {
+                // Playback moved back without a noted seek (a later Margin's rejoin step-back, #776): appending
+                // the replayed audio would splice it into this signature under its old start time, so the
+                // window starts again from the rewound audio.
+                if let mediaTimeMs {
+                    if let previous = accumulator.lastBufferStartMs, previous >= mediaTimeMs {
+                        accumulator.restart()
+                    }
+                    accumulator.lastBufferStartMs = mediaTimeMs
+                }
                 do {
                     let delayFrames = Int64(
                         (Double(accumulator.request.captureDelayMs) * format.sampleRate / 1_000).rounded(.up)
