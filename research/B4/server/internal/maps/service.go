@@ -35,6 +35,7 @@ const (
 	Withdrawn                    // the owner took this episode's map down
 	CapReached                   // the month's spending cap is reached
 	Busy                         // too many transcripts waiting
+	SpendFailed                  // the caller's spend failed; nothing queued
 )
 
 // Service accepts transcripts and runs the worker that turns them into maps.
@@ -59,6 +60,10 @@ type Service struct {
 	once   sync.Once
 	wake   chan struct{}
 	halted atomic.Bool
+	// submitMu makes Submit's checks, spend and queueing one step, so two
+	// uploads of one episode can't both pay, or both pass MaxWaiting.
+	// Uploads are already capped at a few at once, so it costs nothing.
+	submitMu sync.Mutex
 }
 
 func (s *Service) init() {
@@ -109,8 +114,20 @@ func quiet(err error) string {
 }
 
 // Submit queues a checked transcript for the worker.
-func (s *Service) Submit(t Transcript) (Outcome, error) {
+func (s *Service) Submit(t Transcript) (Outcome, error) { return s.SubmitSpending(t, nil) }
+
+// SubmitSpending is Submit with a price: spend, when not nil, runs only
+// once the transcript is about to be queued, so an upload that does no work
+// (already mapped, withdrawn, over the cap, busy, or already waiting) costs
+// the uploader nothing. If spend fails, nothing is queued and Submit
+// returns SpendFailed with spend's error.
+//
+// If the spend succeeds and the transcript then can't be written (a disk
+// fault), the spend stands: callers can't take a token back.
+func (s *Service) SubmitSpending(t Transcript, spend func() error) (Outcome, error) {
 	s.init()
+	s.submitMu.Lock()
+	defer s.submitMu.Unlock()
 	switch {
 	case s.Store.Withdrawn(t.EpisodeKey):
 		return Withdrawn, nil
@@ -127,6 +144,11 @@ func (s *Service) Submit(t Transcript) (Outcome, error) {
 		return Busy, err
 	} else if n >= s.MaxWaiting {
 		return Busy, nil
+	}
+	if spend != nil {
+		if err := spend(); err != nil {
+			return SpendFailed, err
+		}
 	}
 	if err := s.Store.PutTranscript(t, s.Now()); err != nil {
 		return Busy, err

@@ -153,7 +153,53 @@ final class EpisodeEndSeekTests: XCTestCase {
         XCTAssertNil(playing.lastFailure)
     }
 
+    // MARK: - Play after a scrub back from the end (#643)
+
+    // The app's Play button replays a finished session from 0:00 in a new session. A scrub back
+    // is where the listener wants to listen next, so it must leave the session unfinished.
+    func testAScrubBackAfterTheEndIsNoLongerFinishedSoPlayResumesThere() throws {
+        for target in [60_000, durationMs - 1_000] {
+            let (engine, audio) = try engineThatPlayedToTheEnd()
+
+            let scrubbed = try engine.seekMedia(toMediaTimeMs: target)
+            XCTAssertEqual(scrubbed.status, .paused, "a seek doesn't start playback")
+            XCTAssertNotEqual(scrubbed.phase, .finished, "Play would replay from 0:00 at \(target)")
+            now += 10
+            XCTAssertNotEqual(try engine.syncPlaybackProgress().phase, .finished)
+
+            _ = try engine.resumePlayback()
+            XCTAssertEqual(audio.mediaPlays.last, target, "Play starts where the listener scrubbed to")
+        }
+    }
+
+    func testAStagedScrubOrSkipBackAfterTheEndIsNoLongerFinished() throws {
+        let (staged, _) = try engineThatPlayedToTheEnd()
+        XCTAssertNotEqual(try staged.stagePausedMediaPosition(toMediaTimeMs: 60_000).phase, .finished)
+
+        let (skipped, _) = try engineThatPlayedToTheEnd()
+        XCTAssertNotEqual(try skipped.skipBack(unit: "time_15s").phase, .finished)
+    }
+
+    func testWithoutAScrubBackAFinishedEpisodeStillOffersReplay() throws {
+        let (engine, _) = try engineThatPlayedToTheEnd()
+        now += 10
+        XCTAssertEqual(try engine.syncPlaybackProgress().phase, .finished)
+        XCTAssertEqual(try engine.seekMedia(toMediaTimeMs: durationMs).phase, .finished, "the end is still the end")
+    }
+
     // MARK: - Fixture
+
+    private func engineThatPlayedToTheEnd() throws -> (SessionEngine, EpisodeAudioClient) {
+        let (engine, audio) = try engine(startingAt: 170_000)
+        audio.startStatus = .confirmed
+        XCTAssertEqual(try engine.syncPlaybackProgress().status, .playing)
+        audio.mediaTimeMs = durationMs
+        audio.ended = true
+        let ended = try engine.syncPlaybackProgress()
+        XCTAssertEqual(ended.status, .paused)
+        XCTAssertEqual(ended.phase, .finished, "playing to the end finishes the session")
+        return (engine, audio)
+    }
 
     private func engineResumingAtTheEnd() throws -> (SessionEngine, EpisodeAudioClient) {
         // The owner's Margin was at 2:58 of 2:58; a start within AVPlayer's end tolerance ends at once.

@@ -63,6 +63,8 @@ Retired on 2026-09-29. A long-lived triage desk re-read a large context on every
 
 The merge-check comment keeps its old first line, **Merge check (triage desk) on `<sha7>`**. The lane runner writes it and `scripts/merge_audit.py` looks for that exact text, so don't reword it.
 
+`scripts/merge_audit.py` labels `merge-audit` on any PR merged into `next` without that comment, unless it was a hand merge that met the hand-merge rule before the merge: the newest lane report on the head (and the newest T3 report, if any) says PASS, and the newest Codex audit naming the head says "No blocking findings" (#742). Its comment says what was missing. The daily routine checks open flags; one the owner merged himself gets the label removed with a comment saying so.
+
 ## Model and effort
 
 - **Default:** Opus 5.5 at high effort for every stream.

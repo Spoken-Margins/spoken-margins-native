@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from typing import Callable
 
 import sm_codex_worker as worker
 
@@ -140,14 +141,27 @@ def dedupe_query(test: str) -> str:
     return 'is:issue is:open "' + re.sub(r'[^A-Za-z0-9_]', '', name) + '"'
 
 
-def find_duplicate(issues: list[dict], tests: list[str]) -> int | None:
+# `gh issue list --json comments` returns at most this many comments per issue.
+LISTED_COMMENTS = 100
+
+
+def find_duplicate(issues: list[dict], tests: list[str],
+                   all_comments: Callable[[int], str] | None = None) -> int | None:
+    """The first open issue naming one of the tests. An issue whose listed comments may be cut
+    short is read in full through all_comments(number) before it is ruled out (#694)."""
+    def names_a_test(text: str) -> bool:
+        return any(re.search(r'(?<!\w)' + re.escape(t.rsplit('/', 1)[-1].removesuffix('()')) + r'(?!\w)', text)
+                   for t in tests)
+
     for issue in issues:
         if issue['number'] == REPORT_ISSUE:
             continue  # the report we just posted names every failure; it is not a bug issue
+        comments = issue.get('comments') or []
         text = '\n'.join([issue.get('title') or '', issue.get('body') or '']
-                         + [c.get('body') or '' for c in issue.get('comments', [])])
-        if any(re.search(r'(?<!\w)' + re.escape(t.rsplit('/', 1)[-1].removesuffix('()')) + r'(?!\w)', text)
-               for t in tests):
+                         + [c.get('body') or '' for c in comments])
+        if names_a_test(text):
+            return issue['number']
+        if all_comments is not None and len(comments) >= LISTED_COMMENTS and names_a_test(all_comments(issue['number'])):
             return issue['number']
     return None
 
@@ -261,6 +275,11 @@ class Ops(worker.Ops):
         raw = answer.read_text() if proc.returncode == 0 and answer.exists() else ''
         return diagnoses(raw, failed)
 
+    def issue_comments(self, number: int) -> str:
+        """Every comment body on an issue, one after another (#694)."""
+        return self.must(['gh', 'api', '--paginate', f'repos/{worker.REPO}/issues/{number}/comments',
+                          '--jq', '.[].body'], cwd=self.repo_root).stdout or ''
+
     def file_failures(self, groups: list[dict], sha: str, report: str, evidence: Path) -> None:
         for i, group in enumerate(groups):
             duplicate = None
@@ -268,7 +287,7 @@ class Ops(worker.Ops):
                 issues = self.gh_json(['issue', 'list', '-R', worker.REPO, '--state', 'open',
                                        '--search', dedupe_query(test), '--limit', '100',
                                        '--json', 'number,title,body,comments'])
-                duplicate = find_duplicate(issues, [test])
+                duplicate = find_duplicate(issues, [test], self.issue_comments)
                 if duplicate is not None:
                     break
             body = issue_text(group, sha, report, evidence)
