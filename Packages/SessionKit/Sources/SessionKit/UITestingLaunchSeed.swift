@@ -18,6 +18,9 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
     /// One podcast episode that is already downloaded: a generated local audio
     /// file, so the script needs no network.
     case offlinePodcast(title: String, durationSeconds: Int)
+    /// The fixture article plus a generated multi-page PDF, imported through the
+    /// app's own Files import so PDF extraction and the reader run (J7).
+    case importedPDF
 
     public static let textItemId = "item-ui-text-regression"
     public static let podcastItemId = "item-ui-podcast"
@@ -41,6 +44,8 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         } else if environment["SPOKEN_MARGINS_UI_TEST_PODCAST"] == "1" {
             let seconds = environment["SPOKEN_MARGINS_UI_TEST_PODCAST_SECONDS"].flatMap(Int.init) ?? 1_500
             self = .offlinePodcast(title: title ?? "UI Test Episode", durationSeconds: min(max(seconds, 10), 3_600))
+        } else if environment["SPOKEN_MARGINS_UI_TEST_PDF"] == "1" {
+            self = .importedPDF
         } else {
             self = .fixture
         }
@@ -49,7 +54,7 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
     /// The single Item this seed adds, when it adds one of its own.
     public var item: Item? {
         switch self {
-        case .none, .keepLibrary, .fixture:
+        case .none, .keepLibrary, .fixture, .importedPDF:
             return nil
         case let .text(title, text, reference):
             return Item(

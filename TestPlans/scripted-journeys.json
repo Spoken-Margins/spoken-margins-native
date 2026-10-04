@@ -13,6 +13,10 @@
     {
       "test": "SpokenMarginsAppUITests/J3RecordAndRejoinJourneyUITests",
       "journey": "J3"
+    },
+    {
+      "test": "SpokenMarginsAppUITests/J7PDFJourneyUITests",
+      "journey": "J7"
     }
   ]
 }

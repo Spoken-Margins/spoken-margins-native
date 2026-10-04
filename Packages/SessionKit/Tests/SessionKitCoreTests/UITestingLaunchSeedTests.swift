@@ -7,6 +7,7 @@ final class UITestingLaunchSeedTests: XCTestCase {
         "SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY": "1",
         "SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT": "Some text.",
         "SPOKEN_MARGINS_UI_TEST_PODCAST": "1",
+        "SPOKEN_MARGINS_UI_TEST_PDF": "1",
         "SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE": "Title",
     ]
 
@@ -88,5 +89,19 @@ final class UITestingLaunchSeedTests: XCTestCase {
         XCTAssertFalse(UITestingLaunchSeed.usesStandInAudioServices(arguments: ["--ui-testing"], environment: [:]))
         XCTAssertTrue(UITestingLaunchSeed.usesStandInAudioServices(arguments: ["--ui-testing"], environment: recording))
         XCTAssertTrue(UITestingLaunchSeed.usesStandInAudioServices(arguments: ["--ui-testing"], environment: podcast))
+    }
+
+    func testThePDFSeedImportsThroughTheAppRatherThanWritingAnItem() {
+        let seed = UITestingLaunchSeed(arguments: ["--ui-testing"], environment: ["SPOKEN_MARGINS_UI_TEST_PDF": "1"])
+        XCTAssertEqual(seed, .importedPDF)
+        XCTAssertNil(seed.item, "The PDF item must come from the real import, not a hand-made Item")
+        XCTAssertNil(seed.podcastDownload(bytesWritten: 1))
+        XCTAssertFalse(seed.seedsGeneratedTimeline, "Fixture timeline turns would interrupt the PDF")
+        XCTAssertEqual(
+            UITestingLaunchSeed(arguments: ["--ui-testing"], environment: [
+                "SPOKEN_MARGINS_UI_TEST_PDF": "1", "SPOKEN_MARGINS_UI_TEST_PODCAST": "1",
+            ]),
+            .offlinePodcast(title: "UI Test Episode", durationSeconds: 1_500)
+        )
     }
 }

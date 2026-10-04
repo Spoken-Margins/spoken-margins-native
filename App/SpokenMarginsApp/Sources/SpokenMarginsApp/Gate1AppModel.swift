@@ -385,7 +385,7 @@ private struct ObsidianImportBatch: Sendable {
     let failures: [String]
 }
 
-private enum SourceFileImportError: LocalizedError {
+enum SourceFileImportError: LocalizedError {
     case pdfHasNoExtractableText
     case pdfImportUnavailable
     case remotePDFInvalidResponse
@@ -1163,7 +1163,7 @@ final class Gate1AppModel: ObservableObject {
         completedOnboardingSteps.contains(step)
     }
 
-    private func markOnboardingSteps(_ steps: Set<OnboardingStep>) {
+    func markOnboardingSteps(_ steps: Set<OnboardingStep>) {
         let updated = completedOnboardingSteps.union(steps)
         guard updated != completedOnboardingSteps else { return }
         completedOnboardingSteps = updated
@@ -1812,6 +1812,7 @@ final class Gate1AppModel: ObservableObject {
             switch UITestingLaunchSeed.current {
             case .none, .keepLibrary: break
             case .fixture: resetAndSeed(); return
+            case .importedPDF: resetAndSeed(); try importObsidianMarkdownFiles(urls: [UITestingLaunchSeedWriter.writePDF()]); return
             case .text, .offlinePodcast:
                 try seedUITesting(store: store, item: UITestingLaunchSeedWriter.write(.current, into: store)); return
             }
@@ -3132,6 +3133,7 @@ final class Gate1AppModel: ObservableObject {
         )
         do {
             let result = try await PublicPodcastLinkResolver().resolveAsync(request)
+            if result.isPDFDocument { return try await importPDFFromLinkField(url) }
             if let article = await readLinkAsArticleOrOfferSafari(url, after: result, startSession: shouldStartSession) {
                 return importBrowserText(article)
             }
@@ -3414,6 +3416,7 @@ final class Gate1AppModel: ObservableObject {
             result = try await PublicPodcastLinkResolver().resolveAsync(request)
         }
         guard result.status == .playable else {
+            if feedEntry == nil, result.isPDFDocument { try await importRemotePDFInBackground(url: url); return nil } // #758
             if feedEntry == nil, let article = try await LinkArticleFallback.article(for: url, after: result, startSession: false, using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }) {
                 try importBrowserTextInBackground(article); return nil
             }
@@ -3498,45 +3501,7 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    private func importRemotePDFInBackground(url: URL) async throws {
-        #if canImport(PDFKit)
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 30
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let pdfHeader = Data("%PDF-".utf8)
-        guard let response = response as? HTTPURLResponse,
-              (200..<300).contains(response.statusCode),
-              data.prefix(1_024).range(of: pdfHeader) != nil else {
-            throw SourceFileImportError.remotePDFInvalidResponse
-        }
-        guard data.count <= 50 * 1_024 * 1_024 else {
-            throw SourceFileImportError.remotePDFTooLarge
-        }
-        let extracted = try await Task.detached(priority: .userInitiated) {
-            try NativePDFDocumentExtractor.extractStructured(from: data)
-        }.value
-        let decodedName = url.deletingPathExtension().lastPathComponent.removingPercentEncoding
-            ?? url.deletingPathExtension().lastPathComponent
-        let fileTitle = decodedName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let handoff = BrowserTextHandoff(
-            captureMode: .markdownFile,
-            source: BrowserTextSource(
-                url: url.absoluteString,
-                title: extracted.title ?? (fileTitle.isEmpty ? "Shared PDF" : fileTitle)
-            ),
-            text: extracted.document.text,
-            contentFormat: .plainText,
-            documentStructure: extracted.documentStructure
-        )
-        try importBrowserTextInBackground(handoff, structuredDocument: extracted.document)
-        diagnostics["lastRemotePDFImport"] = url.absoluteString
-        markOnboardingSteps([.addedOwnSource, .addedFromSafari])
-        #else
-        throw SourceFileImportError.pdfImportUnavailable
-        #endif
-    }
-
-    @discardableResult private func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> String {
+    @discardableResult func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> String {
         let store = try requireStore()
         if engine == nil {
             installEngine(try makeEngine(store: store))
@@ -7847,8 +7812,8 @@ final class Gate1AppModel: ObservableObject {
                             defer { try? FileManager.default.removeItem(at: root) }
                             guard let self else { return }
                             do {
-                                try await self.verifyLocalAudioForImport(item, contents: contents)
-                                try await self.activateImportedLocalAudioMaps(item: item, contents: contents)
+                                try await self.placeOnOwnedAudio(item, contents: contents,
+                                    admission: self.verifyLocalAudioForImport(item, contents: contents))
                                 self.reportSuccess("Restored this listening package. Playback has not started.")
                             } catch { self.reportFailure(error, context: "Restoring listening package failed") }
                         }
@@ -7961,8 +7926,9 @@ final class Gate1AppModel: ObservableObject {
                 }
                 let item = try itemId.map { try store.loadItem(id: $0) }
                 let localItem = item.map(self.localSharedItemIdentity(for:))
+                var localAudioAdmission: LocalAudioPacketAdmission?
                 if let item, item.mediaType == "audiobook" {
-                    try await self.verifyLocalAudioForImport(item, contents: review.contents)
+                    localAudioAdmission = try await self.verifyLocalAudioForImport(item, contents: review.contents)
                 }
                 let itemText = item?.text
                 let disposition: ImportedCommentaryImportDisposition
@@ -8007,8 +7973,8 @@ final class Gate1AppModel: ObservableObject {
                             userInitiated: true
                         )
                     }
-                    if let item, item.mediaType == "audiobook" {
-                        try await self.activateImportedLocalAudioMaps(item: item, contents: review.contents)
+                    if let item, let localAudioAdmission {
+                        try await self.placeOnOwnedAudio(item, contents: review.contents, admission: localAudioAdmission)
                     } else if let localURL = self.podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
                         self.resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
                     }
@@ -8025,23 +7991,21 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func verifyLocalAudioForImport(_ item: Item, contents: VerifiedSpokenMarginsPackage) async throws {
+    private func verifyLocalAudioForImport(_ item: Item, contents: VerifiedSpokenMarginsPackage) async throws -> LocalAudioPacketAdmission {
         guard let url = resolvedOwnedAudiobookURL(for: item) else {
             throw SpokenMarginsPackageArchiveError.invalidManifest("Local source audio is unavailable")
         }
         let actualDigest = try await Task.detached(priority: .utility) {
             try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: url)
         }.value
-        let recipient = localSharedItemIdentity(for: item)
-        guard actualDigest == recipient.exactEditionSHA256,
-              ExactLocalAudioImport.matches(contents.manifest.item, recipient) else {
-            throw SpokenMarginsPackageArchiveError.invalidManifest("The audio bytes do not match this listening package")
-        }
-        for proposal in contents.listeningMapProposals {
-            _ = try ExactLocalAudioImport.projection(
-                proposal: proposal, source: contents.manifest.item, recipient: recipient, itemId: item.id
-            )
-        }
+        return try LocalAudioPacketAdmission.admitted(
+            contents, recipient: localSharedItemIdentity(for: item), itemId: item.id, actualDigest: actualDigest)
+    }
+
+    /// Exact maps project at the sender's times; a podcast packet on the listener's copy is placed like a download.
+    private func placeOnOwnedAudio(_ item: Item, contents: VerifiedSpokenMarginsPackage, admission: LocalAudioPacketAdmission) async throws {
+        if admission == .exactEdition { return try await activateImportedLocalAudioMaps(item: item, contents: contents) }
+        if let url = resolvedOwnedAudiobookURL(for: item) { resolveImportedPodcastCommentary(itemId: item.id, localURL: url) }
     }
 
     private func activateImportedLocalAudioMaps(item: Item, contents: VerifiedSpokenMarginsPackage) async throws {
@@ -8300,14 +8264,12 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["uiTestSharedSourceMiss"] = "forced_once"
             return nil
         }
-        let matches = try store.listItems().filter { item in
-            ImportedItemResolver.canRepresentSameWork(itemIdentity, localSharedItemIdentity(for: item))
-        }
-        return matches.count == 1 ? matches[0].id : nil
+        return SharedPacketItemMatcher.matchingItemId(
+            for: itemIdentity, among: try store.listItems(), ownedAudiobookDigest: localAudiobookDigest(for:))
     }
 
     func localSharedItemIdentity(for item: Item) -> SharedItemIdentity {
-        SharedItemIdentityBuilder.localIdentity(for: item, localAudioDigest: localAudiobookDigest(for: item))
+        SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: localAudiobookDigest(for: item))
     }
 
     private func localAudiobookDigest(for item: Item) -> String? {
@@ -11548,6 +11510,8 @@ final class Gate1AppModel: ObservableObject {
             return "Apple Podcasts did not expose a playable public audio stream for that episode."
         case "audio_enclosure_not_found":
             return "I found the page or feed, but not a playable podcast/audio file."
+        case "pdf_document":
+            return "That link is a PDF document, not a podcast or audio file."
         case "rss_episode_ambiguous":
             return "I found the feed, but could not identify one episode to play."
         case "unsupported_link_type":
@@ -13892,7 +13856,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func sharedItemType(for item: Item) -> SharedItemType {
-        SharedItemIdentityBuilder.itemType(for: item)
+        SharedPacketItemMatcher.itemType(for: item)
     }
 
     private func portableAnchor(
@@ -14719,7 +14683,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Records a successful outcome and presents it only when the result is not
     /// otherwise apparent from the current interface.
-    private func reportConfirmation(_ message: String) {
+    func reportConfirmation(_ message: String) {
         reportSuccess(message)
         presentFeedback(UserFeedbackEvent(kind: .success, message: message))
     }
@@ -15607,25 +15571,20 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["followSourceFailure"] = await coordinator.failureDiagnostic(for: error)
     }
 
-    /// B1 drawer: follows a catalog feed (always a public https feed) in one tap. Throws so the
-    /// drawer can show the failure on the row.
-    /// Returns the followed source's id, which the drawer keeps: the feed can settle on another URL.
-    func followCatalogFeed(_ feedURL: String) async throws -> String {
+    /// B1 drawer and OPML import (#463): follows a public https feed link. Throws so the caller
+    /// can show the failure on the row. Returns the followed source's id, which the drawer keeps:
+    /// the feed can settle on another URL. An import refreshes once at the end, not per feed.
+    func followCatalogFeed(_ feedURL: String, refreshAfter: Bool = true) async throws -> String {
         let store = try requireStore()
         let coordinator = followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
         followedSourceCoordinator = coordinator
-        guard let candidate = try await coordinator.discover(urlString: feedURL).first else {
-            throw FollowedSourceError.noFeedCandidates
-        }
-        let sourceId: String
-        if let existing = try store.loadFeedSubscriptions().first(where: { $0.source.id == candidate.source.id }) {
-            sourceId = existing.source.id
-        } else {
-            sourceId = try await coordinator.follow(candidate: candidate).source.id
-        }
-        await refreshFollowedSources(force: false)
+        let sourceId = try await coordinator.followFeed(urlString: feedURL).source.id
+        if refreshAfter { await refreshFollowedSources(force: false) }
         return sourceId
     }
+
+    /// Read from the store: `feedSubscriptions` lags a follow until its refresh lands (#463).
+    func storedFeedSubscriptions() -> [FeedSubscription] { (try? store?.loadFeedSubscriptions()) ?? feedSubscriptions }
 
     func followSourceCandidate(_ candidate: SourceCandidateEvidence) {
         Task { [weak self] in
@@ -15981,11 +15940,10 @@ final class Gate1AppModel: ObservableObject {
                 }
                 let entry = await self.followedSourceCoordinator?.publisherAudioEntry(for: entry) ?? entry
                 let imported: Bool
-                // A post with the publisher's own audio imports as an article (#545).
-                if subscription.source.kind == .podcastFeed, !entry.hasPublisherAudio {
-                    let importURL = try await self.followedSourceCoordinator?.playableAudioURL(for: entry)
-                        ?? entry.audioURL
-                        ?? entry.canonicalURL
+                // Posts with the publisher's own audio (#545) and text-only posts (#641) import as articles.
+                let route = try await self.followedSourceCoordinator?.importRoute(for: entry, subscriptionKind: subscription.source.kind)
+                    ?? FollowedEntryImportRoute.route(for: entry, subscriptionKind: subscription.source.kind, audio: .stored(in: entry))
+                if case .episode(let importURL) = route {
                     let importedItemId = try await self.importSourceLinkInBackground(SourceLinkHandoff(
                         id: "quick-add-\(entry.id)",
                         inputURL: importURL,

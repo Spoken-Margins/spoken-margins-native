@@ -3,6 +3,7 @@ import Foundation
 import SessionKit
 import SessionKitAudio
 import SessionKitPersistence
+import UIKit
 
 extension UITestingLaunchSeed {
     /// This process's seed. `.none` unless the app was launched with `--ui-testing`.
@@ -77,5 +78,34 @@ enum UITestingLaunchSeedWriter {
         }
         let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         return Int64(size)
+    }
+
+    /// A four-page text PDF with the page furniture J7 checks is not read: a
+    /// running header, a "Downloaded on" stamp and page numbers on every page.
+    static func writePDF() throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appending(path: "J7 Walking Notes.pdf")
+        let body = UIFont.systemFont(ofSize: 10)
+        let small = UIFont.systemFont(ofSize: 9)
+        let paragraphs = [
+            "The first walk began at the river, where the path bends under the old willows and the water runs slow and brown.",
+            "By the second mile the light had changed, and the hedges on either side held small birds that called and went quiet.",
+            "At the top of the hill the town spread out below, roofs and chimneys, and a bell somewhere marking the hour.",
+            "The way home followed the railway cutting, past allotments where someone was burning leaves in a small blue fire.",
+        ]
+        try UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792)).writePDF(to: url) { context in
+            for (page, paragraph) in paragraphs.enumerated() {
+                context.beginPage()
+                ("Quiet Walks Review · Volume 3" as NSString).draw(at: CGPoint(x: 40, y: 24), withAttributes: [.font: small])
+                if page == 0 {
+                    ("Walking Notes" as NSString).draw(at: CGPoint(x: 40, y: 70), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 24)])
+                }
+                // Long pages keep one sentence under 1.5% of the text, so a percent check can be tight.
+                let text = Array(repeating: paragraph, count: 18).joined(separator: " ")
+                (text as NSString).draw(in: CGRect(x: 40, y: 120, width: 532, height: 560), withAttributes: [.font: body])
+                ("Downloaded on 25 September 2026" as NSString).draw(at: CGPoint(x: 40, y: 760), withAttributes: [.font: small])
+                ("\(page + 1)" as NSString).draw(at: CGPoint(x: 560, y: 760), withAttributes: [.font: small])
+            }
+        }
+        return url
     }
 }
