@@ -28,7 +28,7 @@ public struct MarginMomentAnchor: Sendable, Equatable {
 ///
 /// This is the whole state machine. The app supplies progress ticks and plays the voices.
 public struct MarginMomentSequence: Sendable, Equatable {
-    public static let defaultLeadInMs = 30_000
+    public static let defaultLeadInMs = ListeningMoment.rule(for: .playThisMoment).leadInMs
     /// Progress ticks arrive every 0.5 s, so even 3× playback advances well under this. A bigger forward move
     /// is a seek or skip, and skipping over a Margin shouldn't play it.
     public static let maxTickAdvanceMs = 4_000
@@ -56,7 +56,12 @@ public struct MarginMomentSequence: Sendable, Equatable {
     ) {
         self.itemId = itemId
         self.target = target
-        let start = max(0, target.mediaTimeMs - max(0, leadInMs))
+        let start = ListeningMoment(
+            use: .playThisMoment,
+            margin: ListeningMoment.Margin(id: target.marginId, position: target.mediaTimeMs),
+            source: .media(),
+            leadInMs: leadInMs
+        ).sourceStartPosition
         startMediaTimeMs = start
         let others = otherMargins.filter { $0.marginId != target.marginId && $0.mediaTimeMs >= start }
         unplayed = ([target] + others).sorted { lhs, rhs in

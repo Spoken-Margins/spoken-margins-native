@@ -62,6 +62,16 @@ final class EpisodeGUIDSharingTests: XCTestCase {
         XCTAssertTrue(ImportedItemResolver.canRepresentSameWork(sender, recipient), "5% apart is different ad fill")
     }
 
+    func testPacketMatcherUsesTheCurrentLocalIdentityBuilder() {
+        let sender = SharedItemIdentityBuilder.exportIdentity(
+            for: episode(audioURL: senderLink, guid: "show-episode-0001", durationMs: 3_600_000),
+            draftEditionDigests: [nil])
+        let recipient = episode(audioURL: recipientLink, guid: "show-episode-0001", durationMs: 3_780_000)
+        XCTAssertEqual(SharedPacketItemMatcher.localIdentity(for: recipient, ownedAudiobookDigest: nil),
+                       SharedItemIdentityBuilder.localIdentity(for: recipient))
+        XCTAssertEqual(SharedPacketItemMatcher.matchingItemId(for: sender, among: [recipient]), recipient.id)
+    }
+
     func testTheSameGUIDOnATrailerDoesNotMatchTheFullEpisode() {
         let sender = SharedItemIdentityBuilder.exportIdentity(
             for: episode(audioURL: senderLink, guid: "show-episode-0001", durationMs: 3_600_000), draftEditionDigests: [nil])
