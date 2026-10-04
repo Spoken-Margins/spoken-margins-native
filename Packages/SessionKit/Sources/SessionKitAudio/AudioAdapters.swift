@@ -3210,6 +3210,9 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
     private var recordingStartedAt: Date?
     /// After an interruption stops a recording, its end still decides whether the source resumes.
     private var awaitsInterruptionEnd = false
+    /// Headphone outputs in use when the interruption began. A suspended app may miss the route
+    /// change during a call, so the end checks they are still there.
+    private var headphonesWhenInterrupted: Set<String> = []
 
     public init(
         baseDirectory: URL? = nil,
@@ -3422,6 +3425,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
                 // While waiting for an end that may never come, a new interruption is reported
                 // too, so the app drops the stale resume.
                 guard self.recordingStartedAt != nil || self.awaitsInterruptionEnd else { return }
+                if !self.awaitsInterruptionEnd { self.headphonesWhenInterrupted = Self.headphoneOutputs() }
                 self.awaitsInterruptionEnd = true
                 self.onInterruption?(.interruptionBegan, self.recordedSeconds)
             case .ended:
@@ -3430,7 +3434,12 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
                 let wasAwaiting = self.awaitsInterruptionEnd
                 self.awaitsInterruptionEnd = false
                 if self.recordingStartedAt == nil { self.removeAudioSessionObservers() }
-                if wasAwaiting { self.onInterruption?(.interruptionEnded(shouldResume: shouldResume), self.recordedSeconds) }
+                guard wasAwaiting else { return }
+                if !self.headphonesWhenInterrupted.isSubset(of: Self.headphoneOutputs()) {
+                    self.onInterruption?(.routeLost, self.recordedSeconds)
+                }
+                self.headphonesWhenInterrupted = []
+                self.onInterruption?(.interruptionEnded(shouldResume: shouldResume), self.recordedSeconds)
             @unknown default:
                 break
             }
@@ -3448,6 +3457,14 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         })
         #endif
     }
+
+    #if canImport(AVFoundation) && os(iOS)
+    /// By name: AirPods change port (and UID) between music and a call's two-way profile.
+    private static func headphoneOutputs() -> Set<String> {
+        let headphoneTypes: Set<AVAudioSession.Port> = [.headphones, .bluetoothA2DP, .bluetoothLE, .bluetoothHFP, .usbAudio]
+        return Set(AVAudioSession.sharedInstance().currentRoute.outputs.filter { headphoneTypes.contains($0.portType) }.map(\.portName))
+    }
+    #endif
 
     private func removeAudioSessionObservers() {
         for observer in audioSessionObservers {
