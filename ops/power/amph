@@ -23,6 +23,14 @@ on run argv
 		return "started: " & mins & " min"
 	end if
 
+	if cmd is "hold" then
+		-- A fixed-length hold for leaving the Mac alone: lid closed is fine, the display sleeps,
+		-- and it doesn't depend on agents or builds staying busy.
+		set mins to requireDuration(params)
+		startSession(mins, false, true)
+		return "holding: " & mins & " min, lid closed OK, ends " & (((current date) + mins * 60) as text)
+	end if
+
 	if cmd is "ensure" then
 		set mins to requireMinutes(params, "ensure")
 		if mins < 1 then error "ensure needs at least 1 minute" number 2
@@ -153,6 +161,31 @@ on requireMinutes(params, cmdName)
 	return mins
 end requireMinutes
 
+-- "41h", "90m" or "1h30m" to minutes.
+on requireDuration(params)
+	set bad to "hold needs a length like 41h, 90m or 1h30m"
+	if (count of params) is 0 then error bad number 2
+	set total to 0
+	set digits to ""
+	repeat with ch in (characters of (item 1 of params))
+		set ch to ch as text
+		if ch is in {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"} then
+			set digits to digits & ch
+		else if (ch is "h" or ch is "m") and digits is not "" then
+			if ch is "h" then
+				set total to total + (digits as integer) * 60
+			else
+				set total to total + (digits as integer)
+			end if
+			set digits to ""
+		else
+			error bad number 2
+		end if
+	end repeat
+	if digits is not "" or total < 1 then error bad number 2
+	return total
+end requireDuration
+
 on requireChoice(params, cmdName, choices)
 	if (count of params) is 0 or (item 1 of params) is not in choices then
 		set AppleScript's text item delimiters to "|"
@@ -167,6 +200,8 @@ on usage()
 	return "amph: control Amphetamine from the command line.
 
   amph status                     JSON: active, remaining_seconds, kind, lid_awake, ...
+  amph hold <41h|90m|1h30m>       stay awake exactly that long, lid closed OK, busy or
+                                  not (replaces any session)
   amph ensure <min> [--lid] [--screen-on]
                                   keep awake at least ~<min> more minutes; never shortens
                                   or replaces another session (use this from agents)

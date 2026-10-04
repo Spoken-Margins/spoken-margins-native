@@ -33,6 +33,16 @@ Change these in Amphetamine's Settings:
 3. **Leave Triggers off.** The job does their work, and Triggers can't see agent activity.
 4. **End a "while Claude is running" session** if one is going. The Claude app is always open, so it holds the Mac awake until the battery hits 10%. The job is the narrower version of the same idea.
 
+## Leaving the Mac for a fixed time
+
+When you know the Mac will be on power with a network for a while, and want to close the lid and walk away, hold it for that long:
+
+```zsh
+~/Documents/GitHub/spoken-margins-native/ops/power/amph hold 41h
+```
+
+It stays awake for exactly that long, lid closed included, whether or not agents are busy, so a crash or an agent stopping to wait doesn't let it sleep. The display sleeps. It replaces whatever session was running, and the job leaves it alone. `amph status` shows the seconds left; `amph stop` ends it early. On battery, Amphetamine still ends it at 10%. Lane runners keep working with the lid closed only once the lane power guard counts Amphetamine (#787).
+
 ## Using `amph`
 
 ```zsh
@@ -46,6 +56,7 @@ ops/power/amph ensure 90 --lid
 | Command | What it does |
 |---|---|
 | `amph status` | JSON: `active`, `remaining_seconds`, `kind` (`none`, `timed`, `until_stopped`, `trigger`, `app_or_time`), `lid_awake`, `display_sleep_allowed`, `triggers_enabled`. |
+| `amph hold <41h\|90m\|1h30m>` | Stays awake exactly that long, lid closed included, busy or not. Replaces any session. Cole's command for walking away. |
 | `amph ensure <min> [--lid] [--screen-on]` | Keeps the Mac awake for about `<min>` more minutes. Never shortens or replaces another session. This is the one agents use, for example before a long build. |
 | `amph start <min> [--lid] [--screen-on]` | Replaces whatever session is running with a new one. `0` means until stopped. |
 | `amph stop` | Ends the current session. Cole's call, not an agent's: it ends other people's holds too. |
