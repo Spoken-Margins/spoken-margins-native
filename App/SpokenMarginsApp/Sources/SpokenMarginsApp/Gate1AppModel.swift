@@ -6159,28 +6159,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func podcastCacheLimitChanged() {
-        guard let limit = PodcastCacheLimitGB(rawValue: podcastCacheLimitGB) else {
-            podcastCacheLimitGB = PodcastCacheLimitGB.defaultValue.rawValue
-            return
-        }
-        UserDefaults.standard.set(limit.rawValue, forKey: "podcastCacheLimitGB")
-        podcastDownloadCoordinator?.setCacheLimit(limit)
-        diagnostics["podcastCacheLimitGB"] = "\(limit.rawValue)"
-        reportSuccess("Podcast cache limit set to \(limit.rawValue) GB.")
-    }
-
-    func renderedSpeechCacheLimitChanged() {
-        guard Self.supportedRenderedSpeechCacheLimitsMB.contains(renderedSpeechCacheLimitMB) else {
-            renderedSpeechCacheLimitMB = 256
-            return
-        }
-        UserDefaults.standard.set(renderedSpeechCacheLimitMB, forKey: "renderedSpeechCacheLimitMB")
-        renderedSpeechDiskCache?.setLimitBytes(renderedSpeechCacheLimitMB * 1024 * 1024)
-        diagnostics["renderedSpeechCacheLimitMB"] = "\(renderedSpeechCacheLimitMB)"
-        reportSuccess("Rendered speech cache limit set to \(renderedSpeechCacheLimitMB) MB.")
-    }
-
     func stopStalledPodcastStart(itemID: String) {
         guard snapshot.itemId == itemID, snapshot.status == .starting,
               selectedPodcastDownloadState != nil else { return }
@@ -6216,11 +6194,6 @@ final class Gate1AppModel: ObservableObject {
         } else {
             reportWarning("The download could not start yet. Check the connection and try again.")
         }
-    }
-
-    func clearPodcastDownloads() {
-        podcastDownloadCoordinator?.clearDownloads()
-        reportConfirmation("Cleared downloaded podcast audio. Remote sources remain available.")
     }
 
     private func skipUnitForCurrentTarget() -> String {
