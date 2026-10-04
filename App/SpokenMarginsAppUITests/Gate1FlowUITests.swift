@@ -288,6 +288,13 @@ final class Gate1FlowUITests: XCTestCase {
         let listen = app.buttons["item.start.button"]
         XCTAssertTrue(listen.waitForExistence(timeout: 4))
         XCTAssertTrue(listen.isHittable, "Start or Continue Listening should be available before scrolling.")
+        // #149: pinned in the lower third, within thumb reach, and still there after scrolling.
+        XCTAssertGreaterThan(listen.frame.midY, app.windows.firstMatch.frame.height * 2 / 3)
+        captureScreen(named: "item-listen-pinned-top")
+        app.scrollViews.firstMatch.swipeUp()
+        XCTAssertTrue(listen.isHittable, "The listening button should stay pinned while the page scrolls.")
+        XCTAssertGreaterThan(listen.frame.midY, app.windows.firstMatch.frame.height * 2 / 3)
+        captureScreen(named: "item-listen-pinned-scrolled")
         XCTAssertLessThanOrEqual(app.buttons.matching(identifier: "item.generateMap.button").count, 1)
         XCTAssertEqual(app.buttons.matching(identifier: "chapters.generateMap.button").count, 0)
     }

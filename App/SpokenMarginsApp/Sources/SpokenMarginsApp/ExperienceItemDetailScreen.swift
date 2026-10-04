@@ -15,7 +15,7 @@ struct ExperienceItemDetailScreen: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 22) {
                     hero
-                    primaryActions
+                    secondaryActions
                     downloadRecovery
                     ItemLastFailureCard(itemId: model.selectedItem.id)
                     if !sharingCoordinator.importedLayers.isEmpty {
@@ -35,6 +35,15 @@ struct ExperienceItemDetailScreen: View {
                 .padding(.vertical, 22)
                 .frame(maxWidth: 900)
                 .frame(maxWidth: .infinity)
+            }
+            // The main listening button stays pinned at the bottom, within thumb reach, above the mini player (#149).
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(alignment: .leading, spacing: 8) { primaryPlaybackAction }
+                    .padding(.horizontal, horizontalSizeClass == .regular ? 30 : 18)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: 900)
+                    .frame(maxWidth: .infinity)
+                    .background(AppColors.bone)
             }
             .background(AppColors.bone)
             .accessibilityIdentifier("item.screen")
@@ -128,14 +137,12 @@ struct ExperienceItemDetailScreen: View {
             : model.selectedItem.chapters.count
     }
 
-    private var primaryActions: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            primaryPlaybackAction
-            if model.selectedItemPreferredContinuationSession != nil || !itemMargins.isEmpty {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) { secondaryActionButtons }
-                    VStack(alignment: .leading, spacing: 8) { secondaryActionButtons }
-                }
+    @ViewBuilder
+    private var secondaryActions: some View {
+        if model.selectedItemPreferredContinuationSession != nil || !itemMargins.isEmpty {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { secondaryActionButtons }
+                VStack(alignment: .leading, spacing: 8) { secondaryActionButtons }
             }
         }
     }
