@@ -344,6 +344,7 @@ struct ExperienceItemDetailScreen: View {
                         }
                     }
                 }
+                ReadwiseItemLink(sync: model.readwiseHighlightSync, itemId: model.selectedItem.id)
             }
         }
     }
@@ -610,4 +611,19 @@ private struct ExperienceListeningMapSection: View, Equatable {
         }
     }
 
+}
+
+/// "Open in Readwise" once this item's Margins have been sent there (#623).
+private struct ReadwiseItemLink: View {
+    @ObservedObject var sync: ReadwiseHighlightSync
+    let itemId: String
+
+    var body: some View {
+        if let url = sync.links[itemId] {
+            Link(destination: url) {
+                Label("Open in Readwise", systemImage: "arrow.up.right.square")
+            }
+            .accessibilityIdentifier("item.readwise.link")
+        }
+    }
 }

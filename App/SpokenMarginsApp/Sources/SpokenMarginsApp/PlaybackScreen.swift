@@ -79,8 +79,6 @@ struct PlaybackScreen: View {
                                     openTimeline()
                                 }
                             }
-                            SourceFollowSuggestionCard(appearance: .playback)
-                            ManualSourceFollowButton(appearance: .playback)
                         }
                         .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
                         .padding(.vertical, 18)
