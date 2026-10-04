@@ -118,9 +118,9 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
         XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 5), "Margin did not open")
         let play = app.buttons["marginDetail.playRecording.button"]
         XCTAssertTrue(play.waitForExistence(timeout: 5), "The Margin has no recording to play")
-        XCTAssertTrue(play.isEnabled, "The Margin's recording cannot be played")
         play.tap()
         waitUntil("The Margin never started playing") { play.label == "Stop playing" }
+        assertNoAudioProblemShown()
         // An unplayable file resets the button at once, so require it to keep playing first.
         let stopsEarly = XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in play.label != "Stop playing" }, object: nil
@@ -129,10 +129,14 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter().wait(for: [stopsEarly], timeout: 5), .completed,
                        "The Margin stopped before its 10 s recording could finish")
         waitUntil("The Margin never played to the end", timeout: 25) { play.label == "Play Margin" }
+        assertNoAudioProblemShown()
+    }
+
+    private func assertNoAudioProblemShown() {
         let banner = element("app.feedback.banner")
-        if banner.exists {
-            XCTAssertFalse(banner.label.localizedCaseInsensitiveContains("unavailable"),
-                           "Margin playback reported: \(banner.label)")
+        guard banner.exists else { return }
+        for problem in ["unavailable", "couldn't be played", "could not be played"] {
+            XCTAssertFalse(banner.label.localizedCaseInsensitiveContains(problem), "Margin playback reported: \(banner.label)")
         }
     }
 
