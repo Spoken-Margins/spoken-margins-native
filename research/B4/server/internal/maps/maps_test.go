@@ -3,11 +3,14 @@ package maps
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -433,5 +436,60 @@ func TestWaitingKeysOldestFirst(t *testing.T) {
 	got, err := store.WaitingKeys()
 	if err != nil || strings.Join(got, ",") != strings.Join(keys, ",") {
 		t.Fatalf("WaitingKeys = %v, %v", got, err)
+	}
+}
+
+// A spend runs only when the transcript is about to be queued, and a failed
+// spend queues nothing (#743).
+func TestSubmitSpendingChargesOnlyQueuedWork(t *testing.T) {
+	svc, _, _ := newService(t, newFakeAPI(t, goodAnswer), 10)
+	spent := 0
+	spend := func() error { spent++; return nil }
+
+	if out, err := svc.SubmitSpending(testTranscript(), func() error { return errors.New("token spent") }); out != SpendFailed || err == nil {
+		t.Fatalf("failed spend: got %v %v, want SpendFailed", out, err)
+	}
+	if n, _ := svc.Store.CountTranscripts(); n != 0 {
+		t.Fatalf("%d transcripts queued after a failed spend", n)
+	}
+	if out, err := svc.SubmitSpending(testTranscript(), spend); out != Accepted || err != nil || spent != 1 {
+		t.Fatalf("first upload: %v %v, %d spends", out, err, spent)
+	}
+	if out, _ := svc.SubmitSpending(testTranscript(), spend); out != Accepted || spent != 1 {
+		t.Fatalf("already waiting: %v, %d spends, want no new spend", out, spent)
+	}
+}
+
+// Uploads of one episode racing with different tokens pay once between
+// them, and racing uploads can't overfill the queue.
+func TestSubmitSpendingRacesPayOnce(t *testing.T) {
+	svc, _, _ := newService(t, newFakeAPI(t, goodAnswer), 10)
+	var spends atomic.Int32
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			svc.SubmitSpending(testTranscript(), func() error { spends.Add(1); return nil })
+		}()
+	}
+	wg.Wait()
+	if n := spends.Load(); n != 1 {
+		t.Fatalf("%d spends for one queued transcript, want 1", n)
+	}
+
+	svc.MaxWaiting = 3
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			tr := testTranscript()
+			tr.EpisodeKey = fmt.Sprintf("%064x", i+1)
+			svc.SubmitSpending(tr, func() error { return nil })
+		}(i)
+	}
+	wg.Wait()
+	if n, _ := svc.Store.CountTranscripts(); n != 3 {
+		t.Fatalf("%d transcripts waiting, want MaxWaiting 3", n)
 	}
 }

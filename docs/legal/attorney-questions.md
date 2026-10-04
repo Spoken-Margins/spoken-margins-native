@@ -16,7 +16,9 @@ Read with [privacy-policy-draft.md](privacy-policy-draft.md) and [terms-draft.md
 5. **Whose address goes in the public directory?** The Copyright Office generally requires a street address for the service provider (a P.O. box only with its approval), while the agent's own address may be a P.O. box, so a registered-agent service or the LLC's address may be the only way to keep my home address out of a public listing (same FAQ).
 6. **Does a server that holds a shared packet for 30 days qualify for the § 512(c) safe harbor?** The server stores what a listener chose to upload, shows its Margin text on a public page, and deletes it after 30 days or on a takedown (#486); I want to know it counts as storage "at the direction of a user".
 7. **What repeat-infringer policy is reasonable with no accounts?** § 512(i) requires one, but the app has no sign-in; the only handle the server has is a random per-install key that a reinstall replaces (`research/B4/DESIGN.md` §2 on `ws/b4-bridge`).
-8. **Is showing a Margin's text, the source title and the show name on the link page a copyright risk?** A Margin can quote the source it's anchored to; no source audio or source text beyond what the listener typed or said is served (#486).
+8. **Our public share page shows a short excerpt of the podcast or article next to the listener's comment. What limits should we keep?** At most 500 characters before and after each Margin (`BoundedAnchorContext.maximumCharactersPerSide`, `Packages/SessionKit/Sources/SessionKit/InterjectionCleanup.swift:20`), shown with the title, the show and a link to the source; never the source's audio (#486, Cole's decision on #14, 2026-09-30).
+
+8a. **Phones upload transcripts of public podcast episodes they made on the device. Our server sends each one to an AI service to make a listening map (scene titles and short summaries), deletes the transcript within 24 hours, and shares only the map. Anything to watch?** Transcripts are never shared (#551, #552; deletion in `research/B4/server/internal/maps/store.go:13-16`); Cole would also like to know whether sharing full transcripts would ever be allowed.
 
 ## 3. Other liability for hosted content
 
@@ -26,7 +28,7 @@ Read with [privacy-policy-draft.md](privacy-policy-draft.md) and [terms-draft.md
 ## 4. Terms and consent
 
 11. **Can new sharing terms be accepted at the first share, rather than by everyone at once?** Bumping the Terms version (`SpokenMarginsTerms.currentVersion`, `App/SpokenMarginsApp/Sources/SpokenMarginsApp/SpokenMarginsTerms.swift:4`) makes every listener accept again before the on-device voice works (`docs/legal/spoken-margins-terms.md`), so a separate sharing agreement shown at first share would disturb fewer people.
-12. **Is the tap-to-accept flow enforceable for the voice model's use restrictions?** The Open RAIL-M licence requires its restrictions to appear in an enforceable agreement, and the app records only a version and date on the device.
+12. **Is the tap-to-accept flow enforceable for the voice model's use restrictions?** The Open RAIL-M licence requires its restrictions to appear in an enforceable agreement, and the app records only a version and date on the device. Only listeners who pick the James or Lily voice accept those Terms; everyone else downloads under Apple's Standard EULA. Should App Store Connect use a custom EULA (Apple's terms plus ours) so every download agrees to the restrictions (`docs/launch/app-store-submission.md` §6, Q3; #449)?
 13. **Do shared packets need a "machine-generated" disclosure?** The Open RAIL-M licence asks for one when distributing machine-generated content, and a packet can carry a cleaned or synthesized voice as well as the listener's own recording.
 
 ## 5. Privacy
@@ -36,3 +38,7 @@ Read with [privacy-policy-draft.md](privacy-policy-draft.md) and [terms-draft.md
 16. **Is a user-supplied OpenAI key enough to keep me out of the data path?** When enabled, the app sends source text and Margin transcripts to OpenAI with the listener's own key, and none of it touches my server (`App/SpokenMarginsApp/Sources/SpokenMarginsApp/OpenAIResponsesClient.swift`).
 17. **What age rating and children's-privacy position should I take?** The app has no age gate, and share links are public pages anyone can open.
 18. **If an attack forces me to put a protection service such as Cloudflare in front of the server, what must change first?** Today the server keeps no visitor logs, and its rate limiter holds only scrambled IP addresses in memory for an hour (`research/B4/DESIGN.md` §5). Such a service would see every visitor's IP address. Can I turn it on during an attack and update the policy and App Store label afterwards, or must the policy name it in advance?
+
+## 6. Data bundled in the app
+
+19. **May the app ship a starter list of podcasts built from Apple's Top Charts, with Apple-hosted artwork? If not, is a hand-picked list rebuilt from each show's own feed safe?** 192 of the 200 starter shows come from Apple's Top Charts feeds, and their artwork loads from Apple's image server. Apple's site terms forbid copying or distributing its content "for publication or distribution or for any commercial enterprise" without written consent, and its artwork terms require a link to Apple's store, which the app doesn't show. The options are keep it, serve it only from my server, or rebuild it from the publishers' own feeds; my pick is the rebuild (`docs/launch/app-store-submission.md` §6, "The starter podcast catalog"; #632).

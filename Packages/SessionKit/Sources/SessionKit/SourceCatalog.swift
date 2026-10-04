@@ -351,6 +351,33 @@ public enum CatalogDrawerFollowState: Equatable, Sendable {
     }
 }
 
+/// #661: the drawer footer's count of what it followed, in words that fit each kind. The Writers
+/// row follows newsletters, which aren't shows: "Following 2 shows and 1 newsletter".
+public enum CatalogFollowedSummary {
+    public static func text(followedKinds: [SourceContentKind]) -> String? {
+        var shows = 0, newsletters = 0, others = 0
+        for kind in followedKinds {
+            switch kind {
+            case .podcast: shows += 1
+            case .newsletter: newsletters += 1
+            default: others += 1
+            }
+        }
+        let parts = [
+            phrase(shows, "show", "shows"),
+            phrase(newsletters, "newsletter", "newsletters"),
+            phrase(others, "feed", "feeds"),
+        ].compactMap { $0 }
+        guard let last = parts.last else { return nil }
+        let joined = parts.count == 1 ? last : parts.dropLast().joined(separator: ", ") + " and " + last
+        return "Following \(joined)"
+    }
+
+    private static func phrase(_ count: Int, _ one: String, _ many: String) -> String? {
+        count == 0 ? nil : "\(count) \(count == 1 ? one : many)"
+    }
+}
+
 /// B1 M1: when the first-run podcast drawer opens by itself. Only a fresh install sees it
 /// unasked (the Library was empty before the welcome sample was added); upgraded Libraries
 /// reach it from Following. It opens by itself once.

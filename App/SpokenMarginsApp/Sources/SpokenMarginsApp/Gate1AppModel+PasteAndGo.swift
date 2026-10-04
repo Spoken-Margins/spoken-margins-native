@@ -68,6 +68,8 @@ extension Gate1AppModel {
             return "the page is larger than the 1 MB the app reads itself."
         case ReadablePageExtractionError.tooManyRedirects:
             return "the page redirected too many times."
+        case ReadablePageExtractionError.pageLeftHTTPS:
+            return "the page moved to an address that isn't secure."
         case ReadablePageExtractionError.invalidResult:
             return "no article text was found. It may need JavaScript or a sign-in."
         case ReadablePageExtractionError.invalidURL, ReadablePageExtractionError.missingExtractor:

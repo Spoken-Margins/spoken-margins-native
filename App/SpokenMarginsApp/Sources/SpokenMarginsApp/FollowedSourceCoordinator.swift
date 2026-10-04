@@ -67,6 +67,16 @@ actor FollowedSourceCoordinator {
         return try await follow(candidate: candidate)
     }
 
+    /// Follows a feed link once. A feed that is already followed keeps its subscription exactly
+    /// as it is (mute state and inbox entries), so the drawer and OPML import can't duplicate it.
+    func followFeed(urlString: String) async throws -> FeedSubscription {
+        guard let candidate = try await discover(urlString: urlString).first else { throw FollowedSourceError.noFeedCandidates }
+        if let existing = try repository.loadFeedSubscriptions().first(where: { $0.source.id == candidate.source.id }) {
+            return existing
+        }
+        return try await follow(candidate: candidate)
+    }
+
     func discover(urlString: String, requiringItemMembership: Bool = false) async throws -> [SourceCandidateEvidence] {
         let link = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         lastDiscoveryTrace = []
@@ -239,26 +249,45 @@ actor FollowedSourceCoordinator {
         return confirmed
     }
 
+    /// How Following adds `entry` (#641). For an entry that could be an episode, this looks up its
+    /// audio, refetching the feed for an older entry saved without its enclosure.
+    func importRoute(for entry: FeedEntry, subscriptionKind: SourceIdentityKind) async throws -> FollowedEntryImportRoute {
+        guard FollowedEntryImportRoute.needsAudioLookup(for: entry, subscriptionKind: subscriptionKind) else { return .article }
+        let known = try await audio(for: entry)
+        return FollowedEntryImportRoute.route(for: entry, subscriptionKind: subscriptionKind, audio: known)
+    }
+
     func playableAudioURL(for entry: FeedEntry) async throws -> String? {
+        guard case .found(let audioURL) = try await audio(for: entry) else { return nil }
+        return Self.validHTTPSURL(audioURL)?.absoluteString
+    }
+
+    /// The entry's audio: its stored https enclosure, or the one the feed lists for it now (saved
+    /// on the entry). The feed listing the entry with no audio at all marks a text-only post.
+    func audio(for entry: FeedEntry) async throws -> FollowedEntryAudio {
         if let audioURL = Self.validHTTPSURL(entry.audioURL) {
-            return audioURL.absoluteString
+            return .found(audioURL.absoluteString)
         }
+        let stored = FollowedEntryAudio.stored(in: entry)
         guard let subscription = try repository.loadFeedSubscriptions().first(where: { $0.id == entry.subscriptionId }),
               subscription.source.kind == .podcastFeed,
               let feedURL = URL(string: subscription.source.canonicalURL) else {
-            return nil
+            return stored
         }
         let parsed = try await fetch(url: feedURL, subscription: nil)
         guard let match = parsed.items.first(where: { item in
             item.url == entry.canonicalURL
                 || (item.title == entry.title && item.publishedAt == entry.publishedAt)
-        }), let audioURL = Self.validHTTPSURL(match.audioURL) else {
-            return nil
+        }) else {
+            return stored
+        }
+        guard let audioURL = Self.validHTTPSURL(match.audioURL) else {
+            return entry.audioURL == nil && match.audioURL == nil ? .noneInFeed : stored
         }
         var updated = entry
         updated.audioURL = audioURL.absoluteString
         try repository.saveFeedEntry(updated)
-        return audioURL.absoluteString
+        return .found(audioURL.absoluteString)
     }
 
     func setNewItemPolicy(subscriptionId: String, policy: FeedNewItemPolicy) throws {

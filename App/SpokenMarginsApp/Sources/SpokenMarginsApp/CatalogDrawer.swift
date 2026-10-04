@@ -26,17 +26,21 @@ final class CatalogDrawerModel: ObservableObject {
     private let subscriptions: @MainActor () -> [FeedSubscription]
     private let defaults: UserDefaults
     private var hasLoaded = false
+    /// Makes a fresh OPML import (#463) for the drawer and Following; nil hides the entry.
+    let makeOPMLImport: (@MainActor () -> OPMLImportModel)?
 
     init(
         store: SourceCatalogStore?,
         defaults: UserDefaults = .standard,
         subscriptions: @escaping @MainActor () -> [FeedSubscription],
-        follow: @escaping @MainActor (String) async throws -> String
+        follow: @escaping @MainActor (String) async throws -> String,
+        makeOPMLImport: (@MainActor () -> OPMLImportModel)? = nil
     ) {
         self.store = store
         self.defaults = defaults
         self.subscriptions = subscriptions
         self.follow = follow
+        self.makeOPMLImport = makeOPMLImport
     }
 
     /// The app's drawer: the bundled snapshot plus a cache in Application Support.
@@ -63,6 +67,11 @@ final class CatalogDrawerModel: ObservableObject {
 
     var subjects: [SourceCatalogSubject] { catalog?.visibleSubjects ?? [] }
     var followedCount: Int { followStates.values.filter { $0 == .followed }.count }
+    /// The footer, counting shows and newsletters in their own words (#661).
+    var followedSummary: String? {
+        let followed = (catalog?.entries ?? []).filter { followStates[$0.id] == .followed }
+        return CatalogFollowedSummary.text(followedKinds: followed.map(\.contentKind))
+    }
 
     func presentIfFirstRun(libraryWasEmptyAtLaunch: Bool, followedSourceCount: Int) {
         guard FirstRunCatalogDrawerPolicy.opensAutomatically(
@@ -165,6 +174,7 @@ struct CatalogDrawerView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 subjectBar
+                importLink
                 list
             }
             .background(AppColors.bone)
@@ -179,6 +189,21 @@ struct CatalogDrawerView: View {
             .task { await drawer.load() }
         }
         .accessibilityIdentifier("catalog.drawer")
+    }
+
+    /// Shown whether or not the podcast list loaded: importing matters most when it didn't (#463).
+    @ViewBuilder
+    private var importLink: some View {
+        if let makeOPMLImport = drawer.makeOPMLImport {
+            NavigationLink {
+                OPMLImportScreen(importer: makeOPMLImport())
+            } label: {
+                Label("Import from another app", systemImage: "square.and.arrow.down")
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            }
+            .padding(.horizontal, 16)
+            .accessibilityIdentifier("catalog.drawer.importOPML")
+        }
     }
 
     private var subjectBar: some View {
@@ -234,8 +259,8 @@ struct CatalogDrawerView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .safeAreaInset(edge: .bottom) {
-                if drawer.followedCount > 0 {
-                    Text("Following \(drawer.followedCount) \(drawer.followedCount == 1 ? "show" : "shows")")
+                if let summary = drawer.followedSummary {
+                    Text(summary)
                         .font(.subheadline.weight(.semibold))
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .background(.bar)

@@ -124,6 +124,26 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertEqual(drawer.state(for: entry), .followed)
     }
 
+    /// #661 (Test Desk): following One Useful Thing from the Writers row said "Following 1 show".
+    func testFooterNamesANewsletterFollowedFromWritersAsANewsletter() async throws {
+        let log = FollowLog()
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: log)
+        await drawer.load()
+        XCTAssertNil(drawer.followedSummary, "no footer before anything is followed")
+        drawer.selectedSubject = "writers"
+        let newsletter = try XCTUnwrap(drawer.entries.first)
+        XCTAssertEqual(newsletter.contentKind, .newsletter)
+        drawer.toggleFollow(newsletter)
+        for _ in 0..<100 where drawer.followedCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(drawer.followedSummary, "Following 1 newsletter")
+
+        drawer.selectedSubject = nil
+        let show = try XCTUnwrap(drawer.entries.first { $0.contentKind == .podcast })
+        drawer.toggleFollow(show)
+        for _ in 0..<100 where drawer.followedCount < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(drawer.followedSummary, "Following 1 show and 1 newsletter")
+    }
+
     /// #246 (found on the phone): the drawer stuttered while scrolling. Every row worked out its
     /// follow state twice per render, and each time read the recorded follows from UserDefaults and
     /// every subscription again. One pass over the whole catalog now reads subscriptions once.

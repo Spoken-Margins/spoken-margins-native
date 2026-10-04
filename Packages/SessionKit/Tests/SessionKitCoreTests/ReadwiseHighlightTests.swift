@@ -135,6 +135,51 @@ final class ReadwiseHighlightTests: XCTestCase {
         XCTAssertEqual(transport.highlights.map { $0.map { $0["note"] ?? "" } }, [["first"], ["second"], ["second"], ["third"]])
     }
 
+    /// #642: tapping Disconnect during a send pass let the pass keep sending batches with the token
+    /// it had captured. It now stops before the next batch and keeps the accepted one in the ledger.
+    func testDisconnectDuringAPassStopsTheNextBatch() async throws {
+        let highlights = try twoArticleHighlights() + [try highlight(id: "m3")]
+        let transport = RecordingTransport()
+        let client = ReadwiseHighlightClient(transport: transport.send)
+        // The stored credential: the listener disconnects once the first batch has gone out.
+        let stored = LockedValue<String?>("t")
+        let sendThenDisconnect = ReadwiseHighlightClient { request in
+            let result = try await transport.send(request)
+            stored.set(nil)
+            return result
+        }
+        do {
+            _ = try await ReadwiseHighlightSyncPass.run(
+                highlights, token: "t", client: sendThenDisconnect, ledger: ledger(), batchSize: 1,
+                tokenIsCurrent: { stored.get() == $0 }
+            )
+            XCTFail("Disconnect should stop the pass")
+        } catch is CancellationError {}
+        XCTAssertEqual(transport.requests.count, 1, "no batch starts after Disconnect")
+        XCTAssertEqual(try ledger().sentKeys(), ["session-item-article:m1"])
+
+        // A different token saved meanwhile stops the old pass too.
+        stored.set("new-token")
+        await XCTAssertThrowsCancellation {
+            try await ReadwiseHighlightSyncPass.run(highlights, token: "t", client: client, ledger: self.ledger(), batchSize: 1, tokenIsCurrent: { stored.get() == $0 })
+        }
+        XCTAssertEqual(transport.requests.count, 1)
+
+        // Connected with that token, the next pass sends what's left.
+        let sent = try await ReadwiseHighlightSyncPass.run(highlights, token: "new-token", client: client, ledger: ledger(), batchSize: 1, tokenIsCurrent: { stored.get() == $0 })
+        XCTAssertEqual(sent, 2)
+    }
+
+    private func XCTAssertThrowsCancellation(_ body: () async throws -> Int, file: StaticString = #filePath, line: UInt = #line) async {
+        do {
+            _ = try await body()
+            XCTFail("expected a CancellationError", file: file, line: line)
+        } catch is CancellationError {
+        } catch {
+            XCTFail("expected a CancellationError, got \(error)", file: file, line: line)
+        }
+    }
+
     func testLedgerSurvivesARestartAndGathererSkipsSentMargins() async throws {
         let item = article()
         let pairs = [(item, margin(item: item, id: "m1")), (item, margin(item: item, id: "m2"))]
@@ -302,4 +347,13 @@ private final class RecordingTransport: @unchecked Sendable {
             return (Data("{}".utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
         }
     }
+}
+
+/// A value read and written from the transport and the pass (#642).
+private final class LockedValue<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Value
+    init(_ value: Value) { self.value = value }
+    func get() -> Value { lock.lock(); defer { lock.unlock() }; return value }
+    func set(_ newValue: Value) { lock.lock(); value = newValue; lock.unlock() }
 }
