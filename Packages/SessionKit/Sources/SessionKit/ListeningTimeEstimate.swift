@@ -131,3 +131,19 @@ public enum ListeningTimeEstimator {
         return rate
     }
 }
+
+extension ListeningTimeEstimate {
+    /// The text scrubber's VoiceOver value: "42 percent, about 12 minutes left".
+    public func scrubberAccessibilityValue(percent: Int) -> String {
+        "\(percent) percent, \(remainingSpokenText)"
+    }
+}
+
+extension ListeningTimeEstimator {
+    /// A Library row's length for a text item at the listener's speed: "about 25 min". Nil for an
+    /// item with no text, such as a podcast, which shows no estimate.
+    public static func libraryTotalText(textCharacterCount: Int?, playbackSpeed: Double) -> String? {
+        guard let textCharacterCount else { return nil }
+        return estimate(totalCharacters: textCharacterCount, charactersHeard: 0, playbackSpeed: playbackSpeed)?.totalText
+    }
+}
