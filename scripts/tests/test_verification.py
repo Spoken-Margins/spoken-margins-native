@@ -57,6 +57,74 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(step['simulator_crash_report'], crashes[-1])
             self.assertEqual(step['exit_code'], 124)
 
+    def test_a_crash_report_renamed_while_it_is_read_is_skipped(self):
+        # integration-4ca9d9c (#767): macOS wrote `.SpokenMarginsApp-….ips`, then renamed it between
+        # the scan's glob and its stat, and the whole app run died with FileNotFoundError.
+        device = 'synthetic-device'
+
+        class RenamingFolder:
+            """Lists the real folder, then renames every hidden report, as macOS does, before the caller reads it."""
+
+            def __init__(self, folder):
+                self.folder = folder
+
+            def glob(self, pattern):
+                found = list(self.folder.glob(pattern))
+                for path in found:
+                    if path.name.startswith('.'):
+                        path.rename(path.with_name(path.name[1:]))
+                return iter(found)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / '.SpokenMarginsApp-2026-10-04-095145.ips').write_text(f'com.apple.CoreSimulator.SimDevice.{device}')
+            self.assertEqual(verification.crash_snapshot(RenamingFolder(folder)), {})
+            for report in folder.iterdir():
+                report.unlink()
+            (folder / '.SpokenMarginsApp-2026-10-04-095146.ips').write_text(f'com.apple.CoreSimulator.SimDevice.{device}')
+            self.assertIsNone(verification.new_crash(RenamingFolder(folder), {}, device))
+
+            # The renamed report is the real one, and the next scan finds it.
+            self.assertEqual(verification.new_crash(folder, {}, device).name, 'SpokenMarginsApp-2026-10-04-095146.ips')
+
+            # A report that vanishes outright (not hidden) is skipped too.
+            class VanishingFolder(RenamingFolder):
+                def glob(self, pattern):
+                    found = list(self.folder.glob(pattern))
+                    for path in found:
+                        path.unlink()
+                    return iter(found)
+
+            self.assertEqual(verification.crash_snapshot(VanishingFolder(folder)), {})
+            (folder / 'SpokenMarginsApp-later.ips').write_text(f'com.apple.CoreSimulator.SimDevice.{device}')
+            self.assertIsNone(verification.new_crash(VanishingFolder(folder), {}, device))
+
+    def test_a_hidden_report_still_being_written_is_not_a_crash_yet(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / '.SpringBoard-2026-10-04-095145.ips').write_text('com.apple.CoreSimulator.SimDevice.synthetic-device')
+            self.assertEqual(verification.crash_snapshot(folder), {})
+            self.assertIsNone(verification.new_crash(folder, {}, 'synthetic-device'))
+
+    def test_when_the_runner_itself_fails_it_still_stops_the_command(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'test')
+            run.manifest['destination'] = {'udid': 'synthetic-device'}
+            run.crash_baseline = {}
+            pid_file = Path(temporary) / 'child.pid'
+
+            def scan(*args):
+                if pid_file.exists() and pid_file.read_text():
+                    raise FileNotFoundError('a crash report vanished')
+                return None
+
+            child = f'import os, time; open({str(pid_file)!r}, "w").write(str(os.getpid())); time.sleep(60)'
+            with patch.object(verification, 'new_crash', side_effect=scan):
+                with self.assertRaises(FileNotFoundError):
+                    run.command('crash-check', [sys.executable, '-c', child])
+            with self.assertRaises(ProcessLookupError):
+                os.kill(int(pid_file.read_text()), 0)
+
     def test_the_host_plan_runs_each_ops_folder_s_own_tests(self):
         # ops/dial and ops/codex carry their own Python tests, which no lane plan ran.
         with tempfile.TemporaryDirectory() as temporary:

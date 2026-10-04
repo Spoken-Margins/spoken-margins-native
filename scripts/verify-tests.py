@@ -17,7 +17,7 @@ import sys
 import time
 from lane_xcresult_attachments import export_failed_attachments
 
-from check_posterboard_repair import new_crash
+from check_posterboard_repair import crash_snapshot, new_crash
 import lane_sim
 from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
                         state_dir, SIMULATOR_SLOTS)
@@ -327,6 +327,15 @@ def ops_test_folders(root=None):
     return sorted({path.parent for path in (base / 'ops').rglob('test_*.py')})
 
 
+def stop_process_group(process):
+    os.killpg(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+
+
 class Run:
     def __init__(self, output, plan):
         self.output = output
@@ -373,8 +382,7 @@ class Run:
         if device and self.crash_baseline is None:
             if not reports.is_dir():
                 raise RuntimeError('Simulator crash reports are unavailable')
-            self.crash_baseline = {p: (p.stat().st_mtime_ns, p.stat().st_size)
-                                   for p in reports.glob('*.ips')}
+            self.crash_baseline = crash_snapshot(reports)
         # xcodebuild shares the Mac-wide build slots with every session; the wait isn't timed.
         slot = build_slot(f'verify-tests {self.manifest["plan"]} {name}', max_wait=BUILD_SLOT_WAIT_SECONDS) \
             if args[0] == 'xcodebuild' else contextlib.nullcontext()
@@ -399,17 +407,16 @@ class Run:
                         continue
             except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError):
                 entry['interrupted'] = True
-                os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
+                stop_process_group(process)
                 result = 124
                 if entry.get('simulator_crash_report'):
                     shutdown = subprocess.run(['xcrun', 'simctl', 'shutdown', device],
                                               stdout=log, stderr=subprocess.STDOUT, timeout=20)
                     entry['simulator_shutdown_exit'] = shutdown.returncode
+            except BaseException:
+                # The runner itself failed: don't leave xcodebuild running orphaned (#767).
+                stop_process_group(process)
+                raise
         entry.update(exit_code=result, seconds=round(time.monotonic() - start, 3))
         text = (self.output / f'{name}.log').read_text(errors='replace')
         errors = []
