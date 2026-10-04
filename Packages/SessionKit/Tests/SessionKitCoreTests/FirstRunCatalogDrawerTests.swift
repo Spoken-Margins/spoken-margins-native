@@ -104,6 +104,21 @@ final class FirstRunCatalogDrawerTests: XCTestCase {
         XCTAssertTrue(CatalogFollowState.followedEntryIds(in: catalog, recordedSourceIds: recorded, subscriptions: []).isEmpty)
     }
 
+    /// #661 (Test Desk): following One Useful Thing from the Writers row said "Following 1 show".
+    /// A newsletter isn't a show.
+    func testFooterCountsNewslettersAsNewslettersNotShows() throws {
+        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.bundledSnapshot))
+        let newsletter = try XCTUnwrap(catalog.entries(forSubject: "writers").first)
+        let show = try XCTUnwrap(catalog.entries(forSubject: nil).first { $0.contentKind == .podcast })
+
+        XCTAssertEqual(CatalogFollowedSummary.text(followedKinds: [newsletter.contentKind]), "Following 1 newsletter")
+        XCTAssertEqual(CatalogFollowedSummary.text(followedKinds: [show.contentKind]), "Following 1 show")
+        XCTAssertEqual(CatalogFollowedSummary.text(followedKinds: [.podcast, .newsletter, .podcast]), "Following 2 shows and 1 newsletter")
+        XCTAssertEqual(CatalogFollowedSummary.text(followedKinds: [.newsletter, .newsletter]), "Following 2 newsletters")
+        XCTAssertEqual(CatalogFollowedSummary.text(followedKinds: [.podcast, .newsletter, .article]), "Following 1 show, 1 newsletter and 1 feed")
+        XCTAssertNil(CatalogFollowedSummary.text(followedKinds: []), "no footer before anything is followed")
+    }
+
     func testDrawerOpensByItselfOnlyOnAFreshInstallAndOnlyOnce() {
         XCTAssertTrue(FirstRunCatalogDrawerPolicy.opensAutomatically(libraryWasEmptyAtLaunch: true, hasSeenDrawer: false, followedSourceCount: 0))
         XCTAssertFalse(FirstRunCatalogDrawerPolicy.opensAutomatically(libraryWasEmptyAtLaunch: true, hasSeenDrawer: true, followedSourceCount: 0), "once")

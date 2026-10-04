@@ -67,6 +67,11 @@ final class CatalogDrawerModel: ObservableObject {
 
     var subjects: [SourceCatalogSubject] { catalog?.visibleSubjects ?? [] }
     var followedCount: Int { followStates.values.filter { $0 == .followed }.count }
+    /// The footer, counting shows and newsletters in their own words (#661).
+    var followedSummary: String? {
+        let followed = (catalog?.entries ?? []).filter { followStates[$0.id] == .followed }
+        return CatalogFollowedSummary.text(followedKinds: followed.map(\.contentKind))
+    }
 
     func presentIfFirstRun(libraryWasEmptyAtLaunch: Bool, followedSourceCount: Int) {
         guard FirstRunCatalogDrawerPolicy.opensAutomatically(
@@ -241,8 +246,8 @@ struct CatalogDrawerView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .safeAreaInset(edge: .bottom) {
-                if drawer.followedCount > 0 {
-                    Text("Following \(drawer.followedCount) \(drawer.followedCount == 1 ? "show" : "shows")")
+                if let summary = drawer.followedSummary {
+                    Text(summary)
                         .font(.subheadline.weight(.semibold))
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .background(.bar)
