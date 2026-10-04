@@ -6475,7 +6475,7 @@ final class Gate1AppModel: ObservableObject {
         let closedItemId = snapshot.itemId ?? activeItemId
         run { engine in
             snapshot = try engine.endSession(stoppingInlinePlayback: endMarginMoment)
-            activeItemId = closedItemId
+            activeItemId = SessionCloseSelection.itemId(closing: closedItemId, pageOnScreen: screen == .item ? selectedItem.id : nil, navigatesHome: navigateHome)
             refreshSelectedItem()
             if let store {
                 try refreshLibraryRows(store: store)
