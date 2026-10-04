@@ -1132,14 +1132,15 @@ extension SQLiteSessionStore: PublisherAudioRepository {
 }
 
 /// Community map uploads (#552) live in the records table as kind "community_map_upload", one
-/// row per episode key, linked to the item it came from so deleting the item removes it. No
-/// table or column changes, and schema_version stays the same: Build 29 selects records by kind
-/// and never reads this one.
+/// row per episode key. The row is not linked to an item, so deleting one Library copy keeps the
+/// episode's history and re-importing it doesn't send the transcript again. No table or column
+/// changes, and schema_version stays the same: Build 29 selects records by kind and never reads
+/// this one.
 extension SQLiteSessionStore: CommunityMapUploadRepository {
     static let communityMapUploadKind = "community_map_upload"
 
     public func saveCommunityMapUpload(_ record: CommunityMapUploadRecord) throws {
-        try save(kind: Self.communityMapUploadKind, id: record.id, sessionId: nil, itemId: record.itemId, value: record)
+        try save(kind: Self.communityMapUploadKind, id: record.id, sessionId: nil, itemId: nil, value: record)
     }
 
     public func loadCommunityMapUpload(episodeKey: String) throws -> CommunityMapUploadRecord? {

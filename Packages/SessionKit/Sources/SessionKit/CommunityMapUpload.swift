@@ -203,12 +203,22 @@ public enum CommunityMapUploadPolicy {
         return true
     }
 
-    /// The share of the episode between the first spoken segment and the last.
+    /// The share of the episode the spoken segments actually cover: the union of their spans,
+    /// clipped to the episode, so a stretch with no segments counts as missing.
     static func coverage(of timeline: TranscriptTimeline, durationMs: Int?) -> Double {
-        let spoken = timeline.segments.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        guard let durationMs, durationMs > 0,
-              let first = spoken.map(\.startMs).min(), let last = spoken.map(\.endMs).max(), last > first else { return 0 }
-        return Double(min(last, durationMs) - max(first, 0)) / Double(durationMs)
+        guard let durationMs, durationMs > 0 else { return 0 }
+        let spans = timeline.segments
+            .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { (start: min(max($0.startMs, 0), durationMs), end: min(max($0.endMs, 0), durationMs)) }
+            .filter { $0.end > $0.start }
+            .sorted { $0.start < $1.start }
+        var covered = 0
+        var reached = 0
+        for span in spans where span.end > reached {
+            covered += span.end - max(span.start, reached)
+            reached = span.end
+        }
+        return Double(covered) / Double(durationMs)
     }
 }
 
@@ -270,9 +280,11 @@ public struct CommunityMapTranscriptUpload: Codable, Equatable, Sendable {
     }
 
     /// A publisher's transcript can read "visit https://example.com/promo"; the body carries no
-    /// URL of any kind, so web addresses (with a scheme, `www.`, a domain followed by a path, or
-    /// a bare domain on a common ending such as `.com`) are cut out of the text and the spaces
-    /// around them closed up.
+    /// URL of any kind, so web addresses are cut out of the text and the spaces around them
+    /// closed up: anything with a scheme or `www.`, and any run of dotted words with no space
+    /// after a dot whose last part has two or more letters ("example.ai", "shop.example.co.uk",
+    /// "example.net/deal"). Abbreviations whose parts are single letters ("e.g.", "U.S.",
+    /// "Ph.D.") and numbers ("3.30", "2.5") are kept.
     static func withoutLinks(_ text: String) -> String {
         let range = NSRange(text.startIndex..., in: text)
         let stripped = linkPattern.stringByReplacingMatches(in: text, range: range, withTemplate: " ")
@@ -280,7 +292,7 @@ public struct CommunityMapTranscriptUpload: Codable, Equatable, Sendable {
     }
 
     private static let linkPattern = try! NSRegularExpression(
-        pattern: #"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.)\S+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}/\S*|\b(?:[a-z0-9-]+\.)+(?:com|org|net|io|co|fm|ly|tv|app|us|uk|ca|au|de)\b"#
+        pattern: #"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.)\S+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/\S*|\b)"#
     )
 
     public func encoded() throws -> Data {

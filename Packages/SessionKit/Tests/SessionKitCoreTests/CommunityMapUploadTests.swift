@@ -128,6 +128,13 @@ final class CommunityMapUploadTests: XCTestCase {
         // 94% of the episode is not enough; 95% is.
         XCTAssertEqual(decide(timeline: timed(from: 0, to: 564_000)), .skip(.partialTranscript))
         XCTAssertEqual(decide(timeline: timed(from: 0, to: 570_000)), .upload(episodeKey: expectedKey))
+        // A hole in the middle counts as missing even though the ends are covered: 0-100 s and
+        // 390-600 s is 310 s of a 600 s episode.
+        let holed = TranscriptTimeline(
+            segments: timed(from: 0, to: 100_000).segments + timed(from: 390_000, to: 600_000).segments,
+            chapters: [], durationMs: 600_000
+        )
+        XCTAssertEqual(decide(timeline: holed), .skip(.partialTranscript))
     }
 
     /// Ten-second segments from `start` to `end` of a 600 s episode.
@@ -302,14 +309,17 @@ final class CommunityMapUploadTests: XCTestCase {
                 MediaTimelineSegment(id: "c", startMs: 5_000, endMs: 6_000, text: "Write to podcast:feed or ftp://files.example.com/x"),
                 MediaTimelineSegment(id: "d", startMs: 7_000, endMs: 8_000,
                                      text: "Go to BetterHelp.com today or example.co.uk, e.g. Mr. Smith in the U.S. at 3.30."),
+                MediaTimelineSegment(id: "e", startMs: 9_000, endMs: 9_500,
+                                     text: "Try example.ai or shop.example.dev; a Ph.D. at 2.5x speed, i.e. 1.5x/day."),
             ], chapters: [])
         ))
         XCTAssertEqual(upload.segments.map(\.text), [
             "Visit now, or and today. Version 2.5 is out.",
             "Write to podcast:feed or",
             "Go to today or , e.g. Mr. Smith in the U.S. at 3.30.",
+            "Try or ; a Ph.D. at 2.5x speed, i.e. 1.5x/day.",
         ])
-        XCTAssertEqual(upload.segments.map(\.startMs), [1_000, 5_000, 7_000])
+        XCTAssertEqual(upload.segments.map(\.startMs), [1_000, 5_000, 7_000, 9_000])
 
         XCTAssertNil(CommunityMapTranscriptUpload.make(episodeKey: expectedKey, durationMs: 10_000, language: "en",
                                                        timeline: TranscriptTimeline(segments: [], chapters: [])))
@@ -444,6 +454,23 @@ final class CommunityMapUploadTests: XCTestCase {
         XCTAssertEqual(try reopened.loadCommunityMapUploads(), [record])
         XCTAssertNil(try reopened.loadCommunityMapUpload(episodeKey: String(repeating: "0", count: 64)))
         XCTAssertEqual(try reopened.quarantinedRecordCount(), 0)
+    }
+
+    func testDeletingOneLibraryCopyKeepsTheEpisodesUploadHistory() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try SQLiteSessionStore(path: directory.appending(path: "library.sqlite").path)
+        let item = episode()
+        try store.saveItem(item)
+        let uploaded = CommunityMapUploadRecord(id: expectedKey, itemId: item.id, state: .uploaded, attempts: 1,
+                                                lastAttemptAt: now, lastOutcome: "uploaded:202")
+        try store.saveCommunityMapUpload(uploaded)
+        try store.deleteItem(id: item.id)
+        // Importing the episode again finds it already sent.
+        XCTAssertEqual(try store.loadCommunityMapUpload(episodeKey: expectedKey), uploaded)
+        XCTAssertEqual(decide(item: episode(id: "reimported"), previous: try store.loadCommunityMapUpload(episodeKey: expectedKey)),
+                       .skip(.alreadyUploaded))
     }
 }
 

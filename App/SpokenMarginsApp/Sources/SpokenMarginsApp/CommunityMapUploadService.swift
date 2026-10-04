@@ -1,6 +1,7 @@
 import Foundation
 import SessionKit
 import SessionKitPersistence
+@preconcurrency import AVFoundation
 
 /// Sends an episode's transcript to the owner's server once, so it can make a community
 /// listening map, when the listener opted in (#552). The rules and the request body live in
@@ -84,7 +85,7 @@ final class CommunityMapUploadService {
                 publisherChapters: {
                     if storedChapters { return true }
                     guard let audioFile else { return nil }
-                    return await EmbeddedPublisherChapterLoader.load(from: audioFile) != nil
+                    return await Self.hasEmbeddedChapters(audioFile)
                 },
                 mapsState: {
                     guard let bridge else { return .off(.noConfig) }
@@ -95,5 +96,16 @@ final class CommunityMapUploadService {
             self.inFlight.remove(episodeKey)
             report(outcome.diagnostic)
         }
+    }
+
+    /// Whether the audio file carries chapters, or nil when it couldn't be read (gone, or still
+    /// being replaced), so a failed read holds the upload instead of counting as "no chapters".
+    private nonisolated static func hasEmbeddedChapters(_ file: URL) async -> Bool? {
+        guard FileManager.default.isReadableFile(atPath: file.path) else { return nil }
+        let asset = AVURLAsset(url: file)
+        guard let groups = try? await asset.loadChapterMetadataGroups(
+            bestMatchingPreferredLanguages: Locale.preferredLanguages
+        ) else { return nil }
+        return !groups.isEmpty
     }
 }
