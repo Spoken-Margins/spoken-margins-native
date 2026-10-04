@@ -831,8 +831,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private var storedSourceFollowSuggestionCandidates: [SourceCandidateEvidence] = []
     private var sourceFollowSuggestionItemId: String?
     var sourceFollowSuggestionCandidates: [SourceCandidateEvidence] {
-        guard sourceFollowSuggestionItemId == selectedItem.id,
-              screen != .playback || sourceFollowSuggestionItemId == snapshot.itemId else { return [] }
+        guard sourceFollowSuggestionItemId == selectedItem.id else { return [] }
         guard !FollowedSourceMatching.isSourceAlreadyFollowed(
             sourceURL: libraryItems.first(where: { $0.id == selectedItem.id })?.sourceURL,
             sourceTitle: libraryItems.first(where: { $0.id == selectedItem.id })?.sourceTitle,
