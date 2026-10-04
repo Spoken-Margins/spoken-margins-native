@@ -3069,11 +3069,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         model.continueMicrophonePrimer()
         model.continueMicrophonePrimer()
-        for _ in 0..<100 where gate.continuation == nil { await Task.yield() }
+        for _ in 0..<200 where gate.continuation == nil { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertFalse(model.microphonePrimer.isShowing)
         XCTAssertEqual(gate.requests, 1, "A second Continue tap must not ask twice")
         gate.finish(true)
-        for _ in 0..<100 where !model.snapshot.isRecording { await Task.yield() }
+        for _ in 0..<200 where !model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertTrue(model.snapshot.isRecording)
         model.cancelInterjection()
     }
@@ -3123,7 +3123,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             model.pause()
             model.beginInterjection()
             XCTAssertFalse(model.microphonePrimer.isShowing, "\(status)")
-            for _ in 0..<100 where model.isRequestingRecordingPermission { await Task.yield() }
+            // The injected answer is async and leaves the main actor, so wait on time, not yields:
+            // 100 yields weren't enough on the lane's simulator (T3 FAIL on 0e38d1c).
+            for _ in 0..<200 where model.isRequestingRecordingPermission { try await Task.sleep(for: .milliseconds(10)) }
             XCTAssertEqual(model.snapshot.isRecording, granted, "\(status)")
             XCTAssertEqual(model.recordingPermissionDenied, !granted, "\(status)")
             if granted { model.cancelInterjection() }
