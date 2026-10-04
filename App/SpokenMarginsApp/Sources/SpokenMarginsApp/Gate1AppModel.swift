@@ -990,6 +990,8 @@ final class Gate1AppModel: ObservableObject {
     private let audioPlaybackClientOverride: AudioPlaybackClient?
     private var mediaPlaybackClient: AVPlayerStreamPlaybackClient?
     private var podcastDownloadCoordinator: PodcastDownloadCoordinator?
+    /// Shared by the podcast downloader and the pre-play offline check (#779).
+    let connectivity = ConnectivityMonitor()
     private var requestedPodcastTransportReplacements: Set<String> = []
     private var offlineStorageLedger: OfflineStorageLedger?
     private var localSourceImporter: LocalSourceImporter?
@@ -3767,6 +3769,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func start() {
+        if let message = offlineEpisodeStartBlockedMessage(itemId: activeItemId) {
+            reportFailure(message, itemId: activeItemId)
+            return
+        }
         guard !requireTermsDecisionBeforePlayback(.startCurrentItem) else { return }
         if !hasActiveSession {
             resetMixWithOtherAudioForNewSession()
@@ -6207,7 +6213,22 @@ final class Gate1AppModel: ObservableObject {
         guard snapshot.itemId == itemID, snapshot.status == .starting,
               selectedPodcastDownloadState != nil else { return }
         pause()
-        reportFailure("Podcast playback did not start. Use Download Again in More to replace the saved audio, then press Play.")
+        // A saved file, even one that turns out broken, is what "Download Again" can replace.
+        reportFailure(OfflinePlayability.episodeStalledMessage(
+            hasSavedAudio: podcastDownloadRecords[itemID]?.localRelativePath != nil,
+            isOffline: connectivity.isOffline
+        ))
+    }
+
+    /// A streamed-only episode started with no signal says so, instead of trying and stalling (#779).
+    private func offlineEpisodeStartBlockedMessage(itemId: String) -> String? {
+        guard connectivity.isOffline,
+              let item = try? store?.loadItem(id: itemId),
+              item.media?.sourceType == .remoteStream else { return nil }
+        return OfflinePlayability.episodeStartBlockedMessage(
+            hasSavedAudio: podcastDownloadCoordinator?.validatedLocalURL(for: itemId) != nil,
+            isOffline: true
+        )
     }
 
     func redownloadSelectedPodcast() {
@@ -14974,6 +14995,7 @@ final class Gate1AppModel: ObservableObject {
             applicationSupportDirectory: try applicationSupportDirectory(),
             cacheLimit: limit,
             monitorsNetwork: !Self.isRunningUnitTests,
+            connectivity: connectivity,
             usesBackgroundSession: !Self.isRunningUnitTests
         )
         coordinator.onRecordChanged = { [weak self] record in

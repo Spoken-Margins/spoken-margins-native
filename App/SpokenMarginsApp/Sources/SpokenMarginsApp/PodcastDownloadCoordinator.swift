@@ -1,5 +1,4 @@
 import Foundation
-import Network
 import SessionKit
 import SessionKitPersistence
 
@@ -57,8 +56,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     private let store: SQLiteSessionStore
     private let ledger: OfflineStorageLedger
     private let directory: URL
-    private let monitor = NWPathMonitor()
-    private let monitorQueue = DispatchQueue(label: "com.spokenmargins.podcast-network")
+    private let connectivity: ConnectivityMonitor
+    private var connectivityObserver: UUID?
     private var cacheLimit: PodcastCacheLimitGB
     private var activeItemId: String?
     private var activeTaskItemIds: Set<String> = []
@@ -78,11 +77,13 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         applicationSupportDirectory: URL,
         cacheLimit: PodcastCacheLimitGB,
         monitorsNetwork: Bool = true,
+        connectivity: ConnectivityMonitor? = nil,
         usesBackgroundSession: Bool = true,
         contentLength: (@Sendable (URL, Bool) async throws -> Int64)? = nil,
         startDownload: ((URLRequest, String) -> Void)? = nil
     ) throws {
         self.store = store
+        self.connectivity = connectivity ?? ConnectivityMonitor()
         self.contentLength = contentLength
         self.startDownload = startDownload
         self.ledger = ledger ?? OfflineStorageLedger(
@@ -140,12 +141,13 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     }
 
     deinit {
-        monitor.cancel()
         session?.invalidateAndCancel()
     }
 
     func shutdown() {
-        monitor.cancel()
+        // The monitor is shared and outlives this coordinator; only stop listening to it.
+        if let connectivityObserver { connectivity.removeObserver(connectivityObserver) }
+        connectivityObserver = nil
         session.invalidateAndCancel()
         for itemId in Array(generations.keys) { invalidateAttempt(itemId: itemId) }
     }
@@ -388,20 +390,11 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     }
 
     private func startNetworkMonitor() {
-        monitor.pathUpdateHandler = { [weak self] path in
-            let transport: PodcastNetworkTransport
-            if path.status != .satisfied {
-                transport = .unavailable
-            } else if path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet) {
-                transport = .wifi
-            } else if path.usesInterfaceType(.cellular) {
-                transport = .cellular
-            } else {
-                transport = .other
-            }
-            Task { @MainActor [weak self] in self?.networkChanged(to: transport) }
+        guard connectivityObserver == nil else { return }
+        connectivityObserver = connectivity.addObserver { [weak self] transport in
+            self?.networkChanged(to: transport)
         }
-        monitor.start(queue: monitorQueue)
+        connectivity.start()
     }
 
     private func beginDownload(record: PodcastDownloadRecord, userInitiated: Bool) {
