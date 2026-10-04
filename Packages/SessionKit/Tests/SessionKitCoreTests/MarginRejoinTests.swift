@@ -222,6 +222,21 @@ final class MarginRejoinTests: XCTestCase {
         XCTAssertEqual(MarginRejoin.textResumeOffset(pausedAt: 3, in: ""), 0)
     }
 
+    /// A "." inside a number or a word is not a sentence end: a Margin during "today" in "The value is 3.14
+    /// today." used to resume at "14 today." and speak the wrong number (Codex audit on 34a1cae).
+    func testAPointInsideANumberIsNotASentenceEnd() {
+        let text = "Before. The value is 3.14 today. See example.com now."
+        let valueStart = "Before. ".count
+        let todayOffset = "Before. The value is 3.14 to".count
+        XCTAssertEqual(MarginRejoin.textResumeOffset(pausedAt: todayOffset, in: text), valueStart)
+        XCTAssertEqual(MarginRejoin.textResumeOffset(pausedAt: valueStart, in: text), valueStart, "a sentence start stays put")
+        let seeStart = "Before. The value is 3.14 today. ".count
+        XCTAssertEqual(MarginRejoin.textResumeOffset(pausedAt: text.count - 2, in: text), seeStart)
+        let quoted = "He said \"stop.\" Then he left."
+        XCTAssertEqual(MarginRejoin.textResumeOffset(pausedAt: quoted.count - 3, in: quoted), "He said \"stop.\" ".count,
+                       "a closing quote after the stop still ends the sentence")
+    }
+
     func testMediaResumeTimeStepsBackThreeSecondsAndNeverBeforeZero() {
         XCTAssertEqual(MarginRejoin.mediaStepBackMs, 3_000)
         XCTAssertEqual(MarginRejoin.mediaResumeTimeMs(pausedAtMs: 1_263_000), 1_260_000)

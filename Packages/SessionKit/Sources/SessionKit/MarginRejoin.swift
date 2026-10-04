@@ -17,15 +17,23 @@ enum MarginRejoin {
     /// start stays where it is, so several Margins in one sentence never drift back into the
     /// sentence before it.
     ///
-    /// A sentence ends at ".", "?" or "!" or a line break, and the next one starts after the
-    /// whitespace that follows.
+    /// A sentence ends at a line break, or at ".", "?" or "!" (and any closing quotes or brackets after
+    /// it) followed by whitespace or the end of the text, so the point in "3.14" or "example.com" is not
+    /// an end. The next sentence starts after the whitespace that follows.
     static func textResumeOffset(pausedAt offset: Int, in text: String) -> Int {
         let chars = Array(text)
         let clamped = max(0, min(offset, chars.count))
         var index = min(clamped, chars.count - 1)
         while index >= 0 {
-            if sentenceEnds.contains(chars[index]) || chars[index].isNewline {
-                var start = index + 1
+            var start: Int?
+            if chars[index].isNewline {
+                start = index + 1
+            } else if sentenceEnds.contains(chars[index]) {
+                var after = index + 1
+                while after < chars.count, closers.contains(chars[after]) { after += 1 }
+                if after == chars.count || chars[after].isWhitespace { start = after }
+            }
+            if var start {
                 while start < chars.count, chars[start].isWhitespace { start += 1 }
                 if start <= clamped { return start }
             }
@@ -35,4 +43,5 @@ enum MarginRejoin {
     }
 
     private static let sentenceEnds: Set<Character> = [".", "?", "!"]
+    private static let closers: Set<Character> = ["\"", "'", "\u{201D}", "\u{2019}", ")", "]"]
 }
