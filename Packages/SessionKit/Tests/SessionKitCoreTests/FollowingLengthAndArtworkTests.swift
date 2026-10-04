@@ -31,6 +31,13 @@ final class FollowingLengthAndArtworkTests: XCTestCase {
         XCTAssertNil(ListenLength(entry))
     }
 
+    func testAnEpisodeWithoutADurationIsNotTimedFromItsShowNotes() {
+        let episode = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://example.com/e", audioURL: "https://example.com/e.mp3", title: "E", bodyWordCount: 400)
+        XCTAssertNil(ListenLength(episode), "show notes are not the episode, so an hour-long show must not read \"2 min listen\"")
+        let timed = FeedEntry(id: "t", subscriptionId: "s", canonicalURL: "https://example.com/t", audioURL: "https://example.com/t.mp3", title: "T", bodyWordCount: 400, audioDurationMs: 42 * 60_000)
+        XCTAssertEqual(ListenLength(timed)?.label, "42 min")
+    }
+
     // MARK: Channel image
 
     func testRSSPrefersTheItunesImageThenTheChannelImage() throws {

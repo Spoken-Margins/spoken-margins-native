@@ -31,8 +31,10 @@ public struct ListenLength: Equatable, Sendable {
         }
     }
 
+    /// An entry with audio is timed only by its duration: its word count is show notes, not the episode.
     public init?(_ entry: FeedEntry, rate: Double = 1) {
-        self.init(audioDurationMs: entry.audioDurationMs, bodyWordCount: entry.bodyWordCount, rate: rate)
+        let hasAudio = !(entry.audioURL ?? "").isEmpty
+        self.init(audioDurationMs: entry.audioDurationMs, bodyWordCount: hasAudio ? nil : entry.bodyWordCount, rate: rate)
     }
 
     /// "42 min", "1 h 5 min", or "12 min listen" for an article.
