@@ -15192,7 +15192,7 @@ final class Gate1AppModel: ObservableObject {
             try Task.checkCancellation()
             let store = try requireStore()
             var queuedJobs = try store.loadAudioPreparationJobs()
-                .filter({ !$0.isCancelled && !PreparationChunkGate.holdsForLowPowerMode($0.policy, isLowPowerModeEnabled: device.isLowPowerModeEnabled) })
+                .filter({ !$0.isCancelled && !PreparationChunkGate.setsAsideForLowPowerMode($0.policy, thermal: device.thermal, isLowPowerModeEnabled: device.isLowPowerModeEnabled) })
             if foregroundDemandOnly {
                 queuedJobs = queuedJobs.filter {
                     $0.policy == .explicit || ($0.policy == .demandWindow && $0.maximumChunkCount != nil)

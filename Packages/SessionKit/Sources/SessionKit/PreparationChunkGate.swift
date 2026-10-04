@@ -43,6 +43,17 @@ public enum PreparationChunkGate {
         isLowPowerModeEnabled && policy != .explicit
     }
 
+    /// Whether the pass sets a queued job aside before choosing one. Heat comes first: while the
+    /// phone is too warm every job stays in line, so the chosen one's manifest is saved as paused
+    /// for heat even in Low Power Mode (Codex audit on #765).
+    public static func setsAsideForLowPowerMode(
+        _ policy: PreparationJobPolicy,
+        thermal: SpeechThermalLevel,
+        isLowPowerModeEnabled: Bool
+    ) -> Bool {
+        !isTooWarm(thermal) && holdsForLowPowerMode(policy, isLowPowerModeEnabled: isLowPowerModeEnabled)
+    }
+
     public static func decide(
         policy: PreparationJobPolicy,
         thermal: SpeechThermalLevel,

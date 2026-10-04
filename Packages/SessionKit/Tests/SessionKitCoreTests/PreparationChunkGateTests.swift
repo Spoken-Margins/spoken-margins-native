@@ -83,6 +83,28 @@ final class PreparationChunkGateTests: XCTestCase {
         }
     }
 
+    /// Codex audit on #765: in Low Power Mode and too warm, an automatic job must stay in line so
+    /// the pass reaches the heat decision and saves its manifest as paused, instead of skipping it.
+    func testHeatInLowPowerModeKeepsAutomaticJobsInLineSoTheyPauseForHeat() {
+        for thermal in [SpeechThermalLevel.serious, .critical] {
+            for policy in allPolicies {
+                XCTAssertFalse(
+                    PreparationChunkGate.setsAsideForLowPowerMode(policy, thermal: thermal, isLowPowerModeEnabled: true),
+                    "\(policy) at \(thermal)"
+                )
+                let decision = PreparationChunkGate.decide(policy: policy, thermal: thermal, isLowPowerModeEnabled: true, itemAlreadyListened: false)
+                XCTAssertEqual(decision, .pauseForHeat)
+                XCTAssertEqual(PreparationChunkGate.manifestState(after: decision, current: .preparing), .pausedForThermal)
+            }
+        }
+        for thermal in [SpeechThermalLevel.nominal, .fair] {
+            XCTAssertTrue(PreparationChunkGate.setsAsideForLowPowerMode(.whileCharging, thermal: thermal, isLowPowerModeEnabled: true))
+            XCTAssertTrue(PreparationChunkGate.setsAsideForLowPowerMode(.demandWindow, thermal: thermal, isLowPowerModeEnabled: true))
+            XCTAssertFalse(PreparationChunkGate.setsAsideForLowPowerMode(.explicit, thermal: thermal, isLowPowerModeEnabled: true))
+            XCTAssertFalse(PreparationChunkGate.setsAsideForLowPowerMode(.whileCharging, thermal: thermal, isLowPowerModeEnabled: false))
+        }
+    }
+
     /// The same cases the app tested on `Gate1AppModel.shouldSkipTextAudioPreparation` before the move.
     func testItemAlreadyListenedAtTheCutoffOrWhenFinished() {
         let atCutoff = session(id: "at-cutoff", percent: 99)
@@ -123,8 +145,8 @@ final class PreparationChunkGateTests: XCTestCase {
         }
     }
 
-    /// The pass renders one chunk per call. Heat in the middle of an article pauses it with the
-    /// committed chunks kept, and cooling resumes at the first missing chunk: no chunk renders twice.
+    /// The gate's decisions alone, over a model of one-chunk passes: heat mid-article pauses, cooling
+    /// resumes. It doesn't run the app's pass; the app-hosted test of the real pass is #64 Done when 2.
     func testHeatMidArticlePausesAndResumesWithoutRenderingAChunkTwice() {
         let plannedChunks = 6
         var committed: Set<Int> = []
