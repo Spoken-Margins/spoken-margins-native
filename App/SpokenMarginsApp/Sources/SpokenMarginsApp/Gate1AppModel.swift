@@ -15249,7 +15249,6 @@ final class Gate1AppModel: ObservableObject {
                 plan: plan,
                 maximumChunkCount: job.maximumChunkCount
             )
-            let completedIndexes = PreparedAudioCoordinator.completedIndexes(manifest, plan: plan, sourceText: sourceText, retryingStandInsFor: job)
             let ledger = offlineStorageLedger ?? OfflineStorageLedger(repository: store, rootDirectory: support)
             offlineStorageLedger = ledger
             let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
@@ -15261,11 +15260,9 @@ final class Gate1AppModel: ObservableObject {
             let atRender = preparationSeams.deviceConditions() // read again here: heat can rise during the setup above (Codex audit on 27fd1bd)
             let gate = PreparationChunkGate.decide(policy: job.policy, thermal: atRender.thermal, isLowPowerModeEnabled: atRender.isLowPowerModeEnabled,
                                                    itemAlreadyListened: item.sourceCompletedAt != nil || PreparationChunkGate.itemAlreadyListened(sourceSessions))
-            if let state = PreparationChunkGate.manifestState(after: gate, current: manifest.state) { // a heat pause keeps committed chunks
-                (manifest.state, manifest.updatedAt) = (state, Date())
-                try store.savePreparedAudioManifest(manifest)
-                try refreshLibraryRows(store: store)
-            }
+            let gated = try await coordinator.applyGate(gate, manifestId: manifest.id) // applied to the saved manifest: chunks committed meanwhile stay
+            manifest = gated.manifest ?? manifest
+            if gated.changed { try refreshLibraryRows(store: store) }
             if gate == .dropListenedItem {
                 // Removing speculative work must never invalidate committed audio.
                 try store.deleteAudioPreparationJob(id: job.id)
@@ -15273,6 +15270,7 @@ final class Gate1AppModel: ObservableObject {
                 return try hasMoreMatchingJobs()
             }
             guard gate == .render else { diagnostics["backgroundAudioPreparation"] = gate.rawValue; return false }
+            let completedIndexes = PreparedAudioCoordinator.completedIndexes(manifest, plan: plan, sourceText: sourceText, retryingStandInsFor: job)
             guard let next = eligiblePlan.first(where: { !completedIndexes.contains($0.index) }) else {
                 // All chunks are intact but nothing is assembled (#278): assemble now, because it
                 // otherwise happens only right after the last chunk is committed.
