@@ -577,6 +577,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var snapshot = SessionSnapshot() {
         didSet {
             recordPlaybackEventState(previous: oldValue)
+            updateNarrationVoiceNotice()
             if playingImportedCommentary != nil,
                oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId
                 || oldValue.targetId != snapshot.targetId || snapshot.status.isPlaybackActive {
@@ -600,6 +601,7 @@ final class Gate1AppModel: ObservableObject {
             updateGate2CompactState()
         }
     }
+    @Published var narrationVoiceNotice = NarrationVoiceNotice() // written by updateNarrationVoiceNotice() only
     private(set) var gate2CompactSnapshot: CompactControlSnapshot?
     let runtimeDiagnostics = RuntimeDiagnostics()
     var diagnostics: [String: String] {
@@ -977,7 +979,7 @@ final class Gate1AppModel: ObservableObject {
     #endif
     private let openAIResponsesClient = OpenAIResponsesClient()
     private let streamingSpeechQueue = StreamingSpeechQueue()
-    private var speechPlaybackClient: AudioPlaybackClient?
+    private(set) var speechPlaybackClient: AudioPlaybackClient?
     private var sessionAudioPlaybackClient: AudioPlaybackClient?
     private var supertonicRenderer: SupertonicNarrationRenderer?
     private var preparedAudioCoordinator: PreparedAudioCoordinator?
@@ -1723,6 +1725,7 @@ final class Gate1AppModel: ObservableObject {
                         if updated != self.snapshot {
                             self.snapshot = updated
                         }
+                        self.updateNarrationVoiceNotice()
                         if previousEngagementProgress < 25,
                            updated.currentPlaybackProgressPercent >= 25,
                            let itemId = updated.itemId,
@@ -8840,16 +8843,6 @@ final class Gate1AppModel: ObservableObject {
         return selectedItem.title.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    var playbackChapterHeaderTitle: String? {
-        let itemTitle = playbackItemHeaderTitle
-        let combined = playbackHeaderTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !combined.isEmpty,
-              combined.caseInsensitiveCompare(itemTitle) != .orderedSame else {
-            return nil
-        }
-        return combined
-    }
-
     var exportSourceTextAvailable: Bool {
         !selectedItem.isNativeAudio
     }
@@ -14698,7 +14691,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["recentFailure"] = message
     }
 
-    private func presentFeedback(_ event: UserFeedbackEvent) {
+    func presentFeedback(_ event: UserFeedbackEvent) {
         guard feedbackEvent?.mayBeReplaced(by: event) ?? true else { return }
         feedbackEvent = event
     }
