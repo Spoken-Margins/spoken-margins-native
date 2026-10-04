@@ -1003,8 +1003,8 @@ final class Gate1AppModel: ObservableObject {
     @Published private var followOffers: [String: FollowOffer] = [:]
     private var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
     private let recordingClientOverride: RecordingClient?
-    private let microphonePermissionRequest: (() async -> Bool)?
-    private let microphonePermissionStatusOverride: (() -> PermissionPromptStatus)?
+    let microphonePermissionRequest: (() async -> Bool)?
+    let microphonePermissionStatusOverride: (() -> PermissionPromptStatus)?
     private let forcePreparedTextGate: Bool
     private let sourceTranscriptionClient: SourceTranscriptionClient
     private let interjectionTranscriptionHandler: InterjectionTranscriptionHandler
@@ -6304,12 +6304,6 @@ final class Gate1AppModel: ObservableObject {
         requestMicrophoneThenRecord(requestedAt: Date(), captureID: captureID)
     }
 
-    /// The permission state the primer reads. A test that injects only the request skips the line.
-    private func microphonePrimerStatus() -> PermissionPromptStatus? {
-        if let microphonePermissionStatusOverride { return microphonePermissionStatusOverride() }
-        return microphonePermissionRequest == nil ? Self.microphonePermissionStatus() : nil
-    }
-
     private func requestMicrophoneThenRecord(requestedAt: Date, captureID voiceCaptureRequestID: UUID) {
         Task {
             let granted = await requestMicrophonePermission()
@@ -6351,31 +6345,6 @@ final class Gate1AppModel: ObservableObject {
         if !snapshot.isRecording {
             recordingPresentationContext = nil
         }
-    }
-
-    /// #217: waits as long as the system prompt is up; a slow Allow is still a yes.
-    private func requestMicrophonePermission(timeoutSeconds: TimeInterval = 10) async -> Bool {
-        if let microphonePermissionRequest { return await microphonePermissionRequest() }
-        let granted = await PermissionPromptWait.awaitAnswer(
-            request: { await SystemRecordingClient.requestRecordPermission() },
-            currentStatus: { Self.microphonePermissionStatus() },
-            timeout: .seconds(timeoutSeconds)
-        )
-        diagnostics["lastMicrophonePermissionResult"] = granted ? "granted" : "denied"
-        return granted
-    }
-
-    private nonisolated static func microphonePermissionStatus() -> PermissionPromptStatus {
-        #if canImport(AVFoundation) && os(iOS)
-        switch AVAudioApplication.shared.recordPermission {
-        case .granted: return .granted
-        case .denied: return .denied
-        case .undetermined: return .undetermined
-        @unknown default: return .undetermined
-        }
-        #else
-        return .granted
-        #endif
     }
 
     /// Publish acknowledgement before synchronous recorder/store finalization.
