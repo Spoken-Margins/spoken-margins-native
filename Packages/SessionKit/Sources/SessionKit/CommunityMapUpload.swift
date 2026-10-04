@@ -82,6 +82,7 @@ public enum CommunityMapUploadSkipReason: String, Equatable, Sendable {
     case noEpisodeKey = "no_episode_key"
     case partialTranscript = "partial_transcript"
     case untimedTranscript = "untimed_transcript"
+    case unknownDuration = "unknown_duration"
     case publisherChapters = "publisher_chapters"
     case alreadyUploaded = "already_uploaded"
     case rejectedBefore = "rejected_before"
@@ -126,12 +127,6 @@ public enum CommunityMapUploadPolicy {
         guard linksArePublic(item) else { return .skip(.privateLink) }
         guard feedIsVerified(item) else { return .skip(.unverifiedFeed) }
         guard let episodeKey = CommunityMapEpisodeKey.key(for: item) else { return .skip(.noEpisodeKey) }
-        let durationMs = durationMs(item: item, timeline: timeline)
-        guard hasRealTiming(timeline, durationMs: durationMs) else { return .skip(.untimedTranscript) }
-        guard coverage(of: timeline, durationMs: durationMs) >= minimumCoverage else {
-            return .skip(.partialTranscript)
-        }
-        guard !hasPublisherChapters else { return .skip(.publisherChapters) }
         if let previous {
             switch previous.state {
             case .uploaded: return .skip(.alreadyUploaded)
@@ -141,6 +136,12 @@ public enum CommunityMapUploadPolicy {
                 guard previous.attempts < maximumAttempts else { return .skip(.tooManyAttempts) }
             }
         }
+        guard let durationMs = durationMs(item: item) else { return .skip(.unknownDuration) }
+        guard hasRealTiming(timeline, durationMs: durationMs) else { return .skip(.untimedTranscript) }
+        guard coverage(of: timeline, durationMs: durationMs) >= minimumCoverage else {
+            return .skip(.partialTranscript)
+        }
+        guard !hasPublisherChapters else { return .skip(.publisherChapters) }
         return .upload(episodeKey: episodeKey)
     }
 
@@ -176,8 +177,10 @@ public enum CommunityMapUploadPolicy {
         return timeline?.chapters.contains { $0.id.hasPrefix("ch-publisher-") } ?? false
     }
 
-    public static func durationMs(item: Item, timeline: TranscriptTimeline) -> Int? {
-        [item.media?.durationMs, timeline.durationMs].compactMap { $0 }.first { $0 > 0 }
+    /// The episode's own length, from the feed or the audio. Not the transcript's: a transcript
+    /// that stops early would measure itself as complete.
+    public static func durationMs(item: Item) -> Int? {
+        item.media?.durationMs.flatMap { $0 > 0 ? $0 : nil }
     }
 
     /// Failed uploads whose day has passed, for the app to try again (at most once a day).
@@ -351,8 +354,9 @@ public struct CommunityMapUploader: Sendable {
     /// - `mapsState` is read only for an otherwise eligible episode, so an opted-out phone, or one
     ///   with nothing to send, makes no request at all.
     ///
-    /// An eligible episode held back by something that can change (no file to check, maps off,
-    /// no config) is recorded as failed, so the app tries it again a day later.
+    /// An eligible episode held back by something that can change (no file to check, length not
+    /// yet known, maps off, no config, the app closed mid-upload) is recorded as failed, so the
+    /// app tries it again a day later.
     public func uploadIfEligible(
         item: Item,
         timeline: TranscriptTimeline,
@@ -366,6 +370,8 @@ public struct CommunityMapUploader: Sendable {
         guard await optedIn() else { return .skipped(.optedOut) }
         let previous = CommunityMapEpisodeKey.key(for: item).flatMap { try? repository.loadCommunityMapUpload(episodeKey: $0) }
         let chapters = await publisherChapters()
+        // Reading the audio file can take a while; the setting may have been turned off meanwhile.
+        guard await optedIn() else { return .skipped(.optedOut) }
         let decision = CommunityMapUploadPolicy.decide(
             optedIn: true, item: item, timeline: timeline,
             hasPublisherChapters: chapters ?? false, previous: previous, now: now
@@ -373,38 +379,57 @@ public struct CommunityMapUploader: Sendable {
         guard case .upload(let episodeKey) = decision else {
             let reason: CommunityMapUploadSkipReason
             if case .skip(let skipped) = decision { reason = skipped } else { reason = .unusableTranscript }
+            // The episode's length can be learned later (from the feed or playback): try again.
+            if reason == .unknownDuration, let episodeKey = CommunityMapEpisodeKey.key(for: item) {
+                return save(.failed(reason.rawValue), episodeKey: episodeKey, item: item, previous: previous, now: now, repository: repository)
+            }
             return settle(previous, skipped: reason, now: now, repository: repository)
         }
-        guard let durationMs = CommunityMapUploadPolicy.durationMs(item: item, timeline: timeline),
+        guard let durationMs = CommunityMapUploadPolicy.durationMs(item: item),
               let upload = CommunityMapTranscriptUpload.make(episodeKey: episodeKey, durationMs: durationMs, language: language, timeline: timeline),
               let body = try? upload.encoded() else {
             return settle(previous, skipped: .unusableTranscript, now: now, repository: repository)
         }
+        guard chapters != nil else {
+            return save(.failed("chapters_unchecked"), episodeKey: episodeKey, item: item, previous: previous, now: now, repository: repository)
+        }
+        // Recorded before any request, so an app that is closed mid-upload still retries it.
+        _ = save(.failed("interrupted"), episodeKey: episodeKey, item: item, previous: previous, now: now, repository: repository)
+        guard (await mapsState()).isOn else {
+            return save(.failed(CommunityMapUploadSkipReason.mapsOff.rawValue), episodeKey: episodeKey, item: item, previous: previous, now: now, repository: repository)
+        }
+        guard await optedIn() else { return .skipped(.optedOut) }
         let outcome: CommunityMapUploadOutcome
-        let recordState: CommunityMapUploadRecord.State
-        if chapters == nil {
-            (outcome, recordState) = (.failed("chapters_unchecked"), .failed)
-        } else if !(await mapsState()).isOn {
-            (outcome, recordState) = (.failed(CommunityMapUploadSkipReason.mapsOff.rawValue), .failed)
-        } else if !(await optedIn()) {
-            return .skipped(.optedOut)
-        } else {
-            do {
-                let status = try await post(url, body)
-                switch status {
-                case 200, 202:
-                    (outcome, recordState) = (.uploaded(status: status), .uploaded)
-                case 400..<500 where status != 429:
-                    (outcome, recordState) = (.rejected(status: status), .rejected)
-                default:
-                    (outcome, recordState) = (.failed(String(status)), .failed)
-                }
-            } catch {
-                (outcome, recordState) = (.failed("network"), .failed)
+        do {
+            let status = try await post(url, body)
+            switch status {
+            case 200, 202: outcome = .uploaded(status: status)
+            case 400..<500 where status != 429: outcome = .rejected(status: status)
+            default: outcome = .failed(String(status))
             }
+        } catch {
+            outcome = .failed("network")
+        }
+        return save(outcome, episodeKey: episodeKey, item: item, previous: previous, now: now, repository: repository)
+    }
+
+    /// Records this attempt for the episode and returns its outcome.
+    private func save(
+        _ outcome: CommunityMapUploadOutcome,
+        episodeKey: String,
+        item: Item,
+        previous: CommunityMapUploadRecord?,
+        now: Date,
+        repository: CommunityMapUploadRepository
+    ) -> CommunityMapUploadOutcome {
+        let state: CommunityMapUploadRecord.State
+        switch outcome {
+        case .uploaded: state = .uploaded
+        case .rejected: state = .rejected
+        case .failed, .skipped: state = .failed
         }
         let record = CommunityMapUploadRecord(
-            id: episodeKey, itemId: item.id, state: recordState, attempts: (previous?.attempts ?? 0) + 1,
+            id: episodeKey, itemId: item.id, state: state, attempts: (previous?.attempts ?? 0) + 1,
             lastAttemptAt: now, lastOutcome: outcome.diagnostic
         )
         try? repository.saveCommunityMapUpload(record)

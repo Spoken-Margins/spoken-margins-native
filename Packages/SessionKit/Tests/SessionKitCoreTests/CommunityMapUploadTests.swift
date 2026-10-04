@@ -153,7 +153,7 @@ final class CommunityMapUploadTests: XCTestCase {
         // With no duration in the feed, the block runs 0 to 1 ms.
         let noDuration = TranscriptTimeline(segments: [MediaTimelineSegment(id: "all", startMs: 0, endMs: 1, text: "The whole episode as text.")],
                                             chapters: [], durationMs: 1)
-        XCTAssertEqual(decide(item: episode(durationMs: nil), timeline: noDuration), .skip(.untimedTranscript))
+        XCTAssertEqual(decide(item: episode(durationMs: 600_000), timeline: noDuration), .skip(.untimedTranscript))
         // A few sparse segments, or a ten-minute silence in the middle, are not a listened transcript either.
         let sparse = TranscriptTimeline(segments: [
             MediaTimelineSegment(id: "a", startMs: 0, endMs: 10_000, text: "Start."),
@@ -163,6 +163,23 @@ final class CommunityMapUploadTests: XCTestCase {
         var gapped = timed(from: 0, to: 600_000)
         gapped.segments.removeAll { $0.startMs >= 100_000 && $0.startMs < 410_000 }
         XCTAssertEqual(decide(timeline: gapped), .skip(.untimedTranscript))
+    }
+
+    func testATranscriptIsMeasuredAgainstTheEpisodesOwnLengthNotItsOwn() async throws {
+        // A VTT covering the first ten minutes of an hour-long episode whose feed gave no length:
+        // the parser sets the timeline's duration to its last cue, which would look complete.
+        let firstTenMinutes = timed(from: 0, to: 600_000)
+        XCTAssertEqual(decide(item: episode(durationMs: nil), timeline: firstTenMinutes), .skip(.unknownDuration))
+        XCTAssertEqual(decide(item: episode(durationMs: 3_600_000), timeline: firstTenMinutes), .skip(.partialTranscript))
+
+        // Held for a retry once the length is known, not dropped.
+        let repository = InMemorySessionRepository()
+        let uploader = CommunityMapUploader { _, _ in 202 }
+        let held = await upload(uploader, item: episode(durationMs: nil), timeline: firstTenMinutes, repository: repository)
+        XCTAssertEqual(held, .failed("unknown_duration"))
+        XCTAssertEqual(try repository.loadCommunityMapUpload(episodeKey: expectedKey)?.state, .failed)
+        let known = await upload(uploader, repository: repository, at: now.addingTimeInterval(86_400))
+        XCTAssertEqual(known, .uploaded(status: 202))
     }
 
     func testAnEpisodeWithPublisherChaptersDoesNotUpload() {
@@ -357,7 +374,50 @@ final class CommunityMapUploadTests: XCTestCase {
         XCTAssertEqual(outcome, .skipped(.optedOut))
         let postCount = await posted.bodies.count
         XCTAssertEqual(postCount, 0)
+        // Only the attempt recorded before the request remains; retries run only while opted in.
+        XCTAssertEqual(try repository.loadCommunityMapUpload(episodeKey: expectedKey)?.lastOutcome, "failed:interrupted")
+    }
+
+    func testTurningTheSettingOffWhileTheAudioIsReadMakesNoRequest() async throws {
+        let repository = InMemorySessionRepository()
+        let posted = PostedBodies()
+        let asked = PostedBodies()
+        let uploader = CommunityMapUploader { url, body in await posted.append(url, body); return 202 }
+        let setting = OptInSetting()
+        let outcome = await upload(
+            uploader, repository: repository, optedIn: { await setting.isOn },
+            publisherChapters: { await setting.turnOff(); return false },
+            mapsState: { await asked.append(CommunityMapUploader.transcriptsURL, Data()); return .on }
+        )
+        XCTAssertEqual(outcome, .skipped(.optedOut))
+        let askCount = await asked.bodies.count
+        let postCount = await posted.bodies.count
+        XCTAssertEqual(askCount, 0)
+        XCTAssertEqual(postCount, 0)
         XCTAssertNil(try repository.loadCommunityMapUpload(episodeKey: expectedKey))
+    }
+
+    func testAnUploadCutOffMidwayIsAlreadyRecordedForRetry() async throws {
+        // While the config request or the post is in flight the app can be closed; the record
+        // must already exist by then, or the episode is never tried again.
+        let repository = InMemorySessionRepository()
+        let key = expectedKey
+        let seen = RecordSeen()
+        let uploader = CommunityMapUploader { _, _ in
+            await seen.note(try? repository.loadCommunityMapUpload(episodeKey: key))
+            return 202
+        }
+        let outcome = await upload(uploader, repository: repository, mapsState: {
+            await seen.note(try? repository.loadCommunityMapUpload(episodeKey: key))
+            return .on
+        })
+        XCTAssertEqual(outcome, .uploaded(status: 202))
+        let midway = await seen.records
+        XCTAssertEqual(midway.map(\.state), [.failed, .failed])
+        XCTAssertEqual(midway.map(\.lastOutcome), ["failed:interrupted", "failed:interrupted"])
+        let final = try XCTUnwrap(repository.loadCommunityMapUpload(episodeKey: expectedKey))
+        XCTAssertEqual(final.state, .uploaded)
+        XCTAssertEqual(final.attempts, 1)
     }
 
     func testAnEpisodeIsHeldUntilItsAudioCanBeCheckedForEmbeddedChapters() async throws {
@@ -481,6 +541,14 @@ private actor PostedBodies {
     func append(_ url: URL, _ body: Data) {
         urls.append(url)
         bodies.append(body)
+    }
+}
+
+private actor RecordSeen {
+    private(set) var records: [CommunityMapUploadRecord] = []
+
+    func note(_ record: CommunityMapUploadRecord?) {
+        if let record { records.append(record) }
     }
 }
 
