@@ -454,6 +454,23 @@ class FinishSelectionTests(unittest.TestCase):
         for at in ('', 'invalid'):
             self.assertFalse(self.eligible(pull(labels=['needs-mac'], comments=[dict(c, createdAt=at)])))
 
+    def test_other_finishers_claims_hold_for_two_hours(self):
+        for text in ('Finisher two taking this.', 'Mac finisher taking this PR.',
+                     'Finisher one taking this.\n\nMerging next first.', '**Mac finisher taking this PR.**'):
+            claim = {'body': text, 'createdAt': '2026-10-01T11:30:00Z'}
+            for trigger in (pull(labels=['needs-mac']), pull(comments=[lane()]), pull(comments=[audit()])):
+                trigger['comments'] += [claim]
+                self.assertEqual(w.finish_eligible(trigger, NOW), (False, w.OTHER_FINISHER_REASON), text)
+            # Exactly two hours old no longer holds.
+            self.assertTrue(self.eligible(pull(labels=['needs-mac'], comments=[dict(claim, createdAt='2026-10-01T11:00:00Z')])))
+            for at in ('', 'invalid'):
+                self.assertFalse(self.eligible(pull(labels=['needs-mac'], comments=[dict(claim, createdAt=at)])))
+        # Codex's own claim, a quoted claim mid-comment, and a hand-off to a finisher do not hold.
+        for text in ('Finisher Codex taking this.\n\nThread "Codex worker 1" finishing #73',
+                     'Note: "Finisher two taking this." was posted yesterday.',
+                     'Handing to the Mac finisher: build fails.'):
+            self.assertTrue(self.eligible(pull(labels=['needs-mac'], comments=[{'body': text, 'createdAt': '2026-10-01T12:30:00Z'}])), text)
+
     def test_newest_audit_must_name_head_and_open_with_findings(self):
         self.assertTrue(self.eligible(pull(comments=[audit()])))
         self.assertFalse(self.eligible(pull(comments=[audit(head='9876543')])))
