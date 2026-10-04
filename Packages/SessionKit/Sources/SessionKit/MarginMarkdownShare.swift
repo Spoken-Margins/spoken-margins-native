@@ -62,26 +62,33 @@ public enum MarginMarkdownShare {
     /// Every active Margin of one item, in the order they sit in the source, as one file named
     /// `Margins - <item title>.md`. Nil when the item has no Margin with a note.
     public static func file(forItemMargins margins: [Interjection], engine: SessionEngine) throws -> MarginMarkdownFile? {
-        // The percent is coarse: two Margins in the same percent follow their media time, or
-        // for a text anchor its character, before when they were recorded.
-        func sourceOrder(_ margin: Interjection) -> (Int, Int, Int) {
-            let anchor = margin.anchor
-            return (margin.roughPercent, anchor.mediaTimeMs ?? 0, anchor.anchorType == .text ? anchor.startChar : 0)
-        }
-        let ordered = margins.filter(hasNote).sorted {
-            let (lhs, rhs) = (sourceOrder($0), sourceOrder($1))
-            return lhs != rhs ? lhs < rhs : ($0.createdAt, $0.id) < ($1.createdAt, $1.id)
-        }
-        var title: String?
-        var notes: [String] = []
-        for margin in ordered {
+        var notes: [(margin: Interjection, export: SessionExport, markdown: String)] = []
+        for margin in margins where hasNote(margin) {
             let (export, markdown) = try note(for: margin, engine: engine)
-            guard !markdown.isEmpty else { continue }
-            title = title ?? export.item.title
-            notes.append(markdown)
+            if !markdown.isEmpty { notes.append((margin, export, markdown)) }
         }
-        guard let title, !notes.isEmpty else { return nil }
-        return MarginMarkdownFile(fileName: "Margins - \(safeName(title)).md", markdown: notes.joined(separator: separator))
+        guard let item = notes.first?.export.item else { return nil }
+        let timed = recordedMediaSources.contains(item.mediaSourceType ?? "")
+        notes.sort {
+            let (lhs, rhs) = (sourceOrder($0.margin, timed: timed), sourceOrder($1.margin, timed: timed))
+            return lhs != rhs ? lhs < rhs : ($0.margin.createdAt, $0.margin.id) < ($1.margin.createdAt, $1.margin.id)
+        }
+        return MarginMarkdownFile(
+            fileName: "Margins - \(safeName(item.title)).md",
+            markdown: notes.map(\.markdown).joined(separator: separator)
+        )
+    }
+
+    /// Items whose source is a recording: their Margins follow media time. Every other item is
+    /// text, even when narrated, and its Margins follow their character in the text (#572 audit).
+    static let recordedMediaSources: Set<String> = [
+        AudioSourceType.nativeMediaFile.rawValue, AudioSourceType.browserOwnedMedia.rawValue, AudioSourceType.remoteStream.rawValue,
+    ]
+
+    /// The percent is coarse: within one, a recording's Margins follow media time and a text's
+    /// Margins their start character, whether or not narration gave them a media time.
+    static func sourceOrder(_ margin: Interjection, timed: Bool) -> (Int, Int) {
+        (margin.roughPercent, timed ? margin.anchor.mediaTimeMs ?? 0 : margin.anchor.startChar)
     }
 
     /// Writes the file into a fresh folder under `directory`, so two shares with the same name
@@ -109,12 +116,13 @@ public enum MarginMarkdownShare {
     /// and trailing dots and spaces go, and it is cut to 150 UTF-8 bytes without splitting a
     /// character, which leaves room for the rest of the name under the 255-byte limit.
     static func safeName(_ title: String) -> String {
-        let reserved = Set("/\\:*?\"<>|")
+        let reserved = Set("/\\:*?\"<>|".unicodeScalars)
         var name = ""
         for character in title {
             if character.isWhitespace {
                 if !name.hasSuffix(" ") { name.append(" ") }
-            } else if reserved.contains(character) || character.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) {
+            } else if character.unicodeScalars.contains(where: { reserved.contains($0) || $0.properties.generalCategory == .control }) {
+                // Per scalar: `/` followed by a combining accent is one Character, still a slash.
                 name.append("-")
             } else {
                 name.append(character)

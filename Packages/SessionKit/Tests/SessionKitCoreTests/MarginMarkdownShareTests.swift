@@ -63,6 +63,36 @@ final class MarginMarkdownShareTests: XCTestCase {
         XCTAssertTrue(notes[1].contains("Thought first-recorded."), file.markdown)
     }
 
+    func testANarratedTextsMarginsFollowTheirCharacterEvenWithAMediaTime() throws {
+        // Prepared narration gives one Margin a media time; system speech leaves the other without.
+        let item = item(title: "A narrated article")
+        let margins = [
+            margin("system-speech", item: item, mediaTimeMs: nil, percent: 10, startChar: 1_080),
+            margin("narration", item: item, mediaTimeMs: 61_000, percent: 10, startChar: 1_020),
+        ]
+        let notes = try XCTUnwrap(try MarginMarkdownShare.file(forItemMargins: margins, engine: engine(item: item, margins: margins)))
+            .markdown.components(separatedBy: MarginMarkdownShare.separator)
+        XCTAssertEqual(notes.count, 2)
+        XCTAssertTrue(notes[0].contains("Thought narration."), notes[0])
+        XCTAssertTrue(notes[1].contains("Thought system-speech."), notes[1])
+    }
+
+    func testARecordingsMarginsFollowMediaTime() throws {
+        let item = Item(
+            id: "item-1", title: "An episode", mediaType: "audio", text: nil, externalReference: nil, status: "ready",
+            media: ItemMedia(sourceType: .nativeMediaFile, url: "file:///episode.mp3")
+        )
+        let margins = [
+            margin("later-in-episode", item: item, mediaTimeMs: 90_000, percent: 10, startChar: 100, createdAt: createdAt),
+            margin("earlier-in-episode", item: item, mediaTimeMs: 80_000, percent: 10, startChar: 900, createdAt: createdAt.addingTimeInterval(60)),
+        ]
+        let notes = try XCTUnwrap(try MarginMarkdownShare.file(forItemMargins: margins, engine: engine(item: item, margins: margins)))
+            .markdown.components(separatedBy: MarginMarkdownShare.separator)
+        XCTAssertEqual(notes.count, 2)
+        XCTAssertTrue(notes[0].contains("Thought earlier-in-episode."), notes[0])
+        XCTAssertTrue(notes[1].contains("Thought later-in-episode."), notes[1])
+    }
+
     func testAPlaceholderDateIsReadAgainstTheSessionStart() throws {
         let item = item(title: "An essay")
         var margin = margin("old", item: item, mediaTimeMs: nil, percent: 10)
@@ -94,6 +124,7 @@ final class MarginMarkdownShareTests: XCTestCase {
         XCTAssertEqual(MarginMarkdownShare.safeName("👩‍👩‍👧 Family 🎧"), "👩‍👩‍👧 Family 🎧", "emoji, including joined ones, stay whole")
         XCTAssertEqual(MarginMarkdownShare.safeName(""), "Untitled")
         XCTAssertEqual(MarginMarkdownShare.safeName("/:"), "--")
+        XCTAssertEqual(MarginMarkdownShare.safeName("a/\u{0301}b"), "a-b", "a slash with a combining accent is still a slash")
         XCTAssertEqual(MarginMarkdownShare.safeName(" . "), "Untitled")
         let long = String(repeating: "🎧", count: 100)
         XCTAssertEqual(MarginMarkdownShare.safeName(long), String(repeating: "🎧", count: 37), "150 bytes, never splitting a character")
@@ -134,7 +165,7 @@ final class MarginMarkdownShareTests: XCTestCase {
     func testLongTitlesInAnyScriptStillMakeAWritableFile() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        for title in [String(repeating: "聞", count: 120), String(repeating: "👩‍👩‍👧", count: 80), String(repeating: "x", count: 400)] {
+        for title in ["Up/\u{0301}down", String(repeating: "聞", count: 120), String(repeating: "👩‍👩‍👧", count: 80), String(repeating: "x", count: 400)] {
             let item = Item(id: "item-1", title: title, mediaType: "text", text: "Source text.", externalReference: nil, status: "ready")
             let margin = margin("m1", item: item, mediaTimeMs: 3_723_000, percent: 50)
             let file = try XCTUnwrap(try MarginMarkdownShare.file(for: margin, engine: engine(item: item, margins: [margin])))
