@@ -2025,8 +2025,8 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(interjection.anchor.anchorBefore, "First")
         XCTAssertEqual(interjection.anchor.anchorAfter, "sentence. Second sentence.")
         XCTAssertEqual(transcriber.scheduledInterjectionIds, [interjection.id])
-        XCTAssertEqual(engine.currentSession?.position.charOffset, "First ".count)
-        XCTAssertEqual(audio.playedOffsets.last, "First ".count)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, 0, "rejoins at the start of its sentence (#776)")
+        XCTAssertEqual(audio.playedOffsets.last, 0)
     }
 
     /// #624: spoken Margins were stamped one second after 1970 per Margin, which Readwise and the
@@ -2629,7 +2629,7 @@ final class SessionKitCoreTests: XCTestCase {
         }
     }
 
-    func testNativeAudioInterjectionFreezesClockBeforeSavingAndResumesAtExactAnchor() throws {
+    func testNativeAudioInterjectionFreezesClockBeforeSavingAndRejoinsJustBeforeTheAnchor() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
             displayName: "Phone/Tablet Online",
@@ -2662,8 +2662,8 @@ final class SessionKitCoreTests: XCTestCase {
 
         let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
         XCTAssertEqual(interjection.anchor.mediaTimeMs, 124_250)
-        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 124_250)
-        XCTAssertEqual(audio.playedOffsets.last, 124_250)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 121_250, "rejoins 3 s earlier (#776)")
+        XCTAssertEqual(audio.playedOffsets.last, 121_250)
     }
 
     func testRecordingInterjectionRejectsTimelineNavigationAndPreservesMediaAnchor() throws {
@@ -2738,8 +2738,8 @@ final class SessionKitCoreTests: XCTestCase {
         let saved = try XCTUnwrap(try repo.loadInterjections(sessionId: sessionID).first)
         XCTAssertEqual(saved.anchor.mediaTimeMs, 124_250)
         XCTAssertEqual(resumed.status, .playing)
-        XCTAssertEqual(resumed.currentMediaTimeMs, 124_250)
-        XCTAssertEqual(audio.playedOffsets.last, 124_250)
+        XCTAssertEqual(resumed.currentMediaTimeMs, 121_250, "rejoins 3 s earlier (#776)")
+        XCTAssertEqual(audio.playedOffsets.last, 121_250)
     }
 
     func testInspectSessionRepairsMediaPercentagesFromDurableTimestamps() throws {
@@ -2934,17 +2934,17 @@ final class SessionKitCoreTests: XCTestCase {
 
         XCTAssertEqual(detached.status, .idle)
         XCTAssertNil(detached.sessionId)
-        XCTAssertEqual(persisted.position.mediaTimeMs, 1_500_000)
+        XCTAssertEqual(persisted.position.mediaTimeMs, 1_497_000, "rejoined 3 s earlier (#776)")
         XCTAssertEqual(persisted.status, "in_progress")
         XCTAssertEqual(interjection.anchor.mediaTimeMs, 1_500_000)
 
         let restored = try engine.inspectSession(sessionId: sessionID)
         XCTAssertEqual(restored.status, .paused)
-        XCTAssertEqual(restored.currentMediaTimeMs, 1_500_000)
+        XCTAssertEqual(restored.currentMediaTimeMs, 1_497_000)
 
         let resumed = try engine.resumePlayback()
         XCTAssertEqual(resumed.status, .playing)
-        XCTAssertEqual(audio.playedOffsets.last, 1_500_000)
+        XCTAssertEqual(audio.playedOffsets.last, 1_497_000)
     }
 
     func testRepeatedMediaSeekInterjectionResumeCyclesKeepOneAdvancingClock() throws {
@@ -2990,8 +2990,8 @@ final class SessionKitCoreTests: XCTestCase {
             let recording = try engine.beginInterjection()
             XCTAssertEqual(recording.currentMediaTimeMs, beforeInterjection)
             let resumed = try engine.finishInterjection(audioRef: "interjections/cycle-\(index).m4a")
-            XCTAssertEqual(resumed.currentMediaTimeMs, beforeInterjection)
-            XCTAssertEqual(audio.playedOffsets.last, beforeInterjection)
+            XCTAssertEqual(resumed.currentMediaTimeMs, beforeInterjection - MarginRejoin.mediaStepBackMs)
+            XCTAssertEqual(audio.playedOffsets.last, beforeInterjection - MarginRejoin.mediaStepBackMs)
 
             audio.currentMediaTimeValue = beforeInterjection + 12_000
             let postResume = try engine.syncPlaybackProgress()
