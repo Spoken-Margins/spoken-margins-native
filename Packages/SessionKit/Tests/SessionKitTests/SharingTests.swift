@@ -1079,6 +1079,51 @@ final class SharingTests: XCTestCase {
         ), placed)
     }
 
+    /// A stored wrong-episode verdict (#456) survives a later pass whose acoustic step failed. That pass has
+    /// only the transcript, which matches the shared intro and would place the Margin on the rejected episode
+    /// (Codex audit on 75b32ad). An acoustic placement, a listener's confirmation or another edition lifts it.
+    func testStoredEditionRejectionSurvivesATranscriptOnlyPass() throws {
+        let rejection = try XCTUnwrap(PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+            ["inside-intro": ImportedAnchorResolution(evidenceClass: .unresolved), "a": .init(evidenceClass: .unresolved),
+             "b": .init(evidenceClass: .unresolved)],
+            matchedFlanks: 2, answeredFlanks: 6
+        )["inside-intro"])
+        XCTAssertTrue(PodcastAcousticAnchorResolver.isEditionRejection(rejection))
+
+        // The failed acoustic pass leaves fusion only the transcript of the shared intro.
+        let introTranscript = ImportedAnchorResolution(
+            evidenceClass: .transcriptVerified, localMediaTimeMs: 10_200, confidence: 0.9,
+            algorithmVersion: "podcast-transcript-anchor.v1"
+        )
+        let transcriptOnly = PodcastAnchorFusionResolver.fuse(
+            transcript: introTranscript, acoustic: ImportedAnchorResolution(evidenceClass: .unresolved)
+        )
+        XCTAssertNotNil(transcriptOnly.localMediaTimeMs, "fusion alone places the intro Margin")
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
+            previous: rejection, proposed: transcriptOnly, previousEdition: "edition-b", currentEdition: "edition-b",
+            hasTranscript: true
+        ), rejection, "the stored verdict stays on the same edition")
+
+        let acousticPlacement = ImportedAnchorResolution(
+            evidenceClass: .fused, localMediaTimeMs: 10_000, confidence: 0.95, algorithmVersion: "podcast-anchor.v1"
+        )
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
+            previous: rejection, proposed: acousticPlacement, previousEdition: "edition-b", currentEdition: "edition-b",
+            hasTranscript: true
+        ), acousticPlacement, "an acoustic pass that found the edition lifts the verdict")
+        let confirmed = ImportedAnchorResolution(
+            evidenceClass: .recipientConfirmed, localMediaTimeMs: 10_000, confidence: 1, algorithmVersion: "recipient.v1"
+        )
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
+            previous: rejection, proposed: confirmed, previousEdition: "edition-b", currentEdition: "edition-b",
+            hasTranscript: false
+        ), confirmed, "a listener's confirmation lifts the verdict")
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
+            previous: rejection, proposed: transcriptOnly, previousEdition: "edition-b", currentEdition: "edition-c",
+            hasTranscript: true
+        ), transcriptOnly, "a different edition starts afresh")
+    }
+
     /// Flanks ShazamKit can't answer for say nothing about the edition. Evidence recorded before Build 29 is
     /// 12 s and every query errors; an unreadable signature is skipped. Such a packet on the right episode must
     /// not be rejected as a different edition, or its transcript placements would be withdrawn.

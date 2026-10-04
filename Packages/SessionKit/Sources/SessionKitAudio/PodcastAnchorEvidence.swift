@@ -1044,6 +1044,9 @@ public enum PodcastAnchorFusionResolver {
     /// The resolution a re-resolution stores: a verified placement on the same recipient edition survives a
     /// weaker result, so a pass without a transcript doesn't undo one with it. An edition rejection (#456)
     /// isn't weaker: it withdraws the machine placements it finds. A listener's own confirmation stays.
+    /// A stored rejection survives a later pass on the same edition too, unless that pass confirms the edition
+    /// itself (`confirmsEdition`). Otherwise a pass whose acoustic step failed would let the shared intro's
+    /// transcript place the Margin on the rejected episode again (Codex audit on 75b32ad).
     public static func preservingVerifiedPlacement(
         previous: ImportedAnchorResolution, proposed: ImportedAnchorResolution,
         previousEdition: String?, currentEdition: String?, hasTranscript: Bool
@@ -1052,12 +1055,28 @@ public enum PodcastAnchorFusionResolver {
         if PodcastAcousticAnchorResolver.isEditionRejection(proposed) {
             return sameEdition && previous.evidenceClass == .recipientConfirmed ? previous : proposed
         }
+        if sameEdition, PodcastAcousticAnchorResolver.isEditionRejection(previous), !confirmsEdition(proposed) {
+            return previous
+        }
         let verified = isInlinePlacement(previous)
             && previous.evidenceClass != .timestampFallback && previous.evidenceClass != .mapInterpolated
         let weaker = proposed.evidenceClass == .unresolved || proposed.evidenceClass == .absentFromRecipientEdition
             || (!hasTranscript && proposed.evidenceClass == .ambiguous
                 && (previous.evidenceClass == .transcriptVerified || previous.evidenceClass == .fused))
         return sameEdition && verified && weaker ? previous : proposed
+    }
+
+    /// Whether a resolution is evidence about the edition itself, enough to lift an edition rejection: the
+    /// sender's exact file, the listener's own confirmation, or an acoustic match from a pass that didn't
+    /// reject the edition. A transcript match alone isn't: the shared intro's words match on either episode.
+    static func confirmsEdition(_ resolution: ImportedAnchorResolution) -> Bool {
+        switch resolution.evidenceClass {
+        case .exactEdition, .recipientConfirmed, .acousticVerified, .fused:
+            return resolution.localMediaTimeMs != nil
+        case .transcriptVerified, .articleTextVerified, .mapInterpolated, .timestampFallback,
+             .ambiguous, .absentFromRecipientEdition, .unresolved:
+            return false
+        }
     }
 
     /// Whether a podcast Margin plays inline at a recipient position.
