@@ -169,4 +169,38 @@ final class StructuredDocumentUpgradeSessionTests: XCTestCase {
         XCTAssertEqual(String(Array(upgradedText)[moved.position.charOffset...].prefix(10)), "The effect",
                        "the saved place, not render B's words at the same time")
     }
+
+    func testReadingTextForAMissingRenderKeepsTheSavedPlaceWhenAnotherRendersTimelineIsLeft() throws {
+        // Same rule as the upgrade (#344 audit 3), in SessionEngine.readText: render A's
+        // file is gone and render B was detached, leaving B's timeline. The session reads
+        // the text from its saved place, not B's words at A's time.
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let store = try SQLiteSessionStore(path: path)
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "pdf", displayName: "PDF", capabilities: ["sync": ["canonical_persistence"]]), repository: store)
+        let item = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: "shared-file://share-sheet/Paper.pdf", title: "Paper"),
+            text: "# Paper\n\n## Methods\n\nWe measured sleep in adults.\nThe effect held across cohorts.",
+            contentFormat: .markdown
+        ))
+        let text = try XCTUnwrap(item.text)
+        let measured = text.distance(from: text.startIndex, to: try XCTUnwrap(text.range(of: "We measured")).lowerBound)
+        let effect = text.distance(from: text.startIndex, to: try XCTUnwrap(text.range(of: "The effect")).lowerBound)
+        XCTAssertNil(item.media)
+        try store.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: "timeline-344-b", itemId: item.id, createdAt: Date(timeIntervalSince1970: 2),
+            timeline: TranscriptTimeline(segments: [
+                MediaTimelineSegment(id: "1", startMs: 0, endMs: 60_000, startChar: measured, endChar: measured, text: "We measured"),
+            ], chapters: [], durationMs: 60_000)
+        ))
+        let session = Session(id: "session-344-a", itemId: item.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .transcriptBackedMedia, currentTargetId: "file:///tmp/missing-narration-344-a-\(UUID().uuidString).caf", position: Position(charOffset: effect, mediaTimeMs: 30_000), completionPercent: 20, playbackRate: 1)
+        try store.saveSession(session)
+
+        try engine.inspectSession(sessionId: session.id)
+
+        XCTAssertEqual(engine.currentSession?.currentTargetType, .itemTextTTS)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, effect)
+        XCTAssertEqual(try store.loadSession(id: session.id)?.position.charOffset, effect)
+    }
 }

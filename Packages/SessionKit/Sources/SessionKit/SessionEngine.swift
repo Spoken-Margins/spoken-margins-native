@@ -3306,7 +3306,9 @@ public final class SessionEngine {
             try PreparedNarrationFallback.markPreparedAudioForRepreparation(itemId: detached.id, repository: repository)
         }
         currentItem = detached
-        let timelineDescribesTarget = targetIsCurrentRender || detached.media == nil
+        // With the media detached, nothing says whose timeline is left, so it isn't used
+        // (#344 audit 3).
+        let timelineDescribesTarget = targetIsCurrentRender
         var reading = PreparedNarrationFallback.liveSpeechSession(
             from: session, item: detached,
             timeline: timelineDescribesTarget ? sourceTranscriptTimeline(for: session) : nil
