@@ -52,6 +52,7 @@ struct SpokenMarginsApp: App {
     @StateObject private var model: Gate1AppModel
     @StateObject private var sharingCoordinator: Build23SharingCoordinator
     @StateObject private var catalogDrawer: CatalogDrawerModel
+    @StateObject private var bridge: BridgeService
     @Environment(\.scenePhase) private var scenePhase
     private let memoryFootprint: MemoryFootprintRecorder
     #if canImport(MetricKit)
@@ -76,6 +77,7 @@ struct SpokenMarginsApp: App {
         ListeningEditionShortcutBridge.model = model
         #endif
         _model = StateObject(wrappedValue: model)
+        _bridge = StateObject(wrappedValue: BridgeService(store: BridgeService.makeStore()))
         _sharingCoordinator = StateObject(
             wrappedValue: Build23SharingCoordinator(model: model)
         )
@@ -95,6 +97,7 @@ struct SpokenMarginsApp: App {
                 .environmentObject(model)
                 .environmentObject(sharingCoordinator)
                 .environmentObject(catalogDrawer)
+                .environmentObject(bridge)
                 .onReceive(NotificationCenter.default.publisher(for: ListeningReadyNotifications.opened)) { _ in model.openReadyListeningEdition() }
                 .onOpenURL { url in
                     model.handleIncomingURL(url)

@@ -2,6 +2,7 @@ import XCTest
 import SessionKit
 import SessionKitPersistence
 import SessionKitAudio
+import SessionKitFeeds
 @testable import SpokenMarginsApp
 #if canImport(UIKit)
 import UIKit
@@ -122,12 +123,13 @@ final class SourceLinkImportTests: XCTestCase {
         let store = try SQLiteSessionStore(path: databaseURL.path)
         let subscription = FeedSubscription(id: "subscription", source: SourceIdentity(id: "source", kind: .podcastFeed, canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Actual Publisher"), lastRefreshAt: Date())
         try store.saveFeedSubscription(subscription)
-        let entry = FeedEntry(id: "entry", subscriptionId: subscription.id, canonicalURL: "https://publisher.example/episode", audioURL: audioURL, title: "Actual episode title", author: "Actual author", summary: "00:00 Opening\n02:00 Discussion", publishedAt: Date(timeIntervalSince1970: 1_790_675_200), episodeGUID: "episode-42")
+        let entry = FeedEntry(id: "entry", subscriptionId: subscription.id, canonicalURL: "https://publisher.example/episode", audioURL: audioURL, title: "Actual episode title", author: "Actual author", summary: "00:00 Opening\n02:00 Discussion", publishedAt: Date(timeIntervalSince1970: 1_790_675_200), bodyWordCount: 900, fullBody: String(repeating: "Podcast transcript. ", count: 450), episodeGUID: "episode-42")
         try store.saveFeedEntry(entry)
         model.importFollowedSourceEntry(entry)
         try await waitFor("feed entry import") { model.libraryItems.contains { $0.title == entry.title } }
         let row = try XCTUnwrap(model.libraryItems.first { $0.title == entry.title })
         let persisted = try store.loadItem(id: row.id)
+        XCTAssertNotNil(persisted.media, "a long podcast transcript must not replace playable episode media")
         XCTAssertEqual(persisted.sourceTitle, "Actual Publisher")
         XCTAssertEqual(persisted.sourceURL, subscription.source.canonicalURL)
         XCTAssertEqual(persisted.externalReference, entry.canonicalURL)
@@ -167,6 +169,87 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(candidates.first?.source.canonicalURL, "https://example.com/canonical-feed")
         let subscription = try await coordinator.follow(urlString: "https://example.com/rss")
         XCTAssertEqual(subscription.source.id, candidates.first?.source.id)
+    }
+
+    /// #545: a Substack post with a voiceover was saved like an episode, so adding it made a podcast
+    /// item with no text. Following the feed now records each entry's body length and duration, and
+    /// the voiceover entry is the only one that imports as an article with publisher audio.
+    func testFollowingAPublicationWithVoiceoversMarksOnlyThePostsWithAFullBody() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [VoiceoverFeedURLProtocol.self]
+        let repository = InMemorySessionRepository()
+        let coordinator = FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration))
+
+        let subscription = try await coordinator.follow(urlString: "https://voiceovers.example/feed")
+
+        XCTAssertEqual(subscription.source.kind, .podcastFeed, "a feed with audio is still followed as it was")
+        let entries = try repository.loadFeedEntries(subscriptionId: subscription.id)
+        let post = try XCTUnwrap(entries.first { $0.title == "A post with a voiceover" })
+        let episode = try XCTUnwrap(entries.first { $0.title == "An episode" })
+        XCTAssertGreaterThanOrEqual(post.bodyWordCount ?? 0, 700)
+        XCTAssertEqual(post.audioDurationMs, 1_312_000)
+        XCTAssertFalse(post.hasPublisherAudio, "length alone is ambiguous")
+        let confirmed = await coordinator.publisherAudioEntry(for: post)
+        XCTAssertTrue(confirmed.hasPublisherAudio)
+        XCTAssertEqual(PublisherAudioDetector.publisherAudio(for: confirmed, itemId: "item")?.audioURL, "https://cdn.voiceovers.example/post.mp3")
+        XCTAssertFalse(episode.hasPublisherAudio, "an episode with short notes imports as audio, as before")
+        XCTAssertNil(PublisherAudioDetector.publisherAudio(for: episode, itemId: "item"))
+    }
+
+    func testPublisherNarrationImportsSubscriberFeedBodyWithoutPublicPageExtraction() async throws {
+        for openWhenFinished in [false, true] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let databaseURL = root.appendingPathComponent("subscriber.sqlite")
+            let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+            model.resetAndSeed()
+            model.startItem(id: "item-pill")
+            let activeSession = model.snapshot.sessionId
+            let extractor = RefusingPublisherPageExtractor()
+            model.readablePageExtractor = extractor
+            let store = try SQLiteSessionStore(path: databaseURL.path)
+            let subscription = FeedSubscription(id: "s", source: SourceIdentity(id: "publication", kind: .podcastFeed,
+                canonicalURL: "https://publisher.example/private-feed", host: "publisher.example", title: "Publisher"), lastRefreshAt: Date())
+            try store.saveFeedSubscription(subscription)
+            let sentences = String(repeating: "This subscriber article is available in the feed only. ", count: 90)
+            let html = "<p>Don&#8217;t stop. &ldquo;Listen&rdquo; &copy; 2026.</p><p>\(sentences)</p>"
+            let feed = "<rss><channel><item><title>Private publisher narration</title><link>https://publisher.example/p/private</link><content:encoded xmlns:content=\"http://purl.org/rss/1.0/modules/content/\"><![CDATA[\(html)]]></content:encoded></item></channel></rss>"
+            let parsed = try FeedParser().parse(data: Data(feed.utf8), contentType: "application/rss+xml")
+            let body = try XCTUnwrap(parsed.items.first?.content)
+            let expected = "Don’t stop. “Listen” © 2026. " + sentences.trimmingCharacters(in: .whitespacesAndNewlines)
+            let entry = FeedEntry(id: "private-post", subscriptionId: "s", canonicalURL: "https://publisher.example/p/private",
+                audioURL: "https://publisher.example/private.mp3", title: "Private publisher narration", bodyWordCount: 810,
+                fullBody: body, publisherNarrationConfirmed: true, audioDurationMs: 60_000)
+            try store.saveFeedEntry(entry)
+            model.importFollowedSourceEntry(entry, openWhenFinished: openWhenFinished)
+            try await waitFor("subscriber feed article import") {
+                (try? store.loadFeedEntries(subscriptionId: "s").first?.state) == .imported
+            }
+            let row = try XCTUnwrap(model.libraryItems.first { $0.title == entry.title })
+            let item = try store.loadItem(id: row.id)
+            XCTAssertEqual(item.mediaType, "text")
+            XCTAssertEqual(item.text, expected, "Add and open must import decoded feed text")
+            XCTAssertNil(item.media)
+            XCTAssertEqual(try store.loadPublisherAudio(itemId: item.id)?.audioURL, entry.audioURL)
+            XCTAssertEqual(extractor.calls, 0, "a public 403/teaser must never replace accessible feed text")
+            XCTAssertEqual(model.snapshot.sessionId, activeSession)
+            XCTAssertEqual(model.selectedItem.id, openWhenFinished ? item.id : "item-pill")
+        }
+    }
+
+    func testConfirmedNarrationWithoutStoredBodyUsesTheArticleExtractor() async throws {
+        let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://publisher.example/p/article",
+            audioURL: "https://publisher.example/recording.mp3", title: "Article", bodyWordCount: 720,
+            publisherNarrationConfirmed: true)
+        let expected = BrowserTextHandoff(captureMode: .readablePage,
+            source: BrowserTextSource(url: entry.canonicalURL, title: entry.title), text: "Extracted body.")
+        let extractor = RefusingPublisherPageExtractor(result: expected)
+        var diagnostics: [String: String] = [:]
+        let result = try await FollowedArticleImport.handoff(for: entry, url: XCTUnwrap(URL(string: entry.canonicalURL)),
+            using: extractor, record: { diagnostics = $0 })
+        XCTAssertEqual(result, expected)
+        XCTAssertEqual(extractor.calls, 1)
+        XCTAssertEqual(diagnostics["followedArticleExtractor"], "unauthenticated-page")
     }
 
     func testFollowedSourceAcceptsLargeFeedAndRetainsOnlyNewestTwentyFiveSuggestions() async throws {
@@ -1584,6 +1667,52 @@ private struct StaticAppLinkResolver: LinkResolutionClient {
     }
 }
 
+private final class VoiceoverFeedURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let feedData = Data("""
+    <?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+    <channel><title>Voiceovers</title><link>https://voiceovers.example</link><generator>Substack</generator>
+    <item><title>A post with a voiceover</title><link>https://voiceovers.example/p/post</link><guid>post</guid>
+    <description>Subtitle.</description><enclosure url="https://cdn.voiceovers.example/post.mp3" type="audio/mpeg"/>
+    <itunes:duration>1312</itunes:duration>
+    <content:encoded><![CDATA[<p>\(String(repeating: "Listening in the margins. ", count: 180))</p>]]></content:encoded></item>
+    <item><title>An episode</title><link>https://voiceovers.example/p/episode</link><guid>episode</guid>
+    <description>Subtitle.</description><enclosure url="https://cdn.voiceovers.example/episode.mp3" type="audio/mpeg"/>
+    <content:encoded><![CDATA[<p>Show notes for the episode.</p>]]></content:encoded></item>
+    </channel></rss>
+    """.utf8)
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "voiceovers.example"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/rss+xml"]) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if url.path == "/p/post" {
+            let post: [String: Any] = ["id": 1, "type": "newsletter", "has_voiceover": true,
+                "canonical_url": "https://voiceovers.example/p/post", "audio_items": [
+                    ["post_id": 1, "type": "voiceover", "status": "completed", "audio_url": "https://cdn.voiceovers.example/post.mp3"]]]
+            let json = try! JSONSerialization.data(withJSONObject: ["post": post], options: [.sortedKeys, .withoutEscapingSlashes])
+            let encoded = try! JSONEncoder().encode(String(decoding: json, as: UTF8.self))
+            client?.urlProtocol(self, didLoad: Data("<script>window._preloads = JSON.parse(\(String(decoding: encoded, as: UTF8.self)));</script>".utf8))
+        } else {
+            client?.urlProtocol(self, didLoad: Self.feedData)
+        }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
 private final class LargePodcastFeedURLProtocol: URLProtocol, @unchecked Sendable {
     private static let feedData: Data = {
         let padding = String(repeating: "x", count: 2 * 1_024 * 1_024 + 1)
@@ -1881,5 +2010,19 @@ private extension Gate1AppModel {
     /// Per-Margin diagnostics are keyed by a session token; these tests run a single session.
     func marginDiagnostic(_ name: String, interjectionId: String) -> String? {
         diagnostics.first { $0.key.hasPrefix("\(name):") && $0.key.hasSuffix("/\(interjectionId)") }?.value
+    }
+}
+
+@MainActor
+private final class RefusingPublisherPageExtractor: ReadablePageExtracting {
+    var calls = 0
+    private let result: BrowserTextHandoff?
+    init(result: BrowserTextHandoff? = nil) { self.result = result }
+    var lastExtractor: String? { "unauthenticated-page" }
+    var contactedHosts: [String] { [] }
+    func extract(url: URL) async throws -> BrowserTextHandoff {
+        calls += 1
+        if let result { return result }
+        throw URLError(.userAuthenticationRequired)
     }
 }

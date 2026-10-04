@@ -2,6 +2,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -361,6 +362,124 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(verification.test_records(log), {
             'App/ExportTests/testIsolation': {'status': 'failed', 'seconds': 0.125}})
 
+    def test_interleaved_completion_is_recovered_from_result_bundle(self):
+        method = 'testExplicitPodcastRedownloadCanReplacePausedTransportWhileAutomaticCompletionCannot'
+        identifier = f'SpokenMarginsAppTests/SourceLinkImportTests/{method}'
+        # Real failure shape from ce29f0c: a network log splits the completion inside the name.
+        log = ("Test Case '-[SpokenMarginsAppTests.SourceLinkImportTests " + method[:-7]
+               + '2026-10-02 07:55:20.045198-0400 SpokenMarginsApp[342:22743267] '
+                 '[Default] Connection 32: received failure notification\n'
+               + method[-7:] + "]' passed (0.094 seconds).")
+        evidence = {'testNodes': [{'nodeType': 'Unit test bundle', 'name': 'SpokenMarginsAppTests',
+                    'children': [{'nodeType': 'Test Case', 'nodeIdentifier': f'SourceLinkImportTests/{method}()',
+                                  'result': 'Passed', 'durationInSeconds': 0.094}]}]}
+        self.assertEqual(verification.test_records(log), {})
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'app')
+            bundle = run.output / 'tests.xcresult'
+            bundle.mkdir()
+            with patch.object(verification.subprocess, 'check_output', return_value=json.dumps(evidence)):
+                run.command('xcode-tests', [sys.executable, '-c', f'print({log!r})',
+                            '-resultBundlePath', str(bundle)], tests=True, expected={identifier})
+            step = run.manifest['steps'][-1]
+            self.assertEqual(step['tests'][identifier], {'status': 'passed', 'seconds': 0.094})
+            self.assertEqual(step['errors'], [])
+            self.assertEqual(step['test_evidence'], 'log+xcresult')
+
+    def test_failed_probation_exports_media_even_with_false_failure_flags(self):
+        # #706: J1 failed but all nine attachments had isAssociatedWithFailure=false.
+        identifier = 'App/ExportTests/testIsolation'
+        url = 'test://com.apple.xcode/Project/App/ExportTests/testIsolation'
+        evidence = self.xcresult_payload('Failed', nodeIdentifierURL=url,
+                                         hasMediaAttachments=False)
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'journeys')
+            bundle = run.output / 'tests.xcresult'
+            bundle.mkdir()
+            exports = []
+
+            def export(args, **kwargs):
+                exports.append(args)
+                output = Path(args[args.index('--output-path') + 1])
+                attachments = []
+                for n in range(9):
+                    name = f'{n}.mp4' if n == 8 else f'{n}.txt'
+                    (output / name).write_bytes(b'retained evidence')
+                    attachments.append({'exportedFileName': name, 'isAssociatedWithFailure': False})
+                (output / 'manifest.json').write_text(json.dumps([
+                    {'testIdentifierURL': url, 'attachments': attachments}]))
+                return subprocess.CompletedProcess(args, 0)
+
+            with patch.object(verification.subprocess, 'check_output', return_value=json.dumps(evidence)), \
+                    patch.object(verification.subprocess, 'run', side_effect=export):
+                run.command('xcode-tests', [sys.executable, '-c', 'raise SystemExit(65)',
+                            '-resultBundlePath', str(bundle)], tests=True,
+                            expected={identifier}, probation={identifier})
+            step = run.manifest['steps'][-1]
+            self.assertEqual(len(exports), 1)
+            self.assertNotIn('--only-failures', exports[0])
+            self.assertEqual(exports[0][exports[0].index('--test-id') + 1], url)
+            recovered = step['attachments'][0]
+            self.assertEqual(recovered['test'], identifier)
+            self.assertEqual(len(recovered['files']), 9)
+            self.assertTrue(all(Path(p).is_file() for p in recovered['files']))
+            self.assertTrue(Path(recovered['manifest']).is_file())
+            self.assertEqual(step['tests'][identifier]['status'], 'failed')
+            self.assertEqual(step['probation'], {identifier: 'failed'})
+            self.assertEqual(step['counts'], {'passed': 0, 'failed': 1, 'skipped': 0})
+            self.assertEqual(step['errors'], [])
+
+    def xcresult_payload(self, result='Passed', **fields):
+        case = {'nodeType': 'Test Case', 'nodeIdentifier': 'ExportTests/testIsolation()',
+                'result': result, 'durationInSeconds': 0.125, **fields}
+        return {'testNodes': [{'nodeType': 'UI test bundle', 'name': 'App', 'children': [case]}]}
+
+    def test_result_bundle_cannot_erase_log_failure_or_skip(self):
+        for status in ('failed', 'skipped'):
+            with self.subTest(status=status):
+                log = f"Test Case '-[App.ExportTests testIsolation]' {status} (0.125 seconds)."
+                with patch.object(verification.subprocess, 'check_output',
+                                  return_value=json.dumps(self.xcresult_payload())):
+                    records, _ = verification.completed_test_records(log, 'tests.xcresult')
+                self.assertEqual(records['App/ExportTests/testIsolation']['status'], status)
+                self.assertTrue(verification.reconcile(set(records), records))
+
+    def test_result_bundle_failed_retry_and_skips_fail_closed(self):
+        retry = self.xcresult_payload(children=[{'nodeType': 'Test Case Run', 'result': 'Failed'},
+                                               {'nodeType': 'Test Case Run', 'result': 'Passed'}])
+        records = verification.xcresult_test_records(retry)
+        self.assertEqual(records['App/ExportTests/testIsolation']['status'], 'failed')
+        self.assertTrue(verification.reconcile(set(records), records))
+        skipped = verification.xcresult_test_records(self.xcresult_payload('Skipped'))
+        self.assertEqual(skipped['App/ExportTests/testIsolation']['status'], 'skipped')
+        self.assertTrue(verification.reconcile(set(skipped), skipped))
+        with patch.object(verification.subprocess, 'check_output',
+                          return_value=json.dumps(self.xcresult_payload('Failed'))):
+            log = "Test Case '-[App.ExportTests testIsolation]' passed (0.125 seconds)."
+            failed, _ = verification.completed_test_records(log, 'tests.xcresult')
+        self.assertEqual(failed['App/ExportTests/testIsolation']['status'], 'failed')
+
+    def test_result_bundle_counts_cannot_replace_individual_records(self):
+        payload = {'testNodes': [{'nodeType': 'Test Plan', 'name': 'App', 'result': 'Passed'}],
+                   'passedTests': 591}
+        with patch.object(verification.subprocess, 'check_output', return_value=json.dumps(payload)):
+            with self.assertRaisesRegex(ValueError, 'No completed individual tests'):
+                verification.completed_test_records('', 'tests.xcresult')
+        records = verification.xcresult_test_records(self.xcresult_payload())
+        self.assertTrue(verification.reconcile(set(records) | {'App/ExportTests/testMissing'}, records))
+
+    def test_unreadable_or_unknown_result_bundle_does_not_fall_back_to_pass(self):
+        identifier = 'App/ExportTests/testIsolation'
+        log = "Test Case '-[App.ExportTests testIsolation]' passed (0.125 seconds)."
+        for output in ('not JSON', json.dumps(self.xcresult_payload('unknown'))):
+            with self.subTest(output=output), tempfile.TemporaryDirectory() as temporary:
+                run = verification.Run(Path(temporary) / 'run', 'app')
+                with patch.object(verification.subprocess, 'check_output', return_value=output):
+                    with self.assertRaisesRegex(RuntimeError, 'Could not reconcile xcresult'):
+                        run.command('xcode-tests', [sys.executable, '-c', f'print({log!r})',
+                                    '-resultBundlePath', 'tests.xcresult'], tests=True, expected={identifier})
+                self.assertEqual(run.manifest['steps'][-1]['counts']['passed'], 1)
+
     def test_passing_retry_cannot_erase_failure(self):
         log = "\n".join(f"Test Case '-[App.ExportTests testIsolation]' {status} (0.125 seconds)."
                         for status in ('failed', 'passed', 'passed'))
@@ -519,6 +638,38 @@ class VerificationTests(unittest.TestCase):
             self.assertTrue(inventory.scripted_journey_errors(root))
             listing.unlink()
             self.assertTrue(inventory.scripted_journey_errors(root))
+
+
+class InheritedSimulatorSlotTests(unittest.TestCase):
+    def test_cli_passes_inherited_slot_to_the_app_runner(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(verification, 'ROOT', Path(temporary)), \
+                patch.object(verification, 'validate', return_value=[]), \
+                patch.object(verification, 'input_identity', return_value='inputs'), \
+                patch.object(verification, 'Run') as factory, \
+                patch.object(sys, 'argv', ['verify-tests.py', '--plan', 'app', '--simulator-slot-fd', '8']):
+            run = factory.return_value
+            run.manifest = {'input_sha256': 'inputs'}
+            self.assertEqual(verification.main(), 0)
+            run.xcode.assert_called_once_with('app', None, False, None, [], simulator_slot_fd=8)
+
+    def test_only_a_real_locked_simulator_slot_descriptor_can_be_inherited(self):
+        import fcntl
+        import lane_slots
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}):
+            path = Path(temporary) / lane_slots.SIMULATOR_SLOT
+            with path.open('a+') as handle:
+                with self.assertRaises(ValueError):
+                    verification.inherited_simulator_slot(handle.fileno())
+                fcntl.flock(handle, fcntl.LOCK_EX)
+                borrowed = verification.inherited_simulator_slot(handle.fileno())
+                borrowed.close()
+                self.assertTrue(lane_slots.simulator_job_running())
+            self.assertFalse(lane_slots.simulator_job_running())
+            with (Path(temporary) / 'wrong.lock').open('a+') as handle:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+                with self.assertRaises(ValueError):
+                    verification.inherited_simulator_slot(handle.fileno())
 
 
 if __name__ == '__main__':
