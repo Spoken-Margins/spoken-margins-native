@@ -469,11 +469,12 @@ class Run:
             if not entry['executed_count']:
                 errors.append('Infrastructure runner executed zero tests' if name == 'runner-tests'
                               else f'{name} executed zero tests')
-        if name == 'browser':
+        if name in ('browser', 'share-link'):
             match = re.search(r'^# tests (\d+)$', text, re.M)
             entry['executed_count'] = int(match[1]) if match else 0
             if not entry['executed_count']:
-                errors.append('Browser runner executed zero tests')
+                errors.append('Browser runner executed zero tests' if name == 'browser'
+                              else f'{name} executed zero tests')
         # A failing probation test makes xcodebuild exit non-zero; that alone doesn't fail the step.
         probation_only = (tests and not errors and not entry.get('interrupted')
                           and any(status != 'passed' for status in entry.get('probation', {}).values()))
@@ -509,6 +510,7 @@ class Run:
         if not (ROOT / 'node_modules').exists():
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         self.command('browser', ['npm', 'run', 'test:browser-extraction'])
+        self.command('share-link', ['npm', 'run', 'test:share-link'])
         expected = set()
         for target in ('SessionKitCoreTests', 'SessionKitTests', 'SessionKitTraceTests'):
             expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))
