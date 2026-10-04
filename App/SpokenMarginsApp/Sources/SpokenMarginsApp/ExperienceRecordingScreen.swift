@@ -11,6 +11,11 @@ struct ExperienceRecordingView: View {
         model.isRequestingRecordingPermission && !model.snapshot.isRecording
     }
 
+    /// #783: the line before iOS's first microphone prompt is on screen, waiting for Continue.
+    private var showsMicrophonePrimer: Bool {
+        isPreparing && model.microphonePrimer.isShowing
+    }
+
     var body: some View {
         ZStack {
             AppColors.listeningBackground.ignoresSafeArea()
@@ -59,7 +64,13 @@ struct ExperienceRecordingView: View {
 
     @ViewBuilder
     private var recordingTime: some View {
-        if isPreparing {
+        if showsMicrophonePrimer {
+            Text(MicrophonePrimer.message)
+                .font(.title3)
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("recording.microphonePrimer.text")
+        } else if isPreparing {
             HStack(spacing: 12) {
                 ProgressView().tint(AppColors.listeningAccent)
                 Text("Waiting for microphone access")
@@ -122,6 +133,16 @@ struct ExperienceRecordingView: View {
 
     private var actionDock: some View {
         VStack(spacing: 8) {
+            if showsMicrophonePrimer {
+                Button(action: model.continueMicrophonePrimer) {
+                    Text("Continue")
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(AppColors.captureBackground)
+                .foregroundStyle(AppColors.listeningBackground)
+                .accessibilityIdentifier("recording.microphonePrimer.continue")
+            }
             if isPreparing {
                 Button("Write instead", systemImage: "square.and.pencil", action: model.switchPendingVoiceCaptureToWrittenMargin)
                     .foregroundStyle(.white)

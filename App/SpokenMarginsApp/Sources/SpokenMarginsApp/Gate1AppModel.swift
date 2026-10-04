@@ -760,6 +760,8 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var offlineStorageSnapshot = OfflineStorageSnapshot()
     @Published private(set) var recordingPresentationContext: RecordingPresentationContext?
     @Published private(set) var isRequestingRecordingPermission = false
+    /// #783: the line shown before iOS's first microphone prompt.
+    @Published private(set) var microphonePrimer = MicrophonePrimer()
     @Published private(set) var isFinishingInterjection = false
     @Published private(set) var isMarginCaptureCoolingDown = false
     @Published private(set) var isDismissingMiniPlayer = false
@@ -1003,6 +1005,7 @@ final class Gate1AppModel: ObservableObject {
     private var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
     private let recordingClientOverride: RecordingClient?
     private let microphonePermissionRequest: (() async -> Bool)?
+    private let microphonePermissionStatusOverride: (() -> PermissionPromptStatus)?
     private let forcePreparedTextGate: Bool
     private let sourceTranscriptionClient: SourceTranscriptionClient
     private let interjectionTranscriptionHandler: InterjectionTranscriptionHandler
@@ -1271,6 +1274,7 @@ final class Gate1AppModel: ObservableObject {
         audioPlaybackClient: AudioPlaybackClient? = nil,
         recordingClient: RecordingClient? = nil,
         microphonePermissionRequest: (() async -> Bool)? = nil,
+        microphonePermissionStatus: (() -> PermissionPromptStatus)? = nil,
         forcePreparedTextGate: Bool = false,
         sourceTranscriptionClient: SourceTranscriptionClient = SystemSourceTranscriptionClient(),
         interjectionTranscriptionHandler: InterjectionTranscriptionHandler? = nil,
@@ -1296,6 +1300,7 @@ final class Gate1AppModel: ObservableObject {
         self.audioPlaybackClientOverride = audioPlaybackClient
         self.recordingClientOverride = recordingClient
         self.microphonePermissionRequest = microphonePermissionRequest
+        self.microphonePermissionStatusOverride = microphonePermissionStatus
         self.forcePreparedTextGate = forcePreparedTextGate
         self.sourceTranscriptionClient = sourceTranscriptionClient
         self.gate2CompactControls = gate2CompactControls
@@ -6306,6 +6311,28 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         #endif
+        if let status = microphonePrimerStatus(),
+           microphonePrimer.holds(captureID: voiceCaptureRequestID, status: status) {
+            diagnostics["lastMicrophonePermissionResult"] = "primer_shown"
+            return
+        }
+        requestMicrophoneThenRecord(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
+    }
+
+    /// #783: Continue on the line before the microphone prompt goes on to iOS's request.
+    func continueMicrophonePrimer() {
+        guard let captureID = microphonePrimer.continueTapped(),
+              pendingVoiceCaptureRequestID == captureID else { return }
+        requestMicrophoneThenRecord(requestedAt: Date(), captureID: captureID)
+    }
+
+    /// The permission state the primer reads. A test that injects only the request skips the line.
+    private func microphonePrimerStatus() -> PermissionPromptStatus? {
+        if let microphonePermissionStatusOverride { return microphonePermissionStatusOverride() }
+        return microphonePermissionRequest == nil ? Self.microphonePermissionStatus() : nil
+    }
+
+    private func requestMicrophoneThenRecord(requestedAt: Date, captureID voiceCaptureRequestID: UUID) {
         Task {
             let granted = await requestMicrophonePermission()
             guard pendingVoiceCaptureRequestID == voiceCaptureRequestID else { return }
@@ -6416,6 +6443,7 @@ final class Gate1AppModel: ObservableObject {
 
     func cancelInterjection() {
         if isRequestingRecordingPermission && !snapshot.isRecording {
+            microphonePrimer.cancel()
             pendingVoiceCaptureRequestID = nil
             isRequestingRecordingPermission = false
             recordingPresentationContext = nil
@@ -6469,6 +6497,7 @@ final class Gate1AppModel: ObservableObject {
 
     func switchPendingVoiceCaptureToWrittenMargin() {
         guard isRequestingRecordingPermission, !snapshot.isRecording else { return }
+        microphonePrimer.cancel()
         isRequestingRecordingPermission = false
         pendingVoiceCaptureRequestID = nil
         recordingPresentationContext = nil

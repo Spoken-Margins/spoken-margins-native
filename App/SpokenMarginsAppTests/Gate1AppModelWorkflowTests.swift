@@ -3048,6 +3048,88 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.cancelWrittenMargin()
     }
 
+    /// #783: while iOS hasn't asked yet, one plain line comes before the system prompt; Continue
+    /// goes on to the request, and the grant records as today.
+    func testUndeterminedMicrophoneShowsThePrimerBeforeTheSystemRequest() async throws {
+        let gate = MarginPermissionTestGate()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient(),
+            microphonePermissionRequest: { await gate.request() },
+            microphonePermissionStatus: { .undetermined }
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pause()
+        model.beginInterjection()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertTrue(model.microphonePrimer.isShowing)
+        XCTAssertTrue(model.isRequestingRecordingPermission, "The recording screen carries the line")
+        XCTAssertEqual(gate.requests, 0, "iOS's prompt must wait for Continue")
+
+        model.continueMicrophonePrimer()
+        model.continueMicrophonePrimer()
+        for _ in 0..<100 where gate.continuation == nil { await Task.yield() }
+        XCTAssertFalse(model.microphonePrimer.isShowing)
+        XCTAssertEqual(gate.requests, 1, "A second Continue tap must not ask twice")
+        gate.finish(true)
+        for _ in 0..<100 where !model.snapshot.isRecording { await Task.yield() }
+        XCTAssertTrue(model.snapshot.isRecording)
+        model.cancelInterjection()
+    }
+
+    /// #783: dismissing the line cancels that Margin like Cancel does; the next try shows it again.
+    func testCancellingThePrimerCancelsTheMarginAndShowsItAgainNextTime() async throws {
+        let gate = MarginPermissionTestGate()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient(),
+            microphonePermissionRequest: { await gate.request() },
+            microphonePermissionStatus: { .undetermined }
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pause()
+        model.beginInterjection()
+        XCTAssertTrue(model.microphonePrimer.isShowing)
+        model.cancelInterjection()
+        XCTAssertFalse(model.microphonePrimer.isShowing)
+        XCTAssertFalse(model.isRequestingRecordingPermission)
+        XCTAssertFalse(model.recordingNavigationIsLocked)
+        model.continueMicrophonePrimer()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(gate.requests, 0)
+        XCTAssertFalse(model.snapshot.isRecording)
+
+        model.beginInterjection()
+        XCTAssertTrue(model.microphonePrimer.isShowing)
+        model.switchPendingVoiceCaptureToWrittenMargin()
+        XCTAssertFalse(model.microphonePrimer.isShowing)
+        XCTAssertNotNil(model.writtenMarginDraft)
+        model.cancelWrittenMargin()
+    }
+
+    /// #783: once the listener has answered, the line never shows; a denial follows today's path.
+    func testAnsweredMicrophoneNeverShowsThePrimer() async throws {
+        for (status, granted) in [(PermissionPromptStatus.granted, true), (.denied, false)] {
+            let model = Gate1AppModel(
+                audioPlaybackClient: NoopAudioPlaybackClient(),
+                recordingClient: NoopRecordingClient(),
+                microphonePermissionRequest: { granted },
+                microphonePermissionStatus: { status }
+            )
+            model.resetAndSeed()
+            model.startItem(id: "item-pill")
+            model.pause()
+            model.beginInterjection()
+            XCTAssertFalse(model.microphonePrimer.isShowing, "\(status)")
+            for _ in 0..<100 where model.isRequestingRecordingPermission { await Task.yield() }
+            XCTAssertEqual(model.snapshot.isRecording, granted, "\(status)")
+            XCTAssertEqual(model.recordingPermissionDenied, !granted, "\(status)")
+            if granted { model.cancelInterjection() }
+        }
+    }
+
     func testAssistantMarginCaptureRetainsTurnPositionAcrossReloadAndExport() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "turn-anchors-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -4511,8 +4593,10 @@ private final class WorkflowCompletionAudioClient: AudioPlaybackClient {
 @MainActor
 private final class MarginPermissionTestGate {
     var continuation: CheckedContinuation<Bool, Never>?
+    private(set) var requests = 0
     func request() async -> Bool {
-        await withCheckedContinuation { continuation = $0 }
+        requests += 1
+        return await withCheckedContinuation { continuation = $0 }
     }
     func finish(_ granted: Bool) {
         let pending = continuation
