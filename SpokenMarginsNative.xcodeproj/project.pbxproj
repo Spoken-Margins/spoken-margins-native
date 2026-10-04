@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0FEB83362436FFB1CBA86CE3 /* icon-96.png in Resources */ = {isa = PBXBuildFile; fileRef = B0E665415E1CA9540B3692BC /* icon-96.png */; };
 		198C6F79A9F04D4B19F2A10B /* browserTextCapture.js in Resources */ = {isa = PBXBuildFile; fileRef = 98C26CB68BDFFFA8A1B7578B /* browserTextCapture.js */; };
+		1D558A9DAF393C1C59BA86EE /* BundledJavaScript-NOTICES.txt in Resources */ = {isa = PBXBuildFile; fileRef = 9DCA8BA796D0A4F2D17C342F /* BundledJavaScript-NOTICES.txt */; };
 		205189A37B2B08E1FAE0B0A2 /* icon-48.png in Resources */ = {isa = PBXBuildFile; fileRef = 534726939CEC57D001157DD9 /* icon-48.png */; };
 		2822AE6642EE5669F2F33F4C /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 8C1BFB86196C5C1BE2E52BEF /* Defuddle-LICENSE.txt */; };
 		296D3E3B2A4A4E4370DB534A /* SourceLinkPreprocessor.js in Resources */ = {isa = PBXBuildFile; fileRef = C52D1CADC5773F67C398A2B2 /* SourceLinkPreprocessor.js */; };
@@ -16,6 +17,7 @@
 		3EB7A4EE3350ECA1902F69A8 /* SessionKitSupertonic in Frameworks */ = {isa = PBXBuildFile; productRef = BE679FFC0BC2A00A74297525 /* SessionKitSupertonic */; };
 		4CF539FBC54D635647751674 /* emoji-article-crash-regression.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */; };
 		4EB9C4988DDEA400406B44F5 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 9AC0CEE299A474FCA1DE58BE /* popup.js */; };
+		5582E774F89977B1BEA8AD66 /* BundledJavaScript-NOTICES.txt in Resources */ = {isa = PBXBuildFile; fileRef = 9DCA8BA796D0A4F2D17C342F /* BundledJavaScript-NOTICES.txt */; };
 		5D420626A6A49CF830E8B408 /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 9547A66336D57411F645B986 /* SessionKitAudio */; };
 		5E894548E5C48572F8F55264 /* icon-512.png in Resources */ = {isa = PBXBuildFile; fileRef = 57C1F61B420E53CF05698E57 /* icon-512.png */; };
 		65126FD4AD9AE90D96C36EC7 /* icon-256.png in Resources */ = {isa = PBXBuildFile; fileRef = 742BEE6988765C9B1F078C8B /* icon-256.png */; };
@@ -39,6 +41,7 @@
 		CC0AD39630C14AEC9A9A8573 /* SessionKitEPUB in Frameworks */ = {isa = PBXBuildFile; productRef = 62C6DAFDEEEE7BC12B1CDE55 /* SessionKitEPUB */; };
 		CC6A33EA5ED33F43E7A818A4 /* emoji-article-crash-regression.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */; };
 		CE6654AD4A7C75198C2D1BB4 /* SessionKitFeeds in Frameworks */ = {isa = PBXBuildFile; productRef = 159EF73AA9CDF755A67A5EFA /* SessionKitFeeds */; };
+		D72E9D080287489A9B88FC31 /* BundledJavaScript-NOTICES.txt in Resources */ = {isa = PBXBuildFile; fileRef = 466DDA96AB529FEFB23D4BEE /* BundledJavaScript-NOTICES.txt */; };
 		D8FED511D7C45D211D991D9E /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = 1213A7465ECB99E1E9FCE12A /* popup.css */; };
 		DCD0BCAD510043A1EB4EF202 /* SpokenMarginsGate2Widget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E3D5265FADF5995640D6FB31 /* SpokenMarginsGate2Widget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		DCF2AB420A460F475B45C6AF /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D8F75089EB72A10C4E2E79E1 /* PrivacyInfo.xcprivacy */; };
@@ -109,6 +112,7 @@
 		1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "emoji-article-crash-regression.txt"; sourceTree = "<group>"; };
 		3D2052181FEAFB56EB0856FA /* Defuddle-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Defuddle-LICENSE.txt"; sourceTree = "<group>"; };
 		454A82B2CAACCCAED5C33E03 /* catalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = catalog.json; sourceTree = "<group>"; };
+		466DDA96AB529FEFB23D4BEE /* BundledJavaScript-NOTICES.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "BundledJavaScript-NOTICES.txt"; sourceTree = "<group>"; };
 		534726939CEC57D001157DD9 /* icon-48.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-48.png"; sourceTree = "<group>"; };
 		560C4E54442E123E42855A02 /* SpokenMarginsAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SpokenMarginsAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		56AD3FBAE5A4EBD7B16F6BFC /* icon-128.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-128.png"; sourceTree = "<group>"; };
@@ -120,6 +124,7 @@
 		968283859946C995CD8FA20C /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = popup.html; sourceTree = "<group>"; };
 		98C26CB68BDFFFA8A1B7578B /* browserTextCapture.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = browserTextCapture.js; sourceTree = "<group>"; };
 		9AC0CEE299A474FCA1DE58BE /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
+		9DCA8BA796D0A4F2D17C342F /* BundledJavaScript-NOTICES.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "BundledJavaScript-NOTICES.txt"; sourceTree = "<group>"; };
 		9FEFBCF337DFC7DB102DAD5B /* SpokenMarginsApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SpokenMarginsApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B0E665415E1CA9540B3692BC /* icon-96.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-96.png"; sourceTree = "<group>"; };
 		BE41691E3B902A5C377AC70D /* SpokenMarginsShareExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SpokenMarginsShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -384,6 +389,7 @@
 			isa = PBXGroup;
 			children = (
 				98C26CB68BDFFFA8A1B7578B /* browserTextCapture.js */,
+				9DCA8BA796D0A4F2D17C342F /* BundledJavaScript-NOTICES.txt */,
 				8C1BFB86196C5C1BE2E52BEF /* Defuddle-LICENSE.txt */,
 			);
 			name = SharedResources;
@@ -393,6 +399,7 @@
 		F509B33704F18191A362D38D /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				466DDA96AB529FEFB23D4BEE /* BundledJavaScript-NOTICES.txt */,
 				3D2052181FEAFB56EB0856FA /* Defuddle-LICENSE.txt */,
 				EE29274792FFFC88EA74C157 /* PrivacyInfo.xcprivacy */,
 				C52D1CADC5773F67C398A2B2 /* SourceLinkPreprocessor.js */,
@@ -633,6 +640,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D72E9D080287489A9B88FC31 /* BundledJavaScript-NOTICES.txt in Resources */,
 				93BDBE3759E50512647FCCB2 /* Defuddle-LICENSE.txt in Resources */,
 				81B60CCA76A6F0E91712933E /* PrivacyInfo.xcprivacy in Resources */,
 				296D3E3B2A4A4E4370DB534A /* SourceLinkPreprocessor.js in Resources */,
@@ -643,6 +651,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5582E774F89977B1BEA8AD66 /* BundledJavaScript-NOTICES.txt in Resources */,
 				7F0A333F40F542B3E4C42E1A /* Defuddle-LICENSE.txt in Resources */,
 				DCF2AB420A460F475B45C6AF /* PrivacyInfo.xcprivacy in Resources */,
 				198C6F79A9F04D4B19F2A10B /* browserTextCapture.js in Resources */,
@@ -662,6 +671,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1D558A9DAF393C1C59BA86EE /* BundledJavaScript-NOTICES.txt in Resources */,
 				2822AE6642EE5669F2F33F4C /* Defuddle-LICENSE.txt in Resources */,
 				E1A30C458CE0DA8DB0031D9C /* Legal in Resources */,
 				BFAB396D17668E220C6104D8 /* Supertonic in Resources */,

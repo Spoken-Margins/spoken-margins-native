@@ -36,9 +36,8 @@ struct PasteAndGoBar: View {
                     ProgressView()
                         .frame(minWidth: 44, minHeight: 44)
                 } else {
-                    PasteButton(payloadType: String.self) { strings in
-                        let pasted = strings.first
-                        Task { @MainActor in paste(pasted) }
+                    PasteButton(supportedContentTypes: PastedClipboardContent.supportedTypes) { providers in
+                        Task { @MainActor in paste(await PastedClipboardContent.text(from: providers)) }
                     }
                     .labelStyle(.titleAndIcon)
                     .buttonBorderShape(.capsule)
