@@ -2878,6 +2878,32 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(audio.playCount, playsBefore + 1)
     }
 
+    /// Codex audit P2 on f11032e: during the call the listener started another session and paused
+    /// it. The call's end must not play that session.
+    func testACallsEndDoesNotPlayASessionOpenedDuringTheCall() async throws {
+        let audio = WorkflowCompletionAudioClient()
+        let recorder = InterruptibleRecordingClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio, recordingClient: recorder)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let interruptedSession = model.snapshot.sessionId
+        model.beginInterjection()
+        recorder.onInterruption?(.interruptionBegan, 5)
+        for _ in 0..<50 where model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(model.snapshot.status, .paused)
+
+        model.startNewSession(id: "item-pill")
+        model.pause()
+        XCTAssertNotEqual(model.snapshot.sessionId, interruptedSession)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        let playsBefore = audio.playCount
+
+        recorder.onInterruption?(.interruptionEnded(shouldResume: true), nil)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(model.snapshot.status, .paused, "the session the listener chose stays paused")
+        XCTAssertEqual(audio.playCount, playsBefore)
+    }
+
     /// #771: taking AirPods out mid-Margin saves it and leaves the source paused, so it never plays
     /// from the speaker. A start interrupted within a second is dropped.
     func testLostHeadphonesSaveAndStayPausedAndAStrayStartIsDropped() async throws {

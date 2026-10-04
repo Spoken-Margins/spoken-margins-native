@@ -3440,7 +3440,8 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
             object: AVAudioSession.sharedInstance(),
             queue: .main
         ) { [weak self] notification in
-            guard let self, self.recordingStartedAt != nil,
+            // Also while a call that stopped a Margin is on: lost headphones cancel its resume.
+            guard let self, self.recordingStartedAt != nil || self.awaitsInterruptionEnd,
                   let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
                   AVAudioSession.RouteChangeReason(rawValue: reasonValue) == .oldDeviceUnavailable else { return }
             self.onInterruption?(.routeLost, self.recordedSeconds)

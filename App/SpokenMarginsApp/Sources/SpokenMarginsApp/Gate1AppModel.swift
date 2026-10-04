@@ -758,7 +758,7 @@ final class Gate1AppModel: ObservableObject {
     }
     @Published private(set) var marginRows: [MarginRow] = []
     @Published private(set) var offlineStorageSnapshot = OfflineStorageSnapshot()
-    @Published private(set) var recordingPresentationContext: RecordingPresentationContext?
+    @Published var recordingPresentationContext: RecordingPresentationContext?
     @Published private(set) var isRequestingRecordingPermission = false
     @Published private(set) var isFinishingInterjection = false
     @Published private(set) var isMarginCaptureCoolingDown = false
@@ -977,7 +977,7 @@ final class Gate1AppModel: ObservableObject {
     private let gate3WatchConnectivity = Gate3WatchConnectivityController()
     #endif
     private let openAIResponsesClient = OpenAIResponsesClient()
-    private let streamingSpeechQueue = StreamingSpeechQueue()
+    let streamingSpeechQueue = StreamingSpeechQueue()
     private var speechPlaybackClient: AudioPlaybackClient?
     private var sessionAudioPlaybackClient: AudioPlaybackClient?
     private var supertonicRenderer: SupertonicNarrationRenderer?
@@ -1002,7 +1002,6 @@ final class Gate1AppModel: ObservableObject {
     @Published private var followOffers: [String: FollowOffer] = [:]
     private var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
     private let recordingClientOverride: RecordingClient?
-    private var marginRecordingInterruptionPolicy = MarginRecordingInterruptionPolicy()
     private let microphonePermissionRequest: (() async -> Bool)?
     private let forcePreparedTextGate: Bool
     private let sourceTranscriptionClient: SourceTranscriptionClient
@@ -6387,50 +6386,7 @@ final class Gate1AppModel: ObservableObject {
         streamingSpeechQueue.resumeAfterInterjection()
     }
 
-    /// A call, Siri or lost headphones stopped a spoken Margin (#771). What was said is kept (or a
-    /// stray start dropped) without resuming the source; the policy resumes it when a call ends.
-    private func handleMarginRecordingInterruption(_ event: MarginRecordingInterruptionEvent, recordedSeconds: TimeInterval?) {
-        let seconds = snapshot.isRecording ? (recordedSeconds ?? 0) : nil
-        let action = marginRecordingInterruptionPolicy.handle(
-            event, recordedSeconds: seconds, sourceAwaitsResume: snapshot.status == .paused && snapshot.phase != .finished
-        )
-        let cause = event == .routeLost ? "headphones_disconnected" : "call_or_siri"
-        recordDeveloperDiagnostic("margin.interruption", [
-            "event": "\(event)", "action": "\(action)", "recordedSeconds": seconds.map { String(format: "%.1f", $0) } ?? "none",
-        ])
-        switch action {
-        case .none:
-            return
-        case .resumeSource:
-            run { engine in snapshot = try engine.resumePlayback() }
-            streamingSpeechQueue.resumeAfterInterjection()
-            return
-        case .saveCutShort:
-            run { engine in
-                snapshot = try engine.finishInterjection(audioRef: nil, resumesSource: false)
-                refreshSelectedItem()
-                recordSavedInterjectionForOnboarding()
-                let interjection = latestInterjectionNeedingTranscription()
-                if let interjection { scheduleTranscription(for: interjection) }
-                diagnostics["lastMarginCutShort"] = "\(interjection?.id ?? "unknown") \(cause) \(String(format: "%.1f", seconds ?? 0))s"
-                reportWarning(event == .routeLost
-                    ? "Margin saved. It stopped when your headphones disconnected. Tap Play to continue."
-                    : "Margin saved. A call or Siri cut it short.")
-            }
-        case .discard:
-            run { engine in
-                snapshot = try engine.cancelInterjection(resumesSource: false)
-                refreshSelectedItem()
-                reportWarning("The Margin was interrupted before you said anything, so it wasn't kept.")
-            }
-        }
-        if !snapshot.isRecording {
-            recordingPresentationContext = nil
-            refreshMarginRows()
-        }
-    }
-
-    private func recordSavedInterjectionForOnboarding() {
+    func recordSavedInterjectionForOnboarding() {
         markOnboardingSteps([.firstInterjection])
         if guidedOnboardingStage == .practiceInterjection {
             setGuidedOnboardingStage(.reviewTimeline)
@@ -9902,7 +9858,7 @@ final class Gate1AppModel: ObservableObject {
 
     func deliverAutomaticMargins() async { await marginNotesDelivery.pass() }
 
-    private func run(_ operation: (SessionEngine) throws -> Void) {
+    func run(_ operation: (SessionEngine) throws -> Void) {
         if engine == nil {
             do {
                 let store = try requireStore()
@@ -10146,15 +10102,11 @@ final class Gate1AppModel: ObservableObject {
         } else {
             provider = FixtureAIProvider()
         }
-        let recorder = recordingClientOverride ?? SystemRecordingClient()
-        (recorder as? RecordingInterruptionReporting)?.onInterruption = { [weak self] event, seconds in
-            Task { @MainActor [weak self] in self?.handleMarginRecordingInterruption(event, recordedSeconds: seconds) }
-        }
         return SessionEngine(
             profile: profile,
             repository: store,
             audio: try makeAudioPlaybackClient(),
-            recorder: recorder,
+            recorder: reportingMarginInterruptions(recordingClientOverride ?? SystemRecordingClient()),
             aiProvider: provider,
             linkResolver: sourceLinkResolver ?? PublicPodcastLinkResolver(),
             textAudio: try makeTextAudioPreparationClient()
@@ -12045,7 +11997,7 @@ final class Gate1AppModel: ObservableObject {
         reportFailure(userMessage, itemId: itemId, retry: retry)
     }
 
-    private func latestInterjectionNeedingTranscription() -> Interjection? {
+    func latestInterjectionNeedingTranscription() -> Interjection? {
         guard let sessionId = snapshot.sessionId,
               let interjections = try? store?.loadInterjections(sessionId: sessionId) else { return nil }
         return interjections.last { $0.transcriptionStatus == "pending" && $0.audioPath != nil }
@@ -12753,7 +12705,7 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    private func scheduleTranscription(for interjection: Interjection) {
+    func scheduleTranscription(for interjection: Interjection) {
         guard let audioPath = interjection.audioPath else { return }
         recordAnchorCaptureDiagnostics(for: interjection)
         switch interjection.podcastAnchorEvidenceCaptureStatus {
@@ -14745,7 +14697,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Presents degraded-but-successful behavior without styling it as either a
     /// normal confirmation or a failure.
-    private func reportWarning(_ message: String) {
+    func reportWarning(_ message: String) {
         statusMessage = message
         lastError = nil
         presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
@@ -14779,7 +14731,7 @@ final class Gate1AppModel: ObservableObject {
         feedbackEvent = event
     }
 
-    private func refreshSelectedItem() {
+    func refreshSelectedItem() {
         guard let store, !activeItemId.isEmpty else { return }
         if let detail = try? loadItemDetail(id: activeItemId, store: store) {
             selectedItem = detail
