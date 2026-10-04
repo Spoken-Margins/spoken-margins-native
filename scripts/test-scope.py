@@ -271,6 +271,37 @@ def classify(paths, diffs=None, root=ROOT):
             'app_tests': app_tests, 'lane_paths': lane_paths}
 
 
+def runner_routing(pr, file_pages, runner_pages, root=ROOT):
+    """Choose queue labels, never capacity. API errors/incomplete diffs keep today's queues.
+
+    Inputs are the event's PR and gh api --paginate --slurp responses. Busy online runners
+    count: priority work queues there, but an absent/offline runner must not strand a job.
+    """
+    normal = {'lane': ['self-hosted', 'macOS', 'sm-lane'],
+              'automerge': ['self-hosted', 'macOS', 'sm-lane-build']}
+    priority = ['self-hosted', 'sm-lane-priority']
+    try:
+        online = any(r['status'] == 'online' and set(priority) <= {label['name'] for label in r['labels']}
+                     for page in runner_pages for r in page['runners'])
+        if not online:
+            return normal
+        labelled = any(label['name'] == 'priority' for label in pr['labels'])
+        if not labelled:
+            files = [file for page in file_pages for file in page]
+            if not files or len(files) != pr['changed_files']:
+                return normal
+            # Both sides of a rename belong to the diff: moving app code into ops isn't ops-only.
+            paths = {file['filename'] for file in files}
+            paths.update(file['previous_filename'] for file in files if 'previous_filename' in file)
+            if not all(path.startswith(('ops/', 'docs/')) or is_lane_path(path) for path in paths):
+                return normal
+            if classify(paths, root=root)['tier'] != 'T1':
+                return normal
+        return {'lane': priority, 'automerge': priority}
+    except (KeyError, TypeError, ValueError):
+        return normal
+
+
 def git(*args):
     return subprocess.check_output(['git', '-C', str(ROOT), *args], text=True)
 
@@ -311,7 +342,17 @@ def main(argv=None):
     parser.add_argument('--base', default='origin/next')
     parser.add_argument('--files', nargs='+')
     parser.add_argument('--json', action='store_true')
+    parser.add_argument('--runner-routing', nargs=3, metavar=('EVENT', 'FILES', 'RUNNERS'),
+                        help='route lane jobs from event JSON and paginated gh API JSON files')
     args = parser.parse_args(argv)
+    if args.runner_routing:
+        try:
+            event, files, runners = [json.loads(Path(path).read_text()) for path in args.runner_routing]
+            result = runner_routing(event['pull_request'], files, runners)
+        except (OSError, ValueError, KeyError, TypeError):
+            result = runner_routing({}, [], [])
+        print(json.dumps(result))
+        return 0
     paths, diffs = (args.files, {}) if args.files else changed_paths(args.base)
     result = classify(paths, diffs)
     print(json.dumps(result, indent=2) if args.json else render(result))
