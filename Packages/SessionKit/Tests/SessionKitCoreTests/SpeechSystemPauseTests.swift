@@ -15,6 +15,7 @@ final class SpeechSystemPauseTests: XCTestCase {
         XCTAssertEqual(SpeechSystemPause.interruptionReasonName(nil), "none")
         XCTAssertEqual(SpeechSystemPause.interruptionReasonName(0), "default")
         XCTAssertEqual(SpeechSystemPause.interruptionReasonName(2), "built_in_mic_muted")
+        XCTAssertEqual(SpeechSystemPause.interruptionReasonName(4), "route_disconnected")
         XCTAssertEqual(SpeechSystemPause.interruptionReasonName(9), "raw_9")
     }
 

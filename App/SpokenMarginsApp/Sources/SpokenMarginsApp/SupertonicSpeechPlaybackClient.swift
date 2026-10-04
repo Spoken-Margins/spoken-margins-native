@@ -2431,8 +2431,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// Low Power Mode, so a device export can say why narration stopped in the background (#538).
     private func recordSystemPause(_ cause: SpeechSystemPause, acted: Bool) {
         guard let onSystemPause else { return }
-        let player = lock.withLock { self.player }
-        var fields = AudioSessionDiagnostics.fields().merging(AudioSessionDiagnostics.fields(for: player)) { first, _ in first }
+        let (player, usesSystemVoice) = lock.withLock { (self.player, fallbackIsActive) }
+        var fields = AudioSessionDiagnostics.fields()
+        if usesSystemVoice {
+            fields["engine"] = "system_voice"
+        } else {
+            fields.merge(AudioSessionDiagnostics.fields(for: player)) { first, _ in first }
+        }
         fields.merge(cause.fields(
             acted: acted,
             appState: Self.applicationStateName(),

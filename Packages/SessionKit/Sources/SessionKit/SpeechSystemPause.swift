@@ -40,15 +40,17 @@ public enum SpeechSystemPause: Equatable, Sendable {
         return fields
     }
 
-    /// `AVAudioSession.InterruptionReason` raw values. "app_was_suspended" means iOS suspended the
-    /// app in the background, which it does when no audio is actually playing. Values this build
-    /// doesn't name are kept as numbers.
+    /// `AVAudioSession.InterruptionReason` raw values. iOS 16 and later no longer send
+    /// "app_was_suspended"; an interruption while the app was suspended arrives only when it wakes,
+    /// so its log time is the wake, and it reads "default" or "none". "route_disconnected" is a lost
+    /// Bluetooth or wired route. Values this build doesn't name are kept as numbers.
     static func interruptionReasonName(_ raw: UInt?) -> String {
         switch raw {
         case nil: "none"
         case 0?: "default"
         case 1?: "app_was_suspended"
         case 2?: "built_in_mic_muted"
+        case 4?: "route_disconnected"
         case let other?: "raw_\(other)"
         }
     }
