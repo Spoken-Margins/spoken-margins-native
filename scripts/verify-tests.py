@@ -442,11 +442,12 @@ class Run:
             if not entry['executed_count']:
                 errors.append('Infrastructure runner executed zero tests' if name == 'runner-tests'
                               else f'{name} executed zero tests')
-        if name == 'browser':
+        if name in ('browser', 'share-link'):
             match = re.search(r'^# tests (\d+)$', text, re.M)
             entry['executed_count'] = int(match[1]) if match else 0
             if not entry['executed_count']:
-                errors.append('Browser runner executed zero tests')
+                errors.append('Browser runner executed zero tests' if name == 'browser'
+                              else f'{name} executed zero tests')
         # A failing probation test makes xcodebuild exit non-zero; that alone doesn't fail the step.
         probation_only = (tests and not errors and not entry.get('interrupted')
                           and any(status != 'passed' for status in entry.get('probation', {}).values()))
