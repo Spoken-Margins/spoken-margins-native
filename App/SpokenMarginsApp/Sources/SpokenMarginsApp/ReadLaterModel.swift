@@ -15,15 +15,21 @@ final class ReadLaterModel: ObservableObject {
     @Published private(set) var status = "Connect a service to choose articles. Nothing is imported automatically."
     @Published private(set) var isLoading = false
     @Published private(set) var nextCursor: String?
+    @Published private(set) var loaded = false
+    @Published private(set) var failure: String?
     private var generation = UUID()
     private var task: Task<Void, Never>?
     private let session = URLSession(configuration: .ephemeral, delegate: ReadLaterSessionDelegate(), delegateQueue: nil)
     static let credentialService = "com.spokenmargins.read-later"
     var connected: Bool { KeychainStore.load(service: Self.credentialService, account: service.rawValue) != nil }
+    /// Why Choose Articles is empty, so it never shows a bare heading (#621).
+    var emptyArticlesLine: String? {
+        ReadLaterClient.emptyArticlesLine(service: service, connected: connected, isLoading: isLoading, loaded: loaded, failure: failure, documentCount: documents.count)
+    }
 
     func selectService() {
         generation = UUID(); task?.cancel(); task = nil
-        token = ""; documents = []; nextCursor = nil; isLoading = false
+        token = ""; documents = []; nextCursor = nil; isLoading = false; loaded = false; failure = nil
         status = connected ? "Connected. Refresh to choose articles." : "Enter an access token to connect."
     }
     func connect() {
@@ -59,10 +65,12 @@ final class ReadLaterModel: ObservableObject {
                 var known = Set(documents.map(\.id))
                 documents += page.documents.filter { known.insert($0.id).inserted }
                 nextCursor = page.nextCursor == cursor ? nil : page.nextCursor
+                loaded = true; failure = nil
                 status = "\(documents.count) articles. Choose Add to import a copy; the service is not changed."
             } catch {
                 guard generation == requestGeneration else { return }
                 status = (error as? EditionError)?.localizedDescription ?? "Could not load articles. Check the connection and try again."
+                failure = status
             }
             if generation == requestGeneration { isLoading = false }
         }

@@ -1,8 +1,11 @@
+import SessionKit
 import SwiftUI
 
 struct ExperienceRecordingView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @State private var isDiscardConfirmationPresented = false
+    /// Ignores a stray second tap of a double tap on Add a Margin (#148).
+    @State private var saveTapGuard = RecordingSaveTapGuard(appearedAt: Date())
 
     private var isPreparing: Bool {
         model.isRequestingRecordingPermission && !model.snapshot.isRecording
@@ -28,6 +31,7 @@ struct ExperienceRecordingView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) { actionDock }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("recording.screen")
+        .onAppear { saveTapGuard = RecordingSaveTapGuard(appearedAt: Date()) }
         .alert("Discard this recording?", isPresented: $isDiscardConfirmationPresented) {
             Button("Keep recording", role: .cancel) {}
             Button("Discard recording", role: .destructive, action: model.cancelInterjection)
@@ -105,7 +109,7 @@ struct ExperienceRecordingView: View {
     }
 
     private var finishControl: some View {
-        Button(action: model.requestFinishInterjection) {
+        Button(action: requestFinish) {
             Label(model.isFinishingInterjection ? "Saving Margin…" : "Save & resume", systemImage: "checkmark")
                 .frame(maxWidth: .infinity, minHeight: 52)
         }
@@ -149,6 +153,11 @@ struct ExperienceRecordingView: View {
             progressPercent: model.snapshot.currentPlaybackProgressPercent,
             startedAt: Date()
         )
+    }
+
+    private func requestFinish() {
+        guard saveTapGuard.accepts(tapAt: Date()) else { return }
+        model.requestFinishInterjection()
     }
 
     private func requestDiscard() {
