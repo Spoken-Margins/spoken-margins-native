@@ -719,14 +719,15 @@ struct PlaybackScreen: View {
                 .tint(AppColors.accent)
                 .accessibilityLabel("Playback position")
                 .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
-                .accessibilityValue("\(textScrubberPercent) percent")
+                .accessibilityValue(textTimeEstimate?.scrubberAccessibilityValue(percent: textScrubberPercent) ?? "\(textScrubberPercent) percent")
                 .accessibilityIdentifier("playback.scrubber")
                 .onCompatibleChange(of: canonicalTextOffset) { value in
                     model.recordDeveloperDiagnostic("scrub.text.display", ["canonical": String(value), "displayed": String(textScrubState.displayedValue(canonicalValue: value, range: textScrubRange)), "editing": String(textScrubState.isEditing), "range": String(textScrubRange.upperBound)])
                 }
                 .disabled(model.snapshot.isRecording)
-                Text("100%")
+                Text(textTimeEstimate?.remainingText ?? "100%")
                     .frame(minWidth: 34, alignment: .leading)
+                    .accessibilityIdentifier("playback.timeLeft.label")
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(AppColors.watchSecondary)
@@ -1226,6 +1227,16 @@ struct PlaybackScreen: View {
 
     private var textScrubRange: ClosedRange<Double> {
         0...Double(textLength)
+    }
+
+    /// "about 12 min left" at the listener's speed, following a drag (#305).
+    private var textTimeEstimate: ListeningTimeEstimate? {
+        let offset = textScrubState.displayedValue(canonicalValue: canonicalTextOffset, range: textScrubRange)
+        return ListeningTimeEstimator.estimate(
+            totalCharacters: textLength,
+            charactersHeard: Int(offset.rounded()),
+            playbackSpeed: model.speechPlaybackRateMultiplier
+        )
     }
 
     private var textScrubberPercent: Int {
