@@ -53,6 +53,8 @@ enum UITestingLaunchSeedWriter {
             for _ in 0..<Int((Double(seconds) / 10).rounded(.up)) {
                 try file.write(from: buffer)
             }
+            // The download record must match the finished size on disk.
+            file.close()
         }
         let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         return Int64(size)
