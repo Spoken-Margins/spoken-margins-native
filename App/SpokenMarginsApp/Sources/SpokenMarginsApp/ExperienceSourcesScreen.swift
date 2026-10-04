@@ -301,6 +301,15 @@ private struct ManageFeedsScreen: View {
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 }
                 .accessibilityIdentifier("sources.browseCatalog")
+                if let makeOPMLImport = catalogDrawer.makeOPMLImport {
+                    NavigationLink {
+                        OPMLImportScreen(importer: makeOPMLImport())
+                    } label: {
+                        Label("Import from another app", systemImage: "square.and.arrow.down")
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                    .accessibilityIdentifier("sources.importOPML")
+                }
                 NavigationLink("Read Later Services") { ReadLaterScreen() }
                 NavigationLink("Import Listening Edition") { ListeningEditionImportScreen() }
             }
