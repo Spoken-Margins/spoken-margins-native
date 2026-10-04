@@ -251,12 +251,19 @@ def report(request_id: str, verdict: str, head: str, base: str, tier: str, where
 
 # ---- Processes ----------------------------------------------------------------------------------
 
+# The workflow's command files. A step's processes append to them to set its outputs (the verdict the
+# Verdict step reads), environment and summary, so the PR's code must not see them: the lane's own tests
+# call main(), and inherited, they wrote their fake verdicts into the job's output after the real one.
+WORKFLOW_FILES = ('GITHUB_OUTPUT', 'GITHUB_ENV', 'GITHUB_PATH', 'GITHUB_STATE', 'GITHUB_STEP_SUMMARY')
+
+
 def pr_code_env() -> dict:
     """The environment for the PR's own code (builds, tests): without the GitHub token, so nothing the
-    PR changes can use the lane's write access. Nor BUILD_NEEDS_ROOM_ENV: that is for the T2 builds alone
-    (pr_build_env), and host tests that take build slots or test lane_slots mustn't inherit it."""
+    PR changes can use the lane's write access, and without the workflow's command files, so it can't set
+    the job's verdict. Nor BUILD_NEEDS_ROOM_ENV: that is for the T2 builds alone (pr_build_env), and host
+    tests that take build slots or test lane_slots mustn't inherit it."""
     return {name: value for name, value in os.environ.items()
-            if name not in ('GH_TOKEN', 'GITHUB_TOKEN', BUILD_NEEDS_ROOM_ENV)}
+            if name not in ('GH_TOKEN', 'GITHUB_TOKEN', BUILD_NEEDS_ROOM_ENV, *WORKFLOW_FILES)}
 
 
 def pr_build_env() -> dict:
