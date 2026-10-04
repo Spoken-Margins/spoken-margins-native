@@ -804,7 +804,8 @@ public final class SessionEngine {
         let importer = BrowserTextImporter(repository: repository, heldItems: heldItems)
         let (item, upgraded) = try await importer.importReportingUpgrade(handoff, structuredDocument: structuredDocument)
         if structuredDocument != nil { invalidateStructuredDocumentCaches(itemId: item.id) }
-        if upgraded { try reloadAfterUpgrade(item) }
+        // The upgrade has committed; a failed reload mustn't report the import as failed.
+        if upgraded { try? reloadAfterUpgrade(item) }
         return item
     }
 
@@ -815,16 +816,18 @@ public final class SessionEngine {
     /// The upgrade committed while the engine didn't hold the item, but the listener
     /// may have opened it since, from rows read before the commit. Storage has the
     /// moved item, map and session, so take those instead (#344 audit 2).
+    /// Playback stops without saving: the old text's position would overwrite the moved one.
     func reloadAfterUpgrade(_ upgraded: Item) throws {
         guard currentItem?.id == upgraded.id || currentSession?.itemId == upgraded.id else { return }
-        if snapshot.status.isPlaybackActive { _ = try pause() }
+        let wasPlaying = snapshot.status.isPlaybackActive
+        if wasPlaying { try audio.pause() }
         currentItem = try repository.loadItem(id: upgraded.id)
         currentMap = try repository.loadListeningMap(itemId: upgraded.id)
         if let session = currentSession, session.itemId == upgraded.id,
            let stored = try repository.loadSession(id: session.id) {
             currentSession = stored
         }
-        publish(status: snapshot.status, phase: currentSession?.phase ?? snapshot.phase)
+        publish(status: wasPlaying ? .paused : snapshot.status, phase: currentSession?.phase ?? snapshot.phase)
     }
 
     private func invalidateStructuredDocumentCaches(itemId: String) {
@@ -2811,7 +2814,12 @@ public final class SessionEngine {
               preparedAudio(prepared, matches: item) else {
             return item
         }
-        return try applyPreparedTextAudio(prepared, to: item)
+        do {
+            return try applyPreparedTextAudio(prepared, to: item)
+        } catch SessionKitError.invalidCommandForState("applyPreparedTextAudio:source_text_changed") {
+            // Storage moved on (a re-import upgrade); read the stored item live (#344).
+            return try repository.loadItem(id: item.id)
+        }
     }
 
     /// Prepared narration is cache-backed. If iOS purges that cache, the text item
