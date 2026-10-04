@@ -214,6 +214,22 @@ class ProcessTests(unittest.TestCase):
             self.ready_or_skip(text)
             self.assertIn('KeyboardInterrupt', text)  # default handling reached the child; a SIGKILL leaves no trace
 
+    def test_the_prs_code_cannot_set_the_jobs_verdict(self):
+        # In a T3 job, the automerge run a T3 PASS releases runs --plan fast after the T3's verdict is
+        # recorded. Its runner-tests call main() and appended their own verdicts to the inherited
+        # GITHUB_OUTPUT, so lane jobs that passed and merged showed INCONCLUSIVE (#564, #573 on 10-04).
+        with tempfile.TemporaryDirectory() as temporary:
+            outputs = Path(temporary) / 'outputs'
+            outputs.write_text('reported=true\nverdict=PASS\n')
+            script = ('import os\npath = os.environ.get("GITHUB_OUTPUT")\n'
+                      'if path: open(path, "a").write("verdict=INCONCLUSIVE\\n")\n')
+            with mock.patch.dict('os.environ', {'GITHUB_OUTPUT': str(outputs), 'GITHUB_STEP_SUMMARY': str(outputs)}), \
+                    open(Path(temporary) / 'log', 'w+') as log:
+                self.assertEqual(lane.run_bounded([sys.executable, '-S', '-c', script], log, timeout=60), 0)
+                self.assertNotIn('GITHUB_OUTPUT', lane.pr_code_env())
+                self.assertNotIn('GITHUB_STEP_SUMMARY', lane.pr_code_env())
+            self.assertEqual(outputs.read_text(), 'reported=true\nverdict=PASS\n')
+
     def test_a_group_that_ignores_the_interrupt_is_killed_with_its_children(self):
         with tempfile.TemporaryDirectory() as temporary, open(Path(temporary) / 'log', 'w+') as log:
             pid_file = Path(temporary) / 'child.pid'
