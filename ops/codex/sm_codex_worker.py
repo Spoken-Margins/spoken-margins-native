@@ -423,6 +423,13 @@ AUDIT_REPORT_RE = re.compile(r'^\*\*Codex audit \(Astra\) on `([0-9a-f]{7,40})`\
 MAX_FINISH_ROUNDS = 2
 FINISH_LIMIT_REASON = 'two finishing rounds in the last 24 h; leaving this PR for a human'
 FINISH_LIMIT_MARK = 'Codex finisher round limit reached.'
+# The Claude finishers claim a PR with a first line like "Finisher two taking this." or
+# "Mac finisher taking this PR." and skip one another's claims for two hours. Codex honours
+# the same rule and posts the same kind of line, so no two finishers push one branch.
+OTHER_FINISHER_CLAIM_RE = re.compile(r'^\s*(?!Finisher Codex\b)(?:[\w-]+ )?finisher(?: [\w-]+)? taking this\b', re.I)
+CODEX_FINISHER_CLAIM = 'Finisher Codex taking this.'
+OTHER_FINISHER_HOLD = dt.timedelta(hours=2)
+OTHER_FINISHER_REASON = 'another finisher claimed it in the last 2 h'
 RUNNER_FAULT_RE = re.compile(
     r"runner fault|lane error|lane itself failed|lane's fault|not this PR|not the PR|"
     r'PermissionError|Operation not permitted|No space left on device|device (?:lost|vanished)', re.I)
@@ -487,6 +494,19 @@ def recent_finish_rounds(comments: list, now: dt.datetime) -> int:
     return rounds
 
 
+def claimed_by_other_finisher(comments: list, now: dt.datetime) -> bool:
+    """A Claude finisher's claim from the last two hours. Undated or unreadable claims hold."""
+    for c in comments:
+        if not OTHER_FINISHER_CLAIM_RE.match(c.get('body') or ''):
+            continue
+        try:
+            if not comment_time(c) or now - parse_time(comment_time(c)) < OTHER_FINISHER_HOLD:
+                return True
+        except ValueError:
+            return True
+    return False
+
+
 def finish_eligible(pr: dict, now: dt.datetime, held: set = frozenset()) -> tuple[bool, str]:
     if pr.get('state') != 'OPEN' or pr.get('baseRefName') != BASE_BRANCH or pr.get('isDraft'):
         return False, 'not an open non-draft PR into next'
@@ -504,6 +524,8 @@ def finish_eligible(pr: dict, now: dt.datetime, held: set = frozenset()) -> tupl
     if audit or 'needs-mac' in label_names(pr) or failing_head_report(pr):
         if recent_finish_rounds(pr.get('comments') or [], now) >= MAX_FINISH_ROUNDS:
             return False, FINISH_LIMIT_REASON
+        if claimed_by_other_finisher(pr.get('comments') or [], now):
+            return False, OTHER_FINISHER_REASON
         return True, ('Codex audit findings on head' if audit else
                       'needs-mac' if 'needs-mac' in label_names(pr) else 'lane FAIL on head')
     return False, 'no needs-mac, code failure or Codex audit findings on head'
@@ -1175,7 +1197,7 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
             ops.log(f'PR #{number}: not claimed on re-check: {why}')
             return 'skipped'
         original_labels = label_names(pr)
-        ops.comment(number, f'Thread "Codex worker {slot}" finishing #{number}')
+        ops.comment(number, f'{CODEX_FINISHER_CLAIM}\n\nThread "Codex worker {slot}" finishing #{number}')
         claimed = True
         ops.label(number, remove='automerge')
         if 'automerge' in label_names(ops.pull(number)):
