@@ -94,6 +94,14 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         )
     }
 
+    /// Whether a UI-test launch swaps the microphone and speech recognition for
+    /// stand-ins that need no permission prompt: `SPOKEN_MARGINS_UI_TEST_RECORDING=1`,
+    /// or the podcast seed, whose Margins would otherwise ask to transcribe.
+    public static func usesStandInAudioServices(arguments: [String], environment: [String: String]) -> Bool {
+        arguments.contains("--ui-testing")
+            && (environment["SPOKEN_MARGINS_UI_TEST_RECORDING"] == "1" || environment["SPOKEN_MARGINS_UI_TEST_PODCAST"] == "1")
+    }
+
     /// Whether the start of a session should add the generated timeline turns
     /// that older fixture-article UI tests expect.
     public var seedsGeneratedTimeline: Bool { self == .fixture }
