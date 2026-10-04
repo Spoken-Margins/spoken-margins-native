@@ -8,8 +8,6 @@ import subprocess
 from pathlib import Path
 import sys
 import tempfile
-import threading
-import time
 import unittest
 from unittest.mock import patch
 
@@ -112,79 +110,10 @@ class VerificationTests(unittest.TestCase):
 
     def test_outside_a_sandbox_the_fast_plan_runs_everything_and_tolerates_no_audio_failure(self):
         calls, manifest, status, _ = self.host_step_calls({})
-        self.assertIn('runner-tests', [name for name, _ in calls])
+        self.assertEqual([name for name, _ in calls][0], 'runner-tests')
         self.assertIsNone(dict(calls)['package']['probation'])
         self.assertFalse([step for step in manifest['steps'] if step.get('skipped')])
         self.assertEqual(status, 'verified')
-
-    def runner_tests_beside(self, runner_tests, others):
-        """Run the host steps with runner-tests and the other steps replaced; return (manifest, error, log)."""
-        log, error = [], None
-        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
-            verification.os.environ.pop('CODEX_SANDBOX', None)
-            run = verification.Run(Path(temporary) / 'run', 'fast')
-
-            def command(name, args, **kw):
-                if name != 'runner-tests':
-                    raise AssertionError(name)
-                return runner_tests(run, log)
-
-            with patch.object(run, 'command', side_effect=command), \
-                    patch.object(run, 'other_host_steps', side_effect=lambda: others(run, log)), \
-                    patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
-                try:
-                    run.host_steps()
-                except Exception as raised:  # noqa: BLE001
-                    error = raised
-            return run.manifest, error, log
-
-    def test_runner_tests_run_beside_the_other_host_steps(self):
-        # Lane throughput (2026-10-04): runner-tests took 127 s of every automerge run before anything
-        # else started, though it used 46 s of CPU. Beside the package step, the plan is that much shorter.
-        both_running = threading.Barrier(2, timeout=10)
-
-        def runner_tests(run, log):
-            both_running.wait()
-            log.append('runner-tests done')
-
-        def others(run, log):
-            both_running.wait()  # times out (BrokenBarrierError) if runner-tests runs before or after
-            log.append('others done')
-
-        _, error, log = self.runner_tests_beside(runner_tests, others)
-        self.assertIsNone(error)
-        self.assertEqual(sorted(log), ['others done', 'runner-tests done'])
-
-    def test_a_runner_tests_failure_still_fails_the_plan(self):
-        def runner_tests(run, log):
-            raise RuntimeError('runner-tests failed')
-
-        _, error, log = self.runner_tests_beside(runner_tests, lambda run, log: log.append('others done'))
-        self.assertEqual(str(error), 'runner-tests failed')
-        self.assertEqual(log, ['others done'])
-
-    def test_a_failing_step_stops_runner_tests_instead_of_waiting_for_it(self):
-        def runner_tests(run, log):
-            if not run.stop.wait(timeout=10):
-                log.append('runner-tests was not told to stop')
-
-        def others(run, log):
-            raise RuntimeError('package failed')
-
-        _, error, log = self.runner_tests_beside(runner_tests, others)
-        self.assertEqual(str(error), 'package failed')
-        self.assertEqual(log, [])
-
-    def test_the_stop_signal_interrupts_a_running_command(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            run = verification.Run(Path(temporary) / 'run', 'fast')
-            run.stop.set()
-            started = time.monotonic()
-            with self.assertRaises(RuntimeError) as raised:
-                run.command('runner-tests', [sys.executable, '-c', 'import time; time.sleep(60)'], timeout=120)
-            self.assertLess(time.monotonic() - started, 30)
-            self.assertIn('Process exit 124', str(raised.exception))
-            self.assertTrue(run.manifest['steps'][0]['interrupted'])
 
     def test_ops_files_count_as_verification_inputs(self):
         with patch.object(verification, 'capture', return_value='ops/dial/dial_gate.py\n'), \

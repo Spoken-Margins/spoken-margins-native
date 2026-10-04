@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Named verification plans with bounded processes and auditable execution evidence."""
 import argparse
-from concurrent.futures import ThreadPoolExecutor, wait
 import contextlib
 import datetime
 import fcntl
@@ -15,7 +14,6 @@ import re
 import signal
 import subprocess
 import sys
-import threading
 import time
 from lane_xcresult_attachments import export_failed_attachments
 
@@ -338,23 +336,10 @@ class Run:
                          'input_sha256': input_identity(), 'status': 'running', 'steps': []}
         self.crash_baseline = None
         self.crash_times = {}
-        self.lock = threading.Lock()
-        self.stop = threading.Event()  # set to stop a step running beside another (host_steps)
         self.save()
 
     def save(self):
-        # A step running beside another (host_steps) may add a key to its entry while this one writes;
-        # json.dumps then raises RuntimeError, and the next try sees a settled entry.
-        with self.lock:
-            for _ in range(100):
-                try:
-                    text = json.dumps(self.manifest, indent=2) + '\n'
-                    break
-                except RuntimeError:
-                    time.sleep(0.01)
-            else:
-                text = json.dumps(self.manifest, indent=2) + '\n'
-            (self.output / 'manifest.json').write_text(text)
+        (self.output / 'manifest.json').write_text(json.dumps(self.manifest, indent=2) + '\n')
 
     # A lone system-process crash is recorded and the run continues. Only a flood of
     # identical crashes (the pattern that spams crash dialogs) stops and shuts down.
@@ -404,8 +389,6 @@ class Run:
                     if device and (report := new_crash(reports, self.crash_baseline, device)):
                         if self.note_crash(entry, report):
                             raise InterruptedError('Repeated simulator process crashes')
-                    if self.stop.is_set():
-                        raise InterruptedError('Stopped because a step beside it stopped')
                     remaining = timeout - (time.monotonic() - start)
                     if remaining <= 0:
                         raise subprocess.TimeoutExpired(args, timeout)
@@ -488,31 +471,10 @@ class Run:
             self.host_steps()
 
     def host_steps(self):
-        # runner-tests takes about two minutes, mostly waiting on its own timeouts and child processes
-        # (127 s wall, 46 s CPU on 2026-10-04), so it runs beside the other host steps instead of before
-        # them. Every lane automerge run pays for this plan, so the overlap is the lane's throughput.
-        with ThreadPoolExecutor(max_workers=1) as beside:
-            if in_codex_sandbox():
-                self.skip('runner-tests')
-                runner_tests = None
-            else:
-                runner_tests = beside.submit(self.command, 'runner-tests',
-                                             [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'])
-            try:
-                self.other_host_steps()
-            except BaseException:
-                self.stop.set()  # don't leave runner-tests running after this plan has failed
-                raise
-            finally:
-                if runner_tests is not None:
-                    wait([runner_tests])
-            if runner_tests is not None:
-                runner_tests.result()  # its failure fails the plan, after the other steps have run
-
-        if input_identity() != self.manifest['input_sha256']:
-            raise RuntimeError('Inputs changed during fast verification')
-
-    def other_host_steps(self):
+        if in_codex_sandbox():
+            self.skip('runner-tests')
+        else:
+            self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'])
         self.ops_steps()
         self.command('contracts', [sys.executable, 'scripts/validate-contracts.py'])
         self.command('surfaces', [sys.executable, 'scripts/validate-surface-contracts.py'])
@@ -527,6 +489,9 @@ class Run:
                      expected=expected, tests=True,
                      allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus'},
                      probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
+
+        if input_identity() != self.manifest['input_sha256']:
+            raise RuntimeError('Inputs changed during fast verification')
 
     def skip(self, name):
         reason = CODEX_SANDBOX_SKIPS[name]
