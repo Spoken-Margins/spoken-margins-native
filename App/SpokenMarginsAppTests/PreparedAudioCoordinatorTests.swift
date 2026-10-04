@@ -479,6 +479,7 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         XCTAssertEqual(try saved().chunks.map(\.index), [0, 1])
 
         // Cool again: chunk 2 renders.
+        heat.thermal = .nominal
         _ = await model.performBackgroundAudioPreparationPass()
         texts = await renderer.texts
         XCTAssertEqual(texts.count, 3)
