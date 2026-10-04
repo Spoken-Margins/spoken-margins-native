@@ -59,7 +59,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     private let directory: URL
     private let monitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "com.spokenmargins.podcast-network")
-    private var cacheLimit: PodcastCacheLimitGB
+    private let cacheLimit: PodcastCacheLimitGB
     private var activeItemId: String?
     private var activeTaskItemIds: Set<String> = []
     private var generations: [String: String] = [:]
@@ -310,11 +310,6 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             || recordsByItemId[itemId]?.state == .availableOffline
     }
 
-    func setCacheLimit(_ limit: PodcastCacheLimitGB) {
-        cacheLimit = limit
-        enforceCacheLimit()
-    }
-
     func clearDownloads() {
         for record in Array(recordsByItemId.values)
             where record.state == .availableOffline && record.itemId != activeItemId {
@@ -512,17 +507,6 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     private func localURL(for record: PodcastDownloadRecord?) -> URL? {
         guard let path = record?.localRelativePath else { return nil }
         return directory.appending(path: path)
-    }
-
-    private func enforceCacheLimit() {
-        let protected = Set([activeItemId].compactMap { $0 })
-            .union(recordsByItemId.values.filter { $0.state == .downloading }.map(\.itemId))
-        let evictions = PodcastCacheEvictionPlanner.recordsToEvict(
-            from: Array(recordsByItemId.values),
-            limitBytes: cacheLimit.bytes,
-            protectedItemIds: protected
-        )
-        evictions.forEach(evict)
     }
 
     private func evict(_ record: PodcastDownloadRecord) {
