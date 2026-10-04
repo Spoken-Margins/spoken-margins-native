@@ -155,4 +155,17 @@ final class PlaybackStartCueTests: XCTestCase {
         XCTAssertEqual(checks, 0)
         XCTAssertEqual(chimes, 0)
     }
+
+    /// Audit of #580: the time runs from the listener's request, which the engine stamps on the snapshot.
+    func testTimeRunsFromTheRequestTheSnapshotCarries() {
+        let cue = makeCue()
+        var playing = snapshot("podcast", .playing)
+        playing.playbackRequestedAt = clock
+        clock += 1.2 // audio-session activation before the engine published the start
+
+        cue.observe(snapshot("podcast", .paused))
+        cue.observe(playing)
+
+        XCTAssertEqual(recorded["firstAudioMs:podcast"], "1200")
+    }
 }

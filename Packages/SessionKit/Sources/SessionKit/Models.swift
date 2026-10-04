@@ -1489,6 +1489,9 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public var skimBridgeState: SkimBridgeState?
     public var canSkimForward: Bool
     public var canSkimBackward: Bool
+    /// When the listener's request behind the latest playback start reached the engine, before any audio work, so the
+    /// time from tap to first audio can be measured (#357). Optional, so older decoders ignore it.
+    public var playbackRequestedAt: Date?
 
     public init() {
         sessionId = nil

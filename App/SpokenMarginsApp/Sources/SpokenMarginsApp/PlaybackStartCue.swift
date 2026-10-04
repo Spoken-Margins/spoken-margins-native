@@ -12,7 +12,8 @@ import SessionKit
 /// The model checks the player only every 500 ms, so a snapshot can still say "starting" after speech has begun.
 /// Before chiming, the cue asks for a fresh check (`checkNow`), so the chime doesn't land on the first words. In the
 /// app that check is one extra regular progress tick, so shared Margins and other per-tick work still see every step.
-/// Times to first audio are measured to the snapshot that shows playing, which can be up to 500 ms late.
+/// Times to first audio run from the listener's request (the snapshot's `playbackRequestedAt`) to the snapshot that
+/// shows playing, which can be up to 500 ms late.
 @MainActor
 final class PlaybackStartCue: ObservableObject {
     private var watch = PlaybackStartWatch()
@@ -58,7 +59,8 @@ final class PlaybackStartCue: ObservableObject {
     /// Feed every snapshot change.
     func observe(_ snapshot: SessionSnapshot) {
         let wasWaiting = watch.waitingItemId
-        for outcome in watch.observe(itemId: snapshot.itemId, status: snapshot.status, at: now()) {
+        for outcome in watch.observe(itemId: snapshot.itemId, status: snapshot.status,
+                                         requestedAt: snapshot.playbackRequestedAt, at: now()) {
             switch outcome {
             case .firstAudio(let itemId, let milliseconds):
                 record("firstAudioMs:\(itemId)", "\(milliseconds)")

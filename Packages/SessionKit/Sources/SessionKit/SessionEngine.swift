@@ -38,6 +38,8 @@ public final class SessionEngine {
     private var playbackStartWaitCap: TimeInterval { playbackStartTimeout * 4 }
     private var playbackStartFirstPendingAt: Date?
     private let now: () -> Date
+    /// Set when a listener's start command arrives; the next published start carries it (#357).
+    private var playbackRequestedAt: Date?
     private(set) var recordingAnchor: Anchor?
     private var recordingTargetType: InterjectionTargetType?
     private var recordingTargetId: String?
@@ -109,6 +111,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func startSession(itemId: String) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try require("startSession", category: "sync", capabilities: ["canonical_persistence", "receive_prepared_packages", "browser_session_handoff"])
         forgetFailure(unlessItemIs: itemId)
         var item = try repository.loadItem(id: itemId)
@@ -272,6 +275,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func resumePlayback() throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("resumePlayback")
         try requirePlayback("resumePlayback")
         guard var session = currentSession else {
@@ -1188,6 +1192,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func playSourceFromBeginning() throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("playSourceFromBeginning")
         try requirePlayback("playSourceFromBeginning")
         guard var session = currentSession else {
@@ -1520,6 +1525,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func playInterjectionAnchor(_ interjection: Interjection) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("playInterjectionAnchor")
         let plan = try interjectionAnchorPlaybackPlan(for: interjection)
         let previousSession = currentSession
@@ -1780,6 +1786,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func playTurn(turnId: String) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("playTurn")
         externallyStreamedTurnId = nil
         var session = try resolveSession(nil)
@@ -3117,6 +3124,8 @@ public final class SessionEngine {
     }
 
     private func publishPlaybackStart(for session: Session, phase: SessionPhase) {
+        snapshot.playbackRequestedAt = playbackRequestedAt ?? now()
+        playbackRequestedAt = nil
         playbackStartAttemptId += 1
         activePlaybackStartAttemptId = playbackStartAttemptId
         switch playbackStartStatus(for: session.currentTargetId, attemptId: playbackStartAttemptId) {

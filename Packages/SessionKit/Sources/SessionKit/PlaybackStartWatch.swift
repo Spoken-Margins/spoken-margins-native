@@ -31,15 +31,17 @@ public struct PlaybackStartWatch: Sendable {
     /// Feed every snapshot change. Returns what resolved: the open start's outcome, and a start that played at once.
     /// A start opens when playback goes to "starting" from a stop (idle, paused, failed, recording) or on another
     /// item. A skip, seek or rate change while playing also passes through "starting", and is not a new start. A
-    /// start the player confirms at once (a buffered resume) goes straight to "playing", and counts as first audio
-    /// after 0 ms, so an older measurement for the item isn't left looking current (audit of #580).
-    public mutating func observe(itemId: String?, status: PlaybackStatus, at now: Date) -> [Outcome] {
+    /// start the player confirms at once (a buffered resume) goes straight to "playing" and is first audio too.
+    /// `requestedAt` is when the listener's request reached the engine (the snapshot's `playbackRequestedAt`), so the
+    /// time counts the work before the start was published (audits of #580). A missing or implausible one falls back
+    /// to `now`.
+    public mutating func observe(itemId: String?, status: PlaybackStatus, requestedAt: Date? = nil, at now: Date) -> [Outcome] {
         let previous = last
         last = (itemId, status)
         var outcomes: [Outcome] = []
         if let start {
             if status == .starting, itemId == start.itemId { return [] }
-            let milliseconds = max(0, Int((now.timeIntervalSince(start.startedAt) * 1000).rounded()))
+            let milliseconds = Self.milliseconds(from: start.startedAt, to: now)
             outcomes.append(status == .playing && itemId == start.itemId
                 ? .firstAudio(itemId: start.itemId, milliseconds: milliseconds)
                 : .ended(itemId: start.itemId, milliseconds: milliseconds, status: status))
@@ -48,13 +50,21 @@ public struct PlaybackStartWatch: Sendable {
         }
         let continuesPlayback = previous.map { $0.status.isPlaybackActive && $0.itemId == itemId } ?? false
         if let itemId, !continuesPlayback {
+            let startedAt = requestedAt.flatMap { (now.addingTimeInterval(-Self.longestRequest)...now).contains($0) ? $0 : nil } ?? now
             if status == .starting {
-                start = Start(itemId: itemId, startedAt: now)
+                start = Start(itemId: itemId, startedAt: startedAt)
             } else if status == .playing {
-                outcomes.append(.firstAudio(itemId: itemId, milliseconds: 0))
+                outcomes.append(.firstAudio(itemId: itemId, milliseconds: Self.milliseconds(from: startedAt, to: now)))
             }
         }
         return outcomes
+    }
+
+    /// A request stamp older than this belongs to an earlier command, not this start.
+    static let longestRequest: TimeInterval = 120
+
+    private static func milliseconds(from start: Date, to end: Date) -> Int {
+        max(0, Int((end.timeIntervalSince(start) * 1000).rounded()))
     }
 
     /// True once per start, when it has been silent for `cueDelay`.
