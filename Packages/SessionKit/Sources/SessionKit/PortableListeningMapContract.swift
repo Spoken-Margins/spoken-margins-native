@@ -106,6 +106,41 @@ public enum PortableListeningMapContract {
         )
     }
 
+    /// The same proposal with any scene anchor quotation of `verbatimRunWords` words or more removed.
+    /// A packet that shares its item by reference carries none of its text, so a map anchor must not
+    /// carry a long quotation of it either (#480). The anchor keeps its times, character offsets and
+    /// segment ids, which are what place it; a shorter quotation can't hold a 10-word run and stays.
+    public static func withoutLongAnchorQuotations(
+        _ proposal: PortableListeningMapProposalArtifact
+    ) -> PortableListeningMapProposalArtifact {
+        func trimmed(_ anchor: PortableAnchorEvidence) -> PortableAnchorEvidence {
+            let quoted = [anchor.prefix, anchor.exactText, anchor.suffix].compactMap { $0 }.joined(separator: " ")
+            guard words(quoted).count >= verbatimRunWords else { return anchor }
+            return PortableAnchorEvidence(
+                anchorType: anchor.anchorType, startChar: anchor.startChar, endChar: anchor.endChar,
+                mediaTimeMs: anchor.mediaTimeMs, roughPercent: anchor.roughPercent,
+                transcriptSegmentId: anchor.transcriptSegmentId, chapterTitle: anchor.chapterTitle,
+                machineEvidenceAssetIds: anchor.machineEvidenceAssetIds
+            )
+        }
+        return PortableListeningMapProposalArtifact(
+            id: proposal.id,
+            schemaVersion: proposal.schemaVersion,
+            languageCode: proposal.languageCode,
+            createdAt: proposal.createdAt,
+            generator: proposal.generator,
+            scenes: proposal.scenes.map { scene in
+                PortableListeningMapScene(
+                    id: scene.id, order: scene.order, title: scene.title,
+                    summaryText: scene.summaryText, summaryAssetId: scene.summaryAssetId,
+                    summaryProvenance: scene.summaryProvenance,
+                    eligibility: scene.eligibility, eligibilityReason: scene.eligibilityReason,
+                    startAnchor: trimmed(scene.startAnchor), endAnchor: trimmed(scene.endAnchor)
+                )
+            }
+        )
+    }
+
     /// True when `text` repeats `words` consecutive words of `source`, ignoring case and punctuation.
     public static func sharesRun(_ text: String, _ source: String, words length: Int = verbatimRunWords) -> Bool {
         sharesRun(words(text), runs(words(source), length: length), length: length)

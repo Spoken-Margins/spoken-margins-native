@@ -241,6 +241,11 @@ final class ListeningMapPacketTests: XCTestCase {
 
         let drafts = EpisodeSceneSegmenter.makeDrafts(timeline: timeline)
         XCTAssertGreaterThan(drafts.count, 1)
+        // A map from another sender, or a hand-made one, can quote the transcript in its anchors. The app's
+        // own maps don't, so this is the case that would slip a quotation past the summary check.
+        func quotedStart(_ segmentId: String?) -> String? {
+            timeline.segments.first { $0.id == segmentId }?.text
+        }
         let map = PortableListeningMapProposalArtifact(
             id: "episode-map-proposal", createdAt: fixedDate, generator: "on-device-scene-map.v1",
             scenes: drafts.map { draft in
@@ -251,7 +256,9 @@ final class ListeningMapPacketTests: XCTestCase {
                     summaryProvenance: eligible ? .modelGenerated : nil,
                     eligibility: eligible ? .eligible : .unknown,
                     eligibilityReason: eligible ? nil : "The labeller was not confident.",
-                    startAnchor: .init(anchorType: .transcript, mediaTimeMs: draft.startMs, transcriptSegmentId: draft.startTranscriptSegmentId),
+                    startAnchor: .init(anchorType: .transcript, exactText: quotedStart(draft.startTranscriptSegmentId),
+                                       prefix: "So", suffix: "and then", mediaTimeMs: draft.startMs,
+                                       transcriptSegmentId: draft.startTranscriptSegmentId),
                     endAnchor: .init(anchorType: .transcript, mediaTimeMs: draft.endMs, transcriptSegmentId: draft.endTranscriptSegmentId)
                 )
             }
@@ -294,6 +301,27 @@ final class ListeningMapPacketTests: XCTestCase {
         let found = try archiveRuns([bareMargin, contextMargin], name: "context")
         XCTAssertFalse(found.isEmpty, "the reviewed context is in the packet, so the scan can see transcript text")
         XCTAssertTrue(found.isSubset(of: allowed), "transcript outside reviewed context: \(found.subtracting(allowed).sorted().prefix(3))")
+    }
+
+    /// A long anchor quotation is dropped for a by-reference packet; a short one, and what places the
+    /// anchor, stay (Codex audit on c02afd6).
+    func testOnlyLongAnchorQuotationsAreRemoved() {
+        let long = "one two three four five six seven eight nine ten"
+        let original = proposal([PortableListeningMapScene(
+            id: "scene-0", order: 0, summaryText: "A recap.", summaryProvenance: .senderAuthored, eligibility: .eligible,
+            startAnchor: .init(anchorType: .transcript, startChar: 4, exactText: long, mediaTimeMs: 1_000,
+                               transcriptSegmentId: "segment-0001", machineEvidenceAssetIds: ["landmark"]),
+            endAnchor: .init(anchorType: .transcript, exactText: "three short words", prefix: "a", suffix: "b",
+                             mediaTimeMs: 9_000)
+        )])
+        let scene = PortableListeningMapContract.withoutLongAnchorQuotations(original).scenes[0]
+        XCTAssertNil(scene.startAnchor.exactText)
+        XCTAssertEqual(scene.startAnchor.startChar, 4)
+        XCTAssertEqual(scene.startAnchor.mediaTimeMs, 1_000)
+        XCTAssertEqual(scene.startAnchor.transcriptSegmentId, "segment-0001")
+        XCTAssertEqual(scene.startAnchor.machineEvidenceAssetIds, ["landmark"])
+        XCTAssertEqual(scene.endAnchor, original.scenes[0].endAnchor)
+        XCTAssertEqual(scene.summaryText, "A recap.")
     }
 
     // MARK: Helpers

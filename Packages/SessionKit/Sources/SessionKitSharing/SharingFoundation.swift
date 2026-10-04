@@ -222,7 +222,11 @@ public enum SpokenMarginsPackageBuilder {
         // outside the app, so drop what breaks the scene rules rather than refuse the Margins (#480).
         var embeddedItemText: String?
         if case .embeddedText(let text, _, _) = itemTransportSelection { embeddedItemText = text }
-        let mapProposals = PortableListeningMapContract.forSharing(mapProposals, itemText: embeddedItemText ?? localSourceText)
+        var mapProposals = PortableListeningMapContract.forSharing(mapProposals, itemText: embeddedItemText ?? localSourceText)
+        // Shared by reference, the packet carries none of the item's text, so its map anchors don't quote it.
+        if embeddedItemText == nil {
+            mapProposals = mapProposals.map(PortableListeningMapContract.withoutLongAnchorQuotations)
+        }
         for (index, proposal) in mapProposals.enumerated() {
             let path = String(format: "artifacts/listening-map-proposal-%04d.json", index + 1)
             artifactData[path] = try encodeArtifact(proposal)
