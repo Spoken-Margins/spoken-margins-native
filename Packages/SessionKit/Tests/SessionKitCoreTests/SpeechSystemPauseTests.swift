@@ -19,13 +19,27 @@ final class SpeechSystemPauseTests: XCTestCase {
         XCTAssertEqual(SpeechSystemPause.interruptionReasonName(9), "raw_9")
     }
 
-    /// An interruption that ends without "should resume" is why speech stayed paused on return.
-    func testAnEndedInterruptionSaysWhetherItResumed() {
-        let fields = SpeechSystemPause.interruptionEnded(shouldResume: false)
-            .fields(acted: false, appState: "active", lowPowerMode: false)
-        XCTAssertEqual(fields["shouldResume"], "false")
-        XCTAssertEqual(fields["resumed"], "false")
+    /// An interruption that ends without "should resume" is why speech stayed paused on return. The
+    /// ended event only asks for a resume; whether one happened is its own entry, because the resume
+    /// can still fail to start the audio session (Codex audit on 3fddef3).
+    func testAnEndedInterruptionSaysWhetherItAskedToResume() {
+        let fields = SpeechSystemPause.interruptionEnded(shouldResume: true)
+            .fields(acted: true, appState: "active", lowPowerMode: false)
+        XCTAssertEqual(fields["shouldResume"], "true")
+        XCTAssertEqual(fields["resumeRequested"], "true")
+        XCTAssertNil(fields["resumed"], "the request isn't the outcome")
         XCTAssertNil(fields["paused"])
+    }
+
+    func testTheResumeOutcomeIsItsOwnEntry() {
+        XCTAssertEqual(SpeechInterruptionResume.resumed.kind, "speech.interruption_resume")
+        XCTAssertEqual(SpeechInterruptionResume.resumed.fields, ["outcome": "resumed"])
+        XCTAssertEqual(SpeechInterruptionResume.skipped.fields, ["outcome": "skipped"])
+        XCTAssertEqual(SpeechInterruptionResume.failed(reason: "session busy").fields,
+                       ["outcome": "failed", "error": "session busy"])
+        XCTAssertEqual(SpeechInterruptionResume.failed(reason: "session busy").diagnostic, "resume_failed:session busy")
+        XCTAssertEqual(SpeechInterruptionResume.skipped.diagnostic, "resume_skipped")
+        XCTAssertEqual(SpeechInterruptionResume.resumed.diagnostic, "resumed")
     }
 
     func testRouteLossAndResetSayWhetherTheyPaused() {

@@ -23,7 +23,8 @@ public enum SpeechSystemPause: Equatable, Sendable {
     }
 
     /// - Parameters:
-    ///   - acted: whether this event paused speech, or for an ended interruption, resumed it.
+    ///   - acted: whether this event paused speech, or for an ended interruption, asked to resume it.
+    ///     Whether the resume happened is a separate `SpeechInterruptionResume` entry.
     ///   - appState: the app's state then ("active", "inactive", "background").
     public func fields(acted: Bool, appState: String, lowPowerMode: Bool) -> [String: String] {
         var fields = ["appState": appState, "lowPowerMode": String(lowPowerMode)]
@@ -33,7 +34,7 @@ public enum SpeechSystemPause: Equatable, Sendable {
             fields["paused"] = String(acted)
         case .interruptionEnded(let shouldResume):
             fields["shouldResume"] = String(shouldResume)
-            fields["resumed"] = String(acted)
+            fields["resumeRequested"] = String(acted)
         case .routeLost, .mediaServicesReset:
             fields["paused"] = String(acted)
         }
@@ -52,6 +53,34 @@ public enum SpeechSystemPause: Equatable, Sendable {
         case 2?: "built_in_mic_muted"
         case 4?: "route_disconnected"
         case let other?: "raw_\(other)"
+        }
+    }
+}
+
+/// What came of a resume an ended interruption asked for (#538). Logged after the attempt, so a
+/// device report doesn't read a request as a resume when the audio session then refused to start.
+public enum SpeechInterruptionResume: Equatable, Sendable {
+    case resumed
+    /// Nothing was paused for the interruption by the time it ended, so nothing resumed.
+    case skipped
+    case failed(reason: String)
+
+    public var kind: String { "speech.interruption_resume" }
+
+    public var fields: [String: String] {
+        switch self {
+        case .resumed: ["outcome": "resumed"]
+        case .skipped: ["outcome": "skipped"]
+        case .failed(let reason): ["outcome": "failed", "error": reason]
+        }
+    }
+
+    /// The value the app's `speechPlaybackInterruption` diagnostic has always shown.
+    public var diagnostic: String {
+        switch self {
+        case .resumed: "resumed"
+        case .skipped: "resume_skipped"
+        case .failed(let reason): "resume_failed:\(reason)"
         }
     }
 }

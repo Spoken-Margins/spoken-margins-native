@@ -2454,7 +2454,7 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertNotNil(recorded.first?.fields["appState"])
         XCTAssertNotNil(recorded.first?.fields["lowPowerMode"])
         XCTAssertEqual(recorded.last?.fields["shouldResume"], "false")
-        XCTAssertEqual(recorded.last?.fields["resumed"], "false", "no resume without shouldResume")
+        XCTAssertEqual(recorded.last?.fields["resumeRequested"], "false", "no resume without shouldResume")
         XCTAssertEqual(client.playbackTransportState(targetId: "system-pause"), .paused)
         try client.stop()
     }

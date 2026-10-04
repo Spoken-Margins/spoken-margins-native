@@ -10996,15 +10996,15 @@ final class Gate1AppModel: ObservableObject {
             }
         case .endedShouldResume:
             guard snapshot.status == .paused, let engine else {
-                diagnostics["speechPlaybackInterruption"] = "resume_skipped"
+                noteSpeechInterruptionResume(.skipped)
                 return
             }
             do {
                 snapshot = try engine.resumePlayback()
                 refreshSelectedItem()
-                diagnostics["speechPlaybackInterruption"] = "resumed"
+                noteSpeechInterruptionResume(.resumed)
             } catch {
-                diagnostics["speechPlaybackInterruption"] = "resume_failed:\(error.localizedDescription)"
+                noteSpeechInterruptionResume(.failed(reason: error.localizedDescription))
                 reportWarning("Playback paused after the interruption. Tap Play to resume.")
             }
         }
