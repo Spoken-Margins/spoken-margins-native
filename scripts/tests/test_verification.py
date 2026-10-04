@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -124,6 +125,30 @@ class VerificationTests(unittest.TestCase):
                     run.command('crash-check', [sys.executable, '-c', child])
             with self.assertRaises(ProcessLookupError):
                 os.kill(int(pid_file.read_text()), 0)
+
+    def test_stopping_kills_a_child_that_ignores_sigterm_after_its_leader_exits(self):
+        # Codex audit P2 on dd3e0a4: the leader exits on SIGTERM at once, so waiting on it alone
+        # never escalated, and a descendant that ignores SIGTERM was left running.
+        with tempfile.TemporaryDirectory() as temporary:
+            pid_file = Path(temporary) / 'child.pid'
+            child = ('import os, signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); '
+                     f'open({str(pid_file)!r}, "w").write(str(os.getpid())); time.sleep(60)')
+            leader = f'import subprocess, sys, time; subprocess.Popen([sys.executable, "-c", {child!r}]); time.sleep(60)'
+            process = subprocess.Popen([sys.executable, '-c', leader], start_new_session=True)
+            for _ in range(100):
+                if pid_file.exists() and pid_file.read_text():
+                    break
+                time.sleep(0.05)
+            child_pid = int(pid_file.read_text())
+            verification.stop_process_group(process, grace=1)
+            for _ in range(40):
+                try:
+                    os.kill(child_pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(child_pid, 0)
 
     def test_stopping_a_command_that_already_exited_does_not_raise(self):
         process = subprocess.Popen([sys.executable, '-c', 'pass'], start_new_session=True)

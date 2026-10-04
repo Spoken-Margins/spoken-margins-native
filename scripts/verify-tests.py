@@ -327,17 +327,33 @@ def ops_test_folders(root=None):
     return sorted({path.parent for path in (base / 'ops').rglob('test_*.py')})
 
 
-def stop_process_group(process):
+def process_group_alive(pgid):
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return False  # macOS: only zombies are left
+    return True
+
+
+def stop_process_group(process, grace=10):
     # The group may already be gone (or, on macOS, hold only zombies, which gives EPERM); that
     # must not replace the error that brought us here.
     with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(process.pid, signal.SIGTERM)
-    try:
-        process.wait(timeout=10)
-    except subprocess.TimeoutExpired:
+    # Wait for the whole group, not just its leader: a leader that exits on SIGTERM can leave a
+    # descendant that ignores it (Codex audit P2 on dd3e0a4).
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline:
+        process.poll()  # reap the leader, so a zombie leader doesn't count as alive
+        if not process_group_alive(process.pid):
+            break
+        time.sleep(0.1)
+    else:
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(process.pid, signal.SIGKILL)
-        process.wait()
+    process.wait()
 
 
 class Run:
