@@ -997,6 +997,39 @@ final class SharingTests: XCTestCase {
         )))
     }
 
+    /// A Margin's flank can carry two signature variants, one captured during playback and one cut from the
+    /// source window. When the playback pair matches and the source pair doesn't, that is one Margin with both
+    /// flanks matched, not two of four flanks missing, so the wrong-episode rule leaves it placed (#543 audit).
+    func testSignatureVariantsOfOneFlankCountOnceForTheEditionCheck() {
+        typealias Answer = PodcastAcousticAnchorResolver.EditionFlankAnswer
+        let oneMargin = [
+            Answer(marginId: "m1", anchorOffsetMs: 11_500, matched: true),   // playback, before the anchor
+            Answer(marginId: "m1", anchorOffsetMs: -500, matched: true),     // playback, after the anchor
+            Answer(marginId: "m1", anchorOffsetMs: 11_500, matched: false),  // source window, before
+            Answer(marginId: "m1", anchorOffsetMs: -500, matched: false)     // source window, after
+        ]
+        let counts = PodcastAcousticAnchorResolver.editionFlankCounts(oneMargin)
+        XCTAssertEqual(counts.answered, 2)
+        XCTAssertEqual(counts.matched, 2)
+        let placed = ImportedAnchorResolution(
+            evidenceClass: .fused, localMediaTimeMs: 10_000, confidence: 0.95, algorithmVersion: "podcast-anchor.v1"
+        )
+        XCTAssertEqual(PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+            ["m1": placed], matchedFlanks: counts.matched, answeredFlanks: counts.answered
+        ), ["m1": placed])
+
+        // Flanks of different Margins still count separately: one placed Margin and two that found nothing.
+        let packet = oneMargin + [
+            Answer(marginId: "m2", anchorOffsetMs: 11_500, matched: false),
+            Answer(marginId: "m2", anchorOffsetMs: -500, matched: false),
+            Answer(marginId: "m3", anchorOffsetMs: 11_500, matched: false),
+            Answer(marginId: "m3", anchorOffsetMs: -500, matched: false)
+        ]
+        let packetCounts = PodcastAcousticAnchorResolver.editionFlankCounts(packet)
+        XCTAssertEqual(packetCounts.answered, 6)
+        XCTAssertEqual(packetCounts.matched, 2)
+    }
+
     /// The wrong-episode verdict (#456) survives the app's pipeline. The shared intro's words match the
     /// recipient's transcript, and fusion alone would place that Margin from the transcript; the final
     /// resolutions carry the verdict instead. A verified placement stored by an earlier pass on the same

@@ -290,8 +290,7 @@ public enum PodcastAcousticAnchorResolver {
         }
 
         var resolutions: [String: ImportedAnchorResolution] = [:]
-        var answeredFlanks = 0
-        var matchedFlanks = 0
+        var flankAnswers: [EditionFlankAnswer] = []
         var repeatProbe: RepeatedAudioProbe?
         var repeatProbeTried = false
         for query in queries {
@@ -309,7 +308,9 @@ public enum PodcastAcousticAnchorResolver {
                 switch await session.result(from: signature) {
                 case .match(let match):
                     guard let item = match.mediaItems.first else { continue }
-                    answeredFlanks += 1
+                    flankAnswers.append(EditionFlankAnswer(
+                        marginId: query.packageScopedId, anchorOffsetMs: evidence.anchorOffsetMs, matched: true
+                    ))
                     let matchedStartMs = absoluteStartMs(of: item)
                     let confidence = matchConfidence(of: item)
                     // A flank whose audio also plays elsewhere in this edition (a theme, sting or bumper) can match
@@ -330,7 +331,9 @@ public enum PodcastAcousticAnchorResolver {
                     candidates.append((matchedStartMs + evidence.anchorOffsetMs, confidence))
                     matchedAnchorOffsets.append(evidence.anchorOffsetMs)
                 case .noMatch:
-                    answeredFlanks += 1
+                    flankAnswers.append(EditionFlankAnswer(
+                        marginId: query.packageScopedId, anchorOffsetMs: evidence.anchorOffsetMs, matched: false
+                    ))
                 case .error:
                     continue // Not an answer about this edition: pre-Build 29 evidence (12 s) always errors.
                 }
@@ -345,12 +348,12 @@ public enum PodcastAcousticAnchorResolver {
                 matchedAnchorOffsets: matchedAnchorOffsets,
                 matchedRepeatedAudio: matchedRepeatedAudio
             )
-            matchedFlanks += candidates.count
         }
+        let flanks = editionFlankCounts(flankAnswers)
         return requiringEditionConfirmation(
             corroboratePartialFlanks(queries: queries, resolutions: resolutions),
-            matchedFlanks: matchedFlanks,
-            answeredFlanks: answeredFlanks
+            matchedFlanks: flanks.matched,
+            answeredFlanks: flanks.answered
         )
         #else
         return Dictionary(uniqueKeysWithValues: queries.map { query in
@@ -606,7 +609,7 @@ public enum PodcastAcousticAnchorResolver {
     /// and nothing is placed. Only flanks ShazamKit answered count (a match or no match): an unreadable
     /// signature or a query error says nothing about the edition. The rule needs at least one match, the
     /// shared audio it guards against; with none, other evidence (the transcript) decides as before. A packet
-    /// with fewer answered flanks than `minimumFlanksForEditionCheck` (one Margin) is left as it is.
+    /// with fewer answered flanks than `minimumFlanksForEditionCheck` (two Margins) is left as it is.
     static let minimumFlanksForEditionCheck = 4
     public static let editionUnconfirmedAlgorithmVersion = "podcast-anchor-edition-unconfirmed.v1"
     static let editionRejection = ImportedAnchorResolution(
@@ -618,6 +621,34 @@ public enum PodcastAcousticAnchorResolver {
     /// re-resolution keep it (`PodcastAnchorFusionResolver.enforcingEditionRejection`).
     public static func isEditionRejection(_ resolution: ImportedAnchorResolution) -> Bool {
         resolution.evidenceClass == .unresolved && resolution.algorithmVersion == editionUnconfirmedAlgorithmVersion
+    }
+
+    /// ShazamKit's answer for one signature variant of one Margin's flank.
+    struct EditionFlankAnswer: Equatable, Sendable {
+        let marginId: String
+        let anchorOffsetMs: Int
+        let matched: Bool
+    }
+
+    /// Counts the packet's answered and matched flanks for the edition check. A Margin has a flank before its
+    /// anchor (positive offset) and one after (negative), and each flank can carry more than one signature
+    /// variant: one captured during playback and one cut from the source window. The variants are one piece of
+    /// evidence, so a flank counts once: answered when any variant was answered, matched when any variant
+    /// matched. Counting variants separately let one Margin whose playback pair matched and whose source pair
+    /// didn't withdraw its own placement (Codex audit on d00dd82).
+    static func editionFlankCounts(_ answers: [EditionFlankAnswer]) -> (answered: Int, matched: Int) {
+        struct Flank: Hashable {
+            let marginId: String
+            let side: Int
+        }
+        var answered = Set<Flank>()
+        var matched = Set<Flank>()
+        for answer in answers {
+            let flank = Flank(marginId: answer.marginId, side: answer.anchorOffsetMs.signum())
+            answered.insert(flank)
+            if answer.matched { matched.insert(flank) }
+        }
+        return (answered.count, matched.count)
     }
 
     static func requiringEditionConfirmation(
