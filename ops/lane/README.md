@@ -51,9 +51,11 @@ On battery, or with the lid closed and no external display, the Mac sleeps and w
 
 Every 15 seconds the guard checks the power source and the lid:
 
-1. **On power, lid open** (or closed with an external display): it starts the runners it paused. A runner stopped some other way, by hand for a lane freeze or after a session conflict, is left alone.
-2. **On battery or lid closed, runner idle:** it stops that runner and notes it in `~/SpokenMarginsOps/lane-power-guard/paused`. Queued jobs wait on GitHub until the Mac is back on power.
-3. **On battery or lid closed, job running:** it lets the job finish and holds a `caffeinate` assertion until the job ends. That keeps idle sleep away while the lid is open. Nothing can keep a closed lid awake. When the job ends it checks again at once, so the runner is paused before it takes the next queued job. A job counts as running from the moment the runner's log says it took one, before its worker process starts, so a stop never cancels a job it just missed.
+1. **On power, lid open** (or closed with an external display), **or an Amphetamine session holds the Mac awake** (above 10% battery, and with lid-closed running on if the lid is shut; see `ops/power/README.md`): it starts the runners it paused. A runner stopped some other way, by hand for a lane freeze or after a session conflict, is left alone.
+2. **Otherwise, on battery or lid closed, runner idle:** it stops that runner and notes it in `~/SpokenMarginsOps/lane-power-guard/paused`. Queued jobs wait on GitHub until the Mac is back on power.
+3. **Otherwise, on battery or lid closed, job running:** it lets the job finish and holds a `caffeinate` assertion until the job ends. That keeps idle sleep away while the lid is open; `caffeinate` can't keep a closed lid awake. When the job ends it checks again at once, so the runner is paused before it takes the next queued job. A job counts as running from the moment the runner's log says it took one, before its worker process starts, so a stop never cancels a job it just missed.
+
+It asks Amphetamine only when the power and lid alone say no, and never opens it. macOS still reports that closing the lid causes sleep while Amphetamine holds it, so the guard asks Amphetamine instead of trusting that reading. The first time, macOS asks whether `python3` may control Amphetamine; choose **Allow**.
 
 It finds the runners from their launchd plists in `~/Library/LaunchAgents` and logs only changes to `~/SpokenMarginsOps/lane-power-guard/log.txt`.
 

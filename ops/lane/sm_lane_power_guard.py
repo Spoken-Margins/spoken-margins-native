@@ -9,7 +9,8 @@ posted. On 2026-10-02 to 10-04 the Mac was unplugged for 42 hours and lost about
 
 Every 15 seconds this checks the power source and the lid:
 
-- Mac can stay awake (on power, lid open or an external display keeps it awake): start the runners
+- Mac can stay awake (on power with the lid open or an external display, or an Amphetamine
+  session above 10% battery, with its lid-closed running on if the lid is shut): start the runners
   this guard paused. A runner stopped some other way (by hand, or after a session conflict) is left
   alone.
 - Mac can't stay awake, runner idle: stop the runner service and remember that the guard paused it.
@@ -17,7 +18,7 @@ Every 15 seconds this checks the power source and the lid:
 - Mac can't stay awake, a job already running (a worker process, or the listener's log shows a job
   started and not finished): leave it, and hold a `caffeinate` assertion until the job's worker
   exits, then check again at once so the runner is paused before it takes the next queued job. On
-  battery with the lid open that keeps idle sleep away; nothing can keep a closed lid awake.
+  battery with the lid open that keeps idle sleep away; caffeinate can't keep a closed lid awake.
 
 It finds the runners from their launchd plists (actions.runner.uncomposed-spoken-margins-native.*)
 in ~/Library/LaunchAgents. It logs only changes, to ~/SpokenMarginsOps/lane-power-guard/log.txt.
@@ -45,6 +46,7 @@ RUNNER_PREFIX = 'actions.runner.uncomposed-spoken-margins-native.'
 STATE_DIR = HOME / 'SpokenMarginsOps' / 'lane-power-guard'
 LOG = STATE_DIR / 'log.txt'
 PAUSED = STATE_DIR / 'paused'  # one runner label per line: the runners this guard stopped
+LOW_BATTERY = 10  # percent; Amphetamine ends its sessions here too
 
 
 @dataclass(frozen=True)
@@ -71,15 +73,49 @@ class Action:
     note: str
 
 
-def awake_state(power_line: str, clamshell: str) -> Tuple[bool, str]:
-    """Whether the Mac can stay awake for a job, from `pmset -g ps` and `ioreg` output."""
-    if 'AC Power' not in power_line:
-        return False, 'on battery'
+def awake_state(power_line: str, clamshell: str, amphetamine: Optional[Tuple[bool, bool]] = None,
+                low_battery: int = LOW_BATTERY) -> Tuple[bool, str]:
+    """Whether the Mac can stay awake for a job, from `pmset -g ps`, `ioreg` and Amphetamine.
+
+    `amphetamine` is (session active, lid-closed running on), or None when it isn't running or
+    can't be asked. An Amphetamine session keeps the Mac awake on battery above `low_battery`
+    percent (where Amphetamine itself ends sessions), and with the lid closed when its lid-closed
+    running is on. macOS still reports that closing the lid causes sleep while Amphetamine holds
+    it, so the clamshell reading alone can't tell."""
+    on_power = 'AC Power' in power_line
     closed = re.search(r'"AppleClamshellState" = Yes', clamshell)
     sleeps = re.search(r'"AppleClamshellCausesSleep" = Yes', clamshell)
-    if closed and sleeps:
+    lid_sleeps = bool(closed and sleeps)
+    if on_power and not lid_sleeps:
+        return True, 'on power'
+    blocked = 'on battery' if not on_power else 'lid closed'
+    active, lid_awake = amphetamine or (False, False)
+    if not active:
+        return False, blocked
+    if not on_power:
+        match = re.search(r'(\d+)%', power_line)
+        charge = int(match.group(1)) if match else None
+        if charge is None or charge <= low_battery:
+            return False, f'on battery at {charge if charge is not None else "unknown"}%'
+    if lid_sleeps and not lid_awake:
         return False, 'lid closed'
-    return True, 'on power'
+    where = 'on power' if on_power else f'on battery at {charge}%'
+    return True, f'Amphetamine holds the Mac awake ({where}{", lid closed" if lid_sleeps else ""})'
+
+
+AMPHETAMINE_QUERY = '''if application "Amphetamine" is running then
+    tell application "Amphetamine" to return ((session is active) as text) & "," & ((closed display mode enabled) as text)
+end if
+return "not running"'''
+
+
+def amphetamine_state() -> Optional[Tuple[bool, bool]]:
+    """(session active, lid-closed running on) from Amphetamine, or None. Never launches it."""
+    answer = run(['/usr/bin/osascript', '-e', AMPHETAMINE_QUERY]).strip()
+    if ',' not in answer:
+        return None
+    active, lid_awake = answer.split(',', 1)
+    return active == 'true', lid_awake == 'true'
 
 
 def listener_has_job(runner_log_tail: str) -> bool:
@@ -201,8 +237,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     uid = os.getuid()
-    can_stay_awake, reason = awake_state(run(['/usr/bin/pmset', '-g', 'ps']),
-                                         run(['/usr/sbin/ioreg', '-r', '-k', 'AppleClamshellState', '-d', '4']))
+    power_line = run(['/usr/bin/pmset', '-g', 'ps'])
+    clamshell = run(['/usr/sbin/ioreg', '-r', '-k', 'AppleClamshellState', '-d', '4'])
+    can_stay_awake, reason = awake_state(power_line, clamshell)
+    if not can_stay_awake:
+        can_stay_awake, reason = awake_state(power_line, clamshell, amphetamine_state())
     runners = find_runners(uid)
     actions = decide(can_stay_awake, reason, runners, held_worker_pids(), paused_labels())
     if args.dry_run:

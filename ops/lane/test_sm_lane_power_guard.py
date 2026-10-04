@@ -41,6 +41,37 @@ class AwakeState(unittest.TestCase):
         self.assertEqual(g.awake_state('', LID_OPEN), (False, 'on battery'))
 
 
+class AwakeStateWithAmphetamine(unittest.TestCase):
+    HOLD_LID = (True, True)      # session active, lid-closed running on
+    HOLD_NO_LID = (True, False)
+    NO_SESSION = (False, True)
+
+    def test_closed_lid_on_power_with_lid_hold_can(self):
+        # Owner, 2026-10-04: close the lid for 14 hours on power and keep the lane working.
+        self.assertEqual(g.awake_state(AC, LID_CLOSED, self.HOLD_LID),
+                         (True, 'Amphetamine holds the Mac awake (on power, lid closed)'))
+
+    def test_battery_above_the_floor_with_a_hold_can(self):
+        self.assertEqual(g.awake_state(BATTERY, LID_OPEN, self.HOLD_NO_LID),
+                         (True, 'Amphetamine holds the Mac awake (on battery at 84%)'))
+
+    def test_battery_at_the_floor_cannot_even_with_a_hold(self):
+        low = BATTERY.replace('84%', '10%')
+        self.assertEqual(g.awake_state(low, LID_OPEN, self.HOLD_LID), (False, 'on battery at 10%'))
+
+    def test_closed_lid_without_lid_running_cannot(self):
+        self.assertEqual(g.awake_state(AC, LID_CLOSED, self.HOLD_NO_LID), (False, 'lid closed'))
+        self.assertEqual(g.awake_state(BATTERY, LID_CLOSED, self.HOLD_NO_LID), (False, 'lid closed'))
+
+    def test_no_session_or_no_answer_keeps_the_old_rules(self):
+        self.assertEqual(g.awake_state(BATTERY, LID_OPEN, self.NO_SESSION), (False, 'on battery'))
+        self.assertEqual(g.awake_state(AC, LID_CLOSED, None), (False, 'lid closed'))
+
+    def test_battery_without_a_reading_cannot(self):
+        self.assertEqual(g.awake_state("Now drawing from 'Battery Power'\n", LID_OPEN, self.HOLD_LID),
+                         (False, 'on battery at unknown%'))
+
+
 class Decide(unittest.TestCase):
     def test_idle_runner_is_paused_on_battery(self):
         actions = g.decide(False, 'on battery', [runner()], [], [])
