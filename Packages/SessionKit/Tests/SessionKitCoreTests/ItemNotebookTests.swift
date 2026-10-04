@@ -112,11 +112,36 @@ final class ItemNotebookTests: XCTestCase {
         XCTAssertEqual(ItemNotebook.build(unit: .media, chapters: chapters, ownMargins: []).sections.map(\.title), ["A"])
     }
 
+    func testMarginsOnAnAIReplyAreLeftOut() {
+        let notebook = ItemNotebook.build(
+            unit: .text, paragraphStarts: [0, 50], end: 100,
+            ownMargins: [own("reply", char: 10, roughPercent: 100, target: .assistantTurn), own("item", char: 60)]
+        )
+        XCTAssertEqual(notebook.sections.flatMap { $0.entries.map(\.marginID) }, ["item"])
+        XCTAssertEqual(notebook.sections.map(\.title), ["Paragraphs 1–2"])
+    }
+
+    func testAPodcastWithOnlyAMapUsesItsScenesInMilliseconds() {
+        let scenes = [
+            EpisodeSceneDraft(id: "s1", order: 0, startMs: 0, endMs: 20 * minute, startTranscriptSegmentId: nil, endTranscriptSegmentId: nil),
+            EpisodeSceneDraft(id: "s2", order: 1, startMs: 20 * minute, endMs: 40 * minute, startTranscriptSegmentId: nil, endTranscriptSegmentId: nil, publisherTitle: "Ads"),
+        ].map { ItemNotebook.Heading($0, summary: "Gist \($0.id)") }
+        let notebook = ItemNotebook.build(unit: .media, scenes: scenes, ownMargins: [own("a", ms: 5 * minute), own("b", ms: 25 * minute)])
+        XCTAssertEqual(notebook.sections.map(\.title), ["Scene 1", "Ads"])
+        XCTAssertEqual(notebook.sections.map { $0.entries.map(\.marginID) }, [["a"], ["b"]])
+    }
+
+    func testTextWithoutParagraphStartsGetsOneHeading() {
+        let notebook = ItemNotebook.build(unit: .text, ownMargins: [own("a", char: 10), own("b", char: 900)])
+        XCTAssertEqual(notebook.sections.map(\.title), ["The text"])
+        XCTAssertEqual(notebook.sections[0].entries.map(\.marginID), ["a", "b"])
+    }
+
     // MARK: Fixtures
 
-    private func own(_ id: String, ms: Int? = nil, char: Int = 0, roughPercent: Int = 50) -> Interjection {
+    private func own(_ id: String, ms: Int? = nil, char: Int = 0, roughPercent: Int = 50, target: InterjectionTargetType = .item) -> Interjection {
         Interjection(
-            id: id, itemId: "item", sessionId: "session", targetType: .item, targetId: "item",
+            id: id, itemId: "item", sessionId: "session", targetType: target, targetId: "item",
             createdAt: base, roughPercent: roughPercent,
             anchor: Anchor(anchorType: ms == nil ? .text : .media, startChar: char, endChar: char,
                            anchorBefore: "", anchorAfter: "", mediaTimeMs: ms),

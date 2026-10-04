@@ -50,9 +50,15 @@ public struct ItemNotebook: Equatable, Sendable {
             self.init(id: chapter.id, title: chapter.title, start: chapter.startMs)
         }
 
-        /// A chapter of a text item, or a listening-map scene with its summary.
+        /// A chapter of a text item, or a text listening-map scene with its summary. Positions are
+        /// characters, so only for `unit: .text`.
         public init(_ chapter: Chapter, summary: String? = nil) {
             self.init(id: chapter.id, title: chapter.title, summary: summary, start: chapter.startChar)
+        }
+
+        /// A podcast's listening-map scene. Positions are milliseconds, so only for `unit: .media`.
+        public init(_ scene: EpisodeSceneDraft, title: String? = nil, summary: String? = nil) {
+            self.init(id: scene.id, title: title ?? scene.publisherTitle ?? "Scene \(scene.order + 1)", summary: summary, start: scene.startMs)
         }
     }
 
@@ -126,7 +132,8 @@ public struct ItemNotebook: Equatable, Sendable {
             if isAtEnd(position, roughPercent: roughPercent) { atEnd.append(entry) } else { placed.append(entry) }
         }
 
-        for margin in ownMargins {
+        // Only Margins on the item itself: one on an AI reply is anchored in that reply's text.
+        for margin in ownMargins where margin.targetType == .item {
             let stop = SkimStop.margin(margin, unit: unit.skimUnit)
             file(Entry(marginID: margin.id, origin: .own, position: stop?.position, isApproximate: false, createdAt: margin.createdAt),
                  roughPercent: margin.roughPercent)
@@ -188,8 +195,9 @@ public struct ItemNotebook: Equatable, Sendable {
                                start: index * spanMs, entries: byIndex[index] ?? [])
             case .text:
                 let first = index * spanParagraphs
-                let last = max(first + 1, min(starts.count, first + spanParagraphs))
-                return Section(id: "span-\(index)", kind: .span, title: "Paragraphs \(first + 1)–\(last)",
+                let last = min(starts.count, first + spanParagraphs)
+                let title = starts.isEmpty ? "The text" : first + 1 == last ? "Paragraph \(last)" : "Paragraphs \(first + 1)–\(last)"
+                return Section(id: "span-\(index)", kind: .span, title: title,
                                start: starts.indices.contains(first) ? starts[first] : 0, entries: byIndex[index] ?? [])
             }
         }
