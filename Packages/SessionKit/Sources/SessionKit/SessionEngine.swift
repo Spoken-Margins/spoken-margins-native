@@ -1574,7 +1574,9 @@ public final class SessionEngine {
     }
 
     @discardableResult
-    public func finishInterjection(audioRef: String?) throws -> SessionSnapshot {
+    /// - Parameter resumesSource: false leaves the source paused at the Margin's place, for a
+    ///   Margin a call or lost headphones ended (#771); the listener's Save resumes it.
+    public func finishInterjection(audioRef: String?, resumesSource: Bool = true) throws -> SessionSnapshot {
         guard var session = currentSession,
               let anchor = recordingAnchor,
               let targetType = recordingTargetType,
@@ -1669,7 +1671,9 @@ public final class SessionEngine {
         // drift and can move an exact boundary into the preceding sentence.
         currentSession = session
         try persistSession(session)
-        if externallyStreamedTurnId == session.currentTargetId {
+        if !resumesSource {
+            publish(status: .paused, phase: session.phase)
+        } else if externallyStreamedTurnId == session.currentTargetId {
             publish(status: .starting, phase: session.phase)
         } else {
             try playCurrentTarget(session)
@@ -1678,8 +1682,9 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// - Parameter resumesSource: as for `finishInterjection`.
     @discardableResult
-    public func cancelInterjection() throws -> SessionSnapshot {
+    public func cancelInterjection(resumesSource: Bool = true) throws -> SessionSnapshot {
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("cancelInterjection")
         }
@@ -1696,7 +1701,9 @@ public final class SessionEngine {
         }
         currentSession = session
         try persistSession(session)
-        if externallyStreamedTurnId == session.currentTargetId {
+        if !resumesSource {
+            publish(status: .paused, phase: session.phase)
+        } else if externallyStreamedTurnId == session.currentTargetId {
             publish(status: .starting, phase: session.phase)
         } else {
             try playCurrentTarget(session)

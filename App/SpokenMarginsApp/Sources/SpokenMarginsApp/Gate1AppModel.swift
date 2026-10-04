@@ -1002,6 +1002,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private var followOffers: [String: FollowOffer] = [:]
     private var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
     private let recordingClientOverride: RecordingClient?
+    private var marginRecordingInterruptionPolicy = MarginRecordingInterruptionPolicy()
     private let microphonePermissionRequest: (() async -> Bool)?
     private let forcePreparedTextGate: Bool
     private let sourceTranscriptionClient: SourceTranscriptionClient
@@ -6443,6 +6444,47 @@ final class Gate1AppModel: ObservableObject {
         streamingSpeechQueue.resumeAfterInterjection()
     }
 
+    /// A call, Siri or lost headphones stopped a spoken Margin (#771). What was said is kept (or a
+    /// stray start dropped) without resuming the source; the policy resumes it when a call ends.
+    private func handleMarginRecordingInterruption(_ event: MarginRecordingInterruptionEvent, recordedSeconds: TimeInterval?) {
+        let seconds = snapshot.isRecording ? (recordedSeconds ?? 0) : nil
+        let action = marginRecordingInterruptionPolicy.handle(event, recordedSeconds: seconds, sourceIsPaused: snapshot.status == .paused)
+        let cause = event == .routeLost ? "headphones_disconnected" : "call_or_siri"
+        recordDeveloperDiagnostic("margin.interruption", [
+            "event": "\(event)", "action": "\(action)", "recordedSeconds": seconds.map { String(format: "%.1f", $0) } ?? "none",
+        ])
+        switch action {
+        case .none:
+            return
+        case .resumeSource:
+            run { engine in snapshot = try engine.resumePlayback() }
+            streamingSpeechQueue.resumeAfterInterjection()
+            return
+        case .saveCutShort:
+            run { engine in
+                snapshot = try engine.finishInterjection(audioRef: nil, resumesSource: false)
+                refreshSelectedItem()
+                recordSavedInterjectionForOnboarding()
+                let interjection = latestInterjectionNeedingTranscription()
+                if let interjection { scheduleTranscription(for: interjection) }
+                diagnostics["lastMarginCutShort"] = "\(interjection?.id ?? "unknown") \(cause) \(String(format: "%.1f", seconds ?? 0))s"
+                reportWarning(event == .routeLost
+                    ? "Margin saved. It stopped when your headphones disconnected. Tap Play to continue."
+                    : "Margin saved. A call or Siri cut it short.")
+            }
+        case .discard:
+            run { engine in
+                snapshot = try engine.cancelInterjection(resumesSource: false)
+                refreshSelectedItem()
+                reportWarning("The Margin was interrupted before you said anything, so it wasn't kept.")
+            }
+        }
+        if !snapshot.isRecording {
+            recordingPresentationContext = nil
+            refreshMarginRows()
+        }
+    }
+
     private func recordSavedInterjectionForOnboarding() {
         markOnboardingSteps([.firstInterjection])
         if guidedOnboardingStage == .practiceInterjection {
@@ -10162,11 +10204,15 @@ final class Gate1AppModel: ObservableObject {
         } else {
             provider = FixtureAIProvider()
         }
+        let recorder = recordingClientOverride ?? SystemRecordingClient()
+        (recorder as? RecordingInterruptionReporting)?.onInterruption = { [weak self] event, seconds in
+            Task { @MainActor [weak self] in self?.handleMarginRecordingInterruption(event, recordedSeconds: seconds) }
+        }
         return SessionEngine(
             profile: profile,
             repository: store,
             audio: try makeAudioPlaybackClient(),
-            recorder: recordingClientOverride ?? SystemRecordingClient(),
+            recorder: recorder,
             aiProvider: provider,
             linkResolver: sourceLinkResolver ?? PublicPodcastLinkResolver(),
             textAudio: try makeTextAudioPreparationClient()

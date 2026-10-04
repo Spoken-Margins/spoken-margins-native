@@ -2849,6 +2849,63 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.sessions.first { $0.id == sessionID }?.status, "finished")
     }
 
+    /// #771: a call during a spoken Margin stopped the recorder while the screen still said
+    /// "Recording". Now what was said is saved, marked cut short, the source waits through the call,
+    /// and plays on when the call ends with "should resume".
+    func testACallMidMarginSavesItCutShortAndResumesAfterTheCall() async throws {
+        let audio = WorkflowCompletionAudioClient()
+        let recorder = InterruptibleRecordingClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio, recordingClient: recorder)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let marginIDsBefore = Set(model.selectedItem.interjections.map(\.id))
+        model.beginInterjection()
+        XCTAssertTrue(model.snapshot.isRecording)
+        let playsBefore = audio.playCount
+
+        recorder.onInterruption?(.interruptionBegan, 5)
+        for _ in 0..<50 where model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+
+        XCTAssertFalse(model.snapshot.isRecording, "the recording screen closes")
+        XCTAssertEqual(model.snapshot.status, .paused, "the source waits through the call")
+        XCTAssertEqual(audio.playCount, playsBefore)
+        XCTAssertNotNil(model.selectedItem.interjections.first { !marginIDsBefore.contains($0.id) }, "what was said is saved")
+        XCTAssertTrue(model.diagnostics["lastMarginCutShort"]?.contains("call_or_siri") == true)
+        XCTAssertEqual(model.statusMessage, "Margin saved. A call or Siri cut it short.")
+
+        recorder.onInterruption?(.interruptionEnded(shouldResume: true), nil)
+        for _ in 0..<50 where !model.snapshot.status.isPlaybackActive { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(model.snapshot.status.isPlaybackActive, "the source plays on after the call")
+        XCTAssertEqual(audio.playCount, playsBefore + 1)
+    }
+
+    /// #771: taking AirPods out mid-Margin saves it and leaves the source paused, so it never plays
+    /// from the speaker. A start interrupted within a second is dropped.
+    func testLostHeadphonesSaveAndStayPausedAndAStrayStartIsDropped() async throws {
+        let audio = WorkflowCompletionAudioClient()
+        let recorder = InterruptibleRecordingClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio, recordingClient: recorder)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let marginCount = model.selectedItem.interjections.count
+        let playsBefore = audio.playCount
+
+        model.beginInterjection()
+        recorder.onInterruption?(.routeLost, 4)
+        for _ in 0..<50 where model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertEqual(audio.playCount, playsBefore)
+        XCTAssertEqual(model.selectedItem.interjections.count, marginCount + 1)
+
+        model.beginInterjection()
+        recorder.onInterruption?(.interruptionBegan, 0.3)
+        for _ in 0..<50 where model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertEqual(model.selectedItem.interjections.count, marginCount + 1, "a stray start isn't kept")
+        XCTAssertEqual(audio.playCount, playsBefore)
+    }
+
     func testItemReplayStartsANewSessionAndPreservesTheCompletedSession() throws {
         let audio = WorkflowCompletionAudioClient()
         let model = Gate1AppModel(audioPlaybackClient: audio)
@@ -4444,6 +4501,15 @@ private final class MixedAudioPolicyRecordingClient: AudioPlaybackClient {
     func setRemoteCommandHandlingEnabled(_ enabled: Bool) {
         remoteCommandHandlingStates.append(enabled)
     }
+}
+
+/// Records nothing, like `NoopRecordingClient`, and lets a test send the interruptions the real
+/// recorder reports (#771).
+private final class InterruptibleRecordingClient: RecordingClient, RecordingInterruptionReporting, @unchecked Sendable {
+    var onInterruption: (@Sendable (_ event: MarginRecordingInterruptionEvent, _ recordedSeconds: TimeInterval?) -> Void)?
+    func beginRecording() throws {}
+    func finishRecording(audioRef: String?) throws -> String { audioRef ?? "interjections/interrupted.m4a" }
+    func cancelRecording() throws {}
 }
 
 private final class WorkflowCompletionAudioClient: AudioPlaybackClient {
