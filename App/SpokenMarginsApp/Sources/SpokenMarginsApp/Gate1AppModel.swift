@@ -1077,6 +1077,7 @@ final class Gate1AppModel: ObservableObject {
     #endif
     private let preparedTextAudioStarterDurationMs = 30_000
     private static let startupAudioChunkCount = 2
+    var preparationSeams = PreparationPassSeams()
     private static let lastPreparedAudioNoticeDateKey = "lastPreparedAudioNoticeDateV1"
     private let sourceWindowContextBeforeMs = SourceAnchorContextResolver.windowBeforeMs
     private let sourceWindowContextAfterMs = SourceAnchorContextResolver.windowAfterMs
@@ -15179,7 +15180,7 @@ final class Gate1AppModel: ObservableObject {
                 || (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.canYieldRendererToLibrary == true)
     }
 
-    private func performBackgroundAudioPreparationPass(foregroundDemandOnly: Bool = false) async -> Bool {
+    func performBackgroundAudioPreparationPass(foregroundDemandOnly: Bool = false) async -> Bool {
         var attemptedJob: AudioPreparationJob?
         // Live speech owns the serial renderer while the listener has active
         // demand. A stale/background job must not queue ahead of its next chunk.
@@ -15187,7 +15188,7 @@ final class Gate1AppModel: ObservableObject {
         guard (foregroundDemandOnly || automaticAudioPreparationPolicy == .whileCharging),
               hasAcceptedCurrentTerms,
               let voice = ttsVoiceSelection.supertonicVoice else { return false }
-        let device = SupertonicResourcePolicy.currentConditions() // heat and Low Power Mode, checked per chunk (#64)
+        let device = preparationSeams.deviceConditions() // heat and Low Power Mode, checked per chunk (#64)
         do {
             try Task.checkCancellation()
             let store = try requireStore()
@@ -15288,9 +15289,8 @@ final class Gate1AppModel: ObservableObject {
                 ownerId: "prepared-chunk-\(manifest.id)-\(next.index)",
                 byteCount: 64 * 1_024 * 1_024
             )
-            let renderer = try makeSupertonicRenderer()
             // Paced per render, not through the shared lifecycle flag (#377).
-            let pacedRenderer = BackgroundPreparationRenderer(base: renderer)
+            let pacedRenderer: any SupertonicRendering = try preparationSeams.renderer?() ?? BackgroundPreparationRenderer(base: makeSupertonicRenderer())
             var renderStarted = Date()
             do {
                 try Task.checkCancellation()
