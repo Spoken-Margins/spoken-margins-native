@@ -9,14 +9,14 @@ final class PlaybackStartWatchTests: XCTestCase {
     func testRecordsTimeFromStartToFirstAudio() {
         var watch = PlaybackStartWatch()
 
-        XCTAssertNil(watch.observe(itemId: "article", status: .starting, at: tap))
-        XCTAssertNil(watch.observe(itemId: "article", status: .starting, at: tap + 5))
+        XCTAssertEqual(watch.observe(itemId: "article", status: .starting, at: tap), [])
+        XCTAssertEqual(watch.observe(itemId: "article", status: .starting, at: tap + 5), [])
         XCTAssertEqual(watch.waitingItemId, "article")
         let outcome = watch.observe(itemId: "article", status: .playing, at: tap + 14.6)
 
-        XCTAssertEqual(outcome, .firstAudio(itemId: "article", milliseconds: 14_600))
+        XCTAssertEqual(outcome, [.firstAudio(itemId: "article", milliseconds: 14_600)])
         XCTAssertNil(watch.waitingItemId)
-        XCTAssertNil(watch.observe(itemId: "article", status: .playing, at: tap + 20), "only the first audio counts")
+        XCTAssertEqual(watch.observe(itemId: "article", status: .playing, at: tap + 20), [], "only the first audio counts")
     }
 
     func testAStartThatEndsWithoutAudioIsNotCountedAsFirstAudio() {
@@ -24,13 +24,13 @@ final class PlaybackStartWatchTests: XCTestCase {
         _ = watch.observe(itemId: "article", status: .starting, at: tap)
 
         XCTAssertEqual(watch.observe(itemId: "article", status: .paused, at: tap + 3),
-                       .ended(itemId: "article", milliseconds: 3_000, status: .paused))
+                       [.ended(itemId: "article", milliseconds: 3_000, status: .paused)])
 
         _ = watch.observe(itemId: "article", status: .starting, at: tap + 10)
         XCTAssertEqual(watch.observe(itemId: "podcast", status: .starting, at: tap + 11),
-                       .ended(itemId: "article", milliseconds: 1_000, status: .starting))
+                       [.ended(itemId: "article", milliseconds: 1_000, status: .starting)])
         XCTAssertEqual(watch.observe(itemId: "podcast", status: .playing, at: tap + 12.25),
-                       .firstAudio(itemId: "podcast", milliseconds: 1_250))
+                       [.firstAudio(itemId: "podcast", milliseconds: 1_250)])
     }
 
     /// Review of #580: skips, seeks and rate changes send a playing item back through "starting".
@@ -38,19 +38,34 @@ final class PlaybackStartWatchTests: XCTestCase {
         var watch = PlaybackStartWatch()
         _ = watch.observe(itemId: "podcast", status: .starting, at: tap)
         XCTAssertEqual(watch.observe(itemId: "podcast", status: .playing, at: tap + 2),
-                       .firstAudio(itemId: "podcast", milliseconds: 2_000))
+                       [.firstAudio(itemId: "podcast", milliseconds: 2_000)])
 
-        XCTAssertNil(watch.observe(itemId: "podcast", status: .starting, at: tap + 60))
+        XCTAssertEqual(watch.observe(itemId: "podcast", status: .starting, at: tap + 60), [])
         XCTAssertNil(watch.waitingItemId)
         XCTAssertFalse(watch.takeCue(at: tap + 65))
-        XCTAssertNil(watch.observe(itemId: "podcast", status: .playing, at: tap + 66))
+        XCTAssertEqual(watch.observe(itemId: "podcast", status: .playing, at: tap + 66), [])
 
         _ = watch.observe(itemId: "podcast", status: .paused, at: tap + 70)
         _ = watch.observe(itemId: "podcast", status: .starting, at: tap + 80)
         XCTAssertEqual(watch.waitingItemId, "podcast", "resuming after a pause is a start")
-        _ = watch.observe(itemId: "article", status: .playing, at: tap + 81)
+        XCTAssertEqual(watch.observe(itemId: "article", status: .playing, at: tap + 81),
+                       [.ended(itemId: "podcast", milliseconds: 1_000, status: .playing),
+                        .firstAudio(itemId: "article", milliseconds: 0)])
         _ = watch.observe(itemId: "article", status: .starting, at: tap + 90)
         XCTAssertNil(watch.waitingItemId, "a skip within the next item is not a start")
+    }
+
+    /// Audit of #580: a buffered resume can go straight from paused to playing, and still counts as a start.
+    func testAStartConfirmedAtOnceIsRecordedAsFirstAudio() {
+        var watch = PlaybackStartWatch()
+        XCTAssertEqual(watch.observe(itemId: "podcast", status: .playing, at: tap),
+                       [.firstAudio(itemId: "podcast", milliseconds: 0)])
+        XCTAssertEqual(watch.observe(itemId: "podcast", status: .playing, at: tap + 1), [])
+        _ = watch.observe(itemId: "podcast", status: .paused, at: tap + 30)
+        XCTAssertEqual(watch.observe(itemId: "podcast", status: .playing, at: tap + 40),
+                       [.firstAudio(itemId: "podcast", milliseconds: 0)])
+        XCTAssertNil(watch.waitingItemId)
+        XCTAssertFalse(watch.takeCue(at: tap + 45), "no cue for a start that already has audio")
     }
 
     func testCueComesOnceAfterTheDelayAndNotForAQuickStart() {

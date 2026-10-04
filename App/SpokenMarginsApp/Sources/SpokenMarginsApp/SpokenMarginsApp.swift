@@ -78,10 +78,7 @@ struct SpokenMarginsApp: App {
         ListeningEditionShortcutBridge.model = model
         #endif
         _model = StateObject(wrappedValue: model)
-        let playbackStartCue = PlaybackStartCue(snapshots: model.$snapshot.eraseToAnyPublisher(), record: { [weak model] key, value in
-            model?.diagnostics[key] = value
-        })
-        _playbackStartCue = StateObject(wrappedValue: playbackStartCue)
+        _playbackStartCue = StateObject(wrappedValue: PlaybackStartCue(model: model, pinned: pinnedDiagnostics))
         _bridge = StateObject(wrappedValue: BridgeService(store: BridgeService.makeStore()))
         _sharingCoordinator = StateObject(
             wrappedValue: Build23SharingCoordinator(model: model)

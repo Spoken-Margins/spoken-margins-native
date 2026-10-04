@@ -28,26 +28,33 @@ public struct PlaybackStartWatch: Sendable {
     /// The item whose start is still silent, if any.
     public var waitingItemId: String? { start?.itemId }
 
-    /// Feed every snapshot change. Returns the outcome when a start resolves. A start opens when playback goes to
-    /// "starting" from a stop (idle, paused, failed, recording) or on another item. A skip, seek or rate change
-    /// while playing also passes through "starting", and is not a new start.
-    public mutating func observe(itemId: String?, status: PlaybackStatus, at now: Date) -> Outcome? {
+    /// Feed every snapshot change. Returns what resolved: the open start's outcome, and a start that played at once.
+    /// A start opens when playback goes to "starting" from a stop (idle, paused, failed, recording) or on another
+    /// item. A skip, seek or rate change while playing also passes through "starting", and is not a new start. A
+    /// start the player confirms at once (a buffered resume) goes straight to "playing", and counts as first audio
+    /// after 0 ms, so an older measurement for the item isn't left looking current (audit of #580).
+    public mutating func observe(itemId: String?, status: PlaybackStatus, at now: Date) -> [Outcome] {
         let previous = last
         last = (itemId, status)
-        var outcome: Outcome?
+        var outcomes: [Outcome] = []
         if let start {
-            if status == .starting, itemId == start.itemId { return nil }
+            if status == .starting, itemId == start.itemId { return [] }
             let milliseconds = max(0, Int((now.timeIntervalSince(start.startedAt) * 1000).rounded()))
-            outcome = status == .playing && itemId == start.itemId
+            outcomes.append(status == .playing && itemId == start.itemId
                 ? .firstAudio(itemId: start.itemId, milliseconds: milliseconds)
-                : .ended(itemId: start.itemId, milliseconds: milliseconds, status: status)
+                : .ended(itemId: start.itemId, milliseconds: milliseconds, status: status))
             self.start = nil
+            if status == .playing, itemId == start.itemId { return outcomes }
         }
         let continuesPlayback = previous.map { $0.status.isPlaybackActive && $0.itemId == itemId } ?? false
-        if status == .starting, let itemId, !continuesPlayback {
-            start = Start(itemId: itemId, startedAt: now)
+        if let itemId, !continuesPlayback {
+            if status == .starting {
+                start = Start(itemId: itemId, startedAt: now)
+            } else if status == .playing {
+                outcomes.append(.firstAudio(itemId: itemId, milliseconds: 0))
+            }
         }
-        return outcome
+        return outcomes
     }
 
     /// True once per start, when it has been silent for `cueDelay`.
