@@ -22,6 +22,11 @@ public enum HandsFreeMarginTimings {
     /// top still ends by press or by the cap.
     public static let lowestThresholdDB: Double = -50
     public static let highestThresholdDB: Double = -25
+    /// At the end of the listening window, anything this far above the background counts as an
+    /// attempt to talk: the recording is saved, not thrown away for a flag.
+    public static let attemptMarginDB: Double = 4
+    /// A closing tone that never reports finishing (a call cut it off) counts as finished after this.
+    public static let toneTimeout: TimeInterval = 3
 }
 
 /// Where a hands-free trigger came from. Every source follows the same rule.
@@ -68,13 +73,16 @@ public enum HandsFreeFinishReason: Equatable, Sendable {
 
 /// What the app should do next. The coordinator never touches playback itself: the app carries
 /// these out with its existing pause and resume and `SessionEngine`'s begin, finish and cancel.
+/// `resumeSource` is the only resume: today `finishInterjection` and `cancelInterjection` resume
+/// the source themselves, so the wiring slice needs them to save or discard without resuming.
 public enum HandsFreeMarginCommand: Equatable, Sendable {
     /// Pause the source at the trigger, so the anchor is where the listener pressed.
     case pauseSource
     case playTone(HandsFreeTone)
     /// Open the microphone (`SessionEngine.beginInterjection`).
     case beginRecording
-    /// Save the Margin (`SessionEngine.finishInterjection`). Report `saveCompleted()` when it's stored.
+    /// Save the Margin (`SessionEngine.finishInterjection`). Report `saveCompleted()` when it's
+    /// stored, or `saveFailed()`.
     case finishRecording(HandsFreeFinishReason)
     /// Discard the recording (`SessionEngine.cancelInterjection`).
     case cancelRecording
@@ -123,6 +131,9 @@ public final class HandsFreeMarginCoordinator {
     private var resumesAfter = true
     private var awaitingSave = false
     private var awaitingInterruptionEnd = false
+    private var backgroundDB: Double?
+    private var loudestDB: Double = -.infinity
+    private var rejoiningSince: TimeInterval = 0
 
     /// - Parameter clock: seconds on a monotonic clock. Tests pass a fake one.
     public init(microphonePermission: HandsFreeMicrophonePermission = .undetermined, clock: @escaping () -> TimeInterval) {
@@ -157,6 +168,11 @@ public final class HandsFreeMarginCoordinator {
             commands += flag()
         case .speaking, .trailingSilence:
             commands += finish(.press)
+        case .saving where awaitingInterruptionEnd && !awaitingSave:
+            // iOS doesn't always say a call ended. A press means the listener is back.
+            awaitingInterruptionEnd = false
+            resumesAfter = false
+            commands += settle()
         case .saving, .rejoining:
             break
         }
@@ -194,6 +210,7 @@ public final class HandsFreeMarginCoordinator {
         let lastSpeechAt = lastLevel.flatMap { $0.isSpeech ? $0.at : nil }
         if let lastSpeechAt { speechSeconds += now - lastSpeechAt }
         lastLevel = (now, isSpeech)
+        loudestDB = max(loudestDB, decibels)
         if isSpeech {
             silenceSince = nil
             if phase != .speaking { phase = .speaking }
@@ -215,6 +232,21 @@ public final class HandsFreeMarginCoordinator {
         guard phase == .saving, awaitingSave else { return [] }
         awaitingSave = false
         return settle()
+    }
+
+    /// The save threw. A flag keeps the spot, and the low tone says it didn't work.
+    public func saveFailed() -> [HandsFreeMarginCommand] {
+        guard phase == .saving, awaitingSave else { return [] }
+        awaitingSave = false
+        if closingTone != nil { closingTone = .couldNotRecord }
+        return [.requestFlag] + settle()
+    }
+
+    /// Drops whatever is in progress and returns to idle, without commands. For the app to call
+    /// when it gives up on a capture, such as on relaunch.
+    public func abandon() {
+        reset()
+        phase = .idle
     }
 
     /// A call or Siri took the audio session.
@@ -241,7 +273,13 @@ public final class HandsFreeMarginCoordinator {
         case .saving:
             awaitingInterruptionEnd = true
             return due
-        case .idle, .rejoining:
+        case .rejoining:
+            // The call cut the closing tone off; resume, if at all, when the call ends.
+            closingTone = nil
+            awaitingInterruptionEnd = true
+            phase = .saving
+            return due
+        case .idle:
             return due
         }
     }
@@ -290,11 +328,14 @@ public final class HandsFreeMarginCoordinator {
         resumesAfter = true
         awaitingSave = false
         awaitingInterruptionEnd = false
+        backgroundDB = nil
+        loudestDB = -.infinity
     }
 
     /// The background level is the quietest calibration sample; speech sits a margin above it.
     private func learnThreshold() -> Double {
         let background = calibrationLevels.min() ?? HandsFreeMarginTimings.lowestThresholdDB - HandsFreeMarginTimings.speechMarginDB
+        backgroundDB = background
         let threshold = min(HandsFreeMarginTimings.highestThresholdDB,
                             max(HandsFreeMarginTimings.lowestThresholdDB, background + HandsFreeMarginTimings.speechMarginDB))
         speechThresholdDB = threshold
@@ -302,9 +343,18 @@ public final class HandsFreeMarginCoordinator {
     }
 
     private func timeouts(at now: TimeInterval) -> [HandsFreeMarginCommand] {
+        if phase == .rejoining, now - rejoiningSince >= HandsFreeMarginTimings.toneTimeout {
+            phase = .idle
+            return resumesAfter ? [.resumeSource] : []
+        }
         guard isRecording else { return [] }
         let elapsed = now - recordingStartedAt
         if phase == .listening, elapsed >= HandsFreeMarginTimings.listeningWindow {
+            // Something rose above the background but never past the threshold: keep it
+            // rather than lose words the threshold missed.
+            if let backgroundDB, loudestDB > backgroundDB + HandsFreeMarginTimings.attemptMarginDB {
+                return finish(.silence)
+            }
             return flag()
         }
         if phase == .trailingSilence, let since = silenceSince, now - since >= HandsFreeMarginTimings.trailingSilence {
@@ -346,6 +396,7 @@ public final class HandsFreeMarginCoordinator {
         guard !awaitingSave, !awaitingInterruptionEnd else { return [] }
         if let tone = closingTone {
             phase = .rejoining
+            rejoiningSince = clock()
             return [.playTone(tone)]
         }
         phase = .idle

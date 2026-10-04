@@ -208,4 +208,67 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.headphonesRemoved(), [])
         XCTAssertEqual(coordinator.phase, .idle)
     }
+
+    func testAFailedSaveFlagsTheSpotWithTheLowTone() {
+        startRecording()
+        feed(quiet, for: 0.5)
+        feed(voice, for: 2)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.finishRecording(.press)])
+        XCTAssertEqual(coordinator.saveFailed(), [.requestFlag, .playTone(.couldNotRecord)])
+        XCTAssertEqual(coordinator.toneFinished(.couldNotRecord), [.resumeSource])
+    }
+
+    func testAPressAfterACallWithNoEndNoticeClosesTheMargin() {
+        startRecording()
+        feed(quiet, for: 0.5)
+        feed(voice, for: 2)
+        coordinator.interruptionBegan()
+        XCTAssertEqual(coordinator.saveCompleted(), [])
+        clock.advance(120)
+        // iOS never said the call ended. The next press plays the save tone and leaves the
+        // source paused, since nothing said to resume.
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.playTone(.saved)])
+        XCTAssertEqual(coordinator.toneFinished(.saved), [])
+        XCTAssertEqual(coordinator.phase, .idle)
+        clock.advance(1)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)], "ready for the next one")
+    }
+
+    func testACallThatCutsTheClosingToneOffResumesOnlyWhenItEnds() {
+        startRecording()
+        feed(quiet, for: 6)
+        XCTAssertEqual(coordinator.phase, .rejoining)
+        XCTAssertEqual(coordinator.interruptionBegan(), [])
+        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: true), [.resumeSource])
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
+    func testAClosingToneThatNeverReportsFinishingTimesOut() {
+        startRecording()
+        feed(quiet, for: 6)
+        XCTAssertEqual(coordinator.phase, .rejoining)
+        clock.advance(2.9)
+        XCTAssertEqual(coordinator.tick(), [])
+        clock.advance(0.1)
+        XCTAssertEqual(coordinator.tick(), [.resumeSource])
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
+    func testFaintSpeechTheThresholdMissedIsKeptNotFlagged() {
+        startRecording()
+        feed(-50, for: 0.5)
+        // The threshold is -42; a quiet talker at -44 never crosses it but is clearly not silence.
+        XCTAssertEqual(feed(-44, for: 5.5), [.finishRecording(.silence)])
+    }
+
+    func testAbandonReturnsToIdle() {
+        startRecording()
+        feed(quiet, for: 0.5)
+        feed(voice, for: 2)
+        coordinator.trigger(from: .headphones)
+        coordinator.abandon()
+        XCTAssertEqual(coordinator.phase, .idle)
+        clock.advance(1)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)])
+    }
 }
