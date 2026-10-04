@@ -2804,6 +2804,17 @@ public final class SessionEngine {
     }
 
     private func applyPreparedTextAudio(_ prepared: PreparedTextAudio, to item: Item) throws -> Item {
+        // Check the item as stored, in the same transaction as the writes: an upgrade
+        // committing after the caller loaded it would otherwise get the old text written
+        // back over it (#344 audit 1).
+        let write = { try self.writePreparedTextAudio(prepared, to: try self.repository.loadItem(id: item.id)) }
+        if let store = repository as? any SessionRepositoryTransaction {
+            return try store.withSessionTransaction(write)
+        }
+        return try write()
+    }
+
+    private func writePreparedTextAudio(_ prepared: PreparedTextAudio, to item: Item) throws -> Item {
         // A render of text the item no longer has, such as one that started before a
         // re-import upgraded it, would write that text back over it (#344).
         guard preparedAudio(prepared, matches: item) else {

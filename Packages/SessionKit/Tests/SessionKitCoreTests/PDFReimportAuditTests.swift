@@ -207,6 +207,42 @@ final class PDFReimportAuditTests: XCTestCase {
         XCTAssertEqual(try store.loadSession(id: session.id)?.position.charOffset, document.text.range(of: "We measured").map { document.text.distance(from: document.text.startIndex, to: $0.lowerBound) })
     }
 
+    func testAudioAttachmentAndAnUpgradeCannotInterleave() throws {
+        // #344 audit 1 on 921487b: attachment checked the item, then saved it, in separate
+        // steps. An upgrade committing between them got the old text written back over it
+        // while its document, Margins and sessions stayed on the new text.
+        let store = TransactionalRepository()
+        let engine = SessionEngine(profile: .init(id: "pdf", displayName: "PDF", capabilities: ["sync": ["canonical_persistence"], "playback": ["prerendered_audio"]]), repository: store)
+        let old = try engine.importBrowserTextInBackground(handoff("Paper\nWe measured sleep in adults."))
+        let prepared = PreparedTextAudio(
+            normalizedText: old.text!,
+            media: ItemMedia(sourceType: .generatedTTSPrerendered, url: "file:///tmp/audit-344-render.caf", durationMs: 1_000),
+            timeline: TranscriptTimeline(segments: [MediaTimelineSegment(id: "1", startMs: 0, endMs: 1_000, startChar: 0, endChar: old.text!.count, text: old.text!)], chapters: [], durationMs: 1_000)
+        )
+        // Just after attachment finds no document, a re-import tries to commit an upgrade.
+        let upgraded = DispatchSemaphore(value: 0)
+        store.afterLoadStructuredDocument = { [document] in
+            Thread.detachNewThread {
+                defer { upgraded.signal() }
+                guard let existing = try? store.loadItem(id: old.id),
+                      case .success(let plan)? = try? StructuredDocumentUpgrader.plan(existing: existing, document: document, listeningMap: nil, repository: store) else { return }
+                // SQLiteSessionStore commits an upgrade in a transaction of its own.
+                try? store.withSessionTransaction { try store.applyStructuredDocumentUpgrade(plan) }
+            }
+            // Give an unguarded upgrade time to land; a guarded one waits for attachment.
+            if upgraded.wait(timeout: .now() + 0.5) == .success { upgraded.signal() }
+        }
+        _ = try? engine.attachPreparedTextAudio(itemId: old.id, prepared: prepared)
+        upgraded.wait()
+        let stored = try store.loadItem(id: old.id)
+        if try store.loadStructuredDocument(itemId: old.id) != nil {
+            XCTAssertEqual(stored.text, document.text, "an upgraded item keeps the upgrade's text")
+            XCTAssertNil(stored.media, "and no render of the old text")
+        } else {
+            XCTAssertEqual(stored.text, old.text)
+        }
+    }
+
     func testIdenticalTextReimportRetiresPlainTextPreparation() throws {
         // #344 audit 4 on 921487b: adopting a document without a text change kept the
         // plain text's preparation, which can no longer commit, so its job ran forever.
@@ -224,6 +260,29 @@ final class PDFReimportAuditTests: XCTestCase {
         XCTAssertEqual(try store.loadStructuredDocument(itemId: old.id), document)
         XCTAssertTrue(try store.loadPreparedAudioManifests(itemId: old.id).isEmpty)
         XCTAssertTrue(try store.loadAudioPreparationJobs().isEmpty)
+    }
+}
+
+/// Runs a hook once, just after a read returns, to land a change between two steps.
+private class HookedRepository: InMemorySessionRepository, @unchecked Sendable {
+    var afterLoadStructuredDocument: (() throws -> Void)?
+    override var structuredDocuments: [String: [Int: StructuredDocument]] {
+        get {
+            let documents = super.structuredDocuments
+            if let hook = afterLoadStructuredDocument { afterLoadStructuredDocument = nil; try? hook() }
+            return documents
+        }
+        set { super.structuredDocuments = newValue }
+    }
+}
+
+/// Serializes transactions as SQLiteSessionStore does.
+private final class TransactionalRepository: HookedRepository, SessionRepositoryTransaction, @unchecked Sendable {
+    private let lock = NSRecursiveLock()
+    func withSessionTransaction<T>(_ operation: () throws -> T) throws -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try operation()
     }
 }
 
