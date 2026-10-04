@@ -3,19 +3,19 @@ import SessionKit
 
 /// Owns only app-generated files. The journal is committed before the write, so
 /// retries after interruption reconcile either the old or intended new bytes.
+/// A note the listener edited is left as is and counted, not reported as a failure (#581).
 actor AutomaticMarginWriter {
     struct Entry: Codable { var previous: String?; var intended: String }
     struct Note: Sendable { let id: String; let markdown: String }
     let journalURL: URL
     init(journalURL: URL) { self.journalURL = journalURL }
 
-    func deliver(_ notes: [Note], to folder: URL, destinationID: String) throws -> Int {
+    func deliver(_ notes: [Note], to folder: URL, destinationID: String) throws -> MarginNoteDelivery.Summary {
         var journal: [String: Entry] = [:]
         if FileManager.default.fileExists(atPath: journalURL.path) {
             journal = try JSONDecoder().decode([String: Entry].self, from: Data(contentsOf: journalURL))
         }
-        var delivered = 0
-        var failures: [String] = []
+        var summary = MarginNoteDelivery.Summary()
         let granted = folder.startAccessingSecurityScopedResource()
         defer { if granted { folder.stopAccessingSecurityScopedResource() } }
         for note in notes {
@@ -26,21 +26,25 @@ actor AutomaticMarginWriter {
             let old = journal[key]
             var coordinationError: NSError?
             var writeError: Error?
+            var keptEdit = false
             NSFileCoordinator().coordinate(writingItemAt: file, options: .forReplacing, error: &coordinationError) { coordinated in
                 do {
                     let existing = FileManager.default.fileExists(atPath: coordinated.path)
                         ? try String(contentsOf: coordinated, encoding: .utf8) : nil
                     let actual = existing.map(ListeningEdition.digest)
-                    if actual == digest {
+                    switch MarginNoteDelivery.action(existing: actual, intended: digest, journalPrevious: old?.previous, journalIntended: old?.intended) {
+                    case .upToDate:
                         if old == nil {
                             journal[key] = Entry(previous: actual, intended: digest)
                             try FileManager.default.createDirectory(at: journalURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                             try JSONEncoder().encode(journal).write(to: journalURL, options: .atomic)
                         }
                         return
-                    }
-                    if let actual, actual != old?.intended && actual != old?.previous {
-                        throw EditionError.invalid("An exported note was edited outside Spoken Margins. Your edits are preserved. Choose another output folder to export a new copy.")
+                    case .keepListenerEdit:
+                        keptEdit = true
+                        return
+                    case .write:
+                        break
                     }
                     journal[key] = Entry(previous: actual, intended: digest)
                     try FileManager.default.createDirectory(at: journalURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -49,12 +53,14 @@ actor AutomaticMarginWriter {
                 } catch { writeError = error }
             }
             if let error = coordinationError ?? writeError as NSError? {
-                failures.append(error.localizedDescription)
-            } else { delivered += 1 }
+                summary.failures.append(error.localizedDescription)
+            } else if keptEdit {
+                summary.keptEdits += 1
+            } else { summary.saved += 1 }
         }
-        if let first = failures.first {
-            throw EditionError.invalid("\(delivered) Margins delivered; \(failures.count) need attention. " + first)
+        if let message = MarginNoteDelivery.failureMessage(summary) {
+            throw EditionError.invalid(message)
         }
-        return delivered
+        return summary
     }
 }
