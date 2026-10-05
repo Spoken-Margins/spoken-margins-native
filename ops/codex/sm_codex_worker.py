@@ -15,7 +15,8 @@ A stopped finisher leaves the PR's labels as found, except automerge stays remov
 The child claims the issue, makes a worktree on `ws/<issue>-codex-<slug>` from fresh
 origin/next, runs `codex exec` (workspace-write, 60-minute cap), re-runs the fast plan
 itself, and only on a pass commits, pushes and opens an `automerge` PR into next. Every
-other outcome posts a stop note and frees the issue. Worktree and lock always go.
+other outcome posts a stop note and frees the issue. The lock always goes; so does the worktree,
+unless saving Codex's changes failed: then it moves to kept/<run> for a human (#710).
 
 Holds (every slip fails toward spending less):
 - Dial: no `**Codex workers**` group, no tick, Mode Off, or dial_gate not importable -> 0.
@@ -68,6 +69,7 @@ MODEL = 'gpt-6.1-sol'
 EFFORT = 'high'
 CODEX_TIMEOUT_S = 60 * 60
 FAST_PLAN_TIMEOUT_S = 45 * 60
+FAST_EVIDENCE_DIR = 'fast-evidence'  # in the run folder, outside the worktree (#707)
 LIMITS_TIMEOUT_S = 30
 
 MAX_WORKERS = 3
@@ -422,6 +424,13 @@ AUDIT_REPORT_RE = re.compile(r'^\*\*Codex audit \(Astra\) on `([0-9a-f]{7,40})`\
 MAX_FINISH_ROUNDS = 2
 FINISH_LIMIT_REASON = 'two finishing rounds in the last 24 h; leaving this PR for a human'
 FINISH_LIMIT_MARK = 'Codex finisher round limit reached.'
+# The Claude finishers claim a PR with a first line like "Finisher two taking this." or
+# "Mac finisher taking this PR." and skip one another's claims for two hours. Codex honours
+# the same rule and posts the same kind of line, so no two finishers push one branch.
+OTHER_FINISHER_CLAIM_RE = re.compile(r'^[\s>*_]*(?!Finisher Codex\b)(?:[\w-]+ )?finisher(?: [\w-]+)? taking this\b', re.I)
+CODEX_FINISHER_CLAIM = 'Finisher Codex taking this.'
+OTHER_FINISHER_HOLD = dt.timedelta(hours=2)
+OTHER_FINISHER_REASON = 'another finisher claimed it in the last 2 h'
 RUNNER_FAULT_RE = re.compile(
     r"runner fault|lane error|lane itself failed|lane's fault|not this PR|not the PR|"
     r'PermissionError|Operation not permitted|No space left on device|device (?:lost|vanished)', re.I)
@@ -486,6 +495,19 @@ def recent_finish_rounds(comments: list, now: dt.datetime) -> int:
     return rounds
 
 
+def claimed_by_other_finisher(comments: list, now: dt.datetime) -> bool:
+    """A Claude finisher's claim from the last two hours. Undated or unreadable claims hold."""
+    for c in comments:
+        if not OTHER_FINISHER_CLAIM_RE.match(c.get('body') or ''):
+            continue
+        try:
+            if not comment_time(c) or now - parse_time(comment_time(c)) < OTHER_FINISHER_HOLD:
+                return True
+        except ValueError:
+            return True
+    return False
+
+
 def finish_eligible(pr: dict, now: dt.datetime, held: set = frozenset()) -> tuple[bool, str]:
     if pr.get('state') != 'OPEN' or pr.get('baseRefName') != BASE_BRANCH or pr.get('isDraft'):
         return False, 'not an open non-draft PR into next'
@@ -503,6 +525,8 @@ def finish_eligible(pr: dict, now: dt.datetime, held: set = frozenset()) -> tupl
     if audit or 'needs-mac' in label_names(pr) or failing_head_report(pr):
         if recent_finish_rounds(pr.get('comments') or [], now) >= MAX_FINISH_ROUNDS:
             return False, FINISH_LIMIT_REASON
+        if claimed_by_other_finisher(pr.get('comments') or [], now):
+            return False, OTHER_FINISHER_REASON
         return True, ('Codex audit findings on head' if audit else
                       'needs-mac' if 'needs-mac' in label_names(pr) else 'lane FAIL on head')
     return False, 'no needs-mac, code failure or Codex audit findings on head'
@@ -636,9 +660,11 @@ def default_run(cmd: list, cwd: Optional[Path] = None, timeout: Optional[float] 
 
     Never with CODEX_SANDBOX: with it, verify-tests skips runner-tests, and this runs the gate."""
     env = {k: v for k, v in os.environ.items() if k != 'CODEX_SANDBOX'}
+    # Output that isn't UTF-8 (a new PDF fixture in a diff, #710) is read with replacement characters, not
+    # raised: a decoding error here once ended a finished run. Byte-exact output goes to a file instead (save_diff).
     proc = subprocess.Popen([str(c) for c in cmd], cwd=str(cwd) if cwd else None, env=env,
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, start_new_session=True)
+                            encoding='utf-8', errors='replace', start_new_session=True)
     try:
         out, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -966,15 +992,64 @@ def check_staged_changes(ops: Ops, wt: Path) -> None:
               '-indent-with-non-tab,-tab-in-indent', 'diff', '--cached', '--check'], cwd=wt)
 
 
+def run_fast_plan(ops: Ops, wt: Path, run_dir: Path) -> Result:
+    """The wrapper's own --plan fast in the worktree, its evidence written to the run folder.
+
+    Without --output, verify-tests writes its manifest and step logs under the worktree's
+    artifacts/, and removing the worktree deleted them, even after a timeout (#707). The run
+    folder is outside the worktree, so the evidence is never staged and survives cleanup, and
+    each step's log is there from the moment the step starts."""
+    evidence = run_dir / FAST_EVIDENCE_DIR
+    fast = ops.run(['.venv/bin/python', 'scripts/verify-tests.py', '--plan', 'fast', '--output', str(evidence)],
+                   cwd=wt, timeout=FAST_PLAN_TIMEOUT_S)
+    (run_dir / 'fast-plan.txt').write_text((fast.stdout or '') + (fast.stderr or '')
+                                           + f'\nEvidence folder: {evidence}\n')
+    return fast
+
+
 def save_diff(ops: Ops, wt: Path, dest: Path) -> None:
     """Save everything Codex changed, new files included, before the worktree is removed.
 
     Plain `git diff` leaves out untracked files, so a give-up or failed run lost every file Codex
     created (#64). Staging first is safe: the commit step stages the same paths again.
+
+    Git writes the patch to `dest` itself, so its bytes never pass through a text decoder: a new file Git
+    treats as text can hold bytes that aren't UTF-8, and decoding one (0x93 in a PDF) ended a finished run
+    before anything was saved (#710).
     """
     stage_changes(ops, wt)
-    diff = ops.run(['git', 'diff', '--cached', '--binary'], cwd=wt).stdout
-    dest.write_text(diff or '')
+    dest.unlink(missing_ok=True)
+    ops.must(['git', 'diff', '--cached', '--binary', f'--output={dest}'], cwd=wt)
+    if not dest.is_file():
+        raise RuntimeError(f'git diff wrote no {dest.name}')
+
+
+def save_or_keep(ops: Ops, wt: Path, dest: Path, keep_as: str) -> tuple[Optional[Path], str]:
+    """Save Codex's changes before cleanup. If that fails, move the worktree out of the slot (the next run in the
+    slot removes `wt-<slot>`) and return where it went and why, so finished work survives for a human (#710)."""
+    try:
+        save_diff(ops, wt, dest)
+        return None, ''
+    except Exception as exc:
+        why = str(exc)[:200]
+        ops.log(f'could not save {dest}: {why}')
+    kept = ops.home / 'kept' / keep_as
+    kept.parent.mkdir(parents=True, exist_ok=True)
+    if ops.run(['git', 'worktree', 'move', str(wt), str(kept)], cwd=ops.repo_root).returncode != 0:
+        try:
+            os.rename(wt, kept)
+        except OSError as exc:
+            ops.log(f'could not move the worktree to {kept} either; it stays at {wt} until the slot runs again: {exc}')
+            return wt, why
+        ops.run(['git', 'worktree', 'repair', str(kept)], cwd=ops.repo_root)  # point Git at the new path
+    ops.log(f'kept the worktree at {kept}')
+    return kept, why
+
+
+def kept_where(kept: Path, wt: Path) -> str:
+    if kept == wt:  # the move failed too: say honestly that the slot's next run clears it
+        return f'its worktree is still at `{wt}`, but the next run in this slot removes it, so copy it out first'
+    return f'its worktree is at `{kept}` for a human'
 
 
 def run_child(ops: Ops, slot: int, number: int) -> str:
@@ -1036,7 +1111,13 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
 
         changes = ops.run(['git', 'status', '--porcelain', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt).stdout
         if changes.strip():
-            save_diff(ops, wt, run_dir / 'codex.diff')
+            kept, why = save_or_keep(ops, wt, run_dir / 'codex.diff', run_dir.name)
+            if kept:
+                wt_added = False  # cleanup must not remove it
+                branch = None  # still checked out in the kept worktree
+                stop('none', f'could not save Codex\'s changes ({why}); {kept_where(kept, wt)} '
+                             f'(run folder `{run_dir}`)')
+                return 'kept'
         give_up = out / 'give-up.txt'
         if give_up.exists():
             reason = (give_up.read_text(errors='replace').strip().splitlines() or ['Codex gave up'])[0]
@@ -1049,9 +1130,7 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
             stop('none', 'Codex made no changes')
             return 'empty'
 
-        fast = ops.run(['.venv/bin/python', 'scripts/verify-tests.py', '--plan', 'fast'], cwd=wt,
-                       timeout=FAST_PLAN_TIMEOUT_S)
-        (run_dir / 'fast-plan.txt').write_text((fast.stdout or '') + (fast.stderr or ''))
+        fast = run_fast_plan(ops, wt, run_dir)
 
         msg_file = run_dir / 'commit-msg.txt'
         raw_msg = (out / 'commit-msg.txt').read_text(errors='replace') if (out / 'commit-msg.txt').exists() else ''
@@ -1132,7 +1211,7 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
             ops.log(f'PR #{number}: not claimed on re-check: {why}')
             return 'skipped'
         original_labels = label_names(pr)
-        ops.comment(number, f'Thread "Codex worker {slot}" finishing #{number}')
+        ops.comment(number, f'{CODEX_FINISHER_CLAIM}\n\nThread "Codex worker {slot}" finishing #{number}')
         claimed = True
         ops.label(number, remove='automerge')
         if 'automerge' in label_names(ops.pull(number)):
@@ -1183,7 +1262,12 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
         codex_ok, codex_why = ops.codex(wt, run_dir / 'answer.md', prompt, run_dir / 'transcript.txt')
         changes = ops.must(['git', 'status', '--porcelain', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt).stdout
         if changes.strip():
-            save_diff(ops, wt, run_dir / 'codex.diff')
+            kept, why = save_or_keep(ops, wt, run_dir / 'codex.diff', run_dir.name)
+            if kept:
+                wt_added = False  # cleanup must not remove it
+                stop(f'could not save Codex\'s changes ({why}); {kept_where(kept, wt)} '
+                     f'(run folder `{run_dir}`)')
+                return 'kept'
         if (out / 'give-up.txt').exists():
             reason = (out / 'give-up.txt').read_text(errors='replace').strip().splitlines()
             stop(f'Codex gave up: {reason[0] if reason else "no reason"}')
@@ -1202,9 +1286,7 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
             return 'empty'
         # Staging the resolutions does not hide accidentally retained conflict markers.
         check_staged_changes(ops, wt)
-        fast = ops.run(['.venv/bin/python', 'scripts/verify-tests.py', '--plan', 'fast'], cwd=wt,
-                       timeout=FAST_PLAN_TIMEOUT_S)
-        (run_dir / 'fast-plan.txt').write_text((fast.stdout or '') + (fast.stderr or ''))
+        fast = run_fast_plan(ops, wt, run_dir)
         if fast.returncode != 0:
             stop('fast plan failed; no commit or push. Evidence kept in ' + str(run_dir / 'fast-plan.txt'))
             return 'fast-failed'

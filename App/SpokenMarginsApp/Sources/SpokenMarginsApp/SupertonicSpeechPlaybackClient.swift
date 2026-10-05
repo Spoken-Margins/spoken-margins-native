@@ -57,9 +57,9 @@ extension RenderedSpeechGenerationState {
                 return "Preparing the full Supertonic audio on this iPhone"
             }
             if isDelayed {
-                return "Still rendering chunk \(min(progress.completedChunks + 1, progress.totalChunks)) of \(progress.totalChunks) · \(progress.percent)% complete"
+                return "Still preparing part \(min(progress.completedChunks + 1, progress.totalChunks)) of \(progress.totalChunks) · \(progress.percent)% complete"
             }
-            return "Generating full audio · \(progress.percent)% (\(progress.completedChunks) of \(progress.totalChunks) chunks)"
+            return "Generating full audio · \(progress.percent)% (\(progress.completedChunks) of \(progress.totalChunks) parts)"
         case .ready:
             return "Prepared audio is ready for playback"
         case .stopped:
@@ -1744,6 +1744,18 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// The player's own state for the playback heartbeat (#288).
     func playerDiagnostics() -> [String: String] {
         lock.withLock { AudioSessionDiagnostics.fields(for: fallbackIsActive ? nil : player) }
+    }
+
+    /// The guard's replacement that is playing now (#306), not a render prepared ahead.
+    /// Full-item fallbacks have their own reason; this notice is only for a temporary passage.
+    var replacementVoiceTargetId: String? {
+        lock.withLock {
+            guard !fallbackIsActive, transportIntent == .playing, !playbackComplete,
+                  player?.currentItem != nil, startedTargetId == currentTargetId,
+                  standInOffsets.contains(currentStartOffset),
+                  !observesPlayerLifecycle || player?.timeControlStatus == .playing else { return nil }
+            return currentTargetId
+        }
     }
 
     /// Watches the player's clock while playback is intended. AVPlayer can report "playing" while

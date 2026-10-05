@@ -236,6 +236,36 @@ class TickTests(unittest.TestCase):
         self.assertTrue(any(c[:4] == ['gh', 'issue', 'comment', '42'] for c in self.calls))
         self.assertFalse(any(c[:3] == ['gh', 'issue', 'create'] for c in self.calls))
 
+    def test_fail_finds_a_duplicate_named_only_past_the_first_100_comments(self):
+        # #694: `gh issue list` returns only an issue's first 100 comments, so a failing test named
+        # in comment 150 was missed and a duplicate ready,priority,bug issue was filed.
+        self.app = manifest('failed')
+        first_100 = [{'body': f'comment {n}'} for n in range(1, 101)]
+        later = '\n'.join(f'comment {n}' for n in range(101, 150)) + '\nStill failing: ' + TEST + '\n'
+        fake_run = self.fake_run
+
+        def run(cmd, cwd=None, timeout=None):
+            if cmd[:3] == ['gh', 'api', '--paginate'] and cmd[3].endswith('/issues/42/comments'):
+                self.calls.append(cmd)
+                return worker.Result(0, '\n'.join(c['body'] for c in first_100) + '\n' + later)
+            return fake_run(cmd, cwd, timeout)
+        self.ops.run = run
+        with patch.object(self.ops, 'diagnose', return_value=desk.diagnoses('', [TEST])), \
+                patch.object(self.ops, 'gh_json', return_value=[{'number': 42, 'title': 'Resume fails',
+                                                                 'comments': first_100}]):
+            self.assertEqual(self.tick(), 'FAIL')
+        self.assertTrue(any(c[:4] == ['gh', 'issue', 'comment', '42'] for c in self.calls))
+        self.assertFalse(any(c[:3] == ['gh', 'issue', 'create'] for c in self.calls))
+
+    def test_a_hit_with_fewer_than_100_comments_is_not_paged(self):
+        self.app = manifest('failed')
+        with patch.object(self.ops, 'diagnose', return_value=desk.diagnoses('', [TEST])), \
+                patch.object(self.ops, 'gh_json', return_value=[{'number': 42, 'title': 'Resume fails',
+                                                                 'comments': [{'body': 'no match'}]}]):
+            self.assertEqual(self.tick(), 'FAIL')
+        self.assertFalse(any(c[:3] == ['gh', 'api', '--paginate'] for c in self.calls))
+        self.assertTrue(any(c[:3] == ['gh', 'issue', 'create'] for c in self.calls))
+
     def test_fail_creates_worker_eligible_issue_with_report_and_steps(self):
         self.app = manifest('failed')
         with patch.object(self.ops, 'diagnose', return_value=desk.diagnoses('', [TEST])):

@@ -121,6 +121,9 @@ struct ReadLaterScreen: View {
                 ReadwiseHighlightSection(sync: model.readwiseHighlightSync)
             }
             Section("Choose Articles") {
+                if let line = connection.emptyArticlesLine {
+                    Text(line).font(.footnote).foregroundStyle(.secondary)
+                }
                 ForEach(connection.documents) { document in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(document.title).font(.headline)
