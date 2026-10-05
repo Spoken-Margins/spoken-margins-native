@@ -1368,6 +1368,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func saveWrittenInterjection(captureId: String, text: String) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
         guard let capture = pendingWrittenInterjection, capture.id == captureId,
               let session = currentSession,
               session.id == capture.sessionId,
@@ -1417,6 +1418,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func cancelWrittenInterjection(captureId: String) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
         guard let capture = pendingWrittenInterjection, capture.id == captureId,
               let session = currentSession,
               session.id == capture.sessionId,
@@ -1584,6 +1586,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func finishInterjection(audioRef: String?) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
         guard var session = currentSession,
               let anchor = recordingAnchor,
               let targetType = recordingTargetType,
@@ -1689,6 +1692,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func cancelInterjection() throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("cancelInterjection")
         }

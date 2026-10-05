@@ -155,6 +155,45 @@ final class PlaybackRequestTimingTests: XCTestCase {
         XCTAssertEqual(resumed.playbackRequestedAt, tap, "stamped before the player's 1.5 s of work")
     }
 
+    /// Audit of #580: the resume after a Margin is recorded (or the recording is cancelled) counts from the tap that
+    /// ended the recording, so the 1.5 s of audio work before the resume is published is in its time.
+    func testTheResumeAfterAMarginIsTimedFromTheTap() throws {
+        for finishes in [true, false] {
+            let (engine, audio) = try makeEngine()
+            audio.confirmsAtOnce = true
+            _ = try engine.resumePlayback()
+            now += 10
+            _ = try engine.beginInterjection()
+            now += 5
+            let tap = now
+
+            let resumed = finishes ? try engine.finishInterjection(audioRef: nil) : try engine.cancelInterjection()
+
+            XCTAssertEqual(resumed.status, .playing, finishes ? "finish" : "cancel")
+            XCTAssertEqual(resumed.playbackRequestedAt, tap, finishes ? "finish" : "cancel")
+        }
+    }
+
+    /// Audit of #580: the same holds for a written Margin, saved or cancelled.
+    func testTheResumeAfterAWrittenMarginIsTimedFromTheTap() throws {
+        for saves in [true, false] {
+            let (engine, audio) = try makeEngine()
+            audio.confirmsAtOnce = true
+            _ = try engine.resumePlayback()
+            now += 10
+            let capture = try engine.beginWrittenInterjection()
+            now += 5
+            let tap = now
+
+            let resumed = saves
+                ? try engine.saveWrittenInterjection(captureId: capture.id, text: "A note.")
+                : try engine.cancelWrittenInterjection(captureId: capture.id)
+
+            XCTAssertEqual(resumed.status, .playing, saves ? "save" : "cancel")
+            XCTAssertEqual(resumed.playbackRequestedAt, tap, saves ? "save" : "cancel")
+        }
+    }
+
     func testAStaleOrFutureRequestTimeFallsBackToNow() {
         var watch = PlaybackStartWatch()
         let at = Date(timeIntervalSince1970: 10_000)
@@ -183,7 +222,10 @@ final class PlaybackRequestTimingTests: XCTestCase {
         let engine = SessionEngine(
             profile: RuntimeCapabilityProfile(
                 id: "phone", displayName: "Phone",
-                capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media", "assistant_turn_tts"]]
+                capabilities: [
+                    "sync": ["canonical_persistence"], "playback": ["native_media", "assistant_turn_tts"],
+                    "interjection": ["record_audio", "delegate_interjection_to_canonical_runtime"],
+                ]
             ),
             repository: InMemorySessionRepository(
                 items: [item.id: item], sessions: [session.id: session],
