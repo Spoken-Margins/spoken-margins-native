@@ -206,6 +206,17 @@ public enum ListeningSignalContext {
         return context(for: item, subscriptions: subscriptions,
                        entries: (try? repository.loadFeedEntries(subscriptionId: nil)) ?? [], redirects: redirects)
     }
+    /// The item a session just finished in, for one `finish` row however it got there: playback
+    /// reaching the end or a skip past it. Only a live session moving into `.finished` counts, so
+    /// reopening an already finished session or switching items records nothing.
+    public static func finishedItem(from previous: SessionSnapshot, to current: SessionSnapshot) -> String? {
+        guard current.phase == .finished,
+              ![.finished, .idle, .abandoned].contains(previous.phase),
+              let sessionId = current.sessionId, previous.sessionId == sessionId,
+              let itemId = current.itemId, previous.itemId == itemId else { return nil }
+        return itemId
+    }
+
     public static func source(for subscription: FeedSubscription) -> ListeningSignalSource {
         ListeningSignalSource(
             id: subscription.source.id,

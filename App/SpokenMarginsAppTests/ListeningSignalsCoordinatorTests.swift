@@ -54,6 +54,30 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         model.endSession()
     }
 
+    func testShareCreditsTheItemThePacketWasBuiltForNotTheSelection() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try SQLiteSessionStore(path: root.appendingPathComponent("share.sqlite").path)
+        let subscription = FeedSubscription(id: "followed", source: SourceIdentity(id: "publication", kind: .articleFeed,
+            canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Publisher"))
+        try store.saveFeedSubscription(subscription)
+        for id in ["a", "b"] {
+            try store.saveItem(Item(id: id, title: id.uppercased(), mediaType: "article", text: "Words",
+                externalReference: nil, status: "ready", sourceURL: subscription.source.canonicalURL))
+        }
+        let recorder = ListeningSignalRecorder(fileURL: root.appendingPathComponent("signals.jsonl"), flushDelay: 60)
+        let signals = ListeningSignalsCoordinator(recorder: recorder, repository: { store })
+        let packetB = root.appendingPathComponent("b.spokenmargins")
+        signals.export(itemId: "b", packetId: "package-b", marginCount: 1, packetURL: packetB)
+        // Item A may be selected by the time B's share sheet completes; the packet still names B.
+        signals.share(packetURL: packetB)
+        signals.share(packetURL: root.appendingPathComponent("never-built.spokenmargins"))
+        let exported = await signals.exportFileURL()
+        let rows = exported.map(ListeningSignalRecorder.read) ?? []
+        XCTAssertEqual(rows.map { "\($0.event.name):\($0.item?.id ?? "-")" }, ["export:library-b", "share:library-b"])
+    }
+
     func testAppCompletionRecordsTheSavedSpokenMargin() async throws {
         try await checkCompletion(compact: false)
     }

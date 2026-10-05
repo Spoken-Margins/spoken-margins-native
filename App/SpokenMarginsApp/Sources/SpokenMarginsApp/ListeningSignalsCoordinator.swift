@@ -21,6 +21,9 @@ final class ListeningSignalsCoordinator {
     private let collector: ListeningSignalCollector
     private let repository: @MainActor () -> (any SessionRepository)?
     private var pendingDurations: [UUID: Task<Void, Never>] = [:]
+    /// The item each packet file was built for, so a share sheet that completes later credits that
+    /// item even if the selection has moved on meanwhile.
+    private var exportedItems: [URL: String] = [:]
     init(recorder: ListeningSignalRecorder = .app, repository: @escaping @MainActor () -> (any SessionRepository)?) {
         self.collector = ListeningSignalCollector(recorder: recorder)
         self.repository = repository
@@ -57,11 +60,13 @@ final class ListeningSignalsCoordinator {
         }
     }
 
-    func share(itemId: String?) {
-        record(.share, itemId: itemId)
+    /// The system share sheet sent `packetURL`; the row goes to the item the packet was built for.
+    func share(packetURL: URL) {
+        record(.share, itemId: exportedItems[packetURL.standardizedFileURL])
     }
 
-    func export(itemId: String?, packetId: String, marginCount: Int) {
+    func export(itemId: String?, packetId: String, marginCount: Int, packetURL: URL) {
+        exportedItems[packetURL.standardizedFileURL] = itemId
         record(.export(packetId: packetId, marginCount: marginCount), itemId: itemId)
     }
 
@@ -71,6 +76,12 @@ final class ListeningSignalsCoordinator {
 
     func finish(itemId: String?) {
         record(.finish, itemId: itemId)
+    }
+
+    /// Every snapshot change: a session moving into finished records `finish`, whether playback
+    /// reached the end or a transport command skipped past it.
+    func snapshotChanged(from previous: SessionSnapshot, to current: SessionSnapshot) {
+        if let itemId = ListeningSignalContext.finishedItem(from: previous, to: current) { finish(itemId: itemId) }
     }
 
     func dismiss(entryId: String) {

@@ -266,6 +266,28 @@ final class ListeningSignalRecorderTests: XCTestCase {
                      "after unfollowing A, a shared GUID alone must not file A's episode under B")
     }
 
+    func testOnlyALiveSessionMovingIntoFinishedNamesAFinishedItem() {
+        var playing = SessionSnapshot()
+        playing.sessionId = "session"
+        playing.itemId = "item"
+        playing.phase = .itemPlayback
+        var finished = playing
+        finished.phase = .finished
+        XCTAssertEqual(ListeningSignalContext.finishedItem(from: playing, to: finished), "item",
+                       "playback reaching the end or a skip past it")
+        var pausedSummary = playing
+        pausedSummary.phase = .summaryPlayback
+        XCTAssertEqual(ListeningSignalContext.finishedItem(from: pausedSummary, to: finished), "item")
+        XCTAssertNil(ListeningSignalContext.finishedItem(from: finished, to: finished), "later ticks add nothing")
+        XCTAssertNil(ListeningSignalContext.finishedItem(from: SessionSnapshot(), to: finished), "reopening a finished session")
+        var idle = playing
+        idle.phase = .idle
+        XCTAssertNil(ListeningSignalContext.finishedItem(from: idle, to: finished), "loading a finished session")
+        var otherSession = playing
+        otherSession.sessionId = "earlier"
+        XCTAssertNil(ListeningSignalContext.finishedItem(from: otherSession, to: finished))
+    }
+
     func testItemsMatchTheirFollowedSourceByURLOrTitleOnly() {
         let subscription = FeedSubscription(
             id: "subscription-source-1",

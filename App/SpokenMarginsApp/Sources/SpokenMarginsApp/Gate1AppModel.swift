@@ -577,6 +577,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var snapshot = SessionSnapshot() {
         didSet {
             recordPlaybackEventState(previous: oldValue)
+            listeningSignals.snapshotChanged(from: oldValue, to: snapshot)
             updateNarrationVoiceNotice()
             if playingImportedCommentary != nil,
                oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId
@@ -6647,7 +6648,6 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         guard snapshot.phase == .finished else { return }
-        listeningSignals.finish(itemId: snapshot.itemId)
         if let store {
             try? refreshLibraryRows(store: store)
         }
@@ -13767,7 +13767,7 @@ final class Gate1AppModel: ObservableObject {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let destination = directory.appending(path: "\(safeShareFilename(item.title))-\(packageID.suffix(8)).spokenmargins")
             _ = try SpokenMarginsPackageArchive.write(prepared, to: destination)
-            listeningSignals.export(itemId: item.id, packetId: packageID, marginCount: drafts.count)
+            listeningSignals.export(itemId: item.id, packetId: packageID, marginCount: drafts.count, packetURL: destination)
             UserDefaults.standard.set(sharingState.senderDisplayLabel, forKey: "sharingSenderDisplayLabel")
             sharedSpokenMarginsPackageURL = destination
             sharingState.isExporting = false

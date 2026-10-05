@@ -517,9 +517,9 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         stage = newStage
     }
 
-    /// The share sheet sent the verified packet (logged as an I4 `share`, #483).
-    func recordSystemShareCompleted() {
-        model.listeningSignals.share(itemId: model.selectedItem.id)
+    /// The share sheet sent the verified packet (logged as an I4 `share` for its item, #483).
+    func recordSystemShareCompleted(packetURL: URL) {
+        model.listeningSignals.share(packetURL: packetURL)
     }
 
     private func buildRecipientPreview() {

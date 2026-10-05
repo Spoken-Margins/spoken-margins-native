@@ -949,7 +949,7 @@ struct SharedSpokenMarginsPackageReadyView: View {
         }
         .sheet(isPresented: $isActivityPresented) {
             SharedSpokenMarginsPackageActivityView(packageURL: packageURL) {
-                model.listeningSignals.share(itemId: model.selectedItem.id)
+                model.listeningSignals.share(packetURL: packageURL)
             }
         }
     }
