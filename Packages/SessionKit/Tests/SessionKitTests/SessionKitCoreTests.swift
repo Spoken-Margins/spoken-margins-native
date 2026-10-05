@@ -769,6 +769,8 @@ final class SessionKitCoreTests: XCTestCase {
 
         _ = try engine.startSession(itemId: item.id)
         let spoken = try XCTUnwrap(audio.preparedTexts.last)
+        // #336: prepared audio is planned from exactly what the player speaks after any preface.
+        XCTAssertTrue(spoken.hasSuffix(try XCTUnwrap(PreparedSpeechText(item: item, document: document)).text))
         XCTAssertTrue(spoken.contains("References skipped."))
         XCTAssertTrue(spoken.contains("Table not read."))
         for unheard in ["A cited title", "P1 14", "J Biol", "[12]"] {
@@ -1460,7 +1462,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(summary.delegatedToCanonicalRuntime)
         XCTAssertEqual(summary.snapshot.pendingAiJobKind, "interjection_summary")
         XCTAssertEqual(summary.snapshot.pendingAiJobStatus, "pending")
-        XCTAssertTrue(summary.snapshot.timeline.contains { $0.kind == "interjection_summary" && $0.title == "Interjection Summary 1" })
+        XCTAssertTrue(summary.snapshot.timeline.contains { $0.kind == "interjection_summary" && $0.title == "Margin Summary 1" })
 
         let discussion = try dispatcher.dispatch(.submitFollowup, followUpText: "Can you respond to my interjection?")
         XCTAssertTrue(discussion.delegatedToCanonicalRuntime)
@@ -6551,7 +6553,7 @@ final class SessionKitCoreTests: XCTestCase {
 
         XCTAssertEqual(snapshot.sourceProgressPercent, 100)
         XCTAssertLessThan(snapshot.currentPlaybackProgressPercent, 100)
-        XCTAssertEqual(snapshot.chapterTitle, "Interjection Summary 1")
+        XCTAssertEqual(snapshot.chapterTitle, "Margin Summary 1")
     }
 
     func testAssistantSeekAndPausedSkipPreserveSourceCompletionAndPersistTarget() throws {

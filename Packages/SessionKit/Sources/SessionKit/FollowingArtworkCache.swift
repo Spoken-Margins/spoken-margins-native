@@ -94,3 +94,39 @@ public struct FollowingArtworkCache: Codable, Equatable, Sendable {
         try encoder.encode(self).write(to: url, options: .atomic)
     }
 }
+
+/// The artwork side file as Following keeps it (#773): changes are written straight away, and only
+/// when they change something. A nil file keeps the artwork in memory.
+public struct FollowingArtworkStore: Sendable {
+    public let file: URL?
+    public private(set) var cache: FollowingArtworkCache
+
+    public init(file: URL?) {
+        self.file = file
+        cache = file.map(FollowingArtworkCache.load(from:)) ?? FollowingArtworkCache()
+    }
+
+    /// A follow or refresh read the feed's channel image.
+    public mutating func recordFeedArtwork(_ feedURL: String?, for subscriptionID: String) {
+        update { $0.record(feedURL: feedURL, for: subscriptionID) }
+    }
+
+    public mutating func remove(subscriptionID: String) {
+        update { $0.remove(subscriptionID: subscriptionID) }
+    }
+
+    /// Drops shows no longer followed and records the catalog's artwork for the ones it lists.
+    public mutating func reconcile(with subscriptions: [FeedSubscription], catalog: SourceCatalog?) {
+        update {
+            $0.keepOnly(Set(subscriptions.map(\.id)))
+            $0.recordCatalogArtwork(for: subscriptions, catalog: catalog)
+        }
+    }
+
+    private mutating func update(_ change: (inout FollowingArtworkCache) -> Void) {
+        let before = cache
+        change(&cache)
+        guard cache != before, let file else { return }
+        try? cache.save(to: file)
+    }
+}

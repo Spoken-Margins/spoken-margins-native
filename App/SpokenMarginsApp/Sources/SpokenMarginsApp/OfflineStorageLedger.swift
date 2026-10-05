@@ -25,6 +25,8 @@ actor OfflineStorageLedger {
     private let fileManager: FileManager
     /// The last reconciliation's counts, for diagnostics (#259).
     private(set) var lastReconciliation: OfflineLedgerReconciliation?
+    /// The render signature prepared chunks are current for; the rest are stale (#281).
+    private var currentPreparedChunkDigest: String?
 
     init(repository: any SessionRepository, rootDirectory: URL, fileManager: FileManager = .default) {
         self.repository = repository
@@ -60,7 +62,13 @@ actor OfflineStorageLedger {
                     availableBytes: max(0, budget.limitBytes - used + plan.reclaimableBytes)
                 )
             }
-            try execute(plan: plan, assets: assets, references: &references)
+            let reclaimed = try execute(plan: plan, assets: assets, references: &references)
+            guard reclaimed >= deficit else {
+                throw OfflineStorageLedgerError.insufficientSpace(
+                    requiredBytes: requested,
+                    availableBytes: max(0, budget.limitBytes - used + reclaimed)
+                )
+            }
         }
         if let physicalAvailable = try? rootDirectory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage,
            physicalAvailable >= 0,
@@ -172,8 +180,8 @@ actor OfflineStorageLedger {
         let deficit = max(0, used - budget.limitBytes)
         guard deficit > 0 else { return 0 }
         var (plan, references) = try evictionPlan(requiredBytes: deficit, assets: assets)
-        try execute(plan: plan, assets: assets, references: &references)
-        return max(0, deficit - plan.reclaimableBytes)
+        let reclaimed = try execute(plan: plan, assets: assets, references: &references)
+        return max(0, deficit - reclaimed)
     }
 
     /// Brings the rows in line with the disk (#259): rows for missing files are dropped, sizes come
@@ -189,10 +197,15 @@ actor OfflineStorageLedger {
                   let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize else { return .other }
             return .file(byteCount: Int64(size))
         }
-        for id in plan.removedAssetIds { try repository.deleteOwnedOfflineAsset(id: id) }
+        let recordedById = Dictionary(recorded.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // Another ledger on the same store can commit a new file under a dropped row's id meanwhile,
+        // so a row is deleted only while it still names the file this reconcile checked (#530).
+        for id in plan.removedAssetIds {
+            guard let before = recordedById[id] else { continue }
+            try repository.deleteOwnedOfflineAsset(id: id) { $0.relativePath == before.relativePath }
+        }
         // The app toggles protections on these rows outside this actor while the files are checked,
         // so each row is re-read and only the plan's own changes are written (#287).
-        let recordedById = Dictionary(recorded.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         for planned in plan.updatedAssets {
             guard let before = recordedById[planned.id] else { continue }
             try repository.updateOwnedOfflineAsset(id: planned.id) {
@@ -267,6 +280,24 @@ actor OfflineStorageLedger {
                 ))
             }
         }
+        if let currentPreparedChunkDigest {
+            try markSupersededPreparedChunks(currentSignatureDigest: currentPreparedChunkDigest)
+        }
+    }
+
+    /// After a change of voice, speed or chunking (Build 30 re-keyed every chunk, #240), prepared
+    /// chunk files from the old signature are never read again. They're marked stale so they're
+    /// the first to go when space is needed (#281); switching back makes them valid again. Never
+    /// deletes a file. Returns how many rows changed.
+    @discardableResult
+    func markSupersededPreparedChunks(currentSignatureDigest: String) throws -> Int {
+        currentPreparedChunkDigest = currentSignatureDigest
+        let changed = OfflineStoragePlanner.preparedChunkStaleness(
+            assets: try repository.loadOwnedOfflineAssets(),
+            currentSignatureDigest: currentSignatureDigest
+        )
+        for asset in changed { try repository.saveOwnedOfflineAsset(asset) }
+        return changed.count
     }
 
     /// Eviction never leaves an item pointing at a deleted file (#237), so a file an item plays as
@@ -282,19 +313,34 @@ actor OfflineStorageLedger {
         return (OfflineStoragePlanner.evictionPlan(requiredBytes: requiredBytes, assets: candidates), references)
     }
 
+    /// Returns the bytes it actually freed, which is less than the plan's when a row was skipped.
     private func execute(
         plan: OfflineEvictionPlan,
         assets: [OwnedOfflineAsset],
         references: inout PreparedNarrationFallback.FileReferences
-    ) throws {
+    ) throws -> Int64 {
         let byId = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
+        var reclaimed: Int64 = 0
         for id in plan.selectedAssetIds {
             guard let asset = byId[id], asset.isAutomaticallyEvictable else { continue }
             let url = rootDirectory.appending(path: asset.relativePath)
             guard try releaseReferences(to: url, references: &references) else { continue }
-            if fileManager.fileExists(atPath: url.path) { try fileManager.removeItem(at: url) }
-            try repository.deleteOwnedOfflineAsset(id: id)
+            let hasFile = fileManager.fileExists(atPath: url.path)
+            // `assets` is an earlier read, and the app protects rows from the main actor meanwhile
+            // (an episode starts playing). The row is judged as it is now, and its file is removed
+            // inside the same store step (#530). A protection saved first keeps both; playback that
+            // starts after finds no row and no file, never a URL about to vanish. A file that can't
+            // be removed keeps its row, so its bytes stay charged and the shortfall refuses the
+            // reservation.
+            let deleted = try repository.deleteOwnedOfflineAsset(id: id, if: { current in
+                guard current.isAutomaticallyEvictable, current.relativePath == asset.relativePath else { return false }
+                guard hasFile, fileManager.fileExists(atPath: url.path) else { return true }
+                return (try? fileManager.removeItem(at: url)) != nil
+            })
+            guard deleted else { continue }
+            reclaimed += asset.byteCount
         }
+        return reclaimed
     }
 
     /// Items that play `url` as generated narration are detached before it's deleted, and read
