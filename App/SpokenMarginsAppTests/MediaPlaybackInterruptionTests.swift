@@ -274,6 +274,73 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .paused, "A stopped Margin must not retain a source-resume intent")
     }
 
+    /// #469: a shared Margin is new until its voice first plays, by any route. This route is
+    /// Listen in the Margins list or the Timeline's shared Margin sheet.
+    func testListeningToASharedMarginMarksItHeardOnce() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "item-pill", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.refreshMarginRows()
+        XCTAssertEqual(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id }?.isNew, true, "new until heard")
+        XCTAssertNil(try fixture.storedRecord()?.firstHeardAt)
+
+        model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
+        XCTAssertNotNil(model.playingImportedCommentary)
+        try waitUntil("its voice plays") { try fixture.storedRecord()?.firstHeardAt != nil }
+        let heardAt = try XCTUnwrap(try fixture.storedRecord()?.firstHeardAt, "hearing it records the time")
+        XCTAssertEqual(model.selectedItem.importedCommentaryInterjections[fixture.layer.id]?.first?.isNewToListener, false)
+        XCTAssertEqual(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id }?.isNew, false, "the mark goes away")
+
+        model.stopInterjectionAudioPlayback()
+        model.returnToSourceFromImportedCommentary()
+        model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
+        model.stopInterjectionAudioPlayback()
+        XCTAssertEqual(try fixture.storedRecord()?.firstHeardAt, heardAt, "a second play keeps the first time")
+        model.refreshMarginRows()
+        XCTAssertEqual(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id }?.isNew, false, "stays gone after a reload")
+    }
+
+    /// #690: Listen asks AVPlayer to play, but a voice file that can't be decoded never plays,
+    /// so the shared Margin stays new. It used to be marked heard as soon as play was asked.
+    func testASharedMarginWhoseVoiceFailsToPlayStaysNew() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "item-pill", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        try Data("not audio".utf8).write(to: URL(fileURLWithPath: fixture.record.audioPath!))
+        let model = fixture.model
+        model.refreshMarginRows()
+        model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
+        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        XCTAssertNil(try fixture.storedRecord()?.firstHeardAt, "a voice that never played isn't heard")
+        model.stopInterjectionAudioPlayback()
+        model.refreshMarginRows()
+        XCTAssertEqual(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id }?.isNew, true)
+    }
+
+    private func waitUntil(_ what: String, timeout: TimeInterval = 5, _ condition: () throws -> Bool) throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while try !condition() {
+            guard Date() < deadline else { return XCTFail("timed out waiting until \(what)") }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+    }
+
+    /// #469: the Timeline's Margin moment for a shared podcast Margin (#158) marks it heard when its voice starts.
+    func testPlayingASharedMarginsMomentMarksItHeard() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id })
+        XCTAssertTrue(row.isNew)
+
+        model.playSharedMarginMoment(row)
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertNil(try fixture.storedRecord()?.firstHeardAt, "the lead-in alone isn't hearing it")
+        model.playMarginMomentNow()
+        XCTAssertNotNil(try fixture.storedRecord()?.firstHeardAt, "its voice started")
+        XCTAssertEqual(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id }?.isNew, false)
+    }
+
     private func makeTestWAV(duration: TimeInterval) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "media-interruption-\(UUID().uuidString).wav")
@@ -299,5 +366,54 @@ private final class InterruptionEventRecorder: @unchecked Sendable {
         lock.withLock {
             storage.append(event)
         }
+    }
+}
+
+/// A native-media item with one shared podcast Margin whose voice is a real WAV file (#469).
+@MainActor
+private struct SharedMarginHearingFixture {
+    let model: Gate1AppModel
+    let store: SQLiteSessionStore
+    let layer: ImportedCommentaryLayer
+    let record: ImportedCommentaryInterjection
+    private let root: URL
+    private let files: [URL]
+
+    init(itemID: String, makeWAV: (TimeInterval) throws -> URL) throws {
+        root = FileManager.default.temporaryDirectory.appending(path: "margin-heard-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let sourceURL = try makeWAV(30)
+        let voiceURL = try makeWAV(2)
+        files = [sourceURL, voiceURL]
+        let db = root.appending(path: "library.sqlite")
+        let routed = RoutedAudioPlaybackClient(speech: NoopAudioPlaybackClient(), media: AVPlayerStreamPlaybackClient())
+        model = Gate1AppModel(audioPlaybackClient: routed, databaseURLOverride: db)
+        model.resetAndSeed()
+        store = try SQLiteSessionStore(path: db.path)
+        if itemID == "real-source" {
+            try store.seed(item: Item(id: itemID, title: "Real source", mediaType: "audiobook", text: nil,
+                externalReference: sourceURL.absoluteString, status: "ready", externalReferenceType: "audiobook",
+                media: ItemMedia(sourceType: .nativeMediaFile, url: sourceURL.absoluteString, durationMs: 30_000, nativeMediaId: "source-audio")))
+        }
+        layer = ImportedCommentaryLayer(id: "received", itemId: itemID, packageDigest: "digest-\(UUID().uuidString)", packageId: "package",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Source"),
+            displayLabel: "Reviewer", importedAt: Date(), sourceResolutionStatus: .resolved,
+            isEnabled: true, isMuted: true, revealMode: .companion)
+        record = ImportedCommentaryInterjection(id: "note", layerId: layer.id, packageScopedId: "note", createdAt: Date(),
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media),
+            approvedTranscript: "Reviewed words", audioPath: voiceURL.path, audioDurationMs: 2_000,
+            resolution: ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 1_000, confidence: 1))
+        _ = try store.importCommentaryLayer(layer, interjections: [record])
+        model.selectedItem.importedCommentaryLayers = [layer]
+        model.selectedItem.importedCommentaryInterjections = [layer.id: [record]]
+    }
+
+    func storedRecord() throws -> ImportedCommentaryInterjection? {
+        try store.loadImportedCommentaryInterjections(layerId: layer.id).first { $0.id == record.id }
+    }
+
+    func cleanUp() {
+        model.stopInterjectionAudioPlayback()
+        for url in files + [root] { try? FileManager.default.removeItem(at: url) }
     }
 }
