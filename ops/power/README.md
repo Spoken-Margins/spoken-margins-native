@@ -41,7 +41,7 @@ When you know the Mac will be on power with a network for a while, and want to c
 ~/Documents/GitHub/spoken-margins-native/ops/power/amph hold 41h
 ```
 
-It stays awake for exactly that long, lid closed included, whether or not agents are busy, so a crash or an agent stopping to wait doesn't let it sleep. The display sleeps. It replaces whatever session was running, and the job leaves it alone. `amph status` shows the seconds left; `amph stop` ends it early. On battery, Amphetamine still ends it at 10%. Lane runners keep working with the lid closed only once the lane power guard counts Amphetamine (#787).
+It stays awake for exactly that long, lid closed included, whether or not agents are busy, so a crash or an agent stopping to wait doesn't let it sleep. The display sleeps. It replaces whatever session was running. `amph ensure`, and so the job, keeps it to its own end however little is left: `hold` notes its end time in `~/SpokenMarginsOps/keep-awake/hold-until`, and `ensure` keeps a session whose time left matches it (#837). `amph start` and `amph stop` clear that note. `amph status` shows the seconds left; `amph stop` ends it early. On battery, Amphetamine still ends it at 10%. Lane runners keep working with the lid closed only once the lane power guard counts Amphetamine (#787).
 
 ## Using `amph`
 
