@@ -577,6 +577,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var snapshot = SessionSnapshot() {
         didSet {
             recordPlaybackEventState(previous: oldValue)
+            settleSpeechInterruptionResume()
             updateNarrationVoiceNotice()
             if playingImportedCommentary != nil,
                oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId
@@ -624,6 +625,7 @@ final class Gate1AppModel: ObservableObject {
         automatic: true
     )
     private var lastPlaybackEventCheckpoint: TimeInterval = 0
+    var speechInterruptionResumeWatch = SpeechInterruptionResumeWatch()
 
     func recordDeveloperDiagnostic(_ kind: String, _ fields: [String: String] = [:]) {
         developerRecording.record(kind, fields)
@@ -10730,9 +10732,7 @@ final class Gate1AppModel: ObservableObject {
                 },
                 onStall: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
                 onSystemPause: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
-                onResumeDecision: { [weak self] fields in
-                    Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) }
-                }
+                onResumeDecision: { [weak self] fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) } }
             )
         }
         diagnostics["sessionTTS"] = "System speech"
@@ -10931,7 +10931,7 @@ final class Gate1AppModel: ObservableObject {
             do {
                 snapshot = try engine.resumePlayback()
                 refreshSelectedItem()
-                noteSpeechInterruptionResume(.resumed)
+                noteSpeechInterruptionResumeReturned()
             } catch {
                 noteSpeechInterruptionResume(.failed(reason: error.localizedDescription))
                 reportWarning("Playback paused after the interruption. Tap Play to resume.")

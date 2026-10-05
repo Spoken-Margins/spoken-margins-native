@@ -47,4 +47,41 @@ final class SpeechSystemPauseTests: XCTestCase {
         XCTAssertEqual(SpeechSystemPause.routeLost.fields(acted: false, appState: "active", lowPowerMode: false)["paused"], "false")
         XCTAssertEqual(SpeechSystemPause.mediaServicesReset.kind, "speech.media_services_reset")
     }
+
+    func testAResumeThatReturnsStartingIsLoggedOnlyOnceItPlays() {
+        var watch = SpeechInterruptionResumeWatch()
+        XCTAssertNil(watch.resumeReturned(Self.snapshot(.starting)), "a starting resume hasn't resumed yet")
+        XCTAssertNil(watch.snapshotChanged(Self.snapshot(.starting)))
+        XCTAssertEqual(watch.snapshotChanged(Self.snapshot(.playing)), .resumed)
+        XCTAssertNil(watch.snapshotChanged(Self.snapshot(.paused)), "settled once, logged once")
+    }
+
+    func testAStartingResumeThatFailsIsLoggedAsFailed() {
+        var watch = SpeechInterruptionResumeWatch()
+        XCTAssertNil(watch.resumeReturned(Self.snapshot(.starting)))
+        var failed = Self.snapshot(.failed)
+        failed.lastFailure = "render failed"
+        XCTAssertEqual(watch.snapshotChanged(failed), .failed(reason: "render failed"))
+    }
+
+    func testAResumeThatReturnsFailedWithoutThrowingIsNotResumed() {
+        var watch = SpeechInterruptionResumeWatch()
+        XCTAssertEqual(watch.resumeReturned(Self.snapshot(.failed)), .failed(reason: "playback_failed"))
+        XCTAssertEqual(watch.resumeReturned(Self.snapshot(.paused)), .failed(reason: "ended_paused"))
+        XCTAssertEqual(watch.resumeReturned(Self.snapshot(.playing)), .resumed)
+    }
+
+    func testAStartingResumeReplacedByAnotherSessionIsNotResumed() {
+        var watch = SpeechInterruptionResumeWatch()
+        XCTAssertNil(watch.resumeReturned(Self.snapshot(.starting)))
+        XCTAssertEqual(watch.snapshotChanged(Self.snapshot(.playing, sessionId: "other")),
+                       .failed(reason: "replaced_before_start"))
+    }
+
+    private static func snapshot(_ status: PlaybackStatus, sessionId: String = "s1") -> SessionSnapshot {
+        var snapshot = SessionSnapshot()
+        snapshot.sessionId = sessionId
+        snapshot.status = status
+        return snapshot
+    }
 }
