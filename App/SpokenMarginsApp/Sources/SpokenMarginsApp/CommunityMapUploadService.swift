@@ -126,6 +126,10 @@ final class CommunityMapUploadService {
                     guard let audioFile else { return nil }
                     return await Self.hasEmbeddedChapters(audioFile)
                 },
+                audioDurationMs: {
+                    guard let audioFile else { return nil }
+                    return await Self.measuredDurationMs(audioFile)
+                },
                 mapsState: {
                     guard let bridge else { return .off(.noConfig) }
                     await bridge.refreshConfigOnly()
@@ -168,6 +172,14 @@ final class CommunityMapUploadService {
         guard let data = try? JSONEncoder().encode(timeline) else { return false }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         return (try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])) != nil
+    }
+
+    /// The downloaded audio's length, for an episode whose feed doesn't give one.
+    private nonisolated static func measuredDurationMs(_ file: URL) async -> Int? {
+        guard FileManager.default.isReadableFile(atPath: file.path),
+              let duration = try? await AVURLAsset(url: file).load(.duration),
+              duration.isNumeric, duration.seconds > 0 else { return nil }
+        return Int((duration.seconds * 1_000).rounded())
     }
 
     /// Whether the audio file carries chapters, or nil when it couldn't be read (gone, or still

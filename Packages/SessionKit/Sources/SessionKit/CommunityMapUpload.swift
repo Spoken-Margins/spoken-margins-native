@@ -108,6 +108,9 @@ public enum CommunityMapUploadPolicy {
     /// stretch longer than five; a publisher transcript stored as one block of text has neither.
     static let maximumSegmentSpacingMs = 120_000
     static let maximumGapMs = 300_000
+    /// Pauses between words and sentences this short are part of a transcribed stretch; longer
+    /// silences count against coverage.
+    static let coveredPauseMs = 15_000
 
     /// Every rule from #552 that the phone can check on its own: consent first, then what the
     /// episode is, then whether this transcript is worth sending. The owner's switch is read
@@ -119,6 +122,7 @@ public enum CommunityMapUploadPolicy {
         timeline: TranscriptTimeline,
         hasPublisherChapters: Bool,
         previous: CommunityMapUploadRecord?,
+        audioDurationMs: Int? = nil,
         now: Date
     ) -> CommunityMapUploadDecision {
         guard optedIn else { return .skip(.optedOut) }
@@ -138,7 +142,7 @@ public enum CommunityMapUploadPolicy {
                 guard previous.attempts < maximumAttempts else { return .skip(.tooManyAttempts) }
             }
         }
-        guard let durationMs = durationMs(item: item) else { return .skip(.unknownDuration) }
+        guard let durationMs = durationMs(item: item, audioDurationMs: audioDurationMs) else { return .skip(.unknownDuration) }
         guard hasRealTiming(timeline, durationMs: durationMs) else { return .skip(.untimedTranscript) }
         guard coverage(of: timeline, durationMs: durationMs) >= minimumCoverage else {
             return .skip(.partialTranscript)
@@ -185,10 +189,10 @@ public enum CommunityMapUploadPolicy {
         return timeline?.chapters.contains { $0.id.hasPrefix("ch-publisher-") } ?? false
     }
 
-    /// The episode's own length, from the feed or the audio. Not the transcript's: a transcript
-    /// that stops early would measure itself as complete.
-    public static func durationMs(item: Item) -> Int? {
-        item.media?.durationMs.flatMap { $0 > 0 ? $0 : nil }
+    /// The episode's own length, from the feed or playback, or else measured from the downloaded
+    /// audio. Not the transcript's: a transcript that stops early would measure itself as complete.
+    public static func durationMs(item: Item, audioDurationMs: Int? = nil) -> Int? {
+        item.media?.durationMs.flatMap { $0 > 0 ? $0 : nil } ?? audioDurationMs.flatMap { $0 > 0 ? $0 : nil }
     }
 
     /// Failed uploads whose day has passed, for the app to try again (at most once a day).
@@ -262,7 +266,9 @@ public enum CommunityMapUploadPolicy {
     }
 
     /// The share of the episode the spoken segments actually cover: the union of their spans,
-    /// clipped to the episode, so a stretch with no segments counts as missing.
+    /// clipped to the episode, with pauses up to `coveredPauseMs` between them (and at either
+    /// end) counted as covered, since a transcriber times words, not the silence between them.
+    /// A longer stretch with no segments counts as missing.
     static func coverage(of timeline: TranscriptTimeline, durationMs: Int?) -> Double {
         guard let durationMs, durationMs > 0 else { return 0 }
         let spans = timeline.segments
@@ -270,13 +276,15 @@ public enum CommunityMapUploadPolicy {
             .map { (start: min(max($0.startMs, 0), durationMs), end: min(max($0.endMs, 0), durationMs)) }
             .filter { $0.end > $0.start }
             .sorted { $0.start < $1.start }
-        var covered = 0
+        guard !spans.isEmpty else { return 0 }
+        var missing = 0
         var reached = 0
         for span in spans where span.end > reached {
-            covered += span.end - max(span.start, reached)
+            if span.start - reached > coveredPauseMs { missing += span.start - reached }
             reached = span.end
         }
-        return Double(covered) / Double(durationMs)
+        if durationMs - reached > coveredPauseMs { missing += durationMs - reached }
+        return Double(durationMs - missing) / Double(durationMs)
     }
 }
 
@@ -421,16 +429,19 @@ public struct CommunityMapUploader: Sendable {
         now: Date = Date(),
         optedIn: @Sendable () async -> Bool,
         publisherChapters: @Sendable () async -> Bool?,
+        audioDurationMs: @Sendable () async -> Int? = { nil },
         mapsState: @Sendable () async -> ServerFeatureState
     ) async -> CommunityMapUploadOutcome {
         guard await optedIn() else { return .skipped(.optedOut) }
         let previous = CommunityMapEpisodeKey.key(for: item).flatMap { try? repository.loadCommunityMapUpload(episodeKey: $0) }
         let chapters = await publisherChapters()
+        // A feed can omit the length; the downloaded audio is measured then.
+        let measured = CommunityMapUploadPolicy.durationMs(item: item) == nil ? await audioDurationMs() : nil
         // Reading the audio file can take a while; the setting may have been turned off meanwhile.
         guard await optedIn() else { return .skipped(.optedOut) }
         let decision = CommunityMapUploadPolicy.decide(
             optedIn: true, item: item, timeline: timeline,
-            hasPublisherChapters: chapters ?? false, previous: previous, now: now
+            hasPublisherChapters: chapters ?? false, previous: previous, audioDurationMs: measured, now: now
         )
         guard case .upload(let episodeKey) = decision else {
             let reason: CommunityMapUploadSkipReason
@@ -441,7 +452,7 @@ public struct CommunityMapUploader: Sendable {
             }
             return settle(previous, skipped: reason, now: now, repository: repository)
         }
-        guard let durationMs = CommunityMapUploadPolicy.durationMs(item: item),
+        guard let durationMs = CommunityMapUploadPolicy.durationMs(item: item, audioDurationMs: measured),
               let upload = CommunityMapTranscriptUpload.make(episodeKey: episodeKey, durationMs: durationMs, language: language, timeline: timeline),
               let body = try? upload.encoded() else {
             return settle(previous, skipped: .unusableTranscript, now: now, repository: repository)

@@ -183,6 +183,34 @@ final class CommunityMapUploadTests: XCTestCase {
         return TranscriptTimeline(segments: segments, chapters: [], durationMs: 600_000)
     }
 
+    func testPausesBetweenTranscribedWordsCountAsCoveredButALongSilenceDoesNot() {
+        // How the phone's transcriber times speech: one interval per word, with the pauses
+        // between them left out. Here 800 ms of every second.
+        let words = TranscriptTimeline(segments: stride(from: 0, to: 600_000, by: 1_000).map {
+            MediaTimelineSegment(id: "w\($0)", startMs: $0, endMs: $0 + 800, text: "word")
+        }, chapters: [], durationMs: 600_000)
+        XCTAssertEqual(CommunityMapUploadPolicy.coverage(of: words, durationMs: 600_000), 1)
+        XCTAssertEqual(decide(timeline: words), .upload(episodeKey: expectedKey))
+        // A minute with no words at all is still missing: 540 s of 600 s is 90%.
+        var silent = words
+        silent.segments.removeAll { $0.startMs >= 100_000 && $0.startMs < 160_000 }
+        XCTAssertEqual(decide(timeline: silent), .skip(.partialTranscript))
+    }
+
+    func testAnEpisodeWhoseFeedOmitsItsLengthIsMeasuredFromTheDownloadedAudio() async throws {
+        let item = episode(durationMs: nil)
+        XCTAssertEqual(decide(item: item), .skip(.unknownDuration))
+        let uploader = CommunityMapUploader { _, _ in 202 }
+        let measured = await uploader.uploadIfEligible(
+            item: item, timeline: fullTranscript(), language: "und", repository: InMemorySessionRepository(), now: now,
+            optedIn: { true }, publisherChapters: { false }, audioDurationMs: { 600_000 }, mapsState: { .on }
+        )
+        XCTAssertEqual(measured, .uploaded(status: 202))
+        // With no file to measure, it waits for a length as before.
+        let unmeasured = await upload(uploader, item: item, repository: InMemorySessionRepository())
+        XCTAssertEqual(unmeasured, .failed("unknown_duration"))
+    }
+
     func testAPublisherTranscriptStoredAsOneUntimedBlockNeverUploads() {
         // How plain-text and JSON publisher transcripts are attached: the whole text in one segment.
         let block = TranscriptTimeline(segments: [MediaTimelineSegment(id: "all", startMs: 0, endMs: 600_000, text: "The whole episode as text.")],
