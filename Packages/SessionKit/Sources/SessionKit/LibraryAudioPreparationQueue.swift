@@ -124,6 +124,17 @@ public struct LibraryAudioPreparationTurns: Sendable {
             if !backgroundIsPreparing { preparingItemId = nil }
         }
     }
+
+    /// The foreground loop ended. Returns whether it should start again because it had
+    /// stopped to wait for a background task that has since stopped. The resume is used
+    /// up here: a replacement pass that stops before it selects (Low Power Mode, heat)
+    /// must not restart the loop again and again (Codex audit on #644).
+    public mutating func foregroundLoopEnded() -> Bool {
+        stopped(.foreground)
+        guard foregroundShouldResume else { return false }
+        foregroundIsWaiting = false
+        return true
+    }
 }
 
 /// Lets one piece of work run at a time; the rest wait their turn, first come first

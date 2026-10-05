@@ -90,6 +90,21 @@ final class LibraryAudioPreparationTurnsTests: XCTestCase {
         turns.blocked(.foreground)
         XCTAssertTrue(turns.backgroundIsPreparing)
         XCTAssertEqual(turns.preparingItemId, "a", "the background task's item keeps showing progress")
+    }
+
+    func testAResumedForegroundLoopThatCannotPrepareDoesNotRestartAgain() {
+        // Codex audit on #644: the loop waits for a While Charging job, then Low Power Mode
+        // stops the background task. The resumed pass exits at its power guard before it
+        // selects, so the resume must be used up or the loop restarts itself forever.
+        var turns = LibraryAudioPreparationTurns()
+        let jobs = [whileChargingPinned, prepareNow]
+        _ = turns.select(jobs, activeItemId: nil, for: .background)
+        XCTAssertNil(turns.select(jobs, activeItemId: nil, for: .foreground))
+        turns.stopped(.background)
+        XCTAssertTrue(turns.foregroundLoopEnded(), "the waiting loop starts again once the task stops")
+        // The replacement pass hits the Low Power Mode guard: it stops without selecting.
+        turns.stopped(.foreground)
+        XCTAssertFalse(turns.foregroundLoopEnded(), "a pass that never selected does not restart the loop again")
         XCTAssertFalse(turns.foregroundShouldResume)
     }
 

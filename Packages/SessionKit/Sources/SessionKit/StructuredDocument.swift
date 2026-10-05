@@ -339,6 +339,14 @@ public enum StructuredDocumentSpeech {
         kind == .citation || kind == .footnote
     }
 
+    /// What the speech path speaks instead of `Item.text` for a PDF on the new reader (extraction
+    /// v2), with each character's offset in `Item.text`. Nil for every other item, and for a
+    /// document whose text isn't exactly `Item.text`. Live speech and prepared audio share it (#336).
+    public static func listenableProjection(item: Item, document: StructuredDocument?) -> NormalizedSpeechText? {
+        guard item.mediaType == "pdf", let text = item.text, let document, document.text == text else { return nil }
+        return listenableText(document)
+    }
+
     /// The text to hand the speech path, one unit (segment or announcement) per
     /// line, with each character's offset in `document.text`. Announcements map to
     /// the start of the segment they stand for, so skipping never moves an anchor.
