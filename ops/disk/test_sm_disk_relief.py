@@ -17,7 +17,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import sm_disk_relief as d  # noqa: E402
 
 MiB = 1024 ** 2
-NOW = time.time()
+# The fake clock and expected offload folders must agree after October 1 too.
+NOW = time.mktime((2026, 10, 1, 12, 0, 0, 0, 0, -1))
 DAY = 86400
 
 

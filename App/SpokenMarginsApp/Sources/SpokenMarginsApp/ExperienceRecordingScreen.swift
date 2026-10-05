@@ -86,6 +86,7 @@ struct ExperienceRecordingView: View {
                     .font(.system(.largeTitle, design: .monospaced).weight(.semibold))
                     .foregroundStyle(.white)
                     .accessibilityLabel("Recording duration \(elapsedDescription(at: timeline.date))")
+                    .accessibilityIdentifier("recording.duration.label")
             }
         }
     }

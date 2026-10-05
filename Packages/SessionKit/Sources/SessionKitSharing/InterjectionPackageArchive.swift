@@ -258,10 +258,14 @@ public enum SpokenMarginsPackageArchive {
         })
         try verifyDescriptors(manifest: manifest, artifactData: artifactData, assetData: assetData)
         let decoded = try decodeKnownArtifacts(manifest: manifest, artifactData: artifactData)
+        // Export refuses a proposal that breaks the scene rules. Build 29 senders could include one (every
+        // scene of theirs carries a summary), so import leaves it out rather than refusing their Margins (#480).
+        let proposals = PortableListeningMapContract.forSharing(
+            decoded.proposals, itemText: decoded.embeddedTextItems.first?.text)
         try validateManifestBoundary(
             manifest,
             commentaryLayers: decoded.commentary,
-            proposals: decoded.proposals,
+            proposals: proposals,
             fingerprintSpines: decoded.fingerprintSpines,
             phraseSketches: decoded.phraseSketches,
             embeddedTextItems: decoded.embeddedTextItems,
@@ -316,7 +320,7 @@ public enum SpokenMarginsPackageArchive {
         return VerifiedSpokenMarginsPackage(
             manifest: manifest,
             commentaryLayers: decoded.commentary,
-            listeningMapProposals: decoded.proposals,
+            listeningMapProposals: proposals,
             editionFingerprintSpines: decoded.fingerprintSpines,
             transcriptPhraseSketches: decoded.phraseSketches,
             embeddedTextItems: decoded.embeddedTextItems,
@@ -629,7 +633,9 @@ public enum SpokenMarginsPackageArchive {
             throw SpokenMarginsPackageArchiveError.invalidManifest("package-scoped Margin IDs are not unique")
         }
         for record in layer.interjections { try validate(record, assetsByID: assetsByID) }
-        for proposal in proposals { try validate(proposal, assetsByID: assetsByID) }
+        for proposal in proposals {
+            try validate(proposal, assetsByID: assetsByID, itemText: embeddedTextItems.first?.text)
+        }
         for spine in fingerprintSpines { try validate(spine, assetsByID: assetsByID, item: manifest.item) }
         for sketch in phraseSketches { try validate(sketch, item: manifest.item) }
         guard conversations.count <= 1 else {
@@ -785,7 +791,8 @@ public enum SpokenMarginsPackageArchive {
 
     private static func validate(
         _ proposal: PortableListeningMapProposalArtifact,
-        assetsByID: [String: SpokenMarginsAssetDescriptor]
+        assetsByID: [String: SpokenMarginsAssetDescriptor],
+        itemText: String?
     ) throws {
         guard !proposal.scenes.isEmpty, proposal.generator.count <= 200,
               Set(proposal.scenes.map(\.id)).count == proposal.scenes.count,
@@ -798,14 +805,12 @@ public enum SpokenMarginsPackageArchive {
                   scene.eligibilityReason.map({ $0.count <= 500 }) ?? true else {
                 throw SpokenMarginsPackageArchiveError.invalidManifest("Listening Map scene is out of bounds")
             }
-            if scene.eligibility == .eligible {
-                guard scene.summaryText?.isEmpty == false, scene.summaryProvenance != nil else {
-                    throw SpokenMarginsPackageArchiveError.invalidManifest("eligible scene lacks a grounded summary")
-                }
-            }
             if let assetID = scene.summaryAssetId, assetsByID[assetID]?.role != SpokenMarginsAssetRole.summaryVoice {
                 throw SpokenMarginsPackageArchiveError.invalidManifest("scene summary asset is absent or has the wrong role")
             }
+        }
+        if let violation = PortableListeningMapContract.violations(in: proposal, itemText: itemText).first {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("Listening Map \(violation)")
         }
     }
 

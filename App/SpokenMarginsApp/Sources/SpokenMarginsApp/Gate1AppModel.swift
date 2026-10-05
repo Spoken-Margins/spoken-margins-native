@@ -551,13 +551,6 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    static func makeApplicationModel() -> Gate1AppModel {
-        if ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_RECORDING"] == "1" {
-            return Gate1AppModel(recordingClient: NoopRecordingClient())
-        }
-        return Gate1AppModel()
-    }
-
     @Published private var presentedScreen: Gate1Screen = .home
     @Published var requestedExperienceRoot: AppRoot?
     @Published private(set) var writtenMarginDraft: WrittenMarginDraft?
@@ -13663,7 +13656,7 @@ final class Gate1AppModel: ObservableObject {
                 item: itemIdentity,
                 itemTransportSelection: itemTransport,
                 selections: selections,
-                mapProposals: mapProposals,
+                mapProposals: mapProposals, localSourceTexts: [item.text, store.loadTranscriptTimeline(itemId: item.id)?.timeline.segments.map(\.text).joined(separator: " ")].compactMap { $0 },
                 fingerprintSpines: fingerprintSpines,
                 phraseSketches: phraseSketches,
                 machineEvidence: machineEvidence,
@@ -15021,7 +15014,7 @@ final class Gate1AppModel: ObservableObject {
               ProcessInfo.processInfo.thermalState != .serious,
               ProcessInfo.processInfo.thermalState != .critical,
               hasAcceptedCurrentTerms,
-              let voice = ttsVoiceSelection.supertonicVoice else { libraryAudioTurns.stopped(caller); return false }
+              let voice = ttsVoiceSelection.supertonicVoice else { libraryAudioTurns.blocked(caller); return false } // settles until these change (#647)
         do {
             try Task.checkCancellation()
             let store = try requireStore()
