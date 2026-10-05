@@ -3094,9 +3094,10 @@ public final class SessionEngine {
         if status != .starting {
             clearPlaybackStartPending()
         }
-        // Every new start (from a stop, or on another item) carries its own request time, so a later start, such
-        // as a streamed answer, never inherits an earlier one's (audit of #580).
-        if status.isPlaybackActive, !(snapshot.status.isPlaybackActive && snapshot.itemId == currentSession?.itemId) {
+        // Every new start (from a stop, or on another item or target) carries its own request time, so a later
+        // start, such as a streamed answer, never inherits an earlier one's (audits of #580).
+        if status.isPlaybackActive, !(snapshot.status.isPlaybackActive && snapshot.itemId == currentSession?.itemId
+                                      && snapshot.targetId == currentSession?.currentTargetId) {
             snapshot.playbackRequestedAt = playbackRequestedAt ?? now()
             playbackRequestedAt = nil
         }

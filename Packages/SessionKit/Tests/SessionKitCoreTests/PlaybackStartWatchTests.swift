@@ -95,6 +95,22 @@ final class PlaybackStartWatchTests: XCTestCase {
         XCTAssertEqual(watch.cueWait(at: tap + 10) ?? -1, 0.8, accuracy: 0.001, "no request stamp: the full delay")
     }
 
+    /// Audit of #580: another target on the same item (a Margin's answer) is a new start; a seek on the same
+    /// target is not.
+    func testAnotherTargetOnTheSameItemIsANewStart() {
+        var watch = PlaybackStartWatch()
+        _ = watch.observe(itemId: "article", targetId: "article", status: .playing, at: tap)
+        XCTAssertEqual(watch.observe(itemId: "article", targetId: "article", status: .starting, at: tap + 5), [])
+        XCTAssertNil(watch.waitingItemId, "a seek on the same target")
+        _ = watch.observe(itemId: "article", targetId: "article", status: .playing, at: tap + 6)
+
+        XCTAssertEqual(watch.observe(itemId: "article", targetId: "answer", status: .starting, at: tap + 10), [])
+        XCTAssertEqual(watch.waitingTargetId, "answer")
+        XCTAssertTrue(watch.takeCue(at: tap + 10.9))
+        XCTAssertEqual(watch.observe(itemId: "article", targetId: "answer", status: .playing, at: tap + 12),
+                       [.firstAudio(itemId: "article", milliseconds: 2_000)])
+    }
+
     func testChimeIsAShortValidWave() throws {
         let data = PlaybackStartChime.wavData()
         let header = String(decoding: data.prefix(4), as: UTF8.self) + String(decoding: data[8..<16], as: UTF8.self)

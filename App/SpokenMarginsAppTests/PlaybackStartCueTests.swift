@@ -183,4 +183,22 @@ final class PlaybackStartCueTests: XCTestCase {
 
         XCTAssertEqual(chimes, 1, "the chime came within a second of the request")
     }
+
+    /// Audit of #580: an answer on the same item started while the article plays still gets the chime.
+    func testAnswerStartedDuringPlaybackChimes() async throws {
+        let cue = makeCue()
+        var article = snapshot("article", .playing)
+        article.targetId = "article"
+        var answer = snapshot("article", .starting)
+        answer.targetId = "answer"
+        answer.playbackRequestedAt = clock
+
+        cue.observe(article)
+        cue.observe(answer)
+        clock += 1
+        try await Task.sleep(for: .seconds(1.2))
+
+        XCTAssertEqual(chimes, 1)
+        XCTAssertEqual(recorded["lastPlaybackStartCue"], "article:played")
+    }
 }

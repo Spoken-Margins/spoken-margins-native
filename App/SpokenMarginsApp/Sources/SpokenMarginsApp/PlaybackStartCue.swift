@@ -58,9 +58,9 @@ final class PlaybackStartCue: ObservableObject {
 
     /// Feed every snapshot change.
     func observe(_ snapshot: SessionSnapshot) {
-        let wasWaiting = watch.waitingItemId
-        for outcome in watch.observe(itemId: snapshot.itemId, status: snapshot.status,
-                                         requestedAt: snapshot.playbackRequestedAt, at: now()) {
+        let wasWaiting = (watch.waitingItemId, watch.waitingTargetId)
+        for outcome in watch.observe(itemId: snapshot.itemId, targetId: snapshot.targetId, status: snapshot.status,
+                                     requestedAt: snapshot.playbackRequestedAt, at: now()) {
             switch outcome {
             case .firstAudio(let itemId, let milliseconds):
                 record("firstAudioMs:\(itemId)", "\(milliseconds)")
@@ -75,7 +75,7 @@ final class PlaybackStartCue: ObservableObject {
             cueTask = nil
             return
         }
-        guard waiting != wasWaiting else { return }
+        guard (waiting, watch.waitingTargetId) != wasWaiting else { return }
         cueTask?.cancel()
         // The cue is due 0.8 s after the request, not after the start was published (audit of #580).
         let delay = watch.cueWait(at: now()) ?? watch.cueDelay

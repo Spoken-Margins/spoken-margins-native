@@ -64,6 +64,30 @@ final class PlaybackRequestTimingTests: XCTestCase {
                        [.firstAudio(itemId: "item-357", milliseconds: 2_000)])
     }
 
+    /// Audit of #580: a Margin's answer started while the article plays is a new start on the same item, so it gets
+    /// its own request time and the watch times it.
+    func testAnAnswerStartedDuringPlaybackIsANewStart() throws {
+        let (engine, audio) = try makeEngine()
+        audio.confirmsAtOnce = true
+        let playing = try engine.resumePlayback()
+        XCTAssertEqual(playing.status, .playing)
+        var watch = PlaybackStartWatch()
+        _ = watch.observe(itemId: playing.itemId, targetId: playing.targetId, status: playing.status,
+                          requestedAt: playing.playbackRequestedAt, at: now)
+        now += 30
+        let ask = now
+
+        let answer = try engine.activateStreamingTurn(turnId: "turn-357")
+
+        XCTAssertEqual(answer.status, .starting)
+        XCTAssertEqual(answer.playbackRequestedAt, ask)
+        XCTAssertEqual(watch.observe(itemId: answer.itemId, targetId: answer.targetId, status: answer.status,
+                                     requestedAt: answer.playbackRequestedAt, at: now), [])
+        XCTAssertEqual(watch.waitingTargetId, "turn-357")
+        XCTAssertEqual(watch.observe(itemId: answer.itemId, targetId: answer.targetId, status: .playing, at: ask + 3),
+                       [.firstAudio(itemId: "item-357", milliseconds: 3_000)])
+    }
+
     func testAStaleOrFutureRequestTimeFallsBackToNow() {
         var watch = PlaybackStartWatch()
         let at = Date(timeIntervalSince1970: 10_000)

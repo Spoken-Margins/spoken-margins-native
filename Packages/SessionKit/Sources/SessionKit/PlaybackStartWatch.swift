@@ -13,13 +13,14 @@ public struct PlaybackStartWatch: Sendable {
 
     private struct Start: Sendable {
         var itemId: String
+        var targetId: String?
         var startedAt: Date
         var cued = false
     }
 
     public let cueDelay: TimeInterval
     private var start: Start?
-    private var last: (itemId: String?, status: PlaybackStatus)?
+    private var last: (itemId: String?, targetId: String?, status: PlaybackStatus)?
 
     public init(cueDelay: TimeInterval = 0.8) {
         self.cueDelay = cueDelay
@@ -28,31 +29,39 @@ public struct PlaybackStartWatch: Sendable {
     /// The item whose start is still silent, if any.
     public var waitingItemId: String? { start?.itemId }
 
+    /// The target (the item's own audio, or a Margin answer or summary on it) of the start that is still silent.
+    public var waitingTargetId: String? { start?.targetId }
+
     /// Feed every snapshot change. Returns what resolved: the open start's outcome, and a start that played at once.
-    /// A start opens when playback goes to "starting" from a stop (idle, paused, failed, recording) or on another
-    /// item. A skip, seek or rate change while playing also passes through "starting", and is not a new start. A
+    /// A start opens when playback goes to "starting" from a stop (idle, paused, failed, recording), on another
+    /// item, or on another target of the same item (playing a Margin's answer while the article plays). A skip, seek or rate change while playing also passes through "starting", and is not a new start. A
     /// start the player confirms at once (a buffered resume) goes straight to "playing" and is first audio too.
     /// `requestedAt` is when the listener's request reached the engine (the snapshot's `playbackRequestedAt`), so the
     /// time counts the work before the start was published (audits of #580). A missing or implausible one falls back
     /// to `now`.
-    public mutating func observe(itemId: String?, status: PlaybackStatus, requestedAt: Date? = nil, at now: Date) -> [Outcome] {
+    public mutating func observe(
+        itemId: String?, targetId: String? = nil, status: PlaybackStatus, requestedAt: Date? = nil, at now: Date
+    ) -> [Outcome] {
         let previous = last
-        last = (itemId, status)
+        last = (itemId, targetId, status)
         var outcomes: [Outcome] = []
         if let start {
-            if status == .starting, itemId == start.itemId { return [] }
+            let sameStart = itemId == start.itemId && targetId == start.targetId
+            if status == .starting, sameStart { return [] }
             let milliseconds = Self.milliseconds(from: start.startedAt, to: now)
-            outcomes.append(status == .playing && itemId == start.itemId
+            outcomes.append(status == .playing && sameStart
                 ? .firstAudio(itemId: start.itemId, milliseconds: milliseconds)
                 : .ended(itemId: start.itemId, milliseconds: milliseconds, status: status))
             self.start = nil
-            if status == .playing, itemId == start.itemId { return outcomes }
+            if status == .playing, sameStart { return outcomes }
         }
-        let continuesPlayback = previous.map { $0.status.isPlaybackActive && $0.itemId == itemId } ?? false
+        let continuesPlayback = previous.map {
+            $0.status.isPlaybackActive && $0.itemId == itemId && $0.targetId == targetId
+        } ?? false
         if let itemId, !continuesPlayback {
             let startedAt = requestedAt.flatMap { (now.addingTimeInterval(-Self.longestRequest)...now).contains($0) ? $0 : nil } ?? now
             if status == .starting {
-                start = Start(itemId: itemId, startedAt: startedAt)
+                start = Start(itemId: itemId, targetId: targetId, startedAt: startedAt)
             } else if status == .playing {
                 outcomes.append(.firstAudio(itemId: itemId, milliseconds: Self.milliseconds(from: startedAt, to: now)))
             }
