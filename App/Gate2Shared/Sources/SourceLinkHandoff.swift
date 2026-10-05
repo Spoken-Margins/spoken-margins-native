@@ -7,8 +7,35 @@ public enum SourceLinkShareRepresentation {
         return nil
     }
 
+    /// The https link a PDF representation loaded as, instead of a file or bytes. The share
+    /// keeps it only as the last fallback, after every file, PDF and page result (#271).
+    public static func pdfFallbackLink(from item: Any?) -> URL? {
+        guard let url = url(from: item), !url.isFileURL, url.scheme?.lowercased() == "https" else { return nil }
+        return url
+    }
+
     public static func isPDFData(_ data: Data) -> Bool {
         data.prefix(1_024).range(of: Data("%PDF-".utf8)) != nil
+    }
+
+    /// The key under which Safari's share preprocessor puts the bytes of the PDF the page
+    /// has open, base64-encoded (#271).
+    public static let pagePDFKey = "pdfBase64"
+
+    /// The PDF the page sent, with a file name taken from its URL. Nil when the page sent
+    /// none or the bytes aren't a PDF, so the share falls back to the link.
+    public static func pagePDF(fromPageResults results: [String: Any]) -> (data: Data, suggestedFilename: String?)? {
+        guard let encoded = results[pagePDFKey] as? String,
+              let data = Data(base64Encoded: encoded),
+              isPDFData(data) else {
+            return nil
+        }
+        let fileName = ["documentURL", "url"]
+            .compactMap { results[$0] as? String }
+            .compactMap(URL.init(string:))
+            .map(\.lastPathComponent)
+            .first { !$0.isEmpty && $0 != "/" }
+        return (data, fileName)
     }
 }
 

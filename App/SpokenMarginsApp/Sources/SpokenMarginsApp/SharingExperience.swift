@@ -210,9 +210,8 @@ struct SpokenMarginsPackageImportView: View {
                     }
 
                     if let error = model.spokenMarginsPackageImportError {
-                        Text(error)
+                        FailureMessageLabel(error)
                             .font(.callout)
-                            .foregroundStyle(AppColors.dangerText)
                     }
 
                     Button("Import & Resolve Margins") {
@@ -304,9 +303,8 @@ struct InterjectionSharingView: View {
                             }
 
                             if let error = model.sharingState.errorMessage {
-                                Text(error)
+                                FailureMessageLabel(error)
                                     .font(.callout)
-                                    .foregroundStyle(AppColors.dangerText)
                             }
 
                             Button {

@@ -57,7 +57,7 @@ Every 15 seconds the guard checks the power source and the lid:
 
 It asks Amphetamine only when the power and lid alone say no, and never opens it. macOS still reports that closing the lid causes sleep while Amphetamine holds it, so the guard asks Amphetamine instead of trusting that reading. The first time, macOS asks whether `python3` may control Amphetamine; choose **Allow**.
 
-It finds the runners from their launchd plists in `~/Library/LaunchAgents` and logs only changes to `~/SpokenMarginsOps/lane-power-guard/log.txt`.
+It finds the runners from their launchd plists in `~/Library/LaunchAgents` and logs only changes to `~/SpokenMarginsOps/lane-power-guard/log.txt`. Only one guard acts at a time (a lock in the same folder). A runner it fails to restart stays marked paused, so the next check tries again. Just before pausing a runner, it looks once more, and leaves it running if it has taken a job.
 
 While the runners are paused, GitHub shows them offline. After 2 hours the lane stall check above says STALL. That's correct: plug the Mac in.
 

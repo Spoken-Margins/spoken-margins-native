@@ -258,10 +258,14 @@ public enum SpokenMarginsPackageArchive {
         })
         try verifyDescriptors(manifest: manifest, artifactData: artifactData, assetData: assetData)
         let decoded = try decodeKnownArtifacts(manifest: manifest, artifactData: artifactData)
+        // Export refuses a proposal that breaks the scene rules. Build 29 senders could include one (every
+        // scene of theirs carries a summary), so import leaves it out rather than refusing their Margins (#480).
+        let proposals = PortableListeningMapContract.forSharing(
+            decoded.proposals, itemText: decoded.embeddedTextItems.first?.text)
         try validateManifestBoundary(
             manifest,
             commentaryLayers: decoded.commentary,
-            proposals: decoded.proposals,
+            proposals: proposals,
             fingerprintSpines: decoded.fingerprintSpines,
             phraseSketches: decoded.phraseSketches,
             embeddedTextItems: decoded.embeddedTextItems,
@@ -316,7 +320,7 @@ public enum SpokenMarginsPackageArchive {
         return VerifiedSpokenMarginsPackage(
             manifest: manifest,
             commentaryLayers: decoded.commentary,
-            listeningMapProposals: decoded.proposals,
+            listeningMapProposals: proposals,
             editionFingerprintSpines: decoded.fingerprintSpines,
             transcriptPhraseSketches: decoded.phraseSketches,
             embeddedTextItems: decoded.embeddedTextItems,
@@ -629,7 +633,9 @@ public enum SpokenMarginsPackageArchive {
             throw SpokenMarginsPackageArchiveError.invalidManifest("package-scoped Margin IDs are not unique")
         }
         for record in layer.interjections { try validate(record, assetsByID: assetsByID) }
-        for proposal in proposals { try validate(proposal, assetsByID: assetsByID) }
+        for proposal in proposals {
+            try validate(proposal, assetsByID: assetsByID, itemText: embeddedTextItems.first?.text)
+        }
         for spine in fingerprintSpines { try validate(spine, assetsByID: assetsByID, item: manifest.item) }
         for sketch in phraseSketches { try validate(sketch, item: manifest.item) }
         guard conversations.count <= 1 else {
@@ -679,29 +685,37 @@ public enum SpokenMarginsPackageArchive {
         assetsByID: [String: SpokenMarginsAssetDescriptor],
         item: SharedItemIdentity
     ) throws {
-        guard (1...500).contains(spine.itemId.count),
-              spine.landmarks.count <= 500,
-              spine.generatorVersion.count <= 200,
-              spine.canonicalURL.map(validHTTPSURL) ?? true,
-              spine.episodeGUID.map({ $0.count <= 1_000 }) ?? true,
-              spine.producingEditionDurationMs.map({ $0 >= 0 }) ?? true,
-              spine.producingEditionSHA256.map(isSHA256) ?? true,
-              Set(spine.landmarks.map(\.id)).count == spine.landmarks.count,
-              spine.landmarks.map(\.order) == Array(0..<spine.landmarks.count) else {
-            throw SpokenMarginsPackageArchiveError.invalidManifest("episode fingerprint spine is out of bounds")
+        // #536: name the rule that failed, so diagnostics say which one. Rules run in order and stop at
+        // the first failure, so a later rule can rely on the earlier ones having held.
+        let rules: [(String, () -> Bool)] = [
+            ("item_id", { (1...500).contains(spine.itemId.count) }),
+            ("landmark_count", { spine.landmarks.count <= 500 }),
+            ("generator_version", { spine.generatorVersion.count <= 200 }),
+            ("canonical_url", { spine.canonicalURL.map(validHTTPSURL) ?? true }),
+            ("episode_guid", { spine.episodeGUID.map({ $0.count <= 1_000 }) ?? true }),
+            ("duration", { spine.producingEditionDurationMs.map({ $0 >= 0 }) ?? true }),
+            ("edition_sha256", { spine.producingEditionSHA256.map(isSHA256) ?? true }),
+            ("landmark_ids", { Set(spine.landmarks.map(\.id)).count == spine.landmarks.count }),
+            ("landmark_order", { spine.landmarks.map(\.order) == Array(0..<spine.landmarks.count) }),
+        ]
+        if let failed = rules.first(where: { !$0.1() })?.0 {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("episode fingerprint spine is out of bounds: \(failed)")
         }
         if let expected = item.episodeGUID, let actual = spine.episodeGUID, expected != actual {
             throw SpokenMarginsPackageArchiveError.invalidManifest("episode fingerprint spine identity conflicts with the item")
         }
         for landmark in spine.landmarks {
-            guard landmark.sourceMediaStartMs >= 0,
-                  landmark.sourceMediaEndMs >= landmark.sourceMediaStartMs,
-                  landmark.sourceMediaEndMs - landmark.sourceMediaStartMs <= 30_000,
-                  landmark.anchorMediaTimeMs >= 0,
-                  landmark.continuityEpoch >= 0,
-                  landmark.generatorVersion.count <= 200,
-                  assetsByID[landmark.signatureAssetId]?.role == SpokenMarginsAssetRole.acousticSignature else {
-                throw SpokenMarginsPackageArchiveError.invalidManifest("episode fingerprint landmark is invalid")
+            // "duration" subtracts, which only can't overflow once "source_range" has held.
+            let rules: [(String, () -> Bool)] = [
+                ("source_range", { landmark.sourceMediaStartMs >= 0 && landmark.sourceMediaEndMs >= landmark.sourceMediaStartMs }),
+                ("duration", { landmark.sourceMediaEndMs - landmark.sourceMediaStartMs <= 30_000 }),
+                ("anchor_time", { landmark.anchorMediaTimeMs >= 0 }),
+                ("continuity_epoch", { landmark.continuityEpoch >= 0 }),
+                ("generator_version", { landmark.generatorVersion.count <= 200 }),
+                ("signature_asset", { assetsByID[landmark.signatureAssetId]?.role == SpokenMarginsAssetRole.acousticSignature }),
+            ]
+            if let failed = rules.first(where: { !$0.1() })?.0 {
+                throw SpokenMarginsPackageArchiveError.invalidManifest("episode fingerprint landmark is invalid: \(failed)")
             }
         }
     }
@@ -777,7 +791,8 @@ public enum SpokenMarginsPackageArchive {
 
     private static func validate(
         _ proposal: PortableListeningMapProposalArtifact,
-        assetsByID: [String: SpokenMarginsAssetDescriptor]
+        assetsByID: [String: SpokenMarginsAssetDescriptor],
+        itemText: String?
     ) throws {
         guard !proposal.scenes.isEmpty, proposal.generator.count <= 200,
               Set(proposal.scenes.map(\.id)).count == proposal.scenes.count,
@@ -790,14 +805,12 @@ public enum SpokenMarginsPackageArchive {
                   scene.eligibilityReason.map({ $0.count <= 500 }) ?? true else {
                 throw SpokenMarginsPackageArchiveError.invalidManifest("Listening Map scene is out of bounds")
             }
-            if scene.eligibility == .eligible {
-                guard scene.summaryText?.isEmpty == false, scene.summaryProvenance != nil else {
-                    throw SpokenMarginsPackageArchiveError.invalidManifest("eligible scene lacks a grounded summary")
-                }
-            }
             if let assetID = scene.summaryAssetId, assetsByID[assetID]?.role != SpokenMarginsAssetRole.summaryVoice {
                 throw SpokenMarginsPackageArchiveError.invalidManifest("scene summary asset is absent or has the wrong role")
             }
+        }
+        if let violation = PortableListeningMapContract.violations(in: proposal, itemText: itemText).first {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("Listening Map \(violation)")
         }
     }
 
@@ -1017,7 +1030,7 @@ public enum SpokenMarginsPackageArchive {
         return component.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || "._-".unicodeScalars.contains($0) }
     }
 
-    private static func validHTTPSURL(_ value: String) -> Bool {
+    static func validHTTPSURL(_ value: String) -> Bool {
         guard let components = URLComponents(string: value) else { return false }
         return components.scheme?.lowercased() == "https" && !(components.host?.isEmpty ?? true)
             && components.user == nil && components.password == nil
@@ -1031,7 +1044,7 @@ public enum SpokenMarginsPackageArchive {
         guard let start, let end else { return true }
         return end >= start
     }
-    private static func isSHA256(_ value: String?) -> Bool {
+    static func isSHA256(_ value: String?) -> Bool {
         guard let value, value.count == 64 else { return false }
         return value.allSatisfy { $0.isHexDigit && !$0.isUppercase }
     }

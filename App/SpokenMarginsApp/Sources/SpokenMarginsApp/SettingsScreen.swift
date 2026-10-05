@@ -312,9 +312,8 @@ struct SettingsScreen: View {
                                     .font(.caption)
                                     .foregroundStyle(AppColors.secondaryText)
                                     .lineLimit(2)
-                                Text(entry.reason)
+                                FailureMessageLabel(entry.reason)
                                     .font(.caption)
-                                    .foregroundStyle(.red)
                                 HStack {
                                     Button("Retry") {
                                         model.retryImportInboxEntry(entry)

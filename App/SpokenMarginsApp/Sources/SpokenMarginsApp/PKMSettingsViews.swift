@@ -2,6 +2,32 @@ import SwiftUI
 import UniformTypeIdentifiers
 import SessionKit
 
+/// The Margin Output status line. A failure is drawn with the failure icon, so a listener can
+/// tell it from ordinary status without relying on colour (#308).
+struct MarginOutputStatus: Equatable {
+    let message: String
+    var isFailure = false
+
+    init(_ message: String, isFailure: Bool = false) {
+        self.message = message
+        self.isFailure = isFailure
+    }
+
+    static func failure(_ message: String) -> MarginOutputStatus {
+        MarginOutputStatus(message, isFailure: true)
+    }
+}
+
+/// Plain footnote text, or the failure label when the message reports a failure (#308).
+struct StatusMessageText: View {
+    let message: String
+    let isFailure: Bool
+
+    var body: some View {
+        if isFailure { FailureMessageLabel(message).font(.footnote) } else { Text(message).font(.footnote) }
+    }
+}
+
 struct MarginOutputSettingsSection: View {
     @EnvironmentObject private var model: Gate1AppModel
     @State private var choosingFolder = false
@@ -16,7 +42,7 @@ struct MarginOutputSettingsSection: View {
                 .onChange(of: model.automaticMarginOutputEnabled) { _, _ in model.automaticMarginOutputChanged() }
             Button("Retry Delivery") { Task { await model.deliverAutomaticMargins() } }
                 .disabled(!model.automaticMarginOutputEnabled)
-            Text(model.marginOutputStatus).font(.footnote)
+            StatusMessageText(message: model.marginOutputStatus.message, isFailure: model.marginOutputStatus.isFailure)
             Text("Writes each text Margin as a Markdown note in the folder you choose, such as an Obsidian vault. It doesn’t change how Margins play. Notes are written while the app is active and retried when you return. Existing Margins are included. Audio recordings and full source text are excluded. Your folder provider may sync files to its cloud.").font(.footnote).foregroundStyle(.secondary)
         }
         .fileImporter(isPresented: $choosingFolder, allowedContentTypes: [.folder]) { result in
@@ -33,20 +59,27 @@ struct ListeningEditionImportScreen: View {
     @State private var json = ""
     @State private var edition: ListeningEdition?
     @State private var message = ""
+    @State private var messageIsFailure = false
     @State private var choosingFile = false
     @State private var replaceMap = false
     @State private var notifications = ""
+    @State private var notificationsFailed = false
     @FocusState private var editingJSON: Bool
     var body: some View {
         Form {
             Section {
                 Button("Enable Ready Notifications") {
                     Task {
-                        do { notifications = try await ListeningReadyNotifications.requestPermission() ? "Notifications enabled for completed audio." : "Notifications are off. You can change this in system Settings." }
-                        catch { notifications = "Notifications could not be enabled." }
+                        do {
+                            notifications = try await ListeningReadyNotifications.requestPermission() ? "Notifications enabled for completed audio." : "Notifications are off. You can change this in system Settings."
+                            notificationsFailed = false
+                        } catch {
+                            notifications = "Notifications could not be enabled."
+                            notificationsFailed = true
+                        }
                     }
                 }
-                if !notifications.isEmpty { Text(notifications).font(.footnote) }
+                if !notifications.isEmpty { StatusMessageText(message: notifications, isFailure: notificationsFailed) }
                 Button("Choose JSON File") { choosingFile = true }
                 TextEditor(text: $json).frame(minHeight: 140, maxHeight: 240)
                     .accessibilityLabel("Listening edition JSON")
@@ -55,7 +88,7 @@ struct ListeningEditionImportScreen: View {
                 Button("Preview") {
                     editingJSON = false
                     do { edition = try ListeningEdition.decode(Data(json.utf8)); message = "" }
-                    catch { message = error.localizedDescription }
+                    catch { message = error.localizedDescription; messageIsFailure = true }
                 }
             } footer: {
                 Text("Use Make Listening Map Prompt, your chosen model, then Assemble Listening Edition in Shortcuts. Import the result here or with Import Listening Edition. No model request is made during import.")
@@ -76,7 +109,9 @@ struct ListeningEditionImportScreen: View {
                     }
                 }
             }
-            if !message.isEmpty { Text(message).foregroundStyle(.red) }
+            if !message.isEmpty {
+                if messageIsFailure { FailureMessageLabel(message) } else { Text(message) }
+            }
         }
         .navigationTitle("Listening Edition")
         .fileImporter(isPresented: $choosingFile, allowedContentTypes: [.json]) { result in
@@ -90,7 +125,8 @@ struct ListeningEditionImportScreen: View {
                 json = String(data: data, encoding: .utf8) ?? ""
                 // Preview is explicit after changing the editor, so old content cannot import.
                 message = "Loaded \(parsed.title). Tap Preview to review it."
-            } catch { message = error.localizedDescription }
+                messageIsFailure = false
+            } catch { message = error.localizedDescription; messageIsFailure = true }
         }
     }
 }
@@ -115,14 +151,19 @@ struct ReadLaterScreen: View {
                      ? "Reader requires a Readwise account. This view lists Later articles with available text. PDFs, books and highlights are not imported by this adapter."
                      : "Raindrop has a free bookmark account. For personal setup, create an integration and paste its test token. Articles are fetched from their original websites; saved paid/offline copies are not used.")
                     .font(.footnote).foregroundStyle(.secondary)
-                Text(connection.status).font(.footnote)
+                StatusMessageText(message: connection.status, isFailure: connection.statusIsFailure)
             }
             if connection.service == .reader && connection.connected {
                 ReadwiseHighlightSection(sync: model.readwiseHighlightSync)
             }
             Section("Choose Articles") {
                 if let line = connection.emptyArticlesLine {
-                    Text(line).font(.footnote).foregroundStyle(.secondary)
+                    // Only "No articles loaded. <failure>" is a failure; the other lines are guidance.
+                    if connection.connected, connection.failure != nil, !connection.isLoading {
+                        FailureMessageLabel(line).font(.footnote)
+                    } else {
+                        Text(line).font(.footnote).foregroundStyle(.secondary)
+                    }
                 }
                 ForEach(connection.documents) { document in
                     VStack(alignment: .leading, spacing: 6) {
@@ -146,7 +187,7 @@ struct ReadwiseHighlightSection: View {
         Section("Send Margins") {
             Toggle("Send Margins to Readwise", isOn: $sync.enabled)
                 .onChange(of: sync.enabled) { _, _ in sync.enabledChanged() }
-            if !sync.status.isEmpty { Text(sync.status).font(.footnote) }
+            if !sync.status.isEmpty { StatusMessageText(message: sync.status, isFailure: sync.statusIsFailure) }
             Text("Each Margin with text becomes a Readwise highlight: the passage around it, your Margin as the note, filed under the article or episode. Margins are checked once a minute while the app is open. Private feed links are never sent.")
                 .font(.footnote).foregroundStyle(.secondary)
         }
