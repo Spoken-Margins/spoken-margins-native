@@ -26,7 +26,8 @@ class EnsureDecision(unittest.TestCase):
         self.assertEqual(self.decide(540, 20, NOW + 540), 'keep')
 
     def test_a_short_hold_is_kept(self):
-        self.assertEqual(self.decide(300, 5, NOW + 300), 'keep')
+        # `amph hold 5m` with two minutes left, against the job's usual `ensure 20`.
+        self.assertEqual(self.decide(120, 20, NOW + 120), 'keep')
 
     def test_the_same_session_without_a_hold_is_renewed(self):
         self.assertEqual(self.decide(540, 20, 0), 'start')
