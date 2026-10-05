@@ -32,6 +32,20 @@ final class ListeningTimeDisplayTests: XCTestCase {
         XCTAssertNil(ListeningTimeEstimator.characterCount(of: nil))
     }
 
+    func testThePlainProgressBarStillShowsATextItemsTimeLeft() throws {
+        // Codex audit on d75c55c: while starter audio is prepared the player shows a plain bar instead
+        // of the scrubber, and that bar said "100%" with a bare percentage for VoiceOver.
+        let estimate = try XCTUnwrap(ListeningTimeEstimator.estimate(totalCharacters: 21_000, charactersHeard: 10_920, playbackSpeed: 1))
+        let starter = PlaybackProgressBarLabels(percent: 52, estimate: estimate)
+        XCTAssertEqual(starter.trailing, "about 12 min left")
+        XCTAssertEqual(starter.accessibilityValue, "52 percent, about 12 minutes left")
+        let atDouble = PlaybackProgressBarLabels(percent: 52, estimate: ListeningTimeEstimator.estimate(totalCharacters: 21_000, charactersHeard: 10_920, playbackSpeed: 2))
+        XCTAssertEqual(atDouble.trailing, "about 6 min left")
+        let media = PlaybackProgressBarLabels(percent: 40, estimate: nil)
+        XCTAssertEqual(media.trailing, "100%", "media with no known length keeps its percentage")
+        XCTAssertEqual(media.accessibilityValue, "40 percent")
+    }
+
     func testAnItemWithNoTextShowsNoEstimate() {
         XCTAssertNil(ListeningTimeEstimator.libraryTotalText(textCharacterCount: nil, playbackSpeed: 1), "a podcast keeps its own clock")
         XCTAssertNil(ListeningTimeEstimator.libraryTotalText(textCharacterCount: 0, playbackSpeed: 1))

@@ -730,6 +730,10 @@ struct PlaybackScreen: View {
             .font(.caption.monospacedDigit())
             .foregroundStyle(AppColors.watchSecondary)
         } else {
+            let barLabels = PlaybackProgressBarLabels(
+                percent: model.displayPlaybackProgressPercent,
+                estimate: model.isMediaPlaybackSnapshot ? nil : textTimeEstimate // starter audio still shows time left
+            )
             HStack(spacing: 8) {
                 Text("\(model.displayPlaybackProgressPercent)%")
                     .frame(minWidth: 34, alignment: .trailing)
@@ -746,9 +750,10 @@ struct PlaybackScreen: View {
                     }
                     .accessibilityLabel("Playback progress")
                     .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
-                    .accessibilityValue("\(model.displayPlaybackProgressPercent) percent")
-                Text("100%")
+                    .accessibilityValue(barLabels.accessibilityValue)
+                Text(barLabels.trailing)
                     .frame(minWidth: 34, alignment: .leading)
+                    .accessibilityIdentifier("playback.timeLeft.label")
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(AppColors.watchSecondary)

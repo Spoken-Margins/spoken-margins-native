@@ -139,6 +139,20 @@ extension ListeningTimeEstimate {
     }
 }
 
+/// The trailing label and VoiceOver value of the plain progress bar the player shows instead of a scrubber:
+/// for a text item whose starter audio is still being prepared, or media with no known length.
+public struct PlaybackProgressBarLabels: Equatable, Sendable {
+    public var trailing: String
+    public var accessibilityValue: String
+
+    /// A text item still shows its time left, as the scrubber does (Codex audit on #832); without an
+    /// estimate (media, or no text) the bar keeps "100%" and a bare percentage.
+    public init(percent: Int, estimate: ListeningTimeEstimate?) {
+        trailing = estimate?.remainingText ?? "100%"
+        accessibilityValue = estimate?.scrubberAccessibilityValue(percent: percent) ?? "\(percent) percent"
+    }
+}
+
 extension ListeningTimeEstimator {
     /// A Library row's length for a text item at the listener's speed: "about 25 min". Nil for an
     /// item with no text, such as a podcast, which shows no estimate.
