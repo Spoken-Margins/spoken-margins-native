@@ -1721,7 +1721,7 @@ public final class SessionEngine {
            Set(existingTurn.sourceInterjectionIds) == Set(lastSummaryCandidates.map(\.id)) {
             throw SessionKitError.invalidCommandForState("interjection_summary_already_current")
         }
-        let summaryIndex = existingTurn.flatMap { turnSequenceNumber($0.id) } ?? turns.filter { $0.turnType == "interjection_summary" }.count + 1
+        let summaryIndex = existingTurn.flatMap { ConversationTurnTitle.sequenceNumber($0.id) } ?? turns.filter { $0.turnType == "interjection_summary" }.count + 1
         let turnId = existingTurn?.id ?? "turn-summary-\(String(format: "%03d", summaryIndex))"
         let turn = ConversationTurn(
             id: turnId,
@@ -4755,24 +4755,7 @@ public final class SessionEngine {
     }
 
     private func turnTitle(for turn: ConversationTurn) -> String {
-        switch turn.turnType {
-        case "interjection_summary":
-            return "Interjection Summary \(turnSequenceNumber(turn.id) ?? 1)"
-        case "assistant_response":
-            if let number = turnSequenceNumber(turn.id) {
-                return "AI Response \(number)"
-            }
-            return "AI Response"
-        case "user_response":
-            return "Follow-up"
-        default:
-            return turn.turnType.replacingOccurrences(of: "_", with: " ").capitalized
-        }
-    }
-
-    private func turnSequenceNumber(_ id: String) -> Int? {
-        guard let raw = id.split(separator: "-").last else { return nil }
-        return Int(raw)
+        ConversationTurnTitle.numbered(turn)
     }
 
     private func itemSourceOffset(forAudioOffset audioOffset: Int) -> Int {
