@@ -85,8 +85,7 @@ struct UserFeedbackBanner: View {
                     model.dismissFeedback(id: feedback.id)
                     action.perform()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.evergreen)
+                .filledActionButton()
                 .frame(minHeight: 44)
                 .accessibilityLabel(action.accessibilityLabel)
                 .accessibilityIdentifier(action.identifier)
