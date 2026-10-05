@@ -29,7 +29,9 @@ Stdlib only, Python 3.9+.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
+import fcntl
 import os
 import plistlib
 import re
@@ -38,7 +40,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Callable, Iterator, List, Optional, Tuple
 
 HOME = Path.home()
 LAUNCH_AGENTS = HOME / 'Library' / 'LaunchAgents'
@@ -46,6 +48,7 @@ RUNNER_PREFIX = 'actions.runner.uncomposed-spoken-margins-native.'
 STATE_DIR = HOME / 'SpokenMarginsOps' / 'lane-power-guard'
 LOG = STATE_DIR / 'log.txt'
 PAUSED = STATE_DIR / 'paused'  # one runner label per line: the runners this guard stopped
+LOCK = STATE_DIR / 'lock'  # held for a whole look-decide-act cycle (#836)
 LOW_BATTERY = 10  # percent; Amphetamine ends its sessions here too
 
 
@@ -160,14 +163,17 @@ def find_runners(uid: int) -> List[Runner]:
                 data = plistlib.load(handle)
         except (OSError, plistlib.InvalidFileException):
             continue
-        label = data.get('Label', plist.stem)
-        directory = data.get('WorkingDirectory', '')
-        state = run(['/bin/launchctl', 'print', f'gui/{uid}/{label}'])
-        service_running = re.search(r'^\tstate = running$', state, re.MULTILINE) is not None
-        workers = run(['/usr/bin/pgrep', '-f', f'{directory}/bin/Runner.Worker']).split()
-        runners.append(Runner(label, directory, service_running, int(workers[0]) if workers else None,
-                              listener_has_job(runner_log_tail(Path(directory) / '_diag'))))
+        runners.append(observe(uid, data.get('Label', plist.stem), data.get('WorkingDirectory', '')))
     return runners
+
+
+def observe(uid: int, label: str, directory: str) -> Runner:
+    """One runner's service state, worker and listener job, read now."""
+    state = run(['/bin/launchctl', 'print', f'gui/{uid}/{label}'])
+    service_running = re.search(r'^\tstate = running$', state, re.MULTILINE) is not None
+    workers = run(['/usr/bin/pgrep', '-f', f'{directory}/bin/Runner.Worker']).split()
+    return Runner(label, directory, service_running, int(workers[0]) if workers else None,
+                  listener_has_job(runner_log_tail(Path(directory) / '_diag')))
 
 
 def runner_log_tail(diag: Path, size: int = 256 * 1024) -> str:
@@ -190,9 +196,25 @@ def paused_labels() -> List[str]:
 
 
 def set_paused(label: str, paused: bool) -> None:
+    """Record or forget one paused runner. Callers hold cycle_lock(), so two guards (the scheduled
+    one and a worker-exit one) can't each rewrite the file from a stale read and drop a label."""
     labels = [l for l in paused_labels() if l != label] + ([label] if paused else [])
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    PAUSED.write_text(''.join(l + '\n' for l in labels))
+    partial = PAUSED.with_name(PAUSED.name + '.partial')
+    partial.write_text(''.join(l + '\n' for l in labels))
+    partial.replace(PAUSED)
+
+
+@contextlib.contextmanager
+def cycle_lock() -> Iterator[None]:
+    """One guard at a time looks at the runners, decides and acts (#836)."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with LOCK.open('a') as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def held_worker_pids() -> List[int]:
@@ -205,15 +227,33 @@ def held_worker_pids() -> List[int]:
     return held
 
 
-def apply(action: Action, uid: int) -> None:
+def launchctl(args: List[str]) -> int:
+    try:
+        return subprocess.run(['/bin/launchctl', *args], capture_output=True, timeout=20).returncode
+    except (OSError, subprocess.SubprocessError):
+        return -1
+
+
+def apply(action: Action, uid: int, control: Callable[[List[str]], int] = launchctl,
+          look_again: Optional[Callable[[Runner], Runner]] = None) -> str:
+    """Carry out one action and return the line to log."""
     target = f'gui/{uid}/{action.runner.label}'
     if action.kind == 'start':
-        subprocess.run(['/bin/launchctl', 'kickstart', target], timeout=20)
+        code = control(['kickstart', target])
+        if code != 0:  # keep it marked paused, so the next check tries again (#836)
+            return f'{action.runner.name}: start failed (launchctl kickstart exit {code}); will retry'
         set_paused(action.runner.label, False)
     elif action.kind == 'stop':
+        # The runner looked idle when the cycle began; it may have taken a job since. Look once more
+        # right before stopping it, because a stop cancels a job it holds (#836).
+        now = (look_again or (lambda r: observe(uid, r.label, r.directory)))(action.runner)
+        if now.busy:
+            return f'{action.runner.name}: not paused; it took a job since the last look'
         # runsvc.sh turns TERM into INT, which stops the listener cleanly. The plist has no
         # KeepAlive, so it stays stopped until the next 'start'.
-        subprocess.run(['/bin/launchctl', 'kill', 'TERM', target], timeout=20)
+        code = control(['kill', 'TERM', target])
+        if code != 0:
+            return f'{action.runner.name}: pause failed (launchctl kill exit {code})'
         set_paused(action.runner.label, True)
     elif action.kind == 'hold':
         # Hold the Mac awake until the worker exits, then run the guard again straight away so the
@@ -222,6 +262,7 @@ def apply(action: Action, uid: int) -> None:
                   f'exec /usr/bin/python3 {shlex.quote(str(Path(__file__).resolve()))}')
         subprocess.Popen(['/bin/sh', '-c', script],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    return action.note
 
 
 def log(line: str) -> None:
@@ -237,6 +278,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     uid = os.getuid()
+    if args.dry_run:
+        return cycle(uid, dry_run=True)
+    with cycle_lock():
+        return cycle(uid, dry_run=False)
+
+
+def cycle(uid: int, dry_run: bool) -> int:
     power_line = run(['/usr/bin/pmset', '-g', 'ps'])
     clamshell = run(['/usr/sbin/ioreg', '-r', '-k', 'AppleClamshellState', '-d', '4'])
     can_stay_awake, reason = awake_state(power_line, clamshell)
@@ -244,7 +292,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         can_stay_awake, reason = awake_state(power_line, clamshell, amphetamine_state())
     runners = find_runners(uid)
     actions = decide(can_stay_awake, reason, runners, held_worker_pids(), paused_labels())
-    if args.dry_run:
+    if dry_run:
         print(f'Mac {"can" if can_stay_awake else "cannot"} stay awake ({reason}); '
               f'{len(runners)} runner(s): ' + ', '.join(
                   f'{r.name} {"running" if r.service_running else "stopped"}'
@@ -256,8 +304,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             print('nothing to do')
         return 0
     for action in actions:
-        apply(action, uid)
-        log(action.note)
+        log(apply(action, uid))
     return 0
 
 
