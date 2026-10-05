@@ -3417,20 +3417,20 @@ final class Gate1AppModel: ObservableObject {
             sourceSurface: handoff.sourceSurface,
             createdAt: Date()
         )
-        let result: LinkResolutionResult
         let fetched = FetchedPageMemo() // the voiceover lookup reads the post page from here (#810)
-        if let sourceLinkResolver {
-            result = try ((sourceLinkResolver as? PublicPodcastLinkResolver)?.remembering(fetched) ?? sourceLinkResolver).resolve(request)
-        } else {
-            result = try await PublicPodcastLinkResolver().remembering(fetched).resolveAsync(request)
+        let resolution = try await LinkArticleFallback.resolve(
+            request, url: url, resolver: sourceLinkResolver, remembering: fetched, allowsArticle: feedEntry == nil,
+            using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }
+        )
+        guard case .podcast(let result) = resolution else {
+            if case .article(let article) = resolution {
+                let itemId = try importBrowserTextInBackground(article)
+                rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: fetched)
+            }
+            return nil
         }
         guard result.status == .playable else {
             if feedEntry == nil, result.isPDFDocument { try await importRemotePDFInBackground(url: url); return nil } // #758
-            if feedEntry == nil, let article = try await LinkArticleFallback.article(for: url, after: result, startSession: false, using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }) {
-                let itemId = try importBrowserTextInBackground(article)
-                rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: fetched)
-                return nil
-            }
             let provider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
             diagnostics["lastSourceLinkFailureCategory"] = result.failureReason
                 ?? result.status.rawValue
