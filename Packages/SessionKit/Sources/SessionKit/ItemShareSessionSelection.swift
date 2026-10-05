@@ -13,7 +13,7 @@ public enum ItemShareSessionSelection {
         return nil
     }
 
-    /// The same test the Share Margins sheet applies to its candidates.
+    /// Matches the filter in Gate1AppModel.prepareShareInterjections(candidates:).
     public static func isShareable(_ margin: Interjection) -> Bool {
         margin.status == "active" && margin.targetType == .item
     }

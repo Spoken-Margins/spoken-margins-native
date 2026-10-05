@@ -13026,7 +13026,9 @@ final class Gate1AppModel: ObservableObject {
 
     private func prepareShareInterjections(candidates source: [Interjection]) {
         cancelBulkSharePreparation()
-        let candidates = source.filter(ItemShareSessionSelection.isShareable)
+        let candidates = source.filter {
+            $0.status == "active" && $0.targetType == .item
+        }
         guard !candidates.isEmpty else {
             reportFailure("Record at least one Margin on this item before sharing.")
             return
