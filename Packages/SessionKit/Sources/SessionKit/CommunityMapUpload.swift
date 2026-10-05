@@ -192,16 +192,24 @@ public enum CommunityMapUploadPolicy {
     /// Whether the transcript's times come from listening, not from one block of text spread over
     /// the episode. The server keeps the first map made for an episode, so an untimed upload would
     /// decide the map every other phone sees.
+    /// Segments sharing a start count once, as the request body joins them: a JSON transcript
+    /// whose entries carry no times puts every entry at 0 running to the end.
     static func hasRealTiming(_ timeline: TranscriptTimeline, durationMs: Int?) -> Bool {
         guard let durationMs, durationMs >= minimumDurationMs else { return false }
-        let spoken = timeline.segments
-            .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .sorted { $0.startMs < $1.startMs }
+        var spoken: [(start: Int, end: Int)] = []
+        for segment in timeline.segments.sorted(by: { $0.startMs < $1.startMs })
+        where !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if let last = spoken.last, last.start == segment.startMs {
+                spoken[spoken.count - 1].end = max(last.end, segment.endMs)
+            } else {
+                spoken.append((segment.startMs, segment.endMs))
+            }
+        }
         guard spoken.count >= max(2, durationMs / maximumSegmentSpacingMs) else { return false }
-        var reached = spoken[0].endMs
+        var reached = spoken[0].end
         for segment in spoken.dropFirst() {
-            if segment.startMs - reached > maximumGapMs { return false }
-            reached = max(reached, segment.endMs)
+            if segment.start - reached > maximumGapMs { return false }
+            reached = max(reached, segment.end)
         }
         return true
     }
@@ -284,8 +292,8 @@ public struct CommunityMapTranscriptUpload: Codable, Equatable, Sendable {
 
     /// A publisher's transcript can read "visit https://example.com/promo"; the body carries no
     /// URL of any kind, so web addresses are cut out of the text and the spaces around them
-    /// closed up: anything with a scheme (`https://`, `tel:`, `mailto:` and the like) or `www.`,
-    /// email addresses, and any run of dotted words with no space
+    /// closed up: anything with a scheme (`https://`, `tel:`, `mailto:` and the like), `//` or
+    /// `www.`, email addresses, IPv4 addresses with any port or path, and any run of dotted words with no space
     /// after a dot whose last part has two or more letters ("example.ai", "shop.example.co.uk",
     /// "example.net/deal"). Abbreviations whose parts are single letters ("e.g.", "U.S.",
     /// "Ph.D.") and numbers ("3.30", "2.5") are kept.
@@ -296,7 +304,7 @@ public struct CommunityMapTranscriptUpload: Codable, Equatable, Sendable {
     }
 
     private static let linkPattern = try! NSRegularExpression(
-        pattern: #"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.|(?:tel|mailto|sms|file|data|urn|geo|magnet|callto|facetime|skype|bitcoin):)\S+|\S+@(?:[a-z0-9-]+\.)+[a-z]{2,}\S*|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/\S*|\b)"#
+        pattern: #"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.|(?:tel|mailto|sms|file|data|urn|geo|magnet|callto|facetime|skype|bitcoin):)\S+|(?<![\w:/.])//\S+|\b\d{1,3}(?:\.\d{1,3}){3}\b(?::\d+)?(?:/\S*)?|\S+@(?:[a-z0-9-]+\.)+[a-z]{2,}\S*|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/\S*|\b)"#
     )
 
     public func encoded() throws -> Data {

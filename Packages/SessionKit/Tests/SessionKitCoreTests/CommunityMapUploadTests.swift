@@ -163,6 +163,11 @@ final class CommunityMapUploadTests: XCTestCase {
         var gapped = timed(from: 0, to: 600_000)
         gapped.segments.removeAll { $0.startMs >= 100_000 && $0.startMs < 410_000 }
         XCTAssertEqual(decide(timeline: gapped), .skip(.untimedTranscript))
+        // A JSON transcript whose entries carry no times: each runs from 0 to the end of the episode.
+        let untimedEntries = TranscriptTimeline(segments: (1...20).map {
+            MediaTimelineSegment(id: "transcript-item-json-\($0)", startMs: 0, endMs: 600_000, text: "Entry \($0).")
+        }, chapters: [], durationMs: 600_000)
+        XCTAssertEqual(decide(timeline: untimedEntries), .skip(.untimedTranscript))
     }
 
     func testATranscriptIsMeasuredAgainstTheEpisodesOwnLengthNotItsOwn() async throws {
@@ -330,6 +335,8 @@ final class CommunityMapUploadTests: XCTestCase {
                                      text: "Try example.ai or shop.example.dev; a Ph.D. at 2.5x speed, i.e. 1.5x/day."),
                 MediaTimelineSegment(id: "f", startMs: 9_600, endMs: 9_900,
                                      text: "Call tel:+15551234567, email hello@example.com or mailto:hi@example.org, open file:/tmp/x. Note: done."),
+                MediaTimelineSegment(id: "g", startMs: 9_950, endMs: 9_990,
+                                     text: "Visit //192.0.2.1/promo, (//cdn.example.com/x) or 192.0.2.1:8080 and 10.0.0.1/admin; and/or 1.5x."),
             ], chapters: [])
         ))
         XCTAssertEqual(upload.segments.map(\.text), [
@@ -338,8 +345,9 @@ final class CommunityMapUploadTests: XCTestCase {
             "Go to today or , e.g. Mr. Smith in the U.S. at 3.30.",
             "Try or ; a Ph.D. at 2.5x speed, i.e. 1.5x/day.",
             "Call email or open Note: done.",
+            "Visit ( or and and/or 1.5x.",
         ])
-        XCTAssertEqual(upload.segments.map(\.startMs), [1_000, 5_000, 7_000, 9_000, 9_600])
+        XCTAssertEqual(upload.segments.map(\.startMs), [1_000, 5_000, 7_000, 9_000, 9_600, 9_950])
 
         XCTAssertNil(CommunityMapTranscriptUpload.make(episodeKey: expectedKey, durationMs: 10_000, language: "en",
                                                        timeline: TranscriptTimeline(segments: [], chapters: [])))
