@@ -255,9 +255,8 @@ struct BatchExportScreen: View {
                         .foregroundStyle(AppColors.secondaryText)
                 }
                 ForEach(Array(result.failures.enumerated()), id: \.offset) { _, failure in
-                    Label(failure, systemImage: "exclamationmark.triangle")
+                    FailureMessageLabel(failure)
                         .font(.caption)
-                        .foregroundStyle(.red)
                 }
             }
         }

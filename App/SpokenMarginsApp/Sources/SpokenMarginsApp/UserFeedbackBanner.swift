@@ -148,7 +148,7 @@ struct UserFeedbackBanner: View {
         switch feedback.kind {
         case .success: .green
         case .warning: .orange
-        case .error: .red
+        case .error: AppColors.dangerText // octagon, not triangle: must differ from warnings by shape (#308)
         }
     }
 }
@@ -162,7 +162,7 @@ struct ItemLastFailureCard: View {
         if let failure = model.itemFailures.lastFailure(itemId: itemId) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "xmark.octagon.fill")
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppColors.dangerText)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Last problem, \(failure.occurredAt.formatted(date: .omitted, time: .shortened))")
                         .font(.caption.weight(.semibold))

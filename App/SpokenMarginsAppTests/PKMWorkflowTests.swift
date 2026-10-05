@@ -171,7 +171,7 @@ final class PKMWorkflowTests: XCTestCase {
         XCTAssertFalse(written[0].contains("Transcript not available yet."))
     }
 
-    private func delivery(_ fixture: (root: URL, store: SQLiteSessionStore, folder: URL), statuses: @escaping @MainActor (String) -> Void = { _ in }) -> MarginNotesDelivery {
+    private func delivery(_ fixture: (root: URL, store: SQLiteSessionStore, folder: URL), statuses: @escaping @MainActor (MarginOutputStatus) -> Void = { _ in }) -> MarginNotesDelivery {
         MarginNotesDelivery(
             isEnabled: { true },
             isRecording: { false },
@@ -185,7 +185,7 @@ final class PKMWorkflowTests: XCTestCase {
         let fixture = try notesFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         var statuses: [String] = []
-        let delivery = delivery(fixture) { statuses.append($0) }
+        let delivery = delivery(fixture) { statuses.append($0.message) }
         try fixture.store.saveInterjection(spokenMargin(id: "ij-001", sessionId: "session-episode", itemId: "item-episode", transcript: "Said just before switching apps."))
 
         try await XCTUnwrap(delivery.finishBeforeBackground()).value

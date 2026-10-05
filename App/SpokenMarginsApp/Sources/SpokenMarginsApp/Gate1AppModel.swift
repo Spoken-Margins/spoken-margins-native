@@ -854,7 +854,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var sourceLinkSafariOffer: OpenInSafariOffer? // #145, set in Gate1AppModel+PasteAndGo.swift
     @Published private(set) var selectedListeningEdition: ListeningEdition?
     @Published var automaticMarginOutputEnabled = UserDefaults.standard.bool(forKey: "automaticMarginOutputEnabled")
-    @Published var marginOutputStatus = "Choose a folder and send a test note before enabling automatic delivery."
+    @Published var marginOutputStatus = MarginOutputStatus("Choose a folder and send a test note before enabling automatic delivery.")
     @Published private(set) var isImportingReadLater = false
     let readwiseHighlightSync = ReadwiseHighlightSync()
     private(set) lazy var marginNotesDelivery = MarginNotesDelivery(
@@ -9779,7 +9779,7 @@ final class Gate1AppModel: ObservableObject {
     func automaticMarginOutputChanged() {
         UserDefaults.standard.set(automaticMarginOutputEnabled, forKey: "automaticMarginOutputEnabled")
         if automaticMarginOutputEnabled { marginNotesDelivery.start() }
-        else { marginNotesDelivery.stop(); marginOutputStatus = "Automatic delivery is off. Exported files remain in your folder." }
+        else { marginNotesDelivery.stop(); marginOutputStatus = MarginOutputStatus("Automatic delivery is off. Exported files remain in your folder.") }
     }
 
     func testMarginOutput() {
@@ -9787,7 +9787,7 @@ final class Gate1AppModel: ObservableObject {
             do {
                 guard let folder = resolvedBatchExportFolderURL() else { throw EditionError.invalid("Choose an output folder first.") }
                 marginOutputStatus = try await marginNotesDelivery.sendTestNote(to: folder, destinationID: marginOutputDestinationID)
-            } catch { marginOutputStatus = error.localizedDescription }
+            } catch { marginOutputStatus = .failure(error.localizedDescription) }
         }
     }
 
