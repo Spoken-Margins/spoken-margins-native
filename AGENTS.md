@@ -22,7 +22,12 @@ Replace this section when the focus changes; do not append to it.
   - **No off switches for new features.** The way back is reverting the merge.
   - **Merge finished work on host tests plus both builds.** The Test Desk tests the merged tip end to end, instead of per-PR simulator gating.
 - **Owner's standing calls (2026-10-05).** Don't ask again:
-  - **"Post-MVP" is a legacy label.** The app is past MVP. A `[Post-MVP]` title, a `phase: post-mvp` label or `parked` never stops work on an issue; judge it on its merits.
+  - **"Post-MVP" is a legacy label.** The app is past MVP. The `phase:` labels and `[Post-MVP]` title prefixes were removed on 2026-10-05; if one turns up, or `parked` does, it never stops work on an issue. Judge the issue on its merits.
+  - **Default on only when it costs the listener nothing.** A background or sharing feature may be opt-out only if both are true:
+    - It's no burden on the device: no noticeable battery drain, heat or interface stutter.
+    - It's airtight on privacy: nothing that links the data to a listener is stored anywhere, and even someone with full access to our systems and live logs couldn't tell whose data it is.
+    - Otherwise it's opt-in.
+  - **Keep no user data that could identify someone unless the feature needs it.** Where a feature needs it (a voice Margin is traceable by voice alone), encrypt it end to end so the server holds only unreadable bytes, as share links do (#805).
   - **Owner ideas are challenges, not directives.** When the owner suggests a solution, solve the challenge it serves. Treat the suggestion as one example and pick whatever works best.
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
