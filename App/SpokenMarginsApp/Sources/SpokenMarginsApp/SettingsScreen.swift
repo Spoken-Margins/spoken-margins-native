@@ -15,6 +15,7 @@ struct SettingsScreen: View {
     @State private var isEmptyRecentlyDeletedConfirmationPresented = false
     @State private var isResetConfirmationPresented = false
     @State private var copiedDiagnostics = false
+    @AppStorage(CommunityMapUploadService.optInKey) private var helpsMakeListeningMaps = false
 
     private enum Field {
         case mapModel
@@ -337,6 +338,15 @@ struct SettingsScreen: View {
                     .accessibilityIdentifier("settings.help.button")
                     Link("Privacy Policy", destination: AppLinks.privacy)
                     Link("Support", destination: AppLinks.support)
+                    Toggle(isOn: $helpsMakeListeningMaps) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Help make listening maps")
+                            Text("Send transcripts of public episodes to the Spoken Margins server, which turns them into maps and then deletes them.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.communityMaps.toggle")
                     NavigationLink("Terms of Use") {
                         SpokenMarginsTermsView(allowsAcceptance: !model.hasAcceptedCurrentTerms)
                     }
