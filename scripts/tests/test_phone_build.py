@@ -188,16 +188,22 @@ class InstallerTests(unittest.TestCase):
         self.assertIn(f'devicectl device install app --device A {folder.resolve()}/SpokenMarginsApp.app', calls)
 
     def test_already_installed_mentions_a_newer_build_in_progress(self):
+        # The installer's clock is pinned: started three minutes before "now" was "today" except in the three
+        # minutes after midnight, when it is yesterday's date and the installer rightly says so (#841).
         self.make_build()
         (self.phone / 'installed.txt').write_text(f'{self.sha} 2026-09-30T09:05:29 Cole iPhone\n')
-        started = datetime.datetime.now() - datetime.timedelta(minutes=3)
-        (self.phone / '.work' / f'{started:%Y%m%d-%H%M%S}-1234567').mkdir(parents=True)
-        (self.phone / '.work' / '20200101-000000-7654321').mkdir()  # a leftover, not a running build
-        done, calls = self.run_installer([iphone('A')])
-        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        self.assertIn(f'being made right now: commit 1234567, started today at {started:%H:%M}', done.stdout)
-        self.assertNotIn('7654321', done.stdout)
-        self.assertEqual(calls, [])
+        for now, words in (('2026-10-05T12:00:00', 'today at 11:57'), ('2026-10-05T00:01:00', 'yesterday at 23:58')):
+            with self.subTest(now=now):
+                work = self.phone / '.work'
+                shutil.rmtree(work, ignore_errors=True)
+                started = datetime.datetime.fromisoformat(now) - datetime.timedelta(minutes=3)
+                (work / f'{started:%Y%m%d-%H%M%S}-1234567').mkdir(parents=True)
+                (work / '20200101-000000-7654321').mkdir()  # a leftover, not a running build
+                done, calls = self.run_installer([iphone('A')], SM_PHONE_NOW=now)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertIn(f'being made right now: commit 1234567, started {words}', done.stdout)
+                self.assertNotIn('7654321', done.stdout)
+                self.assertEqual(calls, [])
 
     def test_already_installed_mentions_a_failed_newer_attempt(self):
         self.make_build()

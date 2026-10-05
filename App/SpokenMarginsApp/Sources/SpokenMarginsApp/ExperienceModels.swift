@@ -365,6 +365,8 @@ struct SharedMarginRow: Identifiable, Equatable, Sendable {
     let itemTitle: String
 
     var id: String { "shared::\(layer.id)::\(interjection.id)" }
+    /// Its voice hasn't played for this listener yet (#469).
+    var isNew: Bool { interjection.isNewToListener }
     var collectionLabel: String { layer.displayLabel.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? "Imported collection" }
     var positionDescription: String {
         if interjection.resolution.isAmbiguous { return "Position needs review" }
@@ -386,7 +388,7 @@ struct OfflineStorageCategoryRow: Identifiable, Equatable, Sendable {
     var title: String {
         switch category {
         case .preparedAudio: "Prepared audio"
-        case .preparedChunk: "Prepared chunks"
+        case .preparedChunk: "Prepared audio parts"
         case .podcast: "Podcasts"
         case .guidedTour: "Guided tour"
         case .audiobook: "Audiobooks"

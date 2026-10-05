@@ -290,6 +290,7 @@ public enum PodcastAcousticAnchorResolver {
         }
 
         var resolutions: [String: ImportedAnchorResolution] = [:]
+        var flankAnswers: [EditionFlankAnswer] = []
         var repeatProbe: RepeatedAudioProbe?
         var repeatProbeTried = false
         for query in queries {
@@ -307,6 +308,9 @@ public enum PodcastAcousticAnchorResolver {
                 switch await session.result(from: signature) {
                 case .match(let match):
                     guard let item = match.mediaItems.first else { continue }
+                    flankAnswers.append(EditionFlankAnswer(
+                        marginId: query.packageScopedId, anchorOffsetMs: evidence.anchorOffsetMs, matched: true
+                    ))
                     let matchedStartMs = absoluteStartMs(of: item)
                     let confidence = matchConfidence(of: item)
                     // A flank whose audio also plays elsewhere in this edition (a theme, sting or bumper) can match
@@ -326,8 +330,12 @@ public enum PodcastAcousticAnchorResolver {
                     }
                     candidates.append((matchedStartMs + evidence.anchorOffsetMs, confidence))
                     matchedAnchorOffsets.append(evidence.anchorOffsetMs)
-                case .noMatch, .error:
-                    continue
+                case .noMatch:
+                    flankAnswers.append(EditionFlankAnswer(
+                        marginId: query.packageScopedId, anchorOffsetMs: evidence.anchorOffsetMs, matched: false
+                    ))
+                case .error:
+                    continue // Not an answer about this edition: pre-Build 29 evidence (12 s) always errors.
                 }
             }
             resolutions[query.packageScopedId] = resolveCandidates(
@@ -341,7 +349,12 @@ public enum PodcastAcousticAnchorResolver {
                 matchedRepeatedAudio: matchedRepeatedAudio
             )
         }
-        return corroboratePartialFlanks(queries: queries, resolutions: resolutions)
+        let flanks = editionFlankCounts(flankAnswers)
+        return requiringEditionConfirmation(
+            corroboratePartialFlanks(queries: queries, resolutions: resolutions),
+            matchedFlanks: flanks.matched,
+            answeredFlanks: flanks.answered
+        )
         #else
         return Dictionary(uniqueKeysWithValues: queries.map { query in
             (query.packageScopedId, timestampFallback(
@@ -588,6 +601,68 @@ public enum PodcastAcousticAnchorResolver {
             confidence: confidence,
             algorithmVersion: "podcast-anchor.v1"
         )
+    }
+
+    /// A different episode of the same show can share the sender's intro or outro. A Margin there matches
+    /// perfectly, on both flanks, although nothing else in the packet does (#456). So a placement counts only
+    /// when more than half of the packet's evidence found this edition. Below that, the edition is unconfirmed
+    /// and nothing is placed. Only flanks ShazamKit answered count (a match or no match): an unreadable
+    /// signature or a query error says nothing about the edition. The rule needs at least one match, the
+    /// shared audio it guards against; with none, other evidence (the transcript) decides as before. A packet
+    /// with fewer answered flanks than `minimumFlanksForEditionCheck` (two Margins) is left as it is.
+    static let minimumFlanksForEditionCheck = 4
+    public static let editionUnconfirmedAlgorithmVersion = "podcast-anchor-edition-unconfirmed.v1"
+    static let editionRejection = ImportedAnchorResolution(
+        evidenceClass: .unresolved,
+        algorithmVersion: editionUnconfirmedAlgorithmVersion
+    )
+
+    /// The packet-level verdict that the recipient has a different edition. Fusion and the app's
+    /// re-resolution keep it (`PodcastAnchorFusionResolver.enforcingEditionRejection`).
+    public static func isEditionRejection(_ resolution: ImportedAnchorResolution) -> Bool {
+        resolution.evidenceClass == .unresolved && resolution.algorithmVersion == editionUnconfirmedAlgorithmVersion
+    }
+
+    /// ShazamKit's answer for one signature variant of one Margin's flank.
+    struct EditionFlankAnswer: Equatable, Sendable {
+        let marginId: String
+        let anchorOffsetMs: Int
+        let matched: Bool
+    }
+
+    /// Counts the packet's answered and matched flanks for the edition check. A Margin has a flank before its
+    /// anchor (positive offset) and one after (negative), and each flank can carry more than one signature
+    /// variant: one captured during playback and one cut from the source window. The variants are one piece of
+    /// evidence, so a flank counts once: answered when any variant was answered, matched when any variant
+    /// matched. Counting variants separately let one Margin whose playback pair matched and whose source pair
+    /// didn't withdraw its own placement (Codex audit on d00dd82).
+    static func editionFlankCounts(_ answers: [EditionFlankAnswer]) -> (answered: Int, matched: Int) {
+        struct Flank: Hashable {
+            let marginId: String
+            let side: Int
+        }
+        var answered = Set<Flank>()
+        var matched = Set<Flank>()
+        for answer in answers {
+            let flank = Flank(marginId: answer.marginId, side: answer.anchorOffsetMs.signum())
+            answered.insert(flank)
+            if answer.matched { matched.insert(flank) }
+        }
+        return (answered.count, matched.count)
+    }
+
+    static func requiringEditionConfirmation(
+        _ resolutions: [String: ImportedAnchorResolution],
+        matchedFlanks: Int,
+        answeredFlanks: Int
+    ) -> [String: ImportedAnchorResolution] {
+        guard answeredFlanks >= minimumFlanksForEditionCheck, matchedFlanks >= 1,
+              matchedFlanks * 2 <= answeredFlanks else {
+            return resolutions
+        }
+        // Every Margin carries the verdict, placed, ambiguous or not, so neither other evidence (a transcript of
+        // the shared intro) nor an earlier placement on this edition puts one back.
+        return resolutions.mapValues { _ in editionRejection }
     }
 
     /// A high-confidence single flank remains useful direct evidence, but it
@@ -952,6 +1027,69 @@ public enum PodcastAnchorFusionResolver {
             evidenceClass: .unresolved,
             algorithmVersion: "podcast-anchor-fusion.v1"
         )
+    }
+
+    /// When the acoustic pass found the packet on a different edition (#456), nothing places a Margin on it:
+    /// not a transcript match of the shared intro, and not interpolation. Apply to the final resolutions.
+    public static func enforcingEditionRejection(
+        acoustic: [String: ImportedAnchorResolution],
+        resolutions: [String: ImportedAnchorResolution]
+    ) -> [String: ImportedAnchorResolution] {
+        guard acoustic.values.contains(where: PodcastAcousticAnchorResolver.isEditionRejection) else {
+            return resolutions
+        }
+        return resolutions.mapValues { _ in PodcastAcousticAnchorResolver.editionRejection }
+    }
+
+    /// The resolution a re-resolution stores: a verified placement on the same recipient edition survives a
+    /// weaker result, so a pass without a transcript doesn't undo one with it. An edition rejection (#456)
+    /// isn't weaker: it withdraws the machine placements it finds. A listener's own confirmation stays.
+    /// A stored rejection survives a later pass on the same edition too, unless that pass confirms the edition
+    /// itself (`confirmsEdition`). The packet and the file are the same, so a pass that disagrees has lost
+    /// evidence: its acoustic step failed, leaving the shared intro's transcript (Codex audit on 75b32ad), or
+    /// only the intro's flanks were answered, too few for the edition check (Codex audit on 2e6228e).
+    public static func preservingVerifiedPlacement(
+        previous: ImportedAnchorResolution, proposed: ImportedAnchorResolution,
+        previousEdition: String?, currentEdition: String?, hasTranscript: Bool
+    ) -> ImportedAnchorResolution {
+        let sameEdition = currentEdition != nil && currentEdition == previousEdition
+        if PodcastAcousticAnchorResolver.isEditionRejection(proposed) {
+            return sameEdition && previous.evidenceClass == .recipientConfirmed ? previous : proposed
+        }
+        if sameEdition, PodcastAcousticAnchorResolver.isEditionRejection(previous), !confirmsEdition(proposed) {
+            return previous
+        }
+        let verified = isInlinePlacement(previous)
+            && previous.evidenceClass != .timestampFallback && previous.evidenceClass != .mapInterpolated
+        let weaker = proposed.evidenceClass == .unresolved || proposed.evidenceClass == .absentFromRecipientEdition
+            || (!hasTranscript && proposed.evidenceClass == .ambiguous
+                && (previous.evidenceClass == .transcriptVerified || previous.evidenceClass == .fused))
+        return sameEdition && verified && weaker ? previous : proposed
+    }
+
+    /// Whether a resolution is evidence about the edition itself, enough to lift an edition rejection: the
+    /// sender's exact file or the listener's own confirmation. A single Margin's transcript or acoustic match
+    /// isn't: the shared intro matches on either episode, in words and in audio.
+    static func confirmsEdition(_ resolution: ImportedAnchorResolution) -> Bool {
+        switch resolution.evidenceClass {
+        case .exactEdition, .recipientConfirmed:
+            return resolution.localMediaTimeMs != nil
+        case .transcriptVerified, .acousticVerified, .fused, .articleTextVerified, .mapInterpolated,
+             .timestampFallback, .ambiguous, .absentFromRecipientEdition, .unresolved:
+            return false
+        }
+    }
+
+    /// Whether a podcast Margin plays inline at a recipient position.
+    public static func isInlinePlacement(_ resolution: ImportedAnchorResolution) -> Bool {
+        guard resolution.localMediaTimeMs != nil else { return false }
+        switch resolution.evidenceClass {
+        case .exactEdition, .transcriptVerified, .acousticVerified, .fused,
+             .mapInterpolated, .timestampFallback, .recipientConfirmed:
+            return true
+        case .articleTextVerified, .ambiguous, .absentFromRecipientEdition, .unresolved:
+            return false
+        }
     }
 
     public static func enforcingMonotonicOrder(

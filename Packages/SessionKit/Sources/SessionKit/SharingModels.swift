@@ -586,6 +586,12 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
     public let audioDurationMs: Int?
     public let podcastAnchorEvidence: [ImportedPodcastAnchorEvidence]?
     public var resolution: ImportedAnchorResolution
+    /// When this listener first heard the Margin's voice; nil while it's new to them (#469).
+    /// Local only: packets never carry it, and Build 29 ignores the key when it reads the record.
+    public var firstHeardAt: Date?
+
+    /// Not heard yet, so the Timeline and the Margins list mark it as new.
+    public var isNewToListener: Bool { firstHeardAt == nil }
     /// The Margins this one answers, from the packet's conversation artifact (#472). Nil for an
     /// ordinary Margin; more than one link is a fork. Build 29 ignores it.
     public let replyLinks: [MarginReplyLink]?
@@ -601,6 +607,7 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         audioDurationMs: Int? = nil,
         podcastAnchorEvidence: [ImportedPodcastAnchorEvidence]? = nil,
         resolution: ImportedAnchorResolution = .init(evidenceClass: .unresolved),
+        firstHeardAt: Date? = nil,
         replyLinks: [MarginReplyLink]? = nil
     ) {
         self.id = id
@@ -613,6 +620,7 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         self.audioDurationMs = audioDurationMs
         self.podcastAnchorEvidence = podcastAnchorEvidence
         self.resolution = resolution
+        self.firstHeardAt = firstHeardAt
         self.replyLinks = replyLinks
     }
 }
