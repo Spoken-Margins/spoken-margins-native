@@ -88,6 +88,25 @@ final class PlaybackRequestTimingTests: XCTestCase {
                        [.firstAudio(itemId: "item-357", milliseconds: 3_000)])
     }
 
+    /// Audit of #580: a seek while playing keeps the start's request time; a new listener command replaces it.
+    func testASeekKeepsTheRequestAndANewCommandReplacesIt() throws {
+        let (engine, audio) = try makeEngine()
+        audio.confirmsAtOnce = true
+        let tap = now
+        XCTAssertEqual(try engine.resumePlayback().playbackRequestedAt, tap)
+        now += 20
+
+        let sought = try engine.seekMedia(toMediaTimeMs: 120_000)
+        XCTAssertTrue(sought.status.isPlaybackActive)
+        XCTAssertEqual(sought.playbackRequestedAt, tap, "a seek is not a new request")
+
+        now += 20
+        let again = now
+        let resumed = try engine.resumePlayback()
+        XCTAssertTrue(resumed.status.isPlaybackActive)
+        XCTAssertEqual(resumed.playbackRequestedAt, again)
+    }
+
     func testAStaleOrFutureRequestTimeFallsBackToNow() {
         var watch = PlaybackStartWatch()
         let at = Date(timeIntervalSince1970: 10_000)

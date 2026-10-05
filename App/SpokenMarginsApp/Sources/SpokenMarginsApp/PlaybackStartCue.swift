@@ -58,7 +58,7 @@ final class PlaybackStartCue: ObservableObject {
 
     /// Feed every snapshot change.
     func observe(_ snapshot: SessionSnapshot) {
-        let wasWaiting = (watch.waitingItemId, watch.waitingTargetId)
+        let startsBefore = watch.startCount
         for outcome in watch.observe(itemId: snapshot.itemId, targetId: snapshot.targetId, status: snapshot.status,
                                      requestedAt: snapshot.playbackRequestedAt, at: now()) {
             switch outcome {
@@ -75,7 +75,7 @@ final class PlaybackStartCue: ObservableObject {
             cueTask = nil
             return
         }
-        guard (waiting, watch.waitingTargetId) != wasWaiting else { return }
+        guard watch.startCount != startsBefore else { return } // the same start continues; its cue stays scheduled
         cueTask?.cancel()
         // The cue is due 0.8 s after the request, not after the start was published (audit of #580).
         let delay = watch.cueWait(at: now()) ?? watch.cueDelay

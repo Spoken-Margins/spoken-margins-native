@@ -111,6 +111,39 @@ final class PlaybackStartWatchTests: XCTestCase {
                        [.firstAudio(itemId: "article", milliseconds: 2_000)])
     }
 
+    /// Audit of #580: a new request on the same item and target (another saved session of the article) is a new
+    /// start; a seek under the same request is not.
+    func testANewRequestOnTheSameTargetIsANewStart() {
+        var watch = PlaybackStartWatch()
+        let first = tap, second = tap + 20
+        _ = watch.observe(itemId: "article", targetId: "article", status: .playing, requestedAt: first, at: tap + 1)
+        XCTAssertEqual(watch.observe(itemId: "article", targetId: "article", status: .starting, requestedAt: first, at: tap + 10), [])
+        XCTAssertNil(watch.waitingItemId, "a seek keeps its request")
+        _ = watch.observe(itemId: "article", targetId: "article", status: .playing, requestedAt: first, at: tap + 11)
+        let opened = watch.startCount
+
+        XCTAssertEqual(watch.observe(itemId: "article", targetId: "article", status: .starting, requestedAt: second, at: second + 0.2), [])
+        XCTAssertEqual(watch.waitingItemId, "article")
+        XCTAssertEqual(watch.startCount, opened + 1)
+        XCTAssertEqual(watch.observe(itemId: "article", targetId: "article", status: .playing, requestedAt: second, at: second + 4),
+                       [.firstAudio(itemId: "article", milliseconds: 4_000)])
+    }
+
+    /// Audit of #580: when prepared narration times out and the engine switches the waiting start to live speech,
+    /// it is still the same request: one cue, and the time runs from the tap.
+    func testATargetSwitchUnderTheSameRequestKeepsTheStart() {
+        var watch = PlaybackStartWatch(cueDelay: 0.8)
+        _ = watch.observe(itemId: "article", targetId: "narration.m4a", status: .starting, requestedAt: tap, at: tap + 0.1)
+        let opened = watch.startCount
+        XCTAssertTrue(watch.takeCue(at: tap + 0.9))
+
+        XCTAssertEqual(watch.observe(itemId: "article", targetId: "article", status: .starting, requestedAt: tap, at: tap + 10), [])
+        XCTAssertEqual(watch.startCount, opened, "the same start")
+        XCTAssertFalse(watch.takeCue(at: tap + 11), "one cue per tap")
+        XCTAssertEqual(watch.observe(itemId: "article", targetId: "article", status: .playing, requestedAt: tap, at: tap + 12),
+                       [.firstAudio(itemId: "article", milliseconds: 12_000)])
+    }
+
     func testChimeIsAShortValidWave() throws {
         let data = PlaybackStartChime.wavData()
         let header = String(decoding: data.prefix(4), as: UTF8.self) + String(decoding: data[8..<16], as: UTF8.self)

@@ -3094,10 +3094,11 @@ public final class SessionEngine {
         if status != .starting {
             clearPlaybackStartPending()
         }
-        // Every new start (from a stop, or on another item or target) carries its own request time, so a later
-        // start, such as a streamed answer, never inherits an earlier one's (audits of #580).
-        if status.isPlaybackActive, !(snapshot.status.isPlaybackActive && snapshot.itemId == currentSession?.itemId
-                                      && snapshot.targetId == currentSession?.currentTargetId) {
+        // A start carries its request's time: a listener command stamps it, and a start from a stop or on another
+        // item gets the publish time. Seeks and the engine's own target switches (narration falling back to live
+        // speech) keep the request they belong to (audits of #580).
+        if status.isPlaybackActive, playbackRequestedAt != nil || !snapshot.status.isPlaybackActive
+            || snapshot.itemId != currentSession?.itemId {
             snapshot.playbackRequestedAt = playbackRequestedAt ?? now()
             playbackRequestedAt = nil
         }

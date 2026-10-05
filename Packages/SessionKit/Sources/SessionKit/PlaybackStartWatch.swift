@@ -14,13 +14,17 @@ public struct PlaybackStartWatch: Sendable {
     private struct Start: Sendable {
         var itemId: String
         var targetId: String?
+        var requestedAt: Date?
         var startedAt: Date
         var cued = false
     }
 
     public let cueDelay: TimeInterval
     private var start: Start?
-    private var last: (itemId: String?, targetId: String?, status: PlaybackStatus)?
+    private var last: (itemId: String?, targetId: String?, requestedAt: Date?, status: PlaybackStatus)?
+
+    /// Counts the starts opened so far, so a caller can tell a new start from the same one continuing.
+    public private(set) var startCount = 0
 
     public init(cueDelay: TimeInterval = 0.8) {
         self.cueDelay = cueDelay
@@ -33,21 +37,27 @@ public struct PlaybackStartWatch: Sendable {
     public var waitingTargetId: String? { start?.targetId }
 
     /// Feed every snapshot change. Returns what resolved: the open start's outcome, and a start that played at once.
+    /// One start is one listener request: `requestedAt` is when it reached the engine (the snapshot's
+    /// `playbackRequestedAt`), so the time counts the work before the start was published (audits of #580).
     /// A start opens when playback goes to "starting" from a stop (idle, paused, failed, recording), on another
-    /// item, or on another target of the same item (playing a Margin's answer while the article plays). A skip, seek or rate change while playing also passes through "starting", and is not a new start. A
-    /// start the player confirms at once (a buffered resume) goes straight to "playing" and is first audio too.
-    /// `requestedAt` is when the listener's request reached the engine (the snapshot's `playbackRequestedAt`), so the
-    /// time counts the work before the start was published (audits of #580). A missing or implausible one falls back
-    /// to `now`.
+    /// item, or under a new request while playing (a Margin's answer, or another session of the same article). A
+    /// seek, skip or rate change while playing keeps its request and is not a new start, and neither is the engine
+    /// switching a waiting start to another target (narration falling back to live speech). Without request times,
+    /// a new target counts as a new start. A start the player confirms at once (a buffered resume) goes straight to
+    /// "playing" and is first audio too. A missing or implausible request time falls back to `now`.
     public mutating func observe(
         itemId: String?, targetId: String? = nil, status: PlaybackStatus, requestedAt: Date? = nil, at now: Date
     ) -> [Outcome] {
         let previous = last
-        last = (itemId, targetId, status)
+        last = (itemId, targetId, requestedAt, status)
         var outcomes: [Outcome] = []
         if let start {
-            let sameStart = itemId == start.itemId && targetId == start.targetId
-            if status == .starting, sameStart { return [] }
+            let sameStart = itemId == start.itemId
+                && Self.sameRequest(requestedAt, targetId, as: start.requestedAt, start.targetId)
+            if status == .starting, sameStart {
+                self.start?.targetId = targetId
+                return []
+            }
             let milliseconds = Self.milliseconds(from: start.startedAt, to: now)
             outcomes.append(status == .playing && sameStart
                 ? .firstAudio(itemId: start.itemId, milliseconds: milliseconds)
@@ -56,17 +66,25 @@ public struct PlaybackStartWatch: Sendable {
             if status == .playing, sameStart { return outcomes }
         }
         let continuesPlayback = previous.map {
-            $0.status.isPlaybackActive && $0.itemId == itemId && $0.targetId == targetId
+            $0.status.isPlaybackActive && $0.itemId == itemId
+                && Self.sameRequest(requestedAt, targetId, as: $0.requestedAt, $0.targetId)
         } ?? false
         if let itemId, !continuesPlayback {
             let startedAt = requestedAt.flatMap { (now.addingTimeInterval(-Self.longestRequest)...now).contains($0) ? $0 : nil } ?? now
             if status == .starting {
-                start = Start(itemId: itemId, targetId: targetId, startedAt: startedAt)
+                start = Start(itemId: itemId, targetId: targetId, requestedAt: requestedAt, startedAt: startedAt)
+                startCount += 1
             } else if status == .playing {
                 outcomes.append(.firstAudio(itemId: itemId, milliseconds: Self.milliseconds(from: startedAt, to: now)))
             }
         }
         return outcomes
+    }
+
+    /// The same request when both carry a request time; otherwise the same target.
+    private static func sameRequest(_ requestedAt: Date?, _ targetId: String?, as other: Date?, _ otherTargetId: String?) -> Bool {
+        if let requestedAt, let other { return requestedAt == other }
+        return targetId == otherTargetId
     }
 
     /// A request stamp older than this belongs to an earlier command, not this start.
