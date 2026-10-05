@@ -93,6 +93,10 @@ final class CommunityMapUploadService {
     ) {
         guard let item = try? store.loadItem(id: itemId),
               let episodeKey = CommunityMapEpisodeKey.key(for: item) else { return }
+        // The map job deletes its transcript once the map is made, so the phone's transcript is
+        // saved before anything is sent: an app closed mid-upload can still retry it. If it can't
+        // be saved (storage full) it is still sent now, and Diagnostics says it can't be retried.
+        let unkept = transcribed.map { !Self.keep($0, episodeKey: episodeKey) } ?? false
         guard !inFlight.contains(episodeKey) else {
             if let transcribed { queued[episodeKey] = (itemId, transcribed) }
             return
@@ -130,9 +134,10 @@ final class CommunityMapUploadService {
             )
             self.inFlight.remove(episodeKey)
             // Keep the phone's transcript only while its upload waits to be tried again.
-            let waiting = (try? store.loadCommunityMapUpload(episodeKey: episodeKey))?.state == .failed
-            if transcribed != nil || !waiting { Self.keep(waiting ? timeline : nil, episodeKey: episodeKey) }
-            report(outcome.diagnostic)
+            if (try? store.loadCommunityMapUpload(episodeKey: episodeKey))?.state != .failed, self.queued[episodeKey] == nil {
+                Self.keep(nil, episodeKey: episodeKey)
+            }
+            report(outcome.diagnostic + (unkept ? " (transcript not kept for a retry)" : ""))
             if let next = self.queued.removeValue(forKey: episodeKey) {
                 self.attempt(itemId: next.itemId, transcribed: next.timeline, store: store, localAudio: localAudio, report: report)
             }
@@ -150,15 +155,17 @@ final class CommunityMapUploadService {
         return try? JSONDecoder().decode(TranscriptTimeline.self, from: data)
     }
 
-    /// Saves the transcript for a retry, or with nil removes it.
-    private static func keep(_ timeline: TranscriptTimeline?, episodeKey: String) {
-        guard let url = keptFolder?.appending(path: "\(episodeKey).json") else { return }
-        guard let timeline, let data = try? JSONEncoder().encode(timeline) else {
+    /// Saves the transcript for a retry, or with nil removes it. Says whether it was saved.
+    @discardableResult
+    private static func keep(_ timeline: TranscriptTimeline?, episodeKey: String) -> Bool {
+        guard let url = keptFolder?.appending(path: "\(episodeKey).json") else { return false }
+        guard let timeline else {
             try? FileManager.default.removeItem(at: url)
-            return
+            return true
         }
+        guard let data = try? JSONEncoder().encode(timeline) else { return false }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        return (try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])) != nil
     }
 
     /// Whether the audio file carries chapters, or nil when it couldn't be read (gone, or still
