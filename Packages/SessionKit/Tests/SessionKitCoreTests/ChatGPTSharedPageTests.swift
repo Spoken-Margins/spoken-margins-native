@@ -80,7 +80,7 @@ final class ChatGPTSharedPageTests: XCTestCase {
             message(id: "u", role: "user", time: 10, text: "How should I get to Porto?")
         ])
         let handoff = try ChatGPTSharedPage.handoff(fromPageSource: page, url: shareURL)
-        XCTAssertEqual(handoff.text, "You: How should I get to Porto?\n\nChatGPT: Take the morning train.")
+        XCTAssertEqual(handoff.text, "User: How should I get to Porto?\n\nChatGPT: Take the morning train.")
     }
 
     func testHiddenSystemAndRepeatedMessagesAreLeftOut() throws {

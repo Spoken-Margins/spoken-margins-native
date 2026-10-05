@@ -63,21 +63,37 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
         }
         guard continuation == nil else { throw ReadablePageExtractionError.busy }
         let stoppedBefore = stoppedPages
-        let script = try extractorScript()
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
-        configuration.userContentController.addUserScript(WKUserScript(
-            source: script,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: true,
-            in: .defaultClient
-        ))
-        let rules = """
-        [{"trigger":{"url-filter":".*","resource-type":["image","style-sheet","script","font","media","raw","svg-document","popup"]},"action":{"type":"block"}}]
-        """
+        let rules: String
+        let ruleListIdentifier: String
+        if ClaudeSharedPage.matches(url) {
+            // A shared Claude page fetches its chat with its own scripts, so this is the one page that runs
+            // its own code. The rules let it reach only its own host and asset hosts; the only script added is
+            // the one that keeps a copy of the chat it fetched (#876).
+            configuration.userContentController.addUserScript(WKUserScript(
+                source: ClaudeSharedPage.snapshotHookScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true,
+                in: .page
+            ))
+            rules = ClaudeSharedPage.contentRules
+            ruleListIdentifier = "spoken-margins-claude-share.v1"
+        } else {
+            configuration.userContentController.addUserScript(WKUserScript(
+                source: try extractorScript(),
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: true,
+                in: .defaultClient
+            ))
+            rules = """
+            [{"trigger":{"url-filter":".*","resource-type":["image","style-sheet","script","font","media","raw","svg-document","popup"]},"action":{"type":"block"}}]
+            """
+            ruleListIdentifier = "spoken-margins-readable-page.v1"
+        }
         guard let ruleList = try await WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "spoken-margins-readable-page.v1",
+            forIdentifier: ruleListIdentifier,
             encodedContentRuleList: rules
         ) else { throw ReadablePageExtractionError.missingExtractor }
         guard stoppedPages == stoppedBefore else {
@@ -149,6 +165,14 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
         Task { @MainActor in
             // A shared ChatGPT page draws its chat with scripts, so the page reader would see only the title.
             // The chat is in the page's data instead. If it isn't, say so rather than import a few words (#874).
+            if let url = requestedURL, ClaudeSharedPage.matches(url) {
+                let shared: Result<BrowserTextHandoff, Error>
+                do { shared = .success(try await sharedClaudeHandoff(in: webView, url: url)) } catch { shared = .failure(error) }
+                guard self.webView === webView else { return }
+                if case .success = shared { lastExtractor = "claude_shared_page" }
+                finish(shared)
+                return
+            }
             if let url = requestedURL, ChatGPTSharedPage.matches(url) {
                 let shared: Result<BrowserTextHandoff, Error>
                 do { shared = .success(try await sharedChatHandoff(in: webView, url: url)) } catch { shared = .failure(error) }
@@ -210,6 +234,22 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
             }
             return payload
         }
+    }
+
+    /// The page's scripts are still fetching the chat when the page finishes loading. Wait for the copy the
+    /// capture script keeps. A page that was loading fine answers within seconds (3 on a Mac); one stuck behind
+    /// a bot check never does, so stop waiting well before the queue's time limit.
+    private func sharedClaudeHandoff(in webView: WKWebView, url: URL) async throws -> BrowserTextHandoff {
+        let deadline = ContinuousClock.now + .seconds(20)
+        while self.webView === webView {
+            guard ContinuousClock.now < deadline else { throw ClaudeSharedPage.ParseError.noSnapshot }
+            let result = try await webView.callAsyncJavaScript(
+                ClaudeSharedPage.snapshotReadScript, arguments: [:], in: nil, contentWorld: .page
+            )
+            if let snapshot = result as? String { return try ClaudeSharedPage.handoff(fromSnapshot: snapshot, url: url) }
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+        throw CancellationError()
     }
 
     private func sharedChatHandoff(in webView: WKWebView, url: URL) async throws -> BrowserTextHandoff {
