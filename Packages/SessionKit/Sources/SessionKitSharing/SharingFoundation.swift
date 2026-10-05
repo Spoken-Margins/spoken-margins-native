@@ -84,10 +84,10 @@ public enum ReviewedItemTransportSelection: Sendable {
 }
 
 public enum SpokenMarginsPackageBuilder {
-    /// `localSourceText` is the item's own text on this device, and an episode's transcript when it
-    /// has one. Map proposals are checked against it however the source travels, so a scene summary
-    /// that quotes the source is dropped even when the source goes by reference. It is never written
-    /// into the packet.
+    /// `localSourceTexts` are the item's own text on this device and an episode's transcript when it
+    /// has one, each with its own character offsets. Map proposals are checked against them however the
+    /// source travels, so a scene summary that quotes the source is dropped even when the source goes by
+    /// reference. They are never written into the packet.
     public static func prepare(
         packageId: String,
         createdAt: Date,
@@ -95,7 +95,7 @@ public enum SpokenMarginsPackageBuilder {
         itemTransportSelection: ReviewedItemTransportSelection,
         selections: [ReviewedInterjectionSelection],
         mapProposals: [PortableListeningMapProposalArtifact] = [],
-        localSourceText: String? = nil,
+        localSourceTexts: [String] = [],
         fingerprintSpines: [EditionFingerprintSpineArtifact] = [],
         phraseSketches: [TranscriptPhraseSketchArtifact] = [],
         machineEvidence: [ReviewedMachineEvidenceAsset] = [],
@@ -223,7 +223,8 @@ public enum SpokenMarginsPackageBuilder {
         // outside the app, so drop what breaks the scene rules rather than refuse the Margins (#480).
         var embeddedItemText: String?
         if case .embeddedText(let text, _, _) = itemTransportSelection { embeddedItemText = text }
-        var mapProposals = PortableListeningMapContract.forSharing(mapProposals, itemText: embeddedItemText ?? localSourceText)
+        var mapProposals = PortableListeningMapContract.forSharing(
+            mapProposals, sourceTexts: [embeddedItemText].compactMap { $0 } + localSourceTexts)
         // Shared by reference, the packet carries none of the item's text, so its map anchors don't quote it.
         if embeddedItemText == nil {
             mapProposals = mapProposals.map(PortableListeningMapContract.withoutLongAnchorQuotations)

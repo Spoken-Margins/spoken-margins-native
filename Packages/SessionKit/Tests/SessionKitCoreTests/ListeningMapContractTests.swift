@@ -279,6 +279,58 @@ final class ListeningMapContractTests: XCTestCase {
         XCTAssertEqual(violations(withEmbedded(from: sceneStart, to: item.count)), [], "no embedded text, no anchor text")
     }
 
+    /// Codex audit on 17614c9: export joined the item's text and the episode's transcript into one
+    /// string, so a scene's transcript range [0, n) read the item's text instead and a summary quoting
+    /// the transcript passed. Each source text keeps its own character offsets.
+    func testEachSourceTextIsReadInItsOwnCoordinates() {
+        let transcript = "The committee met at dawn and agreed that the old bridge must close before winter storms arrive."
+        let itemText = String(repeating: "Show notes list the sponsors and the music credits only. ", count: 4)
+        XCTAssertGreaterThanOrEqual(itemText.count, transcript.count, "precondition: the range fits the item text too")
+        let map = proposal([PortableListeningMapScene(
+            id: "scene-0", order: 0,
+            summaryText: "In short, the committee met at dawn and agreed that the old bridge must close.",
+            summaryProvenance: .modelGenerated, eligibility: .eligible,
+            startAnchor: .init(anchorType: .transcript, startChar: 0, mediaTimeMs: 0),
+            endAnchor: .init(anchorType: .transcript, endChar: transcript.count, mediaTimeMs: 60_000)
+        )])
+        let quoted: [PortableListeningMapContract.Violation] = [.summaryQuotesSource(sceneId: "scene-0")]
+        XCTAssertEqual(PortableListeningMapContract.violations(in: map, sourceTexts: [itemText, transcript]), quoted)
+        XCTAssertEqual(PortableListeningMapContract.violations(in: map, sourceTexts: [transcript, itemText]), quoted)
+        XCTAssertEqual(PortableListeningMapContract.forSharing([map], sourceTexts: [itemText, transcript]), [])
+        XCTAssertEqual(PortableListeningMapContract.violations(in: map, sourceTexts: [itemText]), [], "the item text alone isn't quoted")
+    }
+
+    /// Codex audit on 17614c9: a scene with no summary could still carry a title or eligibility reason
+    /// copying ten words of the transcript, and the on-device labeller checks a reason's length only.
+    /// Sharing drops the quoting label and keeps the map.
+    func testSceneTitleAndReasonMustNotQuoteTheSource() {
+        let transcript = "The committee met at dawn and agreed that the old bridge must close before winter storms arrive."
+        let copied = "Skipped: the committee met at dawn and agreed that the old bridge must close."
+        func map(title: String?, reason: String?) -> PortableListeningMapProposalArtifact {
+            proposal([
+                scene(0, .eligible, from: 0, to: 1_000),
+                PortableListeningMapScene(
+                    id: "scene-1", order: 1, title: title, eligibility: .unknown, eligibilityReason: reason,
+                    startAnchor: .init(anchorType: .transcript, mediaTimeMs: 1_000),
+                    endAnchor: .init(anchorType: .transcript, mediaTimeMs: 2_000)
+                ),
+            ])
+        }
+        let quoted: [PortableListeningMapContract.Violation] = [.sceneNoteQuotesSource(sceneId: "scene-1")]
+        for (name, title, reason) in [("reason", "Part two", copied), ("title", copied, "The labeller was not confident.")] {
+            let original = map(title: title, reason: reason)
+            XCTAssertEqual(PortableListeningMapContract.violations(in: original, sourceTexts: [transcript]), quoted, name)
+            let shared = PortableListeningMapContract.forSharing([original], sourceTexts: [transcript])
+            XCTAssertEqual(shared.count, 1, "\(name): the map still travels")
+            let scene = shared.first?.scenes[1]
+            XCTAssertEqual(scene?.title, title == copied ? nil : title, name)
+            XCTAssertEqual(scene?.eligibilityReason, reason == copied ? nil : reason, name)
+            XCTAssertEqual(shared.first.map { PortableListeningMapContract.violations(in: $0, sourceTexts: [transcript]) }, [], name)
+        }
+        let plain = map(title: "Part two", reason: "The labeller was not confident.")
+        XCTAssertEqual(PortableListeningMapContract.forSharing([plain], sourceTexts: [transcript]), [plain])
+    }
+
     /// What a packet carries: ineligible summaries dropped, a proposal that still breaks a rule left out.
     func testForSharingKeepsGoodMapsAndLeavesOutBrokenOnes() {
         let labelled = proposal([

@@ -208,7 +208,7 @@ final class ListeningMapPacketTests: XCTestCase {
                     itemTransportSelection: transport,
                     selections: [.init(packageScopedId: "margin-001", revision: revision(before: "", after: ""),
                                        anchor: .init(anchorType: .media, mediaTimeMs: 5_000), representation: .textOnly)],
-                    mapProposals: [map], localSourceText: edition.text
+                    mapProposals: [map], localSourceTexts: [edition.text]
                 )
                 let label = "\(name) by \(transportName)"
                 XCTAssertEqual(prepared.manifest.artifacts.contains { $0.kind == SpokenMarginsArtifactKind.listeningMapProposal }, keepsMap, label)
@@ -242,7 +242,9 @@ final class ListeningMapPacketTests: XCTestCase {
         let drafts = EpisodeSceneSegmenter.makeDrafts(timeline: timeline)
         XCTAssertGreaterThan(drafts.count, 1)
         // A map from another sender, or a hand-made one, can quote the transcript in its anchors. The app's
-        // own maps don't, so this is the case that would slip a quotation past the summary check.
+        // own maps don't, so this is the case that would slip a quotation past the summary check. The unknown
+        // scene's reason quotes transcript its anchors don't, as the on-device labeller's could (Codex audit
+        // on 17614c9), so only the device's transcript reveals it.
         func quotedStart(_ segmentId: String?) -> String? {
             timeline.segments.first { $0.id == segmentId }?.text
         }
@@ -255,7 +257,7 @@ final class ListeningMapPacketTests: XCTestCase {
                     summaryText: eligible ? "The hosts move on to part \(draft.order + 1) of the story." : nil,
                     summaryProvenance: eligible ? .modelGenerated : nil,
                     eligibility: eligible ? .eligible : .unknown,
-                    eligibilityReason: eligible ? nil : "The labeller was not confident.",
+                    eligibilityReason: eligible ? nil : "Unclear: \(quotedStart(draft.endTranscriptSegmentId) ?? "")",
                     startAnchor: .init(anchorType: .transcript, exactText: quotedStart(draft.startTranscriptSegmentId),
                                        prefix: "So", suffix: "and then", mediaTimeMs: draft.startMs,
                                        transcriptSegmentId: draft.startTranscriptSegmentId),
@@ -282,7 +284,8 @@ final class ListeningMapPacketTests: XCTestCase {
         func archiveRuns(_ selections: [ReviewedInterjectionSelection], name: String) throws -> Set<String> {
             let prepared = try SpokenMarginsPackageBuilder.prepare(
                 packageId: "leak-\(name)", createdAt: fixedDate, item: podcastItem, itemTransportSelection: .reference,
-                selections: selections, mapProposals: [map], phraseSketches: [sketch]
+                selections: selections, mapProposals: [map],
+                localSourceTexts: [timeline.segments.map(\.text).joined(separator: " ")], phraseSketches: [sketch]
             )
             let url = root.appending(path: "\(name).spokenmargins")
             _ = try exportPacket(prepared, to: url)
