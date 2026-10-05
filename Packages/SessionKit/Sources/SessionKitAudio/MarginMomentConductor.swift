@@ -30,6 +30,8 @@ public final class MarginMomentConductor {
     public var onChange: (@MainActor () -> Void)?
     /// Called when a Margin's voice can't be played; the source continues without it.
     public var onVoiceUnavailable: (@MainActor (_ marginId: String, _ reason: String) -> Void)?
+    /// Called once a Margin's voice has started playing (#469: a shared Margin is no longer new).
+    public var onVoiceStarted: (@MainActor (_ marginId: String) -> Void)?
     /// Called before a voice starts, to configure the audio session (iOS).
     public var prepareAudioSession: (@MainActor () throws -> Void)?
     public var voiceRate: Float = 1
@@ -124,6 +126,7 @@ public final class MarginMomentConductor {
             voice = player
             voiceDelegate = delegate
             guard player.play() else { throw VoiceError.didNotStart }
+            onVoiceStarted?(margin.marginId)
         } catch {
             onVoiceUnavailable?(margin.marginId, String(describing: error))
             finishVoice()

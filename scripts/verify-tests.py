@@ -17,7 +17,7 @@ import sys
 import time
 from lane_xcresult_attachments import export_failed_attachments
 
-from check_posterboard_repair import new_crash
+from check_posterboard_repair import crash_snapshot, new_crash
 import lane_sim
 from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
                         state_dir, SIMULATOR_SLOTS)
@@ -327,6 +327,35 @@ def ops_test_folders(root=None):
     return sorted({path.parent for path in (base / 'ops').rglob('test_*.py')})
 
 
+def process_group_alive(pgid):
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return False  # macOS: only zombies are left
+    return True
+
+
+def stop_process_group(process, grace=10):
+    # The group may already be gone (or, on macOS, hold only zombies, which gives EPERM); that
+    # must not replace the error that brought us here.
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(process.pid, signal.SIGTERM)
+    # Wait for the whole group, not just its leader: a leader that exits on SIGTERM can leave a
+    # descendant that ignores it (Codex audit P2 on dd3e0a4).
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline:
+        process.poll()  # reap the leader, so a zombie leader doesn't count as alive
+        if not process_group_alive(process.pid):
+            break
+        time.sleep(0.1)
+    else:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(process.pid, signal.SIGKILL)
+    process.wait()
+
+
 class Run:
     def __init__(self, output, plan):
         self.output = output
@@ -373,8 +402,7 @@ class Run:
         if device and self.crash_baseline is None:
             if not reports.is_dir():
                 raise RuntimeError('Simulator crash reports are unavailable')
-            self.crash_baseline = {p: (p.stat().st_mtime_ns, p.stat().st_size)
-                                   for p in reports.glob('*.ips')}
+            self.crash_baseline = crash_snapshot(reports)
         # xcodebuild shares the Mac-wide build slots with every session; the wait isn't timed.
         slot = build_slot(f'verify-tests {self.manifest["plan"]} {name}', max_wait=BUILD_SLOT_WAIT_SECONDS) \
             if args[0] == 'xcodebuild' else contextlib.nullcontext()
@@ -399,17 +427,16 @@ class Run:
                         continue
             except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError):
                 entry['interrupted'] = True
-                os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
+                stop_process_group(process)
                 result = 124
                 if entry.get('simulator_crash_report'):
                     shutdown = subprocess.run(['xcrun', 'simctl', 'shutdown', device],
                                               stdout=log, stderr=subprocess.STDOUT, timeout=20)
                     entry['simulator_shutdown_exit'] = shutdown.returncode
+            except BaseException:
+                # The runner itself failed: don't leave xcodebuild running orphaned (#767).
+                stop_process_group(process)
+                raise
         entry.update(exit_code=result, seconds=round(time.monotonic() - start, 3))
         text = (self.output / f'{name}.log').read_text(errors='replace')
         errors = []
@@ -442,11 +469,12 @@ class Run:
             if not entry['executed_count']:
                 errors.append('Infrastructure runner executed zero tests' if name == 'runner-tests'
                               else f'{name} executed zero tests')
-        if name == 'browser':
+        if name in ('browser', 'share-link'):
             match = re.search(r'^# tests (\d+)$', text, re.M)
             entry['executed_count'] = int(match[1]) if match else 0
             if not entry['executed_count']:
-                errors.append('Browser runner executed zero tests')
+                errors.append('Browser runner executed zero tests' if name == 'browser'
+                              else f'{name} executed zero tests')
         # A failing probation test makes xcodebuild exit non-zero; that alone doesn't fail the step.
         probation_only = (tests and not errors and not entry.get('interrupted')
                           and any(status != 'passed' for status in entry.get('probation', {}).values()))
@@ -482,6 +510,7 @@ class Run:
         if not (ROOT / 'node_modules').exists():
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         self.command('browser', ['npm', 'run', 'test:browser-extraction'])
+        self.command('share-link', ['npm', 'run', 'test:share-link'])
         expected = set()
         for target in ('SessionKitCoreTests', 'SessionKitTests', 'SessionKitTraceTests'):
             expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))
