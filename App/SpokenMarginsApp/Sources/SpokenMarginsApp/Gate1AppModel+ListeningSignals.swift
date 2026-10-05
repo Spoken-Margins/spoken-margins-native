@@ -18,7 +18,7 @@ extension Gate1AppModel {
     }
 
     private func recordSpokenMarginSignal(_ interjection: Interjection) {
-        listeningSignals.spokenMargin(interjectionId: interjection.id, itemId: interjection.itemId,
+        listeningSignals.spokenMargin(sessionId: interjection.sessionId, interjectionId: interjection.id, itemId: interjection.itemId,
                                       audioURL: interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)))
     }
 }

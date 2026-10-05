@@ -79,7 +79,8 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
     }
 
     /// A finish that saves its Margin and then fails to resume playback reaches the hook from the
-    /// success path's defer and the failure path; the Margin counts once.
+    /// success path's defer and the failure path; the Margin counts once. Margin ids repeat across
+    /// sessions (`ij-001`), so another session's first Margin still counts.
     func testASpokenMarginReachingTheHookTwiceCountsOnce() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -92,12 +93,12 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
             externalReference: nil, status: "ready", sourceURL: subscription.source.canonicalURL))
         let recorder = ListeningSignalRecorder(fileURL: root.appendingPathComponent("signals.jsonl"), flushDelay: 60)
         let signals = ListeningSignalsCoordinator(recorder: recorder, repository: { store })
-        for id in ["margin-1", "margin-1", "margin-2"] {
-            signals.spokenMargin(interjectionId: id, itemId: "a", audioURL: nil)
+        for (session, id) in [("session-a", "ij-001"), ("session-a", "ij-001"), ("session-a", "ij-002"), ("session-b", "ij-001")] {
+            signals.spokenMargin(sessionId: session, interjectionId: id, itemId: "a", audioURL: nil)
         }
         let exported = await signals.exportFileURL()
         let rows = exported.map(ListeningSignalRecorder.read) ?? []
-        XCTAssertEqual(rows.map(\.event), [.margin(kind: .spoken, length: 0), .margin(kind: .spoken, length: 0)])
+        XCTAssertEqual(rows.map(\.event), Array(repeating: .margin(kind: .spoken, length: 0), count: 3))
     }
 
     func testAppCompletionRecordsTheSavedSpokenMargin() async throws {

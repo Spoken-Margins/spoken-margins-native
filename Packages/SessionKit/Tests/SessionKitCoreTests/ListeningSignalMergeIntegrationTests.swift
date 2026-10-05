@@ -25,7 +25,7 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
                           "\(start): a Margin saved before resuming playback failed still counts")
         }
         let helper = try appSource("Gate1AppModel+ListeningSignals.swift")
-        XCTAssertTrue(helper.contains("listeningSignals.spokenMargin(interjectionId:"))
+        XCTAssertTrue(helper.contains("listeningSignals.spokenMargin(sessionId: interjection.sessionId, interjectionId:"))
         XCTAssertTrue(helper.contains("scheduleTranscription(for:"))
     }
 
