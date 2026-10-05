@@ -68,8 +68,8 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         var appendedFrames: Int64 = 0
         var skippedFrames: Int64 = 0
         var firstMediaTimeMs: Int?
-        /// The start of the last decoded buffer this window saw, to notice playback moving back.
-        var lastBufferStartMs: Int?
+        /// The end of the last decoded buffer this window saw, to notice playback moving back.
+        var lastBufferEndMs: Int?
 
         init(request: PostResumeAudioSampleRequest) {
             self.request = request
@@ -81,7 +81,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             appendedFrames = 0
             skippedFrames = 0
             firstMediaTimeMs = nil
-            lastBufferStartMs = nil
+            lastBufferEndMs = nil
         }
     }
 
@@ -90,6 +90,9 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         let startMediaTimeMs: Int
         let endMediaTimeMs: Int
     }
+
+    /// Rounding slack when deciding whether a buffer starts before the audio already seen ends.
+    static let rewindToleranceMs = 10
 
     private let lock = NSLock()
     private let completionQueue = DispatchQueue(
@@ -238,9 +241,10 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                let copy = Self.copy(buffer) {
                 let durationMs = Int((Double(frameCount) / format.sampleRate * 1_000).rounded())
                 // Playback moved back without a noted seek (a Margin's rejoin step-back, #776): drop the first
-                // copy of the audio that is about to replay, so evidence windows never hold it twice.
-                if let last = ring.last, last.startMediaTimeMs >= mediaTimeMs {
-                    ring.removeAll { $0.startMediaTimeMs >= mediaTimeMs }
+                // copy of the audio that is about to replay, cutting a buffer the rewind lands inside, so
+                // evidence windows never hold it twice.
+                if let last = ring.last, mediaTimeMs + Self.rewindToleranceMs < last.endMediaTimeMs {
+                    ring = ring.compactMap { Self.trimmed($0, before: mediaTimeMs) }
                 }
                 ring.append(RingChunk(
                     buffer: copy,
@@ -266,10 +270,12 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                 // the replayed audio would splice it into this signature under its old start time, so the
                 // window starts again from the rewound audio.
                 if let mediaTimeMs {
-                    if let previous = accumulator.lastBufferStartMs, previous >= mediaTimeMs {
+                    if let previousEnd = accumulator.lastBufferEndMs,
+                       mediaTimeMs + Self.rewindToleranceMs < previousEnd {
                         accumulator.restart()
                     }
-                    accumulator.lastBufferStartMs = mediaTimeMs
+                    accumulator.lastBufferEndMs = mediaTimeMs
+                        + Int((Double(frameCount) / format.sampleRate * 1_000).rounded())
                 }
                 do {
                     let delayFrames = Int64(
@@ -456,12 +462,25 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         return signature
     }
 
-    private static func copy(_ source: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+    /// The part of `chunk` before `rewindMs`, or nil when none of it is. A cut buffer is a new, shorter copy:
+    /// signature work off the lock may still be reading the original.
+    private static func trimmed(_ chunk: RingChunk, before rewindMs: Int) -> RingChunk? {
+        guard chunk.startMediaTimeMs < rewindMs else { return nil }
+        guard chunk.endMediaTimeMs > rewindMs else { return chunk }
+        let keptFrames = AVAudioFrameCount(
+            (Double(rewindMs - chunk.startMediaTimeMs) * chunk.buffer.format.sampleRate / 1_000).rounded()
+        )
+        guard keptFrames > 0, let kept = copy(chunk.buffer, frameLimit: keptFrames) else { return nil }
+        return RingChunk(buffer: kept, startMediaTimeMs: chunk.startMediaTimeMs, endMediaTimeMs: rewindMs)
+    }
+
+    private static func copy(_ source: AVAudioPCMBuffer, frameLimit: AVAudioFrameCount? = nil) -> AVAudioPCMBuffer? {
+        let frames = min(source.frameLength, frameLimit ?? source.frameLength)
         guard let destination = AVAudioPCMBuffer(
             pcmFormat: source.format,
-            frameCapacity: source.frameLength
+            frameCapacity: frames
         ) else { return nil }
-        destination.frameLength = source.frameLength
+        destination.frameLength = frames
         let sourceBuffers = UnsafeMutableAudioBufferListPointer(source.mutableAudioBufferList)
         let destinationBuffers = UnsafeMutableAudioBufferListPointer(destination.mutableAudioBufferList)
         guard sourceBuffers.count == destinationBuffers.count else { return nil }
