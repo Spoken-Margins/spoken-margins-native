@@ -325,6 +325,7 @@ final class CommunityMapUploadTests: XCTestCase {
         // A publisher transcript can read out its sponsor's web address.
         var timeline = fullTranscript()
         timeline.segments[0].text = "Sponsored by https://sponsor.example.com/code and www.sponsor.example.com, or sponsor.example.com/deal."
+        timeline.segments[1].text = "Follow along on spotify:episode:4rOoJ6Egrf8K2IrywzwOMk."
         let outcome = await uploader.uploadIfEligible(
             item: item, timeline: timeline, language: "en_US", repository: repository, now: now,
             optedIn: { true }, publisherChapters: { false }, mapsState: { .on }
@@ -350,7 +351,7 @@ final class CommunityMapUploadTests: XCTestCase {
 
         let text = try XCTUnwrap(String(data: body, encoding: .utf8))
         for forbidden in ["http", "://", "www.", "feeds.example.com", "cdn.example.com", "podtrac", "Library", ".mp3", ".m4a",
-                          "MARGIN-PRIVATE-WORDS", "margin-1", "item-episode", "Episode Seven", "The Show", "guid-123", "sponsor.example"] {
+                          "MARGIN-PRIVATE-WORDS", "margin-1", "item-episode", "Episode Seven", "The Show", "guid-123", "sponsor.example", "spotify:", "4rOoJ6Egrf8K2IrywzwOMk"] {
             XCTAssertFalse(text.contains(forbidden), "The upload must not carry \(forbidden)")
         }
 
@@ -405,18 +406,21 @@ final class CommunityMapUploadTests: XCTestCase {
                                      text: "Visit //192.0.2.1/promo, (//cdn.example.com/x) or 192.0.2.1:8080 and 10.0.0.1/admin; and/or 1.5x."),
                 MediaTimelineSegment(id: "h", startMs: 9_991, endMs: 9_999,
                                      text: "请看 例子.中国/优惠 或 例子.中国 和 пример.рф today."),
+                MediaTimelineSegment(id: "i", startMs: 9_999, endMs: 10_000,
+                                     text: "Listen on spotify:episode:4rOoJ6Egrf8K2IrywzwOMk or at 10:30, note: done."),
             ], chapters: [])
         ))
         XCTAssertEqual(upload.segments.map(\.text), [
             "Visit now, or and today. Version 2.5 is out.",
-            "Write to podcast:feed or",
+            "Write to or",
             "Go to today or , e.g. Mr. Smith in the U.S. at 3.30.",
             "Try or ; a Ph.D. at 2.5x speed, i.e. 1.5x/day.",
             "Call email or open Note: done.",
             "Visit ( or and and/or 1.5x.",
             "请看 或 和 today.",
+            "Listen on or at 10:30, note: done.",
         ])
-        XCTAssertEqual(upload.segments.map(\.startMs), [1_000, 5_000, 7_000, 9_000, 9_600, 9_950, 9_991])
+        XCTAssertEqual(upload.segments.map(\.startMs), [1_000, 5_000, 7_000, 9_000, 9_600, 9_950, 9_991, 9_999])
 
         XCTAssertNil(CommunityMapTranscriptUpload.make(episodeKey: expectedKey, durationMs: 10_000, language: "en",
                                                        timeline: TranscriptTimeline(segments: [], chapters: [])))

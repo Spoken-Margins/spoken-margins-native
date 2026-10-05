@@ -347,11 +347,13 @@ public struct CommunityMapTranscriptUpload: Codable, Equatable, Sendable {
 
     /// A publisher's transcript can read "visit https://example.com/promo"; the body carries no
     /// URL of any kind, so web addresses are cut out of the text and the spaces around them
-    /// closed up: anything with a scheme (`https://`, `tel:`, `mailto:` and the like), `//` or
+    /// closed up: anything with a scheme (`https://`, `tel:`, `spotify:episode:…`: a word of two
+    /// or more letters, then a colon with no space after it), `//` or
     /// `www.`, email addresses, IPv4 addresses with any port or path, and any run of dotted
     /// words with no space after a dot whose last part has two or more letters, in any script ("example.ai",
     /// "shop.example.co.uk", "example.net/deal", "例子.中国/优惠"). Abbreviations whose parts
-    /// are single letters ("e.g.", "U.S.", "Ph.D.") and numbers ("3.30", "2.5") are kept.
+    /// are single letters ("e.g.", "U.S.", "Ph.D."), numbers and times ("3.30", "2.5", "10:30")
+    /// and a colon before a space ("Note: done") are kept.
     static func withoutLinks(_ text: String) -> String {
         let range = NSRange(text.startIndex..., in: text)
         let stripped = linkPattern.stringByReplacingMatches(in: text, range: range, withTemplate: " ")
@@ -359,7 +361,7 @@ public struct CommunityMapTranscriptUpload: Codable, Equatable, Sendable {
     }
 
     private static let linkPattern = try! NSRegularExpression(
-        pattern: #"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.|(?:tel|mailto|sms|file|data|urn|geo|magnet|callto|facetime|skype|bitcoin):)\S+|(?<![\w:/.])//\S+|\b\d{1,3}(?:\.\d{1,3}){3}\b(?::\d+)?(?:/\S*)?|\S+@(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}\S*|\b(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}(?:/\S*|\b)"#
+        pattern: #"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.|[a-z][a-z0-9+.-]+:)\S+|(?<![\w:/.])//\S+|\b\d{1,3}(?:\.\d{1,3}){3}\b(?::\d+)?(?:/\S*)?|\S+@(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}\S*|\b(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}(?:/\S*|\b)"#
     )
 
     public func encoded() throws -> Data {
