@@ -256,6 +256,18 @@ final class MarginRejoinTests: XCTestCase {
                        "a word that only looks like a short form still ends the sentence")
     }
 
+    /// A short form like "Jr." can end a sentence: a Margin during "Then we left." in "I met Bob Jr. Then
+    /// we left." used to resume at "I met" (Codex audit on 46c2417).
+    func testAShortFormBeforeACapitalEndsTheSentence() {
+        let text = "I met Bob Jr. Then we left. See e.g. the map, vs. the list."
+        let thenStart = "I met Bob Jr. ".count
+        XCTAssertEqual(MarginRejoin.textResumeOffset(pausedAt: thenStart + 6, in: text), thenStart)
+        XCTAssertEqual(MarginRejoin.textResumeOffset(pausedAt: thenStart, in: text), thenStart, "a sentence start stays put")
+        let seeStart = "I met Bob Jr. Then we left. ".count
+        XCTAssertEqual(MarginRejoin.textResumeOffset(pausedAt: text.count - 3, in: text), seeStart,
+                       "a short form before a lowercase word goes on with the sentence")
+    }
+
     func testMediaResumeTimeStepsBackThreeSecondsAndNeverBeforeZero() {
         XCTAssertEqual(MarginRejoin.mediaStepBackMs, 3_000)
         XCTAssertEqual(MarginRejoin.mediaResumeTimeMs(pausedAtMs: 1_263_000), 1_260_000)
