@@ -158,7 +158,12 @@ struct ReadLaterScreen: View {
             }
             Section("Choose Articles") {
                 if let line = connection.emptyArticlesLine {
-                    Text(line).font(.footnote).foregroundStyle(.secondary)
+                    // Only "No articles loaded. <failure>" is a failure; the other lines are guidance.
+                    if connection.connected, connection.failure != nil, !connection.isLoading {
+                        FailureMessageLabel(line).font(.footnote)
+                    } else {
+                        Text(line).font(.footnote).foregroundStyle(.secondary)
+                    }
                 }
                 ForEach(connection.documents) { document in
                     VStack(alignment: .leading, spacing: 6) {

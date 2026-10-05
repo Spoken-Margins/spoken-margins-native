@@ -442,7 +442,7 @@ struct ExperienceItemDetailScreen: View {
                 }
                 if let reason = model.sharedListeningMapRefusal(itemId: model.selectedItem.id) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("A shared map couldn't be placed on your copy")
+                        FailureMessageLabel("A shared map couldn't be placed on your copy")
                             .font(.subheadline.weight(.semibold))
                         Text(reason)
                             .font(.caption)
