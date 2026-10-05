@@ -763,6 +763,8 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var offlineStorageSnapshot = OfflineStorageSnapshot()
     @Published private(set) var recordingPresentationContext: RecordingPresentationContext?
     @Published private(set) var isRequestingRecordingPermission = false
+    /// #783: the line shown before iOS's first microphone prompt.
+    @Published private(set) var microphonePrimer = MicrophonePrimer()
     @Published private(set) var isFinishingInterjection = false
     @Published private(set) var isMarginCaptureCoolingDown = false
     @Published private(set) var isDismissingMiniPlayer = false
@@ -1009,7 +1011,8 @@ final class Gate1AppModel: ObservableObject {
     @Published private var followOffers: [String: FollowOffer] = [:]
     private var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
     private let recordingClientOverride: RecordingClient?
-    private let microphonePermissionRequest: (() async -> Bool)?
+    let microphonePermissionRequest: (() async -> Bool)?
+    let microphonePermissionStatusOverride: (() -> PermissionPromptStatus)?
     private let forcePreparedTextGate: Bool
     private let sourceTranscriptionClient: SourceTranscriptionClient
     private let interjectionTranscriptionHandler: InterjectionTranscriptionHandler
@@ -1281,6 +1284,7 @@ final class Gate1AppModel: ObservableObject {
         audioPlaybackClient: AudioPlaybackClient? = nil,
         recordingClient: RecordingClient? = nil,
         microphonePermissionRequest: (() async -> Bool)? = nil,
+        microphonePermissionStatus: (() -> PermissionPromptStatus)? = nil,
         forcePreparedTextGate: Bool = false,
         sourceTranscriptionClient: SourceTranscriptionClient = SystemSourceTranscriptionClient(),
         interjectionTranscriptionHandler: InterjectionTranscriptionHandler? = nil,
@@ -1306,6 +1310,7 @@ final class Gate1AppModel: ObservableObject {
         self.audioPlaybackClientOverride = audioPlaybackClient
         self.recordingClientOverride = recordingClient
         self.microphonePermissionRequest = microphonePermissionRequest
+        self.microphonePermissionStatusOverride = microphonePermissionStatus
         self.forcePreparedTextGate = forcePreparedTextGate
         self.sourceTranscriptionClient = sourceTranscriptionClient
         self.gate2CompactControls = gate2CompactControls
@@ -6269,6 +6274,22 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         #endif
+        if let status = microphonePrimerStatus(),
+           microphonePrimer.holds(captureID: voiceCaptureRequestID, status: status) {
+            diagnostics["lastMicrophonePermissionResult"] = "primer_shown"
+            return
+        }
+        requestMicrophoneThenRecord(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
+    }
+
+    /// #783: Continue on the line before the microphone prompt goes on to iOS's request.
+    func continueMicrophonePrimer() {
+        guard let captureID = microphonePrimer.continueTapped(),
+              pendingVoiceCaptureRequestID == captureID else { return }
+        requestMicrophoneThenRecord(requestedAt: Date(), captureID: captureID)
+    }
+
+    private func requestMicrophoneThenRecord(requestedAt: Date, captureID voiceCaptureRequestID: UUID) {
         Task {
             let granted = await requestMicrophonePermission()
             guard pendingVoiceCaptureRequestID == voiceCaptureRequestID else { return }
@@ -6309,31 +6330,6 @@ final class Gate1AppModel: ObservableObject {
         if !snapshot.isRecording {
             recordingPresentationContext = nil
         }
-    }
-
-    /// #217: waits as long as the system prompt is up; a slow Allow is still a yes.
-    private func requestMicrophonePermission(timeoutSeconds: TimeInterval = 10) async -> Bool {
-        if let microphonePermissionRequest { return await microphonePermissionRequest() }
-        let granted = await PermissionPromptWait.awaitAnswer(
-            request: { await SystemRecordingClient.requestRecordPermission() },
-            currentStatus: { Self.microphonePermissionStatus() },
-            timeout: .seconds(timeoutSeconds)
-        )
-        diagnostics["lastMicrophonePermissionResult"] = granted ? "granted" : "denied"
-        return granted
-    }
-
-    private nonisolated static func microphonePermissionStatus() -> PermissionPromptStatus {
-        #if canImport(AVFoundation) && os(iOS)
-        switch AVAudioApplication.shared.recordPermission {
-        case .granted: return .granted
-        case .denied: return .denied
-        case .undetermined: return .undetermined
-        @unknown default: return .undetermined
-        }
-        #else
-        return .granted
-        #endif
     }
 
     /// Publish acknowledgement before synchronous recorder/store finalization.
@@ -6379,6 +6375,7 @@ final class Gate1AppModel: ObservableObject {
 
     func cancelInterjection() {
         if isRequestingRecordingPermission && !snapshot.isRecording {
+            microphonePrimer.cancel()
             pendingVoiceCaptureRequestID = nil
             isRequestingRecordingPermission = false
             recordingPresentationContext = nil
@@ -6432,6 +6429,7 @@ final class Gate1AppModel: ObservableObject {
 
     func switchPendingVoiceCaptureToWrittenMargin() {
         guard isRequestingRecordingPermission, !snapshot.isRecording else { return }
+        microphonePrimer.cancel()
         isRequestingRecordingPermission = false
         pendingVoiceCaptureRequestID = nil
         recordingPresentationContext = nil
