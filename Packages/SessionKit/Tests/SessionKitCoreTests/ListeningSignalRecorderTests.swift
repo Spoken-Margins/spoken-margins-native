@@ -266,26 +266,39 @@ final class ListeningSignalRecorderTests: XCTestCase {
                      "after unfollowing A, a shared GUID alone must not file A's episode under B")
     }
 
-    func testOnlyALiveSessionMovingIntoFinishedNamesAFinishedItem() {
+    func testOnlyALiveSessionFinishingForTheFirstTimeNamesAFinishedItem() {
         var playing = SessionSnapshot()
         playing.sessionId = "session"
         playing.itemId = "item"
         playing.phase = .itemPlayback
         var finished = playing
         finished.phase = .finished
-        XCTAssertEqual(ListeningSignalContext.finishedItem(from: playing, to: finished), "item",
+        var recording = playing
+        recording.phase = .recordingInterjection
+
+        var tracker = ListeningSignalFinishTracker()
+        XCTAssertEqual(tracker.finishedItem(from: playing, to: finished), "item",
                        "playback reaching the end or a skip past it")
-        var pausedSummary = playing
-        pausedSummary.phase = .summaryPlayback
-        XCTAssertEqual(ListeningSignalContext.finishedItem(from: pausedSummary, to: finished), "item")
-        XCTAssertNil(ListeningSignalContext.finishedItem(from: finished, to: finished), "later ticks add nothing")
-        XCTAssertNil(ListeningSignalContext.finishedItem(from: SessionSnapshot(), to: finished), "reopening a finished session")
+        XCTAssertNil(tracker.finishedItem(from: finished, to: finished), "later ticks add nothing")
+        XCTAssertNil(tracker.finishedItem(from: recording, to: finished), "a recap Margin saved or canceled afterwards")
+
+        var reopened = ListeningSignalFinishTracker()
+        XCTAssertNil(reopened.finishedItem(from: SessionSnapshot(), to: finished), "opening an already finished session")
+        XCTAssertNil(reopened.finishedItem(from: recording, to: finished),
+                     "a recap Margin on a session that was already finished when opened")
+
+        var endOfItemMargin = ListeningSignalFinishTracker()
+        XCTAssertEqual(endOfItemMargin.finishedItem(from: recording, to: finished), "item",
+                       "a Margin recorded at the very end, then the session finishes for the first time")
+
+        var other = ListeningSignalFinishTracker()
         var idle = playing
         idle.phase = .idle
-        XCTAssertNil(ListeningSignalContext.finishedItem(from: idle, to: finished), "loading a finished session")
+        XCTAssertNil(other.finishedItem(from: idle, to: finished), "loading a finished session")
         var otherSession = playing
         otherSession.sessionId = "earlier"
-        XCTAssertNil(ListeningSignalContext.finishedItem(from: otherSession, to: finished))
+        var switched = ListeningSignalFinishTracker()
+        XCTAssertNil(switched.finishedItem(from: otherSession, to: finished))
     }
 
     func testItemsMatchTheirFollowedSourceByURLOrTitleOnly() {

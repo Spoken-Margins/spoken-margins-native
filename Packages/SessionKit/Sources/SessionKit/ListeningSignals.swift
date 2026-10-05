@@ -193,6 +193,24 @@ public struct ListeningSignal: Codable, Equatable, Sendable {
     }
 }
 
+/// Decides when a session has just finished, for one `finish` row however it got there:
+/// playback reaching the end or a skip past it. Only a live session moving into `.finished` for the
+/// first time counts, so reopening a finished session, switching items, or saving or canceling a
+/// recap Margin on a session already seen finished records nothing.
+public struct ListeningSignalFinishTracker: Sendable {
+    private var finishedSessions: Set<String> = []
+
+    public init() {}
+
+    public mutating func finishedItem(from previous: SessionSnapshot, to current: SessionSnapshot) -> String? {
+        guard current.phase == .finished, let sessionId = current.sessionId,
+              finishedSessions.insert(sessionId).inserted,
+              ![.finished, .idle, .abandoned].contains(previous.phase), previous.sessionId == sessionId,
+              let itemId = current.itemId, previous.itemId == itemId else { return nil }
+        return itemId
+    }
+}
+
 /// Maps the app's followed sources and Library items to I4 rows. Only items from a followed
 /// source are logged: I4 ranks followed sources, and an item without one has no source id to
 /// group under.
@@ -206,17 +224,6 @@ public enum ListeningSignalContext {
         return context(for: item, subscriptions: subscriptions,
                        entries: (try? repository.loadFeedEntries(subscriptionId: nil)) ?? [], redirects: redirects)
     }
-    /// The item a session just finished in, for one `finish` row however it got there: playback
-    /// reaching the end or a skip past it. Only a live session moving into `.finished` counts, so
-    /// reopening an already finished session or switching items records nothing.
-    public static func finishedItem(from previous: SessionSnapshot, to current: SessionSnapshot) -> String? {
-        guard current.phase == .finished,
-              ![.finished, .idle, .abandoned].contains(previous.phase),
-              let sessionId = current.sessionId, previous.sessionId == sessionId,
-              let itemId = current.itemId, previous.itemId == itemId else { return nil }
-        return itemId
-    }
-
     public static func source(for subscription: FeedSubscription) -> ListeningSignalSource {
         ListeningSignalSource(
             id: subscription.source.id,
