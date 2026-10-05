@@ -12,7 +12,7 @@
 
 - `SettingsScreen` (in `Gate1RootView.swift` until A2 moves it) has 8 sections in release builds: Margin Output; Bring Your Own Listening Map; Playback & Voice; Offline Storage; AI Features; Recently Deleted; Import Inbox; Support & Privacy. There's also a DEBUG-only Developer section.
 - There are about 13 adjustable settings and 15 actions.
-- `HelpScreen` still says "From Home, tap Add Source" and describes the Link field as podcasts-only (#144 changed that).
+- `HelpScreen` names the Library and lists what the Link field takes (fixed in #782).
 
 ## Milestones
 
