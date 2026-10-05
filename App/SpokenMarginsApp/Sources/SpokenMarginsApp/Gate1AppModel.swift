@@ -1083,7 +1083,7 @@ final class Gate1AppModel: ObservableObject {
     #endif
     private let preparedTextAudioStarterDurationMs = 30_000
     private static let startupAudioChunkCount = 2
-    static let textAudioPreparationCutoffPercent = 99
+    var preparationSeams = PreparationPassSeams()
     private static let lastPreparedAudioNoticeDateKey = "lastPreparedAudioNoticeDateV1"
     private let sourceWindowContextBeforeMs = SourceAnchorContextResolver.windowBeforeMs
     private let sourceWindowContextAfterMs = SourceAnchorContextResolver.windowAfterMs
@@ -10104,7 +10104,7 @@ final class Gate1AppModel: ObservableObject {
         do {
             let store = try requireStore()
             let item = try store.loadItem(id: itemId)
-            let shouldSkipPreparation = Self.shouldSkipTextAudioPreparation(
+            let shouldSkipPreparation = PreparationChunkGate.itemAlreadyListened(
                 try store.loadSessions(itemId: itemId)
             )
             guard !shouldSkipPreparation else {
@@ -10370,15 +10370,6 @@ final class Gate1AppModel: ObservableObject {
             return !isPreparedTextMediaAvailable(item.media) || isStarterPreparedTextMedia(item.media)
         case .some(.nativeMediaFile), .some(.browserOwnedMedia), .some(.remoteStream):
             return false
-        }
-    }
-
-    static func shouldSkipTextAudioPreparation(_ sessions: [Session]) -> Bool {
-        itemIsCompleted(sessions) || sessions.contains { session in
-            session.completedAt != nil
-                || session.status == "finished"
-                || session.phase == .finished
-                || session.completionPercent >= textAudioPreparationCutoffPercent
         }
     }
 
@@ -10948,7 +10939,7 @@ final class Gate1AppModel: ObservableObject {
                 job: preparationJob
             )
             let effectivePreparedState: PreparedAudioState? = {
-                guard latestManifest?.state == .preparing, preparationJob == nil else {
+                guard [.preparing, .pausedForThermal].contains(latestManifest?.state), preparationJob == nil else { // no job left: nothing will resume it
                     return latestManifest?.state
                 }
                 return .notPrepared
@@ -11023,8 +11014,7 @@ final class Gate1AppModel: ObservableObject {
             || manifest.state == .stopped {
             return (.failed, completed, target)
         }
-        if !SupertonicResourcePolicy.allowsRendering()
-            || manifest.state == .pausedForThermal {
+        if !SupertonicResourcePolicy.allowsRendering() { // live heat, not a stale pausedForThermal (#64)
             return (.paused, completed, target)
         }
         return (inTurn, completed, target)
@@ -11096,7 +11086,7 @@ final class Gate1AppModel: ObservableObject {
             row.startupAudioCompletedChunkCount = startup.completed
             row.startupAudioTargetChunkCount = startup.target
             row.offlineState = Self.libraryOfflineState(
-                preparedState: manifest.state == .preparing && job == nil ? .notPrepared : manifest.state,
+                preparedState: [.preparing, .pausedForThermal].contains(manifest.state) && job == nil ? .notPrepared : manifest.state,
                 mediaSourceType: item.media?.sourceType, podcastDownloadState: nil)
             if row != libraryItems[index] { libraryItems[index] = row }
         }
@@ -11131,7 +11121,7 @@ final class Gate1AppModel: ObservableObject {
         if audioPreparationQueue != rows { audioPreparationQueue = rows }
     }
 
-    private func refreshLibraryRows(store: SQLiteSessionStore) throws {
+    func refreshLibraryRows(store: SQLiteSessionStore) throws {
         libraryItems = try loadLibraryRows(store: store)
         recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
         try refreshAudioPreparationPresentation(store: store)
@@ -14955,7 +14945,7 @@ final class Gate1AppModel: ObservableObject {
                       let text = PreparedSpeechHooks.preparedText(of: item, in: store),
                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else { continue }
-                guard item.sourceCompletedAt == nil, !Self.shouldSkipTextAudioPreparation(sessionsByItemId[item.id] ?? []) else {
+                guard item.sourceCompletedAt == nil, !PreparationChunkGate.itemAlreadyListened(sessionsByItemId[item.id] ?? []) else {
                     diagnostics["automaticAudioPreparation:\(item.id)"] = "skipped_existing_progress"
                     continue
                 }
@@ -14996,7 +14986,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     /// The foreground loop and the background task take turns, so two Library items never render at once (#281).
-    private func performBackgroundAudioPreparationPass(foregroundDemandOnly: Bool = false) async -> Bool {
+    func performBackgroundAudioPreparationPass(foregroundDemandOnly: Bool = false) async -> Bool {
         await libraryAudioRenderGate.run { await self.preparationPassInTurn(foregroundDemandOnly: foregroundDemandOnly) }
     }
 
@@ -15007,16 +14997,16 @@ final class Gate1AppModel: ObservableObject {
         // demand. A stale/background job must not queue ahead of its next chunk.
         guard canPrepareLibraryAudio else { libraryAudioTurns.stopped(caller); return false }
         guard (foregroundDemandOnly || automaticAudioPreparationPolicy == .whileCharging),
-              !ProcessInfo.processInfo.isLowPowerModeEnabled,
-              ProcessInfo.processInfo.thermalState != .serious,
-              ProcessInfo.processInfo.thermalState != .critical,
               hasAcceptedCurrentTerms,
               let voice = ttsVoiceSelection.supertonicVoice else { libraryAudioTurns.blocked(caller); return false } // settles until these change (#647)
+        let device = preparationSeams.deviceConditions() // heat and Low Power Mode, checked per chunk (#64)
         do {
             try Task.checkCancellation()
             let store = try requireStore()
             var queuedJobs = try store.loadAudioPreparationJobs()
-            if !foregroundDemandOnly, !queuedJobs.contains(where: { !$0.isCancelled }) {
+                .filter({ !PreparationChunkGate.setsAsideForLowPowerMode($0.policy, thermal: device.thermal, isLowPowerModeEnabled: device.isLowPowerModeEnabled) })
+            if !foregroundDemandOnly, !queuedJobs.contains(where: { !$0.isCancelled }),
+               PreparationChunkGate.allowsAutomaticWork(thermal: device.thermal, isLowPowerModeEnabled: device.isLowPowerModeEnabled) {
                 await enqueueAutomaticAudioPreparationJobs()
                 queuedJobs = try store.loadAudioPreparationJobs()
             }
@@ -15035,13 +15025,6 @@ final class Gate1AppModel: ObservableObject {
             }
             attemptedJob = job
             recordDeveloperDiagnostic("preparation.selected", ["item": DeveloperDiagnosticRecording.token(job.itemId), "policy": String(describing: job.policy), "nextChunk": String(job.nextChunkIndex)])
-            let sourceSessions = try store.loadSessions(itemId: item.id)
-            if job.policy != .explicit, item.sourceCompletedAt != nil || Self.shouldSkipTextAudioPreparation(sourceSessions) {
-                // Removing speculative work must never invalidate committed audio.
-                try store.deleteAudioPreparationJob(id: job.id)
-                diagnostics["automaticAudioPreparation:\(item.id)"] = "cancelled_existing_progress"
-                return try hasMoreMatchingJobs()
-            }
             let support = try applicationSupportDirectory()
             guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
                 return !foregroundDemandOnly
@@ -15064,7 +15047,6 @@ final class Gate1AppModel: ObservableObject {
                 plan: plan,
                 maximumChunkCount: job.maximumChunkCount
             )
-            let completedIndexes = PreparedAudioCoordinator.completedIndexes(manifest, plan: plan, sourceText: sourceText, retryingStandInsFor: job)
             let ledger = offlineStorageLedger ?? OfflineStorageLedger(repository: store, rootDirectory: support)
             offlineStorageLedger = ledger
             let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
@@ -15072,6 +15054,20 @@ final class Gate1AppModel: ObservableObject {
                 rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
             )
             preparedAudioCoordinator = coordinator
+            let atRender = preparationSeams.deviceConditions() // read again here: heat can rise during the setup above (Codex audit on 27fd1bd)
+            let gate = try PreparationChunkGate.decide(policy: job.policy, thermal: atRender.thermal, isLowPowerModeEnabled: atRender.isLowPowerModeEnabled,
+                                                       itemAlreadyListened: item.sourceCompletedAt != nil || PreparationChunkGate.itemAlreadyListened(store.loadSessions(itemId: item.id)))
+            let gated = try await coordinator.applyGate(gate, manifestId: manifest.id) // applied to the saved manifest: chunks committed meanwhile stay
+            manifest = gated.manifest ?? manifest
+            if gated.changed { try refreshLibraryRows(store: store) }
+            if gate == .dropListenedItem {
+                // Removing speculative work must never invalidate committed audio.
+                try store.deleteAudioPreparationJob(id: job.id)
+                diagnostics["automaticAudioPreparation:\(item.id)"] = "cancelled_existing_progress"
+                return try hasMoreMatchingJobs()
+            }
+            guard gate == .render else { diagnostics["backgroundAudioPreparation"] = gate.rawValue; return false }
+            let completedIndexes = PreparedAudioCoordinator.completedIndexes(manifest, plan: plan, sourceText: sourceText, retryingStandInsFor: job)
             guard let next = eligiblePlan.first(where: { !completedIndexes.contains($0.index) }) else {
                 // All chunks are intact but nothing is assembled (#278): assemble now, because it
                 // otherwise happens only right after the last chunk is committed.
@@ -15089,16 +15085,19 @@ final class Gate1AppModel: ObservableObject {
                 ownerId: "prepared-chunk-\(manifest.id)-\(next.index)",
                 byteCount: 64 * 1_024 * 1_024
             )
-            let renderer = try makeSupertonicRenderer()
             // Paced per render, not through the shared lifecycle flag (#377).
-            let pacedRenderer = BackgroundPreparationRenderer(base: renderer)
+            let pacedRenderer: any SupertonicRendering = try preparationSeams.renderer?() ?? BackgroundPreparationRenderer(base: makeSupertonicRenderer())
+            if try await preparationHeldAtRenderStart(policy: job.policy, manifestId: manifest.id, reservationId: reservation.id, ledger: ledger, coordinator: coordinator, store: store) != nil { return false }
+            var renderStarted = Date(), renderMs = 0
             do {
                 try Task.checkCancellation()
-                recordDeveloperDiagnostic("preparation.render.begin", ["item": DeveloperDiagnosticRecording.token(item.id), "chunk": String(next.index)])
+                renderStarted = Date()
+                recordDeveloperDiagnostic("preparation.render.begin", ["item": DeveloperDiagnosticRecording.token(item.id), "chunk": String(next.index), "thermal": atRender.thermal.rawValue])
                 // The render is discarded once committed (copied), or on any failure.
                 try await supertonicOutputGuard(wrapping: pacedRenderer, systemVoice: speechVoiceIdentifier).render(
                     text: next.text, voice: voice, language: "en", speed: 1, synthesisSteps: 8
                 ) { rendered in
+                    renderMs = Int(Date().timeIntervalSince(renderStarted) * 1_000) // the render alone, before the copy and saves (Codex audit on e5088b9)
                     try Task.checkCancellation()
                     guard !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else {
                         throw CancellationError()
@@ -15134,7 +15133,8 @@ final class Gate1AppModel: ObservableObject {
                 )
             )
             job = (try store.loadAudioPreparationJobs()).first(where: { $0.id == job.id }) ?? job
-            recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count)])
+            recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count),
+                                                                "renderMs": String(renderMs), "thermal": SupertonicResourcePolicy.currentConditions().thermal.rawValue])
             job.nextChunkIndex = updated.chunks.count
             job.lastFailureCode = PreparedAudioCoordinator.hasStandIns(updated) ? PreparedAudioCoordinator.standInRetried : nil
             if PreparedAudioCoordinator.matchingChunks(in: updated, plan: plan, sourceText: sourceText).count == plan.count {

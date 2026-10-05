@@ -2837,11 +2837,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         completedAtOnly.id = "session-completed-at"
         completedAtOnly.completedAt = Date(timeIntervalSince1970: 1)
 
-        XCTAssertFalse(Gate1AppModel.shouldSkipTextAudioPreparation([belowCutoff]))
-        XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([atCutoff]))
-        XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([completed]))
-        XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([completedAtOnly]))
-        XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([belowCutoff, completed]))
+        XCTAssertFalse(PreparationChunkGate.itemAlreadyListened([belowCutoff]))
+        XCTAssertTrue(PreparationChunkGate.itemAlreadyListened([atCutoff]))
+        XCTAssertTrue(PreparationChunkGate.itemAlreadyListened([completed]))
+        XCTAssertTrue(PreparationChunkGate.itemAlreadyListened([completedAtOnly]))
+        XCTAssertTrue(PreparationChunkGate.itemAlreadyListened([belowCutoff, completed]))
         XCTAssertFalse(Gate1AppModel.itemIsCompleted([belowCutoff]))
         XCTAssertTrue(Gate1AppModel.itemIsCompleted([atCutoff]))
         XCTAssertTrue(Gate1AppModel.itemIsCompleted([completed]))
