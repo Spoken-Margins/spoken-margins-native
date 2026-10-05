@@ -67,6 +67,12 @@ public struct PlaybackStartWatch: Sendable {
         max(0, Int((end.timeIntervalSince(start) * 1000).rounded()))
     }
 
+    /// How much longer the open start may stay silent before its cue is due, or nil when no start is open. The
+    /// delay runs from the listener's request, so work done before the start was published counts (audit of #580).
+    public func cueWait(at now: Date) -> TimeInterval? {
+        start.map { max(0, cueDelay - now.timeIntervalSince($0.startedAt)) }
+    }
+
     /// True once per start, when it has been silent for `cueDelay`.
     public mutating func takeCue(at now: Date) -> Bool {
         guard var start, !start.cued, now.timeIntervalSince(start.startedAt) >= cueDelay else { return false }

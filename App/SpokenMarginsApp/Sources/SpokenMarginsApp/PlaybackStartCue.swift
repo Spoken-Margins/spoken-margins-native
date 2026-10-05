@@ -77,9 +77,10 @@ final class PlaybackStartCue: ObservableObject {
         }
         guard waiting != wasWaiting else { return }
         cueTask?.cancel()
-        let delay = watch.cueDelay
+        // The cue is due 0.8 s after the request, not after the start was published (audit of #580).
+        let delay = watch.cueWait(at: now()) ?? watch.cueDelay
         cueTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(delay))
+            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
             guard !Task.isCancelled, let self else { return }
             self.checkNow?()
             guard !Task.isCancelled, self.watch.takeCue(at: self.now()) else { return }

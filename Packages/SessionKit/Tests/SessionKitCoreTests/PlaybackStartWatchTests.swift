@@ -82,6 +82,19 @@ final class PlaybackStartWatchTests: XCTestCase {
         XCTAssertFalse(watch.takeCue(at: tap + 20))
     }
 
+    /// Audit of #580: the cue is due 0.8 s after the request, so work before the start was published counts.
+    func testCueWaitRunsFromTheRequest() {
+        var watch = PlaybackStartWatch(cueDelay: 0.8)
+        XCTAssertNil(watch.cueWait(at: tap), "no open start")
+        _ = watch.observe(itemId: "article", status: .starting, requestedAt: tap, at: tap + 0.3)
+        XCTAssertEqual(watch.cueWait(at: tap + 0.3) ?? -1, 0.5, accuracy: 0.001)
+        XCTAssertEqual(watch.cueWait(at: tap + 2), 0, "overdue: check at once")
+        XCTAssertTrue(watch.takeCue(at: tap + 0.81))
+
+        _ = watch.observe(itemId: "podcast", status: .starting, at: tap + 10)
+        XCTAssertEqual(watch.cueWait(at: tap + 10) ?? -1, 0.8, accuracy: 0.001, "no request stamp: the full delay")
+    }
+
     func testChimeIsAShortValidWave() throws {
         let data = PlaybackStartChime.wavData()
         let header = String(decoding: data.prefix(4), as: UTF8.self) + String(decoding: data[8..<16], as: UTF8.self)

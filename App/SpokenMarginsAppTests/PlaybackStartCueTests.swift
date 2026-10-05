@@ -168,4 +168,19 @@ final class PlaybackStartCueTests: XCTestCase {
 
         XCTAssertEqual(recorded["firstAudioMs:podcast"], "1200")
     }
+
+    /// Audit of #580: when the start is published 0.6 s after the request, the chime is due 0.2 s later, not 0.8 s.
+    func testChimeIsDueFromTheRequestNotFromThePublishedStart() async throws {
+        let cue = makeCue()
+        var starting = snapshot("article", .starting)
+        starting.playbackRequestedAt = clock
+        clock += 0.6 // audio-session activation and player setup before the engine published the start
+
+        cue.observe(snapshot("article", .paused))
+        cue.observe(starting)
+        clock += 0.3
+        try await Task.sleep(for: .seconds(0.5))
+
+        XCTAssertEqual(chimes, 1, "the chime came within a second of the request")
+    }
 }
