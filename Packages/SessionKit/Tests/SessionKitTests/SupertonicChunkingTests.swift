@@ -64,13 +64,16 @@ final class SupertonicChunkingTests: XCTestCase {
     }
 
     /// Rates measured on the Mac (voice M2, speed 1): every babble chunk was 5.4–8.2 characters a
-    /// second, prose 13.3–15.3.
+    /// second, prose 13.3–15.3. A slow chunk is flagged only when it reads like a table or is very
+    /// slow (#708); real table and prose cases are in SessionKitCoreTests' SupertonicOutputCheckTests.
     func testOutputCheckFlagsBabbleAndPassesProse() {
         let prose = String(repeating: "a", count: 139)
         XCTAssertNil(SupertonicOutputCheck.problem(text: prose, durationSeconds: 9.4))
         XCTAssertNil(SupertonicOutputCheck.problem(text: String(repeating: "a", count: 45), durationSeconds: 3.3))
         XCTAssertNotNil(SupertonicOutputCheck.problem(text: String(repeating: "a", count: 235), durationSeconds: 29.1))
-        XCTAssertNotNil(SupertonicOutputCheck.problem(text: String(repeating: "a", count: 85), durationSeconds: 11.6))
+        XCTAssertNotNil(SupertonicOutputCheck.problem(
+            text: "0.0 GenEval 0.8125 81.3% 12.5% 6.2% Qwen2.5-VL-7B 0.6923 69.2% 23.1% 7.7% GPT-4o 0.8571 85.7%",
+            durationSeconds: 11.6))
         XCTAssertNotNil(SupertonicOutputCheck.problem(text: String(repeating: "a", count: 77), durationSeconds: 14.3))
         XCTAssertNotNil(SupertonicOutputCheck.problem(text: prose, durationSeconds: 2), "lost words")
         XCTAssertNotNil(SupertonicOutputCheck.problem(text: prose, durationSeconds: 23), "past the length ceiling")
