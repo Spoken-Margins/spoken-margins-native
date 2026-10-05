@@ -1421,6 +1421,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.startItem(id: "item-pill")
+        XCTAssertTrue(model.activePlaybackIsPlaying, "only a playing session is protected (#638)")
         let snapshotBefore = model.snapshot
         let margin = MarginRow(
             interjection: Interjection(
