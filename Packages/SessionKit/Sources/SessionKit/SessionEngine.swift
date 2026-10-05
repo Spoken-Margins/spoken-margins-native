@@ -1411,7 +1411,10 @@ public final class SessionEngine {
         lastMediaPercentageRepair = nil
         pendingWrittenInterjection = nil
         do {
-            try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying, session: session)
+            // A written Margin rejoins like a spoken one (#776), but a source that was
+            // already paused stays exactly where the listener left it.
+            let resumed = capture.wasPlaying ? try rejoiningAfterSavedMargin(session) : session
+            try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying, session: resumed)
         } catch {
             // The note is already durable. Do not report this as a save failure
             // or retain a retryable draft: doing either would allow a second
@@ -1682,9 +1685,10 @@ public final class SessionEngine {
         }
         session.phase = priorPhaseForResume(targetType: targetType)
         // beginInterjection already captured and persisted the authoritative
-        // source position before pausing. Resume from that position exactly;
-        // applying a second sentence-boundary adjustment here causes backward
-        // drift and can move an exact boundary into the preceding sentence.
+        // source position before pausing, and the anchor above was built from it.
+        // The source rejoins a little earlier (#776); the step is idempotent at a
+        // sentence start, so repeated Margins never drift into the sentence before.
+        session = try rejoiningAfterSavedMargin(session)
         currentSession = session
         try persistSession(session)
         if externallyStreamedTurnId == session.currentTargetId {
@@ -4299,6 +4303,33 @@ public final class SessionEngine {
         }
         publish(status: snapshot.status, phase: updated.phase)
         return snapshot
+    }
+
+    /// Moves a source that is about to resume after a saved Margin to `MarginRejoin`'s position,
+    /// persists it and protects it from the player's stale clock. Generated turns, and the Watch's
+    /// own rollback, keep their exact resume.
+    private func rejoiningAfterSavedMargin(_ session: Session) throws -> Session {
+        var rejoined = session
+        switch session.currentTargetType {
+        case .transcriptBackedMedia, .browserOwnedMedia:
+            guard let pausedAtMs = session.position.mediaTimeMs else { return session }
+            let resumeAtMs = MarginRejoin.mediaResumeTimeMs(pausedAtMs: pausedAtMs)
+            guard resumeAtMs != pausedAtMs else { return session }
+            rejoined = mediaSession(session, movedTo: resumeAtMs)
+        case .itemTextTTS:
+            guard let text = item(for: session)?.text else { return session }
+            let start = MarginRejoin.textResumeOffset(pausedAt: session.position.charOffset, in: text)
+            guard start != session.position.charOffset else { return session }
+            rejoined.position.charOffset = start
+            rejoined.position.chapterId = chapterId(for: start)
+            rejoined.completionPercent = percent(for: start, text: text)
+        case .summaryTurnTTS, .assistantTurnTTS:
+            return session
+        }
+        currentSession = rejoined
+        try persistSession(rejoined)
+        protectPlaybackPosition(for: rejoined)
+        return rejoined
     }
 
     private func mediaSkipIntervalMs(for unit: String) -> Int? {
