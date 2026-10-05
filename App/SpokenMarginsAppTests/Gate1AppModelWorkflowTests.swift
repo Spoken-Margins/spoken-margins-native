@@ -2944,6 +2944,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let recorder = InterruptibleRecordingClient()
         let model = Gate1AppModel(audioPlaybackClient: audio, recordingClient: recorder)
         model.resetAndSeed()
+        model.declineCurrentTerms() // these sort first; on a fresh simulator the terms sheet would hold the start
         model.startItem(id: "item-pill")
         let marginIDsBefore = Set(model.selectedItem.interjections.map(\.id))
         model.beginInterjection()
@@ -2972,6 +2973,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let recorder = InterruptibleRecordingClient()
         let model = Gate1AppModel(audioPlaybackClient: audio, recordingClient: recorder)
         model.resetAndSeed()
+        model.declineCurrentTerms() // these sort first; on a fresh simulator the terms sheet would hold the start
         model.startItem(id: "item-pill")
         let interruptedSession = model.snapshot.sessionId
         model.beginInterjection()
