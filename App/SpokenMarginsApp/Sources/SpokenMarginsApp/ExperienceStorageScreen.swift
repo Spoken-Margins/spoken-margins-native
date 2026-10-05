@@ -54,9 +54,9 @@ struct ExperienceStorageScreen: View {
                 }
                 GeometryReader { geometry in
                     HStack(spacing: 2) {
-                        storageSegment(width: geometry.size.width * protectedFraction, color: AppColors.coral)
-                        storageSegment(width: geometry.size.width * reproducibleFraction, color: AppColors.evergreen)
-                        storageSegment(width: geometry.size.width * reservedFraction, color: AppColors.ochre)
+                        StorageSwatch(kind: .protected).frame(width: max(0, geometry.size.width * protectedFraction), height: 18)
+                        StorageSwatch(kind: .reproducible).frame(width: max(0, geometry.size.width * reproducibleFraction), height: 18)
+                        StorageSwatch(kind: .reserved).frame(width: max(0, geometry.size.width * reservedFraction), height: 18)
                     }
                 }
                 .frame(height: 18)
@@ -66,10 +66,11 @@ struct ExperienceStorageScreen: View {
                 .accessibilityLabel("Storage budget")
                 .accessibilityValue("\(bytes(snapshot.usedBytes)) used of \(bytes(snapshot.budgetBytes)); \(bytes(snapshot.reservedBytes)) reserved")
 
-                HStack(spacing: 14) {
-                    legend("Protected", color: AppColors.coral)
-                    legend("Reproducible", color: AppColors.evergreen)
-                    legend("Reserved", color: AppColors.ochre)
+                // Each part is named with its size and drawn solid, striped or dotted, so the bar
+                // never relies on colour alone (#503).
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 14) { legendItems }
+                    VStack(alignment: .leading, spacing: 6) { legendItems }
                 }
 
                 Picker("Storage budget", selection: $model.offlineStorageLimitGB) {
@@ -95,17 +96,17 @@ struct ExperienceStorageScreen: View {
     private var accounting: some View {
         ExperienceSurface {
             VStack(spacing: 12) {
-                ledgerRow("Protected or irreplaceable", value: snapshot.protectedBytes, color: AppColors.coral)
+                ledgerRow("Protected or irreplaceable", value: snapshot.protectedBytes, kind: .protected)
                     .accessibilityIdentifier("offlineStorage.protected.row")
                 Divider()
-                ledgerRow("Reproducible", value: snapshot.reproducibleBytes, color: AppColors.evergreen)
+                ledgerRow("Reproducible", value: snapshot.reproducibleBytes, kind: .reproducible)
                     .accessibilityIdentifier("offlineStorage.reproducible.row")
                 Divider()
-                ledgerRow("Safe to clear now", value: snapshot.clearableBytes, color: AppColors.ochre)
+                ledgerRow("Safe to clear now", value: snapshot.clearableBytes, kind: .reproducible)
                     .accessibilityIdentifier("offlineStorage.clearable.row")
                 if snapshot.reservedBytes > 0 {
                     Divider()
-                    ledgerRow("Reserved for work in progress", value: snapshot.reservedBytes, color: AppColors.ochre)
+                    ledgerRow("Reserved for work in progress", value: snapshot.reservedBytes, kind: .reserved)
                 }
             }
         }
@@ -160,21 +161,24 @@ struct ExperienceStorageScreen: View {
     private var reproducibleFraction: Double { min(max(0, usageFraction - protectedFraction), Double(snapshot.reproducibleBytes) / Double(max(1, snapshot.budgetBytes))) }
     private var reservedFraction: Double { min(max(0, 1 - protectedFraction - reproducibleFraction), Double(snapshot.reservedBytes) / Double(max(1, snapshot.budgetBytes))) }
 
-    private func storageSegment(width: CGFloat, color: Color) -> some View {
-        color.frame(width: max(0, width), height: 18)
+    @ViewBuilder
+    private var legendItems: some View {
+        legend("Protected", value: snapshot.protectedBytes, kind: .protected)
+        legend("Reproducible", value: snapshot.reproducibleBytes, kind: .reproducible)
+        legend("Reserved", value: snapshot.reservedBytes, kind: .reserved)
     }
 
-    private func legend(_ title: String, color: Color) -> some View {
+    private func legend(_ title: String, value: Int64, kind: StorageSwatch.Kind) -> some View {
         Label {
-            Text(title).font(.caption)
+            Text("\(title) \(bytes(value))").font(.caption)
         } icon: {
-            Circle().fill(color).frame(width: 8, height: 8)
+            StorageSwatch(kind: kind).frame(width: 14, height: 10).clipShape(RoundedRectangle(cornerRadius: 2))
         }
     }
 
-    private func ledgerRow(_ title: String, value: Int64, color: Color) -> some View {
+    private func ledgerRow(_ title: String, value: Int64, kind: StorageSwatch.Kind) -> some View {
         HStack {
-            Circle().fill(color).frame(width: 9, height: 9)
+            StorageSwatch(kind: kind).frame(width: 14, height: 10).clipShape(RoundedRectangle(cornerRadius: 2))
             Text(title)
             Spacer()
             Text(bytes(value)).font(.subheadline.monospacedDigit()).foregroundStyle(AppColors.secondaryText)
@@ -183,5 +187,53 @@ struct ExperienceStorageScreen: View {
 
     private func bytes(_ value: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
+    }
+}
+
+/// One part of the storage bar. Protected is solid plum, Reproducible striped evergreen and Reserved
+/// dotted ochre: a red-green colour-blind listener tells them apart by pattern and by the sizes named
+/// in the legend, not by hue (#503).
+private struct StorageSwatch: View {
+    enum Kind { case protected, reproducible, reserved }
+    let kind: Kind
+
+    var body: some View {
+        switch kind {
+        case .protected:
+            AppColors.plum
+        case .reproducible:
+            AppColors.evergreen.overlay { DiagonalStripes().stroke(AppColors.bone.opacity(0.75), lineWidth: 2) }.clipped()
+        case .reserved:
+            AppColors.ochre.overlay { Dots().fill(AppColors.bone.opacity(0.75)) }.clipped()
+        }
+    }
+
+    private struct DiagonalStripes: Shape {
+        func path(in rect: CGRect) -> Path {
+            var path = Path()
+            var x = rect.minX - rect.height
+            while x < rect.maxX {
+                path.move(to: CGPoint(x: x, y: rect.maxY))
+                path.addLine(to: CGPoint(x: x + rect.height, y: rect.minY))
+                x += 6
+            }
+            return path
+        }
+    }
+
+    private struct Dots: Shape {
+        func path(in rect: CGRect) -> Path {
+            var path = Path()
+            var y = rect.minY + 2.5
+            while y < rect.maxY {
+                var x = rect.minX + 2.5
+                while x < rect.maxX {
+                    path.addEllipse(in: CGRect(x: x - 1.25, y: y - 1.25, width: 2.5, height: 2.5))
+                    x += 5
+                }
+                y += 5
+            }
+            return path
+        }
     }
 }

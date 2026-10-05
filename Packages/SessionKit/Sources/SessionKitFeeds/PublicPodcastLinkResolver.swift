@@ -1168,6 +1168,9 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
 
     private func metadataOnlyResult(request: LinkResolutionRequest, url: URL, provider: String?, reason: String) throws -> LinkResolutionResult {
         let data = try? fetch(url)
+        if let data, Self.isPDFDocument(data) {
+            return needsReview(request: request, provider: provider, title: title(from: url), reason: LinkResolutionResult.pdfDocumentFailureReason)
+        }
         let pageTitle = data.flatMap { String(data: $0, encoding: .utf8) }.flatMap(htmlTitle)
         return needsReview(request: request, provider: provider, title: pageTitle ?? title(from: url), reason: reason)
     }
@@ -1180,8 +1183,18 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         requestTimeoutSeconds: TimeInterval
     ) async throws -> LinkResolutionResult {
         let data = try? await fetchAsync(url, timeout: requestTimeoutSeconds)
+        if let data, Self.isPDFDocument(data) {
+            return needsReview(request: request, provider: provider, title: title(from: url), reason: LinkResolutionResult.pdfDocumentFailureReason)
+        }
         let pageTitle = data.flatMap { String(data: $0, encoding: .utf8) }.flatMap(htmlTitle)
         return needsReview(request: request, provider: provider, title: pageTitle ?? title(from: url), reason: reason)
+    }
+
+    /// The body is a PDF: it starts with the `%PDF-` header, after any leading whitespace (#758). A link with no
+    /// `.pdf` ending, such as arXiv's `/pdf/<id>`, is only recognisable this way.
+    static func isPDFDocument(_ data: Data) -> Bool {
+        let body = data.prefix(1_024).drop { [0x20, 0x09, 0x0A, 0x0D, 0x0C].contains($0) }
+        return body.starts(with: Data("%PDF-".utf8))
     }
 
     private func playable(request: LinkResolutionRequest, provider: String, candidate: LinkResolutionCandidate) -> LinkResolutionResult {

@@ -46,6 +46,9 @@ public struct ParsedFeed: Equatable, Sendable {
     public var homePageURL: String?
     public var feedURL: String?
     public var items: [ParsedFeedItem]
+    /// The show's own artwork: RSS `<itunes:image href>` or `<image><url>`, Atom `<logo>` or
+    /// `<icon>`, JSON Feed `icon`. Https only; nil when the feed names none (#773).
+    public var imageURL: String? = nil
 }
 
 public enum FeedParserError: Error, LocalizedError, Equatable {
@@ -93,7 +96,9 @@ public final class FeedParser: @unchecked Sendable {
                 var item = item
                 item.publisherPlatform = delegate.feedGenerator.nilIfEmpty?.lowercased()
                 return item
-            }
+            },
+            imageURL: [delegate.itunesImage, delegate.channelImage, delegate.atomLogo, delegate.atomIcon]
+                .lazy.compactMap(httpsLink).first
         )
     }
 
@@ -118,6 +123,7 @@ public final class FeedParser: @unchecked Sendable {
             var title: String
             var home_page_url: String?
             var feed_url: String?
+            var icon: String?
             var items: [Item]
         }
         let decoded: JSONFeed
@@ -144,7 +150,7 @@ public final class FeedParser: @unchecked Sendable {
                 guid: item.id?.nilIfEmpty
             )
         }
-        return ParsedFeed(format: .json, title: sanitize(decoded.title), homePageURL: decoded.home_page_url, feedURL: decoded.feed_url, items: items)
+        return ParsedFeed(format: .json, title: sanitize(decoded.title), homePageURL: decoded.home_page_url, feedURL: decoded.feed_url, items: items, imageURL: decoded.icon.flatMap(httpsLink))
     }
 }
 
@@ -155,8 +161,13 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
     var feedGenerator = ""
     var homePageURL = ""
     var feedURL = ""
+    var itunesImage = ""
+    var channelImage = ""
+    var atomLogo = ""
+    var atomIcon = ""
     var items: [ParsedFeedItem] = []
     var tooDeep = false
+    private var inChannelImage = false
     private var depth = 0
     private var currentElement = ""
     private var text = ""
@@ -176,6 +187,14 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
         if name == "item" || name == "entry" {
             inEntry = true
             item = ItemBuilder()
+        }
+        if !inEntry, name == "image" {
+            // `<itunes:image href>` carries the link itself; RSS `<image>` holds a `<url>` child.
+            if let href = attributeDict["href"] {
+                if itunesImage.isEmpty { itunesImage = href }
+            } else {
+                inChannelImage = true
+            }
         }
         if format == .atom, name == "link", let href = attributeDict["href"] {
             let rel = attributeDict["rel"] ?? "alternate"
@@ -215,10 +234,15 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
             case "duration": item?.duration = value
             default: break
             }
+        } else if inChannelImage {
+            if name == "url", channelImage.isEmpty { channelImage = value }
+            if name == "image" { inChannelImage = false }
         } else {
             if name == "generator", feedGenerator.isEmpty { feedGenerator = value }
             if name == "title", feedTitle.isEmpty { feedTitle = value }
             if name == "link", format == .rss, homePageURL.isEmpty { homePageURL = value }
+            if name == "logo", format == .atom, atomLogo.isEmpty { atomLogo = value }
+            if name == "icon", format == .atom, atomIcon.isEmpty { atomIcon = value }
         }
         if name == "item" || name == "entry" {
             if let built = item?.build(), items.count < limits.maximumEntries { items.append(built) }
@@ -283,6 +307,13 @@ enum FeedDuration {
         guard seconds.isFinite, seconds > 0, seconds < 1_000_000 else { return nil }
         return Int((seconds * 1_000).rounded())
     }
+}
+
+/// The link when it is an https URL with a host, else nil.
+private func httpsLink(_ value: String) -> String? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let url = URL(string: trimmed), url.scheme?.lowercased() == "https", !(url.host ?? "").isEmpty else { return nil }
+    return trimmed
 }
 
 private func sanitize(_ value: String) -> String {

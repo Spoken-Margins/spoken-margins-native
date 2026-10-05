@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "build:browser-extraction": "node Tools/BrowserExtraction/build.mjs",
-    "test:browser-extraction": "node --test Tools/BrowserExtraction/browserExtraction.test.mjs App/SpokenMarginsBrowserTextExtension/Tests/browserTextCapture.test.mjs"
+    "test:browser-extraction": "node --test Tools/BrowserExtraction/browserExtraction.test.mjs Tools/BrowserExtraction/licenseNotices.test.mjs App/SpokenMarginsBrowserTextExtension/Tests/browserTextCapture.test.mjs",
+    "test:share-link": "node --test research/B4/server/internal/links/share-link-open.test.mjs"
   },
   "dependencies": {
     "defuddle": "0.19.1"

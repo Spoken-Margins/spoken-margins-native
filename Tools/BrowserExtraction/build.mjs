@@ -1,46 +1,36 @@
 import { build } from "esbuild";
+import path from "node:path";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { BUNDLES, LICENSE_DIRECTORIES, esbuildOptions } from "./bundleConfig.mjs";
+import { NOTICES_FILE_NAME, bundledPackages, renderNotices, unaccountedDependencies } from "./licenseNotices.mjs";
 
-const builds = [
-  {
-    entryPoints: ["Tools/BrowserExtraction/browserTextCapture.entry.mjs"],
-    outfile: "App/SharedResources/browserTextCapture.js"
-  },
-  {
-    entryPoints: ["Tools/BrowserExtraction/sourceLinkPreprocessor.entry.mjs"],
-    outfile: "App/SpokenMarginsShareExtension/Resources/SourceLinkPreprocessor.js"
-  },
-  {
-    entryPoints: ["Tools/BrowserExtraction/popup.entry.mjs"],
-    outfile: "App/SpokenMarginsBrowserTextExtension/Resources/Scripts/popup.js",
-    banner: "/* Spoken Margins Safari capture transport */"
-  }
-];
+const noticeBundles = [];
 
-for (const configuration of builds) {
-  await build({
-    ...configuration,
-    bundle: true,
-    format: "iife",
-    platform: "browser",
-    target: ["safari16"],
-    minify: true,
-    sourcemap: false,
-    legalComments: "none",
-    banner: { js: configuration.banner || "/* Bundled Defuddle 0.19.1; see Defuddle-LICENSE.txt */" }
-  });
+for (const configuration of BUNDLES) {
+  const result = await build(esbuildOptions(configuration));
   const bundledSource = await readFile(configuration.outfile, "utf8");
   const cleanSource = bundledSource
     .split("\n")
     .map((line) => line.replace(/[ \t]+$/g, ""))
     .join("\n");
   await writeFile(configuration.outfile, cleanSource);
+  noticeBundles.push({
+    name: path.basename(configuration.outfile),
+    packages: bundledPackages(result.metafile, configuration.outfile)
+  });
 }
 
-for (const directory of [
-  "App/SharedResources",
-  "App/SpokenMarginsShareExtension/Resources"
-]) {
+const gaps = unaccountedDependencies([...new Set(noticeBundles.flatMap((bundle) => bundle.packages))]);
+if (gaps.length) {
+  throw new Error(
+    `Shipped packages depend on packages with no notice: ${gaps.join("; ")}. ` +
+    "Add each to PREBUNDLED_PACKAGES or NOT_SHIPPED in licenseNotices.mjs."
+  );
+}
+const notices = renderNotices(noticeBundles);
+
+for (const directory of LICENSE_DIRECTORIES) {
   await mkdir(directory, { recursive: true });
   await copyFile("node_modules/defuddle/LICENSE", `${directory}/Defuddle-LICENSE.txt`);
+  await writeFile(`${directory}/${NOTICES_FILE_NAME}`, notices);
 }
