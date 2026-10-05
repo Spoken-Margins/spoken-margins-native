@@ -15,6 +15,11 @@ final class ReadwiseHighlightSync: ObservableObject {
     }
     /// A failure is drawn with the failure icon, not as ordinary status (#308).
     @Published private(set) var statusIsFailure = false
+    /// Each item's page on readwise.io, for "Open in Readwise" on the item page (#623).
+    @Published private(set) var links: [String: URL] = [:]
+    /// What the last pass that sent anything sent, kept so a quiet pass doesn't erase it.
+    private var lastSummary: String?
+    private var lastSentAt: String?
     private var storeProvider: (@MainActor () -> SQLiteSessionStore?)?
     private var task: Task<Void, Never>?
     private var isSending = false
@@ -24,6 +29,7 @@ final class ReadwiseHighlightSync: ObservableObject {
     /// Called when the app becomes active. Starts the loop if sending is on.
     func start(store: @escaping @MainActor () -> SQLiteSessionStore?) {
         storeProvider = store
+        links = (try? Self.ledger().links()) ?? links
         guard enabled, task == nil else { return }
         task = Task { [weak self] in
             while !Task.isCancelled {
@@ -55,9 +61,7 @@ final class ReadwiseHighlightSync: ObservableObject {
         isSending = true
         defer { isSending = false }
         do {
-            let ledger = ReadwiseSentLedger(fileURL: try FileManager.default
-                .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-                .appendingPathComponent("SpokenMargins/ReadwiseSentLedger.json"))
+            let ledger = try Self.ledger()
             let client = ReadwiseHighlightClient { [session] request in
                 let (data, response) = try await session.data(for: request)
                 guard let http = response as? HTTPURLResponse else { throw ReadwiseHighlightError.httpStatus(0) }
@@ -74,9 +78,12 @@ final class ReadwiseHighlightSync: ObservableObject {
                 }
             }
             // stop() cancels the loop; this carries that into the detached pass so no further batch goes out.
-            let sent = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
+            let report = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
             rejectedTokenDigest = nil
-            status = "\(sent) new Margins sent. Last checked \(Date().formatted(date: .omitted, time: .shortened))."
+            let now = Date().formatted(date: .omitted, time: .shortened)
+            if let summary = report.summary { lastSummary = summary; lastSentAt = now }
+            status = ReadwiseSyncReport.statusLine(lastSummary: lastSummary, sentAt: lastSentAt, checkedAt: now)
+            links = (try? ledger.links()) ?? links
         } catch is CancellationError {
             return
         } catch ReadwiseHighlightError.tokenRejected {
@@ -87,5 +94,11 @@ final class ReadwiseHighlightSync: ObservableObject {
             status = "Sending needs attention: \(error.localizedDescription)"
             statusIsFailure = true
         }
+    }
+
+    private static func ledger() throws -> ReadwiseSentLedger {
+        ReadwiseSentLedger(fileURL: try FileManager.default
+            .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            .appendingPathComponent("SpokenMargins/ReadwiseSentLedger.json"))
     }
 }

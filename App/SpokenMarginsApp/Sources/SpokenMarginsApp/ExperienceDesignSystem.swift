@@ -79,6 +79,19 @@ struct ExperienceFilterChip<Content: View>: View {
     }
 }
 
+/// Marks a shared Margin the listener hasn't heard yet (#469). The word carries the meaning, not the color.
+struct NewMarginBadge: View {
+    var body: some View {
+        Text("New")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(AppColors.onEvergreen)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(AppColors.evergreen, in: Capsule())
+            .accessibilityLabel("New to you")
+    }
+}
+
 extension View {
     func experienceListBlock(
         horizontalSizeClass: UserInterfaceSizeClass?,

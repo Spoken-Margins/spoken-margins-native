@@ -19,6 +19,16 @@ struct UserFeedbackEvent: Identifiable, Equatable {
 
     var retry: Retry? = nil
 
+    /// One button on a confirmation, such as Play now after an add (#784).
+    struct Action {
+        let title: String
+        let accessibilityLabel: String
+        let identifier: String
+        let perform: @MainActor () -> Void
+    }
+
+    var action: Action? = nil
+
     /// Each event is new, so its id decides equality; the retry action can't be compared.
     static func == (lhs: UserFeedbackEvent, rhs: UserFeedbackEvent) -> Bool {
         lhs.id == rhs.id
@@ -51,7 +61,8 @@ extension Gate1AppModel {
 }
 
 /// The app's top banner. Confirmations and warnings dismiss themselves and let taps through. An error
-/// stays until the listener closes it or retries (#310), so it takes taps.
+/// stays until the listener closes it or retries (#310), so it takes taps, as does a confirmation
+/// with an action (#784).
 struct UserFeedbackBanner: View {
     @EnvironmentObject private var model: Gate1AppModel
     let feedback: UserFeedbackEvent
@@ -69,6 +80,17 @@ struct UserFeedbackBanner: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("app.feedback.banner")
+            if let action = feedback.action {
+                Button(action.title) {
+                    model.dismissFeedback(id: feedback.id)
+                    action.perform()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(AppColors.evergreen)
+                .frame(minHeight: 44)
+                .accessibilityLabel(action.accessibilityLabel)
+                .accessibilityIdentifier(action.identifier)
+            }
             if feedback.kind == .error {
                 if let retry = feedback.retry {
                     Button("Retry") {
@@ -96,12 +118,17 @@ struct UserFeedbackBanner: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppColors.border))
         .padding(.top, 44)
-        .allowsHitTesting(feedback.kind == .error)
+        .allowsHitTesting(feedback.kind == .error || feedback.action != nil)
         .task(id: feedback.id) {
             #if canImport(UIKit)
-            UIAccessibility.post(notification: .announcement, argument: feedback.message)
+            // A VoiceOver listener hears that the banner holds a button, not only its message (#784).
+            let announcement = feedback.action.map { "\(feedback.message) \($0.title) is available." } ?? feedback.message
+            UIAccessibility.post(notification: .announcement, argument: announcement)
             #endif
-            guard let seconds = FeedbackBannerPolicy.autoDismissSeconds(for: feedback.kind) else { return }
+            guard let seconds = FeedbackBannerPolicy.autoDismissSeconds(
+                for: feedback.kind,
+                offersAction: feedback.action != nil
+            ) else { return }
             do {
                 try await Task.sleep(for: .seconds(seconds))
                 model.dismissFeedback(id: feedback.id)
