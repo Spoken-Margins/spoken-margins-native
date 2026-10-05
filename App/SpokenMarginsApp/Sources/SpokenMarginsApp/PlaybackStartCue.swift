@@ -14,6 +14,9 @@ import SessionKit
 /// app that check is one extra regular progress tick, so shared Margins and other per-tick work still see every step.
 /// Times to first audio run from the listener's request (the snapshot's `playbackRequestedAt`) to the snapshot that
 /// shows playing, which can be up to 500 ms late.
+///
+/// The chime stops as soon as its start resolves, so it never runs over the first words. Since the regular check can
+/// be 500 ms late, the cue asks for one more check part-way through the chime (audit of #580).
 @MainActor
 final class PlaybackStartCue: ObservableObject {
     private var watch = PlaybackStartWatch()
@@ -22,6 +25,8 @@ final class PlaybackStartCue: ObservableObject {
     private let now: () -> Date
     /// Tests replace the chime; it returns what the cue did.
     private let playChime: (@MainActor () -> String)?
+    /// Tests replace stopping the chime.
+    private let stopChimeOverride: (@MainActor () -> Void)?
     /// Brings the snapshot up to date with the player before the cue decides; in the app, one model progress tick.
     private let checkNow: (@MainActor () -> Void)?
     /// Writes one diagnostic (key, value), normally into the model's diagnostics.
@@ -35,11 +40,13 @@ final class PlaybackStartCue: ObservableObject {
         snapshots: AnyPublisher<SessionSnapshot, Never>? = nil,
         now: @escaping () -> Date = Date.init,
         playChime: (@MainActor () -> String)? = nil,
+        stopChime: (@MainActor () -> Void)? = nil,
         checkNow: (@MainActor () -> Void)? = nil,
         record: @escaping @MainActor (String, String) -> Void
     ) {
         self.now = now
         self.playChime = playChime
+        self.stopChimeOverride = stopChime
         self.checkNow = checkNow
         self.record = record
         // The model is main-actor bound, so its snapshots are published on the main thread.
@@ -59,8 +66,11 @@ final class PlaybackStartCue: ObservableObject {
     /// Feed every snapshot change.
     func observe(_ snapshot: SessionSnapshot) {
         let startsBefore = watch.startCount
-        for outcome in watch.observe(itemId: snapshot.itemId, targetId: snapshot.targetId, status: snapshot.status,
-                                     requestedAt: snapshot.playbackRequestedAt, at: now()) {
+        let outcomes = watch.observe(itemId: snapshot.itemId, targetId: snapshot.targetId, status: snapshot.status,
+                                     requestedAt: snapshot.playbackRequestedAt, at: now())
+        // A start that resolved (audio began, or it was paused, failed or replaced) ends its chime (audit of #580).
+        if !outcomes.isEmpty || watch.startCount != startsBefore { stopChime() }
+        for outcome in outcomes {
             switch outcome {
             case .firstAudio(let itemId, let milliseconds):
                 record("firstAudioMs:\(itemId)", "\(milliseconds)")
@@ -84,8 +94,23 @@ final class PlaybackStartCue: ObservableObject {
             guard !Task.isCancelled, let self else { return }
             self.checkNow?()
             guard !Task.isCancelled, self.watch.takeCue(at: self.now()) else { return }
-            self.record("lastPlaybackStartCue", "\(waiting):" + (self.playChime?() ?? self.playSoftChime()))
+            let result = self.playChime?() ?? self.playSoftChime()
+            self.record("lastPlaybackStartCue", "\(waiting):" + result)
+            guard result == "played" else { return }
+            // Speech that begins under the chime stops it here, not at the next regular check.
+            try? await Task.sleep(for: .seconds(Self.checkDuringChime))
+            guard !Task.isCancelled else { return }
+            self.checkNow?()
         }
+    }
+
+    /// The end of the chime's first note.
+    static let checkDuringChime = PlaybackStartChime.notes[0].seconds
+
+    private func stopChime() {
+        if let stopChimeOverride { stopChimeOverride(); return }
+        player?.stop()
+        player = nil
     }
 
     private func playSoftChime() -> String {

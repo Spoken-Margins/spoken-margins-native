@@ -201,4 +201,52 @@ final class PlaybackStartCueTests: XCTestCase {
         XCTAssertEqual(chimes, 1)
         XCTAssertEqual(recorded["lastPlaybackStartCue"], "article:played")
     }
+
+    /// Audit of #580: speech that begins while the chime plays stops the chime, found by a check part-way through it
+    /// rather than at the next regular 500 ms check.
+    func testSpeechStartingUnderTheChimeStopsIt() async throws {
+        var cue: PlaybackStartCue!
+        var chiming = false
+        var checks = 0
+        cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            playChime: { [unowned self] in self.chimes += 1; chiming = true; return "played" },
+            stopChime: { chiming = false },
+            checkNow: { [unowned self] in
+                checks += 1
+                self.clock += 0.05
+                // The check before the chime still sees silence; the one during the chime sees speech.
+                cue.observe(self.snapshot("article", checks == 1 ? .starting : .playing))
+            },
+            record: { [unowned self] key, value in self.recorded[key] = value }
+        )
+
+        cue.observe(snapshot("article", .starting))
+        clock += 0.8
+        try await Task.sleep(for: .seconds(1.3))
+
+        XCTAssertEqual(chimes, 1)
+        XCTAssertEqual(checks, 2, "one check before the chime and one during it")
+        XCTAssertFalse(chiming, "the chime stopped when speech began")
+        XCTAssertEqual(recorded["firstAudioMs:article"], "900")
+    }
+
+    /// Audit of #580: a start that is paused or replaced while the chime plays stops it too.
+    func testPausingDuringTheChimeStopsIt() async throws {
+        var chiming = false
+        let cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            playChime: { [unowned self] in self.chimes += 1; chiming = true; return "played" },
+            stopChime: { chiming = false },
+            record: { [unowned self] key, value in self.recorded[key] = value }
+        )
+
+        cue.observe(snapshot("article", .starting))
+        clock += 0.8
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertTrue(chiming)
+        cue.observe(snapshot("article", .paused))
+
+        XCTAssertFalse(chiming)
+    }
 }

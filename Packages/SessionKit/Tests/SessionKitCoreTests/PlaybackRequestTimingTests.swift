@@ -132,6 +132,29 @@ final class PlaybackRequestTimingTests: XCTestCase {
         XCTAssertEqual(within.playbackRequestedAt, jump, "another chapter of the same answer is a seek")
     }
 
+    /// Audit of #580: a chapter of the paused answer is a new start, so its time includes the 1.5 s of audio work.
+    func testAChapterStartedFromAPauseIsTimedFromTheTap() throws {
+        let first = Chapter(id: "ch-1", title: "First", startChar: 0, endChar: 15, percent: 0)
+        let second = Chapter(id: "ch-2", title: "Second", startChar: 16, endChar: 29, percent: 50)
+        let answer = ConversationTurn(
+            id: "turn-357", sessionId: "session-357", role: "assistant", turnType: "assistant_response",
+            status: "complete", summary: nil, text: "First response. Second point.", rawText: nil,
+            chapters: [first, second], sourceInterjectionIds: []
+        )
+        let (engine, audio) = try makeEngine(turns: [answer])
+        audio.confirmsAtOnce = true
+        _ = try engine.jumpToTurnChapter(turnId: answer.id, chapterId: first.id)
+        now += 10
+        XCTAssertEqual(try engine.pause().targetId, answer.id)
+        now += 10
+        let tap = now
+
+        let resumed = try engine.jumpToTurnChapter(turnId: answer.id, chapterId: second.id)
+
+        XCTAssertEqual(resumed.status, .playing)
+        XCTAssertEqual(resumed.playbackRequestedAt, tap, "stamped before the player's 1.5 s of work")
+    }
+
     func testAStaleOrFutureRequestTimeFallsBackToNow() {
         var watch = PlaybackStartWatch()
         let at = Date(timeIntervalSince1970: 10_000)

@@ -1172,12 +1172,13 @@ public final class SessionEngine {
         try requirePlayback("jumpToChapter")
         if let session = currentSession,
            session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
+            stampRequestIfStarting(target: session.currentTargetId)
             return try jumpToMediaChapter(chapterId: chapterId, session: session)
         }
         guard var session = currentSession, let chapter = currentMap?.chapters.first(where: { $0.id == chapterId }) else {
             throw SessionKitError.invalidCommandForState("jumpToChapter")
         }
-        stampRequestIfSwitchingTarget(to: session.itemId)
+        stampRequestIfStarting(target: session.itemId)
         session.currentTargetType = .itemTextTTS
         session.currentTargetId = session.itemId
         session.phase = .itemPlayback
@@ -1907,7 +1908,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func jumpToTurnChapter(turnId: String, chapterId: String) throws -> SessionSnapshot {
-        stampRequestIfSwitchingTarget(to: turnId); defer { playbackRequestedAt = nil }
+        stampRequestIfStarting(target: turnId); defer { playbackRequestedAt = nil }
         try requireNavigationAllowed("jumpToTurnChapter")
         var session = try resolveSession(nil)
         let turns = try repository.loadTurns(sessionId: session.id)
@@ -3135,10 +3136,11 @@ public final class SessionEngine {
         snapshot.pendingAiJobCount = (try? repository.loadAIJobs(sessionId: session.id).filter { $0.status != "complete" }.count) ?? snapshot.pendingAiJobCount
     }
 
-    /// A chapter jump to another target (a saved answer's chapter, or back to the source) is a new request; within
-    /// the current target it is a seek and keeps its request (audit of #580).
-    private func stampRequestIfSwitchingTarget(to targetId: String) {
-        if snapshot.targetId != targetId { playbackRequestedAt = now() }
+    /// A chapter jump that starts playback (from a pause or stop, or onto another target such as a saved answer's
+    /// chapter) is a new request, stamped before any audio work; within the target that is already playing it is a
+    /// seek and keeps its request (audits of #580).
+    private func stampRequestIfStarting(target targetId: String) {
+        if !snapshot.status.isPlaybackActive || snapshot.targetId != targetId { playbackRequestedAt = now() }
     }
 
     private func publishPlaybackStart(for session: Session, phase: SessionPhase) {
