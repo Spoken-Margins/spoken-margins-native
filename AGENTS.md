@@ -21,6 +21,9 @@ Replace this section when the focus changes; do not append to it.
   - **The server on the owner's VPS is approved.** App features that use it go ahead. Any "waits on the owner's hosting call" gate is gone.
   - **No off switches for new features.** The way back is reverting the merge.
   - **Merge finished work on host tests plus both builds.** The Test Desk tests the merged tip end to end, instead of per-PR simulator gating.
+- **Owner's standing calls (2026-10-05).** Don't ask again:
+  - **"Post-MVP" is a legacy label.** The app is past MVP. A `[Post-MVP]` title, a `phase: post-mvp` label or `parked` never stops work on an issue; judge it on its merits.
+  - **Owner ideas are challenges, not directives.** When the owner suggests a solution, solve the challenge it serves. Treat the suggestion as one example and pick whatever works best.
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
