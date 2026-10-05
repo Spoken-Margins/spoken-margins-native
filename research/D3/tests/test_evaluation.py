@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from evaluate import load_log, metrics, replay, summarize  # noqa: E402
+from evaluate import load_log, main as evaluate_main, metrics, replay, summarize  # noqa: E402
 from rank import load_policy, rank_items  # noqa: E402
 from synth import generate  # noqa: E402
 
@@ -61,6 +61,16 @@ class RankingTests(unittest.TestCase):
         self.assertGreater(result["ndcg@10"][1], result["ndcg@10"][0])
         self.assertLess(result["mean_positive_rank"][1], result["mean_positive_rank"][0])
 
+    def test_listened_share_uses_a_duration_from_any_row(self):
+        # The app's item_published rows can lack the duration its listened rows carry.
+        published = event("item_published", "a", "a1", 0, 0)
+        published["item"]["duration_seconds"] = None
+        history = [published, event("listened", "a", "a1", 1, 0, seconds=50)]
+        items = [event("item_published", "a", "a2", 1, 1), event("item_published", "b", "b1", 1, 1, hour=9)]
+        ranked = rank_items(items, ts(2), history, self.policy)
+        self.assertEqual("a2", ranked[0]["item"]["item"]["id"])
+        self.assertIn("listen", ranked[0]["reason"])
+
     def test_future_signals_do_not_change_earlier_ranking(self):
         items = [event("item_published", "a", "a1", 0, 0), event("item_published", "b", "b1", 0, 0, hour=9)]
         as_of = ts(1)
@@ -76,6 +86,17 @@ class RankingTests(unittest.TestCase):
             path.write_text('{"schema_version":"wrong"}\n', encoding="utf-8")
             with self.assertRaisesRegex(ValueError, r"bad\.jsonl:1: unsupported schema_version"):
                 load_log(path)
+
+    def test_reads_the_apps_recorded_log(self):
+        # The published I4 fixture is byte-for-byte what the app's recorder writes
+        # (SessionKit ListeningSignalRecorderTests.testRecorderWritesThePublishedFixture).
+        fixture = ROOT.parents[1] / "Contracts/fixtures/listening-signals/i4-engagement-sample.jsonl"
+        events = load_log(fixture)
+        self.assertEqual({"item_published", "listened", "margin", "share", "export", "packet_import",
+                          "dismiss", "finish"}, {row["event"] for row in events})
+        samples = replay(events, self.policy)
+        self.assertEqual(["2026-09-02", "2026-09-03", "2026-09-04"], [s["day"] for s in samples])
+        self.assertEqual(0, evaluate_main([str(fixture)]))
 
     def test_synthetic_log_is_deterministic_and_has_six_signal_types(self):
         first = generate(seed=9, source_count=60, weeks=3)

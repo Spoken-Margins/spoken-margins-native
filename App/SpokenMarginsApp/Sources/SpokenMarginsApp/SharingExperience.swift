@@ -862,12 +862,18 @@ private struct ShareRevisionAudioPreviewButton: View {
 
 struct SharedSpokenMarginsPackageActivityView: UIViewControllerRepresentable {
     let packageURL: URL
+    /// Runs when the share sheet reports the packet was sent (logged as an I4 `share`, #483).
+    var onShared: () -> Void = {}
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(
+        let controller = UIActivityViewController(
             activityItems: [SpokenMarginsPackageActivityItem(packageURL: packageURL)],
             applicationActivities: nil
         )
+        controller.completionWithItemsHandler = { _, completed, _, _ in
+            if completed { onShared() }
+        }
+        return controller
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
@@ -940,7 +946,9 @@ struct SharedSpokenMarginsPackageReadyView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .sheet(isPresented: $isActivityPresented) {
-            SharedSpokenMarginsPackageActivityView(packageURL: packageURL)
+            SharedSpokenMarginsPackageActivityView(packageURL: packageURL) {
+                model.listeningSignals.share(packetURL: packageURL)
+            }
         }
     }
 }

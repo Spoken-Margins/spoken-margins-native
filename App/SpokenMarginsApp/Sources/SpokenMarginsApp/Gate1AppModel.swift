@@ -571,6 +571,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var snapshot = SessionSnapshot() {
         didSet {
             recordPlaybackEventState(previous: oldValue)
+            listeningSignals.snapshotChanged(from: oldValue, to: snapshot)
             updateNarrationVoiceNotice()
             if playingImportedCommentary != nil,
                oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId
@@ -838,7 +839,7 @@ final class Gate1AppModel: ObservableObject {
         return FollowedSourceMatching.uniqueUnfollowedCandidates(storedSourceFollowSuggestionCandidates, subscriptions: feedSubscriptions)
     }
     @Published private(set) var followedSourceEntries: [FeedEntry] = [] { didSet { cachedQuickAddCandidates = nil } }
-    @Published private(set) var feedSubscriptions: [FeedSubscription] = [] { didSet { cachedQuickAddCandidates = nil } }
+    @Published private(set) var feedSubscriptions: [FeedSubscription] = [] { didSet { cachedQuickAddCandidates = nil; listeningSignals.endListening() } }
     @Published private(set) var isRefreshingFollowedSources = false
     @Published private(set) var importingFollowedSourceEntryIds: Set<String> = []
     @Published private(set) var isFollowingSelectedSource = false
@@ -966,6 +967,7 @@ final class Gate1AppModel: ObservableObject {
 
     private var engine: SessionEngine?
     private(set) var store: SQLiteSessionStore?
+    lazy var listeningSignals = ListeningSignalsCoordinator(repository: { [weak self] in self?.store })
     private var databaseURLOverride: URL?
     private let gate2CompactControls: Gate2CompactControlController
     private let featureFlags: SpokenMarginsFeatureFlags
@@ -1723,6 +1725,7 @@ final class Gate1AppModel: ObservableObject {
             if updated != self.snapshot {
                 self.snapshot = updated
             }
+            self.listeningSignals.playbackProgress(itemId: updated.itemId, status: updated.status, transport: engine.currentPlaybackTransportState())
             self.updateNarrationVoiceNotice()
             if previousEngagementProgress < 25,
                updated.currentPlaybackProgressPercent >= 25,
@@ -1744,6 +1747,7 @@ final class Gate1AppModel: ObservableObject {
     private func stopPlaybackProgressTicker() {
         playbackProgressTask?.cancel()
         playbackProgressTask = nil
+        listeningSignals.endListening()
     }
 
     func syncPlaybackProgressForLifecycle() {
@@ -5650,6 +5654,7 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             // Completion is an item-level fact, not fabricated listening history.
             guard let item = try ManualItemCompletion.markComplete(itemId: id, in: store) else { return }
+            listeningSignals.finish(itemId: id)
             try refreshLibraryRows(store: store)
             if selectedItem.id == id { selectedItem = try loadItemDetail(id: id, store: store) }
             completionUndo = (id, item.title, item.sourceCompletedAt ?? Date())
@@ -6342,12 +6347,11 @@ final class Gate1AppModel: ObservableObject {
     func finishInterjection() {
         guard snapshot.isRecording else { return }
         run { engine in
+            defer { recordSpokenMarginSavedBeforeFailure(engine.lastScheduledTranscriptionInterjectionId) }
             snapshot = try engine.finishInterjection(audioRef: nil)
             refreshSelectedItem()
             recordSavedInterjectionForOnboarding()
-            if let interjection = latestInterjectionNeedingTranscription() {
-                scheduleTranscription(for: interjection)
-            }
+            transcribeAndRecordSavedSpokenMargin()
             reportConfirmation("Margin saved. Transcription is continuing in the background.")
         }
         if !snapshot.isRecording {
@@ -6431,6 +6435,7 @@ final class Gate1AppModel: ObservableObject {
         guard let draft = writtenMarginDraft, let engine else { return }
         do {
             snapshot = try engine.saveWrittenInterjection(captureId: draft.capture.id, text: text)
+            listeningSignals.writtenMargin(itemId: draft.capture.itemId, text: text)
             writtenMarginDraft = nil
             if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
             refreshSelectedItem()
@@ -7917,6 +7922,7 @@ final class Gate1AppModel: ObservableObject {
                     self.diagnostics["lastSpokenMarginsPackageImport"] = "duplicate_layer:\(existingLayerId)"
                 case .imported(let layerId, let interjectionIds):
                     self.diagnostics["lastSpokenMarginsPackageImport"] = "imported:\(layerId):\(interjectionIds.count)"
+                    self.listeningSignals.packetImport(itemId: itemId, packetId: review.contents.manifest.packageId, marginCount: interjectionIds.count)
                 }
                 if let itemId {
                     self.activeItemId = itemId
@@ -9404,9 +9410,7 @@ final class Gate1AppModel: ObservableObject {
                 updateGate3WatchState()
             }
             refreshSelectedItem()
-            if request.command == .finishInterjection, let interjection = latestInterjectionNeedingTranscription() {
-                scheduleTranscription(for: interjection)
-            }
+            if request.command == .finishInterjection, result.delegatedToCanonicalRuntime { transcribeAndRecordSavedSpokenMargin() }
             diagnostics["gate3WatchLastCommand"] = request.command.rawValue
             diagnostics["gate3WatchLastResult"] = result.delegatedToCanonicalRuntime ? "delegated" : (result.rejectedReason ?? "rejected")
             updateGate3WatchState()
@@ -9414,6 +9418,7 @@ final class Gate1AppModel: ObservableObject {
         } catch {
             diagnostics["gate3WatchLastCommand"] = request.command.rawValue
             diagnostics["gate3WatchLastResult"] = "failed"
+            if request.command == .finishInterjection { recordSpokenMarginSavedBeforeFailure(engine?.lastScheduledTranscriptionInterjectionId) }
             updateGate3WatchState()
             reportFailure(error, context: "Watch control failed")
         }
@@ -9530,9 +9535,7 @@ final class Gate1AppModel: ObservableObject {
             if command == .finishInterjection {
                 recordSavedInterjectionForOnboarding()
             }
-            if command == .finishInterjection, let interjection = latestInterjectionNeedingTranscription() {
-                scheduleTranscription(for: interjection)
-            }
+            if command == .finishInterjection, result.delegatedToCanonicalRuntime { transcribeAndRecordSavedSpokenMargin() }
             if command == .finishInterjection || command == .cancelInterjection {
                 streamingSpeechQueue.resumeAfterInterjection()
                 if !snapshot.isRecording {
@@ -9545,6 +9548,7 @@ final class Gate1AppModel: ObservableObject {
             }
             reportSuccess("Compact control \(command.rawValue) \(result.delegatedToCanonicalRuntime ? "delegated" : "handled").")
         } catch {
+            if command == .finishInterjection { recordSpokenMarginSavedBeforeFailure(engine?.lastScheduledTranscriptionInterjectionId) }
             if command == .beginInterjection || command == .finishInterjection || command == .cancelInterjection {
                 streamingSpeechQueue.resumeAfterInterjection()
             }
@@ -11903,7 +11907,7 @@ final class Gate1AppModel: ObservableObject {
         reportFailure(userMessage, itemId: itemId, retry: retry)
     }
 
-    private func latestInterjectionNeedingTranscription() -> Interjection? {
+    func latestInterjectionNeedingTranscription() -> Interjection? {
         guard let sessionId = snapshot.sessionId,
               let interjections = try? store?.loadInterjections(sessionId: sessionId) else { return nil }
         return interjections.last { $0.transcriptionStatus == "pending" && $0.audioPath != nil }
@@ -12551,7 +12555,7 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    private func scheduleTranscription(for interjection: Interjection) {
+    func scheduleTranscription(for interjection: Interjection) {
         guard let audioPath = interjection.audioPath else { return }
         recordAnchorCaptureDiagnostics(for: interjection)
         switch interjection.podcastAnchorEvidenceCaptureStatus {
@@ -13654,6 +13658,7 @@ final class Gate1AppModel: ObservableObject {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let destination = directory.appending(path: "\(safeShareFilename(item.title))-\(packageID.suffix(8)).spokenmargins")
             _ = try SpokenMarginsPackageArchive.write(prepared, to: destination)
+            listeningSignals.export(itemId: item.id, packetId: packageID, marginCount: drafts.count, packetURL: destination)
             UserDefaults.standard.set(sharingState.senderDisplayLabel, forKey: "sharingSenderDisplayLabel")
             sharedSpokenMarginsPackageURL = destination
             sharingState.isExporting = false
@@ -13857,7 +13862,7 @@ final class Gate1AppModel: ObservableObject {
         return "duration_ms=unknown;bytes=\(bytes)"
     }
 
-    private func resolvedInterjectionAudioURL(for path: String) -> URL? {
+    func resolvedInterjectionAudioURL(for path: String) -> URL? {
         Self.resolvedInterjectionAudioURL(
             for: path,
             applicationSupportDirectory: try? FileManager.default.url(
@@ -13869,50 +13874,11 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    /// Stored Margin audio paths may be absolute paths from an earlier app container
-    /// (container UUIDs change on reinstall, restore, and some updates). Rebase them onto
-    /// the current Application Support directory instead of failing.
-    nonisolated static func resolvedInterjectionAudioURL(
-        for path: String,
-        applicationSupportDirectory: URL?
-    ) -> URL? {
-        if path.hasPrefix("interjections/"), let applicationSupportDirectory {
-            let legacyURL = applicationSupportDirectory.appending(path: "SpokenMargins").appending(path: path)
-            if FileManager.default.fileExists(atPath: legacyURL.path) { return legacyURL }
-        }
-        return resolvedApplicationSupportAssetURL(
-            for: path, applicationSupportDirectory: applicationSupportDirectory
-        )
-    }
-
     private func resolvedApplicationSupportAssetURL(for path: String) -> URL? {
         Self.resolvedApplicationSupportAssetURL(
             for: path,
             applicationSupportDirectory: try? applicationSupportDirectory()
         )
-    }
-
-    nonisolated static func resolvedApplicationSupportAssetURL(
-        for path: String,
-        applicationSupportDirectory: URL?
-    ) -> URL? {
-        let fileManager = FileManager.default
-        let directURL = URL(fileURLWithPath: path)
-        if directURL.isFileURL, fileManager.fileExists(atPath: directURL.path) {
-            return directURL
-        }
-        guard let applicationSupportDirectory else { return nil }
-        let supportMarker = "/Library/Application Support/"
-        if let markerRange = path.range(of: supportMarker) {
-            let relativePath = String(path[markerRange.upperBound...])
-            let relocatedURL = applicationSupportDirectory.appending(path: relativePath)
-            if fileManager.fileExists(atPath: relocatedURL.path) {
-                return relocatedURL
-            }
-        }
-        let relativePath = path.hasPrefix("/") ? String(path.dropFirst()) : path
-        let relativeURL = applicationSupportDirectory.appending(path: relativePath)
-        return fileManager.fileExists(atPath: relativeURL.path) ? relativeURL : nil
     }
 
     private func recordAnchorCaptureDiagnostics(for interjection: Interjection) {
@@ -15758,6 +15724,7 @@ final class Gate1AppModel: ObservableObject {
 
     func dismissFollowedSourceEntry(id: String) {
         guard let coordinator = followedSourceCoordinator else { return }
+        listeningSignals.dismiss(entryId: id)
         Task { [weak self] in
             try? await coordinator.setEntryState(id: id, state: .dismissed)
             await self?.refreshFollowedSources(force: false)
@@ -15792,8 +15759,9 @@ final class Gate1AppModel: ObservableObject {
                     imported = importedItemId != nil
                     if openWhenFinished, let importedItemId { self.openItem(id: importedItemId) }
                 } else {
-                    let handoff = try await FollowedArticleImport.handoff(for: entry, url: url, using: self.readablePageExtractor, record: { self.diagnostics.merge($0) { _, new in new } })
-                    if openWhenFinished, !entry.hasPublisherAudio {
+                    let handoff = self.listeningSignals.followedArticle(try await FollowedArticleImport.handoff(for: entry, url: url, using: self.readablePageExtractor, record: { self.diagnostics.merge($0) { _, new in new } }), for: entry)
+                    // With something already playing, importBrowserText only adds; Add and open still opens it (#567).
+                    if openWhenFinished, !entry.hasPublisherAudio, !self.hasActiveSession {
                         imported = self.importBrowserText(handoff)
                     } else {
                         let itemId = try self.importBrowserTextInBackground(handoff)

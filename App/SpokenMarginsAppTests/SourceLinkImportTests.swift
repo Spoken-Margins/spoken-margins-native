@@ -160,6 +160,46 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.id, "item-pill")
     }
 
+    func testRedirectedFollowedArticleAddAndOpenKeepTheirSignalEntry() async throws {
+        for openWhenFinished in [false, true] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            temporaryDirectories.append(root)
+            let database = root.appendingPathComponent("redirect.sqlite")
+            let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: database)
+            model.resetAndSeed()
+            let store = try SQLiteSessionStore(path: database.path)
+            let recorder = ListeningSignalRecorder(fileURL: root.appendingPathComponent("signals.jsonl"), flushDelay: 60)
+            let signals = ListeningSignalsCoordinator(recorder: recorder, repository: { store })
+            model.listeningSignals = signals
+            model.startItem(id: "item-pill")
+            let activeSession = model.snapshot.sessionId
+            let subscription = FeedSubscription(id: "s", source: SourceIdentity(id: "publication", kind: .articleFeed,
+                canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Publisher"), lastRefreshAt: Date())
+            let entry = FeedEntry(id: "redirected-entry", subscriptionId: subscription.id,
+                canonicalURL: "https://publisher.example/link", title: "A redirected article")
+            try store.saveFeedSubscription(subscription)
+            try store.saveFeedEntry(entry)
+            let capture = BrowserTextHandoff(captureMode: .readablePage,
+                source: BrowserTextSource(url: "https://destination.example/article", title: entry.title),
+                text: "The extracted article body stays intact.")
+            model.readablePageExtractor = RedirectedFeedArticleExtractor(capture: capture)
+            model.importFollowedSourceEntry(entry, openWhenFinished: openWhenFinished)
+            try await waitFor("redirected followed article import") { model.libraryItems.contains { $0.title == entry.title } }
+            let row = try XCTUnwrap(model.libraryItems.first { $0.title == entry.title })
+            let item = try store.loadItem(id: row.id)
+            XCTAssertEqual(item.externalReference, capture.source.url, "the final URL stays the sharing identity")
+            XCTAssertEqual(item.text, capture.text)
+            XCTAssertEqual(model.snapshot.sessionId, activeSession)
+            XCTAssertEqual(model.selectedItem.id, openWhenFinished ? item.id : "item-pill")
+            signals.writtenMargin(itemId: item.id, text: "A note")
+            let exported = await signals.exportFileURL()
+            let rows = exported.map(ListeningSignalRecorder.read) ?? []
+            XCTAssertEqual(rows.filter { $0.event.name == "margin" }.map { $0.item?.id }, [entry.id])
+            model.endSession()
+        }
+    }
+
     func testFeedAliasesUseFinalResponseIdentityWithoutSelfLink() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [AliasedFeedURLProtocol.self]
@@ -2157,6 +2197,15 @@ private actor SequencedInterjectionTranscriber {
         }
         return transcripts.removeFirst()
     }
+}
+
+@MainActor
+private final class RedirectedFeedArticleExtractor: ReadablePageExtracting {
+    let capture: BrowserTextHandoff
+    init(capture: BrowserTextHandoff) { self.capture = capture }
+    var lastExtractor: String? { "redirected-test-capture" }
+    var contactedHosts: [String] { ["publisher.example", "destination.example"] }
+    func extract(url: URL) async throws -> BrowserTextHandoff { capture }
 }
 
 private final class AliasedFeedURLProtocol: URLProtocol, @unchecked Sendable {

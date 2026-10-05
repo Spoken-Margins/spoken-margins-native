@@ -37,6 +37,7 @@ PATH_SCHEMA_RULES = [
     ("fixtures/prepared-audio/*.json", "prepared-audio-manifest.schema.json"),
     ("fixtures/offline-storage/*.json", "offline-storage.schema.json"),
     ("fixtures/followed-sources/*.json", "followed-source.schema.json"),
+    ("fixtures/listening-signals/*.jsonl", "i4-engagement.schema.json", "jsonl"),
     ("fixtures/presentation/*.json", "app-presentation.schema.json"),
     ("fixtures/source-catalog/*.json", "source-catalog.schema.json"),
     ("fixtures/source-catalog-manifest/*.json", "source-catalog-manifest.schema.json"),
@@ -50,6 +51,7 @@ NEGATIVE_PATH_SCHEMA_RULES = [
     ("fixtures/invalid/interjection-packages/*.json", "spoken-margins-package.schema.json"),
     ("fixtures/invalid/source-catalog/*.json", "source-catalog.schema.json"),
     ("fixtures/invalid/source-resolution/*.json", "source-resolution.schema.json"),
+    ("fixtures/invalid/listening-signals/*.json", "i4-engagement.schema.json"),
 ]
 
 # Remote source catalogs (seam I2): the published catalog and its manifest, and each
@@ -69,13 +71,19 @@ def load_json(path: Path):
 def validate_file(path: Path, schema_path: Path, mode: str | None = None) -> list[str]:
     schema = load_json(schema_path)
     validator = Draft202012Validator(schema, format_checker=FormatChecker())
-    instance = load_json(path)
-    instances = instance if mode == "array" else [instance]
+    if mode == "jsonl":
+        with path.open("r", encoding="utf-8") as handle:
+            instances = [json.loads(line) for line in handle if line.strip()]
+    else:
+        instance = load_json(path)
+        instances = instance if mode == "array" else [instance]
     errors: list[str] = []
     for index, value in enumerate(instances):
         prefix = f"{path}"
         if mode == "array":
             prefix += f"[{index}]"
+        elif mode == "jsonl":
+            prefix += f":{index + 1}"
         for error in sorted(validator.iter_errors(value), key=lambda err: list(err.path)):
             location = ".".join(str(part) for part in error.path) or "<root>"
             errors.append(f"{prefix}: {location}: {error.message}")
