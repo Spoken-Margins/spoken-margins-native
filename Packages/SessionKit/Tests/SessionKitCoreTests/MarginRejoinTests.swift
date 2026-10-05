@@ -237,6 +237,25 @@ final class MarginRejoinTests: XCTestCase {
                        "a closing quote after the stop still ends the sentence")
     }
 
+    /// A title or short form is not a sentence end: a Margin during "result" in "Intro. Dr. Smith explained
+    /// the result." used to resume at "Smith" (Codex audit on dda759c).
+    func testAnAbbreviationPeriodIsNotASentenceEnd() {
+        let text = "Intro. Dr. Smith explained the result. Mr. Lee met Ms. Ray on St. James St. today, e.g. at noon."
+        let drStart = "Intro. ".count
+        let resultOffset = "Intro. Dr. Smith explained the res".count
+        XCTAssertEqual(MarginRejoin.textResumeOffset(pausedAt: resultOffset, in: text), drStart)
+        var offset = resultOffset
+        for _ in 0..<5 {
+            offset = MarginRejoin.textResumeOffset(pausedAt: offset, in: text)
+            XCTAssertEqual(offset, drStart, "repeated Margins stay at the sentence's start")
+        }
+        let mrStart = "Intro. Dr. Smith explained the result. ".count
+        XCTAssertEqual(MarginRejoin.textResumeOffset(pausedAt: text.count - 3, in: text), mrStart)
+        let ended = "It was no. Then it was yes."
+        XCTAssertEqual(MarginRejoin.textResumeOffset(pausedAt: ended.count - 3, in: ended), "It was no. ".count,
+                       "a word that only looks like a short form still ends the sentence")
+    }
+
     func testMediaResumeTimeStepsBackThreeSecondsAndNeverBeforeZero() {
         XCTAssertEqual(MarginRejoin.mediaStepBackMs, 3_000)
         XCTAssertEqual(MarginRejoin.mediaResumeTimeMs(pausedAtMs: 1_263_000), 1_260_000)

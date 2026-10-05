@@ -19,7 +19,8 @@ enum MarginRejoin {
     ///
     /// A sentence ends at a line break, or at ".", "?" or "!" (and any closing quotes or brackets after
     /// it) followed by whitespace or the end of the text, so the point in "3.14" or "example.com" is not
-    /// an end. The next sentence starts after the whitespace that follows.
+    /// an end. Nor is the period of a title or Latin short form such as "Dr." or "e.g.". The next sentence
+    /// starts after the whitespace that follows.
     static func textResumeOffset(pausedAt offset: Int, in text: String) -> Int {
         let chars = Array(text)
         let clamped = max(0, min(offset, chars.count))
@@ -31,7 +32,10 @@ enum MarginRejoin {
             } else if sentenceEnds.contains(chars[index]) {
                 var after = index + 1
                 while after < chars.count, closers.contains(chars[after]) { after += 1 }
-                if after == chars.count || chars[after].isWhitespace { start = after }
+                if (after == chars.count || chars[after].isWhitespace),
+                   !(chars[index] == "." && endsAbbreviation(chars, at: index)) {
+                    start = after
+                }
             }
             if var start {
                 while start < chars.count, chars[start].isWhitespace { start += 1 }
@@ -41,6 +45,19 @@ enum MarginRejoin {
         }
         return 0
     }
+
+    /// Whether the "." at `period` closes a short form like "Dr." or "e.g.", which goes on mid-sentence.
+    private static func endsAbbreviation(_ chars: [Character], at period: Int) -> Bool {
+        var first = period
+        while first > 0, chars[first - 1].isLetter || chars[first - 1] == "." { first -= 1 }
+        return abbreviations.contains(String(chars[first..<period]).lowercased())
+    }
+
+    /// Short forms that rarely end a sentence. "etc.", "Inc." and "No." often do, so they are left out.
+    private static let abbreviations: Set<String> = [
+        "mr", "mrs", "ms", "dr", "prof", "st", "sr", "jr", "rev", "hon", "gen", "gov", "sen", "rep",
+        "capt", "lt", "col", "sgt", "mt", "ft", "vs", "e.g", "i.e", "cf", "approx", "vol", "fig",
+    ]
 
     private static let sentenceEnds: Set<Character> = [".", "?", "!"]
     private static let closers: Set<Character> = ["\"", "'", "\u{201D}", "\u{2019}", ")", "]"]
