@@ -48,8 +48,7 @@ struct Build23SenderSharingExperience: View {
                             coordinator.send(.setIncludesAcousticEvidence(false))
                             shareVerifiedPackage()
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(AppColors.evergreen)
+                        .filledActionButton()
                         .accessibilityIdentifier("build23.sender.share.without-matching")
                     }
                 }
@@ -119,16 +118,14 @@ struct Build23SenderSharingExperience: View {
             Button("Review \(includedCount)") {
                 advanceToReview(from: snapshot)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(AppColors.evergreen)
+            .filledActionButton()
             .disabled(!snapshot.canAdvance || snapshot.isPreparingAll)
             .accessibilityIdentifier("build23.sender.select.continue")
         case .review:
             Button("Share \(includedCount)", systemImage: "square.and.arrow.up") {
                 shareVerifiedPackage()
             }
-            .buttonStyle(.borderedProminent)
-            .tint(AppColors.evergreen)
+            .filledActionButton()
             .disabled(!snapshot.canAdvance)
             .accessibilityIdentifier("build23.sender.review.share")
         case .recipientPreview:
@@ -138,8 +135,7 @@ struct Build23SenderSharingExperience: View {
             ) {
                 shareVerifiedPackage()
             }
-            .buttonStyle(.borderedProminent)
-            .tint(AppColors.evergreen)
+            .filledActionButton()
             .disabled(snapshot.previewState != .ready)
         case .share:
             EmptyView()
@@ -558,8 +554,7 @@ struct Build23SenderSharingExperience: View {
                         Button("Share verified package", systemImage: "square.and.arrow.up") {
                             presentVerifiedSystemShare()
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(AppColors.evergreen)
+                        .filledActionButton()
                         .disabled(!snapshot.canShareVerifiedFile || coordinator.verifiedShareFileURL == nil)
                         .accessibilityHint("Opens the system share sheet with the verified package file")
                         .accessibilityIdentifier("build23.sender.share.present")
@@ -641,8 +636,7 @@ struct Build23SenderSharingExperience: View {
                         Button("Open system share sheet", systemImage: "square.and.arrow.up") {
                             presentVerifiedSystemShare()
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(AppColors.evergreen)
+                        .filledActionButton()
                         .accessibilityIdentifier("build23.sender.share.reopen")
                     }
                 }
