@@ -103,6 +103,15 @@ public struct LibraryAudioPreparationTurns: Sendable {
         }
     }
 
+    /// `caller` couldn't run at all: Low Power Mode, heat, unaccepted terms or no voice (#647).
+    /// A foreground loop that was waiting for the background task isn't waiting any more, so it
+    /// must not restart itself until one of those changes: the app's own triggers (coming to the
+    /// foreground, Prepare Now, playback changes) start it again.
+    public mutating func blocked(_ caller: LibraryAudioPreparationCaller) {
+        if caller == .foreground { foregroundIsWaiting = false }
+        stopped(caller)
+    }
+
     /// `caller` stopped: it finished, was cancelled, expired, or is waiting. The item it was
     /// preparing stops showing progress, unless the other pass is still working on it.
     public mutating func stopped(_ caller: LibraryAudioPreparationCaller) {
