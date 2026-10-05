@@ -802,6 +802,14 @@ struct PlaybackScreen: View {
                 .accessibilityIdentifier("playback.forward.button")
             }
 
+            if model.snapshot.status == .starting {
+                // #357: say what the silence is, instead of a bare spinner.
+                Text(PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.watchSecondary)
+                    .accessibilityIdentifier("playback.starting.label")
+            }
+
             if model.isMediaPlaybackSnapshot,
                model.snapshot.canSkimBackward || model.snapshot.canSkimForward || model.snapshot.skimBridgeState != nil {
                 HStack(spacing: 14) {
