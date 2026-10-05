@@ -2187,11 +2187,11 @@ final class Gate1AppModel: ObservableObject {
     /// Spoken podcast Margins get the full moment: lead-in, the Margin inline, then the item's other spoken
     /// Margins as playback reaches them. Written Margins and text items keep playing from the anchor.
     private func startMarginMomentIfSpoken(_ interjection: Interjection, store: SQLiteSessionStore) {
-        guard Self.isInlineSpokenMargin(interjection), let anchorMs = interjection.anchor.mediaTimeMs else { return }
+        guard interjection.isInlineSpokenMargin, let anchorMs = interjection.anchor.mediaTimeMs else { return }
         let sessions: [Session] = (try? store.loadSessions(itemId: interjection.itemId)) ?? []
         let spoken: [Interjection] = sessions
             .flatMap { session -> [Interjection] in (try? store.loadInterjections(sessionId: session.id)) ?? [] }
-            .filter(Self.isInlineSpokenMargin)
+            .filter(\.isInlineSpokenMargin)
         var voiceURLs: [String: URL] = [:]
         for margin in spoken + [interjection] {
             if let path = margin.audioPath { voiceURLs[Self.marginIdentity(margin)] = resolvedInterjectionAudioURL(for: path) }
@@ -2238,6 +2238,7 @@ final class Gate1AppModel: ObservableObject {
             title: "\(row.collectionLabel)'s Margin",
             isApproximate: position.isApproximate
         )
+        marginMomentConductor?.onVoiceStarted = { [weak self] in if $0 == targetID { self?.markSharedMarginHeard(row.interjection) } }
         if !snapshot.status.isPlaybackActive { resumePlayback() }
         screen = .playback
     }
@@ -2283,11 +2284,6 @@ final class Gate1AppModel: ObservableObject {
         marginMomentPositionIsApproximate = isApproximate
         conductor.start()
         diagnostics["marginMoment"] = "started:lead_in_ms=\(target.mediaTimeMs - sequence.startMediaTimeMs);others=\(sequence.unplayed.count - 1);approximate=\(isApproximate)"
-    }
-
-    private nonisolated static func isInlineSpokenMargin(_ margin: Interjection) -> Bool {
-        guard margin.status == "active", margin.captureKind != .written, margin.targetType == .item else { return false }
-        return margin.anchor.mediaTimeMs != nil && margin.audioPath != nil
     }
 
     /// "Play it now" on the coming-up cue.
@@ -7153,11 +7149,14 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
             interjectionAudioCompletionTask = Task { @MainActor [weak self, weak item] in
+                var heard = false
                 while !Task.isCancelled, let item {
                     try? await Task.sleep(for: .milliseconds(200))
                     guard !Task.isCancelled else { return }
                     let duration = item.duration.seconds
                     let current = item.currentTime().seconds
+                    // Heard once the voice has played; a file that fails to decode stays new (#690).
+                    if !heard, current.isFinite, current > 0 { heard = true; self?.markSharedMarginHeard(prompt.interjection) }
                     if duration.isFinite, duration > 0, current.isFinite, current >= duration - 0.05 {
                         self?.stopImportedCommentaryPlayback(resumeSource: true)
                         return
@@ -7208,6 +7207,13 @@ final class Gate1AppModel: ObservableObject {
             rate: importedCommentaryIsPaused ? 0 : Double(player.rate)
         )
         #endif
+    }
+
+    /// Its voice started playing, so the shared Margin is no longer new to this listener (#469).
+    private func markSharedMarginHeard(_ margin: ImportedCommentaryInterjection) {
+        guard margin.isNewToListener, let heard = try? store?.markImportedCommentaryInterjectionHeard(id: margin.id, at: Date()) else { return }
+        selectedItem.importedCommentaryInterjections = SharedMarginHearing.replacing(heard, in: selectedItem.importedCommentaryInterjections)
+        sharedMarginRows = sharedMarginRows.map { $0.interjection.id == heard.id ? SharedMarginRow(interjection: heard, layer: $0.layer, itemTitle: $0.itemTitle) : $0 }
     }
 
     private func stopImportedCommentaryPlayback(resumeSource: Bool) {
@@ -7350,7 +7356,7 @@ final class Gate1AppModel: ObservableObject {
     private func playImportedCommentaryCue() {
         #if canImport(AVFoundation)
         do {
-            commentaryCuePlayer = try AVAudioPlayer(data: Self.doubleChimeWAVData())
+            commentaryCuePlayer = try AVAudioPlayer(data: SharedMarginCue.doubleChimeWAVData())
             commentaryCuePlayer?.volume = 0.65
             commentaryCuePlayer?.play()
         } catch {
@@ -7358,36 +7364,6 @@ final class Gate1AppModel: ObservableObject {
         }
         #endif
     }
-
-    #if canImport(AVFoundation)
-    private static func doubleChimeWAVData() -> Data {
-        let sampleRate = 44_100
-        let segments: [(frequency: Double, seconds: Double)] = [(880, 0.08), (0, 0.08), (1_175, 0.11)]
-        var samples: [Int16] = []
-        for segment in segments {
-            let count = Int(Double(sampleRate) * segment.seconds)
-            for index in 0..<count {
-                guard segment.frequency > 0 else { samples.append(0); continue }
-                let progress = Double(index) / Double(max(1, count - 1))
-                let envelope = sin(.pi * progress)
-                let value = sin(2 * .pi * segment.frequency * Double(index) / Double(sampleRate)) * envelope * 0.30
-                samples.append(Int16(value * Double(Int16.max)))
-            }
-        }
-        let payloadBytes = samples.count * MemoryLayout<Int16>.size
-        var data = Data()
-        func appendASCII(_ value: String) { data.append(contentsOf: value.utf8) }
-        func appendLE<T: FixedWidthInteger>(_ value: T) {
-            var little = value.littleEndian
-            withUnsafeBytes(of: &little) { data.append(contentsOf: $0) }
-        }
-        appendASCII("RIFF"); appendLE(UInt32(36 + payloadBytes)); appendASCII("WAVEfmt ")
-        appendLE(UInt32(16)); appendLE(UInt16(1)); appendLE(UInt16(1)); appendLE(UInt32(sampleRate))
-        appendLE(UInt32(sampleRate * 2)); appendLE(UInt16(2)); appendLE(UInt16(16)); appendASCII("data")
-        appendLE(UInt32(payloadBytes)); samples.forEach { appendLE($0) }
-        return data
-    }
-    #endif
 
     func importPastedAssistantResponse(autoPlay: Bool = true) {
         let text = pastedAssistantResponse.trimmingCharacters(in: .whitespacesAndNewlines)
