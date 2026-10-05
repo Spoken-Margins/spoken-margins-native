@@ -1166,6 +1166,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func jumpToChapter(chapterId: String) throws -> SessionSnapshot {
+        defer { playbackRequestedAt = nil }
         try requireNavigationAllowed("jumpToChapter")
         try require("jumpToChapter", category: "timeline", capabilities: ["chapter_timing"])
         try requirePlayback("jumpToChapter")
@@ -1176,6 +1177,7 @@ public final class SessionEngine {
         guard var session = currentSession, let chapter = currentMap?.chapters.first(where: { $0.id == chapterId }) else {
             throw SessionKitError.invalidCommandForState("jumpToChapter")
         }
+        stampRequestIfSwitchingTarget(to: session.itemId)
         session.currentTargetType = .itemTextTTS
         session.currentTargetId = session.itemId
         session.phase = .itemPlayback
@@ -1905,6 +1907,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func jumpToTurnChapter(turnId: String, chapterId: String) throws -> SessionSnapshot {
+        stampRequestIfSwitchingTarget(to: turnId); defer { playbackRequestedAt = nil }
         try requireNavigationAllowed("jumpToTurnChapter")
         var session = try resolveSession(nil)
         let turns = try repository.loadTurns(sessionId: session.id)
@@ -3130,6 +3133,12 @@ public final class SessionEngine {
         snapshot.chapterTitle = progress.chapterTitle ?? currentItem?.title
         snapshot.activeInterjectionCount = (try? repository.loadInterjections(sessionId: session.id).filter { $0.status == "active" }.count) ?? snapshot.activeInterjectionCount
         snapshot.pendingAiJobCount = (try? repository.loadAIJobs(sessionId: session.id).filter { $0.status != "complete" }.count) ?? snapshot.pendingAiJobCount
+    }
+
+    /// A chapter jump to another target (a saved answer's chapter, or back to the source) is a new request; within
+    /// the current target it is a seek and keeps its request (audit of #580).
+    private func stampRequestIfSwitchingTarget(to targetId: String) {
+        if snapshot.targetId != targetId { playbackRequestedAt = now() }
     }
 
     private func publishPlaybackStart(for session: Session, phase: SessionPhase) {

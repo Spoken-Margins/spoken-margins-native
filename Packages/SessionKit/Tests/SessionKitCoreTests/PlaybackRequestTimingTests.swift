@@ -107,6 +107,31 @@ final class PlaybackRequestTimingTests: XCTestCase {
         XCTAssertEqual(resumed.playbackRequestedAt, again)
     }
 
+    /// Audit of #580: jumping to a saved answer's chapter while the article plays is a new request; another chapter
+    /// of the same answer is a seek and keeps it.
+    func testAChapterJumpToAnotherTargetIsANewRequest() throws {
+        let first = Chapter(id: "ch-1", title: "First", startChar: 0, endChar: 15, percent: 0)
+        let second = Chapter(id: "ch-2", title: "Second", startChar: 16, endChar: 29, percent: 50)
+        let answer = ConversationTurn(
+            id: "turn-357", sessionId: "session-357", role: "assistant", turnType: "assistant_response",
+            status: "complete", summary: nil, text: "First response. Second point.", rawText: nil,
+            chapters: [first, second], sourceInterjectionIds: []
+        )
+        let (engine, audio) = try makeEngine(turns: [answer])
+        audio.confirmsAtOnce = true
+        _ = try engine.resumePlayback()
+        now += 30
+        let jump = now
+
+        let toAnswer = try engine.jumpToTurnChapter(turnId: answer.id, chapterId: first.id)
+        XCTAssertEqual(toAnswer.targetId, answer.id)
+        XCTAssertEqual(toAnswer.playbackRequestedAt, jump)
+
+        now += 10
+        let within = try engine.jumpToTurnChapter(turnId: answer.id, chapterId: second.id)
+        XCTAssertEqual(within.playbackRequestedAt, jump, "another chapter of the same answer is a seek")
+    }
+
     func testAStaleOrFutureRequestTimeFallsBackToNow() {
         var watch = PlaybackStartWatch()
         let at = Date(timeIntervalSince1970: 10_000)
@@ -119,7 +144,7 @@ final class PlaybackRequestTimingTests: XCTestCase {
 
     // MARK: - Fixture
 
-    private func makeEngine() throws -> (SessionEngine, ActivatingAudioClient) {
+    private func makeEngine(turns: [ConversationTurn] = []) throws -> (SessionEngine, ActivatingAudioClient) {
         let url = "file:///episodes/357.mp3"
         let item = Item(
             id: "item-357", title: "Silence", mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil,
@@ -135,9 +160,12 @@ final class PlaybackRequestTimingTests: XCTestCase {
         let engine = SessionEngine(
             profile: RuntimeCapabilityProfile(
                 id: "phone", displayName: "Phone",
-                capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]
+                capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media", "assistant_turn_tts"]]
             ),
-            repository: InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session]),
+            repository: InMemorySessionRepository(
+                items: [item.id: item], sessions: [session.id: session],
+                turns: Dictionary(uniqueKeysWithValues: turns.map { ($0.id, $0) })
+            ),
             audio: audio,
             now: { [unowned self] in self.now }
         )
