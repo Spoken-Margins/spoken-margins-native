@@ -508,9 +508,9 @@ actor FollowedSourceCoordinator {
             )
             try repository.saveFeedEntry(entry)
             saved.append(entry)
-            if existing[id] == nil {
-                signals?.record(.itemPublished, source: ListeningSignalContext.source(for: subscription), item: ListeningSignalContext.item(for: entry, seenAt: seenAt, durationMs: item.durationMs), at: seenAt)
-            }
+            // Every retained entry, stored or not: the recorder publishes each one once, so entries
+            // saved before this build (or before a re-follow) still get their publication row.
+            signals?.record(.itemPublished, source: ListeningSignalContext.source(for: subscription), item: ListeningSignalContext.item(for: entry, seenAt: seenAt, durationMs: item.durationMs), at: seenAt)
         }
 
         for entry in existingEntries where !retainedIDs.contains(entry.id) {

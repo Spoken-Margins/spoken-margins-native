@@ -39,10 +39,11 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
             "var saved: [FeedEntry] = []",
             "try repository.saveFeedEntry(entry)",
             "saved.append(entry)",
-            "if existing[id] == nil {",
             "signals?.record(.itemPublished",
             "return (saved, existingEntries)",
         ], in: save)
+        XCTAssertFalse(save.contains("if existing[id] == nil {"),
+                       "Entries already stored still publish once; the recorder deduplicates")
     }
 
     func testManualCompletionRecordsFinishOnlyAfterTheCompletionHelperChangesTheItem() throws {
