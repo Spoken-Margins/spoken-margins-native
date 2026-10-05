@@ -438,6 +438,100 @@ final class OfflineStorageLedgerTests: XCTestCase {
         XCTAssertEqual(row.protections, [.activePlayback], "the playing episode keeps its protection")
     }
 
+    // #530: eviction decided from rows read before it deleted anything, so an episode that started
+    // playing after that read was deleted mid-play.
+    @MainActor
+    func testAnEpisodeThatStartsPlayingDuringEvictionIsNotDeleted() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "offline-ledger-evict-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let support = root.appending(path: "ApplicationSupport", directoryHint: .isDirectory)
+        let podcasts = support.appending(path: "PodcastAudio", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: podcasts, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = podcasts.appending(path: "episode.mp3")
+        try Data(repeating: 1, count: 3).write(to: file)
+        let store = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
+        try store.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 3))
+        try store.savePodcastDownload(PodcastDownloadRecord(
+            id: "download-episode", itemId: "episode", remoteURL: "https://example.com/episode.mp3",
+            localRelativePath: "episode.mp3", state: .availableOffline, bytesWritten: 3
+        ))
+        try store.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: "podcast-offline-episode", itemId: "episode", category: .podcast,
+            relativePath: "PodcastAudio/episode.mp3", byteCount: 3, isReproducible: true
+        ))
+        let fileManager = EvictionHookFileManager()
+        let ledger = OfflineStorageLedger(repository: store, rootDirectory: support, fileManager: fileManager)
+        let coordinator = try PodcastDownloadCoordinator(
+            store: store, ledger: ledger, applicationSupportDirectory: support,
+            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false
+        )
+        fileManager.beforeDelete = {
+            // The plan has chosen the idle episode. The ledger runs off the main actor, which is
+            // free while this test awaits it, so playback can start now.
+            DispatchQueue.main.sync { MainActor.assumeIsolated { coordinator.configureActiveItem("episode") } }
+        }
+
+        do {
+            _ = try await ledger.reserve(ownerId: "other-download", byteCount: 3)
+            XCTFail("Nothing could be freed, so the reservation must be refused")
+        } catch OfflineStorageLedgerError.insufficientSpace {}
+
+        XCTAssertTrue(fileManager.didFire, "playback started after the eviction plan was made")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path), "the playing episode's file survives")
+        let row = try XCTUnwrap(store.loadOwnedOfflineAssets().first { $0.id == "podcast-offline-episode" })
+        XCTAssertEqual(row.protections, [.activePlayback])
+        XCTAssertNotNil(coordinator.validatedLocalURL(for: "episode"))
+        XCTAssertTrue(try store.loadOfflineStorageReservations().isEmpty)
+        coordinator.shutdown()
+    }
+
+    // #530, Codex P1 on 3ff22d0: the row was deleted before its file, so playback starting in
+    // between installed no protection, got the file's URL, and then lost the file.
+    func testAnEvictedRowIsNeverVisibleWhileItsFileStillExists() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "offline-ledger-unlink-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = RowDeletionObservingRepository()
+        try repository.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 7))
+        let ledger = OfflineStorageLedger(repository: repository, rootDirectory: root)
+        let file = try writeAsset(Fixture(root: root, repository: repository, ledger: ledger),
+                                  relativePath: "PodcastAudio/episode.m4a", category: .podcast)
+        repository.afterRowDeleted = { _ in
+            // Playback starting now finds no row to protect, so it must find no file either.
+            repository.fileExistedWhenRowWasDeleted = FileManager.default.fileExists(atPath: file.path)
+        }
+
+        _ = try await ledger.reserve(ownerId: "other-download", byteCount: 7)
+
+        XCTAssertEqual(repository.fileExistedWhenRowWasDeleted, false,
+                       "the file must be gone by the time its row's deletion is visible")
+    }
+
+    // #530, Codex P2 on 3ff22d0: a file that couldn't be removed lost its row anyway, so its bytes
+    // stopped counting and the next download could go over the budget.
+    func testAFileThatCannotBeRemovedStaysCharged() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "offline-ledger-unremovable-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = InMemorySessionRepository()
+        try repository.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 7))
+        let ledger = OfflineStorageLedger(repository: repository, rootDirectory: root, fileManager: UnremovableFileManager())
+        let file = try writeAsset(Fixture(root: root, repository: repository, ledger: ledger),
+                                  relativePath: "PodcastAudio/episode.m4a", category: .podcast)
+
+        for attempt in 1...2 {
+            do {
+                _ = try await ledger.reserve(ownerId: "other-download-\(attempt)", byteCount: 7)
+                XCTFail("Attempt \(attempt): nothing could be freed, so the reservation must be refused")
+            } catch OfflineStorageLedgerError.insufficientSpace {}
+        }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        let inventory = try await ledger.inventoryBytes()
+        XCTAssertEqual(inventory, 7, "the file that stayed on disk is still charged")
+        XCTAssertTrue(try repository.loadOfflineStorageReservations().isEmpty)
+    }
+
     private func writeAsset(_ fixture: Fixture, relativePath: String, category: OfflineAssetCategory) throws -> URL {
         let file = fixture.root.appending(path: relativePath)
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -508,5 +602,47 @@ private final class FileCheckHookFileManager: FileManager, @unchecked Sendable {
             hook()
         }
         return super.fileExists(atPath: path, isDirectory: isDirectory)
+    }
+}
+
+/// Runs a hook the first time eviction checks the episode's file, after the plan is made and
+/// before anything is deleted. Reconcile's directory-aware checks don't fire it.
+private final class EvictionHookFileManager: FileManager, @unchecked Sendable {
+    var beforeDelete: (@Sendable () -> Void)?
+    private(set) var didFire = false
+    private var checkingWithDirectory = false
+
+    override func fileExists(atPath path: String, isDirectory: UnsafeMutablePointer<ObjCBool>?) -> Bool {
+        checkingWithDirectory = true
+        defer { checkingWithDirectory = false }
+        return super.fileExists(atPath: path, isDirectory: isDirectory)
+    }
+
+    override func fileExists(atPath path: String) -> Bool {
+        if !checkingWithDirectory, !didFire, path.hasSuffix("episode.mp3"), let hook = beforeDelete {
+            didFire = true
+            hook()
+        }
+        return super.fileExists(atPath: path)
+    }
+}
+
+/// Reports each conditional row deletion as soon as it commits, which is when the app's main actor
+/// could next read the store.
+private final class RowDeletionObservingRepository: InMemorySessionRepository, @unchecked Sendable {
+    var afterRowDeleted: ((String) -> Void)?
+    var fileExistedWhenRowWasDeleted: Bool?
+
+    override func deleteOwnedOfflineAsset(id: String, if shouldDelete: (OwnedOfflineAsset) -> Bool) throws -> Bool {
+        let deleted = try super.deleteOwnedOfflineAsset(id: id, if: shouldDelete)
+        if deleted { afterRowDeleted?(id) }
+        return deleted
+    }
+}
+
+/// A file system that refuses every removal, as a locked or permission-denied file would.
+private final class UnremovableFileManager: FileManager, @unchecked Sendable {
+    override func removeItem(at URL: URL) throws {
+        throw CocoaError(.fileWriteNoPermission)
     }
 }

@@ -392,6 +392,14 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
             return asset
         }
     }
+    @discardableResult
+    public func deleteOwnedOfflineAsset(id: String, if shouldDelete: (OwnedOfflineAsset) -> Bool) throws -> Bool {
+        ownedOfflineAssetsLock.withLock {
+            guard let asset = ownedOfflineAssets[id], shouldDelete(asset) else { return false }
+            ownedOfflineAssets[id] = nil
+            return true
+        }
+    }
     public func saveOfflineStorageReservation(_ reservation: OfflineStorageReservation) throws { offlineStorageReservations[reservation.id] = reservation }
     public func loadOfflineStorageReservations() throws -> [OfflineStorageReservation] { offlineStorageReservations.values.sorted { $0.id < $1.id } }
     public func deleteOfflineStorageReservation(id: String) throws { offlineStorageReservations[id] = nil }
