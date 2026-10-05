@@ -104,6 +104,48 @@ final class FirstRunCatalogDrawerTests: XCTestCase {
         XCTAssertTrue(CatalogFollowState.followedEntryIds(in: catalog, recordedSourceIds: recorded, subscriptions: []).isEmpty)
     }
 
+    /// #646: follow a show in the drawer, unfollow it in Following, and open the drawer again in
+    /// the same app run. The row said Following and refused a second tap, because the drawer's
+    /// remembered success outranked the live subscriptions.
+    func testAShowUnfollowedSinceTheDrawerFollowedItCanBeFollowedAgainAfterReopening() {
+        typealias State = CatalogDrawerFollowState
+        let rows = ["unfollowed", "following", "failed", "elsewhere"]
+        var drawer: [String: State] = ["unfollowed": .followed, "following": .following, "failed": .failed("Timed out")]
+
+        // While the drawer stays open, a show it just followed reads Following even before the
+        // subscription list has caught up.
+        XCTAssertEqual(State.merged(drawerStates: drawer, liveFollowedEntryIds: [], entryIds: rows)["unfollowed"], .followed)
+
+        // Unfollowed in Following; only "elsewhere" is still subscribed. Then the drawer opens again.
+        drawer = State.keptOnReopening(drawer)
+        let reopened = State.merged(drawerStates: drawer, liveFollowedEntryIds: ["elsewhere"], entryIds: rows)
+
+        XCTAssertNil(reopened["unfollowed"], "shows Follow again, so a tap can follow it again")
+        XCTAssertEqual(reopened["following"], .following, "a follow in flight still blocks a second tap")
+        XCTAssertEqual(reopened["failed"], .failed("Timed out"), "a failure stays on its row")
+        XCTAssertEqual(reopened["elsewhere"], .followed)
+
+        // Followed again: the live subscription shows it as followed after the next reopening too.
+        drawer["unfollowed"] = .followed
+        drawer = State.keptOnReopening(drawer)
+        XCTAssertEqual(State.merged(drawerStates: drawer, liveFollowedEntryIds: ["unfollowed"], entryIds: rows)["unfollowed"], .followed)
+    }
+
+    /// #661 (Test Desk): following One Useful Thing from the Writers row said "Following 1 show".
+    /// A newsletter isn't a show.
+    func testFooterCountsNewslettersAsNewslettersNotShows() throws {
+        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.bundledSnapshot))
+        let newsletter = try XCTUnwrap(catalog.entries(forSubject: "writers").first)
+        let show = try XCTUnwrap(catalog.entries(forSubject: nil).first { $0.contentKind == .podcast })
+
+        XCTAssertEqual(CatalogFollowedSummary.text(followedKinds: [newsletter.contentKind]), "Following 1 newsletter")
+        XCTAssertEqual(CatalogFollowedSummary.text(followedKinds: [show.contentKind]), "Following 1 show")
+        XCTAssertEqual(CatalogFollowedSummary.text(followedKinds: [.podcast, .newsletter, .podcast]), "Following 2 shows and 1 newsletter")
+        XCTAssertEqual(CatalogFollowedSummary.text(followedKinds: [.newsletter, .newsletter]), "Following 2 newsletters")
+        XCTAssertEqual(CatalogFollowedSummary.text(followedKinds: [.podcast, .newsletter, .article]), "Following 1 show, 1 newsletter and 1 feed")
+        XCTAssertNil(CatalogFollowedSummary.text(followedKinds: []), "no footer before anything is followed")
+    }
+
     func testDrawerOpensByItselfOnlyOnAFreshInstallAndOnlyOnce() {
         XCTAssertTrue(FirstRunCatalogDrawerPolicy.opensAutomatically(libraryWasEmptyAtLaunch: true, hasSeenDrawer: false, followedSourceCount: 0))
         XCTAssertFalse(FirstRunCatalogDrawerPolicy.opensAutomatically(libraryWasEmptyAtLaunch: true, hasSeenDrawer: true, followedSourceCount: 0), "once")

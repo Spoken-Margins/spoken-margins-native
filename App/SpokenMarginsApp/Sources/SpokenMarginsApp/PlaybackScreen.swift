@@ -79,8 +79,6 @@ struct PlaybackScreen: View {
                                     openTimeline()
                                 }
                             }
-                            SourceFollowSuggestionCard(appearance: .playback)
-                            ManualSourceFollowButton(appearance: .playback)
                         }
                         .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
                         .padding(.vertical, 18)
@@ -1502,7 +1500,7 @@ struct PlaybackScreen: View {
                                     }
                                     .buttonStyle(IconButtonStyle())
                                     .disabled(model.selectedItem.interjections.filter { $0.targetId == turn.id && $0.targetType != .item }.isEmpty)
-                                    .accessibilityLabel("Copy interjections for \(turnTitle(turn))")
+                                    .accessibilityLabel("Copy Margins for \(turnTitle(turn))")
                                     .accessibilityIdentifier("conversation.copyTurnInterjections.\(turn.id)")
                                     Button {
                                         model.playTurn(turn)
@@ -1583,7 +1581,7 @@ private struct GuidedOnboardingPlaybackCard: View {
     private var stageContent: some View {
         switch model.guidedOnboardingStage {
         case .practiceInterjection:
-            Text("Practice making an Margin")
+            Text("Practice making a Margin")
                 .font(.title3.bold())
             Text("Let the welcome source play until an idea occurs to you, then record a short note. Spoken Margins will anchor it to this listening session.")
                 .foregroundStyle(AppColors.secondaryText)
@@ -1592,7 +1590,7 @@ private struct GuidedOnboardingPlaybackCard: View {
                     .buttonStyle(PrimaryButtonStyle())
                     .accessibilityIdentifier("onboarding.interjection.done.button")
             } else {
-                Button("Make an Interjection", action: model.beginInterjection)
+                Button("Add a Margin", action: model.beginInterjection)
                     .buttonStyle(PrimaryButtonStyle())
                     .disabled(!model.hasActiveSession)
                     .accessibilityIdentifier("onboarding.interjection.start.button")
@@ -1609,7 +1607,7 @@ private struct GuidedOnboardingPlaybackCard: View {
             Text("AI is optional")
                 .font(.title3.bold())
             Text(model.remoteProviderExperienceEnabled
-                ? "Summarize Notes synthesizes this session’s interjections. Discuss answers a question using relevant source and session context. Both require your OpenAI API key, network access, and permission to send content."
+                ? "Summarize Notes sums up this session’s Margins. Discuss answers a question using relevant source and session context. Both require your OpenAI API key, network access, and permission to send content."
                 : "Summarize Notes uses Apple’s on-device model when it is available. Nothing is sent to a third-party AI service. You can also copy notes to another chatbot and paste its response back here.")
                 .foregroundStyle(AppColors.secondaryText)
             if model.remoteProviderExperienceEnabled {
