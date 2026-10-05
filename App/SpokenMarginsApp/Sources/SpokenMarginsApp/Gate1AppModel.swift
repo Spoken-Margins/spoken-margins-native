@@ -1003,6 +1003,7 @@ final class Gate1AppModel: ObservableObject {
     /// A fresh install: the Library was empty before the welcome sample was added (B1 drawer).
     private(set) var libraryWasEmptyAtLaunch = false
     var readablePageExtractor: any ReadablePageExtracting = AppOwnedReadablePageExtractor() // tests replace it (#223)
+    let sharedLinkVoiceover = SharedLinkVoiceover() // tests replace its page fetch (#810)
     private var sourceSuggestionChecks: Set<String> = []
     private var followDiscoveries: [String: Task<[SourceCandidateEvidence], Error>] = [:]
     @Published private var followOffers: [String: FollowOffer] = [:]
@@ -3136,10 +3137,13 @@ final class Gate1AppModel: ObservableObject {
             createdAt: Date()
         )
         do {
-            let result = try await PublicPodcastLinkResolver().resolveAsync(request)
+            let fetched = FetchedPageMemo() // the voiceover lookup reads the post page from here (#810)
+            let result = try await PublicPodcastLinkResolver().remembering(fetched).resolveAsync(request)
             if result.isPDFDocument { return try await importPDFFromLinkField(url) }
             if let article = await readLinkAsArticleOrOfferSafari(url, after: result, startSession: shouldStartSession) {
-                return importBrowserText(article)
+                guard let itemId = importBrowserTextItem(article) else { return false }
+                rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: fetched)
+                return true
             }
             return importResolvedSourceLink(request: request, result: result, startSession: shouldStartSession)
         } catch {
@@ -3414,15 +3418,18 @@ final class Gate1AppModel: ObservableObject {
             createdAt: Date()
         )
         let result: LinkResolutionResult
+        let fetched = FetchedPageMemo() // the voiceover lookup reads the post page from here (#810)
         if let sourceLinkResolver {
-            result = try sourceLinkResolver.resolve(request)
+            result = try ((sourceLinkResolver as? PublicPodcastLinkResolver)?.remembering(fetched) ?? sourceLinkResolver).resolve(request)
         } else {
-            result = try await PublicPodcastLinkResolver().resolveAsync(request)
+            result = try await PublicPodcastLinkResolver().remembering(fetched).resolveAsync(request)
         }
         guard result.status == .playable else {
             if feedEntry == nil, result.isPDFDocument { try await importRemotePDFInBackground(url: url); return nil } // #758
             if feedEntry == nil, let article = try await LinkArticleFallback.article(for: url, after: result, startSession: false, using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }) {
-                try importBrowserTextInBackground(article); return nil
+                let itemId = try importBrowserTextInBackground(article)
+                rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: fetched)
+                return nil
             }
             let provider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
             diagnostics["lastSourceLinkFailureCategory"] = result.failureReason
@@ -3656,11 +3663,16 @@ final class Gate1AppModel: ObservableObject {
 
     @discardableResult
     func importBrowserText(_ handoff: BrowserTextHandoff) -> Bool {
+        importBrowserTextItem(handoff) != nil
+    }
+
+    /// `importBrowserText`, returning the new item's id, or nil when the import failed.
+    private func importBrowserTextItem(_ handoff: BrowserTextHandoff) -> String? {
         do {
             if hasActiveSession {
                 let itemId = try importBrowserTextInBackground(handoff)
                 reportAddedToLibrary(title: handoff.source.title, itemId: itemId)
-                return true
+                return itemId
             }
             let store = try requireStore()
             let engine = try makeEngine(store: store)
@@ -3685,10 +3697,23 @@ final class Gate1AppModel: ObservableObject {
                 screen = .item
                 reportConfirmation("Imported browser text from \(handoff.source.title).")
             }
-            return true
+            return importedItemId
         } catch {
             reportFailure(error, context: "Browser text import failed")
-            return false
+            return nil
+        }
+    }
+
+    /// A shared or pasted Substack post keeps its voiceover beside the article (#810). Runs after the import,
+    /// so a slow page never holds up the share.
+    private func rememberSharedLinkVoiceover(sharedURL: URL, article: BrowserTextHandoff, itemId: String, fetched: FetchedPageMemo) {
+        guard let store = try? requireStore() else { return }
+        let transcriber = sourceTranscriptionClient
+        let voiceover = sharedLinkVoiceover
+        Task { [weak self] in
+            await voiceover.remember(sharedURL: sharedURL, article: article, itemId: itemId, fetched: fetched, store: store, transcriber: transcriber) {
+                self?.diagnostics["sharedLinkVoiceover"] = $0
+            }
         }
     }
 
@@ -12139,67 +12164,6 @@ final class Gate1AppModel: ObservableObject {
         default:
             return nil
         }
-    }
-
-    static func sanitizedBrowserTextHandoff(_ handoff: BrowserTextHandoff) -> BrowserTextHandoff {
-        guard handoff.captureMode == .readablePage,
-              handoff.text.range(of: #"<[^>]+>"#, options: .regularExpression) != nil else {
-            return handoff
-        }
-        var sanitized = handoff
-        sanitized.text = handoff.contentFormat == .markdown
-            ? stripEmbeddedHTMLPreservingMarkdown(handoff.text)
-            : stripHTML(handoff.text)
-        sanitized.text = sanitized.text
-            .replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return sanitized
-    }
-
-    private static func stripEmbeddedHTMLPreservingMarkdown(_ markdown: String) -> String {
-        var result = markdown
-            .replacingOccurrences(
-                of: #"<\s*(script|style|video|audio|figure|svg|iframe|canvas|noscript)\b[^>]*>[\s\S]*?<\s*/\s*\1\s*>"#,
-                with: "\n",
-                options: [.regularExpression, .caseInsensitive]
-            )
-            .replacingOccurrences(
-                of: #"<\s*(source|img)\b[^>]*>"#,
-                with: " ",
-                options: [.regularExpression, .caseInsensitive]
-            )
-
-        for level in 1...6 {
-            result = result
-                .replacingOccurrences(
-                    of: #"<\s*h\#(level)\b[^>]*>"#,
-                    with: "\n\(String(repeating: "#", count: level)) ",
-                    options: [.regularExpression, .caseInsensitive]
-                )
-                .replacingOccurrences(
-                    of: #"<\s*/\s*h\#(level)\s*>"#,
-                    with: "\n",
-                    options: [.regularExpression, .caseInsensitive]
-                )
-        }
-
-        return result
-            .replacingOccurrences(
-                of: #"</?(p|div|section|article|li|br)\b[^>]*>"#,
-                with: "\n",
-                options: [.regularExpression, .caseInsensitive]
-            )
-            .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
-    }
-
-    private static func stripHTML(_ html: String) -> String {
-        html.replacingOccurrences(of: #"<script[\s\S]*?</script>"#, with: " ", options: [.regularExpression, .caseInsensitive])
-            .replacingOccurrences(of: #"<style[\s\S]*?</style>"#, with: " ", options: [.regularExpression, .caseInsensitive])
-            .replacingOccurrences(of: #"<video[\s\S]*?</video>"#, with: " ", options: [.regularExpression, .caseInsensitive])
-            .replacingOccurrences(of: #"<source[^>]*>"#, with: " ", options: [.regularExpression, .caseInsensitive])
-            .replacingOccurrences(of: #"</?(p|div|section|article|h[1-6]|li|br)[^>]*>"#, with: "\n", options: [.regularExpression, .caseInsensitive])
-            .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
     }
 
     private func scheduleFullSourceTranscriptionForListeningMap(for item: Item, localSourceURL: URL? = nil) {
