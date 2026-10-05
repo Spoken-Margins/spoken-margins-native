@@ -189,6 +189,45 @@ public enum CommunityMapUploadPolicy {
             .sorted { $0.lastAttemptAt < $1.lastAttemptAt }
     }
 
+    /// Readies a failed record for its retry, and says whether to try its item again. The record
+    /// is closed instead when its item or transcript is gone, or the episode no longer has a key.
+    /// When the episode's key has changed (a reimport filled in its GUID), its attempts move to
+    /// the new key, unless that key already has a record, and the old row is closed. Either way
+    /// the record can't stay due on every launch and crowd other episodes out of the retry batch.
+    public static func prepareRetry(
+        _ record: CommunityMapUploadRecord,
+        item: Item?,
+        hasTranscript: Bool,
+        repository: CommunityMapUploadRepository,
+        now: Date
+    ) -> Bool {
+        guard let item, hasTranscript, let key = CommunityMapEpisodeKey.key(for: item) else {
+            close(record, reason: "item_gone", repository: repository, now: now)
+            return false
+        }
+        guard key != record.id else { return true }
+        do {
+            if try repository.loadCommunityMapUpload(episodeKey: key) == nil {
+                var moved = record
+                moved.id = key
+                try repository.saveCommunityMapUpload(moved)
+            }
+        } catch {
+            // Storage failed: leave the old row for the next retry to move.
+            return true
+        }
+        close(record, reason: "key_changed", repository: repository, now: now)
+        return true
+    }
+
+    private static func close(_ record: CommunityMapUploadRecord, reason: String, repository: CommunityMapUploadRepository, now: Date) {
+        var closed = record
+        closed.state = .rejected
+        closed.lastAttemptAt = now
+        closed.lastOutcome = "skipped:\(reason)"
+        try? repository.saveCommunityMapUpload(closed)
+    }
+
     /// Whether the transcript's times come from listening, not from one block of text spread over
     /// the episode. The server keeps the first map made for an episode, so an untimed upload would
     /// decide the map every other phone sees.
@@ -293,10 +332,10 @@ public struct CommunityMapTranscriptUpload: Codable, Equatable, Sendable {
     /// A publisher's transcript can read "visit https://example.com/promo"; the body carries no
     /// URL of any kind, so web addresses are cut out of the text and the spaces around them
     /// closed up: anything with a scheme (`https://`, `tel:`, `mailto:` and the like), `//` or
-    /// `www.`, email addresses, IPv4 addresses with any port or path, and any run of dotted words with no space
-    /// after a dot whose last part has two or more letters ("example.ai", "shop.example.co.uk",
-    /// "example.net/deal"). Abbreviations whose parts are single letters ("e.g.", "U.S.",
-    /// "Ph.D.") and numbers ("3.30", "2.5") are kept.
+    /// `www.`, email addresses, IPv4 addresses with any port or path, and any run of dotted
+    /// words with no space after a dot whose last part has two or more letters, in any script ("example.ai",
+    /// "shop.example.co.uk", "example.net/deal", "例子.中国/优惠"). Abbreviations whose parts
+    /// are single letters ("e.g.", "U.S.", "Ph.D.") and numbers ("3.30", "2.5") are kept.
     static func withoutLinks(_ text: String) -> String {
         let range = NSRange(text.startIndex..., in: text)
         let stripped = linkPattern.stringByReplacingMatches(in: text, range: range, withTemplate: " ")
@@ -304,7 +343,7 @@ public struct CommunityMapTranscriptUpload: Codable, Equatable, Sendable {
     }
 
     private static let linkPattern = try! NSRegularExpression(
-        pattern: #"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.|(?:tel|mailto|sms|file|data|urn|geo|magnet|callto|facetime|skype|bitcoin):)\S+|(?<![\w:/.])//\S+|\b\d{1,3}(?:\.\d{1,3}){3}\b(?::\d+)?(?:/\S*)?|\S+@(?:[a-z0-9-]+\.)+[a-z]{2,}\S*|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/\S*|\b)"#
+        pattern: #"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.|(?:tel|mailto|sms|file|data|urn|geo|magnet|callto|facetime|skype|bitcoin):)\S+|(?<![\w:/.])//\S+|\b\d{1,3}(?:\.\d{1,3}){3}\b(?::\d+)?(?:/\S*)?|\S+@(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}\S*|\b(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}(?:/\S*|\b)"#
     )
 
     public func encoded() throws -> Data {

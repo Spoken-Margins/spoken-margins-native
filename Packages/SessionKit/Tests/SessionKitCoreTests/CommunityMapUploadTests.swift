@@ -337,6 +337,8 @@ final class CommunityMapUploadTests: XCTestCase {
                                      text: "Call tel:+15551234567, email hello@example.com or mailto:hi@example.org, open file:/tmp/x. Note: done."),
                 MediaTimelineSegment(id: "g", startMs: 9_950, endMs: 9_990,
                                      text: "Visit //192.0.2.1/promo, (//cdn.example.com/x) or 192.0.2.1:8080 and 10.0.0.1/admin; and/or 1.5x."),
+                MediaTimelineSegment(id: "h", startMs: 9_991, endMs: 9_999,
+                                     text: "请看 例子.中国/优惠 或 例子.中国 和 пример.рф today."),
             ], chapters: [])
         ))
         XCTAssertEqual(upload.segments.map(\.text), [
@@ -346,8 +348,9 @@ final class CommunityMapUploadTests: XCTestCase {
             "Try or ; a Ph.D. at 2.5x speed, i.e. 1.5x/day.",
             "Call email or open Note: done.",
             "Visit ( or and and/or 1.5x.",
+            "请看 或 和 today.",
         ])
-        XCTAssertEqual(upload.segments.map(\.startMs), [1_000, 5_000, 7_000, 9_000, 9_600, 9_950])
+        XCTAssertEqual(upload.segments.map(\.startMs), [1_000, 5_000, 7_000, 9_000, 9_600, 9_950, 9_991])
 
         XCTAssertNil(CommunityMapTranscriptUpload.make(episodeKey: expectedKey, durationMs: 10_000, language: "en",
                                                        timeline: TranscriptTimeline(segments: [], chapters: [])))
@@ -516,6 +519,56 @@ final class CommunityMapUploadTests: XCTestCase {
         let lost = await upload(offline, repository: InMemorySessionRepository())
         XCTAssertEqual(lost, .failed("network"))
         XCTAssertEqual(lost.diagnostic, "failed:network")
+    }
+
+    func testARetryWhoseEpisodeGainedAGUIDMovesToTheNewKeyAndClosesTheOldRow() throws {
+        let repository = InMemorySessionRepository()
+        let oldKey = try XCTUnwrap(CommunityMapEpisodeKey.key(for: episode(guid: nil)))
+        let stale = CommunityMapUploadRecord(id: oldKey, itemId: "item-episode", state: .failed, attempts: 2,
+                                             lastAttemptAt: now, lastOutcome: "failed:503")
+        try repository.saveCommunityMapUpload(stale)
+        let later = now.addingTimeInterval(86_400)
+        // A reimport filled in the GUID, so the episode's key is now the GUID's.
+        XCTAssertTrue(CommunityMapUploadPolicy.prepareRetry(stale, item: episode(), hasTranscript: true, repository: repository, now: later))
+        let old = try XCTUnwrap(repository.loadCommunityMapUpload(episodeKey: oldKey))
+        XCTAssertEqual(old.state, .rejected)
+        XCTAssertEqual(old.lastOutcome, "skipped:key_changed")
+        let moved = try XCTUnwrap(repository.loadCommunityMapUpload(episodeKey: expectedKey))
+        XCTAssertEqual(moved.state, .failed)
+        XCTAssertEqual(moved.attempts, 2)
+        XCTAssertEqual(CommunityMapUploadPolicy.dueForRetry(try repository.loadCommunityMapUploads(), now: later).map(\.id), [expectedKey])
+
+        // The new key's own record is kept as it is.
+        let uploaded = InMemorySessionRepository()
+        let done = CommunityMapUploadRecord(id: expectedKey, itemId: "item-other", state: .uploaded, attempts: 1,
+                                            lastAttemptAt: now, lastOutcome: "202")
+        try uploaded.saveCommunityMapUpload(done)
+        try uploaded.saveCommunityMapUpload(stale)
+        XCTAssertTrue(CommunityMapUploadPolicy.prepareRetry(stale, item: episode(), hasTranscript: true, repository: uploaded, now: later))
+        XCTAssertEqual(try uploaded.loadCommunityMapUpload(episodeKey: expectedKey), done)
+        XCTAssertEqual(try uploaded.loadCommunityMapUpload(episodeKey: oldKey)?.state, .rejected)
+
+        // An unchanged key is simply retried.
+        let current = CommunityMapUploadRecord(id: expectedKey, itemId: "item-episode", state: .failed, attempts: 1,
+                                               lastAttemptAt: now, lastOutcome: "failed:503")
+        let same = InMemorySessionRepository()
+        try same.saveCommunityMapUpload(current)
+        XCTAssertTrue(CommunityMapUploadPolicy.prepareRetry(current, item: episode(), hasTranscript: true, repository: same, now: later))
+        XCTAssertEqual(try same.loadCommunityMapUploads(), [current])
+    }
+
+    func testARetryWhoseItemTranscriptOrKeyIsGoneIsClosed() throws {
+        let record = CommunityMapUploadRecord(id: expectedKey, itemId: "item-episode", state: .failed, attempts: 1,
+                                              lastAttemptAt: now, lastOutcome: "failed:503")
+        for (item, hasTranscript) in [(nil, true), (episode(), false), (episode(guid: nil, enclosure: ""), true)] as [(Item?, Bool)] {
+            let repository = InMemorySessionRepository()
+            try repository.saveCommunityMapUpload(record)
+            XCTAssertFalse(CommunityMapUploadPolicy.prepareRetry(record, item: item, hasTranscript: hasTranscript,
+                                                                 repository: repository, now: now.addingTimeInterval(86_400)))
+            let closed = try XCTUnwrap(repository.loadCommunityMapUpload(episodeKey: expectedKey))
+            XCTAssertEqual(closed.state, .rejected)
+            XCTAssertEqual(closed.lastOutcome, "skipped:item_gone")
+        }
     }
 
     // MARK: Storage
