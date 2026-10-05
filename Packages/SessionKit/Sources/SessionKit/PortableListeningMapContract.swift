@@ -43,11 +43,16 @@ public enum PortableListeningMapContract {
     /// Every rule the proposal breaks, checking quotations against each of `sourceTexts`. Each text keeps
     /// its own character offsets, so an item's text and an episode's transcript are passed separately,
     /// never joined: a scene's character range is read in each text it fits.
+    ///
+    /// `withheldTexts` are source texts the packet doesn't carry, such as the device's transcript of an
+    /// episode shared by reference. Any 10-word run of one is a leak wherever the scene sits, so they are
+    /// checked whole, never just the scene's range (Codex audit on 555209f).
     public static func violations(
         in proposal: PortableListeningMapProposalArtifact,
-        sourceTexts: [String]
+        sourceTexts: [String],
+        withheldTexts: [String] = []
     ) -> [Violation] {
-        violations(in: proposal, sources: SourceTexts(sourceTexts))
+        violations(in: proposal, sources: SourceTexts(sourceTexts, withheld: withheldTexts))
     }
 
     private static func violations(in proposal: PortableListeningMapProposalArtifact, sources: SourceTexts) -> [Violation] {
@@ -102,12 +107,14 @@ public enum PortableListeningMapContract {
         forSharing(proposals, sources: SourceTexts(itemText.map { [$0] } ?? []))
     }
 
-    /// `forSharing`, checking quotations against each of `sourceTexts` in its own coordinates.
+    /// `forSharing`, checking quotations against each of `sourceTexts` in its own coordinates and
+    /// against the whole of each of `withheldTexts`, as `violations(in:sourceTexts:withheldTexts:)` does.
     public static func forSharing(
         _ proposals: [PortableListeningMapProposalArtifact],
-        sourceTexts: [String]
+        sourceTexts: [String],
+        withheldTexts: [String] = []
     ) -> [PortableListeningMapProposalArtifact] {
-        forSharing(proposals, sources: SourceTexts(sourceTexts))
+        forSharing(proposals, sources: SourceTexts(sourceTexts, withheld: withheldTexts))
     }
 
     private static func forSharing(
@@ -221,8 +228,9 @@ public enum PortableListeningMapContract {
         sharesRun(words(text), runs(words(source), length: length), length: length)
     }
 
-    /// Whether a scene's text quotes its source: its anchors' quoted text and context, and the scene's
-    /// span of each source text (all of that text when the scene's character range doesn't fit it).
+    /// Whether a scene's text quotes its source: its anchors' quoted text and context, the scene's span
+    /// of each source text (all of that text when the scene's character range doesn't fit it), and the
+    /// whole of each withheld text.
     private static func quotesSource(_ text: String, scene: PortableListeningMapScene, sources: SourceTexts) -> Bool {
         let summaryWords = words(text)
         guard summaryWords.count >= verbatimRunWords else { return false }
@@ -236,7 +244,7 @@ public enum PortableListeningMapContract {
         let lower = scene.startAnchor.startChar ?? scene.startAnchor.endChar
         let upper = scene.endAnchor.endChar ?? scene.endAnchor.startChar
         return sources.texts.contains { source in
-            if let lower, let upper, 0 <= lower, lower < upper, upper <= source.characters.count {
+            if !source.isWithheld, let lower, let upper, 0 <= lower, lower < upper, upper <= source.characters.count {
                 let span = String(source.characters[lower..<upper])
                 return sharesRun(summaryWords, runs(words(span), length: verbatimRunWords), length: verbatimRunWords)
             }
@@ -248,18 +256,21 @@ public enum PortableListeningMapContract {
     private struct SourceTexts {
         let texts: [SourceText]
 
-        init(_ texts: [String]) {
-            self.texts = texts.filter { !$0.isEmpty }.map(SourceText.init)
+        init(_ texts: [String], withheld: [String] = []) {
+            self.texts = texts.filter { !$0.isEmpty }.map { SourceText($0, isWithheld: false) }
+                + withheld.filter { !$0.isEmpty }.map { SourceText($0, isWithheld: true) }
         }
     }
 
     private final class SourceText {
         let characters: [Character]
+        let isWithheld: Bool
         private let text: String
         private(set) lazy var allRuns: Set<String> = runs(words(text), length: verbatimRunWords)
 
-        init(_ text: String) {
+        init(_ text: String, isWithheld: Bool) {
             self.text = text
+            self.isWithheld = isWithheld
             self.characters = Array(text)
         }
     }

@@ -300,6 +300,27 @@ final class ListeningMapContractTests: XCTestCase {
         XCTAssertEqual(PortableListeningMapContract.violations(in: map, sourceTexts: [itemText]), [], "the item text alone isn't quoted")
     }
 
+    /// Codex audit on 555209f: a by-reference packet carries none of the transcript, so a summary that
+    /// copies transcript from outside its scene's range leaks it just the same. A withheld text is
+    /// checked whole; an embedded one still only within the scene's range.
+    func testAWithheldTextIsCheckedWholeWhateverTheSceneRange() {
+        let opening = "The hosts open with a long story about the harbour and its keepers over many years. "
+        let transcript = opening + "The committee met at dawn and agreed that the old bridge must close before winter storms arrive."
+        let map = proposal([PortableListeningMapScene(
+            id: "scene-0", order: 0,
+            summaryText: "In short, the committee met at dawn and agreed that the old bridge must close.",
+            summaryProvenance: .modelGenerated, eligibility: .eligible, eligibilityReason: nil,
+            startAnchor: .init(anchorType: .transcript, startChar: 0, mediaTimeMs: 0),
+            endAnchor: .init(anchorType: .transcript, endChar: opening.count, mediaTimeMs: 60_000)
+        )])
+        XCTAssertEqual(PortableListeningMapContract.violations(in: map, sourceTexts: [transcript]), [], "precondition: outside its range")
+        XCTAssertEqual(
+            PortableListeningMapContract.violations(in: map, sourceTexts: [], withheldTexts: [transcript]),
+            [.summaryQuotesSource(sceneId: "scene-0")]
+        )
+        XCTAssertEqual(PortableListeningMapContract.forSharing([map], sourceTexts: [], withheldTexts: [transcript]), [])
+    }
+
     /// Codex audit on 17614c9: a scene with no summary could still carry a title, chapter title or
     /// eligibility reason copying ten words of the transcript, and the on-device labeller checks a
     /// reason's length only. Sharing drops the quoting label and keeps the map.

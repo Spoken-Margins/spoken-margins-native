@@ -306,6 +306,41 @@ final class ListeningMapPacketTests: XCTestCase {
         XCTAssertTrue(found.isSubset(of: allowed), "transcript outside reviewed context: \(found.subtracting(allowed).sorted().prefix(3))")
     }
 
+    /// Codex audit on 555209f: a positioned scene whose summary copies transcript from outside its own
+    /// character range passed the scene-range check, and a by-reference packet carried the quotation.
+    /// The builder now checks the device's transcript whole, so the map stays behind and the Margin goes.
+    func testAPositionedSceneQuotingTranscriptOutsideItsRangeStaysOutOfTheArchive() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let timeline = syntheticTranscript(segments: 10, segmentMs: 15_000)
+        let transcript = timeline.segments.map(\.text).joined(separator: " ")
+        let first = timeline.segments[0], last = timeline.segments[9]
+        let map = PortableListeningMapProposalArtifact(
+            id: "positioned-map", createdAt: fixedDate, generator: "test",
+            scenes: [PortableListeningMapScene(
+                id: "scene-0", order: 0, title: "Opening",
+                summaryText: "Later on: \(last.text)", summaryProvenance: .modelGenerated, eligibility: .eligible,
+                startAnchor: .init(anchorType: .transcript, startChar: first.startChar, mediaTimeMs: first.startMs),
+                endAnchor: .init(anchorType: .transcript, endChar: first.endChar, mediaTimeMs: first.endMs)
+            )]
+        )
+        XCTAssertEqual(PortableListeningMapContract.violations(in: map, sourceTexts: [transcript]), [], "precondition: outside its range")
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "positioned", createdAt: fixedDate, item: podcastItem, itemTransportSelection: .reference,
+            selections: [.init(packageScopedId: "margin-001", revision: revision(before: "", after: ""),
+                               anchor: .init(anchorType: .media, mediaTimeMs: 5_000), representation: .textOnly)],
+            mapProposals: [map], localSourceTexts: [transcript]
+        )
+        XCTAssertFalse(prepared.manifest.artifacts.contains { $0.kind == SpokenMarginsArtifactKind.listeningMapProposal })
+        let url = root.appending(path: "positioned.spokenmargins")
+        _ = try exportPacket(prepared, to: url)
+        let imported = try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appending(path: "positioned"))
+        XCTAssertEqual(imported.commentaryLayers.first?.interjections.map(\.packageScopedId), ["margin-001"], "the Margin still travels")
+        for (path, data) in try readRawArchive(url) {
+            XCTAssertFalse(PortableListeningMapContract.sharesRun(String(decoding: data, as: UTF8.self), transcript), path)
+        }
+    }
+
     /// A long anchor quotation is dropped for a by-reference packet; a short one, and what places the
     /// anchor, stay (Codex audit on c02afd6).
     func testOnlyLongAnchorQuotationsAreRemoved() {
