@@ -42,6 +42,28 @@ final class PlaybackRequestTimingTests: XCTestCase {
                        [.firstAudio(itemId: "item-357", milliseconds: 3_500)])
     }
 
+    /// Audit of #580: a streamed answer published straight as "starting" gets its own request time, not the one
+    /// left on the snapshot by the resume half a minute earlier.
+    func testAStreamedStartDoesNotInheritAnEarlierRequestTime() throws {
+        let (engine, audio) = try makeEngine()
+        audio.confirmsAtOnce = true
+        _ = try engine.resumePlayback()
+        now += 30
+        _ = try engine.pause()
+        now += 1
+        let ask = now
+
+        let streaming = try engine.activateStreamingTurn(turnId: "turn-357")
+
+        XCTAssertEqual(streaming.status, .starting)
+        XCTAssertEqual(streaming.playbackRequestedAt, ask)
+        var watch = PlaybackStartWatch()
+        _ = watch.observe(itemId: streaming.itemId, status: .paused, at: ask - 1)
+        _ = watch.observe(itemId: streaming.itemId, status: .starting, requestedAt: streaming.playbackRequestedAt, at: now)
+        XCTAssertEqual(watch.observe(itemId: streaming.itemId, status: .playing, at: ask + 2),
+                       [.firstAudio(itemId: "item-357", milliseconds: 2_000)])
+    }
+
     func testAStaleOrFutureRequestTimeFallsBackToNow() {
         var watch = PlaybackStartWatch()
         let at = Date(timeIntervalSince1970: 10_000)

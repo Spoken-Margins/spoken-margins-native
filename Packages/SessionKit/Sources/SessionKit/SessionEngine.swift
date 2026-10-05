@@ -1818,6 +1818,7 @@ public final class SessionEngine {
     /// canonical owner of user-visible playback state and position.
     @discardableResult
     public func activateStreamingTurn(turnId: String) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         var session = try resolveSession(nil)
         let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == turnId })
         let targetType: TargetType = turn?.turnType == "interjection_summary" ? .summaryTurnTTS : .assistantTurnTTS
@@ -3093,6 +3094,12 @@ public final class SessionEngine {
         if status != .starting {
             clearPlaybackStartPending()
         }
+        // Every new start (from a stop, or on another item) carries its own request time, so a later start, such
+        // as a streamed answer, never inherits an earlier one's (audit of #580).
+        if status.isPlaybackActive, !(snapshot.status.isPlaybackActive && snapshot.itemId == currentSession?.itemId) {
+            snapshot.playbackRequestedAt = playbackRequestedAt ?? now()
+            playbackRequestedAt = nil
+        }
         snapshot.status = status
         snapshot.phase = phase
         snapshot.isRecording = status == .recording
@@ -3124,8 +3131,6 @@ public final class SessionEngine {
     }
 
     private func publishPlaybackStart(for session: Session, phase: SessionPhase) {
-        snapshot.playbackRequestedAt = playbackRequestedAt ?? now()
-        playbackRequestedAt = nil
         playbackStartAttemptId += 1
         activePlaybackStartAttemptId = playbackStartAttemptId
         switch playbackStartStatus(for: session.currentTargetId, attemptId: playbackStartAttemptId) {
