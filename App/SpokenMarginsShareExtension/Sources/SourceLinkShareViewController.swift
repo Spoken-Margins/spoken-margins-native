@@ -194,7 +194,12 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             let presentsPDF = candidate.provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier)
             // A PDF representation that loads as a web URL would send the link again (#271),
             // so for those only a file or bytes count; otherwise try the data representation.
-            let sharedImport = UTType(candidate.identifier)?.conforms(to: .pdf) == true
+            // The link is kept as the last fallback, after the data and every other attachment.
+            let isPDFCandidate = UTType(candidate.identifier)?.conforms(to: .pdf) == true
+            let pdfFallbackLink = isPDFCandidate
+                ? SourceLinkShareRepresentation.pdfFallbackLink(from: item).map { SharedImport.remotePDF($0.absoluteString) }
+                : nil
+            let sharedImport = isPDFCandidate
                 ? Self.sharedPDFImport(from: item, suggestedName: candidate.provider.suggestedName)
                 : Self.sharedImport(
                     from: item,
@@ -218,6 +223,10 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                            suggestedName: candidate.provider.suggestedName
                        ) {
                         completion(.success(sharedImport))
+                    } else if let pdfFallbackLink {
+                        DispatchQueue.main.async {
+                            self?.acceptLink(pdfFallbackLink, candidates: candidates, index: index, completion: completion)
+                        }
                     } else {
                         DispatchQueue.main.async {
                             self?.loadFirstSharedImport(candidates, index: index + 1, completion: completion)

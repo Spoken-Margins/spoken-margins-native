@@ -7,6 +7,13 @@ public enum SourceLinkShareRepresentation {
         return nil
     }
 
+    /// The https link a PDF representation loaded as, instead of a file or bytes. The share
+    /// keeps it only as the last fallback, after every file, PDF and page result (#271).
+    public static func pdfFallbackLink(from item: Any?) -> URL? {
+        guard let url = url(from: item), !url.isFileURL, url.scheme?.lowercased() == "https" else { return nil }
+        return url
+    }
+
     public static func isPDFData(_ data: Data) -> Bool {
         data.prefix(1_024).range(of: Data("%PDF-".utf8)) != nil
     }

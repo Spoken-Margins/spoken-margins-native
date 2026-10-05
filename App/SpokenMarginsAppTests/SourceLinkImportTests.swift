@@ -515,6 +515,31 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(handoff.url, Self.pmcPDFURL)
     }
 
+    func testPDFRepresentationThatLoadsAsALinkKeepsItAsTheLastFallback() throws {
+        // #271 audit on 1c86dee: an attachment offering only com.adobe.pdf can load as an
+        // https link. With no file or bytes anywhere, that link must still be handed off.
+        XCTAssertEqual(SourceLinkShareRepresentation.pdfFallbackLink(from: Self.pmcPDFURL as NSURL), Self.pmcPDFURL)
+        XCTAssertNil(SourceLinkShareRepresentation.pdfFallbackLink(from: URL(fileURLWithPath: "/tmp/shared.pdf")))
+        XCTAssertNil(SourceLinkShareRepresentation.pdfFallbackLink(from: URL(string: "http://example.com/report.pdf")))
+        XCTAssertNil(SourceLinkShareRepresentation.pdfFallbackLink(from: Data("%PDF-1.7".utf8)))
+
+        let pdfOnly = NSItemProvider()
+        pdfOnly.registerItem(forTypeIdentifier: ShareSheetRepresentationOrder.pdfIdentifier) { completion, _, _ in
+            completion?(Self.pmcPDFURL as NSURL, nil)
+        }
+        let candidates = ShareSheetRepresentationOrder.candidates(
+            from: [pdfOnly],
+            conforms: { $0.hasItemConformingToTypeIdentifier($1) },
+            additionalIdentifiers: { _, _ in [] }
+        )
+        XCTAssertEqual(candidates.map(\.identifier), [ShareSheetRepresentationOrder.pdfIdentifier])
+
+        let handoff = try firstShareHandoff(candidates) { _ in (Self.pmcPDFURL, "share_sheet_pdf") }
+
+        XCTAssertEqual(handoff.surface, "share_sheet_pdf")
+        XCTAssertEqual(handoff.url, Self.pmcPDFURL)
+    }
+
     func testSafariPageResultsWithoutPDFBytesFallBackToTheLink() {
         let html = Data("<html>Preparing to download</html>".utf8).base64EncodedString()
 
