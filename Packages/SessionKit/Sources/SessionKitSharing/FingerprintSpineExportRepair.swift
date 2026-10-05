@@ -12,7 +12,8 @@ public enum FingerprintSpineExportRepair {
 
     /// The spine as the packet may carry it, or nil to leave it out.
     /// - Parameter signatureAssetIDs: the acoustic signatures travelling in the same packet. A
-    ///   landmark whose signature isn't among them is dropped.
+    ///   landmark whose signature isn't among them is dropped, and so is a landmark reusing a
+    ///   signature an earlier landmark already uses: Build 29's importer traps on a repeat.
     public static func repaired(
         _ spine: EditionFingerprintSpineArtifact,
         item: SharedItemIdentity,
@@ -23,7 +24,7 @@ public enum FingerprintSpineExportRepair {
         // A spine naming another episode belongs to another edition.
         if let expected = item.episodeGUID, let actual = episodeGUID, expected != actual { return nil }
 
-        var seenIDs = Set<String>()
+        var seenIDs = Set<String>(), seenSignatures = Set<String>()
         let kept = spine.landmarks
             .filter { landmark in
                 landmark.sourceMediaStartMs >= 0
@@ -35,7 +36,7 @@ public enum FingerprintSpineExportRepair {
                     && signatureAssetIDs.contains(landmark.signatureAssetId)
             }
             .sorted { $0.sourceMediaStartMs < $1.sourceMediaStartMs }
-            .filter { seenIDs.insert($0.id).inserted }
+            .filter { seenIDs.insert($0.id).inserted && seenSignatures.insert($0.signatureAssetId).inserted }
         let landmarks = spread(kept, limit: maximumLandmarks).enumerated().map { index, landmark in
             EpisodeFingerprintLandmark(
                 id: landmark.id,

@@ -372,7 +372,17 @@ final class SharingTests: XCTestCase {
                 trigger: .periodicPlayback, provenance: .observedDecodedPlayback, signatureAssetId: asset
             )
         }
-        let captured = (0..<620).map { landmark($0, asset: evidence.id) } + [landmark(620, asset: "episode-signature-missing")]
+        // Each captured landmark has its own signature, as the app records them. Landmark 621 reuses
+        // landmark 3's: Build 29's importer keys a dictionary by signature and traps on a repeat.
+        let signatures = (0..<620).map { index in
+            ReviewedMachineEvidenceAsset(
+                id: "\(evidence.id)-\(index)", path: "assets/evidence/\(evidence.id)-\(index).shazamsignature",
+                sourceURL: evidence.fileURL, durationMs: evidence.durationMs, anchorOffsetMs: evidence.anchorOffsetMs,
+                provenance: PodcastAnchorEvidenceProvenance.decodedPlaybackStream.rawValue
+            )
+        }
+        let captured = (0..<620).map { landmark($0, asset: signatures[$0].id) }
+            + [landmark(620, asset: "episode-signature-missing"), landmark(621, asset: signatures[3].id)]
         let spine = EditionFingerprintSpineArtifact(
             id: "episode-spine-streamed", itemId: "item-source-v2-streamed",
             canonicalURL: "http://example.com/episodes/one", episodeGUID: "episode-one",
@@ -390,7 +400,7 @@ final class SharingTests: XCTestCase {
                 id: evidence.id, path: evidence.archivePath, sourceURL: evidence.fileURL,
                 durationMs: evidence.durationMs, anchorOffsetMs: evidence.anchorOffsetMs,
                 provenance: PodcastAnchorEvidenceProvenance.decodedPlaybackStream.rawValue
-            )]
+            )] + signatures
         )
         let url = root.appendingPathComponent("streamed.spokenmargins")
         _ = try exportPacket(prepared, to: url)
@@ -404,6 +414,7 @@ final class SharingTests: XCTestCase {
         XCTAssertEqual(shared.landmarks.first?.id, "landmark-0")
         XCTAssertEqual(shared.landmarks.last?.id, "landmark-619", "spread over the whole episode")
         XCTAssertFalse(shared.landmarks.contains { $0.signatureAssetId == "episode-signature-missing" })
+        XCTAssertEqual(Set(shared.landmarks.map(\.signatureAssetId)).count, shared.landmarks.count, "one landmark per signature")
     }
 
     /// #536: a spine naming another episode is left out, and the Margins still share.

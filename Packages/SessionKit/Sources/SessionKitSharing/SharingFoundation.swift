@@ -98,9 +98,13 @@ public enum SpokenMarginsPackageBuilder {
         suggestedRevealMode: ImportedCommentaryRevealMode? = nil
     ) throws -> PreparedSpokenMarginsPackage {
         let item = removingPrivateLinks(from: item)
-        let signatureAssetIDs = Set(machineEvidence.map(\.id))
-        let fingerprintSpines = fingerprintSpines.map(removingPrivateLinks(from:)).compactMap {
-            FingerprintSpineExportRepair.repaired($0, item: item, signatureAssetIDs: signatureAssetIDs)
+        // Each signature may back one landmark across all spines: Build 29's importer keys a dictionary
+        // by signature and traps on a repeat.
+        var unusedSignatureAssetIDs = Set(machineEvidence.map(\.id))
+        let fingerprintSpines = fingerprintSpines.map(removingPrivateLinks(from:)).compactMap { spine in
+            let repaired = FingerprintSpineExportRepair.repaired(spine, item: item, signatureAssetIDs: unusedSignatureAssetIDs)
+            unusedSignatureAssetIDs.subtract(repaired?.landmarks.map(\.signatureAssetId) ?? [])
+            return repaired
         }
         let scopedIds = selections.map(\.packageScopedId)
         if let duplicate = Dictionary(grouping: scopedIds, by: { $0 }).first(where: { $0.value.count > 1 })?.key {
@@ -465,14 +469,16 @@ public enum SpokenMarginsPackageImporter {
             listeningMapProposals: contents.listeningMapProposals,
             editionFingerprintSpines: contents.editionFingerprintSpines,
             transcriptPhraseSketches: contents.transcriptPhraseSketches,
-            episodeMapEvidencePaths: Dictionary(uniqueKeysWithValues:
+            // A packet may name one signature from two landmarks; uniqueKeysWithValues would trap (#536).
+            episodeMapEvidencePaths: Dictionary(
                 contents.editionFingerprintSpines
                     .flatMap(\.landmarks)
                     .compactMap { landmark in
                         contents.extractedAssetURLs[landmark.signatureAssetId].map {
                             (landmark.signatureAssetId, $0.path)
                         }
-                    }
+                    },
+                uniquingKeysWith: { first, _ in first }
             )
         )
         return try repository.importCommentaryLayer(layer, interjections: importedInterjections)
