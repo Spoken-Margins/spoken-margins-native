@@ -312,7 +312,7 @@ public enum SessionExportMarkdownRenderer {
         if let turn {
             targetTitle = title(for: turn)
         } else if interjections.first?.targetType == InterjectionTargetType.summaryTurn.rawValue {
-            targetTitle = "Interjection Summary"
+            targetTitle = ConversationTurnTitle.marginSummary
         } else {
             targetTitle = "AI Response"
         }
@@ -433,16 +433,7 @@ public enum SessionExportMarkdownRenderer {
     }
 
     private static func title(for turn: ConversationTurn) -> String {
-        switch turn.turnType {
-        case "interjection_summary":
-            return "Interjection Summary"
-        case "assistant_response":
-            return "AI Response"
-        case "user_response":
-            return "Follow-up"
-        default:
-            return turn.turnType.replacingOccurrences(of: "_", with: " ").capitalized
-        }
+        ConversationTurnTitle.plain(turnType: turn.turnType)
     }
 
     private static func formattedMediaTime(_ mediaTimeMs: Int) -> String {
