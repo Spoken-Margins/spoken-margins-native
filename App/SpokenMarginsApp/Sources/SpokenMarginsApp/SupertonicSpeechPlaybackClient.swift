@@ -57,9 +57,9 @@ extension RenderedSpeechGenerationState {
                 return "Preparing the full Supertonic audio on this iPhone"
             }
             if isDelayed {
-                return "Still rendering chunk \(min(progress.completedChunks + 1, progress.totalChunks)) of \(progress.totalChunks) · \(progress.percent)% complete"
+                return "Still preparing part \(min(progress.completedChunks + 1, progress.totalChunks)) of \(progress.totalChunks) · \(progress.percent)% complete"
             }
-            return "Generating full audio · \(progress.percent)% (\(progress.completedChunks) of \(progress.totalChunks) chunks)"
+            return "Generating full audio · \(progress.percent)% (\(progress.completedChunks) of \(progress.totalChunks) parts)"
         case .ready:
             return "Prepared audio is ready for playback"
         case .stopped:

@@ -388,7 +388,7 @@ struct OfflineStorageCategoryRow: Identifiable, Equatable, Sendable {
     var title: String {
         switch category {
         case .preparedAudio: "Prepared audio"
-        case .preparedChunk: "Prepared chunks"
+        case .preparedChunk: "Prepared audio parts"
         case .podcast: "Podcasts"
         case .guidedTour: "Guided tour"
         case .audiobook: "Audiobooks"

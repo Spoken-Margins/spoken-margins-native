@@ -25,6 +25,8 @@ actor OfflineStorageLedger {
     private let fileManager: FileManager
     /// The last reconciliation's counts, for diagnostics (#259).
     private(set) var lastReconciliation: OfflineLedgerReconciliation?
+    /// The render signature prepared chunks are current for; the rest are stale (#281).
+    private var currentPreparedChunkDigest: String?
 
     init(repository: any SessionRepository, rootDirectory: URL, fileManager: FileManager = .default) {
         self.repository = repository
@@ -278,6 +280,24 @@ actor OfflineStorageLedger {
                 ))
             }
         }
+        if let currentPreparedChunkDigest {
+            try markSupersededPreparedChunks(currentSignatureDigest: currentPreparedChunkDigest)
+        }
+    }
+
+    /// After a change of voice, speed or chunking (Build 30 re-keyed every chunk, #240), prepared
+    /// chunk files from the old signature are never read again. They're marked stale so they're
+    /// the first to go when space is needed (#281); switching back makes them valid again. Never
+    /// deletes a file. Returns how many rows changed.
+    @discardableResult
+    func markSupersededPreparedChunks(currentSignatureDigest: String) throws -> Int {
+        currentPreparedChunkDigest = currentSignatureDigest
+        let changed = OfflineStoragePlanner.preparedChunkStaleness(
+            assets: try repository.loadOwnedOfflineAssets(),
+            currentSignatureDigest: currentSignatureDigest
+        )
+        for asset in changed { try repository.saveOwnedOfflineAsset(asset) }
+        return changed.count
     }
 
     /// Eviction never leaves an item pointing at a deleted file (#237), so a file an item plays as
