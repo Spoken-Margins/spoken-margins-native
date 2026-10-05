@@ -3059,6 +3059,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             microphonePermissionStatus: { .undetermined }
         )
         model.resetAndSeed()
+        model.declineCurrentTerms()
         model.startItem(id: "item-pill")
         model.pause()
         model.beginInterjection()
@@ -3088,6 +3089,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             microphonePermissionStatus: { .undetermined }
         )
         model.resetAndSeed()
+        model.declineCurrentTerms()
         model.startItem(id: "item-pill")
         model.pause()
         model.beginInterjection()
@@ -3119,12 +3121,14 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
                 microphonePermissionStatus: { status }
             )
             model.resetAndSeed()
+            // On a fresh simulator this test runs first, before any other test has made the first-use
+            // voice choice, so the terms sheet held startItem and nothing could record (T3 FAIL on 843e6fd).
+            model.declineCurrentTerms()
             model.startItem(id: "item-pill")
             model.pause()
             model.beginInterjection()
             XCTAssertFalse(model.microphonePrimer.isShowing, "\(status)")
-            // The injected answer is async and leaves the main actor, so wait on time, not yields:
-            // 100 yields weren't enough on the lane's simulator (T3 FAIL on 0e38d1c).
+            // The injected answer is async and leaves the main actor, so wait on time, not yields.
             for _ in 0..<200 where model.isRequestingRecordingPermission { try await Task.sleep(for: .milliseconds(10)) }
             XCTAssertEqual(model.snapshot.isRecording, granted, "\(status)")
             XCTAssertEqual(model.recordingPermissionDenied, !granted, "\(status)")
