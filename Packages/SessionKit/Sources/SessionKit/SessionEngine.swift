@@ -38,6 +38,8 @@ public final class SessionEngine {
     private var playbackStartWaitCap: TimeInterval { playbackStartTimeout * 4 }
     private var playbackStartFirstPendingAt: Date?
     private let now: () -> Date
+    /// Set when a listener's start command arrives; the next published start carries it (#357).
+    private var playbackRequestedAt: Date?
     private(set) var recordingAnchor: Anchor?
     private var recordingTargetType: InterjectionTargetType?
     private var recordingTargetId: String?
@@ -109,6 +111,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func startSession(itemId: String) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try require("startSession", category: "sync", capabilities: ["canonical_persistence", "receive_prepared_packages", "browser_session_handoff"])
         forgetFailure(unlessItemIs: itemId)
         var item = try repository.loadItem(id: itemId)
@@ -272,6 +275,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func resumePlayback() throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("resumePlayback")
         try requirePlayback("resumePlayback")
         guard var session = currentSession else {
@@ -1162,16 +1166,19 @@ public final class SessionEngine {
 
     @discardableResult
     public func jumpToChapter(chapterId: String) throws -> SessionSnapshot {
+        defer { playbackRequestedAt = nil }
         try requireNavigationAllowed("jumpToChapter")
         try require("jumpToChapter", category: "timeline", capabilities: ["chapter_timing"])
         try requirePlayback("jumpToChapter")
         if let session = currentSession,
            session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
+            stampRequestIfStarting(target: session.currentTargetId)
             return try jumpToMediaChapter(chapterId: chapterId, session: session)
         }
         guard var session = currentSession, let chapter = currentMap?.chapters.first(where: { $0.id == chapterId }) else {
             throw SessionKitError.invalidCommandForState("jumpToChapter")
         }
+        stampRequestIfStarting(target: session.itemId)
         session.currentTargetType = .itemTextTTS
         session.currentTargetId = session.itemId
         session.phase = .itemPlayback
@@ -1188,6 +1195,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func playSourceFromBeginning() throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("playSourceFromBeginning")
         try requirePlayback("playSourceFromBeginning")
         guard var session = currentSession else {
@@ -1360,6 +1368,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func saveWrittenInterjection(captureId: String, text: String) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
         guard let capture = pendingWrittenInterjection, capture.id == captureId,
               let session = currentSession,
               session.id == capture.sessionId,
@@ -1409,6 +1418,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func cancelWrittenInterjection(captureId: String) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
         guard let capture = pendingWrittenInterjection, capture.id == captureId,
               let session = currentSession,
               session.id == capture.sessionId,
@@ -1520,6 +1530,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func playInterjectionAnchor(_ interjection: Interjection) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("playInterjectionAnchor")
         let plan = try interjectionAnchorPlaybackPlan(for: interjection)
         let previousSession = currentSession
@@ -1575,6 +1586,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func finishInterjection(audioRef: String?) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
         guard var session = currentSession,
               let anchor = recordingAnchor,
               let targetType = recordingTargetType,
@@ -1680,6 +1692,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func cancelInterjection() throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("cancelInterjection")
         }
@@ -1780,6 +1793,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func playTurn(turnId: String) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("playTurn")
         externallyStreamedTurnId = nil
         var session = try resolveSession(nil)
@@ -1811,6 +1825,7 @@ public final class SessionEngine {
     /// canonical owner of user-visible playback state and position.
     @discardableResult
     public func activateStreamingTurn(turnId: String) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         var session = try resolveSession(nil)
         let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == turnId })
         let targetType: TargetType = turn?.turnType == "interjection_summary" ? .summaryTurnTTS : .assistantTurnTTS
@@ -1897,6 +1912,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func jumpToTurnChapter(turnId: String, chapterId: String) throws -> SessionSnapshot {
+        stampRequestIfStarting(target: turnId); defer { playbackRequestedAt = nil }
         try requireNavigationAllowed("jumpToTurnChapter")
         var session = try resolveSession(nil)
         let turns = try repository.loadTurns(sessionId: session.id)
@@ -3086,6 +3102,14 @@ public final class SessionEngine {
         if status != .starting {
             clearPlaybackStartPending()
         }
+        // A start carries its request's time: a listener command stamps it, and a start from a stop or on another
+        // item gets the publish time. Seeks and the engine's own target switches (narration falling back to live
+        // speech) keep the request they belong to (audits of #580).
+        if status.isPlaybackActive, playbackRequestedAt != nil || !snapshot.status.isPlaybackActive
+            || snapshot.itemId != currentSession?.itemId {
+            snapshot.playbackRequestedAt = playbackRequestedAt ?? now()
+            playbackRequestedAt = nil
+        }
         snapshot.status = status
         snapshot.phase = phase
         snapshot.isRecording = status == .recording
@@ -3114,6 +3138,13 @@ public final class SessionEngine {
         snapshot.chapterTitle = progress.chapterTitle ?? currentItem?.title
         snapshot.activeInterjectionCount = (try? repository.loadInterjections(sessionId: session.id).filter { $0.status == "active" }.count) ?? snapshot.activeInterjectionCount
         snapshot.pendingAiJobCount = (try? repository.loadAIJobs(sessionId: session.id).filter { $0.status != "complete" }.count) ?? snapshot.pendingAiJobCount
+    }
+
+    /// A chapter jump that starts playback (from a pause or stop, or onto another target such as a saved answer's
+    /// chapter) is a new request, stamped before any audio work; within the target that is already playing it is a
+    /// seek and keeps its request (audits of #580).
+    private func stampRequestIfStarting(target targetId: String) {
+        if !snapshot.status.isPlaybackActive || snapshot.targetId != targetId { playbackRequestedAt = now() }
     }
 
     private func publishPlaybackStart(for session: Session, phase: SessionPhase) {

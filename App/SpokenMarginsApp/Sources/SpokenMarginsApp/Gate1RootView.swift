@@ -291,7 +291,7 @@ struct MiniPlayerBar: View {
                                 if let chapter = model.playbackChapterHeaderTitle {
                                     Text(chapter).lineLimit(1)
                                 }
-                                Text("\(model.displayPlaybackProgressPercent)%")
+                                Text(model.snapshot.status == .starting ? PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot) : "\(model.displayPlaybackProgressPercent)%")
                                     .monospacedDigit()
                             }
                             .font(.caption)
@@ -319,7 +319,7 @@ struct MiniPlayerBar: View {
                             .layoutPriority(-1)
                             .accessibilityHidden(true)
                     }
-                    Text("\(model.displayPlaybackProgressPercent)%")
+                    Text(model.snapshot.status == .starting ? PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot) : "\(model.displayPlaybackProgressPercent)%")
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(AppColors.secondaryText)
                         .fixedSize()
@@ -360,7 +360,7 @@ struct MiniPlayerBar: View {
                     .background(AppColors.evergreen, in: Circle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(model.activePlaybackIsPlaying ? "Pause" : "Play")
+                .accessibilityLabel(model.snapshot.status == .starting ? PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot) : model.activePlaybackIsPlaying ? "Pause" : "Play")
                 .accessibilityIdentifier("miniPlayer.playPause.button")
 
                 Button(action: model.dismissMiniPlayer) {
