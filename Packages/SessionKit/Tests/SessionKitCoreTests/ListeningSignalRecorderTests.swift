@@ -266,6 +266,26 @@ final class ListeningSignalRecorderTests: XCTestCase {
                      "after unfollowing A, a shared GUID alone must not file A's episode under B")
     }
 
+    func testASharedSourceTitleDoesNotPickTheFeedAnEpisodeIsMatchedIn() {
+        let feedA = FeedSubscription(id: "subscription-a", source: SourceIdentity(
+            id: "source-a", kind: .podcastFeed, canonicalURL: "https://a.example/feed", host: "a.example", title: "The Show"))
+        let feedB = FeedSubscription(id: "subscription-b", source: SourceIdentity(
+            id: "source-b", kind: .podcastFeed, canonicalURL: "https://b.example/feed", host: "b.example", title: "The Show"))
+        let entryA = FeedEntry(id: "entry-a", subscriptionId: feedA.id, canonicalURL: "https://a.example/1",
+                               audioURL: "https://cdn.a.example/1.mp3", title: "A one", episodeGUID: "episode-1")
+        let entryB = FeedEntry(id: "entry-b", subscriptionId: feedB.id, canonicalURL: "https://b.example/1",
+                               audioURL: "https://cdn.b.example/1.mp3", title: "B one", episodeGUID: "episode-1")
+        var item = Item(id: "from-b", title: "B one", mediaType: "podcast", text: "",
+                        externalReference: entryB.canonicalURL, status: "ready",
+                        media: ItemMedia(sourceType: .nativeMediaFile, url: entryB.audioURL),
+                        sourceTitle: "The Show")
+        item.episodeGUID = "episode-1"
+
+        let context = ListeningSignalContext.context(for: item, subscriptions: [feedA, feedB], entries: [entryA, entryB])
+        XCTAssertEqual(context?.source.id, "source-b", "two followed sources share the title, so the URLs decide")
+        XCTAssertEqual(context?.item.id, "entry-b")
+    }
+
     func testOnlyALiveSessionFinishingForTheFirstTimeNamesAFinishedItem() {
         var playing = SessionSnapshot()
         playing.sessionId = "session"

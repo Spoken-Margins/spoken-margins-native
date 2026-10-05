@@ -313,10 +313,12 @@ public enum ListeningSignalContext {
                FollowedSourceMatching.normalizedFollowSourceURL($0.source.canonicalURL) == sourceURL
             })
         }
+        // A title names a source only when one followed source has it; otherwise the entry's URLs decide.
         guard let title = nonEmpty(item.sourceTitle) else { return nil }
-        return subscriptions.first {
+        let titled = subscriptions.filter {
             (nonEmpty($0.source.title) ?? $0.source.host).caseInsensitiveCompare(title) == .orderedSame
         }
+        return titled.count == 1 ? titled[0] : nil
     }
 
     static func contentKind(for kind: SourceIdentityKind) -> String {
