@@ -1,5 +1,4 @@
 import Foundation
-import Network
 import SessionKit
 import SessionKitPersistence
 
@@ -57,9 +56,10 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     private let store: SQLiteSessionStore
     private let ledger: OfflineStorageLedger
     private let directory: URL
-    private let monitor = NWPathMonitor()
-    private let monitorQueue = DispatchQueue(label: "com.spokenmargins.podcast-network")
-    private var cacheLimit: PodcastCacheLimitGB
+    private let connectivity: ConnectivityMonitor
+    private var connectivityObserver: UUID?
+    private var isShutDown = false
+    private let cacheLimit: PodcastCacheLimitGB
     private var activeItemId: String?
     private var activeTaskItemIds: Set<String> = []
     private var generations: [String: String] = [:]
@@ -78,11 +78,13 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         applicationSupportDirectory: URL,
         cacheLimit: PodcastCacheLimitGB,
         monitorsNetwork: Bool = true,
+        connectivity: ConnectivityMonitor? = nil,
         usesBackgroundSession: Bool = true,
         contentLength: (@Sendable (URL, Bool) async throws -> Int64)? = nil,
         startDownload: ((URLRequest, String) -> Void)? = nil
     ) throws {
         self.store = store
+        self.connectivity = connectivity ?? ConnectivityMonitor()
         self.contentLength = contentLength
         self.startDownload = startDownload
         self.ledger = ledger ?? OfflineStorageLedger(
@@ -140,12 +142,15 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     }
 
     deinit {
-        monitor.cancel()
         session?.invalidateAndCancel()
     }
 
     func shutdown() {
-        monitor.cancel()
+        // The monitor is shared and outlives this coordinator; only stop listening to it. A cancelled
+        // private monitor used to make a late start a no-op; isShutDown does that now.
+        isShutDown = true
+        if let connectivityObserver { connectivity.removeObserver(connectivityObserver) }
+        connectivityObserver = nil
         session.invalidateAndCancel()
         for itemId in Array(generations.keys) { invalidateAttempt(itemId: itemId) }
     }
@@ -310,11 +315,6 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             || recordsByItemId[itemId]?.state == .availableOffline
     }
 
-    func setCacheLimit(_ limit: PodcastCacheLimitGB) {
-        cacheLimit = limit
-        enforceCacheLimit()
-    }
-
     func clearDownloads() {
         for record in Array(recordsByItemId.values)
             where record.state == .availableOffline && record.itemId != activeItemId {
@@ -388,20 +388,11 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     }
 
     private func startNetworkMonitor() {
-        monitor.pathUpdateHandler = { [weak self] path in
-            let transport: PodcastNetworkTransport
-            if path.status != .satisfied {
-                transport = .unavailable
-            } else if path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet) {
-                transport = .wifi
-            } else if path.usesInterfaceType(.cellular) {
-                transport = .cellular
-            } else {
-                transport = .other
-            }
-            Task { @MainActor [weak self] in self?.networkChanged(to: transport) }
+        guard !isShutDown, connectivityObserver == nil else { return }
+        connectivityObserver = connectivity.addObserver { [weak self] transport in
+            self?.networkChanged(to: transport)
         }
-        monitor.start(queue: monitorQueue)
+        connectivity.start()
     }
 
     private func beginDownload(record: PodcastDownloadRecord, userInitiated: Bool) {
@@ -514,17 +505,6 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         return directory.appending(path: path)
     }
 
-    private func enforceCacheLimit() {
-        let protected = Set([activeItemId].compactMap { $0 })
-            .union(recordsByItemId.values.filter { $0.state == .downloading }.map(\.itemId))
-        let evictions = PodcastCacheEvictionPlanner.recordsToEvict(
-            from: Array(recordsByItemId.values),
-            limitBytes: cacheLimit.bytes,
-            protectedItemIds: protected
-        )
-        evictions.forEach(evict)
-    }
-
     private func evict(_ record: PodcastDownloadRecord) {
         if let url = localURL(for: record) { try? FileManager.default.removeItem(at: url) }
         try? store.deleteAudioAsset(id: "podcast-local-\(record.itemId)")
@@ -555,13 +535,24 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             let destination = directory.appending(path: "\(attempt.generation).\(stagedURL.pathExtension)")
             try FileManager.default.moveItem(at: stagedURL, to: destination)
             do {
+                // Playback can start while the commit waits on the ledger, so the row is committed
+                // protected and the protection is settled once this actor resumes (#541). Other
+                // ledgers on this store can't evict the new file in between.
                 try await ledger.commit(reservationId: attempt.reservationId, asset: OwnedOfflineAsset(
                     id: "podcast-offline-\(attempt.itemId)", itemId: attempt.itemId, category: .podcast,
                     relativePath: "PodcastAudio/\(destination.lastPathComponent)", byteCount: Int64(size),
-                    isReproducible: true, protections: activeItemId == attempt.itemId ? [.activePlayback] : []))
+                    isReproducible: true, protections: [.activePlayback]))
                 guard owns(attempt) else {
                     removeAdoptedFile(destination, itemId: attempt.itemId)
                     return
+                }
+                let isActive = activeItemId == attempt.itemId
+                guard try store.updateOwnedOfflineAsset(id: "podcast-offline-\(attempt.itemId)", { current in
+                    if isActive { current.protections.insert(.activePlayback) }
+                    else { current.protections.remove(.activePlayback) }
+                }) != nil else {
+                    // Evicted or reconciled away already: don't publish a file that may be gone.
+                    throw CocoaError(.fileNoSuchFile)
                 }
                 // Save the asset before publishing availability.
                 try store.saveAudioAsset(AudioAsset(id: "podcast-local-\(attempt.itemId)", itemId: attempt.itemId,

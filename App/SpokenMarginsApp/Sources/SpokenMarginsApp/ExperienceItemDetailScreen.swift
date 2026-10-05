@@ -15,7 +15,7 @@ struct ExperienceItemDetailScreen: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 22) {
                     hero
-                    primaryActions
+                    secondaryActions
                     downloadRecovery
                     ItemLastFailureCard(itemId: model.selectedItem.id)
                     if !sharingCoordinator.importedLayers.isEmpty {
@@ -35,6 +35,15 @@ struct ExperienceItemDetailScreen: View {
                 .padding(.vertical, 22)
                 .frame(maxWidth: 900)
                 .frame(maxWidth: .infinity)
+            }
+            // The main listening button stays pinned at the bottom, within thumb reach, above the mini player (#149).
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(alignment: .leading, spacing: 8) { primaryPlaybackAction }
+                    .padding(.horizontal, horizontalSizeClass == .regular ? 30 : 18)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: 900)
+                    .frame(maxWidth: .infinity)
+                    .background(AppColors.bone)
             }
             .background(AppColors.bone)
             .accessibilityIdentifier("item.screen")
@@ -128,24 +137,24 @@ struct ExperienceItemDetailScreen: View {
             : model.selectedItem.chapters.count
     }
 
-    private var primaryActions: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            primaryPlaybackAction
-            if model.selectedItemPreferredContinuationSession != nil || !itemMargins.isEmpty {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) { secondaryActionButtons }
-                    VStack(alignment: .leading, spacing: 8) { secondaryActionButtons }
-                }
+    @ViewBuilder
+    private var secondaryActions: some View {
+        if model.selectedItemPreferredContinuationSession != nil || !itemMargins.isEmpty {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { secondaryActionButtons }
+                VStack(alignment: .leading, spacing: 8) { secondaryActionButtons }
             }
         }
     }
 
     @ViewBuilder
     private var primaryPlaybackAction: some View {
-        if model.selectedItemStartupAudioState == .preparing {
+        if [.waiting, .preparing].contains(model.selectedItemStartupAudioState) {
             HStack(spacing: 10) {
-                ProgressView()
-                    .tint(AppColors.evergreen)
+                if model.selectedItemStartupAudioState == .preparing {
+                    ProgressView()
+                        .tint(AppColors.evergreen)
+                }
                 Text(model.selectedItemStartupAudioProgressDescription)
                     .fontWeight(.semibold)
             }
@@ -157,7 +166,7 @@ struct ExperienceItemDetailScreen: View {
         Button {
                 model.startItem(id: model.selectedItem.id)
             } label: {
-                Label(model.selectedItemStartupAudioState == .preparing ? "Listen now" : primaryPlaybackLabel, systemImage: "play.fill")
+                Label([.waiting, .preparing].contains(model.selectedItemStartupAudioState) ? "Listen now" : primaryPlaybackLabel, systemImage: "play.fill")
                     .frame(maxWidth: .infinity, minHeight: 52)
             }
             .buttonStyle(.borderedProminent)
@@ -337,6 +346,7 @@ struct ExperienceItemDetailScreen: View {
                         }
                     }
                 }
+                ReadwiseItemLink(sync: model.readwiseHighlightSync, itemId: model.selectedItem.id)
             }
         }
     }
@@ -603,4 +613,19 @@ private struct ExperienceListeningMapSection: View, Equatable {
         }
     }
 
+}
+
+/// "Open in Readwise" once this item's Margins have been sent there (#623).
+private struct ReadwiseItemLink: View {
+    @ObservedObject var sync: ReadwiseHighlightSync
+    let itemId: String
+
+    var body: some View {
+        if let url = sync.links[itemId] {
+            Link(destination: url) {
+                Label("Open in Readwise", systemImage: "arrow.up.right.square")
+            }
+            .accessibilityIdentifier("item.readwise.link")
+        }
+    }
 }

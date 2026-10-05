@@ -142,7 +142,9 @@ public enum SessionExportMarkdownRenderer {
         return transcriptNotAvailableYet
     }
 
-    public static func render(_ export: SessionExport) -> String {
+    /// `includesSessionProgress: false` leaves out the session's status and completion, for a note that must not
+    /// change while the listener plays the item again (#587).
+    public static func render(_ export: SessionExport, includesSessionProgress: Bool = true) -> String {
         var lines: [String] = []
         lines.append("# Spoken Margins AI Handoff: \(export.item.title)")
         lines.append("")
@@ -170,11 +172,13 @@ public enum SessionExportMarkdownRenderer {
             lines.append(transcript)
             lines.append("")
         }
-        lines.append("## Session")
-        lines.append("")
-        lines.append("Status: \(export.session.status)")
-        lines.append("Completion: \(export.session.completionPercent)%")
-        lines.append("")
+        if includesSessionProgress {
+            lines.append("## Session")
+            lines.append("")
+            lines.append("Status: \(export.session.status)")
+            lines.append("Completion: \(export.session.completionPercent)%")
+            lines.append("")
+        }
         if let overview = export.listeningMap?.overview.trimmingCharacters(in: .whitespacesAndNewlines), !overview.isEmpty {
             lines.append("## Listening Map")
             lines.append("")

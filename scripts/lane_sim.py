@@ -124,16 +124,32 @@ def create_temporary(name: str) -> str:
     return subprocess.check_output(simctl() + ['create', name, DEVICE_TYPE, runtime], text=True).strip()
 
 
+def crash_reports(reports: Path):
+    """The finished .ips reports. macOS writes each as a hidden `.Name-date.ips` and then renames it,
+    so a hidden one is skipped, and any report can vanish between the glob and the read (#822)."""
+    return (path for path in reports.glob('*.ips') if not path.name.startswith('.'))
+
+
 def crash_snapshot(reports: Path) -> dict:
-    return {p: (p.stat().st_mtime_ns, p.stat().st_size) for p in reports.glob('*.ips')} if reports.is_dir() else {}
+    snapshot = {}
+    if not reports.is_dir():
+        return snapshot
+    for path in crash_reports(reports):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        snapshot[path] = (stat.st_mtime_ns, stat.st_size)
+    return snapshot
 
 
 def new_crash(reports: Path, baseline: dict, udid: str) -> Path | None:
     if not reports.is_dir():
         return None
-    for path in reports.glob('*.ips'):
+    for path in crash_reports(reports):
         try:
-            if baseline.get(path) == (path.stat().st_mtime_ns, path.stat().st_size):
+            stat = path.stat()
+            if baseline.get(path) == (stat.st_mtime_ns, stat.st_size):
                 continue
             if f'com.apple.CoreSimulator.SimDevice.{udid}' in path.read_text(errors='replace'):
                 return path
@@ -231,7 +247,7 @@ def late_report(reports: Path, udid: str, window: tuple) -> Path | None:
     start, end = window
     if not reports.is_dir():
         return None
-    for path in reports.glob('*.ips'):
+    for path in crash_reports(reports):
         try:
             if path.stat().st_mtime < start:
                 continue

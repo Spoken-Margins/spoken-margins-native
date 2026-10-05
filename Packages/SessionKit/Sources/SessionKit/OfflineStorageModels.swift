@@ -115,6 +115,29 @@ public enum OfflineStoragePlanner {
         return OfflineEvictionPlan(requiredBytes: requiredBytes, selectedAssetIds: selected, reclaimableBytes: reclaimed)
     }
 
+    /// Prepared chunk files live at `PreparedAudio/<item>/<render signature digest>/chunks/<file>`.
+    /// A change of voice, speed or chunking changes the digest (Build 30 re-keyed every chunk, #240),
+    /// and chunks under another digest are never read again: they become stale, so eviction takes
+    /// them first. Rows under the current digest that were marked stale become valid again. Corrupt
+    /// rows, and files outside chunk directories (such as assembled audio), are left alone. Returns
+    /// only the rows that change (#281).
+    public static func preparedChunkStaleness(
+        assets: [OwnedOfflineAsset],
+        currentSignatureDigest: String
+    ) -> [OwnedOfflineAsset] {
+        assets.compactMap { asset in
+            let parts = asset.relativePath.split(separator: "/", omittingEmptySubsequences: false)
+            guard parts.count == 5, parts[0] == "PreparedAudio", parts[3] == "chunks", asset.integrity != .corrupt else {
+                return nil
+            }
+            let wanted: OfflineAssetIntegrity = parts[2] == currentSignatureDigest ? .valid : .stale
+            guard asset.integrity != wanted else { return nil }
+            var changed = asset
+            changed.integrity = wanted
+            return changed
+        }
+    }
+
     private static func priority(_ asset: OwnedOfflineAsset) -> Int {
         if asset.integrity == .corrupt || asset.integrity == .stale { return 0 }
         if asset.category == .preparedChunk && asset.isRedundant { return 1 }

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from check_posterboard_repair import new_crash, poster_state, supervise
+from check_posterboard_repair import crash_snapshot, new_crash, poster_state, supervise
 
 
 class PosterRepairTests(unittest.TestCase):
@@ -54,6 +54,29 @@ class PosterRepairTests(unittest.TestCase):
             self.assertIsNone(new_crash(root, baseline, 'target'))
             report.write_text('new com.apple.CoreSimulator.SimDevice.target')
             self.assertEqual(new_crash(root, baseline, 'target'), report)
+
+    def test_hidden_and_vanished_reports_do_not_abort_the_check(self):
+        # Codex audit on #824: macOS writes each report as a hidden `.Name-date.ips` and then renames
+        # it, so a report can vanish between the glob and the stat (#822). The check uses lane_sim's
+        # guarded scans instead of its own copies.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / '.PosterBoard-2026-10-04-095145.ips').write_text('com.apple.CoreSimulator.SimDevice.target')
+            self.assertEqual(crash_snapshot(root), {})
+            self.assertIsNone(new_crash(root, {}, 'target'), 'a report still being written is not a crash yet')
+
+            class VanishingFolder:
+                def is_dir(self):
+                    return True
+
+                def glob(self, pattern):
+                    found = list(root.glob(pattern))
+                    for path in found:
+                        path.unlink()
+                    return iter(found)
+
+            self.assertEqual(crash_snapshot(VanishingFolder()), {})
+            self.assertIsNone(new_crash(VanishingFolder(), {}, 'target'))
 
     def test_missing_descriptor_prevents_recovery_claim(self):
         with tempfile.TemporaryDirectory() as directory:

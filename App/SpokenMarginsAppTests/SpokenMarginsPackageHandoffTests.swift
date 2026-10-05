@@ -287,6 +287,62 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         }
     }
 
+    /// Co-op (#468): three friends' packets on one episode, the podcast not yet in the Library, opened in
+    /// the order 2, 3, 1 through the model's import path, leave exactly one podcast item carrying all three.
+    @MainActor
+    func testThreeSendersPacketsOnOneEpisodeAddThePodcastOnce() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-coop-three-packets")
+        let databaseURL = root.appendingPathComponent("recipient.sqlite")
+        let senders: [(name: String, digest: String?)] = [
+            ("Ana", String(repeating: "a1", count: 32)), ("Ben", nil), ("Cleo", nil),
+        ]
+        let packets = try senders.map { sender -> (URL, SpokenMarginsPackageManifest) in
+            let url = root.appendingPathComponent("\(sender.name).spokenmargins")
+            let manifest = try writePodcastPackage(
+                to: url, packageID: "package-coop-\(sender.name.lowercased())",
+                sender: sender.name, exactEditionSHA256: sender.digest
+            )
+            return (url, manifest)
+        }
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let model = Gate1AppModel(
+            sourceLinkResolver: podcastResolver(),
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+        XCTAssertFalse(try store.listItems().contains { $0.media?.url == Self.podcastAudioURL })
+
+        var podcastId: String?
+        for index in [1, 2, 0] {
+            model.handleIncomingURL(packets[index].0)
+            // The second and third packets find the podcast the first one added, rather than adding it again.
+            XCTAssertEqual(model.spokenMarginsPackageImportReview?.matchingItemId, podcastId, senders[index].name)
+            model.confirmSpokenMarginsPackageImport()
+            try await waitForImportToFinish(model)
+            XCTAssertNil(model.spokenMarginsPackageImportError, senders[index].name)
+            podcastId = try store.listItems().first { $0.media?.url == Self.podcastAudioURL }?.id
+            XCTAssertNotNil(podcastId, senders[index].name)
+        }
+
+        let podcasts = try store.listItems().filter { $0.media?.url == Self.podcastAudioURL }
+        XCTAssertEqual(podcasts.count, 1)
+        XCTAssertEqual(model.libraryItems.filter { $0.title == Self.podcastTitle }.count, 1)
+        let layers = try store.loadImportedCommentaryLayers(itemId: try XCTUnwrap(podcasts.first?.id))
+        XCTAssertEqual(Set(layers.compactMap(\.displayLabel)), ["Ana", "Ben", "Cleo"])
+        XCTAssertEqual(Set(layers.map(\.packageDigest)), Set(packets.compactMap { $0.1.contentDigest }))
+
+        // Opening one again adds nothing.
+        model.handleIncomingURL(packets[0].0)
+        XCTAssertNil(model.spokenMarginsPackageImportReview)
+        XCTAssertEqual(
+            model.diagnostics["lastSpokenMarginsPackageImport"],
+            "duplicate:\(try XCTUnwrap(packets[0].1.contentDigest))"
+        )
+        XCTAssertEqual(try store.listItems().filter { $0.media?.url == Self.podcastAudioURL }.count, 1)
+        XCTAssertEqual(try store.loadImportedCommentaryLayers().count, 3)
+    }
+
     @MainActor
     private func makePackageImport(
         named name: String,
@@ -570,7 +626,9 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
     private func writePodcastPackage(
         to url: URL,
-        packageID: String
+        packageID: String,
+        sender: String = "Cole",
+        exactEditionSHA256: String? = nil
     ) throws -> SpokenMarginsPackageManifest {
         let revision = InterjectionShareRevision(
             id: "revision-\(packageID)",
@@ -592,7 +650,8 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
                 originalURL: Self.podcastURL,
                 title: Self.podcastTitle,
                 enclosureURL: Self.podcastAudioURL,
-                durationMs: 300_000
+                durationMs: 300_000,
+                exactEditionSHA256: exactEditionSHA256
             ),
             itemTransportSelection: .reference,
             selections: [ReviewedInterjectionSelection(
@@ -606,7 +665,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
                 ),
                 representation: .textOnly
             )],
-            senderDisplayLabel: "Cole",
+            senderDisplayLabel: sender,
             suggestedRevealMode: .companion
         )
         return try SpokenMarginsPackageArchive.write(prepared, to: url)
