@@ -106,7 +106,6 @@ public enum CommunityMapUploadPolicy {
     public static let maximumAttempts = 7
     /// A real timed transcript has at least one spoken segment per two minutes and no silent
     /// stretch longer than five; a publisher transcript stored as one block of text has neither.
-    static let minimumDurationMs = 60_000
     static let maximumSegmentSpacingMs = 120_000
     static let maximumGapMs = 300_000
 
@@ -130,6 +129,9 @@ public enum CommunityMapUploadPolicy {
         if let previous {
             switch previous.state {
             case .uploaded: return .skip(.alreadyUploaded)
+            // Closed because of what one transcript was like: a better one (made on the phone
+            // after a publisher's untimed one) may still upload.
+            case .rejected where closedForTranscript(previous): break
             case .rejected: return .skip(.rejectedBefore)
             case .failed:
                 guard now.timeIntervalSince(previous.lastAttemptAt) >= retryInterval else { return .skip(.retryTooSoon) }
@@ -143,6 +145,12 @@ public enum CommunityMapUploadPolicy {
         }
         guard !hasPublisherChapters else { return .skip(.publisherChapters) }
         return .upload(episodeKey: episodeKey)
+    }
+
+    static func closedForTranscript(_ record: CommunityMapUploadRecord) -> Bool {
+        [CommunityMapUploadSkipReason.untimedTranscript, .partialTranscript, .unusableTranscript].contains {
+            record.lastOutcome == CommunityMapUploadOutcome.skipped($0).diagnostic
+        }
     }
 
     /// An episode streamed or downloaded from a podcast feed: remote audio over http(s) in an item
@@ -234,7 +242,7 @@ public enum CommunityMapUploadPolicy {
     /// Segments sharing a start count once, as the request body joins them: a JSON transcript
     /// whose entries carry no times puts every entry at 0 running to the end.
     static func hasRealTiming(_ timeline: TranscriptTimeline, durationMs: Int?) -> Bool {
-        guard let durationMs, durationMs >= minimumDurationMs else { return false }
+        guard let durationMs, durationMs > 0 else { return false }
         var spoken: [(start: Int, end: Int)] = []
         for segment in timeline.segments.sorted(by: { $0.startMs < $1.startMs })
         where !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

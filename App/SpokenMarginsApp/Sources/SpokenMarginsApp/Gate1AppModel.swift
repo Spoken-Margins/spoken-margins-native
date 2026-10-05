@@ -4364,10 +4364,7 @@ final class Gate1AppModel: ObservableObject {
                     let safeItemID = self.safePodcastEvidenceComponent(item.id)
                     let relativePath = "SpokenMargins/EpisodeMaps/\(safeItemID)/Transient/timeline.json"
                     let transcriptURL = supportDirectory.appending(path: relativePath)
-                    try FileManager.default.createDirectory(
-                        at: transcriptURL.deletingLastPathComponent(),
-                        withIntermediateDirectories: true
-                    )
+                    try FileManager.default.createDirectory(at: transcriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                     let ledger: OfflineStorageLedger
                     if let existingLedger = self.offlineStorageLedger {
                         ledger = existingLedger
@@ -4403,6 +4400,7 @@ final class Gate1AppModel: ObservableObject {
                    !publisherChapters.isEmpty {
                     timeline.chapters = publisherChapters
                 }
+                CommunityMapUploadService.shared.episodeTranscribed(itemId: item.id, timeline: timeline, store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 }
 
                 job.stage = .generatePhraseSketch
                 try store.saveEpisodeMapPreparationJob(job)

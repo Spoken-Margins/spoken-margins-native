@@ -72,6 +72,44 @@ final class CommunityMapUploadTests: XCTestCase {
         XCTAssertEqual(decide(), .upload(episodeKey: expectedKey))
     }
 
+    func testAShortEpisodeWithATimedTranscriptUploads() {
+        let short = episode(durationMs: 45_000)
+        XCTAssertEqual(decide(item: short, timeline: timed(from: 0, to: 45_000)), .upload(episodeKey: expectedKey))
+        // One block of text is still not a timed transcript, however short the episode.
+        let block = TranscriptTimeline(segments: [MediaTimelineSegment(id: "all", startMs: 0, endMs: 45_000, text: "All of it.")],
+                                       chapters: [], durationMs: 45_000)
+        XCTAssertEqual(decide(item: short, timeline: block), .skip(.untimedTranscript))
+    }
+
+    func testAnEpisodeClosedForAnUntimedTranscriptCanStillUploadABetterOne() async throws {
+        let repository = InMemorySessionRepository()
+        let uploader = CommunityMapUploader { _, _ in 202 }
+        // A publisher's untimed transcript, held for chapters, then closed when tried again.
+        let block = TranscriptTimeline(segments: [MediaTimelineSegment(id: "all", startMs: 0, endMs: 600_000, text: "All of it.")],
+                                       chapters: [], durationMs: 600_000)
+        try repository.saveCommunityMapUpload(CommunityMapUploadRecord(
+            id: expectedKey, itemId: "item-episode", state: .failed, attempts: 1, lastAttemptAt: now, lastOutcome: "failed:chapters_unchecked"
+        ))
+        let closed = await upload(uploader, timeline: block, repository: repository, at: now.addingTimeInterval(86_400))
+        XCTAssertEqual(closed, .skipped(.untimedTranscript))
+        XCTAssertEqual(try repository.loadCommunityMapUpload(episodeKey: expectedKey)?.state, .rejected)
+        // The same transcript again changes nothing.
+        let again = await upload(uploader, timeline: block, repository: repository, at: now.addingTimeInterval(2 * 86_400))
+        XCTAssertEqual(again, .skipped(.untimedTranscript))
+        // The phone's own timed transcript of the episode still uploads.
+        let phone = await upload(uploader, repository: repository, at: now.addingTimeInterval(2 * 86_400))
+        XCTAssertEqual(phone, .uploaded(status: 202))
+        XCTAssertEqual(try repository.loadCommunityMapUpload(episodeKey: expectedKey)?.state, .uploaded)
+
+        // A server refusal still closes the episode for good.
+        let refused = InMemorySessionRepository()
+        try refused.saveCommunityMapUpload(CommunityMapUploadRecord(
+            id: expectedKey, itemId: "item-episode", state: .rejected, attempts: 1, lastAttemptAt: now, lastOutcome: "rejected:400"
+        ))
+        let blocked = await upload(uploader, repository: refused, at: now.addingTimeInterval(86_400))
+        XCTAssertEqual(blocked, .skipped(.rejectedBefore))
+    }
+
     func testNothingUploadsWithoutOptIn() {
         XCTAssertEqual(decide(optedIn: false), .skip(.optedOut))
     }
