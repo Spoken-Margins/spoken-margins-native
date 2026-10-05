@@ -1710,6 +1710,51 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.hasActiveSession)
     }
 
+    /// #583: closing the mini player while another item's page is open saves the session and keeps that
+    /// page. It used to switch the page to the item that was playing.
+    func testDismissingMiniPlayerKeepsAnotherItemsPageOpen() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let store = try model.libraryStoreForTesting()
+        try store.saveItem(Item(id: "item-b", title: "Item B", mediaType: "text", text: "Source text.",
+                                externalReference: nil, status: "ready"))
+        model.startItem(id: "item-pill")
+        let sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        model.openItem(id: "item-b")
+        XCTAssertEqual(model.selectedItem.id, "item-b")
+        XCTAssertTrue(model.shouldShowMiniPlayer)
+
+        model.dismissMiniPlayer()
+        for _ in 0..<50 where model.hasActiveSession {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertFalse(model.hasActiveSession)
+        XCTAssertEqual(model.screen, .item)
+        XCTAssertEqual(model.selectedItem.id, "item-b")
+        XCTAssertEqual(model.feedbackEvent?.message, "Session saved. You can resume it later.")
+        XCTAssertEqual(try store.loadSessions().first { $0.id == sessionId }?.status, "in_progress")
+    }
+
+    /// #583: from the playing item's own page, closing the mini player still saves and shows that item.
+    func testDismissingMiniPlayerOnThePlayingItemsPageKeepsItAndSaves() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        model.openItem(id: "item-pill")
+
+        model.dismissMiniPlayer()
+        for _ in 0..<50 where model.hasActiveSession {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertFalse(model.hasActiveSession)
+        XCTAssertEqual(model.selectedItem.id, "item-pill")
+        XCTAssertEqual(model.feedbackEvent?.message, "Session saved. You can resume it later.")
+        XCTAssertEqual(model.selectedItem.sessions.first { $0.id == sessionId }?.status, "in_progress")
+    }
+
     func testRoutinePlaybackAndNavigationActionsDoNotPresentFeedback() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

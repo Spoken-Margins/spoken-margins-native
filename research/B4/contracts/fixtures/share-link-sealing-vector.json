@@ -1,0 +1,17 @@
+{
+  "_comment": "Share link sealing test vector (#805). Generated once with Python's cryptography AESGCM; the Swift tests (ShareLinkSealingTests) and the browser decrypt code's tests (share-link-open.test.mjs) both check against it, so the phone and the web page provably agree. Sealed part = header (\"SMLINK\", version 1, part number) || 12-byte nonce || ciphertext || 16-byte tag; the header is also the AES-GCM additional data. Not a real link: never reuse this key.",
+  "keyFragment": "jxwqfUueA_ahXH4tkLT4NhzlegstSfaDDhpce50vTmA",
+  "linkURL": "https://spokenmargins.proximitytoprogress.com/l/AbCdEf123456#jxwqfUueA_ahXH4tkLT4NhzlegstSfaDDhpce50vTmA",
+  "preview": {
+    "part": 1,
+    "nonceHex": "a1a2a3a4a5a6a7a8a9aaabac",
+    "plaintextBase64": "eyJzY2hlbWEiOiJzcG9rZW5tYXJnaW5zLmxpbmstcHJldmlldy52MSIsInNvdXJjZSI6eyJ0aXRsZSI6IkNhZsOpIG5vdGVzIG9uIHRoZSBGb3VyaWVyIHRyYW5zZm9ybSIsInNob3ciOiJTaWduYWxzICYgTm9pc2UifSwibWFyZ2lucyI6W3sidGV4dCI6IlRoaXMgaXMgdGhlIHBhcnQgSSB3YW50ZWQgeW91IHRvIGhlYXIg8J+OpyIsImJlZm9yZSI6InRoZSB0cmFuc2Zvcm0iLCJhZnRlciI6Im9mIGEgc3F1YXJlIHdhdmUifV19",
+    "sealedBase64": "U01MSU5LAQGhoqOkpaanqKmqq6zTC7qTaaumfQ7BGQXzSZ8GE2jXn07jZZuBMpE5xoQcwDx2Sq3166AreOkGxTFmT5ulD3haOOJuLKIBk+/J0LoiZZc/dcS8a4VQW3NXu1NyslQruhvDNYyGXZBYamM1tqJj+ejuPkscJ0MUGLJ/FrhBf2rEuwjHQ5vGMzVXpnBrpuuJdWAuNVUGx35xHwmEYFICK98W4iLJfyUcFPo7BFWgFnqufUJwCljOQUpN8+0mHtrOAFwanYZCRUTh0mSFIqOPAWrX4jrPhx2UpDeWwpZjW2wQvKDYlFj8kx8FV5//q7V2E8AxEXOoCgwMUa/HIxR0eFiFeGe5kUnBqr01cYzSqHdD"
+  },
+  "packet": {
+    "part": 2,
+    "nonceHex": "b1b2b3b4b5b6b7b8b9babbbc",
+    "plaintextBase64": "UEsDBAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v9maXh0dXJlIHBhY2tldCBieXRlcywgbm90IGEgcmVhbCBhcmNoaXZl",
+    "sealedBase64": "U01MSU5LAQKxsrO0tba3uLm6u7z0l/bx54pbQGmBZknAwWFXT7SHghPwDXNlae5SV8Y6OusmrCQTWhDwVoR52Uns03cCs6kV/XH29XuEbXdmbuXwawFEzSQwSKYl6gievGfzzXchG9J3jBIOXoP6KA+9vcFsUPkWR5yP9w6ViZ5sJPmDAPEv35FrVYpNvwdB2KmjpdyrxKBIpLYZcn4+QULqfZ2CxZVZ4N309BiJYky9qjgSOolpbfPhB3mBlsjFz1XM5gLTsrNOGzytOlG5J+Qa6tlEFcEiStOPAX2no03qXC25XDVwDVBEcqaueOlcTKH8IEovFtQvO8mV1XlrPq0gLNFpRt18fAOHOejGuXyINjVbUZmWqrLkZgJ7o2c4wvf0SA4OnA2bJBAbaFFNHQw10VHrpSQ6vCnPyWrkfKrF2MIOZdZgSxfLzkqzyQSw"
+  }
+}
