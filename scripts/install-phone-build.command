@@ -12,8 +12,8 @@
 # owner types R to reinstall (#500). It also says whether a newer build is being made right now
 # (a scratch folder in ~/SpokenMargins-phone/.work) or the newest attempt failed (last-attempt.json).
 #
-# Tests: SM_PHONE_DIR replaces ~/SpokenMargins-phone, SM_PHONE_ICLOUD the iCloud Drive folder;
-# scripts/tests put a fake xcrun on PATH.
+# Tests: SM_PHONE_DIR replaces ~/SpokenMargins-phone, SM_PHONE_ICLOUD the iCloud Drive folder,
+# SM_PHONE_NOW the clock; scripts/tests put a fake xcrun on PATH.
 set -u
 
 phone_dir="${SM_PHONE_DIR:-$HOME/SpokenMargins-phone}"
@@ -42,11 +42,12 @@ built=$(/usr/bin/plutil -extract built_at raw -o - "$latest/build.json" 2>/dev/n
 [[ "$sha" == [0-9a-f]* && ${#sha} -eq 40 ]] || stop "The newest build's build.json has no commit. Make a fresh build with scripts/phone-build."
 # First line: "same" when installed.txt names this build, else "new". Then the lines to show.
 build_status=$(/usr/bin/python3 - "$phone_dir" "$sha" "$built" <<'PY'
-import datetime, json, re, sys
+import datetime, json, os, re, sys
 from pathlib import Path
 
 phone, sha, built = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
-now = datetime.datetime.now()
+# Tests pin the clock with SM_PHONE_NOW (an ISO local time), so "today" and "yesterday" don't depend on when they run.
+now = datetime.datetime.fromisoformat(os.environ['SM_PHONE_NOW']) if os.environ.get('SM_PHONE_NOW') else datetime.datetime.now()
 
 def when(at):
     if at.date() == now.date():
