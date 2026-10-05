@@ -300,19 +300,19 @@ final class ListeningMapContractTests: XCTestCase {
         XCTAssertEqual(PortableListeningMapContract.violations(in: map, sourceTexts: [itemText]), [], "the item text alone isn't quoted")
     }
 
-    /// Codex audit on 17614c9: a scene with no summary could still carry a title or eligibility reason
-    /// copying ten words of the transcript, and the on-device labeller checks a reason's length only.
-    /// Sharing drops the quoting label and keeps the map.
+    /// Codex audit on 17614c9: a scene with no summary could still carry a title, chapter title or
+    /// eligibility reason copying ten words of the transcript, and the on-device labeller checks a
+    /// reason's length only. Sharing drops the quoting label and keeps the map.
     func testSceneTitleAndReasonMustNotQuoteTheSource() {
         let transcript = "The committee met at dawn and agreed that the old bridge must close before winter storms arrive."
         let copied = "Skipped: the committee met at dawn and agreed that the old bridge must close."
-        func map(title: String?, reason: String?) -> PortableListeningMapProposalArtifact {
+        func map(title: String?, reason: String?, chapter: String? = nil) -> PortableListeningMapProposalArtifact {
             proposal([
                 scene(0, .eligible, from: 0, to: 1_000),
                 PortableListeningMapScene(
                     id: "scene-1", order: 1, title: title, eligibility: .unknown, eligibilityReason: reason,
-                    startAnchor: .init(anchorType: .transcript, mediaTimeMs: 1_000),
-                    endAnchor: .init(anchorType: .transcript, mediaTimeMs: 2_000)
+                    startAnchor: .init(anchorType: .transcript, mediaTimeMs: 1_000, chapterTitle: chapter),
+                    endAnchor: .init(anchorType: .transcript, mediaTimeMs: 2_000, chapterTitle: chapter)
                 ),
             ])
         }
@@ -327,7 +327,12 @@ final class ListeningMapContractTests: XCTestCase {
             XCTAssertEqual(scene?.eligibilityReason, reason == copied ? nil : reason, name)
             XCTAssertEqual(shared.first.map { PortableListeningMapContract.violations(in: $0, sourceTexts: [transcript]) }, [], name)
         }
-        let plain = map(title: "Part two", reason: "The labeller was not confident.")
+        let chaptered = map(title: copied, reason: nil, chapter: copied)
+        let shared = PortableListeningMapContract.forSharing([chaptered], sourceTexts: [transcript]).first?.scenes[1]
+        XCTAssertNil(shared?.startAnchor.chapterTitle, "the title doesn't travel in the anchors either")
+        XCTAssertNil(shared?.endAnchor.chapterTitle)
+        XCTAssertEqual(shared?.startAnchor.mediaTimeMs, 1_000, "what places the anchor stays")
+        let plain = map(title: "Part two", reason: "The labeller was not confident.", chapter: "Part two")
         XCTAssertEqual(PortableListeningMapContract.forSharing([plain], sourceTexts: [transcript]), [plain])
     }
 

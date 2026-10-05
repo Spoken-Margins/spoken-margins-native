@@ -81,7 +81,8 @@ public enum PortableListeningMapContract {
             if let summary = scene.summaryText, !summary.isEmpty, quotesSource(summary, scene: scene, sources: sources) {
                 result.append(.summaryQuotesSource(sceneId: scene.id))
             }
-            if [scene.title, scene.eligibilityReason].contains(where: { $0.map { quotesSource($0, scene: scene, sources: sources) } ?? false }) {
+            let notes = [scene.title, scene.eligibilityReason, scene.startAnchor.chapterTitle, scene.endAnchor.chapterTitle]
+            if notes.contains(where: { $0.map { quotesSource($0, scene: scene, sources: sources) } ?? false }) {
                 result.append(.sceneNoteQuotesSource(sceneId: scene.id))
             }
             reachedStart = furthest(reachedStart, start)
@@ -118,9 +119,9 @@ public enum PortableListeningMapContract {
             .filter { violations(in: $0, sources: sources).isEmpty }
     }
 
-    /// The same proposal without any scene title or eligibility reason that quotes the source. Both are
-    /// optional labels, and the on-device labeller bounds a reason's length but not what it copies, so
-    /// a quoting one is dropped and the map kept (Codex audit on 17614c9).
+    /// The same proposal without any scene title, anchor chapter title or eligibility reason that quotes
+    /// the source. All are optional labels, and the on-device labeller bounds a reason's length but not
+    /// what it copies, so a quoting one is dropped and the map kept (Codex audit on 17614c9).
     private static func withoutQuotingNotes(
         _ proposal: PortableListeningMapProposalArtifact,
         sources: SourceTexts
@@ -135,12 +136,22 @@ public enum PortableListeningMapContract {
                 func kept(_ note: String?) -> String? {
                     note.flatMap { quotesSource($0, scene: scene, sources: sources) ? nil : $0 }
                 }
+                func kept(_ anchor: PortableAnchorEvidence) -> PortableAnchorEvidence {
+                    guard anchor.chapterTitle != nil, kept(anchor.chapterTitle) == nil else { return anchor }
+                    return PortableAnchorEvidence(
+                        anchorType: anchor.anchorType, startChar: anchor.startChar, endChar: anchor.endChar,
+                        exactText: anchor.exactText, prefix: anchor.prefix, suffix: anchor.suffix,
+                        mediaTimeMs: anchor.mediaTimeMs, roughPercent: anchor.roughPercent,
+                        transcriptSegmentId: anchor.transcriptSegmentId, chapterTitle: nil,
+                        machineEvidenceAssetIds: anchor.machineEvidenceAssetIds
+                    )
+                }
                 return PortableListeningMapScene(
                     id: scene.id, order: scene.order, title: kept(scene.title),
                     summaryText: scene.summaryText, summaryAssetId: scene.summaryAssetId,
                     summaryProvenance: scene.summaryProvenance,
                     eligibility: scene.eligibility, eligibilityReason: kept(scene.eligibilityReason),
-                    startAnchor: scene.startAnchor, endAnchor: scene.endAnchor
+                    startAnchor: kept(scene.startAnchor), endAnchor: kept(scene.endAnchor)
                 )
             }
         )
