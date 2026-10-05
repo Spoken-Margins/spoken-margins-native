@@ -199,11 +199,12 @@ public struct ListeningSignal: Codable, Equatable, Sendable {
 public enum ListeningSignalContext {
     public typealias Value = (source: ListeningSignalSource, item: ListeningSignalItem)
 
-    public static func load(forItemId itemId: String, from repository: any SessionRepository) -> Value? {
+    public static func load(forItemId itemId: String, from repository: any SessionRepository,
+                            redirects: [String: String] = [:]) -> Value? {
         guard let item = try? repository.loadItem(id: itemId),
               let subscriptions = try? repository.loadFeedSubscriptions(), !subscriptions.isEmpty else { return nil }
         return context(for: item, subscriptions: subscriptions,
-                       entries: (try? repository.loadFeedEntries(subscriptionId: nil)) ?? [])
+                       entries: (try? repository.loadFeedEntries(subscriptionId: nil)) ?? [], redirects: redirects)
     }
     public static func source(for subscription: FeedSubscription) -> ListeningSignalSource {
         ListeningSignalSource(
@@ -238,16 +239,18 @@ public enum ListeningSignalContext {
 
     /// The followed source a Library item came from, and the feed entry it was imported from when
     /// one matches, so its item id joins the `item_published` row. Unmatched items keep a
-    /// Library-scoped id; their source-level signals still count.
+    /// Library-scoped id; their source-level signals still count. `redirects` maps an article's
+    /// final URL to the feed entry link that led there (`ListeningSignalRedirects`).
     public static func context(
         for item: Item,
         subscriptions: [FeedSubscription],
-        entries: [FeedEntry]
+        entries: [FeedEntry],
+        redirects: [String: String] = [:]
     ) -> (source: ListeningSignalSource, item: ListeningSignalItem)? {
         let knownSubscription = followedSubscription(for: item, subscriptions: subscriptions)
         let entry = importedEntry(for: item, among: entries.filter { entry in
             subscriptions.contains(where: { $0.id == entry.subscriptionId })
-        }, knownSubscriptionId: knownSubscription?.id)
+        }, knownSubscriptionId: knownSubscription?.id, redirects: redirects)
         guard let subscription = entry.flatMap({ entry in subscriptions.first { $0.id == entry.subscriptionId } })
                 ?? knownSubscription else { return nil }
         let duration = item.media?.durationMs.map { Double($0) / 1_000 }
@@ -264,8 +267,10 @@ public enum ListeningSignalContext {
     /// a webpage several episodes share decides only when one entry has it, so signals are never
     /// filed under whichever of them the feed listed first. A GUID is only unique within one feed,
     /// so it counts only inside the item's own followed source; another feed needs a URL match.
-    static func importedEntry(for item: Item, among entries: [FeedEntry], knownSubscriptionId: String?) -> FeedEntry? {
-        let itemKeys = Set([item.externalReference, item.media?.url].compactMap(FollowedSourceMatching.normalizedFollowSourceURL))
+    static func importedEntry(for item: Item, among entries: [FeedEntry], knownSubscriptionId: String?,
+                              redirects: [String: String] = [:]) -> FeedEntry? {
+        let urls = Set([item.externalReference, item.media?.url].compactMap(FollowedSourceMatching.normalizedFollowSourceURL))
+        let itemKeys = urls.union(urls.compactMap { redirects[$0] })
         let guid = nonEmpty(item.episodeGUID)
         let matchesGUID: (FeedEntry) -> Bool = {
             guid != nil && $0.subscriptionId == knownSubscriptionId && nonEmpty($0.episodeGUID) == guid

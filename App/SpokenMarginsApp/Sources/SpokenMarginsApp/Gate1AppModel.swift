@@ -15882,7 +15882,7 @@ final class Gate1AppModel: ObservableObject {
                     imported = importedItemId != nil
                     if openWhenFinished, let importedItemId { self.openItem(id: importedItemId) }
                 } else {
-                    let handoff = FollowedArticleIdentity.preservingEntryURL(in: try await FollowedArticleImport.handoff(for: entry, url: url, using: self.readablePageExtractor, record: { self.diagnostics.merge($0) { _, new in new } }), for: entry)
+                    let handoff = self.listeningSignals.followedArticle(try await FollowedArticleImport.handoff(for: entry, url: url, using: self.readablePageExtractor, record: { self.diagnostics.merge($0) { _, new in new } }), for: entry)
                     // With something already playing, importBrowserText only adds; Add and open still opens it (#567).
                     if openWhenFinished, !entry.hasPublisherAudio, !self.hasActiveSession {
                         imported = self.importBrowserText(handoff)

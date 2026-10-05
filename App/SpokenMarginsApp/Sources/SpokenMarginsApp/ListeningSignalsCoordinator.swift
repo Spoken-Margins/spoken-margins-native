@@ -77,6 +77,12 @@ final class ListeningSignalsCoordinator {
         collector.dismiss(entryId: entryId, repository: repository())
     }
 
+    /// A followed article keeps the page's final URL as its identity; when extraction followed a
+    /// redirect, remember the entry link so its rows still join the entry. Returns the handoff unchanged.
+    func followedArticle(_ handoff: BrowserTextHandoff, for entry: FeedEntry) -> BrowserTextHandoff {
+        collector.redirects.note(handoff, for: entry)
+    }
+
     /// A copy of the log for the share sheet, or nil when nothing has been logged yet.
     func exportFileURL() async -> URL? {
         // Capture the work already present at invocation. Later actions do not keep this

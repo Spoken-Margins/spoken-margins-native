@@ -4,8 +4,9 @@ import SessionKit
 import SessionKitFeeds
 import SessionKitPersistence
 
-final class FollowedArticleIdentityTests: XCTestCase {
-    func testRedirectedFeedCaptureKeepsItsEntryInSQLiteAndSignalExport() throws {
+final class FollowedArticleRedirectTests: XCTestCase {
+    /// The item keeps the page's final URL (its sharing identity, J5); the signal rows still join the entry.
+    func testRedirectedFeedCaptureKeepsItsFinalURLAndItsSignalEntry() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -19,16 +20,16 @@ final class FollowedArticleIdentityTests: XCTestCase {
         let capture = BrowserTextHandoff(captureMode: .readablePage,
             source: BrowserTextSource(url: "https://destination.example/article", title: "Article", author: "Writer"),
             text: "The captured body survives the redirect.")
-        let handoff = FollowedArticleIdentity.preservingEntryURL(in: capture, for: entry)
+        let recorder = ListeningSignalRecorder(fileURL: root.appendingPathComponent("signals.jsonl"), flushDelay: 60)
+        let handoff = ListeningSignalCollector(recorder: recorder).redirects.note(capture, for: entry)
+        XCTAssertEqual(handoff, capture, "noting the redirect leaves the import untouched")
         let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "test", displayName: "Test",
             capabilities: ["sync": ["canonical_persistence"]]), repository: store)
         let imported = try engine.importBrowserTextInBackground(handoff)
         let item = try store.loadItem(id: imported.id)
-        XCTAssertEqual(item.externalReference, entry.canonicalURL)
+        XCTAssertEqual(item.externalReference, capture.source.url, "a recipient's copy matches by the final URL")
         XCTAssertEqual(item.text, capture.text)
-        XCTAssertEqual(handoff.source.title, capture.source.title)
-        XCTAssertEqual(handoff.source.author, capture.source.author)
-        let recorder = ListeningSignalRecorder(fileURL: root.appendingPathComponent("signals.jsonl"), flushDelay: 60)
+        // A fresh collector, as after a relaunch, reads the redirect back from beside the log.
         let collector = ListeningSignalCollector(recorder: recorder)
         collector.record(.margin(kind: .written, length: 12), itemId: item.id, repository: store)
         let exported = try collector.exportCopy(to: root.appendingPathComponent("export"))

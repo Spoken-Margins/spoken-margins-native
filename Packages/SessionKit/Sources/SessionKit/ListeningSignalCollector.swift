@@ -6,17 +6,26 @@ import Foundation
 public final class ListeningSignalCollector: @unchecked Sendable {
     private let queue = DispatchQueue(label: "SessionKit.ListeningSignalCollector", qos: .utility)
     private let recorder: ListeningSignalRecorder
+    /// Where followed-article imports note a redirect, beside the recorder's log.
+    public let redirects: ListeningSignalRedirects
     private let resolve: @Sendable (String, any SessionRepository) -> ListeningSignalContext.Value?
     private var cachedItemId: String?
     private var cachedRepository: (any SessionRepository)?
     private var cachedContext: ListeningSignalContext.Value?
     private var cachedSubscriptions: [FeedSubscription]?
 
+    public convenience init(recorder: ListeningSignalRecorder) {
+        let redirects = ListeningSignalRedirects(beside: recorder)
+        self.init(recorder: recorder, redirects: redirects, resolve: {
+            ListeningSignalContext.load(forItemId: $0, from: $1, redirects: redirects.origins())
+        })
+    }
+
     public init(recorder: ListeningSignalRecorder,
-                resolve: @escaping @Sendable (String, any SessionRepository) -> ListeningSignalContext.Value? = {
-                    ListeningSignalContext.load(forItemId: $0, from: $1)
-                }) {
+                redirects: ListeningSignalRedirects? = nil,
+                resolve: @escaping @Sendable (String, any SessionRepository) -> ListeningSignalContext.Value?) {
         self.recorder = recorder
+        self.redirects = redirects ?? ListeningSignalRedirects(beside: recorder)
         self.resolve = resolve
     }
 

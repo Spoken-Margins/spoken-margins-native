@@ -188,7 +188,7 @@ final class SourceLinkImportTests: XCTestCase {
             try await waitFor("redirected followed article import") { model.libraryItems.contains { $0.title == entry.title } }
             let row = try XCTUnwrap(model.libraryItems.first { $0.title == entry.title })
             let item = try store.loadItem(id: row.id)
-            XCTAssertEqual(item.externalReference, entry.canonicalURL)
+            XCTAssertEqual(item.externalReference, capture.source.url, "the final URL stays the sharing identity")
             XCTAssertEqual(item.text, capture.text)
             XCTAssertEqual(model.snapshot.sessionId, activeSession)
             XCTAssertEqual(model.selectedItem.id, openWhenFinished ? item.id : "item-pill")
