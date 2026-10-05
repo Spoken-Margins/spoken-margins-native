@@ -59,6 +59,39 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.sharingState.drafts.map(\.interjection.sessionId), [first])
     }
 
+    func testItemMarginsShareSkipsANewerSessionWithOnlyResponseMargins() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "share-response-only-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "A thought from the first session")
+        let first = try XCTUnwrap(model.snapshot.sessionId)
+        model.startNewSession(id: "item-pill")
+        let newer = try XCTUnwrap(model.snapshot.sessionId)
+        XCTAssertNotEqual(newer, first)
+        var response = shareableInterjection(itemId: "item-pill")
+        response.sessionId = newer
+        response.targetType = .assistantTurn
+        response.targetId = "turn-1"
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        try store.saveInterjection(response)
+        // Both sessions are saved within the same second, so make the newer one sort first for certain.
+        var newerSession = try XCTUnwrap(store.loadSession(id: newer))
+        newerSession.updatedAt = Date().addingTimeInterval(60)
+        try store.saveSession(newerSession)
+        XCTAssertEqual(try store.loadSessions(itemId: "item-pill").first?.id, newer)
+
+        model.openMarginItemExport(itemID: "item-pill")
+
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(model.sharingState.drafts.map(\.interjection.sessionId), [first])
+    }
+
     func testNextChapterUnavailableForFinalChapterAndDerivativePlayback() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         let first = Chapter(id: "a", title: "Opening", startChar: 0, endChar: 50, percent: 0)

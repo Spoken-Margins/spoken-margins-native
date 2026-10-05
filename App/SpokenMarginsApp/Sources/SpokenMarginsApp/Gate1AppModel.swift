@@ -13015,7 +13015,7 @@ final class Gate1AppModel: ObservableObject {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_export") else { return }
         do {
             selectedItem = try loadItemDetail(id: itemID, store: requireStore())
-            exportSessionId = selectedItem.sessionRows.first { $0.interjectionCount > 0 }?.id
+            exportSessionId = try ItemShareSessionSelection.sessionId(newestFirst: selectedItem.sessionRows.map(\.id)) { try requireStore().loadInterjections(sessionId: $0) }
             prepareExportShareInterjections() // #147: straight to the Share Margins sheet, not the Share/Export screen.
         } catch { reportFailure(error, context: "Open item export failed") }
     }
@@ -13026,9 +13026,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func prepareShareInterjections(candidates source: [Interjection]) {
         cancelBulkSharePreparation()
-        let candidates = source.filter {
-            $0.status == "active" && $0.targetType == .item
-        }
+        let candidates = source.filter(ItemShareSessionSelection.isShareable)
         guard !candidates.isEmpty else {
             reportFailure("Record at least one Margin on this item before sharing.")
             return

@@ -41,8 +41,20 @@ final class Gate1FlowUITests: XCTestCase {
         share.tap()
         // #147: straight to the Share Margins sheet, with Review pinned at the bottom.
         XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 5))
-        XCTAssertTrue(element("build23.sender.select.continue").waitForExistence(timeout: 5))
+        let cleanUpQuestion = app.alerts["Clean selected Margins automatically?"]
+        if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
+        let review = element("build23.sender.select.continue")
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        XCTAssertTrue(review.isHittable)
         captureScreen(named: "qol-item-share-sheet")
+        review.tap()
+        // Tap two of three: Share is pinned at the bottom of Review. Its build, verify and system
+        // share path is covered by testBuild23SenderStagesInvalidateStalePreviewAndUseSystemShare.
+        XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5))
+        let shareAction = element("build23.sender.review.share")
+        XCTAssertTrue(shareAction.waitForExistence(timeout: 5))
+        XCTAssertTrue(shareAction.isHittable)
+        captureScreen(named: "qol-item-share-review")
     }
 
     func testListeningEditionPreviewShowsSuppliedScenesBeforeImport() throws {
