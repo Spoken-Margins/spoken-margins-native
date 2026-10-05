@@ -59,7 +59,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     private let connectivity: ConnectivityMonitor
     private var connectivityObserver: UUID?
     private var isShutDown = false
-    private var cacheLimit: PodcastCacheLimitGB
+    private let cacheLimit: PodcastCacheLimitGB
     private var activeItemId: String?
     private var activeTaskItemIds: Set<String> = []
     private var generations: [String: String] = [:]
@@ -315,11 +315,6 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             || recordsByItemId[itemId]?.state == .availableOffline
     }
 
-    func setCacheLimit(_ limit: PodcastCacheLimitGB) {
-        cacheLimit = limit
-        enforceCacheLimit()
-    }
-
     func clearDownloads() {
         for record in Array(recordsByItemId.values)
             where record.state == .availableOffline && record.itemId != activeItemId {
@@ -510,17 +505,6 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         return directory.appending(path: path)
     }
 
-    private func enforceCacheLimit() {
-        let protected = Set([activeItemId].compactMap { $0 })
-            .union(recordsByItemId.values.filter { $0.state == .downloading }.map(\.itemId))
-        let evictions = PodcastCacheEvictionPlanner.recordsToEvict(
-            from: Array(recordsByItemId.values),
-            limitBytes: cacheLimit.bytes,
-            protectedItemIds: protected
-        )
-        evictions.forEach(evict)
-    }
-
     private func evict(_ record: PodcastDownloadRecord) {
         if let url = localURL(for: record) { try? FileManager.default.removeItem(at: url) }
         try? store.deleteAudioAsset(id: "podcast-local-\(record.itemId)")
@@ -551,13 +535,24 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             let destination = directory.appending(path: "\(attempt.generation).\(stagedURL.pathExtension)")
             try FileManager.default.moveItem(at: stagedURL, to: destination)
             do {
+                // Playback can start while the commit waits on the ledger, so the row is committed
+                // protected and the protection is settled once this actor resumes (#541). Other
+                // ledgers on this store can't evict the new file in between.
                 try await ledger.commit(reservationId: attempt.reservationId, asset: OwnedOfflineAsset(
                     id: "podcast-offline-\(attempt.itemId)", itemId: attempt.itemId, category: .podcast,
                     relativePath: "PodcastAudio/\(destination.lastPathComponent)", byteCount: Int64(size),
-                    isReproducible: true, protections: activeItemId == attempt.itemId ? [.activePlayback] : []))
+                    isReproducible: true, protections: [.activePlayback]))
                 guard owns(attempt) else {
                     removeAdoptedFile(destination, itemId: attempt.itemId)
                     return
+                }
+                let isActive = activeItemId == attempt.itemId
+                guard try store.updateOwnedOfflineAsset(id: "podcast-offline-\(attempt.itemId)", { current in
+                    if isActive { current.protections.insert(.activePlayback) }
+                    else { current.protections.remove(.activePlayback) }
+                }) != nil else {
+                    // Evicted or reconciled away already: don't publish a file that may be gone.
+                    throw CocoaError(.fileNoSuchFile)
                 }
                 // Save the asset before publishing availability.
                 try store.saveAudioAsset(AudioAsset(id: "podcast-local-\(attempt.itemId)", itemId: attempt.itemId,

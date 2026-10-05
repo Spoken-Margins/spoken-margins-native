@@ -13,9 +13,10 @@ public enum FeedbackBannerPolicy {
     }
 
     /// Seconds before the banner dismisses itself, or nil when only the listener dismisses it.
-    public static func autoDismissSeconds(for kind: Kind) -> Double? {
+    /// A confirmation that offers an action (Play now, #784) stays long enough to reach it.
+    public static func autoDismissSeconds(for kind: Kind, offersAction: Bool = false) -> Double? {
         switch kind {
-        case .success: 3
+        case .success: offersAction ? 8 : 3
         case .warning: 6
         case .error: nil
         }

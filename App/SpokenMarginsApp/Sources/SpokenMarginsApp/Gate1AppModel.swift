@@ -577,6 +577,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var snapshot = SessionSnapshot() {
         didSet {
             recordPlaybackEventState(previous: oldValue)
+            updateNarrationVoiceNotice()
             if playingImportedCommentary != nil,
                oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId
                 || oldValue.targetId != snapshot.targetId || snapshot.status.isPlaybackActive {
@@ -600,6 +601,7 @@ final class Gate1AppModel: ObservableObject {
             updateGate2CompactState()
         }
     }
+    @Published var narrationVoiceNotice = NarrationVoiceNotice() // written by updateNarrationVoiceNotice() only
     private(set) var gate2CompactSnapshot: CompactControlSnapshot?
     let runtimeDiagnostics = RuntimeDiagnostics()
     var diagnostics: [String: String] {
@@ -831,8 +833,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private var storedSourceFollowSuggestionCandidates: [SourceCandidateEvidence] = []
     private var sourceFollowSuggestionItemId: String?
     var sourceFollowSuggestionCandidates: [SourceCandidateEvidence] {
-        guard sourceFollowSuggestionItemId == selectedItem.id,
-              screen != .playback || sourceFollowSuggestionItemId == snapshot.itemId else { return [] }
+        guard sourceFollowSuggestionItemId == selectedItem.id else { return [] }
         guard !FollowedSourceMatching.isSourceAlreadyFollowed(
             sourceURL: libraryItems.first(where: { $0.id == selectedItem.id })?.sourceURL,
             sourceTitle: libraryItems.first(where: { $0.id == selectedItem.id })?.sourceTitle,
@@ -978,7 +979,7 @@ final class Gate1AppModel: ObservableObject {
     #endif
     private let openAIResponsesClient = OpenAIResponsesClient()
     private let streamingSpeechQueue = StreamingSpeechQueue()
-    private var speechPlaybackClient: AudioPlaybackClient?
+    private(set) var speechPlaybackClient: AudioPlaybackClient?
     private var sessionAudioPlaybackClient: AudioPlaybackClient?
     private var supertonicRenderer: SupertonicNarrationRenderer?
     private var preparedAudioCoordinator: PreparedAudioCoordinator?
@@ -1016,7 +1017,7 @@ final class Gate1AppModel: ObservableObject {
     #if SPOKEN_MARGINS_WATCH
     private var gate3WatchDispatcher: CompactControlDispatcher?
     #endif
-    private var activeItemId = "item-pill"
+    private(set) var activeItemId = "item-pill"
     private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     private var playbackProgressTask: Task<Void, Never>?
     private var sleepTimerTask: Task<Void, Never>?
@@ -1071,8 +1072,8 @@ final class Gate1AppModel: ObservableObject {
     private var pendingMapGenerationItemId: String?
     private var pendingProviderJobForConsent: PendingProviderJob?
     private var pendingMapGenerationAfterConsent = false
-    private var pendingTermsVoiceSelection: AppTTSVoiceSelection?
-    private var pendingPlaybackAfterTerms: PendingPlaybackAfterTerms?
+    private(set) var pendingTermsVoiceSelection: AppTTSVoiceSelection?
+    var pendingPlaybackAfterTerms: PendingPlaybackAfterTerms?
     #if SPOKEN_MARGINS_WATCH
     private var activeWatchPackageRenderItemIds: Set<String> = []
     private var failedWatchPackageRenderItemIds: Set<String> = []
@@ -1096,7 +1097,7 @@ final class Gate1AppModel: ObservableObject {
         return encoder
     }()
 
-    private enum PendingPlaybackAfterTerms {
+    enum PendingPlaybackAfterTerms {
         case startCurrentItem
         case resumeSession(String)
         case jumpToChapter(String, fromTimeline: Bool)
@@ -1479,17 +1480,6 @@ final class Gate1AppModel: ObservableObject {
         continuePlaybackAfterTerms(pendingPlayback)
     }
 
-    private func requireTermsDecisionBeforePlayback(_ action: PendingPlaybackAfterTerms) -> Bool {
-        guard !hasAcceptedCurrentTerms, pendingTermsVoiceSelection?.supertonicVoice != nil else {
-            return false
-        }
-        pendingPlaybackAfterTerms = action
-        isTermsOfUsePresented = true
-        diagnostics["termsGate"] = "presented_for_first_playback"
-        statusMessage = "Choose whether to enable the improved on-device voice before playback begins."
-        return true
-    }
-
     private func continuePlaybackAfterTerms(_ action: PendingPlaybackAfterTerms?) {
         guard let action else { return }
         switch action {
@@ -1726,6 +1716,7 @@ final class Gate1AppModel: ObservableObject {
                         if updated != self.snapshot {
                             self.snapshot = updated
                         }
+                        self.updateNarrationVoiceNotice()
                         if previousEngagementProgress < 25,
                            updated.currentPlaybackProgressPercent >= 25,
                            let itemId = updated.itemId,
@@ -2649,7 +2640,7 @@ final class Gate1AppModel: ObservableObject {
             if startListening {
                 startItem(id: item.id)
             } else {
-                reportConfirmation("Added \(item.title) to Library without changing Now Playing.")
+                reportAddedToLibrary(title: item.title, itemId: item.id)
             }
         } catch {
             reportFailure(error, context: "Import failed")
@@ -2692,7 +2683,7 @@ final class Gate1AppModel: ObservableObject {
                     self.screen = .item
                     self.reportConfirmation("Imported \(item.title).")
                 } else {
-                    self.reportConfirmation("Added \(item.title) to Library without changing Now Playing.")
+                    self.reportAddedToLibrary(title: item.title, itemId: item.id)
                 }
             } catch {
                 self.reportFailure(error, context: "EPUB import failed")
@@ -2716,7 +2707,7 @@ final class Gate1AppModel: ObservableObject {
                     self.screen = .item
                     self.reportConfirmation("Imported \(item.title).")
                 } else {
-                    self.reportConfirmation("Added \(item.title) to Library without changing Now Playing.")
+                    self.reportAddedToLibrary(title: item.title, itemId: item.id)
                 }
             } catch {
                 self.reportFailure(error, context: "Audiobook import failed")
@@ -3270,7 +3261,7 @@ final class Gate1AppModel: ObservableObject {
                     ))
                     return false
                 }
-                reportConfirmation("Added \(item.title) to Library without changing Now Playing.")
+                reportAddedToLibrary(title: item.title, itemId: item.id)
                 return true
             }
             let store = try requireStore()
@@ -3664,8 +3655,8 @@ final class Gate1AppModel: ObservableObject {
     func importBrowserText(_ handoff: BrowserTextHandoff) -> Bool {
         do {
             if hasActiveSession {
-                try importBrowserTextInBackground(handoff)
-                reportConfirmation("Added \(handoff.source.title) to Library without changing Now Playing.")
+                let itemId = try importBrowserTextInBackground(handoff)
+                reportAddedToLibrary(title: handoff.source.title, itemId: itemId)
                 return true
             }
             let store = try requireStore()
@@ -6168,28 +6159,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func podcastCacheLimitChanged() {
-        guard let limit = PodcastCacheLimitGB(rawValue: podcastCacheLimitGB) else {
-            podcastCacheLimitGB = PodcastCacheLimitGB.defaultValue.rawValue
-            return
-        }
-        UserDefaults.standard.set(limit.rawValue, forKey: "podcastCacheLimitGB")
-        podcastDownloadCoordinator?.setCacheLimit(limit)
-        diagnostics["podcastCacheLimitGB"] = "\(limit.rawValue)"
-        reportSuccess("Podcast cache limit set to \(limit.rawValue) GB.")
-    }
-
-    func renderedSpeechCacheLimitChanged() {
-        guard Self.supportedRenderedSpeechCacheLimitsMB.contains(renderedSpeechCacheLimitMB) else {
-            renderedSpeechCacheLimitMB = 256
-            return
-        }
-        UserDefaults.standard.set(renderedSpeechCacheLimitMB, forKey: "renderedSpeechCacheLimitMB")
-        renderedSpeechDiskCache?.setLimitBytes(renderedSpeechCacheLimitMB * 1024 * 1024)
-        diagnostics["renderedSpeechCacheLimitMB"] = "\(renderedSpeechCacheLimitMB)"
-        reportSuccess("Rendered speech cache limit set to \(renderedSpeechCacheLimitMB) MB.")
-    }
-
     func redownloadSelectedPodcast() {
         guard let coordinator = podcastDownloadCoordinator else { return }
         requestedPodcastTransportReplacements.insert(selectedItem.id)
@@ -6209,11 +6178,6 @@ final class Gate1AppModel: ObservableObject {
         } else {
             reportWarning("The download could not start yet. Check the connection and try again.")
         }
-    }
-
-    func clearPodcastDownloads() {
-        podcastDownloadCoordinator?.clearDownloads()
-        reportConfirmation("Cleared downloaded podcast audio. Remote sources remain available.")
     }
 
     private func skipUnitForCurrentTarget() -> String {
@@ -6503,7 +6467,7 @@ final class Gate1AppModel: ObservableObject {
         let closedItemId = snapshot.itemId ?? activeItemId
         run { engine in
             snapshot = try engine.endSession(stoppingInlinePlayback: endMarginMoment)
-            activeItemId = closedItemId
+            activeItemId = SessionCloseSelection.itemId(closing: closedItemId, pageOnScreen: screen == .item ? selectedItem.id : nil, navigatesHome: navigateHome)
             refreshSelectedItem()
             if let store {
                 try refreshLibraryRows(store: store)
@@ -8858,16 +8822,6 @@ final class Gate1AppModel: ObservableObject {
             if !title.isEmpty { return title }
         }
         return selectedItem.title.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var playbackChapterHeaderTitle: String? {
-        let itemTitle = playbackItemHeaderTitle
-        let combined = playbackHeaderTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !combined.isEmpty,
-              combined.caseInsensitiveCompare(itemTitle) != .orderedSame else {
-            return nil
-        }
-        return combined
     }
 
     var exportSourceTextAvailable: Bool {
@@ -14682,9 +14636,9 @@ final class Gate1AppModel: ObservableObject {
 
     /// Records a successful outcome and presents it only when the result is not
     /// otherwise apparent from the current interface.
-    func reportConfirmation(_ message: String) {
+    func reportConfirmation(_ message: String, action: UserFeedbackEvent.Action? = nil) {
         reportSuccess(message)
-        presentFeedback(UserFeedbackEvent(kind: .success, message: message))
+        presentFeedback(UserFeedbackEvent(kind: .success, message: message, action: action))
     }
 
     /// Presents degraded-but-successful behavior without styling it as either a
@@ -14718,7 +14672,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["recentFailure"] = message
     }
 
-    private func presentFeedback(_ event: UserFeedbackEvent) {
+    func presentFeedback(_ event: UserFeedbackEvent) {
         guard feedbackEvent?.mayBeReplaced(by: event) ?? true else { return }
         feedbackEvent = event
     }

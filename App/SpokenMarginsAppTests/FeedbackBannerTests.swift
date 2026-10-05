@@ -40,6 +40,57 @@ final class FeedbackBannerTests: XCTestCase {
         XCTAssertNil(model.itemFailures.lastFailure(itemId: "item-pill"))
     }
 
+    /// #784: with nothing in Now Playing, the add confirmation offers Play now, and only the tap plays.
+    func testAnAddWithNothingPlayingOffersPlayNowAndOnlyTheTapPlays() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.declineCurrentTerms() // a fresh simulator otherwise parks playback on the voice choice
+        XCTAssertTrue(model.nowPlayingIsEmpty)
+        model.importTitle = "Play Now Article"
+        model.importText = "A short article the listener adds while nothing is playing."
+        model.importTextItem(startListening: false)
+
+        let event = try XCTUnwrap(model.feedbackEvent)
+        XCTAssertEqual(event.kind, .success)
+        XCTAssertEqual(event.message, "Added Play Now Article to Library.")
+        let action = try XCTUnwrap(event.action, "Play now must be offered when Now Playing is empty")
+        XCTAssertEqual(action.title, "Play now")
+        XCTAssertEqual(action.accessibilityLabel, "Play now, Play Now Article")
+        XCTAssertNil(model.snapshot.sessionId, "Nothing plays by itself")
+
+        action.perform()
+        let added = try XCTUnwrap(model.libraryItems.first { $0.title == "Play Now Article" })
+        XCTAssertEqual(model.snapshot.itemId, added.id)
+        XCTAssertEqual(model.screen, .playback)
+    }
+
+    /// #784: with something in Now Playing, today's message stays, with no button; and a stale
+    /// Play now tapped after something else started does nothing.
+    func testAnAddDuringPlaybackKeepsTodaysMessageAndAStalePlayNowDoesNothing() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        model.importTitle = "First Article"
+        model.importText = "The first article, added with nothing playing."
+        model.importTextItem(startListening: false)
+        let stale = try XCTUnwrap(model.feedbackEvent?.action)
+
+        model.startItem(id: "item-pill")
+        model.pause()
+        let nowPlaying = model.snapshot
+        model.openHome()
+        stale.perform()
+        XCTAssertEqual(model.snapshot.sessionId, nowPlaying.sessionId, "Play now must not replace what's in Now Playing")
+        XCTAssertEqual(model.snapshot.itemId, nowPlaying.itemId)
+
+        model.importTitle = "Second Article"
+        model.importText = "The second article, added while another item is paused."
+        model.importTextItem(startListening: false)
+        XCTAssertEqual(model.feedbackEvent?.message, "Added Second Article to Library without changing Now Playing.")
+        XCTAssertNil(model.feedbackEvent?.action)
+        XCTAssertEqual(model.snapshot.sessionId, nowPlaying.sessionId)
+    }
+
     func testAConfirmationDoesNotCoverAnErrorThatOffersRetry() {
         let retryable = UserFeedbackEvent(kind: .error, message: "The request timed out.", retry: .init(key: "test") {})
         let plain = UserFeedbackEvent(kind: .error, message: "Clipboard does not contain text.")
