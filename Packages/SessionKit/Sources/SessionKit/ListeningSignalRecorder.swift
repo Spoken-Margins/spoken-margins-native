@@ -21,6 +21,7 @@ public final class ListeningSignalRecorder: @unchecked Sendable {
     private var flushScheduled = false
     private var openInterval: OpenInterval?
     private var exportedPacketIds: Set<String>?
+    private var publishedKeys: Set<String>?
     private var lastWriteError: String?
 
     private struct OpenInterval {
@@ -57,6 +58,9 @@ public final class ListeningSignalRecorder: @unchecked Sendable {
             if case .export(let packetId?, _) = event {
                 self.exportedPacketIds?.insert(packetId)
             }
+            // A re-followed feed lists entries the log already published (unfollowing deletes
+            // its unimported entries, not the log); each entry is published once.
+            if event == .itemPublished, !self.insertPublishedKey(source: source, item: item) { return }
             self.append(ListeningSignal(event: event, at: time, source: source, item: item))
         }
     }
@@ -191,6 +195,18 @@ public final class ListeningSignalRecorder: @unchecked Sendable {
             lastWriteError = String(describing: error)
             if pending.count > 10_000 { pending.removeFirst(pending.count - 10_000) }
         }
+    }
+
+    private func insertPublishedKey(source: ListeningSignalSource, item: ListeningSignalItem?) -> Bool {
+        if publishedKeys == nil {
+            publishedKeys = Set((Self.read(fileURL) + pending).filter { $0.event == .itemPublished }
+                .map { Self.publishedKey(source: $0.source, item: $0.item) })
+        }
+        return publishedKeys!.insert(Self.publishedKey(source: source, item: item)).inserted
+    }
+
+    private static func publishedKey(source: ListeningSignalSource, item: ListeningSignalItem?) -> String {
+        "\(source.id)\n\(item?.id ?? "")"
     }
 
     private func loadExportedPacketIds() -> Set<String> {

@@ -6360,6 +6360,7 @@ final class Gate1AppModel: ObservableObject {
     func finishInterjection() {
         guard snapshot.isRecording else { return }
         run { engine in
+            defer { recordSpokenMarginSavedBeforeFailure(engine.lastScheduledTranscriptionInterjectionId) }
             snapshot = try engine.finishInterjection(audioRef: nil)
             refreshSelectedItem()
             recordSavedInterjectionForOnboarding()
@@ -9420,9 +9421,7 @@ final class Gate1AppModel: ObservableObject {
                 updateGate3WatchState()
             }
             refreshSelectedItem()
-            if request.command == .finishInterjection, result.delegatedToCanonicalRuntime {
-                transcribeAndRecordSavedSpokenMargin()
-            }
+            if request.command == .finishInterjection, result.delegatedToCanonicalRuntime { transcribeAndRecordSavedSpokenMargin() }
             diagnostics["gate3WatchLastCommand"] = request.command.rawValue
             diagnostics["gate3WatchLastResult"] = result.delegatedToCanonicalRuntime ? "delegated" : (result.rejectedReason ?? "rejected")
             updateGate3WatchState()
@@ -9430,6 +9429,7 @@ final class Gate1AppModel: ObservableObject {
         } catch {
             diagnostics["gate3WatchLastCommand"] = request.command.rawValue
             diagnostics["gate3WatchLastResult"] = "failed"
+            if request.command == .finishInterjection { recordSpokenMarginSavedBeforeFailure(engine?.lastScheduledTranscriptionInterjectionId) }
             updateGate3WatchState()
             reportFailure(error, context: "Watch control failed")
         }
@@ -9546,9 +9546,7 @@ final class Gate1AppModel: ObservableObject {
             if command == .finishInterjection {
                 recordSavedInterjectionForOnboarding()
             }
-            if command == .finishInterjection, result.delegatedToCanonicalRuntime {
-                transcribeAndRecordSavedSpokenMargin()
-            }
+            if command == .finishInterjection, result.delegatedToCanonicalRuntime { transcribeAndRecordSavedSpokenMargin() }
             if command == .finishInterjection || command == .cancelInterjection {
                 streamingSpeechQueue.resumeAfterInterjection()
                 if !snapshot.isRecording {
@@ -9561,6 +9559,7 @@ final class Gate1AppModel: ObservableObject {
             }
             reportSuccess("Compact control \(command.rawValue) \(result.delegatedToCanonicalRuntime ? "delegated" : "handled").")
         } catch {
+            if command == .finishInterjection { recordSpokenMarginSavedBeforeFailure(engine?.lastScheduledTranscriptionInterjectionId) }
             if command == .beginInterjection || command == .finishInterjection || command == .cancelInterjection {
                 streamingSpeechQueue.resumeAfterInterjection()
             }

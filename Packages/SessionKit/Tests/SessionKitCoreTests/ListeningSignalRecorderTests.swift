@@ -142,6 +142,23 @@ final class ListeningSignalRecorderTests: XCTestCase {
         ])
     }
 
+    /// Unfollowing deletes a feed's unimported entries but keeps the log; following it again
+    /// must not publish the same entries twice, in the same launch or a later one.
+    func testAnEntryIsPublishedOnceEvenAfterRefollowing() {
+        let log = temporary.appendingPathComponent("i4-\(UUID().uuidString).jsonl")
+        let (source, item) = Self.podcast
+        let first = ListeningSignalRecorder(fileURL: log, flushDelay: 60)
+        first.record(.itemPublished, source: source, item: item)
+        first.record(.itemPublished, source: source, item: item)
+        first.flush()
+        let later = ListeningSignalRecorder(fileURL: log, flushDelay: 60)
+        later.record(.itemPublished, source: source, item: item)
+        var other = item
+        other.id = "entry-2"
+        later.record(.itemPublished, source: source, item: other)
+        XCTAssertEqual(later.signals().map { $0.item?.id }, ["entry-1", "entry-2"])
+    }
+
     // MARK: Privacy
 
     func testExportedLogHoldsNoMarginTextTranscriptAudioOrFeedURL() throws {

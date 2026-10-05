@@ -78,6 +78,28 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         XCTAssertEqual(rows.map { "\($0.event.name):\($0.item?.id ?? "-")" }, ["export:library-b", "share:library-b"])
     }
 
+    /// A finish that saves its Margin and then fails to resume playback reaches the hook from the
+    /// success path's defer and the failure path; the Margin counts once.
+    func testASpokenMarginReachingTheHookTwiceCountsOnce() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try SQLiteSessionStore(path: root.appendingPathComponent("margin.sqlite").path)
+        let subscription = FeedSubscription(id: "followed", source: SourceIdentity(id: "publication", kind: .articleFeed,
+            canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Publisher"))
+        try store.saveFeedSubscription(subscription)
+        try store.saveItem(Item(id: "a", title: "A", mediaType: "article", text: "Words",
+            externalReference: nil, status: "ready", sourceURL: subscription.source.canonicalURL))
+        let recorder = ListeningSignalRecorder(fileURL: root.appendingPathComponent("signals.jsonl"), flushDelay: 60)
+        let signals = ListeningSignalsCoordinator(recorder: recorder, repository: { store })
+        for id in ["margin-1", "margin-1", "margin-2"] {
+            signals.spokenMargin(interjectionId: id, itemId: "a", audioURL: nil)
+        }
+        let exported = await signals.exportFileURL()
+        let rows = exported.map(ListeningSignalRecorder.read) ?? []
+        XCTAssertEqual(rows.map(\.event), [.margin(kind: .spoken, length: 0), .margin(kind: .spoken, length: 0)])
+    }
+
     func testAppCompletionRecordsTheSavedSpokenMargin() async throws {
         try await checkCompletion(compact: false)
     }

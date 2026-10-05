@@ -21,6 +21,8 @@ final class ListeningSignalsCoordinator {
     private let collector: ListeningSignalCollector
     private let repository: @MainActor () -> (any SessionRepository)?
     private var pendingDurations: [UUID: Task<Void, Never>] = [:]
+    /// Spoken Margins already counted: a finish that saved and then failed to resume reaches the hook twice.
+    private var countedSpokenMargins: Set<String> = []
     /// The item each packet file was built for, so a share sheet that completes later credits that
     /// item even if the selection has moved on meanwhile.
     private var exportedItems: [URL: String] = [:]
@@ -44,7 +46,8 @@ final class ListeningSignalsCoordinator {
     }
 
     /// Spoken Margin length is its recording's duration, read off the main thread.
-    func spokenMargin(itemId: String?, audioURL: URL?) {
+    func spokenMargin(interjectionId: String, itemId: String?, audioURL: URL?) {
+        guard countedSpokenMargins.insert(interjectionId).inserted else { return }
         let store = repository(), at = Date(), signals = collector
         let id = UUID()
         let task = Task.detached(priority: .utility) {

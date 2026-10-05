@@ -21,9 +21,11 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
         ] {
             let route = try body(source, from: start, to: end)
             XCTAssertTrue(route.contains("transcribeAndRecordSavedSpokenMargin()"), start)
+            XCTAssertTrue(route.contains("recordSpokenMarginSavedBeforeFailure(engine"),
+                          "\(start): a Margin saved before resuming playback failed still counts")
         }
         let helper = try appSource("Gate1AppModel+ListeningSignals.swift")
-        XCTAssertTrue(helper.contains("listeningSignals.spokenMargin(itemId:"))
+        XCTAssertTrue(helper.contains("listeningSignals.spokenMargin(interjectionId:"))
         XCTAssertTrue(helper.contains("scheduleTranscription(for:"))
     }
 
