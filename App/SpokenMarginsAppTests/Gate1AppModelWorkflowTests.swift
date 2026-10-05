@@ -329,6 +329,48 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(audio.remoteCommandHandlingStates.last, true)
     }
 
+    func testStartingAStreamedOnlyEpisodeWithNoSignalSaysItIsNotDownloaded() throws {
+        // #779: offline, this used to try, stall for 30 s, then blame saved audio that didn't exist.
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "offline-stream-start-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let item = Item(
+            id: "episode-streamed-only",
+            title: "Streamed Only Episode",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/streamed-only",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(
+                sourceType: .remoteStream,
+                url: "https://cdn.example.com/streamed-only.mp3",
+                durationMs: 900_000
+            )
+        )
+        try store.saveItem(item)
+        model.connectivity.update(transport: .unavailable, isOffline: true)
+
+        model.startNewSession(id: item.id)
+
+        XCTAssertEqual(model.lastError, "This episode isn't downloaded, and there's no signal.")
+        XCTAssertNotEqual(model.snapshot.itemId, item.id, "nothing tries to stream it")
+
+        // With signal back, the same episode is no longer stopped by the check.
+        model.connectivity.update(transport: .wifi, isOffline: false)
+        model.lastError = nil
+        model.startNewSession(id: item.id)
+        XCTAssertNotEqual(model.lastError, OfflinePlayability.episodeNotDownloadedMessage)
+    }
+
     func testResolvedPrivateListeningMapIsLoadedAsVisibleNavigableScenes() throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "visible-private-map-\(UUID().uuidString)", directoryHint: .isDirectory)

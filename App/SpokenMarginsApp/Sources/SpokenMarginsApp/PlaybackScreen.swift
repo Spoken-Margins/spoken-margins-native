@@ -1947,19 +1947,7 @@ private struct Pill: View {
 }
 
 private func turnTitle(_ turn: ConversationTurn) -> String {
-    switch turn.turnType {
-    case "interjection_summary":
-        return "Interjection Summary \(turnSequenceNumber(turn.id) ?? 1)"
-    case "assistant_response":
-        if let number = turnSequenceNumber(turn.id) {
-            return "AI Response \(number)"
-        }
-        return "AI Response"
-    case "user_response":
-        return "Follow-up"
-    default:
-        return turn.turnType.replacingOccurrences(of: "_", with: " ").capitalized
-    }
+    ConversationTurnTitle.numbered(turn)
 }
 
 private func turnBadge(_ turn: ConversationTurn) -> String {
@@ -1983,14 +1971,6 @@ private func interjectionPreview(_ interjection: Interjection) -> String {
         return transcript
     }
     return TranscriptionFailureWording.marginStatus(transcriptionStatus: interjection.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff) ?? interjection.transcriptionStatus
-}
-
-private func turnSequenceNumber(_ id: String) -> Int? {
-    guard let raw = id.split(separator: "-").last,
-          let value = Int(raw) else {
-        return nil
-    }
-    return value
 }
 
 private struct LightButtonStyle: ButtonStyle {
