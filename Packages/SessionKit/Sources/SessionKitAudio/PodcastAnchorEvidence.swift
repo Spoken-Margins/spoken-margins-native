@@ -1045,8 +1045,9 @@ public enum PodcastAnchorFusionResolver {
     /// weaker result, so a pass without a transcript doesn't undo one with it. An edition rejection (#456)
     /// isn't weaker: it withdraws the machine placements it finds. A listener's own confirmation stays.
     /// A stored rejection survives a later pass on the same edition too, unless that pass confirms the edition
-    /// itself (`confirmsEdition`). Otherwise a pass whose acoustic step failed would let the shared intro's
-    /// transcript place the Margin on the rejected episode again (Codex audit on 75b32ad).
+    /// itself (`confirmsEdition`). The packet and the file are the same, so a pass that disagrees has lost
+    /// evidence: its acoustic step failed, leaving the shared intro's transcript (Codex audit on 75b32ad), or
+    /// only the intro's flanks were answered, too few for the edition check (Codex audit on 2e6228e).
     public static func preservingVerifiedPlacement(
         previous: ImportedAnchorResolution, proposed: ImportedAnchorResolution,
         previousEdition: String?, currentEdition: String?, hasTranscript: Bool
@@ -1067,14 +1068,14 @@ public enum PodcastAnchorFusionResolver {
     }
 
     /// Whether a resolution is evidence about the edition itself, enough to lift an edition rejection: the
-    /// sender's exact file, the listener's own confirmation, or an acoustic match from a pass that didn't
-    /// reject the edition. A transcript match alone isn't: the shared intro's words match on either episode.
+    /// sender's exact file or the listener's own confirmation. A single Margin's transcript or acoustic match
+    /// isn't: the shared intro matches on either episode, in words and in audio.
     static func confirmsEdition(_ resolution: ImportedAnchorResolution) -> Bool {
         switch resolution.evidenceClass {
-        case .exactEdition, .recipientConfirmed, .acousticVerified, .fused:
+        case .exactEdition, .recipientConfirmed:
             return resolution.localMediaTimeMs != nil
-        case .transcriptVerified, .articleTextVerified, .mapInterpolated, .timestampFallback,
-             .ambiguous, .absentFromRecipientEdition, .unresolved:
+        case .transcriptVerified, .acousticVerified, .fused, .articleTextVerified, .mapInterpolated,
+             .timestampFallback, .ambiguous, .absentFromRecipientEdition, .unresolved:
             return false
         }
     }

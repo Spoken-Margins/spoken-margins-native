@@ -1079,9 +1079,11 @@ final class SharingTests: XCTestCase {
         ), placed)
     }
 
-    /// A stored wrong-episode verdict (#456) survives a later pass whose acoustic step failed. That pass has
-    /// only the transcript, which matches the shared intro and would place the Margin on the rejected episode
-    /// (Codex audit on 75b32ad). An acoustic placement, a listener's confirmation or another edition lifts it.
+    /// A stored wrong-episode verdict (#456) survives a later pass on the same edition that lost evidence. With
+    /// the acoustic step failed, only the transcript of the shared intro is left (Codex audit on 75b32ad). With
+    /// only the intro's flanks answered, the edition check is skipped and the intro fuses (Codex audit on
+    /// 2e6228e). Either would place the Margin on the rejected episode. A listener's confirmation, the sender's
+    /// exact file or another edition lifts the verdict.
     func testStoredEditionRejectionSurvivesATranscriptOnlyPass() throws {
         let rejection = try XCTUnwrap(PodcastAcousticAnchorResolver.requiringEditionConfirmation(
             ["inside-intro": ImportedAnchorResolution(evidenceClass: .unresolved), "a": .init(evidenceClass: .unresolved),
@@ -1104,13 +1106,31 @@ final class SharingTests: XCTestCase {
             hasTranscript: true
         ), rejection, "the stored verdict stays on the same edition")
 
-        let acousticPlacement = ImportedAnchorResolution(
+        // The content flanks error on retry, so only the intro's two flanks answer: too few for the edition
+        // check, and the intro fuses on its own.
+        let flanks = PodcastAcousticAnchorResolver.editionFlankCounts([
+            .init(marginId: "inside-intro", anchorOffsetMs: 11_500, matched: true),
+            .init(marginId: "inside-intro", anchorOffsetMs: -500, matched: true)
+        ])
+        let introFused = ImportedAnchorResolution(
             evidenceClass: .fused, localMediaTimeMs: 10_000, confidence: 0.95, algorithmVersion: "podcast-anchor.v1"
         )
+        let retry = PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+            ["inside-intro": introFused, "a": .init(evidenceClass: .unresolved), "b": .init(evidenceClass: .unresolved)],
+            matchedFlanks: flanks.matched, answeredFlanks: flanks.answered
+        )
+        XCTAssertEqual(retry["inside-intro"], introFused, "the partial retry places the intro on its own")
         XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
-            previous: rejection, proposed: acousticPlacement, previousEdition: "edition-b", currentEdition: "edition-b",
+            previous: rejection, proposed: introFused, previousEdition: "edition-b", currentEdition: "edition-b",
             hasTranscript: true
-        ), acousticPlacement, "an acoustic pass that found the edition lifts the verdict")
+        ), rejection, "a partial acoustic retry doesn't lift the stored verdict")
+        let exact = ImportedAnchorResolution(
+            evidenceClass: .exactEdition, localMediaTimeMs: 10_000, confidence: 1, algorithmVersion: "exact-edition.v1"
+        )
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
+            previous: rejection, proposed: exact, previousEdition: "edition-b", currentEdition: "edition-b",
+            hasTranscript: false
+        ), exact, "the sender's exact file lifts the verdict")
         let confirmed = ImportedAnchorResolution(
             evidenceClass: .recipientConfirmed, localMediaTimeMs: 10_000, confidence: 1, algorithmVersion: "recipient.v1"
         )
