@@ -33,7 +33,10 @@ enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
 @MainActor
 final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, ReadablePageExtracting {
     private static let maximumHTMLBytes: Int64 = 1 * 1_024 * 1_024
+    /// A shared ChatGPT page is already over half that before the chat: the site's own session data comes first (#874).
+    private static let maximumSharedChatHTMLBytes: Int64 = 8 * 1_024 * 1_024
     private var webView: WKWebView?
+    private var requestedURL: URL?
     private var continuation: CheckedContinuation<BrowserTextHandoff, Error>?
     private var navigationRules: ReadablePageNavigationRules?
     var contactedHosts: [String] { navigationRules?.contactedHosts ?? [] }
@@ -85,6 +88,7 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
         webView.navigationDelegate = self
         self.webView = webView
         navigationRules = ReadablePageNavigationRules(requestedURL: url)
+        requestedURL = url
         lastExtractor = nil
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
@@ -96,8 +100,10 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
         _ webView: WKWebView,
         decidePolicyFor navigationResponse: WKNavigationResponse
     ) async -> WKNavigationResponsePolicy {
+        let limit = requestedURL.map(ChatGPTSharedPage.matches) == true
+            ? Self.maximumSharedChatHTMLBytes : Self.maximumHTMLBytes
         if navigationResponse.isForMainFrame,
-           navigationResponse.response.expectedContentLength > Self.maximumHTMLBytes {
+           navigationResponse.response.expectedContentLength > limit {
             finish(.failure(ReadablePageExtractionError.oversizedHTML))
             return .cancel
         }
@@ -141,6 +147,16 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Task { @MainActor in
+            // A shared ChatGPT page draws its chat with scripts, so the page reader would see only the title.
+            // The chat is in the page's data instead. If it isn't, say so rather than import a few words (#874).
+            if let url = requestedURL, ChatGPTSharedPage.matches(url) {
+                let shared: Result<BrowserTextHandoff, Error>
+                do { shared = .success(try await sharedChatHandoff(in: webView, url: url)) } catch { shared = .failure(error) }
+                guard self.webView === webView else { return }
+                if case .success = shared { lastExtractor = "chatgpt_shared_page" }
+                finish(shared)
+                return
+            }
             let outcome: Result<[String: Any], Error>
             do { outcome = .success(try await capturePayload(in: webView)) } catch { outcome = .failure(error) }
             // A page stopped by the time limit must not answer the next page's request (#579).
@@ -195,6 +211,27 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
             return payload
         }
     }
+
+    private func sharedChatHandoff(in webView: WKWebView, url: URL) async throws -> BrowserTextHandoff {
+        let result = try await webView.callAsyncJavaScript(
+            Self.sharedChatScriptsJavaScript, arguments: [:], in: nil, contentWorld: .defaultClient
+        )
+        guard let payload = result as? [String: Any], let scripts = payload["scripts"] as? String else {
+            throw ChatGPTSharedPage.ParseError.noPageData
+        }
+        return try ChatGPTSharedPage.handoff(fromPageSource: scripts, url: url, pageTitle: payload["title"] as? String)
+    }
+
+    /// The page's inline scripts that carry its data. They sit in the document whether or not they ran.
+    private static let sharedChatScriptsJavaScript = #"""
+    return {
+        title: document.title,
+        scripts: Array.from(document.scripts)
+            .map(script => script.textContent || "")
+            .filter(text => text.includes("streamController.enqueue"))
+            .join("\n")
+    };
+    """#
 
     static func handoff(from payload: [String: Any]) throws -> BrowserTextHandoff {
         guard let text = payload["text"] as? String,
