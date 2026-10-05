@@ -32,6 +32,15 @@ enum Build23SenderPresentation {
         return included.first.map { [$0] } ?? []
     }
 
+    /// #536: a failed share used to just sit there. When episode matching data (the fingerprint
+    /// spine, its landmarks or their signatures) is what failed, the Margins can travel without it,
+    /// so the sheet offers that. Other failures don't: turning matching off wouldn't fix them.
+    static func offersShareWithoutMatching(previewState: Build23SharingPreviewState, includesAcousticEvidence: Bool) -> Bool {
+        guard includesAcousticEvidence, case .failed(let message) = previewState else { return false }
+        let lowered = message.lowercased()
+        return ["fingerprint", "landmark", "assets/evidence/"].contains { lowered.contains($0) }
+    }
+
     static func stageOwnsDetailedEditor(_ stage: Build23SharingStage) -> Bool {
         stage == .review
     }

@@ -65,6 +65,25 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         XCTAssertEqual(coordinator.snapshot.stage, .review)
     }
 
+    /// #536: a failed share offers "Share without episode matching" while matching data is included.
+    func testAFailedShareOffersSharingWithoutEpisodeMatching() {
+        let failed = Build23SharingPreviewState.failed("episode fingerprint spine is out of bounds: canonical_url")
+        XCTAssertTrue(Build23SenderPresentation.offersShareWithoutMatching(previewState: failed, includesAcousticEvidence: true))
+        XCTAssertFalse(Build23SenderPresentation.offersShareWithoutMatching(previewState: failed, includesAcousticEvidence: false))
+        XCTAssertFalse(Build23SenderPresentation.offersShareWithoutMatching(previewState: .ready, includesAcousticEvidence: true))
+        XCTAssertFalse(Build23SenderPresentation.offersShareWithoutMatching(previewState: .notBuilt, includesAcousticEvidence: true))
+        // Failures that turning matching off can't fix offer nothing.
+        for unrelated in ["Select at least one Margin with reviewed text.", "Finish or cancel bulk preparation before sharing.", "The package could not be built."] {
+            XCTAssertFalse(Build23SenderPresentation.offersShareWithoutMatching(previewState: .failed(unrelated), includesAcousticEvidence: true), unrelated)
+        }
+        XCTAssertTrue(Build23SenderPresentation.offersShareWithoutMatching(
+            previewState: .failed("The package manifest is invalid: episode fingerprint landmark is invalid: signature_asset."), includesAcousticEvidence: true
+        ))
+        XCTAssertTrue(Build23SenderPresentation.offersShareWithoutMatching(
+            previewState: .failed("A package asset is unreadable: assets/evidence/episode-signature-item-grid-3.shazamsignature."), includesAcousticEvidence: true
+        ))
+    }
+
     func testPresentationReturnsExactlyOneExpandedEditorForTheSelectedMargin() {
         let coordinator = makeCoordinator(marginCount: 2)
         coordinator.send(.begin)
