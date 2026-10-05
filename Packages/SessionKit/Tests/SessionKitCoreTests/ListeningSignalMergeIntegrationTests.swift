@@ -6,8 +6,9 @@ import XCTest
 final class ListeningSignalMergeIntegrationTests: XCTestCase {
     func testPlaybackTickerPassesConfirmedStatusToTheSignalCollector() throws {
         let source = try appSource("Gate1AppModel.swift")
-        XCTAssertTrue(source.contains("listeningSignals.playbackProgress(itemId: updated.itemId, status: updated.status)"),
-                      "starting playback is not confirmed listening")
+        XCTAssertTrue(source.contains("listeningSignals.playbackProgress(itemId: updated.itemId, status: updated.status, "
+                                      + "transport: engine.currentPlaybackTransportState())"),
+                      "starting playback is not confirmed listening, and a stalled player is not listening")
         XCTAssertFalse(source.contains("listeningSignals.listened(itemId: updated.itemId)"))
     }
 

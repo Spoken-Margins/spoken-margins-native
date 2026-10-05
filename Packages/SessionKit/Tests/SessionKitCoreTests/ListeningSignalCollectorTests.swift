@@ -46,6 +46,23 @@ final class ListeningSignalCollectorTests: XCTestCase {
         XCTAssertEqual(signals.map { $0.item?.id }, ["entry", "entry"])
     }
 
+    /// A network stall leaves the session reading as playing while the player waits; that time is not listening.
+    /// A brief wait between rendered sentences stays inside the interval.
+    func testAStallWhileTheSessionReadsPlayingIsNotListening() {
+        let collector = ListeningSignalCollector(recorder: recorder)
+        let stall: [(Int, PlaybackTransportState)] = [(0, .playing), (2, .playing)]
+            + stride(from: 4, through: 20, by: 2).map { ($0, .waiting) } + [(22, .playing), (24, .playing)]
+        let sentenceGap: [(Int, PlaybackTransportState)] = [(100, .playing), (102, .waiting), (104, .playing), (106, .playing)]
+        for (second, transport) in stall + sentenceGap {
+            collector.playbackProgress(itemId: "item", status: .playing, transport: transport, repository: store,
+                                       at: epoch.addingTimeInterval(Double(second)))
+        }
+        collector.flush()
+        let signals = recorder.signals()
+        XCTAssertEqual(signals.map(\.event), [.listened(seconds: 2), .listened(seconds: 2), .listened(seconds: 6)])
+        XCTAssertEqual(signals.map(\.at), [0, 22, 100].map { epoch.addingTimeInterval($0) })
+    }
+
     func testBlockedContextReadDoesNotBlockTheCallerOrReorderPause() {
         let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
         let returned = expectation(description: "playback tick returned before context read was released")

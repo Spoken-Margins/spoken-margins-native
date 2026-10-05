@@ -1725,7 +1725,7 @@ final class Gate1AppModel: ObservableObject {
                         if updated != self.snapshot {
                             self.snapshot = updated
                         }
-                        self.listeningSignals.playbackProgress(itemId: updated.itemId, status: updated.status)
+                        self.listeningSignals.playbackProgress(itemId: updated.itemId, status: updated.status, transport: engine.currentPlaybackTransportState())
                         self.updateNarrationVoiceNotice()
                         if previousEngagementProgress < 25,
                            updated.currentPlaybackProgressPercent >= 25,

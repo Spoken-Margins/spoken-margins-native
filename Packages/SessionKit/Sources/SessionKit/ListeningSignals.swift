@@ -315,7 +315,12 @@ public enum ListeningSignalContext {
                FollowedSourceMatching.normalizedFollowSourceURL($0.source.canonicalURL) == sourceURL
             })
         }
-        // A title names a source only when one followed source has it; otherwise the entry's URLs decide.
+        // Without a source link, the article's own link names its site feed (an older article
+        // imported through Safari), then a title does, each only when one followed source fits.
+        let siteFeeds = subscriptions.filter {
+            FollowedSourceMatching.isSiteFeed($0.source.canonicalURL, ofLink: item.externalReference)
+        }
+        if siteFeeds.count == 1 { return siteFeeds[0] }
         guard let title = nonEmpty(item.sourceTitle) else { return nil }
         let titled = subscriptions.filter {
             (nonEmpty($0.source.title) ?? $0.source.host).caseInsensitiveCompare(title) == .orderedSame

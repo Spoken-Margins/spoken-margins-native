@@ -29,13 +29,17 @@ public final class ListeningSignalCollector: @unchecked Sendable {
         self.resolve = resolve
     }
 
-    public func playbackProgress(itemId: String?, status: PlaybackStatus,
+    /// `transport` is the player's own state. While it waits (a network stall) the session still
+    /// reads as playing, so a waiting tick neither extends nor closes the interval: a stall longer
+    /// than the recorder's gap splits it, and a brief wait between sentences stays inside it.
+    public func playbackProgress(itemId: String?, status: PlaybackStatus, transport: PlaybackTransportState? = nil,
                                  repository: (any SessionRepository)?, at: Date = Date()) {
         queue.async {
             guard status == .playing, let itemId, let repository else {
                 self.closeListening()
                 return
             }
+            guard transport != .waiting else { return }
             // Subscription mutations can happen through any follow/unfollow caller, while the
             // item and repository stay the same. Detect them here, off the playback thread,
             // while retaining the more expensive item/feed-entry resolution during steady ticks.

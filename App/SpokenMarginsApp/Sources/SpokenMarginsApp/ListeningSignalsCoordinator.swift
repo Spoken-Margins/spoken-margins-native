@@ -31,8 +31,8 @@ final class ListeningSignalsCoordinator {
     }
 
     /// The tick path captures values and enqueues; all context reads happen on the collector's queue.
-    func playbackProgress(itemId: String?, status: PlaybackStatus) {
-        collector.playbackProgress(itemId: itemId, status: status, repository: repository())
+    func playbackProgress(itemId: String?, status: PlaybackStatus, transport: PlaybackTransportState? = nil) {
+        collector.playbackProgress(itemId: itemId, status: status, transport: transport, repository: repository())
     }
 
     func endListening() {

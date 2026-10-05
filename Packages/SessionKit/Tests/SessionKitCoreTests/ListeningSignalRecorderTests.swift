@@ -351,6 +351,22 @@ final class ListeningSignalRecorderTests: XCTestCase {
         XCTAssertNil(ListeningSignalContext.context(for: item, subscriptions: [subscription], entries: []))
     }
 
+    /// An older article imported through Safari has no source metadata; a followed site feed still names its source.
+    func testAnArticleOnAFollowedSiteMatchesItsSiteFeedWithoutSourceMetadata() {
+        let subscription = FeedSubscription(id: "followed", source: SourceIdentity(id: "publisher", kind: .articleFeed,
+            canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Publisher"))
+        let older = Item(id: "older", title: "Older", mediaType: "article", text: "Words",
+            externalReference: "https://www.publisher.example/p/older", status: "ready")
+        let context = ListeningSignalContext.context(for: older, subscriptions: [subscription], entries: [])
+        XCTAssertEqual(context?.source.id, "publisher")
+        XCTAssertEqual(context?.item.id, "library-older")
+
+        let elsewhere = Item(id: "elsewhere", title: "Older", mediaType: "article", text: "Words",
+            externalReference: "https://www.publisher.example/p/older", status: "ready", sourceURL: "https://other.example/feed")
+        XCTAssertNil(ListeningSignalContext.context(for: elsewhere, subscriptions: [subscription], entries: []),
+                     "an item's own source link still decides on its own")
+    }
+
     // MARK: Helpers
 
     private func makeRecorder() -> ListeningSignalRecorder {

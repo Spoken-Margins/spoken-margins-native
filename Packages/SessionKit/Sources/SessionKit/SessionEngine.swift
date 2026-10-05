@@ -325,6 +325,12 @@ public final class SessionEngine {
     /// Changes only the transport asset for an item. Canonical target ids, source URLs,
     /// playback rate, source time, and interjection anchors remain unchanged.
     @discardableResult
+    /// The player's own state behind the current target. It can be waiting (a network stall)
+    /// while the session still reads as playing.
+    public func currentPlaybackTransportState() -> PlaybackTransportState? {
+        currentSession.flatMap { audio.playbackTransportState(targetId: $0.currentTargetId) }
+    }
+
     public func updatePlaybackTransport(
         itemId: String,
         playbackURL: String?,
