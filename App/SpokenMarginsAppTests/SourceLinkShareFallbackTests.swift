@@ -58,14 +58,12 @@ final class SourceLinkShareFallbackTests: XCTestCase {
     }
 
     /// #810: the shared post has the publisher's own voiceover. The article keeps it as its `publisher_audio`
-    /// record, as a followed post does, after one fetch of the post page. Before, nothing looked.
+    /// record, as a followed post does. Before, nothing looked. The voiceover lookup reads the post page the
+    /// link resolver already fetched: resolution and the voiceover ask for the post page once between them
+    /// (Codex audit on 749fc07). The web view that reads the article loads the page on its own, as before.
     func testSharedSubstackPostWithAVoiceoverKeepsThePublisherAudio() async throws {
-        let (model, store, databaseURL) = try makeVoiceoverShareModel()
-        let fetched = FetchedPages()
-        model.sharedLinkVoiceover.fetchPage = { url in
-            fetched.append(url)
-            return (Self.voiceoverPage(canonicalURL: Self.postURL), URL(string: Self.postURL)!)
-        }
+        let requests = RequestedURLs()
+        let (model, store, databaseURL) = try makeVoiceoverShareModel(requests: requests, postPageHasVoiceover: true)
 
         model.importPendingSourceLinkHandoffs()
         let database = try SQLiteSessionStore(path: databaseURL.path)
@@ -79,23 +77,25 @@ final class SourceLinkShareFallbackTests: XCTestCase {
         XCTAssertEqual(try database.loadPublisherAudio(itemId: id)?.audioURL, "https://recordings.example/voiceover.mp3")
         XCTAssertEqual(try database.loadPublisherAudio(itemId: id)?.durationMs, 752_875)
         XCTAssertEqual(try database.loadPublisherAudio(itemId: id)?.detectedFrom, "substack_post_voiceover")
-        XCTAssertEqual(fetched.urls, [URL(string: Self.postURL)!], "the page is fetched once")
+        XCTAssertEqual(requests.urls.filter { $0.absoluteString == Self.postURL }.count, 1, "post page requests: \(requests.urls)")
         XCTAssertEqual(try store.failedHandoffs(), [])
         XCTAssertEqual(try database.loadItem(id: id).mediaType, "text", "it is still an article")
     }
 
-    /// The post page can't be fetched: the article is imported as before, with no record and a diagnostic.
-    func testSharedSubstackPostWhosePageFailsIsStillAnArticle() async throws {
-        let (model, store, databaseURL) = try makeVoiceoverShareModel()
-        model.sharedLinkVoiceover.fetchPage = { _ in throw URLError(.notConnectedToInternet) }
+    /// The post page has no voiceover: the article is imported as before, with no record, and the lookup
+    /// doesn't fetch the page a second time to find that out.
+    func testSharedSubstackPostWithoutAVoiceoverIsStillAnArticle() async throws {
+        let requests = RequestedURLs()
+        let (model, store, databaseURL) = try makeVoiceoverShareModel(requests: requests, postPageHasVoiceover: false)
 
         model.importPendingSourceLinkHandoffs()
         try await waitFor("voiceover diagnostic") {
-            model.diagnostics["sharedLinkVoiceover"]?.contains("failed:") == true
+            model.diagnostics["sharedLinkVoiceover"]?.hasSuffix(": none") == true
         }
 
         let row = try XCTUnwrap(model.libraryItems.first { $0.title == Self.postTitle })
         XCTAssertNil(try SQLiteSessionStore(path: databaseURL.path).loadPublisherAudio(itemId: row.id))
+        XCTAssertEqual(requests.urls.filter { $0.absoluteString == Self.postURL }.count, 1, "post page requests: \(requests.urls)")
         XCTAssertEqual(try store.failedHandoffs(), [])
     }
 
@@ -179,7 +179,8 @@ final class SourceLinkShareFallbackTests: XCTestCase {
         }
     }
 
-    private func makeVoiceoverShareModel() throws -> (Gate1AppModel, SourceLinkHandoffStore, URL) {
+    /// `requests` records every page the share asks for, from the link resolver and the voiceover lookup alike.
+    private func makeVoiceoverShareModel(requests: RequestedURLs, postPageHasVoiceover: Bool) throws -> (Gate1AppModel, SourceLinkHandoffStore, URL) {
         let store = makePayloadStore()
         try store.save(SourceLinkHandoff(id: "source-link-voiceover-post", inputURL: Self.postURL, sourceSurface: "share_sheet", startSession: false))
         let directory = FileManager.default.temporaryDirectory
@@ -188,12 +189,22 @@ final class SourceLinkShareFallbackTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let databaseURL = directory.appendingPathComponent("library.sqlite")
         let model = Gate1AppModel(
-            sourceLinkResolver: PublicPodcastLinkResolver(fetch: { try SourceLinkShareFallbackTests.substackPostAndFeed($0) }),
+            sourceLinkResolver: PublicPodcastLinkResolver(fetch: { url in
+                requests.append(url)
+                let page = try SourceLinkShareFallbackTests.substackPostAndFeed(url)
+                guard postPageHasVoiceover, url.absoluteString == Self.postURL else { return page }
+                return Data(String(decoding: page, as: UTF8.self)
+                    .replacingOccurrences(of: "</head>", with: Self.preloadsScript(canonicalURL: Self.postURL) + "</head>").utf8)
+            }),
             sourceLinkHandoffStore: store,
             audioPlaybackClient: NoopAudioPlaybackClient(),
             databaseURLOverride: databaseURL
         )
         model.resetAndSeed()
+        model.sharedLinkVoiceover.fetchPage = { url in
+            requests.append(url)
+            throw URLError(.notConnectedToInternet)
+        }
         model.readablePageExtractor = RecordedPageExtractor(.success(try AppOwnedReadablePageExtractor.handoff(from: [
             "text": "# \(Self.postTitle)\n\nThe number of reported incidents involving AI agents keeps climbing.",
             "metadata": ["extractor": "defuddle"],
@@ -203,10 +214,10 @@ final class SourceLinkShareFallbackTests: XCTestCase {
     }
 
     /// The `window._preloads` shape of Contracts/fixtures/feeds/substack-voiceover-page.html, for this post.
-    nonisolated private static func voiceoverPage(canonicalURL: String) -> String {
-        #"<html><head><script>window._preloads = JSON.parse("{\"post\":{\"type\":\"newsletter\",\"has_voiceover\":true,\"canonical_url\":\""#
+    nonisolated private static func preloadsScript(canonicalURL: String) -> String {
+        #"<script>window._preloads = JSON.parse("{\"post\":{\"type\":\"newsletter\",\"has_voiceover\":true,\"canonical_url\":\""#
             + canonicalURL
-            + #"\",\"id\":1,\"audio_items\":[{\"post_id\":1,\"voice_id\":\"voiceover\",\"audio_url\":\"https://recordings.example/voiceover.mp3\",\"type\":\"voiceover\",\"status\":\"completed\",\"duration\":752.8751}]}}");</script></head><body></body></html>"#
+            + #"\",\"id\":1,\"audio_items\":[{\"post_id\":1,\"voice_id\":\"voiceover\",\"audio_url\":\"https://recordings.example/voiceover.mp3\",\"type\":\"voiceover\",\"status\":\"completed\",\"duration\":752.8751}]}}");</script>"#
     }
 
     private func makePayloadStore() -> SourceLinkHandoffStore {
@@ -227,8 +238,8 @@ final class SourceLinkShareFallbackTests: XCTestCase {
     }
 }
 
-/// The pages the voiceover lookup asked for.
-private final class FetchedPages: @unchecked Sendable {
+/// The pages a share asked for.
+private final class RequestedURLs: @unchecked Sendable {
     private let lock = NSLock()
     private var requested: [URL] = []
 

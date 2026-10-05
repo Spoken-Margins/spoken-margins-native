@@ -3127,11 +3127,12 @@ final class Gate1AppModel: ObservableObject {
             createdAt: Date()
         )
         do {
-            let result = try await PublicPodcastLinkResolver().resolveAsync(request)
+            let fetched = FetchedPageMemo() // the voiceover lookup reads the post page from here (#810)
+            let result = try await PublicPodcastLinkResolver().remembering(fetched).resolveAsync(request)
             if result.isPDFDocument { return try await importPDFFromLinkField(url) }
             if let article = await readLinkAsArticleOrOfferSafari(url, after: result, startSession: shouldStartSession) {
                 guard let itemId = importBrowserTextItem(article) else { return false }
-                rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId)
+                rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: fetched)
                 return true
             }
             return importResolvedSourceLink(request: request, result: result, startSession: shouldStartSession)
@@ -3407,16 +3408,17 @@ final class Gate1AppModel: ObservableObject {
             createdAt: Date()
         )
         let result: LinkResolutionResult
+        let fetched = FetchedPageMemo() // the voiceover lookup reads the post page from here (#810)
         if let sourceLinkResolver {
-            result = try sourceLinkResolver.resolve(request)
+            result = try ((sourceLinkResolver as? PublicPodcastLinkResolver)?.remembering(fetched) ?? sourceLinkResolver).resolve(request)
         } else {
-            result = try await PublicPodcastLinkResolver().resolveAsync(request)
+            result = try await PublicPodcastLinkResolver().remembering(fetched).resolveAsync(request)
         }
         guard result.status == .playable else {
             if feedEntry == nil, result.isPDFDocument { try await importRemotePDFInBackground(url: url); return nil } // #758
             if feedEntry == nil, let article = try await LinkArticleFallback.article(for: url, after: result, startSession: false, using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }) {
                 let itemId = try importBrowserTextInBackground(article)
-                rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId)
+                rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: fetched)
                 return nil
             }
             let provider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
@@ -3694,12 +3696,12 @@ final class Gate1AppModel: ObservableObject {
 
     /// A shared or pasted Substack post keeps its voiceover beside the article (#810). Runs after the import,
     /// so a slow page never holds up the share.
-    private func rememberSharedLinkVoiceover(sharedURL: URL, article: BrowserTextHandoff, itemId: String) {
+    private func rememberSharedLinkVoiceover(sharedURL: URL, article: BrowserTextHandoff, itemId: String, fetched: FetchedPageMemo) {
         guard let store = try? requireStore() else { return }
         let transcriber = sourceTranscriptionClient
         let voiceover = sharedLinkVoiceover
         Task { [weak self] in
-            await voiceover.remember(sharedURL: sharedURL, article: article, itemId: itemId, store: store, transcriber: transcriber) {
+            await voiceover.remember(sharedURL: sharedURL, article: article, itemId: itemId, fetched: fetched, store: store, transcriber: transcriber) {
                 self?.diagnostics["sharedLinkVoiceover"] = $0
             }
         }

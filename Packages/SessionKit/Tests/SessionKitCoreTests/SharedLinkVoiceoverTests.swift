@@ -70,6 +70,102 @@ final class SharedLinkVoiceoverTests: XCTestCase {
         }
     }
 
+    /// Codex audit on 749fc07: the share path fetched the post page for link resolution and then again for the
+    /// voiceover. With the resolver's memo the lookup reads the page it already has: one request in all.
+    func testTheSharedPostPageIsRequestedOnceForResolutionAndTheVoiceover() async throws {
+        let page = Data(try Self.substackPage().utf8)
+        let requests = RequestLog()
+        let fetched = FetchedPageMemo()
+        let post = substackPost
+        let resolver = PublicPodcastLinkResolver(asynchronousFetch: { url in
+            requests.append(url)
+            guard url == post else { throw URLError(.notConnectedToInternet) }
+            return page
+        }).remembering(fetched)
+
+        _ = try await resolver.resolveAsync(LinkResolutionRequest(id: "share", inputURL: substackPost.absoluteString, sourceSurface: "share_sheet", createdAt: Date()))
+        let outcome = await SharedPostVoiceoverLookup.find(
+            sharedURL: substackPost, articleURL: substackPost.absoluteString, itemId: "item", fetched: fetched,
+            fetchPage: { url in requests.append(url); throw URLError(.notConnectedToInternet) }
+        )
+
+        XCTAssertEqual(outcome, .found(PublisherAudio(
+            itemId: "item", audioURL: "https://recordings.example/voiceover.mp3", durationMs: 752_875,
+            detectedFrom: "substack_post_voiceover"
+        )))
+        XCTAssertEqual(requests.urls.filter { $0 == substackPost }.count, 1, "post page requests: \(requests.urls)")
+    }
+
+    func testTheSynchronousResolverRemembersThePageItFetchedToo() throws {
+        let requests = RequestLog()
+        let fetched = FetchedPageMemo()
+        let resolver = PublicPodcastLinkResolver(fetch: { url in
+            requests.append(url)
+            return Data("<html><head><title>Just text</title></head><body><p>Nothing to play.</p></body></html>".utf8)
+        }).remembering(fetched)
+
+        _ = try resolver.resolve(LinkResolutionRequest(id: "share", inputURL: substackShare.absoluteString, sourceSurface: "share_sheet", createdAt: Date()))
+
+        XCTAssertEqual(requests.urls, [substackShare], "resolution reads the page once")
+        XCTAssertNotNil(fetched.page(for: substackShare))
+    }
+
+    func testWithoutAMemoTheResolverStillFetchesEveryTime() throws {
+        let requests = RequestLog()
+        let resolver = PublicPodcastLinkResolver(fetch: { url in
+            requests.append(url)
+            return Data("<html><head><title>Just text</title></head><body></body></html>".utf8)
+        })
+        _ = try resolver.resolve(LinkResolutionRequest(id: "share", inputURL: substackShare.absoluteString, sourceSurface: "share_sheet", createdAt: Date()))
+        XCTAssertGreaterThan(requests.urls.count, 1, "other callers keep fetching fresh pages")
+    }
+
+    func testThePageIsFetchedOnceWhenTheResolverDidNotReadIt() async {
+        let requests = RequestLog()
+        let page = (try? Self.page()) ?? ""
+        let outcome = await SharedPostVoiceoverLookup.find(
+            sharedURL: URL(string: "https://example.com/share")!, articleURL: substackShare.absoluteString, itemId: "item", fetched: FetchedPageMemo(),
+            fetchPage: { url in requests.append(url); return (page, URL(string: "https://captured.example/p/voiceover")!) }
+        )
+        guard case .found = outcome else { return XCTFail("\(outcome)") }
+        XCTAssertEqual(requests.urls, [substackShare])
+    }
+
+    func testAFailedFetchAndANonSubstackLinkAreReported() async {
+        let failed = await SharedPostVoiceoverLookup.find(
+            sharedURL: substackShare, articleURL: "", itemId: "item", fetched: nil,
+            fetchPage: { _ in throw URLError(.notConnectedToInternet) }
+        )
+        guard case .failed = failed else { return XCTFail("\(failed)") }
+        let elsewhere = await SharedPostVoiceoverLookup.find(
+            sharedURL: URL(string: "https://example.com/a")!, articleURL: "https://example.com/a", itemId: "item", fetched: nil,
+            fetchPage: { _ in XCTFail("no fetch for a non-Substack address"); throw URLError(.badURL) }
+        )
+        XCTAssertEqual(elsewhere, .notSubstack)
+    }
+
+    func testARememberedPageThatIsTooLargeOrNotHTTPSIsNotRead() async {
+        let large = FetchedPageMemo()
+        large.remember(Data(count: SharedPostVoiceoverLookup.maximumPageBytes + 1), for: substackShare)
+        let insecure = FetchedPageMemo()
+        insecure.remember(Data(((try? Self.page()) ?? "").utf8), for: substackShare, finalURL: URL(string: "http://captured.example/p/voiceover")!)
+        for memo in [large, insecure] {
+            let outcome = await SharedPostVoiceoverLookup.find(
+                sharedURL: substackShare, articleURL: "", itemId: "item", fetched: memo,
+                fetchPage: { _ in XCTFail("the remembered page is the answer"); throw URLError(.badURL) }
+            )
+            guard case .failed = outcome else { return XCTFail("\(outcome)") }
+        }
+    }
+
+    private let substackShare = URL(string: "https://open.substack.com/pub/captured/p/voiceover")!
+    private let substackPost = URL(string: "https://captured.substack.com/p/voiceover")!
+
+    /// The fixture, as if its post lived on a Substack host (only those are looked up).
+    private static func substackPage() throws -> String {
+        try page().replacingOccurrences(of: "https://captured.example/p/voiceover", with: "https://captured.substack.com/p/voiceover")
+    }
+
     private static func page() throws -> String {
         var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         while !FileManager.default.fileExists(atPath: root.appendingPathComponent("Contracts").path) {
@@ -80,4 +176,12 @@ final class SharedLinkVoiceoverTests: XCTestCase {
         let url = root.appendingPathComponent("Contracts/fixtures/feeds/substack-voiceover-page.html")
         return String(decoding: try Data(contentsOf: url), as: UTF8.self)
     }
+}
+
+private final class RequestLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requested: [URL] = []
+
+    func append(_ url: URL) { lock.lock(); requested.append(url); lock.unlock() }
+    var urls: [URL] { lock.lock(); defer { lock.unlock() }; return requested }
 }

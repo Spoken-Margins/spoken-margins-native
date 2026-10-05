@@ -4,15 +4,13 @@ import SessionKitFeeds
 import SessionKitPersistence
 
 /// A Substack post shared as a link, or pasted into the Link field, keeps the post's own voiceover beside the
-/// article, as a followed post does (#810). After the article is imported, the post page is fetched once, and
-/// only for a Substack address. A completed voiceover of that same post is saved as the item's
-/// `publisher_audio` record, and its text-to-time map is started. A failed fetch leaves the article as it is.
+/// article, as a followed post does (#810). After the article is imported, the post page the link resolver
+/// already fetched is read (`SharedPostVoiceoverLookup`); the page is fetched only when the resolver didn't.
+/// A completed voiceover of that same post is saved as the item's `publisher_audio` record, and its
+/// text-to-time map is started. A failed fetch leaves the article as it is.
 @MainActor
 final class SharedLinkVoiceover {
-    /// Fetches a page and returns its HTML and the address it ended at after redirects.
-    typealias FetchPage = @Sendable (URL) async throws -> (html: String, finalURL: URL)
-
-    nonisolated static let maximumPageBytes = 4 * 1_024 * 1_024
+    typealias FetchPage = SharedPostVoiceoverLookup.FetchPage
 
     /// Tests replace it, since the share path's page fetch is otherwise the network.
     var fetchPage: FetchPage
@@ -22,32 +20,32 @@ final class SharedLinkVoiceover {
     }
 
     /// Looks for the voiceover of the post at `sharedURL` (or the address the article was read from) and
-    /// saves it for `itemId`. `report` gets one diagnostic: `saved`, `none`, `not_substack`, `item removed`
-    /// or `failed:<reason>`, and the text map's progress after a save.
+    /// saves it for `itemId`. `fetched` holds the pages the link resolver read for this import. `report` gets
+    /// one diagnostic: `saved`, `none`, `not_substack`, `item removed` or `failed:<reason>`, and the text
+    /// map's progress after a save.
     func remember(
         sharedURL: URL,
         article: BrowserTextHandoff,
         itemId: String,
+        fetched: FetchedPageMemo?,
         store: SQLiteSessionStore,
         transcriber: any SourceTranscriptionClient,
         report: @escaping @MainActor (String) -> Void
     ) async {
-        let candidates = [sharedURL, URL(string: article.source.url)].compactMap { $0 }
-        guard let pageURL = candidates.first(where: PublisherNarrationEvidence.mayHaveVoiceover) else {
-            return report("\(itemId): not_substack")
-        }
-        let page: (html: String, finalURL: URL)
-        do {
-            page = try await fetchPage(pageURL)
-        } catch {
-            return report("\(itemId): failed:\(error.localizedDescription)")
-        }
-        // Parse off the main thread: a post page can run to a few hundred KB.
-        let parsed = await Task.detached(priority: .utility) {
-            PublisherNarrationEvidence.publisherAudio(postPage: page.html, finalURL: page.finalURL, itemId: itemId)
+        let fetchPage = fetchPage
+        let articleURL = article.source.url
+        // Off the main thread: a post page can run to a few hundred KB.
+        let outcome = await Task.detached(priority: .utility) {
+            await SharedPostVoiceoverLookup.find(
+                sharedURL: sharedURL, articleURL: articleURL, itemId: itemId, fetched: fetched, fetchPage: fetchPage
+            )
         }.value
-        guard let found = parsed else {
-            return report("\(itemId): none")
+        let found: PublisherAudio
+        switch outcome {
+        case .notSubstack: return report("\(itemId): not_substack")
+        case .failed(let reason): return report("\(itemId): failed:\(reason)")
+        case .none: return report("\(itemId): none")
+        case .found(let audio): found = audio
         }
         do {
             // The listener may have removed the article while the page loaded.
@@ -69,7 +67,7 @@ final class SharedLinkVoiceover {
             throw URLError(.badServerResponse)
         }
         guard let finalURL = http.url, finalURL.scheme?.lowercased() == "https" else { throw URLError(.secureConnectionFailed) }
-        guard data.count <= maximumPageBytes else { throw URLError(.dataLengthExceedsMaximum) }
+        guard data.count <= SharedPostVoiceoverLookup.maximumPageBytes else { throw URLError(.dataLengthExceedsMaximum) }
         return (String(decoding: data, as: UTF8.self), finalURL)
     }
 }
