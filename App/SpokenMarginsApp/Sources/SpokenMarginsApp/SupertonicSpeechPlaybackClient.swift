@@ -1746,6 +1746,18 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         lock.withLock { AudioSessionDiagnostics.fields(for: fallbackIsActive ? nil : player) }
     }
 
+    /// The guard's replacement that is playing now (#306), not a render prepared ahead.
+    /// Full-item fallbacks have their own reason; this notice is only for a temporary passage.
+    var replacementVoiceTargetId: String? {
+        lock.withLock {
+            guard !fallbackIsActive, transportIntent == .playing, !playbackComplete,
+                  player?.currentItem != nil, startedTargetId == currentTargetId,
+                  standInOffsets.contains(currentStartOffset),
+                  !observesPlayerLifecycle || player?.timeControlStatus == .playing else { return nil }
+            return currentTargetId
+        }
+    }
+
     /// Watches the player's clock while playback is intended. AVPlayer can report "playing" while
     /// nothing is heard (#288); a clock that stops moving for `stallThreshold` is logged with the
     /// session's and player's state, and the player is re-seated at the same point. If that doesn't

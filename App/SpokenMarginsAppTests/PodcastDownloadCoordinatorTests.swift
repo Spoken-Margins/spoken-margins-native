@@ -410,6 +410,8 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertTrue(published)
         XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline)
         XCTAssertNotNil(coordinator.validatedLocalURL(for: "episode"))
+        XCTAssertEqual(try fixture.store.loadOwnedOfflineAssets().first?.protections, [],
+                       "nothing is playing, so the committed protection is removed (#541)")
         coordinator.shutdown()
     }
 
@@ -490,6 +492,46 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         coordinator.shutdown()
     }
 
+    // #541: the committed row carried the protection captured before `ledger.commit`. If the
+    // listener started the episode while the commit waited, the new file was left unprotected.
+    func testEpisodeStartedWhileItsDownloadCommitsIsProtectedFromEviction() async throws {
+        let fixture = try makeFixture()
+        try fixture.store.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 10))
+        let fileManager = ReconcileHookFileManager()
+        let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support, fileManager: fileManager)
+        let reservation = try await ledger.reserve(ownerId: "podcast-download-episode:commit", byteCount: 1)
+        let attempt = PodcastDownloadAttempt(itemId: "episode", generation: "commit",
+            reservationId: reservation.id, userInitiated: true)
+        try fixture.store.savePodcastDownload(PodcastDownloadRecord(id: "download", itemId: "episode",
+            remoteURL: "https://example.com/audio", state: .downloading))
+        // A row recorded larger than its file puts the budget over, so the commit's overflow
+        // reservation reconciles with the disk; the hook runs inside that file check.
+        let prepared = fixture.support.appending(path: "PreparedAudio")
+        try FileManager.default.createDirectory(at: prepared, withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: prepared.appending(path: "other.m4a"))
+        try fixture.store.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: "asset-other", category: .preparedAudio, relativePath: "PreparedAudio/other.m4a",
+            byteCount: 20, isReproducible: true
+        ))
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, ledger: ledger,
+            applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false)
+        XCTAssertTrue(coordinator.restoreAttempt(attempt))
+        fileManager.onCheck = {
+            // The ledger runs off the main actor, which is free while finishDownload awaits it.
+            DispatchQueue.main.sync { MainActor.assumeIsolated { coordinator.configureActiveItem("episode") } }
+        }
+        let staged = fixture.root.appending(path: "commit.mp3")
+        try Data([1, 2, 3]).write(to: staged)
+
+        await coordinator.finishDownload(attempt, stagedURL: staged, responseOK: true)
+
+        XCTAssertTrue(fileManager.didFire, "playback started while the commit waited on the ledger")
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline)
+        let row = try XCTUnwrap(fixture.store.loadOwnedOfflineAssets().first { $0.id == "podcast-offline-episode" })
+        XCTAssertEqual(row.protections, [.activePlayback], "the playing episode's new file is protected")
+        coordinator.shutdown()
+    }
+
     private func waitForStarts(_ count: Int, starts: () -> Int) async throws {
         for _ in 0..<100 where starts() < count { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(starts(), count)
@@ -513,4 +555,18 @@ private actor DownloadHeadGate {
         while continuation == nil { await Task.yield() }
     }
     func finish(_ value: Int64) { continuation?.resume(returning: value); continuation = nil }
+}
+
+/// Runs a hook the first time the ledger checks `other.m4a`, inside `reconcileWithDisk`.
+private final class ReconcileHookFileManager: FileManager, @unchecked Sendable {
+    var onCheck: (@Sendable () -> Void)?
+    private(set) var didFire = false
+
+    override func fileExists(atPath path: String, isDirectory: UnsafeMutablePointer<ObjCBool>?) -> Bool {
+        if !didFire, let hook = onCheck, path.hasSuffix("other.m4a") {
+            didFire = true
+            hook()
+        }
+        return super.fileExists(atPath: path, isDirectory: isDirectory)
+    }
 }

@@ -249,7 +249,8 @@ struct ExperienceTimelineRailScreen: View {
                     provenance: .sharedMargin,
                     title: TimelineTextPresentation.excerpt(margin.approvedTranscript, characterLimit: TimelineTextPresentation.marginCharacterLimit),
                     detail: "Shared by \(row.collectionLabel) · \(row.positionDescription)",
-                    action: .sharedMargin(row)
+                    action: .sharedMargin(row),
+                    isNew: row.isNew
                 ))
             }
         }
@@ -454,6 +455,8 @@ struct TimelineRailEntry: Identifiable, Equatable {
     let title: String
     let detail: String
     let action: Action
+    /// A shared Margin the listener hasn't heard yet (#469).
+    var isNew = false
 
     var sortKey: TimelineRailSortKey {
         TimelineRailSortKey(position: position, rank: rank, id: id)
@@ -510,6 +513,7 @@ private struct TimelineRailRow: View, Equatable {
                             .tracking(dynamicTypeSize.isAccessibilitySize ? 0 : 0.8)
                             .foregroundStyle(provenanceColor)
                             .fixedSize(horizontal: false, vertical: true)
+                        if entry.isNew { NewMarginBadge() }
                         if !dynamicTypeSize.isAccessibilitySize { Spacer() }
                         Text("\(entry.position)%")
                             .font(.caption.monospacedDigit())
@@ -544,7 +548,7 @@ private struct TimelineRailRow: View, Equatable {
             .padding(.bottom, 12)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(isCurrent ? "Current chapter. " : "")\(entry.provenance.label), \(entry.position) percent. \(entry.title). \(entry.detail)")
+        .accessibilityLabel("\(isCurrent ? "Current chapter. " : "")\(entry.isNew ? "New to you. " : "")\(entry.provenance.label), \(entry.position) percent. \(entry.title). \(entry.detail)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { action() }
     }

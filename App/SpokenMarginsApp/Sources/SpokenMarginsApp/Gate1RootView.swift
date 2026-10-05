@@ -470,14 +470,9 @@ struct DiscretePlaybackRateSlider: View {
     }
 }
 
+/// Follow is offered on the Item screen only, not while listening (#280).
 struct SourceFollowSuggestionCard: View {
-    enum Appearance: Equatable {
-        case standard
-        case playback
-    }
-
     @EnvironmentObject private var model: Gate1AppModel
-    var appearance: Appearance = .standard
 
     var body: some View {
         if !model.sourceFollowSuggestionCandidates.isEmpty {
@@ -486,7 +481,7 @@ struct SourceFollowSuggestionCard: View {
                     .font(.headline)
                 Text("Following only adds future entries to your source inbox. Nothing is imported, downloaded, or prepared automatically.")
                     .font(.caption)
-                    .foregroundStyle(secondaryColor)
+                    .foregroundStyle(AppColors.secondaryText)
                 ForEach(model.sourceFollowSuggestionCandidates) { candidate in
                     Button {
                         model.acceptSourceFollowSuggestion(candidate)
@@ -509,32 +504,19 @@ struct SourceFollowSuggestionCard: View {
                 }
                 .font(.caption)
             }
-            .padding(appearance == .playback ? 16 : 10)
-            .frame(maxWidth: appearance == .playback ? 430 : .infinity, alignment: .leading)
-            .foregroundStyle(foregroundColor)
-            .background(backgroundColor)
-            .clipShape(RoundedRectangle(cornerRadius: appearance == .playback ? 18 : 12))
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(AppColors.text)
+            .background(AppColors.watchControl.opacity(0.35))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("source.followSuggestion.card")
         }
-    }
-
-    private var foregroundColor: Color {
-        appearance == .playback ? .white : AppColors.text
-    }
-
-    private var secondaryColor: Color {
-        appearance == .playback ? AppColors.watchSecondary : AppColors.secondaryText
-    }
-
-    private var backgroundColor: Color {
-        appearance == .playback ? AppColors.watchBackground : AppColors.watchControl.opacity(0.35)
     }
 }
 
 struct ManualSourceFollowButton: View {
     @EnvironmentObject private var model: Gate1AppModel
-    var appearance: SourceFollowSuggestionCard.Appearance = .standard
 
     var body: some View {
         if model.canManuallyFollowSelectedSource {
@@ -547,7 +529,7 @@ struct ManualSourceFollowButton: View {
                     }
                     Text(model.manualFollowButtonTitle)
                 }
-                .frame(maxWidth: appearance == .playback ? 430 : .infinity)
+                .frame(maxWidth: .infinity)
             }
             .buttonStyle(SecondaryButtonStyle())
             .disabled(model.isFollowingSelectedSource)
