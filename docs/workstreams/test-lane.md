@@ -216,21 +216,25 @@ going. Stop only for owner data, the phone, money, anything public, main or rele
 
 ## The Mac's runners
 
-Two self-hosted GitHub Actions runners on the owner's Mac run `.github/workflows/lane.yml`. Each is a LaunchAgent in its own folder.
+Three self-hosted GitHub Actions runners on the owner's Mac (the third after the owner installs it) run `.github/workflows/lane.yml`. Each is a LaunchAgent in its own folder.
 
-| | Main runner | Build runner |
-|---|---|---|
-| Name | `sm-lane-mac` | `sm-lane-mac-2` |
-| Folder | `~/actions-runner-spoken-margins` | `~/actions-runner-spoken-margins-2` |
-| LaunchAgent | `actions.runner.uncomposed-spoken-margins-native.sm-lane-mac` | `actions.runner.uncomposed-spoken-margins-native.sm-lane-mac-2` |
-| Labels | `self-hosted, macOS, ARM64, sm-lane, sm-lane-build` | `self-hosted, macOS, ARM64, sm-lane-build` |
-| Jobs | `lane` (/lane T2, T3, simulators) and `automerge` | `automerge` only (host tests and builds) |
-| `.env` | `SM_LANE_EVIDENCE_DIR`, `SM_LANE_TOOLS` | the same, plus `SM_LANE_RUNNER_ROLE=build` |
+| | Main runner | Build runner | Priority runner |
+|---|---|---|---|
+| Name | `sm-lane-mac` | `sm-lane-mac-2` | `sm-lane-mac-3` |
+| Folder | `~/actions-runner-spoken-margins` | `~/actions-runner-spoken-margins-2` | `~/actions-runner-spoken-margins-3` |
+| LaunchAgent | `actions.runner.uncomposed-spoken-margins-native.sm-lane-mac` | `actions.runner.uncomposed-spoken-margins-native.sm-lane-mac-2` | `actions.runner.uncomposed-spoken-margins-native.sm-lane-mac-3` |
+| Labels | `self-hosted, macOS, ARM64, sm-lane, sm-lane-build` | `self-hosted, macOS, ARM64, sm-lane-build` | `self-hosted, macOS, ARM64, sm-lane-priority` |
+| Jobs | `lane` (/lane T2, T3, simulators) and `automerge` | `automerge` only (host tests and builds) | Priority `lane` and `automerge` |
+| `.env` | `SM_LANE_EVIDENCE_DIR`, `SM_LANE_TOOLS` | the same, plus `SM_LANE_RUNNER_ROLE=build` | Copy the build runner's `.env` exactly |
 
+- **Priority routing.** A short GitHub-hosted pre-job checks the repository's runners with `gh api` before either Mac job queues. A PR labelled `priority`, or a T1 diff touching only `ops/`, `docs/`, and the lane paths (`LANE_PREFIXES`/`LANE_FILES` in the base branch's `scripts/test-scope.py`), uses `[self-hosted, sm-lane-priority]` when a matching runner is online. Busy online runners count; priority work queues behind other priority work. T0-only and mixed diffs stay in their normal queues unless labelled `priority`. File pagination and both sides of renames count; incomplete file lists never qualify as ops-only.
+  - If the runner is uninstalled/offline, runner discovery is denied or times out, or the hosted pre-job fails, jobs use the normal labels above. An online runner going offline after the check can still leave an already-routed job queued; re-run once it is online or remove/re-add the request label to route again.
+  - Configure repository Actions secret `SM_LANE_RUNNERS_TOKEN` with a fine-grained PAT restricted to this repository and **Administration: read** for runner discovery. The workflow token is tried if the secret is absent; denied access falls back. PR-file discovery always uses the workflow's read token. Routing executes base-branch policy, with no PR code receiving the discovery token.
+  - The third runner adds a queue, not capacity: T3 still takes the existing Mac-wide simulator slot; builds still take the existing `lane_slots` build slots. Its copied `SM_LANE_RUNNER_ROLE=build` applies the same memory/disk gates and beside-a-simulator trials to automerge builds. Lane PRs still need a clean Codex audit on their head before merging. Only the owner installs the runner; the implementing PR provides the install commands.
 - **Build runner gate.** With `SM_LANE_RUNNER_ROLE=build`, an automerge job waits up to 90 minutes for three things: no simulator job running, normal memory pressure, and 20 GB of free disk. Otherwise it reports INCONCLUSIVE and says why.
   - **Trial (2026-10-01): host-only work beside a simulator.** A job whose diff needs no app build (T0 or T1 by next's `test-scope.py`) may start while a simulator job runs, if the kernel reads memory pressure as normal (`kern.memorystatus_vm_pressure_level`, the level `memory_pressure` reports) and more than 30 GiB of disk is free. Its report says "ran beside a simulator job (trial)", and each such job adds one line (time, request id, PR) to `beside-simulator.log` in the lane state folder, to count simulator crashes against. The way back is reverting the PR that added it.
   - **Trial (2026-10-01): builds beside a simulator.** The build runner still spent 6.9 of its 12.7 busy hours in a day (54%) waiting for simulator jobs, because most automerge jobs build. A job that builds (T2: simulator and device builds through the build slot, no simulator boot) may now start beside one simulator job on the same terms (memory pressure read as normal when it starts, more than 30 GiB free), if the one build slot `lane_slots` leaves during a simulator job is free; never beside two. Each build checks again as it takes its build slot, because a second simulator job can start during the host tests: the runner sets `SM_LANE_BUILD_NEEDS_ROOM` for the build runner's builds, and `lane_slots` then gives no build slot beside two simulator jobs, or beside one unless memory pressure reads normal, deciding under the simulator-slot decision lock. `lane_slots` still allows only one build while a simulator job runs. The runner looks up any `lane_slots` helper newer than this trial by name, so a branch that hasn't merged `next` since then waits for no simulator job instead of crashing. Its report says "built beside a simulator job (trial)", and it is logged in `beside-simulator.log` like the host-only trial. Signs it's wrong: memory pressure reaching warn, or simulator crashes during one of those builds; then revert the PR that added it.
-- **Check both:** `gh api repos/uncomposed/spoken-margins-native/actions/runners --jq '.runners[] | "\(.name) \(.status) busy=\(.busy)"'`. On the Mac, `./svc.sh status` in a runner's folder.
+- **Check all:** `gh api repos/uncomposed/spoken-margins-native/actions/runners --jq '.runners[] | "\(.name) \(.status) busy=\(.busy)"'`. On the Mac, `./svc.sh status` in a runner's folder.
 - **Restart one:** `./svc.sh stop`, then `./svc.sh start`, in its folder. Its logs are in `_diag/`, and the job workspace is `_work/spoken-margins-native/spoken-margins-native`.
 - **Remove one:** `./svc.sh uninstall`, then `./config.sh remove --token <token>`. Get the token from `gh api -X POST repos/uncomposed/spoken-margins-native/actions/runners/remove-token --jq .token`.
 - **Runner simulators.** A T3 job creates its own `SM Lane Runner <run>` device and locks that name in the lane state folder until it deletes the device. Every job first sweeps leftover runner devices but skips a locked one, so one runner's sweep can't delete the other's live T3 device (#440, #411). A crashed job's lock ends with its process, so its leftover is swept. If a plan's device disappears or its readiness step fails, the run stops there and reports INCONCLUSIVE as a lane fault, not FAIL.
@@ -238,7 +242,7 @@ Two self-hosted GitHub Actions runners on the owner's Mac run `.github/workflows
 - **Git LFS:** both jobs check out with `lfs: true`, because the Supertonic models are LFS files and the contracts check reads them. The LFS cache is in the workspace's `.git`, so each runner downloads the models once.
 - **Warm build folders.** A job links the tree's `.build` and `Packages/SessionKit/.build` to `~/Library/Caches/SpokenMarginsLane/warm-build/checkout-<checkout path hash>/sk-<SessionKit tree hash>-<project file hash>/`.
   - A SessionKit change starts a new cache, because stale SessionKit modules give false "does not conform" errors. An Xcode project change does too.
-  - Each runner has its own caches. DerivedData and SwiftPM's state record absolute paths, and a cache shared by both runners lost Xcode's VFS overlay and the onnxruntime binary (#405).
+  - Each runner has its own caches. DerivedData and SwiftPM's state record absolute paths, and a cache shared by the two original runners lost Xcode's VFS overlay and the onnxruntime binary (#405).
   - A cache whose SwiftPM state lists a binary artifact that isn't on disk is emptied, and the job builds cold. Its report says which artifact was missing.
   - The T2 simulator and device builds each have their own DerivedData (`.build/dd-simulator`, `.build/dd-device`). When they shared one, the warm simulator build after a device build failed on a missing `all-product-headers.yaml` (#405).
   - At most two caches are kept per runner. Below 15 GB of free disk the job builds cold, and its report says so.
