@@ -242,7 +242,7 @@ final class PlaybackStartCueTests: XCTestCase {
         )
 
         cue.observe(snapshot("article", .starting))
-        clock += 0.8
+        clock += 1 // past the 0.8 s cue; exactly 0.8 rounds just under it
         try await waitUntil { chiming }
         cue.observe(snapshot("article", .paused))
 
