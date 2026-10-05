@@ -993,7 +993,9 @@ final class Gate1AppModel: ObservableObject {
     private let browserTextHandoffStore: Gate5BrowserTextHandoffStore?
     private let audioPlaybackClientOverride: AudioPlaybackClient?
     private var mediaPlaybackClient: AVPlayerStreamPlaybackClient?
-    private var podcastDownloadCoordinator: PodcastDownloadCoordinator?
+    private(set) var podcastDownloadCoordinator: PodcastDownloadCoordinator?
+    /// Shared by the podcast downloader and the pre-play offline check (#779).
+    let connectivity = ConnectivityMonitor()
     private var requestedPodcastTransportReplacements: Set<String> = []
     private var offlineStorageLedger: OfflineStorageLedger?
     private var localSourceImporter: LocalSourceImporter?
@@ -2169,6 +2171,7 @@ final class Gate1AppModel: ObservableObject {
             let detail = try loadItemDetail(id: session.itemId, store: store)
             if engine == nil { installEngine(try makeEngine(store: store)) }
             guard let engine else { return false }
+            if blockOfflineEpisodeStart(itemId: session.itemId) { return false }
             // URL registration is separate from selection; the engine owns exact
             // target validation and the reversible playback transaction.
             try prepareSourceMediaPlayback(itemId: session.itemId)
@@ -3740,6 +3743,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func start() {
+        guard !blockOfflineEpisodeStart(itemId: activeItemId) else { return }
         guard !requireTermsDecisionBeforePlayback(.startCurrentItem) else { return }
         if !hasActiveSession {
             resetMixWithOtherAudioForNewSession()
@@ -4028,6 +4032,7 @@ final class Gate1AppModel: ObservableObject {
             reportFailure("There is no listening session to resume.")
             return
         }
+        if let itemId = snapshot.itemId, blockOfflineEpisodeStart(itemId: itemId) { return }
         guard !requireTermsDecisionBeforePlayback(.resumeSession(sessionId)) else { return }
         stopSpeechPreviews()
         streamingSpeechQueue.relinquishToCanonicalPlayback()
@@ -5520,6 +5525,8 @@ final class Gate1AppModel: ObservableObject {
 
     func startNewSession(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_new_session") else { return }
+        // Before ending what's playing: a blocked start must not stop a downloaded episode.
+        guard !blockOfflineEpisodeStart(itemId: id) else { return }
         resetMixWithOtherAudioForNewSession()
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         cancelSleepTimer()
@@ -5575,6 +5582,7 @@ final class Gate1AppModel: ObservableObject {
 
     func resumeSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("resume_session") else { return }
+        guard !blockOfflineEpisodeStart(itemId: session.itemId) else { return }
         resetMixWithOtherAudioForNewSession()
         cancelSleepTimer()
         announcedImportedInterjectionIDs.removeAll()
@@ -6154,13 +6162,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func stopStalledPodcastStart(itemID: String) {
-        guard snapshot.itemId == itemID, snapshot.status == .starting,
-              selectedPodcastDownloadState != nil else { return }
-        pause()
-        reportFailure("Podcast playback did not start. Use Download Again in More to replace the saved audio, then press Play.")
-    }
-
     func redownloadSelectedPodcast() {
         guard let coordinator = podcastDownloadCoordinator else { return }
         requestedPodcastTransportReplacements.insert(selectedItem.id)
@@ -6168,15 +6169,6 @@ final class Gate1AppModel: ObservableObject {
             prioritizeOfflinePreparation(id: selectedItem.id)
         } else { coordinator.redownload(itemId: selectedItem.id) }
         reportConfirmation("Downloading a fresh copy of the podcast.")
-    }
-
-    func retrySelectedPodcastDownload() {
-        guard !selectedItem.id.isEmpty, podcastDownloadCoordinator != nil else {
-            reportFailure("Podcast download retry is unavailable.")
-            return
-        }
-        podcastDownloadCoordinator?.retry(itemId: selectedItem.id)
-        reportSuccess("Retrying podcast download.")
     }
 
     func downloadSelectedPodcastNow() {
@@ -14593,7 +14585,7 @@ final class Gate1AppModel: ObservableObject {
         return (normalized, indices)
     }
 
-    private func reportSuccess(_ message: String) {
+    func reportSuccess(_ message: String) {
         statusMessage = message
         lastError = nil
         diagnostics["lastStatus"] = message
@@ -14630,7 +14622,7 @@ final class Gate1AppModel: ObservableObject {
         reportFailure([context, message].compactMap { $0 }.joined(separator: ": "), itemId: itemId, retry: retry)
     }
 
-    private func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
+    func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
         statusMessage = "Error"
         lastError = message
         presentFeedback(UserFeedbackEvent(kind: .error, message: message, retry: retry))
@@ -14861,6 +14853,7 @@ final class Gate1AppModel: ObservableObject {
             applicationSupportDirectory: try applicationSupportDirectory(),
             cacheLimit: limit,
             monitorsNetwork: !Self.isRunningUnitTests,
+            connectivity: connectivity,
             usesBackgroundSession: !Self.isRunningUnitTests
         )
         coordinator.onRecordChanged = { [weak self] record in
