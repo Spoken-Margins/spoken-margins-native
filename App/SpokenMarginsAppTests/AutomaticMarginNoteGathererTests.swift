@@ -50,14 +50,14 @@ final class AutomaticMarginNoteGathererTests: XCTestCase {
             profile: RuntimeCapabilityProfile(id: "margin-output", displayName: "Margin output", capabilities: [:]),
             repository: store
         )
-        let margins = try store.loadInterjections(sessionId: "session-a")
-        let marginToSave = try XCTUnwrap(margins.first { $0.id == "ij-001" })
+        let storedMargins = try store.loadInterjections(sessionId: "session-a")
+        let marginToSave = try XCTUnwrap(storedMargins.first { $0.id == "ij-001" })
         let shared = try XCTUnwrap(try MarginMarkdownShare.file(for: marginToSave, engine: engine))
         let url = try MarginMarkdownShare.write(shared, under: root.appending(path: "share"))
         XCTAssertEqual(url.pathExtension, "md")
         XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), saved.markdown)
         // The item's file carries the same two notes, in source order: the others are deleted or written and empty.
-        let itemFile = try XCTUnwrap(try MarginMarkdownShare.file(forItemMargins: margins, engine: engine))
+        let itemFile = try XCTUnwrap(try MarginMarkdownShare.file(forItemMargins: storedMargins, engine: engine))
         XCTAssertEqual(itemFile.fileName, "Margins - A Notes Test Article.md")
         XCTAssertEqual(itemFile.markdown, [saved.markdown, untranscribed.markdown].joined(separator: MarginMarkdownShare.separator))
     }
