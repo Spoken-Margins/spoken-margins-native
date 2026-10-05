@@ -6,35 +6,8 @@ from pathlib import Path
 import subprocess
 import time
 
-
-def crash_reports(reports):
-    """The finished .ips reports. macOS writes each as a hidden `.Name-date.ips` and then renames it,
-    so a hidden one is skipped, and any report can vanish between the glob and the read (#767)."""
-    return (path for path in reports.glob('*.ips') if not path.name.startswith('.'))
-
-
-def crash_snapshot(reports):
-    snapshot = {}
-    for path in crash_reports(reports):
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        snapshot[path] = (stat.st_mtime_ns, stat.st_size)
-    return snapshot
-
-
-def new_crash(reports, baseline, device):
-    for path in crash_reports(reports):
-        try:
-            stat = path.stat()
-            if baseline.get(path) == (stat.st_mtime_ns, stat.st_size):
-                continue
-            if f'com.apple.CoreSimulator.SimDevice.{device}' in path.read_text(errors='replace'):
-                return path
-        except OSError:
-            continue
-    return None
+# The lane's scans skip reports macOS is still writing and ones that vanish mid-scan (#822).
+from lane_sim import crash_snapshot, new_crash
 
 
 def poster_state(store):

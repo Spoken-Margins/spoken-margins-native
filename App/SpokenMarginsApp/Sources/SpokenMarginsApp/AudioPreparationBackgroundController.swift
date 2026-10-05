@@ -16,6 +16,7 @@ final class AudioPreparationBackgroundController {
     static let identifier = "com.spokenmargins.native.audio-preparation"
 
     private var work: (() async -> BackgroundPreparationWorkResult)?
+    private var drainEnded: (@MainActor () -> Void)?
     private var registered = false
 
     private init() {}
@@ -38,8 +39,14 @@ final class AudioPreparationBackgroundController {
         }
     }
 
-    func install(work: @escaping () async -> BackgroundPreparationWorkResult) {
+    /// `drainEnded` runs whenever a background task stops working, finished or expired,
+    /// so the foreground loop can take over the work the task held (#534).
+    func install(
+        work: @escaping () async -> BackgroundPreparationWorkResult,
+        drainEnded: @escaping @MainActor () -> Void
+    ) {
         self.work = work
+        self.drainEnded = drainEnded
     }
 
     func submitIfEnabled(_ enabled: Bool) {
@@ -64,6 +71,7 @@ final class AudioPreparationBackgroundController {
         let operation = Task { await Self.drain(work: work) }
         task.expirationHandler = Self.expirationHandler(for: operation)
         let result = await operation.value
+        drainEnded?()
         task.setTaskCompleted(success: !operation.isCancelled)
         if result.hasRemainingWork && !operation.isCancelled {
             submitIfEnabled(true)

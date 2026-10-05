@@ -69,6 +69,9 @@ class VerificationTests(unittest.TestCase):
             def __init__(self, folder):
                 self.folder = folder
 
+            def is_dir(self):  # the shared scans check the folder exists (lane_sim, #822)
+                return self.folder.is_dir()
+
             def glob(self, pattern):
                 found = list(self.folder.glob(pattern))
                 for path in found:
