@@ -11,7 +11,7 @@ extension LinkArticleFallback {
         _ request: LinkResolutionRequest,
         url: URL,
         resolver: (any LinkResolutionClient)?,
-        remembering pages: FetchedPageMemo,
+        remembering pages: FetchedPageMemo = FetchedPageMemo(),
         allowsArticle: Bool,
         using extractor: any ReadablePageExtracting,
         record: (String) -> Void
