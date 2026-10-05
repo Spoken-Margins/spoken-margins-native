@@ -204,12 +204,12 @@ public enum ChatGPTSharedPage {
             .map(\.element)
     }
 
-    /// A shared response is just the response. A shared run of turns says who spoke.
+    /// A shared response is just the response. A shared run of turns says who spoke; the page doesn't name the person.
     private static func transcript(from messages: [Message]) -> String {
         let speakers = Set(messages.map(\.role))
         guard speakers.count > 1 else { return messages.map(\.text).joined(separator: "\n\n") }
         return messages
-            .map { ($0.role == "user" ? "You: " : "ChatGPT: ") + $0.text }
+            .map { ($0.role == "user" ? "User: " : "ChatGPT: ") + $0.text }
             .joined(separator: "\n\n")
     }
 
