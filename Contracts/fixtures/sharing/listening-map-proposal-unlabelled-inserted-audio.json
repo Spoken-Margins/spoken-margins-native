@@ -1,0 +1,65 @@
+{
+  "id": "proposal-unlabelled-inserted-audio",
+  "schemaVersion": "spoken-margins.listening-map-proposal.v2",
+  "languageCode": "en",
+  "createdAt": "2026-09-30T12:00:00Z",
+  "generator": "deterministic-scene-boundaries.v1",
+  "scenes": [
+    {
+      "id": "scene-001",
+      "order": 0,
+      "title": "First half",
+      "summaryText": "The guest describes growing up beside a working harbour.",
+      "summaryProvenance": "model_generated",
+      "eligibility": "eligible",
+      "startAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 0,
+        "transcriptSegmentId": "segment-0001",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 600000,
+        "transcriptSegmentId": "segment-0120",
+        "machineEvidenceAssetIds": []
+      }
+    },
+    {
+      "id": "scene-002",
+      "order": 1,
+      "eligibility": "unknown",
+      "eligibilityReason": "Inserted audio with no publisher label; left playable and unsummarised.",
+      "startAnchor": {
+        "anchorType": "media",
+        "mediaTimeMs": 600000,
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "media",
+        "mediaTimeMs": 630000,
+        "machineEvidenceAssetIds": []
+      }
+    },
+    {
+      "id": "scene-003",
+      "order": 2,
+      "title": "Second half",
+      "summaryText": "The guest explains why the harbour closed and what replaced it.",
+      "summaryProvenance": "model_generated",
+      "eligibility": "eligible",
+      "startAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 630000,
+        "transcriptSegmentId": "segment-0121",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 1500000,
+        "transcriptSegmentId": "segment-0300",
+        "machineEvidenceAssetIds": []
+      }
+    }
+  ]
+}

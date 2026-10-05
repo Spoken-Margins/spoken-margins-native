@@ -84,6 +84,10 @@ public enum ReviewedItemTransportSelection: Sendable {
 }
 
 public enum SpokenMarginsPackageBuilder {
+    /// `localSourceTexts` are the item's own text on this device and an episode's transcript when it
+    /// has one. They are never written into the packet, so map proposals are checked against the whole
+    /// of each (except the embedded text, which is checked as the packet carries it): a scene summary,
+    /// title or reason quoting any part of the source is dropped even when the source goes by reference.
     public static func prepare(
         packageId: String,
         createdAt: Date,
@@ -91,6 +95,7 @@ public enum SpokenMarginsPackageBuilder {
         itemTransportSelection: ReviewedItemTransportSelection,
         selections: [ReviewedInterjectionSelection],
         mapProposals: [PortableListeningMapProposalArtifact] = [],
+        localSourceTexts: [String] = [],
         fingerprintSpines: [EditionFingerprintSpineArtifact] = [],
         phraseSketches: [TranscriptPhraseSketchArtifact] = [],
         machineEvidence: [ReviewedMachineEvidenceAsset] = [],
@@ -221,6 +226,18 @@ public enum SpokenMarginsPackageBuilder {
             path: commentaryPath,
             required: true
         )]
+        // The on-device labeller describes every scene, and a Listening Edition's summaries come from
+        // outside the app, so drop what breaks the scene rules rather than refuse the Margins (#480).
+        var embeddedItemText: String?
+        if case .embeddedText(let text, _, _) = itemTransportSelection { embeddedItemText = text }
+        // Text the packet doesn't carry is checked whole: a quotation of any part of it would leak it.
+        var mapProposals = PortableListeningMapContract.forSharing(
+            mapProposals, sourceTexts: [embeddedItemText].compactMap { $0 },
+            withheldTexts: localSourceTexts.filter { $0 != embeddedItemText })
+        // Shared by reference, the packet carries none of the item's text, so its map anchors don't quote it.
+        if embeddedItemText == nil {
+            mapProposals = mapProposals.map(PortableListeningMapContract.withoutLongAnchorQuotations)
+        }
         for (index, proposal) in mapProposals.enumerated() {
             let path = String(format: "artifacts/listening-map-proposal-%04d.json", index + 1)
             artifactData[path] = try encodeArtifact(proposal)

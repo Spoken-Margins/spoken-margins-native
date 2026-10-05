@@ -36,6 +36,16 @@ public enum ShippedPacketReader {
         }
     }
 
+    /// Writes a text-only packet with the shipped build's exporter, from its manifest and artifact files as
+    /// JSON. Tests use it for a packet a Build 29 sender could make that the current exporter refuses (#480).
+    public static func writePacket(manifestJSON: Data, artifacts: [String: Data], to packetURL: URL) throws {
+        let manifest = try SpokenMarginsPackageArchive.decodeManifest(manifestJSON)
+        _ = try SpokenMarginsPackageArchive.write(
+            PreparedSpokenMarginsPackage(manifest: manifest, artifactData: artifacts, assetFiles: [:]),
+            to: packetURL
+        )
+    }
+
     /// A Margin as the shipped build saved it on import.
     public struct ImportedMargin: Equatable, Sendable {
         public let packageScopedId: String
