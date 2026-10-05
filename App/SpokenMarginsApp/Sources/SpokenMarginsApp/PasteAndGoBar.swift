@@ -77,11 +77,17 @@ struct SourceLinkImportStatusView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let message = model.sourceLinkImportMessage {
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(model.sourceLinkImportState == "failure" ? AppColors.coral : AppColors.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("sourceLink.import.status")
+                Group {
+                    if model.sourceLinkImportState == "failure" {
+                        FailureMessageLabel(message)
+                    } else {
+                        Text(message)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .font(.subheadline)
+                .accessibilityIdentifier("sourceLink.import.status")
             }
             if model.sourceLinkImportState == "failure", let offer = model.sourceLinkSafariOffer {
                 Button {

@@ -1166,3 +1166,24 @@ extension SQLiteSessionStore: PublisherAudioRepository {
         try loadOptional(kind: Self.publisherAudioKind, id: itemId)
     }
 }
+
+/// Community map uploads (#552) live in the records table as kind "community_map_upload", one
+/// row per episode key. The row is not linked to an item, so deleting one Library copy keeps the
+/// episode's history and re-importing it doesn't send the transcript again. No table or column
+/// changes, and schema_version stays the same: Build 29 selects records by kind and never reads
+/// this one.
+extension SQLiteSessionStore: CommunityMapUploadRepository {
+    static let communityMapUploadKind = "community_map_upload"
+
+    public func saveCommunityMapUpload(_ record: CommunityMapUploadRecord) throws {
+        try save(kind: Self.communityMapUploadKind, id: record.id, sessionId: nil, itemId: nil, value: record)
+    }
+
+    public func loadCommunityMapUpload(episodeKey: String) throws -> CommunityMapUploadRecord? {
+        try loadOptional(kind: Self.communityMapUploadKind, id: episodeKey)
+    }
+
+    public func loadCommunityMapUploads() throws -> [CommunityMapUploadRecord] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", [Self.communityMapUploadKind])
+    }
+}

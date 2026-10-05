@@ -327,10 +327,8 @@ struct ExperienceAddSourceFlow: View {
                 .accessibilityLabel("Source text")
                 .accessibilityIdentifier("create.text.editor")
             if let textImportError {
-                Label(textImportError, systemImage: "exclamationmark.triangle")
+                FailureMessageLabel(textImportError)
                     .font(.subheadline)
-                    .foregroundStyle(AppColors.dangerText)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .tint(AppColors.evergreen)

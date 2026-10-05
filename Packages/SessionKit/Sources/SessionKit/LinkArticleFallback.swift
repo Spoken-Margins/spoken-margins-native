@@ -4,6 +4,38 @@ import Foundation
 /// readable-page extractor (#144), and so does a link shared from another app, such as a Substack post shared
 /// from the Substack app (#223). Podcast resolution always runs first, so a podcast link stays a podcast.
 public enum LinkArticleFallback {
+    public enum Resolution {
+        case podcast(LinkResolutionResult)
+        case article(BrowserTextHandoff)
+    }
+
+    /// Background imports keep podcast identity/review first and never start article playback.
+    @MainActor
+    public static func resolve(
+        url: URL,
+        allowsArticle: Bool,
+        using extractor: any ReadablePageExtracting,
+        record: (String) -> Void,
+        podcast: () async throws -> LinkResolutionResult
+    ) async throws -> Resolution {
+        let result: LinkResolutionResult
+        do {
+            result = try await podcast()
+        } catch let error as URLError where error.code == .badServerResponse
+            && allowsArticle && url.scheme?.lowercased() == "https" {
+            // Podcast fetching collapses HTTP errors to badServerResponse. Let the article extractor
+            // make its own request and report the site's HTTP status. Offline, timeout and cancellation
+            // still propagate unchanged; feed entries never fall back to articles.
+            return .article(try await extract(url, startSession: false, using: extractor, record: record))
+        }
+        if allowsArticle, let article = try await article(
+            for: url, after: result, startSession: false, using: extractor, record: record
+        ) {
+            return .article(article)
+        }
+        return .podcast(result)
+    }
+
     /// The page as an article to import, or nil when the fallback doesn't apply: the resolver found audio or
     /// something to review, or the link isn't HTTPS (the extractor loads HTTPS only). Throws
     /// `LinkArticleFallbackError` when the page should be read but the extractor failed. `record` receives the
@@ -17,6 +49,16 @@ public enum LinkArticleFallback {
         record: (String) -> Void
     ) async throws -> BrowserTextHandoff? {
         guard result.foundNoAudio, url.scheme?.lowercased() == "https" else { return nil }
+        return try await extract(url, startSession: startSession, using: extractor, record: record)
+    }
+
+    @MainActor
+    private static func extract(
+        _ url: URL,
+        startSession: Bool,
+        using extractor: any ReadablePageExtracting,
+        record: (String) -> Void
+    ) async throws -> BrowserTextHandoff {
         do {
             var handoff = try await extractor.extract(url: url)
             handoff.requestedContinuation.startSession = startSession

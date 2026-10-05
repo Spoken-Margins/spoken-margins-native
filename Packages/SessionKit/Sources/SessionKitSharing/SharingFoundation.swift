@@ -84,6 +84,10 @@ public enum ReviewedItemTransportSelection: Sendable {
 }
 
 public enum SpokenMarginsPackageBuilder {
+    /// `localSourceTexts` are the item's own text on this device and an episode's transcript when it
+    /// has one. They are never written into the packet, so map proposals are checked against the whole
+    /// of each (except the embedded text, which is checked as the packet carries it): a scene summary,
+    /// title or reason quoting any part of the source is dropped even when the source goes by reference.
     public static func prepare(
         packageId: String,
         createdAt: Date,
@@ -91,6 +95,7 @@ public enum SpokenMarginsPackageBuilder {
         itemTransportSelection: ReviewedItemTransportSelection,
         selections: [ReviewedInterjectionSelection],
         mapProposals: [PortableListeningMapProposalArtifact] = [],
+        localSourceTexts: [String] = [],
         fingerprintSpines: [EditionFingerprintSpineArtifact] = [],
         phraseSketches: [TranscriptPhraseSketchArtifact] = [],
         machineEvidence: [ReviewedMachineEvidenceAsset] = [],
@@ -98,7 +103,14 @@ public enum SpokenMarginsPackageBuilder {
         suggestedRevealMode: ImportedCommentaryRevealMode? = nil
     ) throws -> PreparedSpokenMarginsPackage {
         let item = removingPrivateLinks(from: item)
-        let fingerprintSpines = fingerprintSpines.map(removingPrivateLinks(from:))
+        // Each signature may back one landmark across all spines: Build 29's importer keys a dictionary
+        // by signature and traps on a repeat.
+        var unusedSignatureAssetIDs = Set(machineEvidence.map(\.id))
+        let fingerprintSpines = fingerprintSpines.map(removingPrivateLinks(from:)).compactMap { spine in
+            let repaired = FingerprintSpineExportRepair.repaired(spine, item: item, signatureAssetIDs: unusedSignatureAssetIDs)
+            unusedSignatureAssetIDs.subtract(repaired?.landmarks.map(\.signatureAssetId) ?? [])
+            return repaired
+        }
         let scopedIds = selections.map(\.packageScopedId)
         if let duplicate = Dictionary(grouping: scopedIds, by: { $0 }).first(where: { $0.value.count > 1 })?.key {
             throw InterjectionPackagePreparationError.duplicatePackageScopedId(duplicate)
@@ -214,6 +226,18 @@ public enum SpokenMarginsPackageBuilder {
             path: commentaryPath,
             required: true
         )]
+        // The on-device labeller describes every scene, and a Listening Edition's summaries come from
+        // outside the app, so drop what breaks the scene rules rather than refuse the Margins (#480).
+        var embeddedItemText: String?
+        if case .embeddedText(let text, _, _) = itemTransportSelection { embeddedItemText = text }
+        // Text the packet doesn't carry is checked whole: a quotation of any part of it would leak it.
+        var mapProposals = PortableListeningMapContract.forSharing(
+            mapProposals, sourceTexts: [embeddedItemText].compactMap { $0 },
+            withheldTexts: localSourceTexts.filter { $0 != embeddedItemText })
+        // Shared by reference, the packet carries none of the item's text, so its map anchors don't quote it.
+        if embeddedItemText == nil {
+            mapProposals = mapProposals.map(PortableListeningMapContract.withoutLongAnchorQuotations)
+        }
         for (index, proposal) in mapProposals.enumerated() {
             let path = String(format: "artifacts/listening-map-proposal-%04d.json", index + 1)
             artifactData[path] = try encodeArtifact(proposal)
@@ -462,14 +486,16 @@ public enum SpokenMarginsPackageImporter {
             listeningMapProposals: contents.listeningMapProposals,
             editionFingerprintSpines: contents.editionFingerprintSpines,
             transcriptPhraseSketches: contents.transcriptPhraseSketches,
-            episodeMapEvidencePaths: Dictionary(uniqueKeysWithValues:
+            // A packet may name one signature from two landmarks; uniqueKeysWithValues would trap (#536).
+            episodeMapEvidencePaths: Dictionary(
                 contents.editionFingerprintSpines
                     .flatMap(\.landmarks)
                     .compactMap { landmark in
                         contents.extractedAssetURLs[landmark.signatureAssetId].map {
                             (landmark.signatureAssetId, $0.path)
                         }
-                    }
+                    },
+                uniquingKeysWith: { first, _ in first }
             )
         )
         return try repository.importCommentaryLayer(layer, interjections: importedInterjections)

@@ -216,6 +216,34 @@ class VerificationTests(unittest.TestCase):
         self.assertFalse([step for step in manifest['steps'] if step.get('skipped')])
         self.assertEqual(status, 'verified')
 
+    def test_the_sessionkit_build_has_its_own_limit_so_the_tests_keep_theirs(self):
+        # #844 (2026-10-05): one 300 s limit covered the SessionKit build and about 1,000 tests. Under a
+        # load average of 40 to 180 the run stopped with hundreds of tests missing, at a different test
+        # each time, and six PRs used their one re-run on it.
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+            verification.os.environ.pop('CODEX_SANDBOX', None)
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, args, kw))), \
+                    patch.object(run, 'ops_steps'), \
+                    patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                run.host_steps()
+        names = [name for name, _, _ in calls]
+        self.assertLess(names.index('package-build'), names.index('package'))
+        steps = {name: (args, kw) for name, args, kw in calls}
+        self.assertEqual(steps['package-build'][0][-1], '--build-only')
+        self.assertEqual(steps['package'][0][-1], '--skip-build')
+        self.assertGreaterEqual(steps['package'][1]['timeout'], 600)
+        self.assertTrue(steps['package'][1]['tests'])  # the exact-test-ID check stays on the tests
+        self.assertFalse(steps['package-build'][1].get('tests'))
+
+    def test_the_sessionkit_script_still_builds_and_tests_with_no_argument(self):
+        script = (SCRIPTS / 'run-sessionkit-tests.sh').read_text()
+        self.assertIn('"") exec "$ROOT/scripts/host-test-lane" swift test ', script)
+        self.assertIn('--build-only) exec "$ROOT/scripts/host-test-lane" swift build --build-tests', script)
+        self.assertIn('--skip-build) exec "$ROOT/scripts/host-test-lane" swift test --skip-build', script)
+
     def test_ops_files_count_as_verification_inputs(self):
         with patch.object(verification, 'capture', return_value='ops/dial/dial_gate.py\n'), \
                 tempfile.TemporaryDirectory() as temporary, patch.object(verification, 'ROOT', Path(temporary)):

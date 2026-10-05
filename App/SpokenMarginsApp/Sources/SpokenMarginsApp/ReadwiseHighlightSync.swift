@@ -10,7 +10,11 @@ import SessionKitPersistence
 @MainActor
 final class ReadwiseHighlightSync: ObservableObject {
     @Published var enabled = UserDefaults.standard.bool(forKey: "readwiseHighlightsEnabled")
-    @Published private(set) var status = ""
+    @Published private(set) var status = "" {
+        didSet { statusIsFailure = false }
+    }
+    /// A failure is drawn with the failure icon, not as ordinary status (#308).
+    @Published private(set) var statusIsFailure = false
     /// Each item's page on readwise.io, for "Open in Readwise" on the item page (#623).
     @Published private(set) var links: [String: URL] = [:]
     /// What the last pass that sent anything sent, kept so a quiet pass doesn't erase it.
@@ -85,8 +89,10 @@ final class ReadwiseHighlightSync: ObservableObject {
         } catch ReadwiseHighlightError.tokenRejected {
             rejectedTokenDigest = tokenDigest
             status = ReadwiseHighlightError.tokenRejected.errorDescription ?? ""
+            statusIsFailure = true
         } catch {
             status = "Sending needs attention: \(error.localizedDescription)"
+            statusIsFailure = true
         }
     }
 

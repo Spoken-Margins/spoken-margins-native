@@ -551,13 +551,6 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    static func makeApplicationModel() -> Gate1AppModel {
-        if ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_RECORDING"] == "1" {
-            return Gate1AppModel(recordingClient: NoopRecordingClient())
-        }
-        return Gate1AppModel()
-    }
-
     @Published private var presentedScreen: Gate1Screen = .home
     @Published var requestedExperienceRoot: AppRoot?
     @Published private(set) var writtenMarginDraft: WrittenMarginDraft?
@@ -764,6 +757,8 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var offlineStorageSnapshot = OfflineStorageSnapshot()
     @Published private(set) var recordingPresentationContext: RecordingPresentationContext?
     @Published private(set) var isRequestingRecordingPermission = false
+    /// #783: the line shown before iOS's first microphone prompt.
+    @Published private(set) var microphonePrimer = MicrophonePrimer()
     @Published private(set) var isFinishingInterjection = false
     @Published private(set) var isMarginCaptureCoolingDown = false
     @Published private(set) var isDismissingMiniPlayer = false
@@ -855,7 +850,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var sourceLinkSafariOffer: OpenInSafariOffer? // #145, set in Gate1AppModel+PasteAndGo.swift
     @Published private(set) var selectedListeningEdition: ListeningEdition?
     @Published var automaticMarginOutputEnabled = UserDefaults.standard.bool(forKey: "automaticMarginOutputEnabled")
-    @Published var marginOutputStatus = "Choose a folder and send a test note before enabling automatic delivery."
+    @Published var marginOutputStatus = MarginOutputStatus("Choose a folder and send a test note before enabling automatic delivery.")
     @Published private(set) var isImportingReadLater = false
     let readwiseHighlightSync = ReadwiseHighlightSync()
     private(set) lazy var marginNotesDelivery = MarginNotesDelivery(
@@ -1011,7 +1006,8 @@ final class Gate1AppModel: ObservableObject {
     @Published private var followOffers: [String: FollowOffer] = [:]
     private var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
     private let recordingClientOverride: RecordingClient?
-    private let microphonePermissionRequest: (() async -> Bool)?
+    let microphonePermissionRequest: (() async -> Bool)?
+    let microphonePermissionStatusOverride: (() -> PermissionPromptStatus)?
     private let forcePreparedTextGate: Bool
     private let sourceTranscriptionClient: SourceTranscriptionClient
     private let interjectionTranscriptionHandler: InterjectionTranscriptionHandler
@@ -1283,6 +1279,7 @@ final class Gate1AppModel: ObservableObject {
         audioPlaybackClient: AudioPlaybackClient? = nil,
         recordingClient: RecordingClient? = nil,
         microphonePermissionRequest: (() async -> Bool)? = nil,
+        microphonePermissionStatus: (() -> PermissionPromptStatus)? = nil,
         forcePreparedTextGate: Bool = false,
         sourceTranscriptionClient: SourceTranscriptionClient = SystemSourceTranscriptionClient(),
         interjectionTranscriptionHandler: InterjectionTranscriptionHandler? = nil,
@@ -1308,6 +1305,7 @@ final class Gate1AppModel: ObservableObject {
         self.audioPlaybackClientOverride = audioPlaybackClient
         self.recordingClientOverride = recordingClient
         self.microphonePermissionRequest = microphonePermissionRequest
+        self.microphonePermissionStatusOverride = microphonePermissionStatus
         self.forcePreparedTextGate = forcePreparedTextGate
         self.sourceTranscriptionClient = sourceTranscriptionClient
         self.gate2CompactControls = gate2CompactControls
@@ -1977,6 +1975,7 @@ final class Gate1AppModel: ObservableObject {
     func handleAppBecameActive() {
         openReadyListeningEdition()
         marginNotesDelivery.start(); readwiseHighlightSync.start { [weak self] in self?.store }
+        if let store { CommunityMapUploadService.shared.retryFailed(store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
         supertonicRenderer?.setBackgroundInferencePacingEnabled(false)
         let refreshedAvailability = localFoundationModelClient.availability()
         if refreshedAvailability != localFoundationModelAvailability {
@@ -2138,19 +2137,19 @@ final class Gate1AppModel: ObservableObject {
 
     func openMarginInTimeline(_ row: MarginRow) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_margin_timeline") else { return }
-        if let activeSessionID = snapshot.sessionId,
-           activeSessionID != row.interjection.sessionId {
+        let opening = MarginTimelineOpening.decide(
+            loadedSessionID: snapshot.sessionId, marginSessionID: row.interjection.sessionId, loadedSessionIsPlaying: activePlaybackIsPlaying)
+        if opening == .keepNowPlaying {
             reportWarning("This Margin belongs to another session. Now Playing was left unchanged.")
             diagnostics["marginTimelineNavigation"] = "blocked_active_session_replacement"
             return
         }
         do {
             let store = try requireStore()
-            if snapshot.sessionId == nil {
-                guard let session = try store.loadSession(id: row.interjection.sessionId) else {
-                    throw SessionKitError.persistenceFailed("margin_session_missing")
-                }
-                openSession(session)
+            if opening == .openMarginSession {
+                guard let session = try store.loadSession(id: row.interjection.sessionId) else { throw SessionKitError.persistenceFailed("margin_session_missing") }
+                openSession(session) // A paused session (#638) is saved and stopped there, never played.
+                guard snapshot.sessionId == session.id else { return } // openSession reported why.
             }
             requestedTimelineFocusMarginID = row.id
             screen = .timeline
@@ -3421,20 +3420,20 @@ final class Gate1AppModel: ObservableObject {
             sourceSurface: handoff.sourceSurface,
             createdAt: Date()
         )
-        let result: LinkResolutionResult
         let fetched = FetchedPageMemo() // the voiceover lookup reads the post page from here (#810)
-        if let sourceLinkResolver {
-            result = try ((sourceLinkResolver as? PublicPodcastLinkResolver)?.remembering(fetched) ?? sourceLinkResolver).resolve(request)
-        } else {
-            result = try await PublicPodcastLinkResolver().remembering(fetched).resolveAsync(request)
+        let resolution = try await LinkArticleFallback.resolve(
+            request, url: url, resolver: sourceLinkResolver, remembering: fetched, allowsArticle: feedEntry == nil,
+            using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }
+        )
+        guard case .podcast(let result) = resolution else {
+            if case .article(let article) = resolution {
+                let itemId = try importBrowserTextInBackground(article)
+                rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: fetched)
+            }
+            return nil
         }
         guard result.status == .playable else {
             if feedEntry == nil, result.isPDFDocument { try await importRemotePDFInBackground(url: url); return nil } // #758
-            if feedEntry == nil, let article = try await LinkArticleFallback.article(for: url, after: result, startSession: false, using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }) {
-                let itemId = try importBrowserTextInBackground(article)
-                rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: fetched)
-                return nil
-            }
             let provider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
             diagnostics["lastSourceLinkFailureCategory"] = result.failureReason
                 ?? result.status.rawValue
@@ -4392,10 +4391,7 @@ final class Gate1AppModel: ObservableObject {
                     let safeItemID = self.safePodcastEvidenceComponent(item.id)
                     let relativePath = "SpokenMargins/EpisodeMaps/\(safeItemID)/Transient/timeline.json"
                     let transcriptURL = supportDirectory.appending(path: relativePath)
-                    try FileManager.default.createDirectory(
-                        at: transcriptURL.deletingLastPathComponent(),
-                        withIntermediateDirectories: true
-                    )
+                    try FileManager.default.createDirectory(at: transcriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                     let ledger: OfflineStorageLedger
                     if let existingLedger = self.offlineStorageLedger {
                         ledger = existingLedger
@@ -4431,6 +4427,7 @@ final class Gate1AppModel: ObservableObject {
                    !publisherChapters.isEmpty {
                     timeline.chapters = publisherChapters
                 }
+                CommunityMapUploadService.shared.episodeTranscribed(itemId: item.id, timeline: timeline, store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 }
 
                 job.stage = .generatePhraseSketch
                 try store.saveEpisodeMapPreparationJob(job)
@@ -6274,6 +6271,22 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         #endif
+        if let status = microphonePrimerStatus(),
+           microphonePrimer.holds(captureID: voiceCaptureRequestID, status: status) {
+            diagnostics["lastMicrophonePermissionResult"] = "primer_shown"
+            return
+        }
+        requestMicrophoneThenRecord(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
+    }
+
+    /// #783: Continue on the line before the microphone prompt goes on to iOS's request.
+    func continueMicrophonePrimer() {
+        guard let captureID = microphonePrimer.continueTapped(),
+              pendingVoiceCaptureRequestID == captureID else { return }
+        requestMicrophoneThenRecord(requestedAt: Date(), captureID: captureID)
+    }
+
+    private func requestMicrophoneThenRecord(requestedAt: Date, captureID voiceCaptureRequestID: UUID) {
         Task {
             let granted = await requestMicrophonePermission()
             guard pendingVoiceCaptureRequestID == voiceCaptureRequestID else { return }
@@ -6314,31 +6327,6 @@ final class Gate1AppModel: ObservableObject {
         if !snapshot.isRecording {
             recordingPresentationContext = nil
         }
-    }
-
-    /// #217: waits as long as the system prompt is up; a slow Allow is still a yes.
-    private func requestMicrophonePermission(timeoutSeconds: TimeInterval = 10) async -> Bool {
-        if let microphonePermissionRequest { return await microphonePermissionRequest() }
-        let granted = await PermissionPromptWait.awaitAnswer(
-            request: { await SystemRecordingClient.requestRecordPermission() },
-            currentStatus: { Self.microphonePermissionStatus() },
-            timeout: .seconds(timeoutSeconds)
-        )
-        diagnostics["lastMicrophonePermissionResult"] = granted ? "granted" : "denied"
-        return granted
-    }
-
-    private nonisolated static func microphonePermissionStatus() -> PermissionPromptStatus {
-        #if canImport(AVFoundation) && os(iOS)
-        switch AVAudioApplication.shared.recordPermission {
-        case .granted: return .granted
-        case .denied: return .denied
-        case .undetermined: return .undetermined
-        @unknown default: return .undetermined
-        }
-        #else
-        return .granted
-        #endif
     }
 
     /// Publish acknowledgement before synchronous recorder/store finalization.
@@ -6383,6 +6371,7 @@ final class Gate1AppModel: ObservableObject {
 
     func cancelInterjection() {
         if isRequestingRecordingPermission && !snapshot.isRecording {
+            microphonePrimer.cancel()
             pendingVoiceCaptureRequestID = nil
             isRequestingRecordingPermission = false
             recordingPresentationContext = nil
@@ -6436,6 +6425,7 @@ final class Gate1AppModel: ObservableObject {
 
     func switchPendingVoiceCaptureToWrittenMargin() {
         guard isRequestingRecordingPermission, !snapshot.isRecording else { return }
+        microphonePrimer.cancel()
         isRequestingRecordingPermission = false
         pendingVoiceCaptureRequestID = nil
         recordingPresentationContext = nil
@@ -9729,8 +9719,6 @@ final class Gate1AppModel: ObservableObject {
         reportConfirmation("Imported item and Listening Map. Audio prepares separately; playback has not started.")
     }
 
-
-
     func importListeningEditionFile(_ url: URL) {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
@@ -9783,7 +9771,7 @@ final class Gate1AppModel: ObservableObject {
     func automaticMarginOutputChanged() {
         UserDefaults.standard.set(automaticMarginOutputEnabled, forKey: "automaticMarginOutputEnabled")
         if automaticMarginOutputEnabled { marginNotesDelivery.start() }
-        else { marginNotesDelivery.stop(); marginOutputStatus = "Automatic delivery is off. Exported files remain in your folder." }
+        else { marginNotesDelivery.stop(); marginOutputStatus = MarginOutputStatus("Automatic delivery is off. Exported files remain in your folder.") }
     }
 
     func testMarginOutput() {
@@ -9791,7 +9779,7 @@ final class Gate1AppModel: ObservableObject {
             do {
                 guard let folder = resolvedBatchExportFolderURL() else { throw EditionError.invalid("Choose an output folder first.") }
                 marginOutputStatus = try await marginNotesDelivery.sendTestNote(to: folder, destinationID: marginOutputDestinationID)
-            } catch { marginOutputStatus = error.localizedDescription }
+            } catch { marginOutputStatus = .failure(error.localizedDescription) }
         }
     }
 
@@ -12248,6 +12236,7 @@ final class Gate1AppModel: ObservableObject {
             generateListeningMap()
         }
         retrySourceWindowContexts(itemId: itemId)
+        if let store { CommunityMapUploadService.shared.transcriptAttached(itemId: itemId, store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
         if let localURL = importedPodcastRecipientLocalURLs[itemId]
             ?? podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
             resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
@@ -13669,7 +13658,7 @@ final class Gate1AppModel: ObservableObject {
                 item: itemIdentity,
                 itemTransportSelection: itemTransport,
                 selections: selections,
-                mapProposals: mapProposals,
+                mapProposals: mapProposals, localSourceTexts: [item.text, store.loadTranscriptTimeline(itemId: item.id)?.timeline.segments.map(\.text).joined(separator: " ")].compactMap { $0 },
                 fingerprintSpines: fingerprintSpines,
                 phraseSketches: phraseSketches,
                 machineEvidence: machineEvidence,
@@ -14989,7 +14978,7 @@ final class Gate1AppModel: ObservableObject {
               ProcessInfo.processInfo.thermalState != .serious,
               ProcessInfo.processInfo.thermalState != .critical,
               hasAcceptedCurrentTerms,
-              let voice = ttsVoiceSelection.supertonicVoice else { libraryAudioTurns.stopped(caller); return false }
+              let voice = ttsVoiceSelection.supertonicVoice else { libraryAudioTurns.blocked(caller); return false } // settles until these change (#647)
         do {
             try Task.checkCancellation()
             let store = try requireStore()

@@ -19,6 +19,7 @@ struct SettingsScreen: View {
     @State private var isExportingListeningSignals = false
     @State private var isListeningSignalsSharePresented = false
     @State private var hasNoListeningSignals = false
+    @AppStorage(CommunityMapUploadService.optInKey) private var helpsMakeListeningMaps = false
 
     private enum Field {
         case mapModel
@@ -316,9 +317,8 @@ struct SettingsScreen: View {
                                     .font(.caption)
                                     .foregroundStyle(AppColors.secondaryText)
                                     .lineLimit(2)
-                                Text(entry.reason)
+                                FailureMessageLabel(entry.reason)
                                     .font(.caption)
-                                    .foregroundStyle(.red)
                                 HStack {
                                     Button("Retry") {
                                         model.retryImportInboxEntry(entry)
@@ -342,6 +342,15 @@ struct SettingsScreen: View {
                     .accessibilityIdentifier("settings.help.button")
                     Link("Privacy Policy", destination: AppLinks.privacy)
                     Link("Support", destination: AppLinks.support)
+                    Toggle(isOn: $helpsMakeListeningMaps) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Help make listening maps")
+                            Text("Send transcripts of public episodes to the Spoken Margins server, which turns them into maps and then deletes them.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.communityMaps.toggle")
                     NavigationLink("Terms of Use") {
                         SpokenMarginsTermsView(allowsAcceptance: !model.hasAcceptedCurrentTerms)
                     }

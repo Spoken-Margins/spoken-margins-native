@@ -1,0 +1,59 @@
+# coop-packet
+
+A Mac tool for co-op test packets (#856). Synthetic listeners (written by Claude or Codex) answer real packets, or start threads for a person to answer, so the whole co-op loop can be tested without recruiting people. Packets are written by the same SessionKit code the app uses.
+
+```bash
+swift build --package-path Packages/SessionKit --product coop-packet
+```
+
+The binary lands in `Packages/SessionKit/.build/debug/coop-packet`. Keep packets, plans and episode audio under `artifacts/` (git-ignored): exported packets hold the owner's voice.
+
+## Commands
+
+- `inspect <packet>...` prints each packet as JSON: item, sender, digest, and every Margin's time, anchor, text, voice length and reply links. Read this before writing replies.
+- `build <plan.json> [--out <dir>]` writes a packet from a plan, then runs `check` on it.
+- `check <packet>...` runs four checks:
+  - every packet imports in the current reader and in the Build 29 reader, with the same Margins;
+  - packets on the same item import into fresh SQLite Libraries in every order (all orders up to five packets, then 120 shuffles), and every order gives the same layers, Margins and reply threads;
+  - opening any packet again adds nothing;
+  - the same Margin arriving in two packets (a sender who shared again) gives a warning.
+
+  It exits 2 on a failure.
+
+## Plan format
+
+Paths are relative to the plan file.
+
+```json
+{
+  "sender": "Ada (synthetic)",
+  "voice": "Samantha",
+  "fileName": "A1-ada-jensen",
+  "base": "../owner/Jensen.spokenmargins",
+  "margins": [
+    { "id": "ada-1", "replyTo": { "margin": "margin-0003" }, "text": "..." },
+    { "id": "ada-2", "replyTo": { "packet": "../out/B1.spokenmargins", "margin": "b-1" }, "offsetMs": 4000, "text": "..." },
+    { "id": "ada-3", "atMs": 4200000, "spoken": false, "text": "..." }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `sender` | Shown to the listener. Keep "synthetic" in it so a test packet is never mistaken for a person. |
+| `voice` | A macOS voice for `say` (`say -v '?'` lists them). Each Margin can set its own `voice`. |
+| `base` | The packet being answered. The item, fingerprint spine and acoustic evidence come from it. |
+| `item` | The item (a `SharedItemIdentity`), when there's no base: a thread the synthetic listener starts. |
+| `episodeAudio` | A downloaded copy of the episode. Each Margin placed by time gets ShazamKit evidence made from it, as the sender's phone would, so it lands right on a copy with different ads. |
+| `embeddedText` | Article text to embed instead of a link. |
+| `margins[].replyTo` | The parent: `margin` is its package-scoped id, and `packet` defaults to `base`. A reply to a reply joins its parent's conversation. |
+| `margins[].atMs`, `offsetMs` | Where it sits. Without `atMs`, a reply sits at its parent's place and carries the parent's evidence. Any offset drops that evidence, so the Margin is placed by time only. |
+| `margins[].quote` | For an article: the words it's anchored to. |
+| `margins[].anchor` | A full `PortableAnchorEvidence`, used as is, for adversarial packets. |
+| `margins[].spoken` | `false` sends text only. Spoken is the default. |
+
+## What it doesn't cover
+
+- The Margins it writes are what Claude or Codex wrote; they say what was heard only as well as the transcript used to write them.
+- It builds no fingerprint spine for a thread it starts, only per-Margin evidence.
+- `check` imports as an outside listener who holds every packet. The sender's own Library, where their Margins are local rather than imported, is the app's job (#473).
