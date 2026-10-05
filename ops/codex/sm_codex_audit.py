@@ -7,7 +7,8 @@ Codex, no Claude.
 
 A PR is audited when all of these hold:
   * it is open, not a draft, and targets `next`;
-  * no comment starting "**Codex audit" names its current head sha7;
+  * no audit comment (starting "**Codex audit (Astra)" or "## Codex audit",
+    the lane runner's own match) names its current head sha7;
   * the newest "Lane report ... — PASS/FAIL" comment is PASS for the current head;
   * its changed files touch a risky area (sharing/packets, persistence/SQLite/
     migrations/ledger, audio session/players/Supertonic, the lane: workflows,
@@ -170,8 +171,15 @@ def comment_time(c: dict) -> str:
     return c.get("created_at") or c.get("createdAt") or ""
 
 
+# How a real audit comment starts: this script's own heading (build_comment), or an older manual
+# "## Codex audit". The same prefixes as AUDITS in scripts/lane-runner.py, so this script counts
+# exactly the audits the runner merges on. A finisher's reply such as "**Codex audit on `a919a79`
+# (P2): fixed in `d00dd82`" is not an audit of `d00dd82` (#812).
+AUDIT_HEADINGS = ("**Codex audit (Astra)", "## Codex audit")
+
+
 def is_audit_comment(c: dict) -> bool:
-    return comment_body(c).lstrip().startswith("**Codex audit")
+    return comment_body(c).lstrip().startswith(AUDIT_HEADINGS)
 
 
 def names_sha(line: str, head_sha: str) -> bool:
@@ -183,7 +191,7 @@ def names_sha(line: str, head_sha: str) -> bool:
 
 
 def audited_on(comments: list[dict], head_sha: str) -> bool:
-    """Any "**Codex audit…" comment whose first line names the head sha7."""
+    """Any audit comment (AUDIT_HEADINGS) whose first line names the head sha7."""
     return any(
         is_audit_comment(c) and names_sha(first_line(comment_body(c)), head_sha)
         for c in comments

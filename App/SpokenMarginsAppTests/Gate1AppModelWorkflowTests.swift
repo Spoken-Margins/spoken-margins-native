@@ -1710,6 +1710,51 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.hasActiveSession)
     }
 
+    /// #583: closing the mini player while another item's page is open saves the session and keeps that
+    /// page. It used to switch the page to the item that was playing.
+    func testDismissingMiniPlayerKeepsAnotherItemsPageOpen() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let store = try model.libraryStoreForTesting()
+        try store.saveItem(Item(id: "item-b", title: "Item B", mediaType: "text", text: "Source text.",
+                                externalReference: nil, status: "ready"))
+        model.startItem(id: "item-pill")
+        let sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        model.openItem(id: "item-b")
+        XCTAssertEqual(model.selectedItem.id, "item-b")
+        XCTAssertTrue(model.shouldShowMiniPlayer)
+
+        model.dismissMiniPlayer()
+        for _ in 0..<50 where model.hasActiveSession {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertFalse(model.hasActiveSession)
+        XCTAssertEqual(model.screen, .item)
+        XCTAssertEqual(model.selectedItem.id, "item-b")
+        XCTAssertEqual(model.feedbackEvent?.message, "Session saved. You can resume it later.")
+        XCTAssertEqual(try store.loadSessions().first { $0.id == sessionId }?.status, "in_progress")
+    }
+
+    /// #583: from the playing item's own page, closing the mini player still saves and shows that item.
+    func testDismissingMiniPlayerOnThePlayingItemsPageKeepsItAndSaves() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        model.openItem(id: "item-pill")
+
+        model.dismissMiniPlayer()
+        for _ in 0..<50 where model.hasActiveSession {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertFalse(model.hasActiveSession)
+        XCTAssertEqual(model.selectedItem.id, "item-pill")
+        XCTAssertEqual(model.feedbackEvent?.message, "Session saved. You can resume it later.")
+        XCTAssertEqual(model.selectedItem.sessions.first { $0.id == sessionId }?.status, "in_progress")
+    }
+
     func testRoutinePlaybackAndNavigationActionsDoNotPresentFeedback() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -3869,6 +3914,48 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(try store.loadSourceSuggestionDecision(sourceId: source.id))
     }
 
+    /// #539: diagnostics showed a Follow failure for Noahpinion, which the owner follows. Its
+    /// article on www.noahpinion.blog wasn't matched to the followed www.noahpinion.blog/feed, so
+    /// opening it ran discovery again and recorded an error.
+    func testAnArticleFromAFollowedSiteRunsNoDiscoveryAndRecordsNoFailure() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try model.libraryStoreForTesting()
+        addTeardownBlock { [weak model, weak store] in
+            // Never unlink an open SQLite/WAL file; see testFollowDiscoveryRechecksSubscriptionsBeforePublishing.
+            if model == nil, store == nil {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        var discovered: [String] = []
+        model.followCandidateDiscoveryHandler = { item, _ in
+            discovered.append(item.id)
+            throw FollowedSourceError.noFeedCandidates
+        }
+        let source = SourceIdentity(id: "source-noahpinion", kind: .articleFeed, canonicalURL: "https://www.noahpinion.blog/feed", host: "www.noahpinion.blog", title: "Noahpinion")
+        // Refreshed just now, so loading subscriptions fetches nothing.
+        try store.saveFeedSubscription(FeedSubscription(id: "subscription-noahpinion", source: source, lastRefreshAt: Date()))
+        try store.saveItem(Item(id: "article", title: "A post", mediaType: "text", text: "Source text.", externalReference: "https://www.noahpinion.blog/p/a-post?utm_source=substack", status: "ready", externalReferenceType: "url"))
+        try store.saveSession(Session(id: "session-article", itemId: "article", status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: "article", position: Position(charOffset: 4), completionPercent: 40, playbackRate: 1))
+        model.openHome()
+        model.refreshFollowedSources(force: false)
+        try await waitFor("subscription loaded") { model.feedSubscriptions.contains { $0.id == "subscription-noahpinion" } }
+
+        model.openItem(id: "article")
+        model.offerFollowSuggestionIfEligible(itemId: "article", store: store)
+        for _ in 0..<10 { await Task.yield() }
+
+        XCTAssertEqual(discovered, [], "a followed site is not looked up again")
+        XCTAssertNil(model.diagnostics["followOffer"])
+        XCTAssertNil(model.diagnostics["sourceFollowSuggestion"])
+        XCTAssertNil(model.diagnostics["followSourceFailure"])
+        XCTAssertFalse(model.canManuallyFollowSelectedSource)
+        XCTAssertTrue(model.sourceFollowSuggestionCandidates.isEmpty)
+    }
+
     func testLateFollowDiscoveryCannotPublishUnderAnotherItem() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -3905,7 +3992,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         pending.removeValue(forKey: "bravo")?.resume(returning: [candidate("bravo")])
         try await waitFor("bravo suggestion") { model.sourceFollowSuggestionCandidates.map(\.id) == ["bravo"] }
         pending.removeValue(forKey: "alpha")?.resume(returning: [candidate("alpha")])
-        try await waitFor("stale discovery rejected") { model.diagnostics["sourceFollowSuggestion"] == "discarded_stale_origin" }
+        try await waitFor("stale discovery rejected") { model.diagnostics["sourceFollowSuggestion"]?.hasPrefix("discarded_stale_origin ") == true }
         XCTAssertEqual(model.sourceFollowSuggestionCandidates.map(\.id), ["bravo"])
         model.openItem(id: "alpha")
         XCTAssertTrue(model.sourceFollowSuggestionCandidates.isEmpty)
