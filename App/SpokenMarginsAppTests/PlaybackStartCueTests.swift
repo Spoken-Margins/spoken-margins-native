@@ -223,7 +223,7 @@ final class PlaybackStartCueTests: XCTestCase {
 
         cue.observe(snapshot("article", .starting))
         clock += 0.8
-        try await Task.sleep(for: .seconds(1.3))
+        try await waitUntil { checks == 2 }
 
         XCTAssertEqual(chimes, 1)
         XCTAssertEqual(checks, 2, "one check before the chime and one during it")
@@ -243,10 +243,18 @@ final class PlaybackStartCueTests: XCTestCase {
 
         cue.observe(snapshot("article", .starting))
         clock += 0.8
-        try await Task.sleep(for: .seconds(1))
-        XCTAssertTrue(chiming)
+        try await waitUntil { chiming }
         cue.observe(snapshot("article", .paused))
 
         XCTAssertFalse(chiming)
+    }
+
+    /// Waits for the cue's timer on a loaded simulator, where a fixed sleep can end before it fires.
+    private func waitUntil(timeout: TimeInterval = 10, _ condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            guard Date() < deadline else { return XCTFail("timed out waiting for the cue") }
+            try await Task.sleep(for: .milliseconds(20))
+        }
     }
 }
