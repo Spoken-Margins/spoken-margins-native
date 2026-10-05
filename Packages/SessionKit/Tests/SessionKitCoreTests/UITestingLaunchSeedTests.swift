@@ -81,6 +81,16 @@ final class UITestingLaunchSeedTests: XCTestCase {
         XCTAssertFalse(seed.seedsGeneratedTimeline)
     }
 
+    func testStandInAudioServicesNeedAUITestLaunch() {
+        let recording = ["SPOKEN_MARGINS_UI_TEST_RECORDING": "1"]
+        let podcast = ["SPOKEN_MARGINS_UI_TEST_PODCAST": "1"]
+        XCTAssertFalse(UITestingLaunchSeed.usesStandInAudioServices(arguments: ["SpokenMarginsApp"], environment: recording))
+        XCTAssertFalse(UITestingLaunchSeed.usesStandInAudioServices(arguments: ["SpokenMarginsApp"], environment: podcast))
+        XCTAssertFalse(UITestingLaunchSeed.usesStandInAudioServices(arguments: ["--ui-testing"], environment: [:]))
+        XCTAssertTrue(UITestingLaunchSeed.usesStandInAudioServices(arguments: ["--ui-testing"], environment: recording))
+        XCTAssertTrue(UITestingLaunchSeed.usesStandInAudioServices(arguments: ["--ui-testing"], environment: podcast))
+    }
+
     func testThePDFSeedImportsThroughTheAppRatherThanWritingAnItem() {
         let seed = UITestingLaunchSeed(arguments: ["--ui-testing"], environment: ["SPOKEN_MARGINS_UI_TEST_PDF": "1"])
         XCTAssertEqual(seed, .importedPDF)
