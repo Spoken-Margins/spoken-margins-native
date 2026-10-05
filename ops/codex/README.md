@@ -98,7 +98,7 @@ launchctl bootout gui/$(id -u)/com.spokenmargins.codex-worker
 
 `sm_codex_audit.py` is the mechanical Codex (`gpt-6-astra`) audit of PRs into `next`. launchd runs it every 20 minutes (`com.spokenmargins.codex-audit.plist`). Its docstring has the full gating rules. In short, it audits an open PR when:
 
-1. The PR has no Codex audit comment naming its head.
+1. The PR has no Codex audit comment naming its head. Only comments the lane runner also counts are audits: ones starting ``**Codex audit (Astra)`` or `## Codex audit`. A finisher's reply such as ``**Codex audit on `a919a79` (P2): fixed in `d00dd82` `` is not (#812).
 2. Its newest lane report is a PASS on the head.
 3. It touches a risky area (sharing, persistence, audio, or the lane itself: `.github/workflows/`, `scripts/lane*` and the runner's helpers), or the runner says it is waiting on an audit, or a comment asks for one.
 
