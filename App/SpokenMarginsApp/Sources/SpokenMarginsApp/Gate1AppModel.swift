@@ -11125,7 +11125,7 @@ final class Gate1AppModel: ObservableObject {
         if audioPreparationQueue != rows { audioPreparationQueue = rows }
     }
 
-    private func refreshLibraryRows(store: SQLiteSessionStore) throws {
+    func refreshLibraryRows(store: SQLiteSessionStore) throws {
         libraryItems = try loadLibraryRows(store: store)
         recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
         try refreshAudioPreparationPresentation(store: store)
@@ -15057,10 +15057,9 @@ final class Gate1AppModel: ObservableObject {
                 rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
             )
             preparedAudioCoordinator = coordinator
-            let sourceSessions = try store.loadSessions(itemId: item.id)
             let atRender = preparationSeams.deviceConditions() // read again here: heat can rise during the setup above (Codex audit on 27fd1bd)
-            let gate = PreparationChunkGate.decide(policy: job.policy, thermal: atRender.thermal, isLowPowerModeEnabled: atRender.isLowPowerModeEnabled,
-                                                   itemAlreadyListened: item.sourceCompletedAt != nil || PreparationChunkGate.itemAlreadyListened(sourceSessions))
+            let gate = try PreparationChunkGate.decide(policy: job.policy, thermal: atRender.thermal, isLowPowerModeEnabled: atRender.isLowPowerModeEnabled,
+                                                       itemAlreadyListened: item.sourceCompletedAt != nil || PreparationChunkGate.itemAlreadyListened(store.loadSessions(itemId: item.id)))
             let gated = try await coordinator.applyGate(gate, manifestId: manifest.id) // applied to the saved manifest: chunks committed meanwhile stay
             manifest = gated.manifest ?? manifest
             if gated.changed { try refreshLibraryRows(store: store) }
@@ -15091,7 +15090,8 @@ final class Gate1AppModel: ObservableObject {
             )
             // Paced per render, not through the shared lifecycle flag (#377).
             let pacedRenderer: any SupertonicRendering = try preparationSeams.renderer?() ?? BackgroundPreparationRenderer(base: makeSupertonicRenderer())
-            var renderStarted = Date()
+            if try await preparationHeldAtRenderStart(policy: job.policy, manifestId: manifest.id, reservationId: reservation.id, ledger: ledger, coordinator: coordinator, store: store) != nil { return false }
+            var renderStarted = Date(), renderMs = 0
             do {
                 try Task.checkCancellation()
                 renderStarted = Date()
@@ -15100,6 +15100,7 @@ final class Gate1AppModel: ObservableObject {
                 try await supertonicOutputGuard(wrapping: pacedRenderer, systemVoice: speechVoiceIdentifier).render(
                     text: next.text, voice: voice, language: "en", speed: 1, synthesisSteps: 8
                 ) { rendered in
+                    renderMs = Int(Date().timeIntervalSince(renderStarted) * 1_000) // the render alone, before the copy and saves (Codex audit on e5088b9)
                     try Task.checkCancellation()
                     guard !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else {
                         throw CancellationError()
@@ -15136,7 +15137,7 @@ final class Gate1AppModel: ObservableObject {
             )
             job = (try store.loadAudioPreparationJobs()).first(where: { $0.id == job.id }) ?? job
             recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count),
-                                                                "renderMs": String(Int(Date().timeIntervalSince(renderStarted) * 1_000)), "thermal": SupertonicResourcePolicy.currentConditions().thermal.rawValue])
+                                                                "renderMs": String(renderMs), "thermal": SupertonicResourcePolicy.currentConditions().thermal.rawValue])
             job.nextChunkIndex = updated.chunks.count
             job.lastFailureCode = PreparedAudioCoordinator.hasStandIns(updated) ? PreparedAudioCoordinator.standInRetried : nil
             if PreparedAudioCoordinator.matchingChunks(in: updated, plan: plan, sourceText: sourceText).count == plan.count {
