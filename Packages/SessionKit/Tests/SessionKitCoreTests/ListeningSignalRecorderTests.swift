@@ -243,6 +243,29 @@ final class ListeningSignalRecorderTests: XCTestCase {
         XCTAssertEqual(ambiguous.source.id, "source")
     }
 
+    func testEpisodeGUIDMatchesOnlyWithinTheItemsOwnSource() {
+        let feedA = FeedSubscription(id: "subscription-a", source: SourceIdentity(
+            id: "source-a", kind: .podcastFeed, canonicalURL: "https://a.example/feed", host: "a.example", title: "A Show"))
+        let feedB = FeedSubscription(id: "subscription-b", source: SourceIdentity(
+            id: "source-b", kind: .podcastFeed, canonicalURL: "https://b.example/feed", host: "b.example", title: "B Show"))
+        let entryA = FeedEntry(id: "entry-a", subscriptionId: feedA.id, canonicalURL: "https://a.example/1",
+                               audioURL: "https://cdn.a.example/1.mp3", title: "A one", episodeGUID: "episode-1")
+        let entryB = FeedEntry(id: "entry-b", subscriptionId: feedB.id, canonicalURL: "https://b.example/1",
+                               audioURL: "https://cdn.b.example/1.mp3", title: "B one", episodeGUID: "episode-1")
+        var item = Item(id: "from-a", title: "A one", mediaType: "podcast", text: "",
+                        externalReference: entryA.canonicalURL, status: "ready",
+                        media: ItemMedia(sourceType: .nativeMediaFile, url: "file:///var/mobile/a1.mp3"),
+                        sourceURL: feedA.source.canonicalURL)
+        item.episodeGUID = "episode-1"
+
+        let followingBoth = ListeningSignalContext.context(for: item, subscriptions: [feedB, feedA], entries: [entryB, entryA])
+        XCTAssertEqual(followingBoth?.source.id, "source-a")
+        XCTAssertEqual(followingBoth?.item.id, "entry-a", "the GUID matches inside the item's own feed")
+
+        XCTAssertNil(ListeningSignalContext.context(for: item, subscriptions: [feedB], entries: [entryB]),
+                     "after unfollowing A, a shared GUID alone must not file A's episode under B")
+    }
+
     func testItemsMatchTheirFollowedSourceByURLOrTitleOnly() {
         let subscription = FeedSubscription(
             id: "subscription-source-1",
