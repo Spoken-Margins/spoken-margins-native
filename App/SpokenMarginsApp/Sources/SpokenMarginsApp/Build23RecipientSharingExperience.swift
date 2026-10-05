@@ -130,10 +130,8 @@ struct Build23RecipientSharingExperience: View {
         }
 
         if let errorMessage = snapshot.errorMessage {
-            Label(errorMessage, systemImage: "exclamationmark.triangle")
+            FailureMessageLabel(errorMessage)
                 .font(.subheadline)
-                .foregroundStyle(AppColors.coral)
-                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityLabel("Import error. \(errorMessage)")
         }
     }

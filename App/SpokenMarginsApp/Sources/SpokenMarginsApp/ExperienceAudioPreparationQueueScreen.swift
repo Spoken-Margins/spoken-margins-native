@@ -85,7 +85,7 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
                             Button("Clear Queue", role: .destructive) {
                                 isConfirmingQueueClear = true
                             }
-                            .accessibilityHint("Cancels queued rendering while keeping Library items and completed audio")
+                            .accessibilityHint("Cancels queued audio preparation while keeping Library items and completed audio")
                         }
                     }
                 }
@@ -110,7 +110,7 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
                     Text("Automatic preparation")
                 }
 
-                Section("Recently rendered") {
+                Section("Recently prepared") {
                     if recentlyPrepared.isEmpty {
                         Text("Completed items will appear here after their final audio file is verified.")
                             .foregroundStyle(.secondary)
@@ -140,7 +140,7 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
                     }
                 }
             }
-            .navigationTitle("Offline Rendering")
+            .navigationTitle("Preparing Audio")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -154,7 +154,7 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
                 refresh()
             }
             .confirmationDialog(
-                "Clear every offline rendering job?",
+                "Clear the audio preparation queue?",
                 isPresented: $isConfirmingQueueClear,
                 titleVisibility: .visible
             ) {
@@ -163,7 +163,7 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
                 }
                 Button("Keep Queue", role: .cancel) {}
             } message: {
-                Text("This keeps your Library items and audio that has already finished rendering. Items will not be queued again unless you explicitly choose Prepare Offline.")
+                Text("This keeps your Library items and audio that has already been prepared. Items will not be queued again unless you explicitly choose Prepare Offline.")
             }
         }
         .presentationDetents([.medium, .large])
@@ -172,15 +172,15 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
 
     private var policyExplanation: String {
         if automaticPolicy == .whileCharging {
-            return "Newly queued text items may continue rendering while the phone is idle, connected to power, out of Low Power Mode, and within storage and thermal limits. iOS decides when background work runs, so overnight completion is not guaranteed."
+            return "Newly queued text items may keep preparing audio while the phone is idle, connected to power, out of Low Power Mode, and within storage and thermal limits. iOS decides when background work runs, so overnight completion is not guaranteed."
         }
-        return "Automatic rendering is off. Existing automatic jobs remain visible but will wait unless you render one now or turn While Charging back on."
+        return "Automatic preparation is off. Existing automatic jobs remain visible but will wait unless you prepare one now or turn While Charging back on."
     }
 
     private var emptyQueueDescription: String {
         automaticPolicy == .whileCharging
             ? "New text items prepare an opening buffer when added. Choose Prepare Offline on an item to queue the rest."
-            : "Choose While Charging, or use Prepare Offline on a Library item to render it now."
+            : "Choose While Charging, or use Prepare Offline on a Library item to prepare it now."
     }
 
     private func recentDetail(_ row: RecentlyPreparedAudioRow) -> String {
@@ -242,17 +242,17 @@ private struct AudioPreparationQueueItemRow: View {
                 Button("Prioritize", systemImage: "arrow.up.to.line") { prioritize() }
                     .font(.caption.weight(.semibold))
                     .buttonStyle(.bordered)
-                    .accessibilityHint("Moves this item to the top of the Library render queue")
+                    .accessibilityHint("Moves this item to the top of the audio preparation queue")
                     .accessibilityIdentifier("offlineRendering.prioritize.\(row.itemId)")
                 Spacer(minLength: 0)
                 if row.policy != .explicit {
-                    Button("Render Now") {
+                    Button("Prepare Now") {
                         renderNow()
                     }
                     .font(.caption.weight(.semibold))
                     .buttonStyle(.bordered)
                 }
-                Button("Don't Render", role: .destructive) {
+                Button("Don't Prepare", role: .destructive) {
                     skip()
                 }
                 .font(.caption.weight(.semibold))
@@ -267,8 +267,8 @@ private struct AudioPreparationQueueItemRow: View {
     private var priorityLabel: String {
         if row.isActivePlaybackItem { return "Now playing" }
         switch row.policy {
-        case .explicit: return "Render now"
-        case .demandWindow: return "Opening buffer"
+        case .explicit: return "Prepare now"
+        case .demandWindow: return "Opening audio"
         case .whileCharging: return "While charging"
         }
     }
@@ -280,8 +280,8 @@ private struct AudioPreparationQueueItemRow: View {
 
     private var statusDetail: String {
         let progress = row.plannedChunkCount > 0
-            ? "\(row.completedChunkCount) of \(row.plannedChunkCount) chunks"
-            : "Waiting for a render plan"
+            ? "\(row.completedChunkCount) of \(row.plannedChunkCount)"
+            : "Waiting"
         if let failureCode = row.failureCode, !failureCode.isEmpty {
             return "Waiting after \(failureCode.replacingOccurrences(of: "_", with: " ")) · \(progress)"
         }
@@ -291,7 +291,7 @@ private struct AudioPreparationQueueItemRow: View {
         case .pausedForThermal:
             return "Paused for device temperature · \(progress)"
         case .needsRepreparation:
-            return "Needs an updated render · \(progress)"
+            return "Needs preparing again · \(progress)"
         case .stopped:
             return "Stopped · \(progress)"
         case .failed:

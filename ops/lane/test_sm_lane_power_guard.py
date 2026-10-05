@@ -3,7 +3,10 @@
 Run: python3 -m unittest ops/lane/test_sm_lane_power_guard.py
 """
 import sys
+import tempfile
+import threading
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -117,6 +120,84 @@ class ListenerHasJob(unittest.TestCase):
 
     def test_empty_log(self):
         self.assertFalse(g.listener_has_job(''))
+
+
+class StateFiles(unittest.TestCase):
+    """The paused file and lock in a temporary folder."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        state = Path(folder.name)
+        for name, value in (('STATE_DIR', state), ('PAUSED', state / 'paused'), ('LOCK', state / 'lock')):
+            patcher = mock.patch.object(g, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+
+class Apply(StateFiles):
+    """#836: Codex's post-merge audits of #763 and #792."""
+
+    def test_a_failed_restart_keeps_the_runner_marked_paused(self):
+        g.set_paused(g.RUNNER_PREFIX + 'sm-lane-mac', True)
+        line = g.apply(g.Action('start', runner(running=False), 'started'), 501, control=lambda args: 3)
+        self.assertEqual(g.paused_labels(), [g.RUNNER_PREFIX + 'sm-lane-mac'])  # the next check retries
+        self.assertIn('start failed', line)
+
+    def test_a_restart_that_works_forgets_the_pause(self):
+        g.set_paused(g.RUNNER_PREFIX + 'sm-lane-mac', True)
+        calls = []
+        g.apply(g.Action('start', runner(running=False), 'started'), 501,
+                control=lambda args: calls.append(args) or 0)
+        self.assertEqual(calls, [['kickstart', 'gui/501/' + g.RUNNER_PREFIX + 'sm-lane-mac']])
+        self.assertEqual(g.paused_labels(), [])
+
+    def test_a_runner_that_took_a_job_since_the_look_is_not_stopped(self):
+        calls = []
+        line = g.apply(g.Action('stop', runner(), 'paused'), 501, control=lambda args: calls.append(args) or 0,
+                       look_again=lambda r: runner(listener_job=True))
+        self.assertEqual(calls, [])  # a TERM now would cancel the job it just accepted
+        self.assertEqual(g.paused_labels(), [])
+        self.assertIn('took a job', line)
+
+    def test_an_idle_runner_is_stopped_and_marked_paused(self):
+        calls = []
+        g.apply(g.Action('stop', runner(), 'paused'), 501, control=lambda args: calls.append(args) or 0,
+                look_again=lambda r: r)
+        self.assertEqual(calls, [['kill', 'TERM', 'gui/501/' + g.RUNNER_PREFIX + 'sm-lane-mac']])
+        self.assertEqual(g.paused_labels(), [g.RUNNER_PREFIX + 'sm-lane-mac'])
+
+
+class CycleLock(StateFiles):
+    def test_a_second_guard_waits_for_the_first_to_finish(self):
+        # The worker-exit guard and the scheduled guard used to read and rewrite the paused file at
+        # the same time; the last write dropped the other's label, and that runner never restarted.
+        entered = threading.Event()
+
+        def second_guard():
+            with g.cycle_lock():
+                entered.set()
+
+        with g.cycle_lock():
+            second = threading.Thread(target=second_guard)
+            second.start()
+            self.assertFalse(entered.wait(0.5), 'the second guard ran while the first held the lock')
+        self.assertTrue(entered.wait(5))
+        second.join(5)
+
+    def test_both_guards_keep_their_pause_records(self):
+        labels = [g.RUNNER_PREFIX + 'sm-lane-mac', g.RUNNER_PREFIX + 'sm-lane-mac-2']
+
+        def guard(label):
+            with g.cycle_lock():
+                g.set_paused(label, True)
+
+        threads = [threading.Thread(target=guard, args=(label,)) for label in labels * 20]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        self.assertEqual(sorted(g.paused_labels()), labels)
 
 
 if __name__ == '__main__':

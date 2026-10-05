@@ -149,10 +149,12 @@ struct ExperienceItemDetailScreen: View {
 
     @ViewBuilder
     private var primaryPlaybackAction: some View {
-        if model.selectedItemStartupAudioState == .preparing {
+        if [.waiting, .preparing].contains(model.selectedItemStartupAudioState) {
             HStack(spacing: 10) {
-                ProgressView()
-                    .tint(AppColors.evergreen)
+                if model.selectedItemStartupAudioState == .preparing {
+                    ProgressView()
+                        .tint(AppColors.evergreen)
+                }
                 Text(model.selectedItemStartupAudioProgressDescription)
                     .fontWeight(.semibold)
             }
@@ -164,7 +166,7 @@ struct ExperienceItemDetailScreen: View {
         Button {
                 model.startItem(id: model.selectedItem.id)
             } label: {
-                Label(model.selectedItemStartupAudioState == .preparing ? "Listen now" : primaryPlaybackLabel, systemImage: "play.fill")
+                Label([.waiting, .preparing].contains(model.selectedItemStartupAudioState) ? "Listen now" : primaryPlaybackLabel, systemImage: "play.fill")
                     .frame(maxWidth: .infinity, minHeight: 52)
             }
             .filledActionButton()
@@ -439,7 +441,7 @@ struct ExperienceItemDetailScreen: View {
                 }
                 if let reason = model.sharedListeningMapRefusal(itemId: model.selectedItem.id) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("A shared map couldn't be placed on your copy")
+                        FailureMessageLabel("A shared map couldn't be placed on your copy")
                             .font(.subheadline.weight(.semibold))
                         Text(reason)
                             .font(.caption)

@@ -329,6 +329,48 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(audio.remoteCommandHandlingStates.last, true)
     }
 
+    func testStartingAStreamedOnlyEpisodeWithNoSignalSaysItIsNotDownloaded() throws {
+        // #779: offline, this used to try, stall for 30 s, then blame saved audio that didn't exist.
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "offline-stream-start-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let item = Item(
+            id: "episode-streamed-only",
+            title: "Streamed Only Episode",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/streamed-only",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(
+                sourceType: .remoteStream,
+                url: "https://cdn.example.com/streamed-only.mp3",
+                durationMs: 900_000
+            )
+        )
+        try store.saveItem(item)
+        model.connectivity.update(transport: .unavailable, isOffline: true)
+
+        model.startNewSession(id: item.id)
+
+        XCTAssertEqual(model.lastError, "This episode isn't downloaded, and there's no signal.")
+        XCTAssertNotEqual(model.snapshot.itemId, item.id, "nothing tries to stream it")
+
+        // With signal back, the same episode is no longer stopped by the check.
+        model.connectivity.update(transport: .wifi, isOffline: false)
+        model.lastError = nil
+        model.startNewSession(id: item.id)
+        XCTAssertNotEqual(model.lastError, OfflinePlayability.episodeNotDownloadedMessage)
+    }
+
     func testResolvedPrivateListeningMapIsLoadedAsVisibleNavigableScenes() throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "visible-private-map-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -1379,6 +1421,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.startItem(id: "item-pill")
+        XCTAssertTrue(model.activePlaybackIsPlaying, "only a playing session is protected (#638)")
         let snapshotBefore = model.snapshot
         let margin = MarginRow(
             interjection: Interjection(
@@ -3093,6 +3136,94 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.cancelWrittenMargin()
     }
 
+    /// #783: while iOS hasn't asked yet, one plain line comes before the system prompt; Continue
+    /// goes on to the request, and the grant records as today.
+    func testUndeterminedMicrophoneShowsThePrimerBeforeTheSystemRequest() async throws {
+        let gate = MarginPermissionTestGate()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient(),
+            microphonePermissionRequest: { await gate.request() },
+            microphonePermissionStatus: { .undetermined }
+        )
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        model.startItem(id: "item-pill")
+        model.pause()
+        model.beginInterjection()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertTrue(model.microphonePrimer.isShowing)
+        XCTAssertTrue(model.isRequestingRecordingPermission, "The recording screen carries the line")
+        XCTAssertEqual(gate.requests, 0, "iOS's prompt must wait for Continue")
+
+        model.continueMicrophonePrimer()
+        model.continueMicrophonePrimer()
+        for _ in 0..<200 where gate.continuation == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(model.microphonePrimer.isShowing)
+        XCTAssertEqual(gate.requests, 1, "A second Continue tap must not ask twice")
+        gate.finish(true)
+        for _ in 0..<200 where !model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(model.snapshot.isRecording)
+        model.cancelInterjection()
+    }
+
+    /// #783: dismissing the line cancels that Margin like Cancel does; the next try shows it again.
+    func testCancellingThePrimerCancelsTheMarginAndShowsItAgainNextTime() async throws {
+        let gate = MarginPermissionTestGate()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient(),
+            microphonePermissionRequest: { await gate.request() },
+            microphonePermissionStatus: { .undetermined }
+        )
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        model.startItem(id: "item-pill")
+        model.pause()
+        model.beginInterjection()
+        XCTAssertTrue(model.microphonePrimer.isShowing)
+        model.cancelInterjection()
+        XCTAssertFalse(model.microphonePrimer.isShowing)
+        XCTAssertFalse(model.isRequestingRecordingPermission)
+        XCTAssertFalse(model.recordingNavigationIsLocked)
+        model.continueMicrophonePrimer()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(gate.requests, 0)
+        XCTAssertFalse(model.snapshot.isRecording)
+
+        model.beginInterjection()
+        XCTAssertTrue(model.microphonePrimer.isShowing)
+        model.switchPendingVoiceCaptureToWrittenMargin()
+        XCTAssertFalse(model.microphonePrimer.isShowing)
+        XCTAssertNotNil(model.writtenMarginDraft)
+        model.cancelWrittenMargin()
+    }
+
+    /// #783: once the listener has answered, the line never shows; a denial follows today's path.
+    func testAnsweredMicrophoneNeverShowsThePrimer() async throws {
+        for (status, granted) in [(PermissionPromptStatus.granted, true), (.denied, false)] {
+            let model = Gate1AppModel(
+                audioPlaybackClient: NoopAudioPlaybackClient(),
+                recordingClient: NoopRecordingClient(),
+                microphonePermissionRequest: { granted },
+                microphonePermissionStatus: { status }
+            )
+            model.resetAndSeed()
+            // On a fresh simulator this test runs first, before any other test has made the first-use
+            // voice choice, so the terms sheet held startItem and nothing could record (T3 FAIL on 843e6fd).
+            model.declineCurrentTerms()
+            model.startItem(id: "item-pill")
+            model.pause()
+            model.beginInterjection()
+            XCTAssertFalse(model.microphonePrimer.isShowing, "\(status)")
+            // The injected answer is async and leaves the main actor, so wait on time, not yields.
+            for _ in 0..<200 where model.isRequestingRecordingPermission { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertEqual(model.snapshot.isRecording, granted, "\(status)")
+            XCTAssertEqual(model.recordingPermissionDenied, !granted, "\(status)")
+            if granted { model.cancelInterjection() }
+        }
+    }
+
     func testAssistantMarginCaptureRetainsTurnPositionAcrossReloadAndExport() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "turn-anchors-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -4598,8 +4729,10 @@ private final class WorkflowCompletionAudioClient: AudioPlaybackClient {
 @MainActor
 private final class MarginPermissionTestGate {
     var continuation: CheckedContinuation<Bool, Never>?
+    private(set) var requests = 0
     func request() async -> Bool {
-        await withCheckedContinuation { continuation = $0 }
+        requests += 1
+        return await withCheckedContinuation { continuation = $0 }
     }
     func finish(_ granted: Bool) {
         let pending = continuation
