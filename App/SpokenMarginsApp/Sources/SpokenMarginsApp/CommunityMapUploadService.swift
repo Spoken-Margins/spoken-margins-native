@@ -133,8 +133,10 @@ final class CommunityMapUploadService {
                 }
             )
             self.inFlight.remove(episodeKey)
-            // Keep the phone's transcript only while its upload waits to be tried again.
-            if (try? store.loadCommunityMapUpload(episodeKey: episodeKey))?.state != .failed, self.queued[episodeKey] == nil {
+            // Keep the phone's transcript only while its upload waits to be tried again (and if
+            // the record can't be read, keep it).
+            if case .success(let record) = Result(catching: { try store.loadCommunityMapUpload(episodeKey: episodeKey) }),
+               record?.state != .failed, self.queued[episodeKey] == nil {
                 Self.keep(nil, episodeKey: episodeKey)
             }
             report(outcome.diagnostic + (unkept ? " (transcript not kept for a retry)" : ""))
