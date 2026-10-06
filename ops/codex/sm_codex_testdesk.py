@@ -263,15 +263,18 @@ class Ops(worker.Ops):
         prompt_path.write_text(prompt)
         answer = evidence / 'diagnosis.json'
         # Prompt on stdin keeps a large test log below the OS argument-size limit.
-        cmd = [worker.CODEX, 'exec', '-m', worker.MODEL, '-c', f'model_reasoning_effort="{worker.EFFORT}"',
+        cmd = [worker.CODEX, 'exec', '--json', '-m', worker.MODEL, '-c', f'model_reasoning_effort="{worker.EFFORT}"',
                '-s', 'read-only',
                '-C', str(wt), '-o', str(answer), '-']
-        with prompt_path.open() as source, (evidence / 'codex.log').open('w') as log:
+        with prompt_path.open() as source, (evidence / 'codex.jsonl').open('w') as log:
             proc = subprocess.Popen(cmd, stdin=source, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             try:
                 proc.wait(timeout=30 * 60)
             except subprocess.TimeoutExpired:
                 worker.kill_tree(proc)
+        self.diagnosis_result = {'ok': proc.returncode == 0,
+                                 'reason': 'ok' if proc.returncode == 0 else
+                                 f'diagnosis timed out or exited {proc.returncode}'}
         raw = answer.read_text() if proc.returncode == 0 and answer.exists() else ''
         return diagnoses(raw, failed)
 
@@ -280,7 +283,8 @@ class Ops(worker.Ops):
         return self.must(['gh', 'api', '--paginate', f'repos/{worker.REPO}/issues/{number}/comments',
                           '--jq', '.[].body'], cwd=self.repo_root).stdout or ''
 
-    def file_failures(self, groups: list[dict], sha: str, report: str, evidence: Path) -> None:
+    def file_failures(self, groups: list[dict], sha: str, report: str, evidence: Path) -> list[dict]:
+        posted = []
         for i, group in enumerate(groups):
             duplicate = None
             for test in group['tests']:
@@ -294,10 +298,39 @@ class Ops(worker.Ops):
             path = evidence / f'issue-{i + 1}.md'
             path.write_text(body)
             if duplicate is not None:
-                self.must(['gh', 'issue', 'comment', str(duplicate), '-R', worker.REPO, '--body-file', str(path)])
+                res = self.must(['gh', 'issue', 'comment', str(duplicate), '-R', worker.REPO, '--body-file', str(path)])
             else:
-                self.must(['gh', 'issue', 'create', '-R', worker.REPO, '--title', group['title'][:120],
-                           '--body-file', str(path), '--label', 'ready,priority,bug'])
+                res = self.must(['gh', 'issue', 'create', '-R', worker.REPO, '--title', group['title'][:120],
+                                 '--body-file', str(path), '--label', 'ready,priority,bug'])
+            match = re.search(r'https://\S+/issues/(\d+)(?:#issuecomment-\d+)?', res.stdout or '')
+            posted.append({'issue': duplicate or (int(match.group(1)) if match else None),
+                           'created': duplicate is None, 'url': match.group(0) if match else None,
+                           'tests': group['tests']})
+            if getattr(self, 'diagnosis_usage', None):
+                self.diagnosis_usage.checkpoint(posted=posted)
+        return posted
+
+    def diagnose_and_file(self, wt: Path, evidence: Path, failed: list[str], sha: str, report: str) -> None:
+        self.diagnosis_usage = record = worker.usage.Run(
+            self.ledger_dir, 'testdesk-diagnosis', worker.MODEL, worker.EFFORT, evidence / 'codex.jsonl',
+            targets=[{'pr': None, 'issues': [REPORT_ISSUE], 'head_sha': sha, 'base_sha': sha,
+                      'trigger': 'confirmed test failure', 'trigger_comment': report}], log=self.log)
+        try:
+            try:
+                groups = self.diagnose(wt, evidence, failed)
+            finally:
+                record.model_finished()
+            record.checkpoint(model_result=getattr(self, 'diagnosis_result', {'ok': True, 'reason': 'ok'}))
+            posted = self.file_failures(groups, sha, report, evidence)
+            record.checkpoint(outcome={'kind': 'bugs filed',
+                                       'signature': worker.usage.signature(json.dumps(groups, sort_keys=True))},
+                              posted=posted, comment_url=report)
+        except Exception as error:
+            record.checkpoint(outcome={'kind': 'failed', 'reason': str(error)})
+            raise
+        finally:
+            record.finish()
+            self.diagnosis_usage = None
 
 
 def save_state(path: Path, state: dict) -> None:
@@ -392,7 +425,7 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
             state['results'][sha]['report'] = report
             save_state(path, state)
             if result['confirmed_failed']:
-                ops.file_failures(ops.diagnose(wt, evidence, result['confirmed_failed']), sha, report, evidence)
+                ops.diagnose_and_file(wt, evidence, result['confirmed_failed'], sha, report)
             return result['verdict']
         except Exception as error:
             if state['results'][sha].get('in_progress'):
@@ -420,6 +453,8 @@ def main(argv=None) -> int:
     ap.add_argument('--dry-run', action='store_true', help='print decisions; run no tests and change nothing')
     args = ap.parse_args(argv)
     ops = Ops()
+    if not args.dry_run:
+        worker.usage.recover(ops.ledger_dir, ops.log)
     if args.dry_run:
         tick(ops, dry_run=True)
         return 0
