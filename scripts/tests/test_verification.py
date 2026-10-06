@@ -181,16 +181,17 @@ class VerificationTests(unittest.TestCase):
                 run.ops_steps(root)
             self.assertIn('executed zero tests', str(raised.exception))
 
-    def host_step_calls(self, environment):
+    def host_step_calls(self, environment, changed=None):
         """(commands run, manifest, final status) for the host steps under an environment."""
         calls = []
+        self.ops_ran = False
         audio = next(iter(verification.CODEX_SANDBOX_AUDIO_TESTS))
         with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, environment, clear=False):
             if not environment:
                 verification.os.environ.pop('CODEX_SANDBOX', None)
-            run = verification.Run(Path(temporary) / 'run', 'fast')
+            run = verification.Run(Path(temporary) / 'run', 'fast', changed)
             with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
-                    patch.object(run, 'ops_steps'), \
+                    patch.object(run, 'ops_steps', side_effect=lambda: setattr(self, 'ops_ran', True)), \
                     patch.object(verification, 'swift_tests',
                                  side_effect=lambda folder: {audio.split('/', 1)[1], 'OtherTests/testX'}
                                  if folder.name == 'SessionKitTests' else set()), \
@@ -215,6 +216,79 @@ class VerificationTests(unittest.TestCase):
         self.assertIsNone(dict(calls)['package']['probation'])
         self.assertFalse([step for step in manifest['steps'] if step.get('skipped')])
         self.assertEqual(status, 'verified')
+
+    def skipped_steps(self, manifest):
+        return {step['name']: step['skipped'] for step in manifest['steps'] if step.get('skipped')}
+
+    def test_a_lane_run_for_an_app_only_diff_runs_just_the_tests_that_read_the_app(self):
+        # #862: runner-tests are about 2 minutes of a 10-minute run, and the ones that read App/ are seconds.
+        calls, manifest, status, _ = self.host_step_calls({}, ['App/SpokenMarginsApp/Sources/SpokenMarginsApp/X.swift'])
+        self.assertEqual(status, 'verified')
+        self.assertIn('runner-tests', [name for name, _ in calls])
+        self.assertFalse(self.ops_ran)
+        self.assertEqual(list(self.skipped_steps(manifest)), ['ops'])
+        self.assertIn('App/', manifest['runner_tests_note'])
+
+    def test_a_lane_run_for_a_docs_only_diff_skips_both_and_records_why(self):
+        calls, manifest, status, _ = self.host_step_calls({}, ['docs/workstreams/README.md'])
+        self.assertNotIn('runner-tests', [name for name, _ in calls])
+        self.assertFalse(self.ops_ran)
+        skipped = self.skipped_steps(manifest)
+        self.assertEqual(sorted(skipped), ['ops', 'runner-tests'])
+        self.assertTrue(all(skipped.values()))
+        self.assertEqual(status, 'verified')
+        self.assertIn('package', [name for name, _ in calls])  # everything else still runs
+
+    def test_a_diff_touching_scripts_or_github_runs_every_runner_test_and_the_ops_tests(self):
+        for path in ('scripts/lane-runner.py', 'scripts/tests/test_x.py', '.github/workflows/lane.yml'):
+            with self.subTest(path=path):
+                calls, manifest, _, _ = self.host_step_calls({}, ['docs/a.md', path])
+                self.assertIn('runner-tests', [name for name, _ in calls])
+                self.assertTrue(self.ops_ran)
+                self.assertFalse(self.skipped_steps(manifest))
+                self.assertNotIn('runner_tests_note', manifest)
+
+    def test_a_diff_touching_ops_runs_the_ops_tests_and_skips_the_runner_tests(self):
+        calls, manifest, _, _ = self.host_step_calls({}, ['ops/dial/dial_gate.py'])
+        self.assertTrue(self.ops_ran)
+        self.assertEqual(list(self.skipped_steps(manifest)), ['runner-tests'])
+
+    def test_no_diff_information_runs_every_step(self):
+        for changed in (None, []):
+            with self.subTest(changed=changed):
+                calls, manifest, _, _ = self.host_step_calls({}, changed)
+                self.assertEqual([name for name, _ in calls][0], 'runner-tests')
+                self.assertTrue(self.ops_ran)
+                self.assertFalse(self.skipped_steps(manifest))
+
+    def test_the_readers_run_names_modules_that_exist_and_would_catch_an_app_change(self):
+        for module in verification.RUNNER_TEST_READERS:
+            self.assertTrue((SCRIPTS / 'tests' / f'{module}.py').exists(), module)
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'fast', ['App/X.swift'])
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, args))), \
+                    patch.object(run, 'ops_steps'), patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                run.host_steps()
+        args = dict(calls)['runner-tests']
+        self.assertEqual(args[-len(verification.RUNNER_TEST_READERS):], list(verification.RUNNER_TEST_READERS))
+        # Run the loader for real, on the scan modules only (this module is one of the readers): the runner's
+        # "Ran N tests" line is there for the zero-tests check.
+        scans = [module for module in verification.RUNNER_TEST_READERS if module.startswith('test_filled_button')]
+        done = subprocess.run([sys.executable, *args[1:-len(verification.RUNNER_TEST_READERS)], *scans],
+                              cwd=SCRIPTS.parent, capture_output=True, text=True)
+        self.assertRegex(done.stderr, r'Ran \d+ tests? in ')
+
+    def test_the_changed_files_list_is_read_or_ignored(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            listing = Path(temporary) / 'changed.txt'
+            listing.write_text('docs/a.md\n\nApp/b.swift\n')
+            self.assertEqual(verification.read_changed_files(listing), ['docs/a.md', 'App/b.swift'])
+            listing.write_text('\n')
+            self.assertIsNone(verification.read_changed_files(listing))
+            self.assertIsNone(verification.read_changed_files(Path(temporary) / 'missing.txt'))
+            self.assertIsNone(verification.read_changed_files(None))
 
     def test_the_sessionkit_build_has_its_own_limit_so_the_tests_keep_theirs(self):
         # #844 (2026-10-05): one 300 s limit covered the SessionKit build and about 1,000 tests. Under a

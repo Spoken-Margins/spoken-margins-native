@@ -291,6 +291,45 @@ def log_errors(text, limit=3, width=300):
 # Inside it the plan skips runner-tests and ends as verified_in_codex_sandbox, which no gate accepts;
 # the Codex worker's own run, outside the sandbox, is the full plan.
 CODEX_SANDBOX_SKIPS = {'runner-tests': 'Codex sandbox: `ps` cannot run here, so the lane boot tests cannot'}
+
+# Lane runs hand the plan the PR's changed paths (--changed-files, #862) so it can leave out the lane's own
+# Python tests when nothing they read changed. A run without that list runs every step. Each rule fails
+# safe: a path none of these names (a new top-level folder, say) leaves the suites on.
+# scripts/tests test the lane itself, and the Codex audit reads lane-runner.py: any change under scripts/ or
+# .github/ runs every runner test.
+RUNNER_TEST_TRIGGERS = ('scripts/', '.github/')
+# Four modules also read the repository outside scripts/: the filled-button scans read App/, and the
+# inventory and contract checks read project.yml, Package.swift, TestPlans/, Contracts/ and validation/. A diff
+# that touches those inputs (and no lane path) runs just these modules; the rest of the suite reads only scripts/.
+RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels', 'test_verification',
+                       'test_validate_contracts')
+RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'project.yml')
+# The ops tests read their own folder and scripts/lane-runner.py (the audit's test), test-scope and the release
+# files, so they follow the ops tools and anything the runner tests follow, plus the build inputs.
+OPS_TEST_TRIGGERS = ('ops/', 'scripts/', '.github/', 'project.yml', 'TestPlans/')
+
+
+def touches(changed, prefixes):
+    return any(path == prefix or path.startswith(prefix) for path in changed for prefix in prefixes)
+
+
+def runner_test_scope(changed):
+    """('all'|'readers'|'none', reason) for the runner tests. changed=None means no diff information: all."""
+    if not changed:
+        return 'all', None
+    if touches(changed, RUNNER_TEST_TRIGGERS):
+        return 'all', None
+    if touches(changed, RUNNER_TEST_INPUTS):
+        return 'readers', 'diff touches no lane path; only the tests that read ' + ', '.join(
+            p for p in RUNNER_TEST_INPUTS if touches(changed, (p,))) + ' run'
+    return 'none', 'diff touches nothing under scripts/, .github/ or the files the runner tests read'
+
+
+def ops_tests_needed(changed):
+    """(run, reason) for the ops tests. changed=None means no diff information: run."""
+    if not changed or touches(changed, OPS_TEST_TRIGGERS):
+        return True, None
+    return False, 'diff touches nothing under ops/, scripts/, .github/ or the files the ops tests read'
 # SessionKit tests that encode, play or speak real audio fail in that sandbox and pass outside it
 # (AVFoundation 'fmt?' errors, players that never start, speech that never renders; 2026-10-01).
 # Inside the sandbox their results are reported but don't fail the package step.
@@ -361,8 +400,9 @@ PACKAGE_TEST_TIMEOUT = 600  # the SessionKit tests alone (#844)
 
 
 class Run:
-    def __init__(self, output, plan):
+    def __init__(self, output, plan, changed=None):
         self.output = output
+        self.changed = changed  # the PR's changed paths in a lane run; None runs every step (#862)
         self.output.mkdir(parents=True, exist_ok=False)
         self.manifest = {'plan': plan, 'head': capture(['git', 'rev-parse', 'HEAD']),
                          'branch': capture(['git', 'branch', '--show-current']),
@@ -503,11 +543,25 @@ class Run:
             self.host_steps()
 
     def host_steps(self):
+        scope, why = runner_test_scope(self.changed)
         if in_codex_sandbox():
             self.skip('runner-tests')
+        elif scope == 'none':
+            self.skip('runner-tests', why)
+        elif scope == 'readers':
+            self.manifest['runner_tests_note'] = why
+            # Same runner and the same "Ran N tests" line, so the zero-tests check still applies.
+            loader = ('import sys, unittest; sys.path.insert(0, "scripts/tests"); '
+                      'result = unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromNames(sys.argv[1:])); '
+                      'sys.exit(not result.wasSuccessful())')
+            self.command('runner-tests', [sys.executable, '-c', loader, *RUNNER_TEST_READERS])
         else:
             self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'])
-        self.ops_steps()
+        needed, why = ops_tests_needed(self.changed)
+        if needed:
+            self.ops_steps()
+        else:
+            self.skip('ops', why)
         self.command('contracts', [sys.executable, 'scripts/validate-contracts.py'])
         self.command('surfaces', [sys.executable, 'scripts/validate-surface-contracts.py'])
         self.command('inventory', [sys.executable, 'scripts/test_inventory.py'])
@@ -532,8 +586,8 @@ class Run:
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed during fast verification')
 
-    def skip(self, name):
-        reason = CODEX_SANDBOX_SKIPS[name]
+    def skip(self, name, reason=None):
+        reason = reason or CODEX_SANDBOX_SKIPS[name]
         self.manifest['steps'].append({'name': name, 'skipped': reason})
         self.save()
         print(f'{name}: skipped ({reason})', flush=True)
@@ -646,6 +700,15 @@ class Run:
             raise RuntimeError('Inputs changed during testing; rerun on a stable source state')
 
 
+def read_changed_files(path):
+    """The changed paths in a --changed-files list, or None (run everything) when it can't be read or is empty."""
+    try:
+        paths = [line.strip() for line in Path(path).read_text().splitlines() if line.strip()] if path else []
+    except OSError:
+        return None
+    return paths or None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--plan', choices=['fast', *PLANS], default='fast')
@@ -654,6 +717,9 @@ def main():
     parser.add_argument('--simulator-slot-fd', type=int, help=argparse.SUPPRESS)
     parser.add_argument('--rebuild', action='store_true', help='Ignore the compatible build stamp')
     parser.add_argument('--output', type=Path, help='New evidence directory')
+    parser.add_argument('--changed-files', type=Path, metavar='FILE',
+                        help='Lane runs: the PR\'s changed paths, one per line (renames name both sides). --plan fast then '
+                             'skips the runner and ops tests nothing in the diff can affect; without it every step runs')
     parser.add_argument('--list', action='store_true', help='Inspect selection without running tests')
     parser.add_argument('--only-testing', action='append', default=[], metavar='CLASS[/METHOD]',
                         help='Xcode plans: run only these tests of the plan (repeatable); unknown ones fail the run')
@@ -677,7 +743,7 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         output = args.output or ROOT / 'artifacts/test-runs' / (
             datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '-' + args.plan)
-        run = Run(output.resolve(), args.plan)
+        run = Run(output.resolve(), args.plan, read_changed_files(args.changed_files) if args.plan == 'fast' else None)
         try:
             if args.plan in ('fast', 'release'):
                 run.fast()

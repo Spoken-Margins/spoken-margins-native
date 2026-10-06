@@ -412,12 +412,32 @@ def hot_file_violations(tree: Path, base: str, labels) -> list[str]:
     return ratchet.violations(tree, f'origin/{base}', 'HEAD', labels) if ratchet else []
 
 
-def run_fast(evidence: Path, runner=run_bounded) -> tuple[str, list[str]]:
-    """--plan fast (host tests): returns (PASS, FAIL or INCONCLUSIVE, details)."""
+def changed_paths_for_tests(tree: Path, base: str) -> list[str] | None:
+    """Every path the tree changes against origin/<base>, both sides of a rename, for verify-tests.py's
+    --changed-files (#862). None when git can't say, which runs every step."""
+    try:
+        git = ['git', '-C', str(tree)]
+        merge_base = subprocess.check_output(git + ['merge-base', 'HEAD', f'origin/{base}'], text=True).strip()
+        paths = subprocess.check_output(git + ['diff', '--name-only', '--no-renames', merge_base, 'HEAD'],
+                                        text=True).splitlines()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return sorted(set(paths)) or None
+
+
+def run_fast(evidence: Path, runner=run_bounded, changed: list[str] | None = None) -> tuple[str, list[str]]:
+    """--plan fast (host tests): returns (PASS, FAIL or INCONCLUSIVE, details).
+
+    changed: the PR's changed paths, so the plan can leave out the lane's own Python tests when nothing they
+    read changed (#862). Without it every step runs."""
     python = ROOT / '.venv/bin/python'
     output, log_path = evidence / 'fast', evidence / 'verify-fast.log'
     command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', 'fast',
                '--output', str(output)]
+    if changed:
+        changed_file = evidence / 'changed-files.txt'
+        changed_file.write_text('\n'.join(changed) + '\n')
+        command += ['--changed-files', str(changed_file)]
     with log_path.open('w') as log:
         code = runner(command, log, FAST_TIMEOUT)
     if code is None:
@@ -430,7 +450,7 @@ def run_fast(evidence: Path, runner=run_bounded) -> tuple[str, list[str]]:
 
 
 def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2,
-                  ratchet=lambda: []) -> tuple[str, str, str, list[str]]:
+                  ratchet=lambda: [], changed=lambda: None) -> tuple[str, str, str, list[str]]:
     """Returns verdict, where, ran, details for the checks the PR's diff needs."""
     tier = int(scope['tier'][1:])
     details = [f'test-scope: {scope["tier"]} ({"; ".join(scope["why"]) or "no changes"})']
@@ -441,7 +461,7 @@ def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2,
     if tier == 0:
         return 'PASS', 'no build', 'nothing to build or test', details + [
             'nothing here reaches the host tests or the app (docs, research or server only)']
-    verdict, more = fast(evidence)
+    verdict, more = fast(evidence, changed=changed())
     details += more
     if verdict != 'PASS':
         return verdict, 'host only', 'host tests (--plan fast): ' + verdict.lower(), details
@@ -721,7 +741,8 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 return 'INCONCLUSIVE', 'no build', 'nothing', notes + [
                     f'{no_room}. Push again, or remove and re-add automerge, to try again.']
             verdict, where, ran, checks = run_automerge(
-                scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)))
+                scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)),
+                changed=lambda: changed_paths_for_tests(ROOT, base))
             tested = f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR); {warm}'
             if verdict != 'PASS':
                 return verdict, where, ran, [tested] + notes + checks
