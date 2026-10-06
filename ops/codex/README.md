@@ -150,6 +150,42 @@ launchctl print gui/$(id -u)/com.spokenmargins.codex-audit | grep ops/codex
 
 Both copies share the same lock in `artifacts/ops/`, so an old run still going can't overlap a new one. The old files in `artifacts/tools/` can stay as a fallback; nothing runs them after the switch.
 
+## Accepted audit findings and review memory
+
+Record one accepted finding per PR comment, using this exact field format. Copy
+the file and title from the audit, including its wording; use the audited sha7:
+
+```text
+**Accepted audit finding:**
+- Audited sha7: `ff249c5`
+- File: `App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackStartCue.swift`
+- Title: Slow synchronous startup still misses the one-second feedback requirement
+- Follow-up issue: #842
+- Accepted by: owner
+```
+
+The owner can accept a finding. A thread can use `Accepted by: C4 (Default taken)`
+under its Default taken rule, except for owner data loss, privacy, security, or
+packet/database compatibility with the last shipped build: those require the
+owner. A thread's acceptance of one of those remains blocking. A reply by a
+finisher is still not an audit. Legacy nickname-only owner decisions are carried
+as context; migrate them to the complete record before relying on a waiver.
+
+Each audit receives the acceptance records, the three most recent audits (plus
+any older audit that an acceptance references), and both the full PR diff and
+diffs since the last audited head and accepted-code heads. Each comment is capped
+at `BODY_CHARS`; an incomplete, oversized or truncated record cannot waive a
+finding. Missing historical commits are reported explicitly: the reviewer must
+establish unchanged code from git/code, or judge the finding again.
+
+An accepted finding whose code is unchanged appears as one line under
+`Previously accepted`, with its follow-up issue. If the new head changes that
+code, the reviewer judges it again. An unrelated edit elsewhere in the same file
+does not by itself invalidate acceptance. New findings still block. An answer
+with only accepted findings starts `No blocking findings.` before the accepted
+lines, so the lane runner, worker, audit re-arm and merge audit keep using their
+existing verdict parsers.
+
 ## Codex Test Desk
 
 `sm_codex_testdesk.py` tests fresh `origin/next` at most once per SHA and once every two hours. Its 20-minute tick holds on the worker's Dial and pacing rules, under 30 GiB free disk, or any busy simulator slot. It reserves the existing simulator and decision locks without waiting; `verify-tests.py` inherits the reservation for `--plan app` followed by `--plan journeys` (gating and probation). Both plans use the dedicated Test Runner. It never selects the journey simulator or boots a device itself.
