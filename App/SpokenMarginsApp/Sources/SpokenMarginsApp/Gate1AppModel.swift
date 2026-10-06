@@ -9803,7 +9803,7 @@ final class Gate1AppModel: ObservableObject {
 
     func deliverAutomaticMargins() async { await marginNotesDelivery.pass() }
 
-    private func run(_ operation: (SessionEngine) throws -> Void) {
+    func run(_ operation: (SessionEngine) throws -> Void) {
         if engine == nil {
             do {
                 let store = try requireStore()
