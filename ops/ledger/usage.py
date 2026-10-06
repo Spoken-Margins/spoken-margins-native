@@ -77,7 +77,19 @@ def audit_outcome(section: str) -> dict:
                 'signature': 'no blocking findings'}
     # Finding headings are the evidence keys, not an estimated count of bullets.
     findings = []
+    blocking_section = True
     for line in section.splitlines():
+        label = line.strip().strip('#* -:').casefold()
+        if re.fullmatch(r'(?:previously accepted(?: findings)?|'
+                        r'(?:suspected|unconfirmed)(?: sibling cases| siblings| cases| findings)?|'
+                        r'possible sibling cases)(?:\s*\([^)]*\))?', label):
+            blocking_section = False
+            continue
+        if re.fullmatch(r'(?:blocking|confirmed)(?: findings| bugs)?', label):
+            blocking_section = True
+            continue
+        if not blocking_section:
+            continue
         heading = re.match(r'^\s*(?:(?:[-*]|\d+[.)]|#{1,6})\s+)?(\*\*)?\[P[0-3]\]\s*', line)
         if not heading:
             continue
