@@ -337,6 +337,19 @@ actor PreparedAudioCoordinator {
         try repository.saveAudioPreparationJob(job)
     }
 
+    /// Applies a preparation-gate decision (#64) to the manifest as it is saved now, not to the
+    /// pass's earlier copy, so a chunk committed by playback, a Stop or a completion while the pass
+    /// was setting up is kept (Codex audit on bae0dc4). Returns the current manifest, nil if it's
+    /// gone, and whether its state changed.
+    func applyGate(_ decision: PreparationChunkDecision, manifestId: String) throws -> (manifest: PreparedAudioManifest?, changed: Bool) {
+        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return (nil, false) }
+        guard let state = PreparationChunkGate.manifestState(after: decision, current: manifest.state) else { return (manifest, false) }
+        manifest.state = state
+        manifest.updatedAt = Date()
+        try repository.savePreparedAudioManifest(manifest)
+        return (manifest, true)
+    }
+
     private func isIntact(_ chunk: PreparedAudioChunk) -> Bool {
         let url = rootDirectory.appending(path: chunk.relativePath)
         guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { return false }

@@ -45,6 +45,7 @@ enum SupertonicPreparedAudioAssembler {
         let assembled = try writePCM(
             chunks: ordered,
             projection: projection,
+            sourceText: sourceText,
             destination: pcmTemporary
         )
         guard let exporter = AVAssetExportSession(
@@ -84,14 +85,17 @@ enum SupertonicPreparedAudioAssembler {
     private static func writePCM(
         chunks: [SupertonicPreparedChunk],
         projection: NormalizedSpeechText,
+        sourceText: String,
         destination: URL
     ) throws -> (durationMs: Int, timelineSegments: [MediaTimelineSegment]) {
+        let source = Array(sourceText)
+        let spoken = Array(projection.text)
         let firstInput = try AVAudioFile(forReading: chunks[0].audioURL)
         let output = try AVAudioFile(forWriting: destination, settings: firstInput.processingFormat.settings)
         let outputFormat = output.processingFormat
         var cursorFrames: AVAudioFramePosition = 0
         var timelineSegments: [MediaTimelineSegment] = []
-        for (index, chunk) in chunks.enumerated() {
+        for chunk in chunks {
             let input = try AVAudioFile(forReading: chunk.audioURL)
             guard input.processingFormat == outputFormat else {
                 throw SessionKitError.persistenceFailed("supertonic_chunk_audio_format_mismatch")
@@ -100,14 +104,24 @@ enum SupertonicPreparedAudioAssembler {
             cursorFrames += try append(input: input, to: output)
             let startMs = milliseconds(startFrames, sampleRate: outputFormat.sampleRate)
             let endMs = max(startMs + 1, milliseconds(cursorFrames, sampleRate: outputFormat.sampleRate))
-            timelineSegments.append(MediaTimelineSegment(
-                id: "supertonic-seg-\(String(format: "%04d", index + 1))",
-                startMs: startMs,
-                endMs: endMs,
-                startChar: projection.sourceOffset(atSpokenCharacterOffset: chunk.startOffset),
-                endChar: projection.sourceOffset(atSpokenCharacterOffset: chunk.startOffset + chunk.sourceLength),
-                text: chunk.text
-            ))
+            // A chunk that speaks across skipped text (a PDF's references) gets a segment per
+            // stretch of Item.text it reads, so positions never land in what wasn't heard (#336).
+            let pieces = NarrationTimelinePieces.pieces(
+                spokenRange: chunk.startOffset..<(chunk.startOffset + chunk.sourceLength),
+                startMs: startMs, endMs: endMs, projection: projection, source: source
+            )
+            for piece in pieces {
+                let lower = min(piece.spokenRange.lowerBound, spoken.count)
+                let upper = min(max(lower, piece.spokenRange.upperBound), spoken.count)
+                timelineSegments.append(MediaTimelineSegment(
+                    id: "supertonic-seg-\(String(format: "%04d", timelineSegments.count + 1))",
+                    startMs: piece.startMs,
+                    endMs: piece.endMs,
+                    startChar: piece.startChar,
+                    endChar: piece.endChar,
+                    text: pieces.count == 1 ? chunk.text : String(spoken[lower..<upper]).trimmingCharacters(in: .whitespacesAndNewlines)
+                ))
+            }
             if chunk.boundary.transitionDelay > 0 {
                 cursorFrames += try appendSilence(
                     seconds: chunk.boundary.transitionDelay,

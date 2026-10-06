@@ -126,11 +126,14 @@ final class ArtworkThumbnailLoader: @unchecked Sendable {
 struct ArtworkThumbnail: View {
     let url: URL?
     private let loader: ArtworkThumbnailLoader
+    /// Shown while the image loads or when it can't; nil keeps the headphones tile.
+    private let fallback: AnyView?
     @State private var image: UIImage?
 
-    init(url: URL?, loader: ArtworkThumbnailLoader = .shared) {
+    init(url: URL?, loader: ArtworkThumbnailLoader = .shared, fallback: AnyView? = nil) {
         self.url = url
         self.loader = loader
+        self.fallback = fallback
         _image = State(initialValue: url.flatMap(loader.cachedThumbnail(for:)))
     }
 
@@ -138,6 +141,8 @@ struct ArtworkThumbnail: View {
         Group {
             if let image {
                 Image(uiImage: image).resizable().scaledToFill()
+            } else if let fallback {
+                fallback
             } else {
                 AppColors.panel.overlay { Image(systemName: "headphones").foregroundStyle(AppColors.secondaryText) }
             }

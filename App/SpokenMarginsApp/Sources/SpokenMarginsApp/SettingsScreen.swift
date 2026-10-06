@@ -15,6 +15,11 @@ struct SettingsScreen: View {
     @State private var isEmptyRecentlyDeletedConfirmationPresented = false
     @State private var isResetConfirmationPresented = false
     @State private var copiedDiagnostics = false
+    @State private var listeningSignalsExportURL: URL?
+    @State private var isExportingListeningSignals = false
+    @State private var isListeningSignalsSharePresented = false
+    @State private var hasNoListeningSignals = false
+    @AppStorage(CommunityMapUploadService.optInKey) private var helpsMakeListeningMaps = false
 
     private enum Field {
         case mapModel
@@ -213,7 +218,7 @@ struct SettingsScreen: View {
                     Text("Episode maps are private and off by default. While Charging only prepares already-downloaded episodes; full transcripts and temporary audio are deleted after derivative artifacts commit.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    Text("While Charging uses durable jobs and pauses before the next chunk when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
+                    Text("While Charging uses durable jobs and pauses between parts of an item when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                 }
@@ -312,9 +317,8 @@ struct SettingsScreen: View {
                                     .font(.caption)
                                     .foregroundStyle(AppColors.secondaryText)
                                     .lineLimit(2)
-                                Text(entry.reason)
+                                FailureMessageLabel(entry.reason)
                                     .font(.caption)
-                                    .foregroundStyle(.red)
                                 HStack {
                                     Button("Retry") {
                                         model.retryImportInboxEntry(entry)
@@ -338,6 +342,15 @@ struct SettingsScreen: View {
                     .accessibilityIdentifier("settings.help.button")
                     Link("Privacy Policy", destination: AppLinks.privacy)
                     Link("Support", destination: AppLinks.support)
+                    Toggle(isOn: $helpsMakeListeningMaps) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Help make listening maps")
+                            Text("Send transcripts of public episodes to the Spoken Margins server, which turns them into maps and then deletes them.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.communityMaps.toggle")
                     NavigationLink("Terms of Use") {
                         SpokenMarginsTermsView(allowsAcceptance: !model.hasAcceptedCurrentTerms)
                     }
@@ -367,6 +380,33 @@ struct SettingsScreen: View {
                     }
                     .buttonStyle(.borderless)
                         .accessibilityIdentifier("settings.copyDiagnostics.button")
+                    #if canImport(UIKit)
+                    Button {
+                        isExportingListeningSignals = true
+                        Task {
+                            defer { isExportingListeningSignals = false }
+                            listeningSignalsExportURL = await model.listeningSignals.exportFileURL()
+                            isListeningSignalsSharePresented = listeningSignalsExportURL != nil
+                            hasNoListeningSignals = listeningSignalsExportURL == nil
+                        }
+                    } label: {
+                        Label(
+                            hasNoListeningSignals ? "Nothing Recorded Yet" : "Export Listening Signals",
+                            systemImage: "square.and.arrow.up"
+                        )
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("settings.exportListeningSignals.button")
+                    .disabled(isExportingListeningSignals)
+                    .sheet(isPresented: $isListeningSignalsSharePresented) {
+                        if let listeningSignalsExportURL {
+                            ListeningSignalsActivityView(fileURL: listeningSignalsExportURL)
+                        }
+                    }
+                    Text("A private log of listening time, Margins, shares and finishes for followed sources: titles, times and counts, never Margin text or audio. It stays on this device unless you export it.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    #endif
                     LabeledContent("Version", value: AppLinks.versionDescription)
                 }
                 #if DEBUG
@@ -481,3 +521,16 @@ private struct RuntimeDiagnosticRows: View {
         }
     }
 }
+
+#if canImport(UIKit)
+/// Hands the listening-signals log (#483) to the share sheet. Nothing is uploaded by the app.
+private struct ListeningSignalsActivityView: UIViewControllerRepresentable {
+    let fileURL: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+#endif

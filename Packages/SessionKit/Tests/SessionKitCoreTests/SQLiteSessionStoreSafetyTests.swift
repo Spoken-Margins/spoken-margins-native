@@ -101,6 +101,15 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
         try assertOwnedOfflineAssetUpdateKeepsALaterProtection(InMemorySessionRepository())
     }
 
+    // #530: eviction picks rows from an earlier read. The conditional delete judges the row as it is now.
+    func testConditionalOwnedOfflineAssetDeleteJudgesTheCurrentRow() throws {
+        try assertConditionalOwnedOfflineAssetDeleteJudgesTheCurrentRow(SQLiteSessionStore(path: temporaryDatabasePath()))
+    }
+
+    func testInMemoryConditionalOwnedOfflineAssetDeleteJudgesTheCurrentRow() throws {
+        try assertConditionalOwnedOfflineAssetDeleteJudgesTheCurrentRow(InMemorySessionRepository())
+    }
+
     private func assertOwnedOfflineAssetUpdateKeepsALaterProtection(
         _ repository: any SessionRepository, file: StaticString = #filePath, line: UInt = #line
     ) throws {
@@ -121,6 +130,29 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
         XCTAssertEqual(saved, row, file: file, line: line)
         XCTAssertNil(try repository.updateOwnedOfflineAsset(id: "missing") { $0.byteCount = 1 }, file: file, line: line)
         XCTAssertEqual(try repository.loadOwnedOfflineAssets().count, 1, "a missing id creates no row", file: file, line: line)
+    }
+
+    private func assertConditionalOwnedOfflineAssetDeleteJudgesTheCurrentRow(
+        _ repository: any SessionRepository, file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        let idle = OwnedOfflineAsset(
+            id: "episode", itemId: "item", category: .podcast, relativePath: "PodcastAudio/episode.mp3",
+            byteCount: 3, isReproducible: true
+        )
+        try repository.saveOwnedOfflineAsset(idle)
+        var playing = idle
+        playing.protections.insert(.activePlayback)
+        try repository.saveOwnedOfflineAsset(playing)
+
+        XCTAssertFalse(try repository.deleteOwnedOfflineAsset(id: idle.id) { $0.isAutomaticallyEvictable },
+                       "the protection saved after the caller's read keeps the row", file: file, line: line)
+        XCTAssertEqual(try repository.loadOwnedOfflineAssets().map(\.protections), [[.activePlayback]], file: file, line: line)
+
+        try repository.saveOwnedOfflineAsset(idle)
+        XCTAssertTrue(try repository.deleteOwnedOfflineAsset(id: idle.id) { $0.isAutomaticallyEvictable },
+                      file: file, line: line)
+        XCTAssertTrue(try repository.loadOwnedOfflineAssets().isEmpty, file: file, line: line)
+        XCTAssertFalse(try repository.deleteOwnedOfflineAsset(id: "missing") { _ in true }, file: file, line: line)
     }
 
     func testStoreWritesCurrentSchemaVersion() throws {

@@ -38,6 +38,7 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     public var structuredDocuments: [String: [Int: StructuredDocument]] = [:]
     /// Publisher audio by item id (#545).
     public var publisherAudio: [String: PublisherAudio] = [:]
+    public var communityMapUploads: [String: CommunityMapUploadRecord] = [:]
 
     public init(
         items: [String: Item] = [:],
@@ -208,7 +209,18 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     }
 
     public func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws {
+        var interjection = interjection
+        // Once heard, a stale copy can't make it new again (#469).
+        if interjection.firstHeardAt == nil { interjection.firstHeardAt = importedCommentaryInterjections[interjection.id]?.firstHeardAt }
         importedCommentaryInterjections[interjection.id] = interjection
+    }
+
+    public func markImportedCommentaryInterjectionHeard(id: String, at date: Date) throws -> ImportedCommentaryInterjection? {
+        guard var interjection = importedCommentaryInterjections[id] else { return nil }
+        guard interjection.firstHeardAt == nil else { return interjection }
+        interjection.firstHeardAt = date
+        importedCommentaryInterjections[id] = interjection
+        return interjection
     }
 
     public func saveTurn(_ turn: ConversationTurn) throws {
@@ -381,6 +393,14 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
             return asset
         }
     }
+    @discardableResult
+    public func deleteOwnedOfflineAsset(id: String, if shouldDelete: (OwnedOfflineAsset) -> Bool) throws -> Bool {
+        ownedOfflineAssetsLock.withLock {
+            guard let asset = ownedOfflineAssets[id], shouldDelete(asset) else { return false }
+            ownedOfflineAssets[id] = nil
+            return true
+        }
+    }
     public func saveOfflineStorageReservation(_ reservation: OfflineStorageReservation) throws { offlineStorageReservations[reservation.id] = reservation }
     public func loadOfflineStorageReservations() throws -> [OfflineStorageReservation] { offlineStorageReservations.values.sorted { $0.id < $1.id } }
     public func deleteOfflineStorageReservation(id: String) throws { offlineStorageReservations[id] = nil }
@@ -422,6 +442,12 @@ extension InMemorySessionRepository: StructuredDocumentRepository {
         upgrade.sessions.forEach { sessions[$0.id] = $0 }
         try saveStructuredDocument(upgrade.document, itemId: upgrade.item.id)
     }
+}
+
+extension InMemorySessionRepository: CommunityMapUploadRepository {
+    public func saveCommunityMapUpload(_ record: CommunityMapUploadRecord) throws { communityMapUploads[record.id] = record }
+    public func loadCommunityMapUpload(episodeKey: String) throws -> CommunityMapUploadRecord? { communityMapUploads[episodeKey] }
+    public func loadCommunityMapUploads() throws -> [CommunityMapUploadRecord] { Array(communityMapUploads.values) }
 }
 
 extension InMemorySessionRepository: PublisherAudioRepository {

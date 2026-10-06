@@ -316,3 +316,153 @@ test("Safari preprocessor identifies a PDF document even when it has no readable
   assert.equal(payload.isPDFDocument, true);
   assert.equal(payload.documentURL, "https://example.com/brief.pdf");
 });
+
+function runPreprocessorOnPDF(fetchImplementation) {
+  const preprocessorSource = fs.readFileSync(
+    "App/SpokenMarginsShareExtension/Resources/SourceLinkPreprocessor.js",
+    "utf8"
+  );
+  const context = {
+    console,
+    fetch: fetchImplementation,
+    btoa,
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    document: {
+      URL: "https://pmc.ncbi.nlm.nih.gov/articles/PMC13305550/pdf/f1000research-12-147832.pdf",
+      contentType: "application/pdf",
+      title: "f1000research-12-147832.pdf",
+      body: null,
+      querySelector: () => null
+    },
+    window: { location: { href: "https://pmc.ncbi.nlm.nih.gov/articles/PMC13305550/pdf/f1000research-12-147832.pdf" } }
+  };
+  vm.runInNewContext(preprocessorSource, context);
+  return new Promise((resolve) => {
+    context.ExtensionPreprocessingJS.run({ completionFunction: resolve });
+  });
+}
+
+function response(bytes, { ok = true, contentLength = bytes.length } = {}) {
+  return {
+    ok,
+    headers: { get: (name) => (name.toLowerCase() === "content-length" ? String(contentLength) : null) },
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
+      }
+    }),
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+  };
+}
+
+// A PDF answer with no content-length that keeps sending 1 MB chunks, counting what was read.
+function endlessPDFResponse({ ok = true } = {}) {
+  const stats = { chunksRead: 0, cancelled: false, arrayBufferCalled: false };
+  const chunk = new Uint8Array(1024 * 1024);
+  chunk.set(new TextEncoder().encode("%PDF-1.7"));
+  return {
+    stats,
+    response: {
+      ok,
+      headers: { get: () => null },
+      body: new ReadableStream({
+        pull(controller) {
+          stats.chunksRead += 1;
+          controller.enqueue(chunk.slice());
+        },
+        cancel() {
+          stats.cancelled = true;
+        }
+      }),
+      arrayBuffer: async () => {
+        stats.arrayBufferCalled = true;
+        throw new Error("the whole body must never be buffered");
+      }
+    }
+  };
+}
+
+test("#271: Safari preprocessor hands over the PDF the page has open", async () => {
+  const pdfBytes = new TextEncoder().encode("%PDF-1.7 F1000Research 12:1146");
+  let requested;
+  const payload = await runPreprocessorOnPDF(async (url, options) => {
+    requested = { url, credentials: options.credentials };
+    return response(pdfBytes);
+  });
+
+  assert.equal(payload.isPDFDocument, true);
+  assert.deepEqual(requested, {
+    url: "https://pmc.ncbi.nlm.nih.gov/articles/PMC13305550/pdf/f1000research-12-147832.pdf",
+    credentials: "include"
+  });
+  assert.equal(Buffer.from(payload.pdfBase64, "base64").toString("latin1"), "%PDF-1.7 F1000Research 12:1146");
+});
+
+test("#271: an HTML answer, a failed fetch or an oversized PDF leaves only the link", async () => {
+  const html = new TextEncoder().encode("<html>Preparing to download ...</html>");
+  const htmlPayload = await runPreprocessorOnPDF(async () => response(html));
+  assert.equal(htmlPayload.pdfBase64, undefined);
+  assert.equal(htmlPayload.documentURL, "https://pmc.ncbi.nlm.nih.gov/articles/PMC13305550/pdf/f1000research-12-147832.pdf");
+
+  const failedPayload = await runPreprocessorOnPDF(async () => { throw new Error("offline"); });
+  assert.equal(failedPayload.pdfBase64, undefined);
+
+  const oversized = new TextEncoder().encode("%PDF-1.7");
+  const oversizedPayload = await runPreprocessorOnPDF(async () => response(oversized, { contentLength: 16 * 1024 * 1024 }));
+  assert.equal(oversizedPayload.pdfBase64, undefined);
+});
+
+test("#271: an oversized PDF without a declared length is cut off at the cap", async () => {
+  const { stats, response: endless } = endlessPDFResponse();
+  const payload = await runPreprocessorOnPDF(async () => endless);
+
+  assert.equal(payload.pdfBase64, undefined);
+  assert.equal(stats.cancelled, true);
+  assert.equal(stats.arrayBufferCalled, false);
+  assert.ok(stats.chunksRead <= 17, `read ${stats.chunksRead} MB before stopping`);
+});
+
+test("#271: a rejected answer releases its body without reading it", async () => {
+  const failed = endlessPDFResponse({ ok: false });
+  const failedPayload = await runPreprocessorOnPDF(async () => failed.response);
+  assert.equal(failedPayload.pdfBase64, undefined);
+  assert.equal(failed.stats.cancelled, true);
+  assert.equal(failed.stats.arrayBufferCalled, false);
+
+  const declared = endlessPDFResponse();
+  declared.response.headers = { get: (name) => (name.toLowerCase() === "content-length" ? String(16 * 1024 * 1024) : null) };
+  const declaredPayload = await runPreprocessorOnPDF(async () => declared.response);
+  assert.equal(declaredPayload.pdfBase64, undefined);
+  assert.equal(declared.stats.cancelled, true);
+});
+
+test("#271: a web page share never fetches its page again", async () => {
+  const preprocessorSource = fs.readFileSync(
+    "App/SpokenMarginsShareExtension/Resources/SourceLinkPreprocessor.js",
+    "utf8"
+  );
+  let fetched = false;
+  const context = {
+    console,
+    fetch: async () => { fetched = true; return response(new Uint8Array()); },
+    btoa,
+    document: {
+      URL: "https://example.com/article",
+      contentType: "text/html",
+      title: "Article",
+      body: null,
+      querySelector: () => null
+    },
+    window: { location: { href: "https://example.com/article" } }
+  };
+  vm.runInNewContext(preprocessorSource, context);
+  let payload;
+  context.ExtensionPreprocessingJS.run({ completionFunction: (value) => { payload = value; } });
+
+  assert.equal(payload.isPDFDocument, false);
+  assert.equal(payload.pdfBase64, undefined);
+  assert.equal(fetched, false);
+});

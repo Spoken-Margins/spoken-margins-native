@@ -46,9 +46,16 @@ actor FollowedSourceCoordinator {
     /// error codes only, never a full link.
     private(set) var lastDiscoveryTrace: [String] = []
     private var lastDiscoveryHost = "unknown"
+    /// Where newly seen entries are logged as I4 `item_published` rows (#483).
+    private let signals: ListeningSignalRecorder?
+    /// Each followed show's artwork, in a side file beside the database (#773).
+    private var artwork: FollowingArtworkStore
 
-    init(repository: any SessionRepository, session: URLSession? = nil) {
+    init(repository: any SessionRepository, session: URLSession? = nil, artworkFile: URL? = nil,
+         signals: ListeningSignalRecorder? = .app) {
         self.repository = repository
+        self.artwork = FollowingArtworkStore(file: artworkFile)
+        self.signals = signals
         if let session {
             self.session = session
         } else {
@@ -186,6 +193,7 @@ actor FollowedSourceCoordinator {
         )
         try repository.saveFeedSubscription(subscription)
         try save(entries: parsed.items, subscription: subscription)
+        artwork.recordFeedArtwork(parsed.imageURL, for: subscription.id)
         return subscription
     }
 
@@ -307,6 +315,16 @@ actor FollowedSourceCoordinator {
             try repository.deleteFeedEntry(id: entry.id)
         }
         try repository.deleteFeedSubscription(id: subscriptionId)
+        artwork.remove(subscriptionID: subscriptionId)
+    }
+
+    /// Following rows' artwork (#773): drops shows no longer followed and records the catalog's
+    /// artwork for followed shows it lists.
+    func followingArtwork(catalog: SourceCatalog? = nil) -> FollowingArtworkCache {
+        if let subscriptions = try? repository.loadFeedSubscriptions() {
+            artwork.reconcile(with: subscriptions, catalog: catalog)
+        }
+        return artwork.cache
     }
 
     private func refresh(_ original: FeedSubscription, now: Date) async -> [FeedEntry] {
@@ -320,6 +338,7 @@ actor FollowedSourceCoordinator {
             subscription.state = current.state
             subscription.newItemPolicy = current.newItemPolicy
             let saved = try save(entries: parsed.items, subscription: subscription)
+            artwork.recordFeedArtwork(parsed.imageURL, for: subscription.id)
             // A muted feed adds nothing on its own.
             toAdd = FeedNewItemPolicy.entriesToAdd(
                 new: saved.entries, existing: saved.previous,
@@ -467,6 +486,7 @@ actor FollowedSourceCoordinator {
             .map { $0.element }
         let retainedIDs = Set(retainedItems.map { Self.entryID(subscriptionID: subscription.id, itemID: $0.id) })
 
+        let seenAt = Date()
         var saved: [FeedEntry] = []
         for item in retainedItems {
             let id = Self.entryID(subscriptionID: subscription.id, itemID: item.id)
@@ -488,6 +508,9 @@ actor FollowedSourceCoordinator {
             )
             try repository.saveFeedEntry(entry)
             saved.append(entry)
+            // Every retained entry, stored or not: the recorder publishes each one once, so entries
+            // saved before this build (or before a re-follow) still get their publication row.
+            signals?.record(.itemPublished, source: ListeningSignalContext.source(for: subscription), item: ListeningSignalContext.item(for: entry, seenAt: seenAt, durationMs: item.durationMs), at: seenAt)
         }
 
         for entry in existingEntries where !retainedIDs.contains(entry.id) {

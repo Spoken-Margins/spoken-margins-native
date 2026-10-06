@@ -16,7 +16,9 @@ let package = Package(
         .library(name: "SessionKitAI", targets: ["SessionKitAI"]),
         .library(name: "SessionKitSupertonic", targets: ["SessionKitSupertonic"]),
         .library(name: "SessionKitEPUB", targets: ["SessionKitEPUB"]),
-        .library(name: "SessionKitFeeds", targets: ["SessionKitFeeds"])
+        .library(name: "SessionKitFeeds", targets: ["SessionKitFeeds"]),
+        // Mac tool for co-op test packets (#856). The app never links it.
+        .executable(name: "coop-packet", targets: ["CoopPacket"])
     ],
     dependencies: [
         .package(
@@ -85,6 +87,11 @@ let package = Package(
             name: "ShippedPacketReader",
             dependencies: ["ShippedSessionKit", "ShippedSessionKitSharing"],
             path: "Tests/ShippedReader/Reader"
+        ),
+        .executableTarget(
+            name: "CoopPacket",
+            dependencies: ["SessionKit", "SessionKitAudio", "SessionKitPersistence", "SessionKitSharing", "ShippedPacketReader"],
+            exclude: ["README.md"]
         ),
         // Tests of the Foundation-only modules. Also runs on Linux (see the end of this file).
         .testTarget(

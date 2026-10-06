@@ -83,6 +83,39 @@ final class HeardAudioWindowRecorderTests: XCTestCase {
         XCTAssertEqual(second.map(\.request.interjectionId), ["ij-002"])
     }
 
+    /// #776: a Margin rejoins 3 s before its anchor. Those 3 s replay the end of the minute before, and used to
+    /// become a second, overlapping segment, so the source context repeated the words at the anchor.
+    func testTheRejoinStepBackIsNotCollectedTwice() throws {
+        var recorder = HeardAudioWindowRecorder(sampleRate: rate)
+        _ = play(&recorder, fromMs: 0, durationMs: 300_000)
+        recorder.begin(request(anchorMs: 300_000))
+        XCTAssertTrue(play(&recorder, fromMs: 297_000, durationMs: 62_500).isEmpty, "the replay doesn't count")
+        let window = try XCTUnwrap(play(&recorder, fromMs: 359_500, durationMs: 500).first)
+        XCTAssertEqual(window.segments.count, 1)
+        let run = try XCTUnwrap(window.segments.first)
+        XCTAssertEqual(run.startMediaTimeMs, 240_000)
+        XCTAssertEqual(window.durationMs(of: run), 120_000, "each moment is held once")
+    }
+
+    /// The rolling minute drops its first copy of the replayed seconds, so the next Margin's minute before is
+    /// one run without a repeat.
+    func testTheRollingMinuteKeepsOneCopyAfterAStepBack() throws {
+        var recorder = HeardAudioWindowRecorder(sampleRate: rate)
+        _ = play(&recorder, fromMs: 0, durationMs: 100_000)
+        recorder.begin(request(anchorMs: 100_000, id: "ij-001"))
+        _ = play(&recorder, fromMs: 97_000, durationMs: 20_000)
+        recorder.begin(request(anchorMs: 117_000, id: "ij-002"))
+        let windows = recorder.finishAll(reason: "stopped")
+        let second = try XCTUnwrap(windows.first { $0.request.interjectionId == "ij-002" })
+        XCTAssertEqual(second.segments.count, 1)
+        let run = try XCTUnwrap(second.segments.first)
+        XCTAssertEqual(run.startMediaTimeMs, 57_000)
+        XCTAssertEqual(second.durationMs(of: run), 60_000)
+        let first = try XCTUnwrap(windows.first { $0.request.interjectionId == "ij-001" })
+        XCTAssertEqual(first.segments.map(\.startMediaTimeMs), [40_000])
+        XCTAssertEqual(first.durationMs(of: try XCTUnwrap(first.segments.first)), 77_000)
+    }
+
     func testTimelinesAreShiftedIntoEpisodeTime() {
         let part = MediaTimeline(segments: [
             MediaTimelineSegment(id: "s1", startMs: 1_000, endMs: 4_000, text: "Nice job, Joe."),
@@ -105,5 +138,49 @@ final class HeardAudioWindowRecorderTests: XCTestCase {
         XCTAssertEqual(mono, [0.5, 0, 1])
         XCTAssertEqual(HeardAudioDownsampler.factor(for: 44_100), 2)
         XCTAssertEqual(HeardAudioDownsampler.factor(for: 48_000), 3)
+    }
+    // Codex audit on 4b107c5, P2: a fresh chunk had to end more than 10 ms past the audio already held, so
+    // back-to-back 10 ms buffers were kept only every other time and a minute took two to collect.
+    func testBackToBackShortBuffersAreAllCollected() throws {
+        var recorder = HeardAudioWindowRecorder(sampleRate: rate)
+        func play10(fromMs: Int, durationMs: Int) -> [HeardAudioWindow] {
+            stride(from: fromMs, to: fromMs + durationMs, by: 10).flatMap {
+                recorder.append(samples: [Float](repeating: 0.1, count: 10), startMediaTimeMs: $0)
+            }
+        }
+        XCTAssertTrue(play10(fromMs: 0, durationMs: 10_000).isEmpty)
+        recorder.begin(request(anchorMs: 10_000))
+        let window = try XCTUnwrap(play10(fromMs: 10_000, durationMs: 60_000).first,
+                                   "a minute of 10 ms buffers fills the minute after resuming")
+        let run = try XCTUnwrap(window.segments.first)
+        XCTAssertEqual(window.segments.count, 1)
+        XCTAssertEqual(run.startMediaTimeMs, 0)
+        XCTAssertEqual(window.durationMs(of: run), 70_000)
+    }
+
+    // Codex audit on 4b107c5, P2: a rejoin that lands inside a chunk kept that chunk whole, so the replayed
+    // audio after it was spliced in twice and the run's timestamps drifted.
+    func testARewindInsideAChunkKeepsOnlyTheAudioBeforeIt() throws {
+        var recorder = HeardAudioWindowRecorder(sampleRate: rate)
+        _ = play(&recorder, fromMs: 40_000, durationMs: 60_000)   // last chunk 99_500–100_000
+        _ = play(&recorder, fromMs: 99_750, durationMs: 1_500)    // rejoin mid-chunk, up to 101_250
+        recorder.begin(request(anchorMs: 101_250))
+        let window = try XCTUnwrap(recorder.finishAll(reason: "stopped").first)
+        let run = try XCTUnwrap(window.segments.last)
+        XCTAssertEqual(window.segments.count, 1)
+        XCTAssertEqual(run.startMediaTimeMs + window.durationMs(of: run), 101_250,
+                       "episode time and held audio agree: nothing is held twice")
+    }
+
+    func testAfterResumingAChunkThatOverlapsHeldAudioAddsOnlyItsNewPart() throws {
+        var recorder = HeardAudioWindowRecorder(sampleRate: rate)
+        _ = play(&recorder, fromMs: 40_000, durationMs: 60_000)   // held up to 100_000
+        recorder.begin(request(anchorMs: 100_000))
+        _ = play(&recorder, fromMs: 97_250, durationMs: 5_000)    // the rejoin replays from mid-chunk
+        let window = try XCTUnwrap(recorder.finishAll(reason: "stopped").first)
+        let run = try XCTUnwrap(window.segments.last)
+        XCTAssertEqual(window.segments.count, 1)
+        XCTAssertEqual(run.startMediaTimeMs, 40_000)
+        XCTAssertEqual(run.startMediaTimeMs + window.durationMs(of: run), 102_250)
     }
 }
