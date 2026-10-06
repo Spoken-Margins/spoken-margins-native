@@ -86,7 +86,9 @@ INSTRUCTION = (
     "issue's Done when or Must not break, and violations of AGENTS.md's hard "
     "rules (packets and databases readable by Build 29, owner data, main). "
     "Rank the most severe first. For each: file and line, the scenario, and the "
-    "smallest fix. No style notes. If you find nothing real, write "
+    "smallest fix. For a matching, sanitizing or page/title parsing finding, list "
+    "sibling cases you suspect but did not confirm. Mark them suspected; they are "
+    "not blocking without a concrete failure scenario. No style notes. If you find nothing real, write "
     '"No blocking findings."'
 )
 

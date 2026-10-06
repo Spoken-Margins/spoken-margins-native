@@ -1250,6 +1250,9 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
                    'it fails without the fix, or explain with evidence why the finding is wrong in '
                    '.codex-out/pr-body.md. The wrapper posts that explanation as a PR comment, even '
                    'if no code change is needed. Do not post comments yourself. '
+                   'For a matching, sanitizing or page/title parsing finding, write a table of neighbouring inputs before fixing: '
+                   'case, whitespace, Unicode normalization, punctuation, empty, very long, '
+                   'the same item from another source, and lookalike items. Fix every row that fails in the same commit. '
                    'Fix the reported code failure or resolve the merge conflicts. The wrapper has merged '
                    'origin/next with --no-commit; leave resolved files uncommitted. Do not run git merge, '
                    'rebase, reset, push, or change labels. Explain the cause and fix in the output files.')
