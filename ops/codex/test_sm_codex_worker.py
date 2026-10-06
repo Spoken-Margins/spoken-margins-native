@@ -519,6 +519,16 @@ class FinishChildTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.home, True)
         w.write_lock(self.home, 1, {'pid': os.getpid(), 'pr': 73})
 
+    def test_finisher_records_one_run_with_round_and_pr(self):
+        self.assertEqual(self.run_finish()[0], 'finished')
+        rows = [json.loads(line) for line in (self.home / 'ledger/usage.jsonl').read_text().splitlines()]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['job'], 'finisher')
+        self.assertEqual(rows[0]['output_tokens'], 10)
+        self.assertEqual(rows[0]['targets'][0]['pr'], 73)
+        self.assertIn('finisher round 1', rows[0]['targets'][0]['trigger'])
+        self.assertEqual(rows[0]['outcome']['kind'], 'PR armed')
+
     def run_finish(self, fast_rc=0, fail=(), codex_ok=True, rearmed=False, moved=False, conflict=False,
                    push_rc=0, arm_failure=False, no_request=False, needs_mac_only=False, empty=False,
                    audit_only=False, checked_text=None, stage_failure=False, evidence=()):
@@ -862,6 +872,7 @@ class FakeRun:
 def fake_codex(files=None, ok=True, why='ok'):
     def codex(wt, answer, prompt, transcript):
         codex.prompt = prompt
+        transcript.write_text('{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":90,"output_tokens":10}}\n')
         out = Path(wt) / w.OUT_DIR_NAME
         for name, text in (files or {}).items():
             (out / name).write_text(text)
@@ -882,6 +893,22 @@ class ChildTests(unittest.TestCase):
         ops = w.Ops(home=self.home, repo_root=self.home, run=run, codex=codex, now=lambda: NOW,
                     alive=lambda pid: False, echo=False)
         return w.run_child(ops, 1, 42)
+
+    def test_issue_run_records_usage_and_failure_after_model_once(self):
+        run = FakeRun(self, status=' M x.swift\n')
+        self.assertEqual(self.child(run, fake_codex(ok=False, why='Codex exit -9')), 'codex-failed')
+        rows = [json.loads(line) for line in (self.home / 'ledger/usage.jsonl').read_text().splitlines()]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['input_tokens'], 100)
+        self.assertEqual(rows[0]['job'], 'issue')
+        self.assertEqual(rows[0]['outcome']['reason'], 'Codex exit -9')
+
+    def test_ledger_failure_does_not_change_issue_job_behavior(self):
+        self.home.mkdir(exist_ok=True)
+        (self.home / 'ledger').write_text('unwritable ledger directory')
+        run = FakeRun(self, status=' M x.swift\n')
+        self.assertEqual(self.child(run, fake_codex(ok=False, why='Codex exit -9')), 'codex-failed')
+        self.assertTrue(any('Codex exit -9' in body for body in run.comments()))
 
     def assert_cleaned(self, run):
         self.assertTrue(run.has('git', 'worktree', 'remove', '--force'))
@@ -1176,6 +1203,10 @@ class StageChangesTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class SandboxTests(unittest.TestCase):
+    def test_every_worker_model_call_requests_usage_events(self):
+        command = w.codex_command(Path('/tmp/worktree'), Path('/tmp/answer'), 'prompt')
+        self.assertIn('--json', command)
+
     """#64 (2026-10-01): Codex gave up after 33 min because its sandbox couldn't run the fast plan."""
 
     def test_codex_may_write_the_lane_slots_and_the_clang_module_cache(self):

@@ -54,6 +54,9 @@ import tempfile
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from ledger import usage
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -723,7 +726,7 @@ def kill_tree(proc: subprocess.Popen) -> None:
 
 def run_codex(worktree: Path, out_file: Path, prompt: str, transcript: Path) -> tuple[bool, str]:
     cmd = [
-        CODEX, "exec",
+        CODEX, "exec", "--json",
         "-m", CODEX_MODEL,
         "-c", 'model_reasoning_effort="high"',
         "-s", "read-only",
@@ -753,6 +756,7 @@ def audit_batch(batch: list[dict]) -> None:
     tmp = Path(tempfile.mkdtemp(prefix="sm-audit-"))
     worktree = tmp / "wt"
     added = False
+    usage_run = None
     t0 = time.time()
     try:
         run(["git", "fetch", "--quiet", "origin", BASE_BRANCH], cwd=REPO_ROOT, timeout=600)
@@ -788,37 +792,64 @@ def audit_batch(batch: list[dict]) -> None:
             blocks.append(pr_context_block(c, issue_texts, rel, base_sha, mb))
             blocks.append("")
         prompt = build_prompt(live, blocks, base_sha)
-        out_file = tmp / "answer.md"
-        transcript = tmp / "transcript.txt"
-        ok, why = run_codex(worktree, out_file, prompt, transcript)
+        OUTPUT_KEEP_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        stem = f"{stamp}-{'-'.join(str(c['number']) for c in live)}-{tmp.name}"
+        out_file = OUTPUT_KEEP_DIR / f"{stem}.md"
+        transcript = OUTPUT_KEEP_DIR / f"{stem}.jsonl"
+        targets = [{'pr': c['number'], 'issues': c['issues'], 'head_sha': c['headRefOid'],
+                    'base_sha': base_sha, 'trigger': 'new head: ' + (c.get('reason') or 'eligible'),
+                    'trigger_comment': next((comment.get('html_url') or comment.get('url')
+                        for comment in sorted(c.get('comments') or [], key=comment_time, reverse=True)
+                        if asks_for_audit(comment_body(comment))), None),
+                    'outcome': {'kind': 'failed', 'reason': 'audit did not finish'},
+                    'comment_url': None} for c in live]
+        usage_run = usage.Run(usage.DEFAULT_DIR, 'audit', CODEX_MODEL, 'high', transcript,
+                              targets=targets, log=log)
+        try:
+            ok, why = run_codex(worktree, out_file, prompt, transcript)
+        finally:
+            usage_run.model_finished()
+        usage_run.checkpoint(model_result={'ok': ok, 'reason': why})
         took = int(time.time() - t0)
         if not ok:
             log(f"batch {','.join('#' + str(c['number']) for c in live)}: codex failed after {took}s ({why}); nothing posted")
             return
         answer = out_file.read_text(encoding="utf-8", errors="replace")
-        OUTPUT_KEEP_DIR.mkdir(parents=True, exist_ok=True)
-        stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-        (OUTPUT_KEEP_DIR / f"{stamp}-{'-'.join(str(c['number']) for c in live)}.md").write_text(answer, encoding="utf-8")
         live_nums = [c["number"] for c in live]
         sections = split_sections(answer, live_nums)
         results = []
         for c in live:
             n, head = c["number"], c["headRefOid"]
+            target = next(t for t in targets if t['pr'] == n)
             if n not in sections:
+                target['outcome'] = {'kind': 'failed', 'reason': 'no PR section in answer'}
                 results.append(f"#{n} no section in Codex's answer, nothing posted")
                 continue
+            target['outcome'] = usage.audit_outcome(sections[n])
             if audited_on(fetch_comments(n), head):
+                target['post_missing_reason'] = 'audited by someone else meanwhile'
                 results.append(f"#{n} audited by someone else meanwhile, nothing posted")
                 continue
             body_file = tmp / f"comment-{n}.md"
             body_file.write_text(build_comment(n, head, sections[n], live_nums), encoding="utf-8")
             res = run(["gh", "pr", "comment", str(n), "--repo", REPO, "--body-file", str(body_file)],
                       cwd=REPO_ROOT, check=False)
+            match = re.search(r'https://\S+#issuecomment-\d+', res.stdout or '')
+            target['comment_url'] = match.group(0) if match else None
+            if res.returncode:
+                target['post_missing_reason'] = res.stderr.strip()[:120]
+            usage_run.checkpoint(targets=targets)
             results.append(f"#{n} posted" if res.returncode == 0 else f"#{n} post failed: {res.stderr.strip()[:120]}")
         log(f"batch {','.join('#' + str(x) for x in live_nums)}: codex {took}s ok; " + "; ".join(results))
+        usage_run.checkpoint(outcome={'kind': 'audit completed', 'signature': usage.signature(answer)})
     except Exception as exc:  # log and move on to the next batch
+        if usage_run:
+            usage_run.checkpoint(outcome={'kind': 'failed', 'reason': str(exc)})
         log(f"batch {label}: error after {int(time.time() - t0)}s: {exc}")
     finally:
+        if usage_run:
+            usage_run.finish()
         if added:
             subprocess.run(["git", "worktree", "remove", "--force", str(worktree)], cwd=REPO_ROOT,
                            capture_output=True, text=True)
@@ -841,6 +872,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--pr", type=int, help="consider only this PR")
     args = ap.parse_args(argv)
     tag = "dry-run " if args.dry_run else ""
+    if not args.dry_run:
+        usage.recover(usage.DEFAULT_DIR, log)
 
     OPS_DIR.mkdir(parents=True, exist_ok=True)
     lock_fh = open(LOCK_PATH, "w")
