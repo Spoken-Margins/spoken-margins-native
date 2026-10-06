@@ -21,6 +21,13 @@
 # `lane-check/**` bases exist only to test a change to the lane before it reaches next.
 name: lane
 
+# The run name carries what scripts/lane_dedupe.py needs to tell this PR's runs apart (#860): the PR, the
+# head and which of the two Mac jobs the event asks for, with the same conditions as the jobs' `if`.
+run-name: >-
+  lane pr=${{ github.event.pull_request.number }} head=${{ github.event.pull_request.head.sha }}
+  lane=${{ contains(github.event.pull_request.labels.*.name, 'lane:queued') && (github.event.action != 'labeled' || github.event.label.name == 'lane:queued') }}
+  auto=${{ contains(github.event.pull_request.labels.*.name, 'automerge') && (github.event.action != 'labeled' || github.event.label.name == 'automerge') }}
+
 on:
   pull_request:
     branches: [next, 'lane-check/**']
@@ -48,10 +55,13 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-      actions: read
+      # write: cancelling this PR's older queued runs (scripts/lane_dedupe.py). Only base-branch code runs here.
+      actions: write
     outputs:
       lane: ${{ steps.route.outputs.lane }}
       automerge: ${{ steps.route.outputs.automerge }}
+      skip_lane: ${{ steps.dedupe.outputs.skip_lane }}
+      skip_automerge: ${{ steps.dedupe.outputs.skip_automerge }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,6 +71,7 @@ jobs:
           # No LFS downloads or history needed to classify infrastructure paths.
           sparse-checkout: |
             scripts/test-scope.py
+            scripts/lane_dedupe.py
             project.yml
           sparse-checkout-cone-mode: false
       - name: Discover runners and changed paths
@@ -73,6 +84,25 @@ jobs:
           # Denied runner-list access, API outages, and uninstalled runners all fall back.
           GH_TOKEN="$RUNNERS_TOKEN" timeout 30s gh api --paginate --slurp "repos/$GH_REPO/actions/runners?per_page=100" > "$RUNNER_TEMP/runners.json" || echo '[]' > "$RUNNER_TEMP/runners.json"
           timeout 30s gh api --paginate --slurp "repos/$GH_REPO/pulls/$PR_NUMBER/files?per_page=100" > "$RUNNER_TEMP/files.json" || echo '[]' > "$RUNNER_TEMP/files.json"
+      - name: Drop stale and duplicate runs
+        id: dedupe
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          WANT_LANE: ${{ contains(github.event.pull_request.labels.*.name, 'lane:queued') && (github.event.action != 'labeled' || github.event.label.name == 'lane:queued') }}
+          WANT_AUTO: ${{ contains(github.event.pull_request.labels.*.name, 'automerge') && (github.event.action != 'labeled' || github.event.label.name == 'automerge') }}
+        run: |
+          # Closed or moved-on PRs and duplicate runs stop here; older-head runs still waiting for a Mac are
+          # cancelled. Any failure (including a base without the helper) leaves both outputs unset: run as before.
+          if python3 scripts/lane_dedupe.py --pr "$PR_NUMBER" --head "$EVENT_HEAD" --run-id "$RUN_ID" \
+              --lane "$WANT_LANE" --auto "$WANT_AUTO" > "$RUNNER_TEMP/dedupe.json"; then
+            jq -r 'to_entries[] | "\(.key)=\(.value | tojson)"' "$RUNNER_TEMP/dedupe.json" >> "$GITHUB_OUTPUT"
+          else
+            echo '::warning::Lane dedupe unavailable; running as before.'
+          fi
       - name: Choose queues
         id: route
         run: |
@@ -89,6 +119,7 @@ jobs:
     if: >-
       !cancelled() &&
       github.event.pull_request.head.repo.full_name == github.repository &&
+      needs.route.outputs.skip_lane != 'true' &&
       contains(github.event.pull_request.labels.*.name, 'lane:queued') &&
       (github.event.action != 'labeled' || github.event.label.name == 'lane:queued')
     runs-on: ${{ fromJSON(needs.route.outputs.lane || '["self-hosted","macOS","sm-lane"]') }}
@@ -156,6 +187,7 @@ jobs:
     if: >-
       !cancelled() &&
       github.event.pull_request.head.repo.full_name == github.repository &&
+      needs.route.outputs.skip_automerge != 'true' &&
       contains(github.event.pull_request.labels.*.name, 'automerge') &&
       (github.event.action != 'labeled' || github.event.label.name == 'automerge')
     runs-on: ${{ fromJSON(needs.route.outputs.automerge || '["self-hosted","macOS","sm-lane-build"]') }}
