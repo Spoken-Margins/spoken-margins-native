@@ -1068,6 +1068,7 @@ final class Gate1AppModel: ObservableObject {
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
     private var completedStreamingTurnIds: Set<String> = []
     @Published private var pendingSourceContextInterjectionIds: Set<String> = []
+    private let sourceWindowJobQueue = SourceWindowJobQueue()
     private var pendingFullSourceTranscriptionItemIds: Set<String> = []
     private var importedPodcastResolutionGenerations: [String: Int] = [:]
     private var importedPodcastResolutionURLs: [String: URL] = [:]
@@ -12423,7 +12424,12 @@ final class Gate1AppModel: ObservableObject {
             snapshot = try engine.sourceWindowContextPending(interjectionId: interjection.id, sessionId: interjection.sessionId)
             refreshSelectedItem()
         }
+        // #871: at most two of these run at once, nearest the playhead first. A finished download used to start
+        // one per Margin, all together.
+        let queue = sourceWindowJobQueue
+        let playheadMs = snapshot.currentMediaTimeMs
         Task { [weak self, interjectionId = interjection.id, itemId = item.id, durationMs = item.media?.durationMs, windowBeforeMs = sourceWindowContextBeforeMs, windowAfterMs = sourceWindowContextAfterMs] in
+            await queue.enqueue(id: Self.marginIdentity(interjection), anchorMediaTimeMs: anchorMediaTimeMs, playheadMediaTimeMs: playheadMs) { [weak self] in
             guard let self else { return }
             do {
                 let analysis = try await self.sourceTranscriptionClient.transcribeSourceAudioWindowWithEvidence(
@@ -12517,6 +12523,7 @@ final class Gate1AppModel: ObservableObject {
                     // Timeline exposes the retry state. Do not turn this expected
                     // degradation into a global error banner after every Margin.
                 }
+            }
             }
         }
         return true
