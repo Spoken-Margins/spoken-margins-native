@@ -676,7 +676,10 @@ def accepted_finding(comment: dict) -> dict | None:
         matches = re.findall(r'^[ \t]*(?:-[ \t]*)?' + re.escape(name) + r':[ \t]*([^\n]+)$', body, re.M)
         if len(matches) != 1:
             return None
-        values[name] = matches[0].strip().strip('`')
+        value = matches[0].strip()
+        if name in ('Audited sha7', 'File') and len(value) >= 2 and value.startswith('`') and value.endswith('`'):
+            value = value[1:-1]
+        values[name] = value
     sha, path, who = values['Audited sha7'], values['File'], values['Accepted by']
     issue = re.fullmatch(r'#([1-9]\d*)', values['Follow-up issue'])
     if (not re.fullmatch(r'[a-f0-9]{7}', sha) or not issue or not values['Title'] or

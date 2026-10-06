@@ -94,6 +94,13 @@ class MemoryTests(unittest.TestCase):
             with self.subTest(case=case):
                 self.assertEqual(audit.accepted_finding(dict(ACCEPTED, body=value)) is not None, valid)
 
+    def test_finding_titles_preserve_code_and_punctuation_exactly(self):
+        for title in ('`resumePlayback()` starts late', 'Keep the existing `cue`',
+                      '`cue`', '“Pause” means pause', 'Café / café', TITLE):
+            with self.subTest(title=title):
+                comment = dict(ACCEPTED, body=ACCEPTED['body'].replace(TITLE, title))
+                self.assertEqual(audit.accepted_finding(comment)['title'], title)
+
     def test_last_audited_head_uses_real_heading_not_finisher_reply(self):
         reply = {'created_at': '2026-10-05T18:00:00Z', 'body': '**Codex audit on `abcdef0`: fixed.**'}
         self.assertEqual(audit.last_audited_head([PRIOR, reply]), 'ff249c5')
