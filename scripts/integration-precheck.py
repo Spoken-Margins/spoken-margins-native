@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 STATE = Path.home() / 'SpokenMarginsOps' / 'integration-precheck' / 'state.json'
 REPO = 'uncomposed/spoken-margins-native'
 OWNER = 'uncomposed'
+PROMPT_MARKER = '[SM-INTEGRATION-PRECHECK]'
+LEGACY_TASK_PREFIX = 'You are the Spoken Margins integration run, for the repo uncomposed/spoken-margins-native'
 
 
 def parse_time(value: str) -> dt.datetime:
@@ -234,11 +236,43 @@ class Ops:
         return json.loads(result)['html_url']
 
 
+def hook_target(payload: dict) -> bool:
+    if not isinstance(payload, dict) or payload.get('hook_event_name') != 'UserPromptSubmit':
+        return False
+    prompt = payload.get('prompt')
+    if not isinstance(prompt, str):
+        return False
+    text = prompt.lstrip('\ufeff \t\r\n')
+    return text.startswith(PROMPT_MARKER) or text.startswith(LEGACY_TASK_PREFIX)
+
+
+def hook_output(decision: Decision) -> dict:
+    if not decision.go:
+        return {'decision': 'block', 'reason': 'STOP: ' + decision.reason,
+                'hookSpecificOutput': {'hookEventName': 'UserPromptSubmit', 'suppressOriginalPrompt': True}}
+    tip = (decision.state.get('last_go') or {}).get('tip')
+    context = (f'Integration precheck GO for {tip or "the current tip (precheck unavailable)"}: {decision.reason}. '
+               'This launch is already claimed. Do not run the precheck again. Use this decision for the '
+               'tip/retry and Test Desk turn-taking gates; do not reapply older scheduling/head rules. '
+               'Continue the existing integration procedure, retaining folder, simulator, disk/memory, '
+               'crash-flood and owner-data guards. A new owner/Test Desk request can authorize the same tip.')
+    return {'hookSpecificOutput': {'hookEventName': 'UserPromptSubmit', 'additionalContext': context}}
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dry-run', action='store_true', help='read current state; post and save nothing')
     parser.add_argument('--state', type=Path, default=STATE)
+    parser.add_argument('--claude-hook', action='store_true', help='read UserPromptSubmit JSON; block unchanged integration prompts before inference')
     args = parser.parse_args(argv)
+    if args.claude_hook:
+        try:
+            payload = json.load(sys.stdin)
+        except (ValueError, OSError) as error:
+            print(f'integration hook unavailable: {error}', file=sys.stderr)
+            return 0  # Same fail-open rule; never stall another task on malformed input.
+        if not hook_target(payload):
+            return 0
     ops = Ops(args.state)
     if args.dry_run:
         decision = execute(ops, dt.datetime.now(dt.timezone.utc), dry_run=True)
@@ -255,7 +289,10 @@ def main(argv=None) -> int:
         except Exception as error:
             print(f'integration precheck unavailable: {error}', file=sys.stderr)
             decision = Decision(True, 'precheck unavailable', {})
-    print('GO' if decision.go else 'STOP: ' + decision.reason)
+    if args.claude_hook:
+        print(json.dumps(hook_output(decision)))
+    else:
+        print('GO' if decision.go else 'STOP: ' + decision.reason)
     return 0
 
 

@@ -200,6 +200,43 @@ class PrecheckTests(unittest.TestCase):
         self.assertFalse(self.ops.path.exists())
         self.assertFalse(self.ops.posts)
 
+    def test_hook_only_targets_initial_integration_prompts(self):
+        cases = [(precheck.PROMPT_MARKER + '\nRun the integration procedure.', True),
+                 ('\ufeff  ' + precheck.PROMPT_MARKER, True),
+                 (precheck.LEGACY_TASK_PREFIX + " on the owner's Mac.", True),
+                 ('Explain ' + precheck.PROMPT_MARKER, False),
+                 ('Please retry the failed test from this session.', False),
+                 ('SM Mac tick', False), ('', False)]
+        for prompt, expected in cases:
+            with self.subTest(prompt=prompt):
+                self.assertEqual(precheck.hook_target({'hook_event_name': 'UserPromptSubmit', 'prompt': prompt}), expected)
+        self.assertFalse(precheck.hook_target({'hook_event_name': 'PreToolUse', 'prompt': precheck.PROMPT_MARKER}))
+
+    def test_hook_stop_is_a_real_block_and_go_cannot_double_precheck(self):
+        stopped = precheck.decide(TIP, [REPORT], {}, precheck.parse_time('2026-10-06T09:00:00Z'))
+        self.assertEqual(precheck.hook_output(stopped)['decision'], 'block')
+        self.ops.tip = 'a' * 40
+        allowed = self.run_at()
+        output = precheck.hook_output(allowed)
+        self.assertNotIn('decision', output)
+        self.assertIn('Do not run the precheck again', output['hookSpecificOutput']['additionalContext'])
+        self.assertFalse(self.run_at().go)  # A model-side second precheck would wrongly stop the launch.
+
+    def test_hook_cli_emits_valid_json_and_unrelated_prompt_has_no_side_effects(self):
+        for prompt, block in ((precheck.PROMPT_MARKER, True), ('Help with the PDF reader', False)):
+            with self.subTest(prompt=prompt):
+                out = io.StringIO()
+                payload = json.dumps({'hook_event_name': 'UserPromptSubmit', 'prompt': prompt})
+                with patch.object(precheck, 'Ops', return_value=self.ops), \
+                     patch.object(sys, 'stdin', io.StringIO(payload)), contextlib.redirect_stdout(out):
+                    self.assertEqual(precheck.main(['--claude-hook', '--dry-run']), 0)
+                if block:
+                    self.assertEqual(json.loads(out.getvalue())['decision'], 'block')
+                else:
+                    self.assertEqual(out.getvalue(), '')
+        self.assertFalse(self.ops.path.exists())
+        self.assertFalse(self.ops.posts)
+
 
 if __name__ == '__main__':
     unittest.main()
