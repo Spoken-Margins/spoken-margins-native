@@ -424,11 +424,10 @@ private struct ExperienceLibraryCompactRow: View {
                         .foregroundStyle(AppColors.text)
                         .multilineTextAlignment(.leading)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-                    Text(detailLine)
+                    detailLineView
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .multilineTextAlignment(.leading)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -528,13 +527,23 @@ private struct ExperienceLibraryCompactRow: View {
         .accessibilityAction(named: "Move to Recently Deleted", onDelete)
     }
 
-    private var detailLine: String {
-        [sourceByline, mediaLabel, lengthLabel, listeningLabel, statusDetail]
-            .compactMap { value in
-                guard let value, !value.isEmpty else { return nil }
-                return value
+    private var detail: LibraryRowDetail {
+        LibraryRowDetail(byline: sourceByline, kind: mediaLabel, length: lengthLabel, listening: listeningLabel, status: statusDetail)
+    }
+
+    /// The length keeps its room on the line; a long byline or status truncates instead (#305).
+    @ViewBuilder private var detailLineView: some View {
+        let detail = detail
+        if dynamicTypeSize.isAccessibilitySize {
+            Text(detail.fullLine)
+        } else if let length = detail.length {
+            HStack(spacing: 0) {
+                Text(length).fixedSize().layoutPriority(1)
+                Text(detail.restAfterLength).lineLimit(1)
             }
-            .joined(separator: " · ")
+        } else {
+            Text(detail.rest).lineLimit(1)
+        }
     }
 
     private var sourceByline: String? {
