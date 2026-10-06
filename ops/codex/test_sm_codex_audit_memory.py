@@ -76,6 +76,24 @@ class MemoryTests(unittest.TestCase):
                 comment = dict(ACCEPTED, body=ACCEPTED['body'].replace('Accepted by: owner', 'Accepted by: ' + who))
                 self.assertEqual(audit.accepted_finding(comment) is not None, valid)
 
+    def test_neighboring_record_inputs_keep_identity_and_field_boundaries(self):
+        body = ACCEPTED['body']
+        cases = [(field + ' empty', '\n'.join(line.split(':', 1)[0] + ':' if
+                  line.startswith('- ' + field + ':') else line for line in body.splitlines()), False)
+                 for field in ('Audited sha7', 'File', 'Title', 'Follow-up issue', 'Accepted by')]
+        cases += [
+            ('duplicate owner', body + '\n- Accepted by: C4 (Default taken)', False),
+            ('horizontal whitespace', body.replace('- File: ', '\t- File:\t'), True),
+            ('Unicode title', body.replace(TITLE, 'Café — pause “here”'), True),
+            ('lookalike owner', body.replace('Accepted by: owner', 'Accepted by: оwner'), False),
+            ('lookalike issue', body.replace('#842', '＃842'), False),
+            ('very long', body + '\n' + 'x' * audit.BODY_CHARS, False),
+            ('parent file path', body.replace(FILE, '../Cue.swift'), False),
+        ]
+        for case, value, valid in cases:
+            with self.subTest(case=case):
+                self.assertEqual(audit.accepted_finding(dict(ACCEPTED, body=value)) is not None, valid)
+
     def test_last_audited_head_uses_real_heading_not_finisher_reply(self):
         reply = {'created_at': '2026-10-05T18:00:00Z', 'body': '**Codex audit on `abcdef0`: fixed.**'}
         self.assertEqual(audit.last_audited_head([PRIOR, reply]), 'ff249c5')

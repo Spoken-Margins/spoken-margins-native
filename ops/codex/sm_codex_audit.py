@@ -673,7 +673,7 @@ def accepted_finding(comment: dict) -> dict | None:
     names = ('Audited sha7', 'File', 'Title', 'Follow-up issue', 'Accepted by')
     values = {}
     for name in names:
-        matches = re.findall(r'^\s*(?:-\s*)?' + re.escape(name) + r':\s*([^\n]+)$', body, re.M)
+        matches = re.findall(r'^[ \t]*(?:-[ \t]*)?' + re.escape(name) + r':[ \t]*([^\n]+)$', body, re.M)
         if len(matches) != 1:
             return None
         values[name] = matches[0].strip().strip('`')
