@@ -99,6 +99,8 @@ class UsageTests(unittest.TestCase):
             ('**[P2] Use `sourceID` for matching** — `App/Model.swift:4`', 'Use `sourceID` for matching', 'App/Model.swift'),
             ('[P1] Preserve the existing `cue` — `Cue.swift:10`', 'Preserve the existing `cue`', 'Cue.swift'),
             ('1. **[P2] `cue` should pause.** `App/Cue.swift:12` — scenario.', '`cue` should pause', 'App/Cue.swift'),
+            ('[P2] Keep `slice[0:7]` intact — `Model.swift:4`', 'Keep `slice[0:7]` intact', 'Model.swift'),
+            ('- **[P2] Preserve café—東京** — `App/Model.swift:4–8`', 'Preserve café—東京', 'App/Model.swift'),
         ]
         outcomes = []
         for text, title, path in cases:

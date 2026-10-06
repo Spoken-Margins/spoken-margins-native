@@ -82,7 +82,7 @@ def audit_outcome(section: str) -> dict:
         if not heading:
             continue
         tail = line[heading.end():]
-        location_pattern = r'`([^`\s:]+):\d+'
+        location_pattern = r'`([^`\s:]+):\d+(?:[–-]\d+)?`'
         location = re.search(location_pattern, tail)
         if heading.group(1) and '**' in tail:
             end = tail.index('**')
