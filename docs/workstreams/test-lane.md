@@ -155,6 +155,17 @@ Taking turns: the scheduled "SM integration run" is the understudy. It runs only
 desk has posted nothing on #184 for three hours, works in its own intrun-<sha7> worktree,
 and stays off the simulator while the standing device is booted.
 
+Before the understudy starts a model session, run
+`/usr/bin/python3 scripts/integration-precheck.py`. On `STOP: ...`, end without
+starting a session or posting. `GO` means a new tip or new owner/Test Desk context
+or `/integration-retry` request remains to handle, under the three-hour rule.
+Git/GitHub/state errors give `GO`, preserving the existing fallback. The precheck
+posts at most one blocker note on #337 per reported INCONCLUSIVE blocker; its
+state is in `~/SpokenMarginsOps/integration-precheck/`. Routine Mac ticks, skip
+notes and its own note do not wake it, even though they share the owner's account.
+`--dry-run` fetches/reads current data but saves and posts nothing. The scheduled
+task's prompt lives outside this repo and must call this precheck first.
+
 A real FAIL: first rule out a flake (run the failing tests again, twice) and a lane fault
 (no test ran, a missing VFS overlay or XCFramework, a boot that failed). Then find the
 culprit merge, open a revert PR titled "Revert #N" into next with the automerge label, and
