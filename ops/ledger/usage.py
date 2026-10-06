@@ -72,18 +72,32 @@ def signature(text: str) -> str:
 
 def audit_outcome(section: str) -> dict:
     clean = section.lstrip().lower().startswith('no blocking findings')
+    if clean:
+        return {'kind': 'no blocking findings', 'finding_count': 0, 'findings': [],
+                'signature': 'no blocking findings'}
     # Finding headings are the evidence keys, not an estimated count of bullets.
     findings = []
     for line in section.splitlines():
-        if re.search(r'\[P[0-3]\]', line):
-            title = re.split(r'\[P[0-3]\]\s*', line, maxsplit=1)[1]
-            title = re.split(r'\*\*|\s+—\s+|\s+`', title, maxsplit=1)[0].strip(' .*')
-            location = re.search(r'`((?:[\w.-]+/)+[^`\s:]+):\d+', line)
+        heading = re.match(r'^\s*(?:(?:[-*]|\d+[.)]|#{1,6})\s+)?(\*\*)?\[P[0-3]\]\s*', line)
+        if not heading:
+            continue
+        tail = line[heading.end():]
+        location_pattern = r'`([^`\s:]+):\d+'
+        location = re.search(location_pattern, tail)
+        if heading.group(1) and '**' in tail:
+            end = tail.index('**')
+            title, remainder = tail[:end], tail[end + 2:]
+        elif location:
+            title, remainder = tail[:location.start()], tail[location.start():]
+        else:
+            title, remainder = tail, ''
+        title = re.sub(r'\s+—\s*$', '', title).strip(' .*')
+        location = re.search(location_pattern, remainder)
+        if title:
             findings.append({'title': title, 'file': location.group(1) if location else None})
-    return {'kind': 'no blocking findings' if clean else 'findings',
-            'finding_count': 0 if clean else len(findings) or None,
-            'findings': findings, 'signature': ('no blocking findings' if clean else
-                json.dumps(sorted((f['title'], f['file'] or '') for f in findings)) if findings else signature(section))}
+    return {'kind': 'findings', 'finding_count': len(findings) or None,
+            'findings': findings, 'signature': json.dumps(sorted((f['title'], f['file']) for f in findings))
+            if findings and all(f['file'] for f in findings) else signature(section)}
 
 
 def safe_log(log, message: str) -> None:

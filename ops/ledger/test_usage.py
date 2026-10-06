@@ -93,6 +93,27 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(row['output_tokens'], 5)
         self.assertEqual(len(list((self.root / 'ledger').glob('torn-*.txt'))), 1)
 
+    def test_finding_identity_preserves_inline_code_and_source_location(self):
+        cases = [
+            ('**[P2] Use `episodeID` for matching** — `App/Model.swift:4`', 'Use `episodeID` for matching', 'App/Model.swift'),
+            ('**[P2] Use `sourceID` for matching** — `App/Model.swift:4`', 'Use `sourceID` for matching', 'App/Model.swift'),
+            ('[P1] Preserve the existing `cue` — `Cue.swift:10`', 'Preserve the existing `cue`', 'Cue.swift'),
+            ('1. **[P2] `cue` should pause.** `App/Cue.swift:12` — scenario.', '`cue` should pause', 'App/Cue.swift'),
+        ]
+        outcomes = []
+        for text, title, path in cases:
+            with self.subTest(text=text):
+                result = usage.audit_outcome(text)
+                outcomes.append(result)
+                self.assertEqual(result['findings'], [{'title': title, 'file': path}])
+        self.assertNotEqual(outcomes[0]['signature'], outcomes[1]['signature'])
+
+    def test_clean_accepted_only_answer_does_not_create_a_new_finding(self):
+        result = usage.audit_outcome('No blocking findings.\n\nPreviously accepted\n'
+                                     '- **[P2] Old cue finding** — `App/Cue.swift:4`; #842.')
+        self.assertEqual(result['findings'], [])
+        self.assertEqual(result['finding_count'], 0)
+
     def test_real_killed_wrapper_is_recovered_from_its_retained_transcript(self):
         code = ('import sys, time; from pathlib import Path; import usage; '
                 'r=usage.Run(Path(sys.argv[1]), "audit", "model", "high", Path(sys.argv[2])); '
