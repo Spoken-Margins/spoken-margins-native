@@ -675,6 +675,14 @@ class FinishChildTests(unittest.TestCase):
         commit = next(c for c in run.calls if c[:2] == ['git', 'commit'])
         self.assertTrue(Path(commit[-1]).read_text().startswith('Address Codex audit findings on #73'))
 
+    def test_finisher_tests_matching_and_sanitizing_findings_by_class(self):
+        _, _, _, codex = self.run_finish(audit_only=True)
+        for text in ('table of neighbouring inputs before fixing', 'case', 'whitespace',
+                     'Unicode normalization', 'punctuation', 'empty', 'very long',
+                     'the same item from another source', 'lookalike items',
+                     'Fix every row that fails in the same commit'):
+            self.assertIn(text, codex.prompt)
+
     def test_audit_failed_fast_never_pushes_or_rearms(self):
         outcome, run, data, _ = self.run_finish(audit_only=True, fast_rc=1)
         self.assertEqual(outcome, 'fast-failed')

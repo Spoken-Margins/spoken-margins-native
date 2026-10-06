@@ -347,6 +347,14 @@ class Batching(unittest.TestCase):
 
 
 class OutputAndComment(unittest.TestCase):
+    def test_matching_and_sanitizing_findings_include_suspected_siblings(self):
+        self.assertIn('matching, sanitizing or page/title parsing', A.INSTRUCTION)
+        self.assertIn('sibling cases', A.INSTRUCTION)
+        self.assertIn('suspected', A.INSTRUCTION)
+        self.assertIn('not blocking', A.INSTRUCTION)
+        self.assertIn('concrete failure scenario', A.INSTRUCTION)
+        self.assertIn('No style notes', A.INSTRUCTION)
+
     ANSWER = (
         "### PR #366\n\n1. **Plausible:** `Foo.swift:12` scenario.\n\n"
         "### PR #372: Speak leftover URL fragments\nNo blocking findings.\n"
