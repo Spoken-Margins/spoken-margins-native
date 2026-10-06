@@ -565,12 +565,15 @@ private struct SourceInboxRow: View {
                 Label("Add", systemImage: "plus.circle.fill")
             }
             .tint(AppColors.evergreen)
+            // Also in the long-press menu; a swipe reaches it without knowing to hold (#484).
+            if isFeedEntry { pinButton.tint(AppColors.ochre) }
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(action: dismiss) {
                 Label("Dismiss", systemImage: "xmark")
             }
             .tint(AppColors.plum)
+            if isFeedEntry { lessButton.tint(AppColors.secondaryText) }
         }
         .contextMenu { showMenu }
         .accessibilityAction(named: "Add to Library", addAndOpen)
@@ -581,17 +584,31 @@ private struct SourceInboxRow: View {
     /// Pin and "Less of this show" (#484), each undone from the same menu. Feed entries only.
     @ViewBuilder
     private var showMenu: some View {
-        if case .followedSource = candidate {
-            if mark == .pinned {
-                Button { setMark(nil) } label: { Label("Unpin this show", systemImage: "pin.slash") }
-            } else {
-                Button { setMark(.pinned) } label: { Label("Pin this show", systemImage: "pin") }
-            }
-            if mark == .less {
-                Button { setMark(nil) } label: { Label("Undo Less of this show", systemImage: "arrow.uturn.backward") }
-            } else {
-                Button { setMark(.less) } label: { Label("Less of this show", systemImage: "hand.thumbsdown") }
-            }
+        if isFeedEntry {
+            pinButton
+            lessButton
+        }
+    }
+
+    private var isFeedEntry: Bool {
+        if case .followedSource = candidate { true } else { false }
+    }
+
+    @ViewBuilder
+    private var pinButton: some View {
+        if mark == .pinned {
+            Button { setMark(nil) } label: { Label("Unpin this show", systemImage: "pin.slash") }
+        } else {
+            Button { setMark(.pinned) } label: { Label("Pin this show", systemImage: "pin") }
+        }
+    }
+
+    @ViewBuilder
+    private var lessButton: some View {
+        if mark == .less {
+            Button { setMark(nil) } label: { Label("Undo Less of this show", systemImage: "arrow.uturn.backward") }
+        } else {
+            Button { setMark(.less) } label: { Label("Less of this show", systemImage: "hand.thumbsdown") }
         }
     }
 
