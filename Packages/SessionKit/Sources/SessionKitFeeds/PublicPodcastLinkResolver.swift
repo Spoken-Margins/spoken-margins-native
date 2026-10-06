@@ -34,13 +34,25 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         var chapterLinks: [SourceChapterLink]
     }
 
-    private let fetch: Fetch
+    private var fetch: Fetch
     private let asynchronousFetch: (@Sendable (URL) async throws -> Data)?
+    private var pages: FetchedPageMemo?
 
     public init(fetch: @escaping Fetch = PublicPodcastLinkResolver.fetchSynchronously,
          asynchronousFetch: (@Sendable (URL) async throws -> Data)? = nil) {
         self.fetch = fetch
         self.asynchronousFetch = asynchronousFetch
+    }
+
+    /// This resolver, keeping every response in `pages` and fetching each address once (#810). Resolution can
+    /// read a page up to three times (feed, episode page, title), and a shared post's voiceover lookup reads
+    /// it again afterwards; with a memo they all share one request.
+    public func remembering(_ pages: FetchedPageMemo) -> PublicPodcastLinkResolver {
+        var resolver = self
+        let fetch = self.fetch
+        resolver.fetch = { url in try pages.page(for: url)?.data ?? pages.remember(try fetch(url), for: url) }
+        resolver.pages = pages
+        return resolver
     }
 
     public func canonicalFeedURL(for url: URL) throws -> URL? {
@@ -1168,6 +1180,9 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
 
     private func metadataOnlyResult(request: LinkResolutionRequest, url: URL, provider: String?, reason: String) throws -> LinkResolutionResult {
         let data = try? fetch(url)
+        if let data, Self.isPDFDocument(data) {
+            return needsReview(request: request, provider: provider, title: title(from: url), reason: LinkResolutionResult.pdfDocumentFailureReason)
+        }
         let pageTitle = data.flatMap { String(data: $0, encoding: .utf8) }.flatMap(htmlTitle)
         return needsReview(request: request, provider: provider, title: pageTitle ?? title(from: url), reason: reason)
     }
@@ -1180,8 +1195,18 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         requestTimeoutSeconds: TimeInterval
     ) async throws -> LinkResolutionResult {
         let data = try? await fetchAsync(url, timeout: requestTimeoutSeconds)
+        if let data, Self.isPDFDocument(data) {
+            return needsReview(request: request, provider: provider, title: title(from: url), reason: LinkResolutionResult.pdfDocumentFailureReason)
+        }
         let pageTitle = data.flatMap { String(data: $0, encoding: .utf8) }.flatMap(htmlTitle)
         return needsReview(request: request, provider: provider, title: pageTitle ?? title(from: url), reason: reason)
+    }
+
+    /// The body is a PDF: it starts with the `%PDF-` header, after any leading whitespace (#758). A link with no
+    /// `.pdf` ending, such as arXiv's `/pdf/<id>`, is only recognisable this way.
+    static func isPDFDocument(_ data: Data) -> Bool {
+        let body = data.prefix(1_024).drop { [0x20, 0x09, 0x0A, 0x0D, 0x0C].contains($0) }
+        return body.starts(with: Data("%PDF-".utf8))
     }
 
     private func playable(request: LinkResolutionRequest, provider: String, candidate: LinkResolutionCandidate) -> LinkResolutionResult {
@@ -1418,7 +1443,11 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
     }
 
     private func fetchAsync(_ url: URL, timeout: TimeInterval) async throws -> Data {
-        if let asynchronousFetch { return try await asynchronousFetch(url) }
+        if let page = pages?.page(for: url) { return page.data }
+        if let asynchronousFetch {
+            let data = try await asynchronousFetch(url)
+            return pages?.remember(data, for: url) ?? data
+        }
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
         request.setValue("SpokenMargins/0.1", forHTTPHeaderField: "User-Agent")
@@ -1427,7 +1456,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         guard (200..<300).contains(status) else {
             throw URLError(.badServerResponse)
         }
-        return data
+        return pages?.remember(data, for: url, finalURL: response.url) ?? data
     }
 }
 

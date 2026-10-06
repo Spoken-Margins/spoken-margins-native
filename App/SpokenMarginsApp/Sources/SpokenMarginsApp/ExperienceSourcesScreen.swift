@@ -30,6 +30,8 @@ struct ExperienceSourcesScreen: View {
     /// Feed management lives on its own screen so Following opens on the new entries (#141).
     @State private var isManagingFeeds = false
     @State private var focusFeedURLOnManage = false
+    /// Each followed show's artwork (#773), read from the coordinator's side file.
+    @State private var artwork = FollowingArtworkCache()
 
     var body: some View {
         NavigationStack {
@@ -74,8 +76,17 @@ struct ExperienceSourcesScreen: View {
                 ManageFeedsScreen(focusFeedURLOnAppear: focusFeedURLOnManage)
             }
             .task { model.refreshQuickAddFeed(force: false) }
-            // The catalog tags followed shows with a kind and subjects (I2).
+            // The catalog tags followed shows with a kind and subjects (I2), and gives their artwork (#773).
             .task { await catalogDrawer.loadSnapshot() }
+            // Re-read the artwork when the shows, the catalog or a refresh changes it (#773).
+            .task(id: ArtworkKey(
+                subscriptionIDs: model.feedSubscriptions.map(\.id),
+                hasCatalog: catalogDrawer.catalog != nil,
+                isRefreshing: model.isRefreshingFollowedSources
+            )) {
+                guard let coordinator = model.followedSourceCoordinator else { return }
+                artwork = await coordinator.followingArtwork(catalog: catalogDrawer.catalog)
+            }
         }
     }
 
@@ -98,7 +109,7 @@ struct ExperienceSourcesScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("sources.manageFeeds")
-        .accessibilityHint("Follow a feed, browse podcasts, or manage the feeds you follow.")
+        .accessibilityHint("Follow a feed, browse podcasts and writers, or manage the feeds you follow.")
     }
 
     private var manageFeedsTitle: String {
@@ -194,7 +205,7 @@ struct ExperienceSourcesScreen: View {
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
             } else {
                 ForEach(orderedCandidates) { row in
-                    SourceInboxRow(candidate: row.candidate, reason: row.reason?.text, mark: mark(of: row.candidate)) { mark in
+                    SourceInboxRow(candidate: row.candidate, artwork: artwork, reason: row.reason?.text, mark: mark(of: row.candidate)) { mark in
                         if let sourceID = sourceID(of: row.candidate) { ranking.setMark(mark, for: sourceID) }
                     }
                     .listRowInsets(EdgeInsets(
@@ -281,6 +292,12 @@ struct ExperienceSourcesScreen: View {
 
     private var isNarrowed: Bool { kind != nil || subject != nil }
 
+    private struct ArtworkKey: Equatable {
+        var subscriptionIDs: [String]
+        var hasCatalog: Bool
+        var isRefreshing: Bool
+    }
+
     private var hiddenSubjects: Set<String> {
         Set(hiddenSubjectsStorage.split(separator: "\n").map(String.init))
     }
@@ -355,10 +372,19 @@ private struct ManageFeedsScreen: View {
                 Button {
                     catalogDrawer.present()
                 } label: {
-                    Label("Browse top podcasts", systemImage: "square.grid.2x2")
+                    Label("Browse podcasts and writers", systemImage: "square.grid.2x2")
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 }
                 .accessibilityIdentifier("sources.browseCatalog")
+                if let makeOPMLImport = catalogDrawer.makeOPMLImport {
+                    NavigationLink {
+                        OPMLImportScreen(importer: makeOPMLImport())
+                    } label: {
+                        Label("Import from another app", systemImage: "square.and.arrow.down")
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                    .accessibilityIdentifier("sources.importOPML")
+                }
                 NavigationLink("Read Later Services") { ReadLaterScreen() }
                 NavigationLink("Import Listening Edition") { ListeningEditionImportScreen() }
             }
@@ -427,8 +453,7 @@ private struct ManageFeedsScreen: View {
     private var followButton: some View {
         Button("Follow", action: model.followSource)
             .frame(minHeight: 46)
-            .buttonStyle(.borderedProminent)
-            .tint(AppColors.evergreen)
+            .filledActionButton()
             .disabled(model.followedSourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .accessibilityIdentifier("sources.follow.button")
     }
@@ -507,6 +532,7 @@ private struct FollowCandidateChoices: View {
 private struct SourceInboxRow: View {
     @EnvironmentObject private var model: Gate1AppModel
     let candidate: QuickAddCandidate
+    let artwork: FollowingArtworkCache
     /// Why the entry is here, shown under Top (#484).
     var reason: String?
     var mark: FollowingPreferences.Mark?
@@ -515,11 +541,7 @@ private struct SourceInboxRow: View {
     var body: some View {
         Button(action: addAndOpen) {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: systemImage)
-                    .font(.title3)
-                    .foregroundStyle(AppColors.evergreen)
-                    .frame(width: 46, height: 46)
-                    .background(AppColors.softGreen, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                leadingImage
                 VStack(alignment: .leading, spacing: 5) {
                     Text(title)
                         .font(.headline)
@@ -559,6 +581,7 @@ private struct SourceInboxRow: View {
         .padding(14)
         .background(AppColors.panel)
         .accessibilityIdentifier(identifier)
+        .accessibilityLabel(accessibilityLabel)
         .accessibilityHint("Adds this entry to Library and opens it.")
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             Button(action: addInPlace) {
@@ -636,14 +659,71 @@ private struct SourceInboxRow: View {
         switch candidate {
         case .localFile(let file): return "Quick Folder · \(file.modifiedAtDescription)"
         case .followedSource(let entry):
-            let source = model.feedSubscriptions.first(where: { $0.id == entry.subscriptionId })?.source
-            return source?.title ?? source?.host ?? entry.author ?? "Followed feed"
+            let show = showTitle(of: entry) ?? "Followed feed"
+            guard let length = row?.length else { return show }
+            return "\(show) · \(length.label)"
         }
     }
 
-    private var systemImage: String {
-        if case .localFile = candidate { return "folder" }
-        return "dot.radiowaves.left.and.right"
+    private func showTitle(of entry: FeedEntry) -> String? {
+        let source = model.feedSubscriptions.first(where: { $0.id == entry.subscriptionId })?.source
+        return source?.title ?? source?.host ?? entry.author
+    }
+
+    /// Artwork, length and the VoiceOver line for a followed entry (#773); nil for a Quick Folder file.
+    private var row: FollowingEntryRow? {
+        guard case .followedSource(let entry) = candidate else { return nil }
+        return FollowingEntryRow(
+            entry: entry,
+            showTitle: showTitle(of: entry),
+            artworkURL: artwork.artworkURL(for: entry.subscriptionId),
+            rate: model.speechPlaybackRateMultiplier
+        )
+    }
+
+    private var accessibilityLabel: String {
+        if let row { return row.accessibilityLabel }
+        return "\(title). \(provenance)"
+    }
+
+    @ViewBuilder
+    private var leadingImage: some View {
+        if let row {
+            Group {
+                if let url = row.artworkURL {
+                    ArtworkThumbnail(url: url, fallback: AnyView(placeholder(row.placeholder)))
+                } else {
+                    placeholder(row.placeholder)
+                }
+            }
+            .frame(width: 56, height: 56)
+            .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .accessibilityHidden(true)
+        } else {
+            Image(systemName: "folder")
+                .font(.title3)
+                .foregroundStyle(AppColors.evergreen)
+                .frame(width: 56, height: 56)
+                .background(AppColors.softGreen, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        }
+    }
+
+    @ViewBuilder
+    private func placeholder(_ placeholder: FollowingEntryRow.Placeholder) -> some View {
+        switch placeholder {
+        case .page:
+            Image(systemName: "doc.text")
+                .font(.title3)
+                .foregroundStyle(AppColors.evergreen)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(AppColors.softGreen)
+        case .initial(let letter):
+            Text(letter)
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(AppColors.evergreen)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(AppColors.softGreen)
+        }
     }
 
     private var identifier: String {

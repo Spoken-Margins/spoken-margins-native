@@ -130,10 +130,8 @@ struct Build23RecipientSharingExperience: View {
         }
 
         if let errorMessage = snapshot.errorMessage {
-            Label(errorMessage, systemImage: "exclamationmark.triangle")
+            FailureMessageLabel(errorMessage)
                 .font(.subheadline)
-                .foregroundStyle(AppColors.coral)
-                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityLabel("Import error. \(errorMessage)")
         }
     }
@@ -202,8 +200,7 @@ struct Build23RecipientSharingExperience: View {
                     Label("Add Source", systemImage: "plus")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.evergreen)
+                .filledActionButton()
                 .accessibilityHint("Opens Add Source and keeps this package ready to resume")
             }
         }
@@ -217,8 +214,7 @@ struct Build23RecipientSharingExperience: View {
             switch Build23RecipientPresentation.primaryAction(for: snapshot) {
             case .addSource:
                 Button("Import") {}
-                    .buttonStyle(.borderedProminent)
-                    .tint(AppColors.evergreen)
+                    .filledActionButton()
                     .frame(maxWidth: .infinity)
                     .disabled(true)
                     .accessibilityHint("Add the matching source before importing")
@@ -236,8 +232,7 @@ struct Build23RecipientSharingExperience: View {
                     }
                     .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.evergreen)
+                .filledActionButton()
                 .disabled(!enabled)
                 .accessibilityHint("Imports the Margins as a separate layer without starting playback")
             }

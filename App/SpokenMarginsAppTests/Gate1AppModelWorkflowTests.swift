@@ -329,6 +329,48 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(audio.remoteCommandHandlingStates.last, true)
     }
 
+    func testStartingAStreamedOnlyEpisodeWithNoSignalSaysItIsNotDownloaded() throws {
+        // #779: offline, this used to try, stall for 30 s, then blame saved audio that didn't exist.
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "offline-stream-start-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let item = Item(
+            id: "episode-streamed-only",
+            title: "Streamed Only Episode",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/streamed-only",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(
+                sourceType: .remoteStream,
+                url: "https://cdn.example.com/streamed-only.mp3",
+                durationMs: 900_000
+            )
+        )
+        try store.saveItem(item)
+        model.connectivity.update(transport: .unavailable, isOffline: true)
+
+        model.startNewSession(id: item.id)
+
+        XCTAssertEqual(model.lastError, "This episode isn't downloaded, and there's no signal.")
+        XCTAssertNotEqual(model.snapshot.itemId, item.id, "nothing tries to stream it")
+
+        // With signal back, the same episode is no longer stopped by the check.
+        model.connectivity.update(transport: .wifi, isOffline: false)
+        model.lastError = nil
+        model.startNewSession(id: item.id)
+        XCTAssertNotEqual(model.lastError, OfflinePlayability.episodeNotDownloadedMessage)
+    }
+
     func testResolvedPrivateListeningMapIsLoadedAsVisibleNavigableScenes() throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "visible-private-map-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -1379,6 +1421,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.startItem(id: "item-pill")
+        XCTAssertTrue(model.activePlaybackIsPlaying, "only a playing session is protected (#638)")
         let snapshotBefore = model.snapshot
         let margin = MarginRow(
             interjection: Interjection(
@@ -1708,6 +1751,51 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertFalse(model.hasActiveSession)
+    }
+
+    /// #583: closing the mini player while another item's page is open saves the session and keeps that
+    /// page. It used to switch the page to the item that was playing.
+    func testDismissingMiniPlayerKeepsAnotherItemsPageOpen() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let store = try model.libraryStoreForTesting()
+        try store.saveItem(Item(id: "item-b", title: "Item B", mediaType: "text", text: "Source text.",
+                                externalReference: nil, status: "ready"))
+        model.startItem(id: "item-pill")
+        let sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        model.openItem(id: "item-b")
+        XCTAssertEqual(model.selectedItem.id, "item-b")
+        XCTAssertTrue(model.shouldShowMiniPlayer)
+
+        model.dismissMiniPlayer()
+        for _ in 0..<50 where model.hasActiveSession {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertFalse(model.hasActiveSession)
+        XCTAssertEqual(model.screen, .item)
+        XCTAssertEqual(model.selectedItem.id, "item-b")
+        XCTAssertEqual(model.feedbackEvent?.message, "Session saved. You can resume it later.")
+        XCTAssertEqual(try store.loadSessions().first { $0.id == sessionId }?.status, "in_progress")
+    }
+
+    /// #583: from the playing item's own page, closing the mini player still saves and shows that item.
+    func testDismissingMiniPlayerOnThePlayingItemsPageKeepsItAndSaves() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        model.openItem(id: "item-pill")
+
+        model.dismissMiniPlayer()
+        for _ in 0..<50 where model.hasActiveSession {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertFalse(model.hasActiveSession)
+        XCTAssertEqual(model.selectedItem.id, "item-pill")
+        XCTAssertEqual(model.feedbackEvent?.message, "Session saved. You can resume it later.")
+        XCTAssertEqual(model.selectedItem.sessions.first { $0.id == sessionId }?.status, "in_progress")
     }
 
     func testRoutinePlaybackAndNavigationActionsDoNotPresentFeedback() {
@@ -2749,11 +2837,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         completedAtOnly.id = "session-completed-at"
         completedAtOnly.completedAt = Date(timeIntervalSince1970: 1)
 
-        XCTAssertFalse(Gate1AppModel.shouldSkipTextAudioPreparation([belowCutoff]))
-        XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([atCutoff]))
-        XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([completed]))
-        XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([completedAtOnly]))
-        XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([belowCutoff, completed]))
+        XCTAssertFalse(PreparationChunkGate.itemAlreadyListened([belowCutoff]))
+        XCTAssertTrue(PreparationChunkGate.itemAlreadyListened([atCutoff]))
+        XCTAssertTrue(PreparationChunkGate.itemAlreadyListened([completed]))
+        XCTAssertTrue(PreparationChunkGate.itemAlreadyListened([completedAtOnly]))
+        XCTAssertTrue(PreparationChunkGate.itemAlreadyListened([belowCutoff, completed]))
         XCTAssertFalse(Gate1AppModel.itemIsCompleted([belowCutoff]))
         XCTAssertTrue(Gate1AppModel.itemIsCompleted([atCutoff]))
         XCTAssertTrue(Gate1AppModel.itemIsCompleted([completed]))
@@ -3046,6 +3134,94 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.recordingPermissionDenied)
         XCTAssertFalse(model.snapshot.isRecording)
         model.cancelWrittenMargin()
+    }
+
+    /// #783: while iOS hasn't asked yet, one plain line comes before the system prompt; Continue
+    /// goes on to the request, and the grant records as today.
+    func testUndeterminedMicrophoneShowsThePrimerBeforeTheSystemRequest() async throws {
+        let gate = MarginPermissionTestGate()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient(),
+            microphonePermissionRequest: { await gate.request() },
+            microphonePermissionStatus: { .undetermined }
+        )
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        model.startItem(id: "item-pill")
+        model.pause()
+        model.beginInterjection()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertTrue(model.microphonePrimer.isShowing)
+        XCTAssertTrue(model.isRequestingRecordingPermission, "The recording screen carries the line")
+        XCTAssertEqual(gate.requests, 0, "iOS's prompt must wait for Continue")
+
+        model.continueMicrophonePrimer()
+        model.continueMicrophonePrimer()
+        for _ in 0..<200 where gate.continuation == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(model.microphonePrimer.isShowing)
+        XCTAssertEqual(gate.requests, 1, "A second Continue tap must not ask twice")
+        gate.finish(true)
+        for _ in 0..<200 where !model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(model.snapshot.isRecording)
+        model.cancelInterjection()
+    }
+
+    /// #783: dismissing the line cancels that Margin like Cancel does; the next try shows it again.
+    func testCancellingThePrimerCancelsTheMarginAndShowsItAgainNextTime() async throws {
+        let gate = MarginPermissionTestGate()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient(),
+            microphonePermissionRequest: { await gate.request() },
+            microphonePermissionStatus: { .undetermined }
+        )
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        model.startItem(id: "item-pill")
+        model.pause()
+        model.beginInterjection()
+        XCTAssertTrue(model.microphonePrimer.isShowing)
+        model.cancelInterjection()
+        XCTAssertFalse(model.microphonePrimer.isShowing)
+        XCTAssertFalse(model.isRequestingRecordingPermission)
+        XCTAssertFalse(model.recordingNavigationIsLocked)
+        model.continueMicrophonePrimer()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(gate.requests, 0)
+        XCTAssertFalse(model.snapshot.isRecording)
+
+        model.beginInterjection()
+        XCTAssertTrue(model.microphonePrimer.isShowing)
+        model.switchPendingVoiceCaptureToWrittenMargin()
+        XCTAssertFalse(model.microphonePrimer.isShowing)
+        XCTAssertNotNil(model.writtenMarginDraft)
+        model.cancelWrittenMargin()
+    }
+
+    /// #783: once the listener has answered, the line never shows; a denial follows today's path.
+    func testAnsweredMicrophoneNeverShowsThePrimer() async throws {
+        for (status, granted) in [(PermissionPromptStatus.granted, true), (.denied, false)] {
+            let model = Gate1AppModel(
+                audioPlaybackClient: NoopAudioPlaybackClient(),
+                recordingClient: NoopRecordingClient(),
+                microphonePermissionRequest: { granted },
+                microphonePermissionStatus: { status }
+            )
+            model.resetAndSeed()
+            // On a fresh simulator this test runs first, before any other test has made the first-use
+            // voice choice, so the terms sheet held startItem and nothing could record (T3 FAIL on 843e6fd).
+            model.declineCurrentTerms()
+            model.startItem(id: "item-pill")
+            model.pause()
+            model.beginInterjection()
+            XCTAssertFalse(model.microphonePrimer.isShowing, "\(status)")
+            // The injected answer is async and leaves the main actor, so wait on time, not yields.
+            for _ in 0..<200 where model.isRequestingRecordingPermission { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertEqual(model.snapshot.isRecording, granted, "\(status)")
+            XCTAssertEqual(model.recordingPermissionDenied, !granted, "\(status)")
+            if granted { model.cancelInterjection() }
+        }
     }
 
     func testAssistantMarginCaptureRetainsTurnPositionAcrossReloadAndExport() throws {
@@ -3869,6 +4045,48 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(try store.loadSourceSuggestionDecision(sourceId: source.id))
     }
 
+    /// #539: diagnostics showed a Follow failure for Noahpinion, which the owner follows. Its
+    /// article on www.noahpinion.blog wasn't matched to the followed www.noahpinion.blog/feed, so
+    /// opening it ran discovery again and recorded an error.
+    func testAnArticleFromAFollowedSiteRunsNoDiscoveryAndRecordsNoFailure() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try model.libraryStoreForTesting()
+        addTeardownBlock { [weak model, weak store] in
+            // Never unlink an open SQLite/WAL file; see testFollowDiscoveryRechecksSubscriptionsBeforePublishing.
+            if model == nil, store == nil {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        var discovered: [String] = []
+        model.followCandidateDiscoveryHandler = { item, _ in
+            discovered.append(item.id)
+            throw FollowedSourceError.noFeedCandidates
+        }
+        let source = SourceIdentity(id: "source-noahpinion", kind: .articleFeed, canonicalURL: "https://www.noahpinion.blog/feed", host: "www.noahpinion.blog", title: "Noahpinion")
+        // Refreshed just now, so loading subscriptions fetches nothing.
+        try store.saveFeedSubscription(FeedSubscription(id: "subscription-noahpinion", source: source, lastRefreshAt: Date()))
+        try store.saveItem(Item(id: "article", title: "A post", mediaType: "text", text: "Source text.", externalReference: "https://www.noahpinion.blog/p/a-post?utm_source=substack", status: "ready", externalReferenceType: "url"))
+        try store.saveSession(Session(id: "session-article", itemId: "article", status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: "article", position: Position(charOffset: 4), completionPercent: 40, playbackRate: 1))
+        model.openHome()
+        model.refreshFollowedSources(force: false)
+        try await waitFor("subscription loaded") { model.feedSubscriptions.contains { $0.id == "subscription-noahpinion" } }
+
+        model.openItem(id: "article")
+        model.offerFollowSuggestionIfEligible(itemId: "article", store: store)
+        for _ in 0..<10 { await Task.yield() }
+
+        XCTAssertEqual(discovered, [], "a followed site is not looked up again")
+        XCTAssertNil(model.diagnostics["followOffer"])
+        XCTAssertNil(model.diagnostics["sourceFollowSuggestion"])
+        XCTAssertNil(model.diagnostics["followSourceFailure"])
+        XCTAssertFalse(model.canManuallyFollowSelectedSource)
+        XCTAssertTrue(model.sourceFollowSuggestionCandidates.isEmpty)
+    }
+
     func testLateFollowDiscoveryCannotPublishUnderAnotherItem() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -3905,7 +4123,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         pending.removeValue(forKey: "bravo")?.resume(returning: [candidate("bravo")])
         try await waitFor("bravo suggestion") { model.sourceFollowSuggestionCandidates.map(\.id) == ["bravo"] }
         pending.removeValue(forKey: "alpha")?.resume(returning: [candidate("alpha")])
-        try await waitFor("stale discovery rejected") { model.diagnostics["sourceFollowSuggestion"] == "discarded_stale_origin" }
+        try await waitFor("stale discovery rejected") { model.diagnostics["sourceFollowSuggestion"]?.hasPrefix("discarded_stale_origin ") == true }
         XCTAssertEqual(model.sourceFollowSuggestionCandidates.map(\.id), ["bravo"])
         model.openItem(id: "alpha")
         XCTAssertTrue(model.sourceFollowSuggestionCandidates.isEmpty)
@@ -4511,8 +4729,10 @@ private final class WorkflowCompletionAudioClient: AudioPlaybackClient {
 @MainActor
 private final class MarginPermissionTestGate {
     var continuation: CheckedContinuation<Bool, Never>?
+    private(set) var requests = 0
     func request() async -> Bool {
-        await withCheckedContinuation { continuation = $0 }
+        requests += 1
+        return await withCheckedContinuation { continuation = $0 }
     }
     func finish(_ granted: Bool) {
         let pending = continuation

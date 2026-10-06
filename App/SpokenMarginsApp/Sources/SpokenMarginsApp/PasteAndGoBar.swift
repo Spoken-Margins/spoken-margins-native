@@ -36,9 +36,8 @@ struct PasteAndGoBar: View {
                     ProgressView()
                         .frame(minWidth: 44, minHeight: 44)
                 } else {
-                    PasteButton(payloadType: String.self) { strings in
-                        let pasted = strings.first
-                        Task { @MainActor in paste(pasted) }
+                    PasteButton(supportedContentTypes: PastedClipboardContent.supportedTypes) { providers in
+                        Task { @MainActor in paste(await PastedClipboardContent.text(from: providers)) }
                     }
                     .labelStyle(.titleAndIcon)
                     .buttonBorderShape(.capsule)
@@ -78,11 +77,17 @@ struct SourceLinkImportStatusView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let message = model.sourceLinkImportMessage {
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(model.sourceLinkImportState == "failure" ? AppColors.coral : AppColors.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("sourceLink.import.status")
+                Group {
+                    if model.sourceLinkImportState == "failure" {
+                        FailureMessageLabel(message)
+                    } else {
+                        Text(message)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .font(.subheadline)
+                .accessibilityIdentifier("sourceLink.import.status")
             }
             if model.sourceLinkImportState == "failure", let offer = model.sourceLinkSafariOffer {
                 Button {

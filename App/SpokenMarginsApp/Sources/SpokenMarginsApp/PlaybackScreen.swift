@@ -79,8 +79,6 @@ struct PlaybackScreen: View {
                                     openTimeline()
                                 }
                             }
-                            SourceFollowSuggestionCard(appearance: .playback)
-                            ManualSourceFollowButton(appearance: .playback)
                         }
                         .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
                         .padding(.vertical, 18)
@@ -804,6 +802,14 @@ struct PlaybackScreen: View {
                 .accessibilityIdentifier("playback.forward.button")
             }
 
+            if model.snapshot.status == .starting {
+                // #357: say what the silence is, instead of a bare spinner.
+                Text(PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.watchSecondary)
+                    .accessibilityIdentifier("playback.starting.label")
+            }
+
             if model.isMediaPlaybackSnapshot,
                model.snapshot.canSkimBackward || model.snapshot.canSkimForward || model.snapshot.skimBridgeState != nil {
                 HStack(spacing: 14) {
@@ -1502,7 +1508,7 @@ struct PlaybackScreen: View {
                                     }
                                     .buttonStyle(IconButtonStyle())
                                     .disabled(model.selectedItem.interjections.filter { $0.targetId == turn.id && $0.targetType != .item }.isEmpty)
-                                    .accessibilityLabel("Copy interjections for \(turnTitle(turn))")
+                                    .accessibilityLabel("Copy Margins for \(turnTitle(turn))")
                                     .accessibilityIdentifier("conversation.copyTurnInterjections.\(turn.id)")
                                     Button {
                                         model.playTurn(turn)
@@ -1583,7 +1589,7 @@ private struct GuidedOnboardingPlaybackCard: View {
     private var stageContent: some View {
         switch model.guidedOnboardingStage {
         case .practiceInterjection:
-            Text("Practice making an Margin")
+            Text("Practice making a Margin")
                 .font(.title3.bold())
             Text("Let the welcome source play until an idea occurs to you, then record a short note. Spoken Margins will anchor it to this listening session.")
                 .foregroundStyle(AppColors.secondaryText)
@@ -1592,7 +1598,7 @@ private struct GuidedOnboardingPlaybackCard: View {
                     .buttonStyle(PrimaryButtonStyle())
                     .accessibilityIdentifier("onboarding.interjection.done.button")
             } else {
-                Button("Make an Interjection", action: model.beginInterjection)
+                Button("Add a Margin", action: model.beginInterjection)
                     .buttonStyle(PrimaryButtonStyle())
                     .disabled(!model.hasActiveSession)
                     .accessibilityIdentifier("onboarding.interjection.start.button")
@@ -1609,7 +1615,7 @@ private struct GuidedOnboardingPlaybackCard: View {
             Text("AI is optional")
                 .font(.title3.bold())
             Text(model.remoteProviderExperienceEnabled
-                ? "Summarize Notes synthesizes this session’s interjections. Discuss answers a question using relevant source and session context. Both require your OpenAI API key, network access, and permission to send content."
+                ? "Summarize Notes sums up this session’s Margins. Discuss answers a question using relevant source and session context. Both require your OpenAI API key, network access, and permission to send content."
                 : "Summarize Notes uses Apple’s on-device model when it is available. Nothing is sent to a third-party AI service. You can also copy notes to another chatbot and paste its response back here.")
                 .foregroundStyle(AppColors.secondaryText)
             if model.remoteProviderExperienceEnabled {
@@ -1949,19 +1955,7 @@ private struct Pill: View {
 }
 
 private func turnTitle(_ turn: ConversationTurn) -> String {
-    switch turn.turnType {
-    case "interjection_summary":
-        return "Interjection Summary \(turnSequenceNumber(turn.id) ?? 1)"
-    case "assistant_response":
-        if let number = turnSequenceNumber(turn.id) {
-            return "AI Response \(number)"
-        }
-        return "AI Response"
-    case "user_response":
-        return "Follow-up"
-    default:
-        return turn.turnType.replacingOccurrences(of: "_", with: " ").capitalized
-    }
+    ConversationTurnTitle.numbered(turn)
 }
 
 private func turnBadge(_ turn: ConversationTurn) -> String {
@@ -1985,14 +1979,6 @@ private func interjectionPreview(_ interjection: Interjection) -> String {
         return transcript
     }
     return TranscriptionFailureWording.marginStatus(transcriptionStatus: interjection.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff) ?? interjection.transcriptionStatus
-}
-
-private func turnSequenceNumber(_ id: String) -> Int? {
-    guard let raw = id.split(separator: "-").last,
-          let value = Int(raw) else {
-        return nil
-    }
-    return value
 }
 
 private struct LightButtonStyle: ButtonStyle {

@@ -143,8 +143,7 @@ struct ExperienceTimelineRailScreen: View {
                     if !dynamicTypeSize.isAccessibilitySize { Spacer() }
                     if model.canSummarizeInterjections {
                         Button(model.canRetryLocalSummary ? "Retry summary" : "Summarize", action: model.summarize)
-                            .buttonStyle(.borderedProminent)
-                            .tint(AppColors.plum)
+                            .filledActionButton(tint: AppColors.plum)
                             .accessibilityIdentifier("timeline.summary.button")
                     }
                 }
@@ -152,9 +151,7 @@ struct ExperienceTimelineRailScreen: View {
                     responseEditorFocused = false
                     model.importPastedAssistantResponse()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.plum)
-                .foregroundStyle(AppColors.onEvergreen)
+                .filledActionButton(tint: AppColors.plum)
                 .disabled(model.pastedAssistantResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityIdentifier("timeline.reflection.import.button")
                 TextEditor(text: $model.pastedAssistantResponse)
@@ -249,7 +246,8 @@ struct ExperienceTimelineRailScreen: View {
                     provenance: .sharedMargin,
                     title: TimelineTextPresentation.excerpt(margin.approvedTranscript, characterLimit: TimelineTextPresentation.marginCharacterLimit),
                     detail: "Shared by \(row.collectionLabel) · \(row.positionDescription)",
-                    action: .sharedMargin(row)
+                    action: .sharedMargin(row),
+                    isNew: row.isNew
                 ))
             }
         }
@@ -454,6 +452,8 @@ struct TimelineRailEntry: Identifiable, Equatable {
     let title: String
     let detail: String
     let action: Action
+    /// A shared Margin the listener hasn't heard yet (#469).
+    var isNew = false
 
     var sortKey: TimelineRailSortKey {
         TimelineRailSortKey(position: position, rank: rank, id: id)
@@ -510,6 +510,7 @@ private struct TimelineRailRow: View, Equatable {
                             .tracking(dynamicTypeSize.isAccessibilitySize ? 0 : 0.8)
                             .foregroundStyle(provenanceColor)
                             .fixedSize(horizontal: false, vertical: true)
+                        if entry.isNew { NewMarginBadge() }
                         if !dynamicTypeSize.isAccessibilitySize { Spacer() }
                         Text("\(entry.position)%")
                             .font(.caption.monospacedDigit())
@@ -544,7 +545,7 @@ private struct TimelineRailRow: View, Equatable {
             .padding(.bottom, 12)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(isCurrent ? "Current chapter. " : "")\(entry.provenance.label), \(entry.position) percent. \(entry.title). \(entry.detail)")
+        .accessibilityLabel("\(isCurrent ? "Current chapter. " : "")\(entry.isNew ? "New to you. " : "")\(entry.provenance.label), \(entry.position) percent. \(entry.title). \(entry.detail)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { action() }
     }

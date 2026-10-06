@@ -52,6 +52,7 @@ struct SpokenMarginsApp: App {
     @StateObject private var model: Gate1AppModel
     @StateObject private var sharingCoordinator: Build23SharingCoordinator
     @StateObject private var catalogDrawer: CatalogDrawerModel
+    @StateObject private var playbackStartCue: PlaybackStartCue
     @StateObject private var bridge: BridgeService
     @Environment(\.scenePhase) private var scenePhase
     private let memoryFootprint: MemoryFootprintRecorder
@@ -77,6 +78,7 @@ struct SpokenMarginsApp: App {
         ListeningEditionShortcutBridge.model = model
         #endif
         _model = StateObject(wrappedValue: model)
+        _playbackStartCue = StateObject(wrappedValue: PlaybackStartCue(model: model, pinned: pinnedDiagnostics))
         _bridge = StateObject(wrappedValue: BridgeService(store: BridgeService.makeStore()))
         _sharingCoordinator = StateObject(
             wrappedValue: Build23SharingCoordinator(model: model)
@@ -87,6 +89,16 @@ struct SpokenMarginsApp: App {
             follow: { [weak model] feedURL in
                 guard let model else { throw CancellationError() }
                 return try await model.followCatalogFeed(feedURL)
+            },
+            makeOPMLImport: { [weak model] in
+                OPMLImportModel(
+                    subscriptions: { model?.storedFeedSubscriptions() ?? [] },
+                    follow: { feedURL in
+                        guard let model else { throw CancellationError() }
+                        _ = try await model.followCatalogFeed(feedURL, refreshAfter: false)
+                    },
+                    didFollow: { model?.refreshFollowedSources(force: false) }
+                )
             }
         ))
     }

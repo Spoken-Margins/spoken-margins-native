@@ -278,14 +278,40 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     public func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws {
-        let layer = try loadImportedCommentaryLayer(id: interjection.layerId)
-        try save(
-            kind: "imported_commentary_interjection",
-            id: interjection.id,
-            sessionId: nil,
-            itemId: layer?.itemId,
-            value: interjection
-        )
+        // The lock, not a transaction: markImportedCommentaryInterjectionHeard calls this inside one.
+        try withConnectionLock {
+            var interjection = interjection
+            if interjection.firstHeardAt == nil {
+                // A copy loaded before the listener heard it (a slow anchor resolution pass)
+                // must not make a heard Margin new again (#469).
+                let stored: ImportedCommentaryInterjection? = try loadOptional(kind: "imported_commentary_interjection", id: interjection.id)
+                interjection.firstHeardAt = stored?.firstHeardAt
+            }
+            let layer = try loadImportedCommentaryLayer(id: interjection.layerId)
+            try save(
+                kind: "imported_commentary_interjection",
+                id: interjection.id,
+                sessionId: nil,
+                itemId: layer?.itemId,
+                value: interjection
+            )
+        }
+    }
+
+    public func markImportedCommentaryInterjectionHeard(id: String, at date: Date) throws -> ImportedCommentaryInterjection? {
+        var result: ImportedCommentaryInterjection?
+        try withTransaction {
+            guard var interjection: ImportedCommentaryInterjection = try loadOptional(
+                kind: "imported_commentary_interjection",
+                id: id
+            ) else { return }
+            if interjection.firstHeardAt == nil {
+                interjection.firstHeardAt = date
+                try saveImportedCommentaryInterjection(interjection)
+            }
+            result = interjection
+        }
+        return result
     }
 
     public func saveTurn(_ turn: ConversationTurn) throws {
@@ -544,6 +570,16 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
             change(&asset)
             try saveOwnedOfflineAsset(asset)
             return asset
+        }
+    }
+
+    @discardableResult
+    public func deleteOwnedOfflineAsset(id: String, if shouldDelete: (OwnedOfflineAsset) -> Bool) throws -> Bool {
+        try withTransaction {
+            guard let asset: OwnedOfflineAsset = try loadOptional(kind: "owned_offline_asset", id: id),
+                  shouldDelete(asset) else { return false }
+            try deleteOwnedOfflineAsset(id: id)
+            return true
         }
     }
 
@@ -1128,5 +1164,26 @@ extension SQLiteSessionStore: PublisherAudioRepository {
 
     public func loadPublisherAudio(itemId: String) throws -> PublisherAudio? {
         try loadOptional(kind: Self.publisherAudioKind, id: itemId)
+    }
+}
+
+/// Community map uploads (#552) live in the records table as kind "community_map_upload", one
+/// row per episode key. The row is not linked to an item, so deleting one Library copy keeps the
+/// episode's history and re-importing it doesn't send the transcript again. No table or column
+/// changes, and schema_version stays the same: Build 29 selects records by kind and never reads
+/// this one.
+extension SQLiteSessionStore: CommunityMapUploadRepository {
+    static let communityMapUploadKind = "community_map_upload"
+
+    public func saveCommunityMapUpload(_ record: CommunityMapUploadRecord) throws {
+        try save(kind: Self.communityMapUploadKind, id: record.id, sessionId: nil, itemId: nil, value: record)
+    }
+
+    public func loadCommunityMapUpload(episodeKey: String) throws -> CommunityMapUploadRecord? {
+        try loadOptional(kind: Self.communityMapUploadKind, id: episodeKey)
+    }
+
+    public func loadCommunityMapUploads() throws -> [CommunityMapUploadRecord] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", [Self.communityMapUploadKind])
     }
 }

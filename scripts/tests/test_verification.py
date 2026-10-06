@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -56,6 +57,106 @@ class VerificationTests(unittest.TestCase):
             step = run.manifest['steps'][-1]
             self.assertEqual(step['simulator_crash_report'], crashes[-1])
             self.assertEqual(step['exit_code'], 124)
+
+    def test_a_crash_report_renamed_while_it_is_read_is_skipped(self):
+        # integration-4ca9d9c (#767): macOS wrote `.SpokenMarginsApp-….ips`, then renamed it between
+        # the scan's glob and its stat, and the whole app run died with FileNotFoundError.
+        device = 'synthetic-device'
+
+        class RenamingFolder:
+            """Lists the real folder, then renames every hidden report, as macOS does, before the caller reads it."""
+
+            def __init__(self, folder):
+                self.folder = folder
+
+            def is_dir(self):  # the shared scans check the folder exists (lane_sim, #822)
+                return self.folder.is_dir()
+
+            def glob(self, pattern):
+                found = list(self.folder.glob(pattern))
+                for path in found:
+                    if path.name.startswith('.'):
+                        path.rename(path.with_name(path.name[1:]))
+                return iter(found)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / '.SpokenMarginsApp-2026-10-04-095145.ips').write_text(f'com.apple.CoreSimulator.SimDevice.{device}')
+            self.assertEqual(verification.crash_snapshot(RenamingFolder(folder)), {})
+            for report in folder.iterdir():
+                report.unlink()
+            (folder / '.SpokenMarginsApp-2026-10-04-095146.ips').write_text(f'com.apple.CoreSimulator.SimDevice.{device}')
+            self.assertIsNone(verification.new_crash(RenamingFolder(folder), {}, device))
+
+            # The renamed report is the real one, and the next scan finds it.
+            self.assertEqual(verification.new_crash(folder, {}, device).name, 'SpokenMarginsApp-2026-10-04-095146.ips')
+
+            # A report that vanishes outright (not hidden) is skipped too.
+            class VanishingFolder(RenamingFolder):
+                def glob(self, pattern):
+                    found = list(self.folder.glob(pattern))
+                    for path in found:
+                        path.unlink()
+                    return iter(found)
+
+            self.assertEqual(verification.crash_snapshot(VanishingFolder(folder)), {})
+            (folder / 'SpokenMarginsApp-later.ips').write_text(f'com.apple.CoreSimulator.SimDevice.{device}')
+            self.assertIsNone(verification.new_crash(VanishingFolder(folder), {}, device))
+
+    def test_a_hidden_report_still_being_written_is_not_a_crash_yet(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / '.SpringBoard-2026-10-04-095145.ips').write_text('com.apple.CoreSimulator.SimDevice.synthetic-device')
+            self.assertEqual(verification.crash_snapshot(folder), {})
+            self.assertIsNone(verification.new_crash(folder, {}, 'synthetic-device'))
+
+    def test_when_the_runner_itself_fails_it_still_stops_the_command(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'test')
+            run.manifest['destination'] = {'udid': 'synthetic-device'}
+            run.crash_baseline = {}
+            pid_file = Path(temporary) / 'child.pid'
+
+            def scan(*args):
+                if pid_file.exists() and pid_file.read_text():
+                    raise FileNotFoundError('a crash report vanished')
+                return None
+
+            child = f'import os, time; open({str(pid_file)!r}, "w").write(str(os.getpid())); time.sleep(60)'
+            with patch.object(verification, 'new_crash', side_effect=scan):
+                with self.assertRaises(FileNotFoundError):
+                    run.command('crash-check', [sys.executable, '-c', child])
+            with self.assertRaises(ProcessLookupError):
+                os.kill(int(pid_file.read_text()), 0)
+
+    def test_stopping_kills_a_child_that_ignores_sigterm_after_its_leader_exits(self):
+        # Codex audit P2 on dd3e0a4: the leader exits on SIGTERM at once, so waiting on it alone
+        # never escalated, and a descendant that ignores SIGTERM was left running.
+        with tempfile.TemporaryDirectory() as temporary:
+            pid_file = Path(temporary) / 'child.pid'
+            child = ('import os, signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); '
+                     f'open({str(pid_file)!r}, "w").write(str(os.getpid())); time.sleep(60)')
+            leader = f'import subprocess, sys, time; subprocess.Popen([sys.executable, "-c", {child!r}]); time.sleep(60)'
+            process = subprocess.Popen([sys.executable, '-c', leader], start_new_session=True)
+            for _ in range(100):
+                if pid_file.exists() and pid_file.read_text():
+                    break
+                time.sleep(0.05)
+            child_pid = int(pid_file.read_text())
+            verification.stop_process_group(process, grace=1)
+            for _ in range(40):
+                try:
+                    os.kill(child_pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(child_pid, 0)
+
+    def test_stopping_a_command_that_already_exited_does_not_raise(self):
+        process = subprocess.Popen([sys.executable, '-c', 'pass'], start_new_session=True)
+        process.wait()
+        verification.stop_process_group(process)  # its group is gone; the runner's own error must survive
 
     def test_the_host_plan_runs_each_ops_folder_s_own_tests(self):
         # ops/dial and ops/codex carry their own Python tests, which no lane plan ran.
@@ -114,6 +215,34 @@ class VerificationTests(unittest.TestCase):
         self.assertIsNone(dict(calls)['package']['probation'])
         self.assertFalse([step for step in manifest['steps'] if step.get('skipped')])
         self.assertEqual(status, 'verified')
+
+    def test_the_sessionkit_build_has_its_own_limit_so_the_tests_keep_theirs(self):
+        # #844 (2026-10-05): one 300 s limit covered the SessionKit build and about 1,000 tests. Under a
+        # load average of 40 to 180 the run stopped with hundreds of tests missing, at a different test
+        # each time, and six PRs used their one re-run on it.
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+            verification.os.environ.pop('CODEX_SANDBOX', None)
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, args, kw))), \
+                    patch.object(run, 'ops_steps'), \
+                    patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                run.host_steps()
+        names = [name for name, _, _ in calls]
+        self.assertLess(names.index('package-build'), names.index('package'))
+        steps = {name: (args, kw) for name, args, kw in calls}
+        self.assertEqual(steps['package-build'][0][-1], '--build-only')
+        self.assertEqual(steps['package'][0][-1], '--skip-build')
+        self.assertGreaterEqual(steps['package'][1]['timeout'], 600)
+        self.assertTrue(steps['package'][1]['tests'])  # the exact-test-ID check stays on the tests
+        self.assertFalse(steps['package-build'][1].get('tests'))
+
+    def test_the_sessionkit_script_still_builds_and_tests_with_no_argument(self):
+        script = (SCRIPTS / 'run-sessionkit-tests.sh').read_text()
+        self.assertIn('"") exec "$ROOT/scripts/host-test-lane" swift test ', script)
+        self.assertIn('--build-only) exec "$ROOT/scripts/host-test-lane" swift build --build-tests', script)
+        self.assertIn('--skip-build) exec "$ROOT/scripts/host-test-lane" swift test --skip-build', script)
 
     def test_ops_files_count_as_verification_inputs(self):
         with patch.object(verification, 'capture', return_value='ops/dial/dial_gate.py\n'), \

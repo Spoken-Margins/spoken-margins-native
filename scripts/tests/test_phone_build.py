@@ -188,16 +188,22 @@ class InstallerTests(unittest.TestCase):
         self.assertIn(f'devicectl device install app --device A {folder.resolve()}/SpokenMarginsApp.app', calls)
 
     def test_already_installed_mentions_a_newer_build_in_progress(self):
+        # The installer's clock is pinned: started three minutes before "now" was "today" except in the three
+        # minutes after midnight, when it is yesterday's date and the installer rightly says so (#841).
         self.make_build()
         (self.phone / 'installed.txt').write_text(f'{self.sha} 2026-09-30T09:05:29 Cole iPhone\n')
-        started = datetime.datetime.now() - datetime.timedelta(minutes=3)
-        (self.phone / '.work' / f'{started:%Y%m%d-%H%M%S}-1234567').mkdir(parents=True)
-        (self.phone / '.work' / '20200101-000000-7654321').mkdir()  # a leftover, not a running build
-        done, calls = self.run_installer([iphone('A')])
-        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        self.assertIn(f'being made right now: commit 1234567, started today at {started:%H:%M}', done.stdout)
-        self.assertNotIn('7654321', done.stdout)
-        self.assertEqual(calls, [])
+        for now, words in (('2026-10-05T12:00:00', 'today at 11:57'), ('2026-10-05T00:01:00', 'yesterday at 23:58')):
+            with self.subTest(now=now):
+                work = self.phone / '.work'
+                shutil.rmtree(work, ignore_errors=True)
+                started = datetime.datetime.fromisoformat(now) - datetime.timedelta(minutes=3)
+                (work / f'{started:%Y%m%d-%H%M%S}-1234567').mkdir(parents=True)
+                (work / '20200101-000000-7654321').mkdir()  # a leftover, not a running build
+                done, calls = self.run_installer([iphone('A')], SM_PHONE_NOW=now)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertIn(f'being made right now: commit 1234567, started {words}', done.stdout)
+                self.assertNotIn('7654321', done.stdout)
+                self.assertEqual(calls, [])
 
     def test_already_installed_mentions_a_failed_newer_attempt(self):
         self.make_build()
@@ -528,6 +534,37 @@ class VerdictTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             plan = self.module.write_plan(Path(folder), '828597e7' + '0' * 32, 'host tests').read_text()
         self.assertIn('No integration run has reported on this commit yet.', plan)
+
+    def plan_with(self, recorded):
+        self.RECORDED = recorded
+        self.module.plan_base = lambda sha: (None, 'the start')
+        self.module.merged_prs = lambda base, sha: {}
+        with tempfile.TemporaryDirectory() as folder:
+            return self.module.write_plan(Path(folder), '828597e7' + '0' * 32, 'host tests').read_text()
+
+    # #627: the shape the Test Desk posts when step 3b skips --plan app on a commit.
+    SKIPPED_JOURNEYS = {'body': '```text\nLane report journeys-828597e — PASS\ncommit 828597e7 (next\'s tip) · J1, J4\n'
+                                'run by: Test Desk\nintegration: skipped (every merged PR had its own T3 PASS; '
+                                'last --plan app 1 h ago)\ncrashes: none\n```'}
+
+    def test_a_deliberate_skip_says_why_instead_of_no_run_yet(self):
+        plan = self.plan_with(self.RECORDED[:1] + [self.SKIPPED_JOURNEYS])
+        self.assertIn('Integration run skipped by the Test Desk: every merged PR had its own T3 PASS; '
+                      'last --plan app 1 h ago.', plan)
+        self.assertNotIn('No integration run has reported', plan)
+        self.assertIn('Latest journeys run for this commit: Lane report journeys-828597e — PASS.', plan)
+
+    def test_an_integration_report_wins_over_a_skip_line(self):
+        plan = self.plan_with(self.RECORDED[:2] + [self.SKIPPED_JOURNEYS])
+        self.assertIn('Latest integration run for this commit: Lane report integration-828597e — PASS.', plan)
+        self.assertNotIn('skipped by the Test Desk', plan)
+
+    def test_a_skip_line_for_another_commit_or_a_ran_line_is_ignored(self):
+        other = {'body': self.SKIPPED_JOURNEYS['body'].replace('828597e', '1234567')}
+        ran = {'body': '```text\nLane report journeys-828597e — PASS\nintegration: ran (#612 touched Packages/)\n```'}
+        plan = self.plan_with(self.RECORDED[:1] + [other, ran])
+        self.assertIn('No integration run has reported on this commit yet.', plan)
+        self.assertNotIn('skipped by the Test Desk', plan)
 
     def test_odd_bodies_are_skipped_not_fatal(self):
         line_separator = {'body': 'a note\u2028with a line separator'}

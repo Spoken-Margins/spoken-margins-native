@@ -38,6 +38,8 @@ public final class SessionEngine {
     private var playbackStartWaitCap: TimeInterval { playbackStartTimeout * 4 }
     private var playbackStartFirstPendingAt: Date?
     private let now: () -> Date
+    /// Set when a listener's start command arrives; the next published start carries it (#357).
+    private var playbackRequestedAt: Date?
     private(set) var recordingAnchor: Anchor?
     private var recordingTargetType: InterjectionTargetType?
     private var recordingTargetId: String?
@@ -109,6 +111,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func startSession(itemId: String) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try require("startSession", category: "sync", capabilities: ["canonical_persistence", "receive_prepared_packages", "browser_session_handoff"])
         forgetFailure(unlessItemIs: itemId)
         var item = try repository.loadItem(id: itemId)
@@ -272,6 +275,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func resumePlayback() throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("resumePlayback")
         try requirePlayback("resumePlayback")
         guard var session = currentSession else {
@@ -325,6 +329,12 @@ public final class SessionEngine {
     /// Changes only the transport asset for an item. Canonical target ids, source URLs,
     /// playback rate, source time, and interjection anchors remain unchanged.
     @discardableResult
+    /// The player's own state behind the current target. It can be waiting (a network stall)
+    /// while the session still reads as playing.
+    public func currentPlaybackTransportState() -> PlaybackTransportState? {
+        currentSession.flatMap { audio.playbackTransportState(targetId: $0.currentTargetId) }
+    }
+
     public func updatePlaybackTransport(
         itemId: String,
         playbackURL: String?,
@@ -629,7 +639,7 @@ public final class SessionEngine {
         // or a seek near the end is read as the end again.
         let endedBeforeSeek = (snapshot.status.isPlaybackActive || snapshot.status == .paused)
             && audio.isPlaybackComplete(targetId: session.currentTargetId)
-        let updated = mediaSession(session, movedTo: mediaTimeMs)
+        let updated = reopeningIfMovedBeforeTheEnd(mediaSession(session, movedTo: mediaTimeMs))
         currentSession = updated
         try persistSession(updated)
         do {
@@ -664,7 +674,7 @@ public final class SessionEngine {
               session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
             throw SessionKitError.invalidCommandForState("stagePausedMediaPosition")
         }
-        let updated = mediaSession(session, movedTo: mediaTimeMs)
+        let updated = reopeningIfMovedBeforeTheEnd(mediaSession(session, movedTo: mediaTimeMs))
         currentSession = updated
         try persistSession(updated)
         protectPlaybackPosition(for: updated)
@@ -1162,16 +1172,19 @@ public final class SessionEngine {
 
     @discardableResult
     public func jumpToChapter(chapterId: String) throws -> SessionSnapshot {
+        defer { playbackRequestedAt = nil }
         try requireNavigationAllowed("jumpToChapter")
         try require("jumpToChapter", category: "timeline", capabilities: ["chapter_timing"])
         try requirePlayback("jumpToChapter")
         if let session = currentSession,
            session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
+            stampRequestIfStarting(target: session.currentTargetId)
             return try jumpToMediaChapter(chapterId: chapterId, session: session)
         }
         guard var session = currentSession, let chapter = currentMap?.chapters.first(where: { $0.id == chapterId }) else {
             throw SessionKitError.invalidCommandForState("jumpToChapter")
         }
+        stampRequestIfStarting(target: session.itemId)
         session.currentTargetType = .itemTextTTS
         session.currentTargetId = session.itemId
         session.phase = .itemPlayback
@@ -1188,6 +1201,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func playSourceFromBeginning() throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("playSourceFromBeginning")
         try requirePlayback("playSourceFromBeginning")
         guard var session = currentSession else {
@@ -1360,6 +1374,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func saveWrittenInterjection(captureId: String, text: String) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
         guard let capture = pendingWrittenInterjection, capture.id == captureId,
               let session = currentSession,
               session.id == capture.sessionId,
@@ -1396,7 +1411,10 @@ public final class SessionEngine {
         lastMediaPercentageRepair = nil
         pendingWrittenInterjection = nil
         do {
-            try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying, session: session)
+            // A written Margin rejoins like a spoken one (#776), but a source that was
+            // already paused stays exactly where the listener left it.
+            let resumed = capture.wasPlaying ? try rejoiningAfterSavedMargin(session) : session
+            try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying, session: resumed)
         } catch {
             // The note is already durable. Do not report this as a save failure
             // or retain a retryable draft: doing either would allow a second
@@ -1409,6 +1427,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func cancelWrittenInterjection(captureId: String) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
         guard let capture = pendingWrittenInterjection, capture.id == captureId,
               let session = currentSession,
               session.id == capture.sessionId,
@@ -1520,6 +1539,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func playInterjectionAnchor(_ interjection: Interjection) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("playInterjectionAnchor")
         let plan = try interjectionAnchorPlaybackPlan(for: interjection)
         let previousSession = currentSession
@@ -1575,6 +1595,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func finishInterjection(audioRef: String?) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
         guard var session = currentSession,
               let anchor = recordingAnchor,
               let targetType = recordingTargetType,
@@ -1664,9 +1685,10 @@ public final class SessionEngine {
         }
         session.phase = priorPhaseForResume(targetType: targetType)
         // beginInterjection already captured and persisted the authoritative
-        // source position before pausing. Resume from that position exactly;
-        // applying a second sentence-boundary adjustment here causes backward
-        // drift and can move an exact boundary into the preceding sentence.
+        // source position before pausing, and the anchor above was built from it.
+        // The source rejoins a little earlier (#776); the step is idempotent at a
+        // sentence start, so repeated Margins never drift into the sentence before.
+        session = try rejoiningAfterSavedMargin(session)
         currentSession = session
         try persistSession(session)
         if externallyStreamedTurnId == session.currentTargetId {
@@ -1680,6 +1702,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func cancelInterjection() throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("cancelInterjection")
         }
@@ -1721,7 +1744,7 @@ public final class SessionEngine {
            Set(existingTurn.sourceInterjectionIds) == Set(lastSummaryCandidates.map(\.id)) {
             throw SessionKitError.invalidCommandForState("interjection_summary_already_current")
         }
-        let summaryIndex = existingTurn.flatMap { turnSequenceNumber($0.id) } ?? turns.filter { $0.turnType == "interjection_summary" }.count + 1
+        let summaryIndex = existingTurn.flatMap { ConversationTurnTitle.sequenceNumber($0.id) } ?? turns.filter { $0.turnType == "interjection_summary" }.count + 1
         let turnId = existingTurn?.id ?? "turn-summary-\(String(format: "%03d", summaryIndex))"
         let turn = ConversationTurn(
             id: turnId,
@@ -1780,6 +1803,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func playTurn(turnId: String) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("playTurn")
         externallyStreamedTurnId = nil
         var session = try resolveSession(nil)
@@ -1811,6 +1835,7 @@ public final class SessionEngine {
     /// canonical owner of user-visible playback state and position.
     @discardableResult
     public func activateStreamingTurn(turnId: String) throws -> SessionSnapshot {
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         var session = try resolveSession(nil)
         let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == turnId })
         let targetType: TargetType = turn?.turnType == "interjection_summary" ? .summaryTurnTTS : .assistantTurnTTS
@@ -1897,6 +1922,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func jumpToTurnChapter(turnId: String, chapterId: String) throws -> SessionSnapshot {
+        stampRequestIfStarting(target: turnId); defer { playbackRequestedAt = nil }
         try requireNavigationAllowed("jumpToTurnChapter")
         var session = try resolveSession(nil)
         let turns = try repository.loadTurns(sessionId: session.id)
@@ -3086,6 +3112,14 @@ public final class SessionEngine {
         if status != .starting {
             clearPlaybackStartPending()
         }
+        // A start carries its request's time: a listener command stamps it, and a start from a stop or on another
+        // item gets the publish time. Seeks and the engine's own target switches (narration falling back to live
+        // speech) keep the request they belong to (audits of #580).
+        if status.isPlaybackActive, playbackRequestedAt != nil || !snapshot.status.isPlaybackActive
+            || snapshot.itemId != currentSession?.itemId {
+            snapshot.playbackRequestedAt = playbackRequestedAt ?? now()
+            playbackRequestedAt = nil
+        }
         snapshot.status = status
         snapshot.phase = phase
         snapshot.isRecording = status == .recording
@@ -3114,6 +3148,13 @@ public final class SessionEngine {
         snapshot.chapterTitle = progress.chapterTitle ?? currentItem?.title
         snapshot.activeInterjectionCount = (try? repository.loadInterjections(sessionId: session.id).filter { $0.status == "active" }.count) ?? snapshot.activeInterjectionCount
         snapshot.pendingAiJobCount = (try? repository.loadAIJobs(sessionId: session.id).filter { $0.status != "complete" }.count) ?? snapshot.pendingAiJobCount
+    }
+
+    /// A chapter jump that starts playback (from a pause or stop, or onto another target such as a saved answer's
+    /// chapter) is a new request, stamped before any audio work; within the target that is already playing it is a
+    /// seek and keeps its request (audits of #580).
+    private func stampRequestIfStarting(target targetId: String) {
+        if !snapshot.status.isPlaybackActive || snapshot.targetId != targetId { playbackRequestedAt = now() }
     }
 
     private func publishPlaybackStart(for session: Session, phase: SessionPhase) {
@@ -4248,7 +4289,7 @@ public final class SessionEngine {
         } else {
             previous = current - 15_000
         }
-        updated = mediaSession(updated, movedTo: previous)
+        updated = reopeningIfMovedBeforeTheEnd(mediaSession(updated, movedTo: previous))
         if snapshot.status == .playing {
             return try seekMedia(toMediaTimeMs: updated.position.mediaTimeMs ?? 0)
         }
@@ -4262,6 +4303,33 @@ public final class SessionEngine {
         }
         publish(status: snapshot.status, phase: updated.phase)
         return snapshot
+    }
+
+    /// Moves a source that is about to resume after a saved Margin to `MarginRejoin`'s position,
+    /// persists it and protects it from the player's stale clock. Generated turns, and the Watch's
+    /// own rollback, keep their exact resume.
+    private func rejoiningAfterSavedMargin(_ session: Session) throws -> Session {
+        var rejoined = session
+        switch session.currentTargetType {
+        case .transcriptBackedMedia, .browserOwnedMedia:
+            guard let pausedAtMs = session.position.mediaTimeMs else { return session }
+            let resumeAtMs = MarginRejoin.mediaResumeTimeMs(pausedAtMs: pausedAtMs)
+            guard resumeAtMs != pausedAtMs else { return session }
+            rejoined = mediaSession(session, movedTo: resumeAtMs)
+        case .itemTextTTS:
+            guard let text = item(for: session)?.text else { return session }
+            let start = MarginRejoin.textResumeOffset(pausedAt: session.position.charOffset, in: text)
+            guard start != session.position.charOffset else { return session }
+            rejoined.position.charOffset = start
+            rejoined.position.chapterId = chapterId(for: start)
+            rejoined.completionPercent = percent(for: start, text: text)
+        case .summaryTurnTTS, .assistantTurnTTS:
+            return session
+        }
+        currentSession = rejoined
+        try persistSession(rejoined)
+        protectPlaybackPosition(for: rejoined)
+        return rejoined
     }
 
     private func mediaSkipIntervalMs(for unit: String) -> Int? {
@@ -4312,6 +4380,18 @@ public final class SessionEngine {
             return mediaSession(session, movedTo: mediaTimeMs, package: package)
         }
         return mediaSession(session, movedTo: mediaTimeMs, durationMs: mediaDurationMs(for: session))
+    }
+
+    /// A listener who moves a finished episode back from its end has picked where to listen
+    /// next, so it is no longer finished. The app replays a finished session from 0:00 in a
+    /// new session, and used to do that even after a scrub back (#643). Skipping text back
+    /// (skipBack) and reopening a session below 100% (inspectSession) follow the same rule.
+    private func reopeningIfMovedBeforeTheEnd(_ session: Session) -> Session {
+        guard session.phase == .finished, session.completionPercent < 100 else { return session }
+        var reopened = session
+        reopened.phase = .itemPlayback
+        reopened.status = "in_progress"
+        return reopened
     }
 
     /// With no known duration the position moves but the percent stays as it was. It
@@ -4743,24 +4823,7 @@ public final class SessionEngine {
     }
 
     private func turnTitle(for turn: ConversationTurn) -> String {
-        switch turn.turnType {
-        case "interjection_summary":
-            return "Interjection Summary \(turnSequenceNumber(turn.id) ?? 1)"
-        case "assistant_response":
-            if let number = turnSequenceNumber(turn.id) {
-                return "AI Response \(number)"
-            }
-            return "AI Response"
-        case "user_response":
-            return "Follow-up"
-        default:
-            return turn.turnType.replacingOccurrences(of: "_", with: " ").capitalized
-        }
-    }
-
-    private func turnSequenceNumber(_ id: String) -> Int? {
-        guard let raw = id.split(separator: "-").last else { return nil }
-        return Int(raw)
+        ConversationTurnTitle.numbered(turn)
     }
 
     private func itemSourceOffset(forAudioOffset audioOffset: Int) -> Int {
@@ -4782,12 +4845,8 @@ public final class SessionEngine {
         if let cache = listenableCache, cache.itemId == item.id, cache.textLength == text.count {
             return cache.projection
         }
-        var projection: NormalizedSpeechText?
-        if let store = repository as? StructuredDocumentRepository,
-           let document = try? store.loadStructuredDocument(itemId: item.id),
-           document.text == text {
-            projection = StructuredDocumentSpeech.listenableText(document)
-        }
+        let document = try? (repository as? StructuredDocumentRepository)?.loadStructuredDocument(itemId: item.id)
+        let projection = StructuredDocumentSpeech.listenableProjection(item: item, document: document)
         listenableCache = (item.id, text.count, projection)
         return projection
     }

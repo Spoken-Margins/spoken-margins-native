@@ -79,6 +79,19 @@ struct ExperienceFilterChip<Content: View>: View {
     }
 }
 
+/// Marks a shared Margin the listener hasn't heard yet (#469). The word carries the meaning, not the color.
+struct NewMarginBadge: View {
+    var body: some View {
+        Text("New")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(AppColors.onEvergreen)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(AppColors.evergreen, in: Capsule())
+            .accessibilityLabel("New to you")
+    }
+}
+
 extension View {
     func experienceListBlock(
         horizontalSizeClass: UserInterfaceSizeClass?,
@@ -178,9 +191,35 @@ struct SMExperienceEmptyState: View {
             Text(detail)
         } actions: {
             Button(actionTitle, action: action)
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.evergreen)
+                .filledActionButton()
         }
         .frame(maxWidth: .infinity, minHeight: 260)
+    }
+}
+
+extension View {
+    /// The filled action button. It sets the label to `onEvergreen`: the system's white label on
+    /// dark-mode evergreen is about 1.8:1, which the owner couldn't read on Add to Library (#537).
+    /// The contrast audit checks `onEvergreen` against evergreen and plum, so tint with one of those.
+    func filledActionButton(tint: Color = AppColors.evergreen) -> some View {
+        buttonStyle(.borderedProminent)
+            .tint(tint)
+            .foregroundStyle(AppColors.onEvergreen)
+    }
+}
+
+/// A listener-facing failure: an icon as well as a colour, because colour alone
+/// cannot tell failure from status for a red-green colour-blind listener (#308).
+struct FailureMessageLabel: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Label(text, systemImage: "exclamationmark.triangle")
+            .foregroundStyle(AppColors.dangerText)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

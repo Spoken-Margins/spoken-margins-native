@@ -29,7 +29,7 @@ final class MarginNotesDelivery {
     private let isRecording: @MainActor () -> Bool
     /// Resolves the folder; throws a message for the listener when it can't.
     private let target: @MainActor () throws -> Target
-    private let report: @MainActor (String) -> Void
+    private let report: @MainActor (MarginOutputStatus) -> Void
     private let recordGather: @MainActor (_ ms: Int, _ sessions: Int, _ notes: Int) -> Void
     private let journalURL: () throws -> URL
 
@@ -43,7 +43,7 @@ final class MarginNotesDelivery {
         isEnabled: @escaping @MainActor () -> Bool,
         isRecording: @escaping @MainActor () -> Bool,
         target: @escaping @MainActor () throws -> Target,
-        report: @escaping @MainActor (String) -> Void,
+        report: @escaping @MainActor (MarginOutputStatus) -> Void,
         recordGather: @escaping @MainActor (_ ms: Int, _ sessions: Int, _ notes: Int) -> Void = { _, _, _ in },
         journalURL: @escaping () throws -> URL = MarginNotesDelivery.defaultJournalURL
     ) {
@@ -119,12 +119,14 @@ final class MarginNotesDelivery {
     }
 
     /// Sends a sample note so the listener can check the folder before turning delivery on.
-    func sendTestNote(to folder: URL, destinationID: String) async throws -> String {
-        _ = try await currentWriter().deliver(
+    func sendTestNote(to folder: URL, destinationID: String) async throws -> MarginOutputStatus {
+        let summary = try await currentWriter().deliver(
             [.init(id: "sample-margin", markdown: "# Spoken Margins test\n\nYour thoughts will arrive here as Markdown, with source context and anchors.\n")],
             to: folder, destinationID: destinationID
         )
-        return "Test note saved. Open Margin-\(ListeningEdition.digest("sample-margin")).md in your notes app."
+        let file = "Margin-\(ListeningEdition.digest("sample-margin")).md"
+        if summary.keptEdits > 0 { return MarginOutputStatus("The test note \(file) is already in this folder and you edited it, so it was left as is.") }
+        return MarginOutputStatus("Test note saved. Open \(file) in your notes app.")
     }
 
     private func deliverOnce() async {
@@ -133,10 +135,13 @@ final class MarginNotesDelivery {
             // Built on a background task (#161); the main actor only waits.
             let gathered = try await AutomaticMarginNoteGatherer.gather(store: target.store)
             recordGather(gathered.elapsedMs, gathered.sessionCount, gathered.notes.count)
-            let count = try await currentWriter().deliver(gathered.notes, to: target.folder, destinationID: target.destinationID)
-            report("\(count) Margins saved to \(target.folder.lastPathComponent). Last checked \(Date().formatted(date: .omitted, time: .shortened)).")
+            let summary = try await currentWriter().deliver(gathered.notes, to: target.folder, destinationID: target.destinationID)
+            report(MarginOutputStatus(MarginNoteDelivery.statusLine(
+                summary, folderName: target.folder.lastPathComponent,
+                checkedAt: Date().formatted(date: .omitted, time: .shortened)
+            )))
         } catch {
-            report("Delivery needs attention: \(error.localizedDescription)")
+            report(.failure("Delivery needs attention: \(error.localizedDescription)"))
         }
     }
 

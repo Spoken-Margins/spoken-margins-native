@@ -1489,6 +1489,9 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public var skimBridgeState: SkimBridgeState?
     public var canSkimForward: Bool
     public var canSkimBackward: Bool
+    /// When the listener's request behind the latest playback start reached the engine, before any audio work, so the
+    /// time from tap to first audio can be measured (#357). Optional, so older decoders ignore it.
+    public var playbackRequestedAt: Date?
 
     public init() {
         sessionId = nil
@@ -1539,5 +1542,14 @@ extension LinkResolutionResult {
             && selectedCandidate?.audioURL == nil
             && !candidates.contains { $0.audioURL != nil }
             && ["audio_enclosure_not_found", "unsupported_link_type"].contains(failureReason ?? "")
+    }
+
+    /// The failure reason for a link whose body is a PDF document rather than a web page or feed (#758).
+    public static let pdfDocumentFailureReason = "pdf_document"
+
+    /// The link serves a PDF. The app imports it with its PDF reader, as it does a PDF shared from Safari, instead
+    /// of sending it to the HTML article reader.
+    public var isPDFDocument: Bool {
+        status != .playable && failureReason == Self.pdfDocumentFailureReason
     }
 }

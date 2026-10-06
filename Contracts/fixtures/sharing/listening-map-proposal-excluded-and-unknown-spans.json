@@ -1,0 +1,86 @@
+{
+  "id": "proposal-excluded-and-unknown-spans",
+  "schemaVersion": "spoken-margins.listening-map-proposal.v2",
+  "languageCode": "en",
+  "createdAt": "2026-09-30T12:00:00Z",
+  "generator": "on-device-scene-map.v1",
+  "scenes": [
+    {
+      "id": "scene-001",
+      "order": 0,
+      "title": "The question",
+      "summaryText": "The hosts ask whether cities can be designed for quiet.",
+      "summaryProvenance": "model_generated",
+      "eligibility": "eligible",
+      "startAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 0,
+        "transcriptSegmentId": "segment-0001",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 240000,
+        "transcriptSegmentId": "segment-0050",
+        "machineEvidenceAssetIds": []
+      }
+    },
+    {
+      "id": "scene-002",
+      "order": 1,
+      "title": "Sponsor break",
+      "eligibility": "excluded",
+      "eligibilityReason": "Host-read sponsor message.",
+      "startAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 240000,
+        "transcriptSegmentId": "segment-0050",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 300000,
+        "transcriptSegmentId": "segment-0061",
+        "machineEvidenceAssetIds": []
+      }
+    },
+    {
+      "id": "scene-003",
+      "order": 2,
+      "eligibility": "unknown",
+      "eligibilityReason": "The labeller could not tell whether this is editorial.",
+      "startAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 300000,
+        "transcriptSegmentId": "segment-0061",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 420000,
+        "transcriptSegmentId": "segment-0085",
+        "machineEvidenceAssetIds": []
+      }
+    },
+    {
+      "id": "scene-004",
+      "order": 3,
+      "title": "Three quiet streets",
+      "summaryText": "Planners from three cities compare what worked.",
+      "summaryProvenance": "model_generated",
+      "eligibility": "eligible",
+      "startAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 420000,
+        "transcriptSegmentId": "segment-0085",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 1800000,
+        "transcriptSegmentId": "segment-0360",
+        "machineEvidenceAssetIds": []
+      }
+    }
+  ]
+}

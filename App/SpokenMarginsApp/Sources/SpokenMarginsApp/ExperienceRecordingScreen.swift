@@ -1,11 +1,19 @@
+import SessionKit
 import SwiftUI
 
 struct ExperienceRecordingView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @State private var isDiscardConfirmationPresented = false
+    /// Ignores a stray second tap of a double tap on Add a Margin (#148).
+    @State private var saveTapGuard = RecordingSaveTapGuard(appearedAt: Date())
 
     private var isPreparing: Bool {
         model.isRequestingRecordingPermission && !model.snapshot.isRecording
+    }
+
+    /// #783: the line before iOS's first microphone prompt is on screen, waiting for Continue.
+    private var showsMicrophonePrimer: Bool {
+        isPreparing && model.microphonePrimer.isShowing
     }
 
     var body: some View {
@@ -16,7 +24,7 @@ struct ExperienceRecordingView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     status
                     recordingTime
-                    anchor
+                    if !showsMicrophonePrimer { anchor }
                     feedback
                 }
                 .padding(24)
@@ -24,10 +32,14 @@ struct ExperienceRecordingView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) { finishControl.padding(24) }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            // While the microphone line is up, VoiceOver goes from the line straight to Continue (#783).
+            finishControl.padding(24).accessibilityHidden(showsMicrophonePrimer)
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) { actionDock }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("recording.screen")
+        .onAppear { saveTapGuard = RecordingSaveTapGuard(appearedAt: Date()) }
         .alert("Discard this recording?", isPresented: $isDiscardConfirmationPresented) {
             Button("Keep recording", role: .cancel) {}
             Button("Discard recording", role: .destructive, action: model.cancelInterjection)
@@ -55,7 +67,13 @@ struct ExperienceRecordingView: View {
 
     @ViewBuilder
     private var recordingTime: some View {
-        if isPreparing {
+        if showsMicrophonePrimer {
+            Text(MicrophonePrimer.message)
+                .font(.title3)
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("recording.microphonePrimer.text")
+        } else if isPreparing {
             HStack(spacing: 12) {
                 ProgressView().tint(AppColors.listeningAccent)
                 Text("Waiting for microphone access")
@@ -68,6 +86,7 @@ struct ExperienceRecordingView: View {
                     .font(.system(.largeTitle, design: .monospaced).weight(.semibold))
                     .foregroundStyle(.white)
                     .accessibilityLabel("Recording duration \(elapsedDescription(at: timeline.date))")
+                    .accessibilityIdentifier("recording.duration.label")
             }
         }
     }
@@ -105,7 +124,7 @@ struct ExperienceRecordingView: View {
     }
 
     private var finishControl: some View {
-        Button(action: model.requestFinishInterjection) {
+        Button(action: requestFinish) {
             Label(model.isFinishingInterjection ? "Saving Margin…" : "Save & resume", systemImage: "checkmark")
                 .frame(maxWidth: .infinity, minHeight: 52)
         }
@@ -118,6 +137,20 @@ struct ExperienceRecordingView: View {
 
     private var actionDock: some View {
         VStack(spacing: 8) {
+            if showsMicrophonePrimer {
+                Button {
+                    // The second tap of a double tap on Add a Margin must not skip the line (#148).
+                    guard saveTapGuard.accepts(tapAt: Date()) else { return }
+                    model.continueMicrophonePrimer()
+                } label: {
+                    Text("Continue")
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(AppColors.captureBackground)
+                .foregroundStyle(AppColors.listeningBackground)
+                .accessibilityIdentifier("recording.microphonePrimer.continue")
+            }
             if isPreparing {
                 Button("Write instead", systemImage: "square.and.pencil", action: model.switchPendingVoiceCaptureToWrittenMargin)
                     .foregroundStyle(.white)
@@ -149,6 +182,11 @@ struct ExperienceRecordingView: View {
             progressPercent: model.snapshot.currentPlaybackProgressPercent,
             startedAt: Date()
         )
+    }
+
+    private func requestFinish() {
+        guard saveTapGuard.accepts(tapAt: Date()) else { return }
+        model.requestFinishInterjection()
     }
 
     private func requestDiscard() {

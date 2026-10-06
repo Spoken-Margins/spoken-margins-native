@@ -4,6 +4,8 @@ import WebKit
 
 enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
     case invalidURL
+    /// The page moved to an address that isn't HTTPS while it loaded (#144).
+    case pageLeftHTTPS
     case oversizedHTML
     case tooManyRedirects
     case missingExtractor
@@ -14,6 +16,7 @@ enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .invalidURL: "Article URLs must use HTTPS."
+        case .pageLeftHTTPS: "The article page moved to an address that isn't secure (HTTPS)."
         case .oversizedHTML: "The article exceeds the 1 MB safety limit."
         case .tooManyRedirects: "The article redirected more than five times."
         case .missingExtractor: "The bundled readable-page extractor is unavailable."
@@ -30,12 +33,13 @@ enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
 @MainActor
 final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, ReadablePageExtracting {
     private static let maximumHTMLBytes: Int64 = 1 * 1_024 * 1_024
-    private static let maximumRedirects = 5
+    /// A shared ChatGPT page is already over half that before the chat: the site's own session data comes first (#874).
+    private static let maximumSharedChatHTMLBytes: Int64 = 8 * 1_024 * 1_024
     private var webView: WKWebView?
-    private var continuation: CheckedContinuation<BrowserTextHandoff, Error>?
-    private var redirectCount = 0
     private var requestedURL: URL?
-    private(set) var contactedHosts: [String] = []
+    private var continuation: CheckedContinuation<BrowserTextHandoff, Error>?
+    private var navigationRules: ReadablePageNavigationRules?
+    var contactedHosts: [String] { navigationRules?.contactedHosts ?? [] }
     private(set) var lastExtractor: String?
     private let queue = ReadablePageQueue()
     /// Counts pages stopped by the time limit, so a stopped page still compiling its rules gives up.
@@ -59,21 +63,37 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
         }
         guard continuation == nil else { throw ReadablePageExtractionError.busy }
         let stoppedBefore = stoppedPages
-        let script = try extractorScript()
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
-        configuration.userContentController.addUserScript(WKUserScript(
-            source: script,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: true,
-            in: .defaultClient
-        ))
-        let rules = """
-        [{"trigger":{"url-filter":".*","resource-type":["image","style-sheet","script","font","media","raw","svg-document","popup"]},"action":{"type":"block"}}]
-        """
+        let rules: String
+        let ruleListIdentifier: String
+        if ClaudeSharedPage.matches(url) {
+            // A shared Claude page fetches its chat with its own scripts, so this is the one page that runs
+            // its own code. The rules let it reach only its own host and asset hosts; the only script added is
+            // the one that keeps a copy of the chat it fetched (#876).
+            configuration.userContentController.addUserScript(WKUserScript(
+                source: ClaudeSharedPage.snapshotHookScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true,
+                in: .page
+            ))
+            rules = ClaudeSharedPage.contentRules
+            ruleListIdentifier = "spoken-margins-claude-share.v1"
+        } else {
+            configuration.userContentController.addUserScript(WKUserScript(
+                source: try extractorScript(),
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: true,
+                in: .defaultClient
+            ))
+            rules = """
+            [{"trigger":{"url-filter":".*","resource-type":["image","style-sheet","script","font","media","raw","svg-document","popup"]},"action":{"type":"block"}}]
+            """
+            ruleListIdentifier = "spoken-margins-readable-page.v1"
+        }
         guard let ruleList = try await WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "spoken-margins-readable-page.v1",
+            forIdentifier: ruleListIdentifier,
             encodedContentRuleList: rules
         ) else { throw ReadablePageExtractionError.missingExtractor }
         guard stoppedPages == stoppedBefore else {
@@ -83,10 +103,9 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
         self.webView = webView
-        redirectCount = 0
+        navigationRules = ReadablePageNavigationRules(requestedURL: url)
         requestedURL = url
         lastExtractor = nil
-        contactedHosts = [url.host!.lowercased()]
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30))
@@ -97,8 +116,10 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
         _ webView: WKWebView,
         decidePolicyFor navigationResponse: WKNavigationResponse
     ) async -> WKNavigationResponsePolicy {
+        let limit = requestedURL.map(ChatGPTSharedPage.matches) == true
+            ? Self.maximumSharedChatHTMLBytes : Self.maximumHTMLBytes
         if navigationResponse.isForMainFrame,
-           navigationResponse.response.expectedContentLength > Self.maximumHTMLBytes {
+           navigationResponse.response.expectedContentLength > limit {
             finish(.failure(ReadablePageExtractionError.oversizedHTML))
             return .cancel
         }
@@ -114,23 +135,25 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction
     ) async -> WKNavigationActionPolicy {
-        guard navigationAction.targetFrame?.isMainFrame != false,
-              let url = navigationAction.request.url,
-              url.scheme?.lowercased() == "https",
-              let host = url.host?.lowercased() else {
-            finish(.failure(ReadablePageExtractionError.invalidURL))
+        guard var rules = navigationRules else { return .cancel }
+        let decision = rules.decide(
+            url: navigationAction.request.url,
+            targetIsMainFrame: navigationAction.targetFrame?.isMainFrame,
+            isRedirect: navigationAction.navigationType == .other
+        )
+        navigationRules = rules
+        switch decision {
+        case .load:
+            return .allow
+        case .skipFrame:
+            return .cancel
+        case .refuse(.pageLeftHTTPS):
+            finish(.failure(ReadablePageExtractionError.pageLeftHTTPS))
+            return .cancel
+        case .refuse(.tooManyRedirects):
+            finish(.failure(ReadablePageExtractionError.tooManyRedirects))
             return .cancel
         }
-        if !contactedHosts.contains(host) { contactedHosts.append(host) }
-        if navigationAction.navigationType == .other, url != requestedURL {
-            redirectCount += 1
-            requestedURL = url
-            if redirectCount > Self.maximumRedirects {
-                finish(.failure(ReadablePageExtractionError.tooManyRedirects))
-                return .cancel
-            }
-        }
-        return .allow
     }
 
     nonisolated static func failingHTTPStatus(_ response: URLResponse) -> Int? {
@@ -140,6 +163,24 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Task { @MainActor in
+            // A shared ChatGPT page draws its chat with scripts, so the page reader would see only the title.
+            // The chat is in the page's data instead. If it isn't, say so rather than import a few words (#874).
+            if let url = requestedURL, ClaudeSharedPage.matches(url) {
+                let shared: Result<BrowserTextHandoff, Error>
+                do { shared = .success(try await sharedClaudeHandoff(in: webView, url: url)) } catch { shared = .failure(error) }
+                guard self.webView === webView else { return }
+                if case .success = shared { lastExtractor = "claude_shared_page" }
+                finish(shared)
+                return
+            }
+            if let url = requestedURL, ChatGPTSharedPage.matches(url) {
+                let shared: Result<BrowserTextHandoff, Error>
+                do { shared = .success(try await sharedChatHandoff(in: webView, url: url)) } catch { shared = .failure(error) }
+                guard self.webView === webView else { return }
+                if case .success = shared { lastExtractor = "chatgpt_shared_page" }
+                finish(shared)
+                return
+            }
             let outcome: Result<[String: Any], Error>
             do { outcome = .success(try await capturePayload(in: webView)) } catch { outcome = .failure(error) }
             // A page stopped by the time limit must not answer the next page's request (#579).
@@ -194,6 +235,43 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
             return payload
         }
     }
+
+    /// The page's scripts are still fetching the chat when the page finishes loading. Wait for the copy the
+    /// capture script keeps. A page that was loading fine answers within seconds (3 on a Mac); one stuck behind
+    /// a bot check never does, so stop waiting well before the queue's time limit.
+    private func sharedClaudeHandoff(in webView: WKWebView, url: URL) async throws -> BrowserTextHandoff {
+        let deadline = ContinuousClock.now + .seconds(20)
+        while self.webView === webView {
+            guard ContinuousClock.now < deadline else { throw ClaudeSharedPage.ParseError.noSnapshot }
+            let result = try await webView.callAsyncJavaScript(
+                ClaudeSharedPage.snapshotReadScript, arguments: [:], in: nil, contentWorld: .page
+            )
+            if let snapshot = result as? String { return try ClaudeSharedPage.handoff(fromSnapshot: snapshot, url: url) }
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+        throw CancellationError()
+    }
+
+    private func sharedChatHandoff(in webView: WKWebView, url: URL) async throws -> BrowserTextHandoff {
+        let result = try await webView.callAsyncJavaScript(
+            Self.sharedChatScriptsJavaScript, arguments: [:], in: nil, contentWorld: .defaultClient
+        )
+        guard let payload = result as? [String: Any], let scripts = payload["scripts"] as? String else {
+            throw ChatGPTSharedPage.ParseError.noPageData
+        }
+        return try ChatGPTSharedPage.handoff(fromPageSource: scripts, url: url, pageTitle: payload["title"] as? String)
+    }
+
+    /// The page's inline scripts that carry its data. They sit in the document whether or not they ran.
+    private static let sharedChatScriptsJavaScript = #"""
+    return {
+        title: document.title,
+        scripts: Array.from(document.scripts)
+            .map(script => script.textContent || "")
+            .filter(text => text.includes("streamController.enqueue"))
+            .join("\n")
+    };
+    """#
 
     static func handoff(from payload: [String: Any]) throws -> BrowserTextHandoff {
         guard let text = payload["text"] as? String,

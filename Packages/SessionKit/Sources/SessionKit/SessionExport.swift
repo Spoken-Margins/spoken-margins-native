@@ -142,7 +142,9 @@ public enum SessionExportMarkdownRenderer {
         return transcriptNotAvailableYet
     }
 
-    public static func render(_ export: SessionExport) -> String {
+    /// `includesSessionProgress: false` leaves out the session's status and completion, for a note that must not
+    /// change while the listener plays the item again (#587).
+    public static func render(_ export: SessionExport, includesSessionProgress: Bool = true) -> String {
         var lines: [String] = []
         lines.append("# Spoken Margins AI Handoff: \(export.item.title)")
         lines.append("")
@@ -170,11 +172,13 @@ public enum SessionExportMarkdownRenderer {
             lines.append(transcript)
             lines.append("")
         }
-        lines.append("## Session")
-        lines.append("")
-        lines.append("Status: \(export.session.status)")
-        lines.append("Completion: \(export.session.completionPercent)%")
-        lines.append("")
+        if includesSessionProgress {
+            lines.append("## Session")
+            lines.append("")
+            lines.append("Status: \(export.session.status)")
+            lines.append("Completion: \(export.session.completionPercent)%")
+            lines.append("")
+        }
         if let overview = export.listeningMap?.overview.trimmingCharacters(in: .whitespacesAndNewlines), !overview.isEmpty {
             lines.append("## Listening Map")
             lines.append("")
@@ -308,7 +312,7 @@ public enum SessionExportMarkdownRenderer {
         if let turn {
             targetTitle = title(for: turn)
         } else if interjections.first?.targetType == InterjectionTargetType.summaryTurn.rawValue {
-            targetTitle = "Interjection Summary"
+            targetTitle = ConversationTurnTitle.marginSummary
         } else {
             targetTitle = "AI Response"
         }
@@ -429,16 +433,7 @@ public enum SessionExportMarkdownRenderer {
     }
 
     private static func title(for turn: ConversationTurn) -> String {
-        switch turn.turnType {
-        case "interjection_summary":
-            return "Interjection Summary"
-        case "assistant_response":
-            return "AI Response"
-        case "user_response":
-            return "Follow-up"
-        default:
-            return turn.turnType.replacingOccurrences(of: "_", with: " ").capitalized
-        }
+        ConversationTurnTitle.plain(turnType: turn.turnType)
     }
 
     private static func formattedMediaTime(_ mediaTimeMs: Int) -> String {

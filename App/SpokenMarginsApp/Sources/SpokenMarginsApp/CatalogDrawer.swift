@@ -6,11 +6,7 @@ import SessionKit
 /// tap through the app's normal follow path.
 @MainActor
 final class CatalogDrawerModel: ObservableObject {
-    enum FollowState: Equatable {
-        case following
-        case followed
-        case failed(String)
-    }
+    typealias FollowState = CatalogDrawerFollowState
 
     static let seenKey = "catalogDrawerSeenV1"
     /// Catalog entry id → followed source id, recorded when the drawer follows a show.
@@ -30,17 +26,21 @@ final class CatalogDrawerModel: ObservableObject {
     private let subscriptions: @MainActor () -> [FeedSubscription]
     private let defaults: UserDefaults
     private var hasLoaded = false
+    /// Makes a fresh OPML import (#463) for the drawer and Following; nil hides the entry.
+    let makeOPMLImport: (@MainActor () -> OPMLImportModel)?
 
     init(
         store: SourceCatalogStore?,
         defaults: UserDefaults = .standard,
         subscriptions: @escaping @MainActor () -> [FeedSubscription],
-        follow: @escaping @MainActor (String) async throws -> String
+        follow: @escaping @MainActor (String) async throws -> String,
+        makeOPMLImport: (@MainActor () -> OPMLImportModel)? = nil
     ) {
         self.store = store
         self.defaults = defaults
         self.subscriptions = subscriptions
         self.follow = follow
+        self.makeOPMLImport = makeOPMLImport
     }
 
     /// The app's drawer: the bundled snapshot plus a cache in Application Support.
@@ -67,6 +67,11 @@ final class CatalogDrawerModel: ObservableObject {
 
     var subjects: [SourceCatalogSubject] { catalog?.visibleSubjects ?? [] }
     var followedCount: Int { followStates.values.filter { $0 == .followed }.count }
+    /// The footer, counting shows and newsletters in their own words (#661).
+    var followedSummary: String? {
+        let followed = (catalog?.entries ?? []).filter { followStates[$0.id] == .followed }
+        return CatalogFollowedSummary.text(followedKinds: followed.map(\.contentKind))
+    }
 
     func presentIfFirstRun(libraryWasEmptyAtLaunch: Bool, followedSourceCount: Int) {
         guard FirstRunCatalogDrawerPolicy.opensAutomatically(
@@ -77,7 +82,10 @@ final class CatalogDrawerModel: ObservableObject {
         present()
     }
 
+    /// The drawer model lives for the whole app run, so each opening drops the follows it
+    /// confirmed before: the listener may have unfollowed one in Following since (#646).
     func present() {
+        followStates = FollowState.keptOnReopening(followStates)
         isPresented = true
     }
 
@@ -124,18 +132,12 @@ final class CatalogDrawerModel: ObservableObject {
     /// twice per row. Subscriptions aren't cached: they change in Following without telling
     /// the drawer.
     func followStates(for entries: [SourceCatalogEntry]) -> [String: FollowState] {
-        var states: [String: FollowState] = [:]
+        var followed: Set<String> = []
         if let catalog, entries.contains(where: { followStates[$0.id] == nil }) {
             let recorded = defaults.dictionary(forKey: Self.followedSourcesKey) as? [String: String] ?? [:]
-            let followed = CatalogFollowState.followedEntryIds(in: catalog, recordedSourceIds: recorded, subscriptions: subscriptions())
-            for entry in entries where followed.contains(entry.id) {
-                states[entry.id] = .followed
-            }
+            followed = CatalogFollowState.followedEntryIds(in: catalog, recordedSourceIds: recorded, subscriptions: subscriptions())
         }
-        for entry in entries {
-            if let state = followStates[entry.id] { states[entry.id] = state }
-        }
-        return states
+        return FollowState.merged(drawerStates: followStates, liveFollowedEntryIds: followed, entryIds: entries.map(\.id))
     }
 
     private func recordFollowedSource(_ sourceId: String, for entry: SourceCatalogEntry) {
@@ -172,6 +174,7 @@ struct CatalogDrawerView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 subjectBar
+                importLink
                 list
             }
             .background(AppColors.bone)
@@ -186,6 +189,21 @@ struct CatalogDrawerView: View {
             .task { await drawer.load() }
         }
         .accessibilityIdentifier("catalog.drawer")
+    }
+
+    /// Shown whether or not the podcast list loaded: importing matters most when it didn't (#463).
+    @ViewBuilder
+    private var importLink: some View {
+        if let makeOPMLImport = drawer.makeOPMLImport {
+            NavigationLink {
+                OPMLImportScreen(importer: makeOPMLImport())
+            } label: {
+                Label("Import from another app", systemImage: "square.and.arrow.down")
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            }
+            .padding(.horizontal, 16)
+            .accessibilityIdentifier("catalog.drawer.importOPML")
+        }
     }
 
     private var subjectBar: some View {
@@ -241,8 +259,8 @@ struct CatalogDrawerView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .safeAreaInset(edge: .bottom) {
-                if drawer.followedCount > 0 {
-                    Text("Following \(drawer.followedCount) \(drawer.followedCount == 1 ? "show" : "shows")")
+                if let summary = drawer.followedSummary {
+                    Text(summary)
                         .font(.subheadline.weight(.semibold))
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .background(.bar)
@@ -304,8 +322,7 @@ private struct CatalogDrawerRow: View, Equatable {
                 .accessibilityIdentifier("catalog.follow.\(entry.id)")
         case nil:
             Button("Follow", action: toggleFollow)
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.evergreen)
+                .filledActionButton()
                 .frame(minWidth: 96, minHeight: 44)
                 .accessibilityLabel("Follow \(entry.title)")
                 .accessibilityIdentifier("catalog.follow.\(entry.id)")

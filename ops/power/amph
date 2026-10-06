@@ -1,0 +1,268 @@
+#!/usr/bin/osascript
+-- amph: a small command-line handle on Amphetamine for agents and scripts.
+-- Usage is in ops/power/README.md, or run `amph help`.
+--
+-- Amphetamine reports a session's time left as seconds, or as a code:
+--   0 = runs until stopped, -1 = started by a Trigger, -2 = "while app running" or
+--   "until a time", -3 = no session.
+-- "Lid awake" is Amphetamine's closed-display mode: the Mac keeps running with the lid shut.
+
+on run argv
+	if (count of argv) is 0 then return usage()
+	set cmd to item 1 of argv
+	set params to {}
+	if (count of argv) > 1 then set params to items 2 thru -1 of argv
+
+	if cmd is "status" then return statusJSON()
+	if cmd is "help" or cmd is "-h" or cmd is "--help" then return usage()
+
+	if cmd is "start" then
+		set mins to requireMinutes(params, "start")
+		startSession(mins, ("--screen-on" is in params), ("--lid" is in params))
+		forgetHold()
+		if mins is 0 then return "started: until stopped"
+		return "started: " & mins & " min"
+	end if
+
+	if cmd is "hold" then
+		-- A fixed-length hold for leaving the Mac alone: lid closed is fine, the display sleeps,
+		-- and it doesn't depend on agents or builds staying busy.
+		set mins to requireDuration(params)
+		startSession(mins, false, true)
+		rememberHold(mins)
+		return "holding: " & mins & " min, lid closed OK, ends " & (((current date) + mins * 60) as text)
+	end if
+
+	if cmd is "ensure" then
+		set mins to requireMinutes(params, "ensure")
+		if mins < 1 then error "ensure needs at least 1 minute" number 2
+		return ensureSession(mins, ("--screen-on" is in params), ("--lid" is in params))
+	end if
+
+	if cmd is "stop" then
+		tell application "Amphetamine" to end session
+		forgetHold()
+		return "stopped"
+	end if
+
+	if cmd is "lid" then
+		set choice to requireChoice(params, "lid", {"on", "off"})
+		tell application "Amphetamine"
+			if choice is "on" then
+				enable closed display mode
+			else
+				disable closed display mode
+			end if
+		end tell
+		return "lid awake: " & choice
+	end if
+
+	if cmd is "display-sleep" then
+		set choice to requireChoice(params, "display-sleep", {"allow", "prevent"})
+		tell application "Amphetamine"
+			if choice is "allow" then
+				allow display sleep
+			else
+				prevent display sleep
+			end if
+		end tell
+		return "display sleep: " & choice
+	end if
+
+	if cmd is "triggers" then
+		set choice to requireChoice(params, "triggers", {"on", "off"})
+		tell application "Amphetamine"
+			if choice is "on" then
+				enable Triggers
+			else
+				disable Triggers
+			end if
+		end tell
+		return "triggers: " & choice
+	end if
+
+	-- For tests only: what ensure would do, without asking Amphetamine.
+	if cmd is "_ensure-decision" then
+		return ensureDecision((item 1 of params) as integer, (item 2 of params) as integer, ¬
+			(item 3 of params) as integer, (item 4 of params) as integer)
+	end if
+
+	error "unknown command: " & cmd & " (try: amph help)" number 2
+end run
+
+-- Start a session. 0 minutes means until stopped. The display may sleep unless asked to stay on,
+-- because unattended builds don't need the screen and it is the biggest drain on battery.
+on startSession(mins, screenOn, lidAwake)
+	if mins is 0 then
+		set opts to {duration:0, interval:0, displaySleepAllowed:(not screenOn)}
+	else
+		set opts to {duration:mins, interval:minutes, displaySleepAllowed:(not screenOn)}
+	end if
+	tell application "Amphetamine"
+		start new session with options opts
+		if lidAwake then enable closed display mode
+	end tell
+end startSession
+
+-- Make sure the Mac stays awake for about `mins` more minutes without cutting anyone short.
+-- A session that runs until stopped, until a time, while an app runs, or from a Trigger is kept.
+-- A timed session with at least half of `mins` left is kept, so repeated calls renew it only at
+-- half-life instead of restarting it every time. Otherwise a new `mins` session replaces it.
+-- An explicit `amph hold` is kept until its own end, however little of it is left (#837).
+on ensureSession(mins, screenOn, lidAwake)
+	tell application "Amphetamine" to set secs to session time remaining
+	if ensureDecision(secs, mins, holdEnd(), epochNow()) is "start" then
+		startSession(mins, screenOn, lidAwake)
+		forgetHold()
+		return "started: " & mins & " min"
+	end if
+	set extra to ""
+	if lidAwake then
+		tell application "Amphetamine"
+			if not (closed display mode enabled) then
+				enable closed display mode
+				set extra to ", lid awake turned on"
+			end if
+		end tell
+	end if
+	return "kept: " & describeRemaining(secs) & extra
+end ensureSession
+
+-- "start" to replace the session with a new `mins` one, or "keep".
+-- secs: Amphetamine's time remaining (or code); holdEnd: when the last `amph hold` ends, in Unix
+-- seconds (0 if none); nowSecs: Unix seconds now. A timed session is the hold when its time left
+-- matches the hold's (within 2 minutes); a stale hold record matches nothing, so it can't pin
+-- another session.
+on ensureDecision(secs, mins, holdEnd, nowSecs)
+	if secs > 0 and holdEnd > nowSecs then
+		set diff to (holdEnd - nowSecs) - secs
+		if diff < 0 then set diff to -diff
+		if diff ≤ 120 then return "keep"
+	end if
+	if secs is -3 or (secs > 0 and secs < mins * 30) then return "start"
+	return "keep"
+end ensureDecision
+
+-- The hold record: when the hold started by `amph hold` ends, as Unix seconds.
+on holdFile()
+	return (POSIX path of (path to home folder)) & "SpokenMarginsOps/keep-awake/hold-until"
+end holdFile
+
+on rememberHold(mins)
+	set f to quoted form of holdFile()
+	do shell script "mkdir -p \"$(dirname " & f & ")\" && echo $(( $(date +%s) + " & (mins * 60) & " )) > " & f
+end rememberHold
+
+on forgetHold()
+	do shell script "rm -f " & quoted form of holdFile()
+end forgetHold
+
+on holdEnd()
+	try
+		return (do shell script "cat " & quoted form of holdFile()) as integer
+	on error
+		return 0
+	end try
+end holdEnd
+
+on epochNow()
+	return (do shell script "date +%s") as integer
+end epochNow
+
+on statusJSON()
+	if not (application "Amphetamine" is running) then return "{\"running\":false}"
+	tell application "Amphetamine"
+		set isActive to session is active
+		set secs to session time remaining
+		set lidAwake to closed display mode enabled
+		set displaySleep to display sleep allowed
+		set triggersOn to Triggers are enabled
+	end tell
+	return "{\"running\":true,\"active\":" & (isActive as text) & ¬
+		",\"remaining_seconds\":" & secs & ¬
+		",\"kind\":\"" & sessionKind(secs) & "\"" & ¬
+		",\"lid_awake\":" & (lidAwake as text) & ¬
+		",\"display_sleep_allowed\":" & (displaySleep as text) & ¬
+		",\"triggers_enabled\":" & (triggersOn as text) & "}"
+end statusJSON
+
+on sessionKind(secs)
+	if secs > 0 then return "timed"
+	if secs is 0 then return "until_stopped"
+	if secs is -1 then return "trigger"
+	if secs is -2 then return "app_or_time"
+	return "none"
+end sessionKind
+
+on describeRemaining(secs)
+	if secs > 0 then return ((secs div 60) as text) & " min left"
+	if secs is 0 then return "session runs until stopped"
+	if secs is -1 then return "Trigger session"
+	if secs is -2 then return "app or end-time session"
+	return "no session"
+end describeRemaining
+
+on requireMinutes(params, cmdName)
+	if (count of params) is 0 then error cmdName & " needs a number of minutes" number 2
+	try
+		set mins to (item 1 of params) as integer
+	on error
+		error cmdName & " needs a number of minutes, got: " & (item 1 of params) number 2
+	end try
+	if mins < 0 then error cmdName & " needs 0 or more minutes" number 2
+	return mins
+end requireMinutes
+
+-- "41h", "90m" or "1h30m" to minutes.
+on requireDuration(params)
+	set bad to "hold needs a length like 41h, 90m or 1h30m"
+	if (count of params) is 0 then error bad number 2
+	set total to 0
+	set digits to ""
+	repeat with ch in (characters of (item 1 of params))
+		set ch to ch as text
+		if ch is in {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"} then
+			set digits to digits & ch
+		else if (ch is "h" or ch is "m") and digits is not "" then
+			if ch is "h" then
+				set total to total + (digits as integer) * 60
+			else
+				set total to total + (digits as integer)
+			end if
+			set digits to ""
+		else
+			error bad number 2
+		end if
+	end repeat
+	if digits is not "" or total < 1 then error bad number 2
+	return total
+end requireDuration
+
+on requireChoice(params, cmdName, choices)
+	if (count of params) is 0 or (item 1 of params) is not in choices then
+		set AppleScript's text item delimiters to "|"
+		set joined to choices as text
+		set AppleScript's text item delimiters to ""
+		error cmdName & " needs one of: " & joined number 2
+	end if
+	return item 1 of params
+end requireChoice
+
+on usage()
+	return "amph: control Amphetamine from the command line.
+
+  amph status                     JSON: active, remaining_seconds, kind, lid_awake, ...
+  amph hold <41h|90m|1h30m>       stay awake exactly that long, lid closed OK, busy or
+                                  not (replaces any session)
+  amph ensure <min> [--lid] [--screen-on]
+                                  keep awake at least ~<min> more minutes; never shortens
+                                  or replaces another session (use this from agents)
+  amph start <min> [--lid] [--screen-on]
+                                  replace any session with a new one (0 = until stopped)
+  amph stop                       end the current session (Cole's call, not an agent's)
+  amph lid on|off                 keep running with the lid closed
+  amph display-sleep allow|prevent
+  amph triggers on|off
+
+  The display may sleep in sessions started here unless --screen-on is given."
+end usage

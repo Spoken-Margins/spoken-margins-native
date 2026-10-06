@@ -23,10 +23,9 @@ final class PKMWorkflowTests: XCTestCase {
         _ = try await restarted.deliver([.init(id: note.id, markdown: "Updated transcript")], to: folder, destinationID: "vault")
         XCTAssertEqual(try String(contentsOf: files[0], encoding: .utf8), "Updated transcript")
         try Data("My Obsidian edit".utf8).write(to: files[0])
-        do {
-            _ = try await restarted.deliver([.init(id: note.id, markdown: "Another transcript"), .init(id: "unaffected", markdown: "Another independent Margin")], to: folder, destinationID: "vault")
-            XCTFail("An external edit must prevent overwrite")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("edited outside")) }
+        // #581: the edit is kept and counted, not reported as a failure.
+        let summary = try await restarted.deliver([.init(id: note.id, markdown: "Another transcript"), .init(id: "unaffected", markdown: "Another independent Margin")], to: folder, destinationID: "vault")
+        XCTAssertEqual(summary, MarginNoteDelivery.Summary(saved: 1, keptEdits: 1))
         XCTAssertEqual(try String(contentsOf: files[0], encoding: .utf8), "My Obsidian edit")
         let delivered = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
         XCTAssertEqual(delivered.count, 2, "One conflict must not prevent independent delivery")
@@ -65,10 +64,8 @@ final class PKMWorkflowTests: XCTestCase {
         try Data("My Obsidian edit".utf8).write(to: file("session-a:m2"))
 
         let upgraded = AutomaticMarginWriter(journalURL: journal)
-        do {
-            _ = try await upgraded.deliver(current, to: folder, destinationID: "vault")
-            XCTFail("The edited note must be reported, not overwritten")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("edited outside")) }
+        let summary = try await upgraded.deliver(current, to: folder, destinationID: "vault")
+        XCTAssertEqual(summary, MarginNoteDelivery.Summary(saved: 1, keptEdits: 1), "The edited note is kept, not overwritten")
         XCTAssertEqual(try String(contentsOf: file("session-a:m1"), encoding: .utf8), current[0].markdown)
         XCTAssertEqual(try String(contentsOf: file("session-a:m2"), encoding: .utf8), "My Obsidian edit")
 
@@ -174,7 +171,7 @@ final class PKMWorkflowTests: XCTestCase {
         XCTAssertFalse(written[0].contains("Transcript not available yet."))
     }
 
-    private func delivery(_ fixture: (root: URL, store: SQLiteSessionStore, folder: URL), statuses: @escaping @MainActor (String) -> Void = { _ in }) -> MarginNotesDelivery {
+    private func delivery(_ fixture: (root: URL, store: SQLiteSessionStore, folder: URL), statuses: @escaping @MainActor (MarginOutputStatus) -> Void = { _ in }) -> MarginNotesDelivery {
         MarginNotesDelivery(
             isEnabled: { true },
             isRecording: { false },
@@ -188,7 +185,7 @@ final class PKMWorkflowTests: XCTestCase {
         let fixture = try notesFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         var statuses: [String] = []
-        let delivery = delivery(fixture) { statuses.append($0) }
+        let delivery = delivery(fixture) { statuses.append($0.message) }
         try fixture.store.saveInterjection(spokenMargin(id: "ij-001", sessionId: "session-episode", itemId: "item-episode", transcript: "Said just before switching apps."))
 
         try await XCTUnwrap(delivery.finishBeforeBackground()).value
@@ -242,5 +239,42 @@ final class PKMWorkflowTests: XCTestCase {
 
         model.handleIncomingURL(MarginDeepLink(sessionId: "session-linked", marginId: "ij-missing").url)
         XCTAssertEqual(model.lastError, "This Margin is no longer in your Library.")
+    }
+
+    /// #638: a cold launch restores another session paused, and the link still opens its own Margin.
+    func testAMarginLinkOpensItsTimelineAfterLaunchRestoresAnotherPausedSession() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("margin-link-restored-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("library.sqlite")
+        let firstLaunch = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: url)
+        firstLaunch.resetAndSeed()
+        firstLaunch.startItem(id: "item-pill")
+        firstLaunch.pause()
+        let restoredSessionID = try XCTUnwrap(firstLaunch.snapshot.sessionId)
+        let store = try SQLiteSessionStore(path: url.path)
+        let restoredPosition = try XCTUnwrap(store.loadSession(id: restoredSessionID)).position
+        try store.saveItem(Item(id: "item-linked", title: "An older article", mediaType: "text",
+                                text: "An older article the listener finished, with a Margin worth coming back to.",
+                                externalReference: "local", status: "ready"))
+        try store.saveSession(Session(id: "session-linked", itemId: "item-linked", status: "finished", phase: .finished,
+                                      currentTargetType: .itemTextTTS, currentTargetId: "item-linked",
+                                      position: Position(charOffset: 20), completionPercent: 100, playbackRate: 1))
+        var margin = spokenMargin(id: "ij-linked", sessionId: "session-linked", itemId: "item-linked", transcript: "Worth coming back to.")
+        margin.anchor = Anchor(anchorType: .text, startChar: 10, endChar: 20, anchorBefore: "Before", anchorAfter: "After")
+        try store.saveInterjection(margin)
+
+        let relaunched = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: url)
+        relaunched.handleIncomingURL(MarginDeepLink(sessionId: "session-linked", marginId: "ij-linked").url)
+
+        XCTAssertEqual(relaunched.diagnostics["restoredSession"], restoredSessionID, "launch restores the other session first")
+        XCTAssertNil(relaunched.diagnostics["marginTimelineNavigation"])
+        XCTAssertEqual(relaunched.snapshot.sessionId, "session-linked")
+        XCTAssertEqual(relaunched.screen, .timeline)
+        XCTAssertEqual(relaunched.requestedTimelineFocusMarginID, "session-linked::ij-linked")
+        XCTAssertFalse(relaunched.activePlaybackIsPlaying, "opening a link starts nothing")
+        let restored = try XCTUnwrap(store.loadSession(id: restoredSessionID))
+        XCTAssertEqual(restored.position, restoredPosition, "the paused session keeps its place")
+        XCTAssertTrue(Gate1AppModel.isResumableSession(restored))
     }
 }

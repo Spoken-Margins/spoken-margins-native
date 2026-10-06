@@ -45,8 +45,8 @@ def source_features(events):
         if item:
             item_id = item["id"]
             state["seen"].add(item_id)
-            if item_id not in items:
-                items[item_id] = item.get("duration_seconds") or 0
+            # item_published rows may lack a duration the playing item knows; keep the largest.
+            items[item_id] = max(items.get(item_id, 0), item.get("duration_seconds") or 0)
             if event["event"] == "listened":
                 state["listened"] += event["seconds"]
             elif event["event"] == "finish":
