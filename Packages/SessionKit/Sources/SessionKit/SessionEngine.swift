@@ -2452,6 +2452,11 @@ public final class SessionEngine {
         throw SessionKitError.invalidCommandForState("selectSummaryCandidates")
     }
 
+    /// The stored session, for dating its Margins as the notes folder does (`Interjection.recordedAt(in:)`, #624).
+    public func loadSession(id: String) throws -> Session? {
+        try repository.loadSession(id: id)
+    }
+
     @discardableResult
     public func buildExport(options: ExportOptions) throws -> SessionExport {
         let session = try resolveSession(options.sessionId)
