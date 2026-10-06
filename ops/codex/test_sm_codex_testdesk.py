@@ -60,6 +60,7 @@ class PureTests(unittest.TestCase):
                            limits=lambda: None, echo=False)
             ops.diagnose(Path(tmp), Path(tmp), [TEST])
         self.assertIn(f'model_reasoning_effort="{worker.EFFORT}"', seen[0])
+        self.assertIn('--json', seen[0])
 
     def test_once_per_sha_and_spacing_even_after_inconclusive(self):
         state = {'last_started': 100, 'results': {SHA: {'verdict': 'INCONCLUSIVE'}}}
@@ -192,6 +193,8 @@ class TickTests(unittest.TestCase):
             return worker.Result(0, json.dumps({'html_url': 'https://github.com/report'}))
         if cmd[:3] == ['gh', 'issue', 'list']:
             return worker.Result(0, json.dumps([{'number': desk.REPORT_ISSUE, 'body': TEST}]))
+        if cmd[:3] == ['gh', 'issue', 'create']:
+            return worker.Result(0, 'https://github.com/uncomposed/spoken-margins-native/issues/900')
         return worker.Result(0)
 
     def fake_plan(self, wt, output, plan, fds):
@@ -202,6 +205,24 @@ class TickTests(unittest.TestCase):
     def tick(self, dry=False):
         with patch.object(self.ops, 'test_plan', side_effect=self.fake_plan):
             return desk.tick(self.ops, dry_run=dry)
+
+    def test_diagnosis_records_usage_and_bug_posts_once(self):
+        self.app = manifest('failed')
+        groups = desk.diagnoses('', [TEST])
+        def diagnose(wt, evidence, failed):
+            (evidence / 'codex.jsonl').write_text(
+                '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":90,"output_tokens":10}}\n')
+            return groups
+        with patch.object(self.ops, 'diagnose', side_effect=diagnose):
+            self.assertEqual(self.tick(), 'FAIL')
+        rows = [json.loads(line) for line in (self.ops.ledger_dir / 'usage.jsonl').read_text().splitlines()]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['job'], 'testdesk-diagnosis')
+        self.assertEqual(rows[0]['input_tokens'], 100)
+        self.assertEqual(rows[0]['targets'][0]['head_sha'], SHA)
+        self.assertEqual(rows[0]['comment_url'], 'https://github.com/report')
+        self.assertEqual(rows[0]['posted'][0]['issue'], 900)
+        self.assertTrue(rows[0]['posted'][0]['created'])
 
     def test_dry_run_does_not_fetch_write_worktree_or_launch_tests(self):
         with contextlib.redirect_stdout(io.StringIO()) as out:

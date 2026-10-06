@@ -2,6 +2,68 @@
 
 A Mac-side worker that finishes PRs before taking `ready` issues with Codex (`gpt-6.1-sol`, reasoning effort `high`), paced by the Dial (#589), so spare Codex allowance gets used. Nothing here is installed by default.
 
+## Local token ledger
+
+Audit batches, issue runs, finisher rounds and Test Desk diagnosis calls use
+`codex exec --json`. Each invocation appends one row to
+`~/SpokenMarginsOps/ledger/usage.jsonl`. A batch has multiple `targets` (PR, linked
+issues, head/base SHA, trigger, outcome and posted comment URL) in a single row;
+its tokens are never duplicated per PR. Worker/diagnosis outcomes and post URLs
+also appear at the run level. Counts come from Codex's `turn.completed.usage`
+events; cached input is included in input. Missing fields are null with a reason,
+and a failed later turn marks completed-turn totals as incomplete.
+
+The audit keeps its `.jsonl` transcript beside the answer in
+`artifacts/ops/codex-audit-outputs/`, including failures. Workers keep
+`transcript.jsonl` in their run folder; diagnosis keeps `codex.jsonl` in its
+evidence folder. These files and the ledger stay local. A write failure is logged
+and does not stop the job or change its posting behavior.
+
+A locked, atomically replaced journal in `ledger/pending/` is saved before each
+model invocation. A normal/failed/timed-out invocation finalizes its row. If the
+wrapper itself is killed, the next wrapper tick, model invocation or report recovers its row
+once, with the preserved usage and an interrupted outcome. Its wall time is null
+if the model hadn't finished. A run whose wrapper still holds the lock is left
+alone. Successful posts checkpoint their URLs before later work.
+
+Print a chosen week's summary locally (week start inclusive, seven days,
+America/Chicago by default):
+
+```zsh
+/usr/bin/python3 ops/ledger/report.py --week 2026-10-05
+```
+
+The report reads the ledger and GitHub. It shows observed token subtotals by job,
+PR-work tokens per PR merged that week, audit tokens per confirmed fix claim, and
+diagnosis tokens per new Test Desk bug. Incomplete usage or a zero denominator
+gives a null ratio. Batches count once. Fixes and new bugs count once even when
+several runs mention them. GitHub errors abort the report instead of silently
+producing an incomplete denominator.
+
+A finding counts as a fix claim only when a later comment links its audit URL or
+audited sha7, names the exact finding title as `**<title>: fixed.**`, and includes
+`fixed in` followed by a backticked commit SHA. The commit must be ahead of the audited head and change
+the finding's file. This recognizes #580's recorded replies. It does not prove
+the behavior is fixed; unmatched prose remains uncounted. For example:
+
+```text
+Findings fixed in `123abcd` from audit on `765fedc`:
+**The chime continues over newly started speech: fixed.**
+```
+
+The repeated-outcome measure compares stable finding titles/files, clean
+verdicts, or stop reasons with the preceding result for each job/PR. A batch is
+repeated only if every target repeats. Repetition can be necessary verification,
+so this is an inspection signal. No percentage appears until ledger events span
+a week. Claude and interactive Codex app sessions are outside this ledger.
+
+Host tests (Python 3.9, no simulator):
+
+```zsh
+/usr/bin/python3 -m unittest discover -s ops/ledger
+/usr/bin/python3 -m unittest discover -s ops/codex
+```
+
 ## What it does
 
 launchd runs `sm_codex_worker.py` every 10 minutes. Each run (a tick) reads:

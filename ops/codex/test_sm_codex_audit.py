@@ -10,7 +10,10 @@ import ast
 import json
 import re
 import sys
+import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -421,6 +424,55 @@ class Paths(unittest.TestCase):
     def test_limits_script_sits_beside_the_audit(self):
         self.assertTrue(A.LIMITS_SCRIPT.is_file())
         self.assertEqual(A.LIMITS_SCRIPT.parent, Path(A.__file__).resolve().parent)
+
+
+class UsageRecording(unittest.TestCase):
+    def test_audit_process_requests_json_events(self):
+        commands = []
+        class Process:
+            def __init__(self, command, **kwargs):
+                commands.append(command)
+                Path(command[command.index('-o') + 1]).write_text('No blocking findings.')
+            def wait(self, timeout):
+                return 0
+        with tempfile.TemporaryDirectory() as tmp, patch.object(A.subprocess, 'Popen', Process):
+            A.run_codex(Path(tmp), Path(tmp) / 'answer.md', 'prompt', Path(tmp) / 'transcript.jsonl')
+        self.assertIn('--json', commands[0])
+
+    def test_batch_retains_transcript_and_records_once_even_on_timeout(self):
+        for ok in (True, False):
+            with self.subTest(ok=ok), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                scratch = root / 'scratch'
+                scratch.mkdir()
+                kept = root / 'kept'
+                ledger = root / 'ledger'
+                def run(command, **kwargs):
+                    if command[:3] == ['git', 'worktree', 'add']:
+                        Path(command[-2]).mkdir()
+                    output = HEAD if command[-1] == 'FETCH_HEAD' else OLD
+                    if command[:3] == ['gh', 'pr', 'comment']:
+                        output = 'https://github.com/uncomposed/spoken-margins-native/pull/1#issuecomment-42'
+                    return SimpleNamespace(stdout=output, stderr='', returncode=0)
+                def codex(wt, answer, prompt, transcript):
+                    transcript.write_text('{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":90,"output_tokens":10}}\n')
+                    if ok:
+                        answer.write_text('### PR #1\nNo blocking findings.\n### PR #2\nNo blocking findings.')
+                    return ok, 'ok' if ok else 'timed out'
+                batch = [dict(pr(number=n), lines=1, issues=[], reason='new head') for n in (1, 2)]
+                with patch.object(A, 'run', run), patch.object(A, 'run_codex', codex), \
+                     patch.object(A, 'fetch_comments', return_value=[]), patch.object(A, 'log'), \
+                     patch.object(A, 'OUTPUT_KEEP_DIR', kept), patch.object(A.usage, 'DEFAULT_DIR', ledger), \
+                     patch.object(A.tempfile, 'mkdtemp', return_value=str(scratch)), \
+                     patch.object(A.subprocess, 'run'):
+                    A.audit_batch(batch)
+                rows = [json.loads(line) for line in (ledger / 'usage.jsonl').read_text().splitlines()]
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(len(rows[0]['targets']), 2)
+                self.assertEqual(rows[0]['input_tokens'], 100)
+                self.assertEqual(len(list(kept.glob('*.jsonl'))), 1)
+                self.assertFalse(scratch.exists())
+                self.assertEqual(rows[0]['outcome']['kind'], 'audit completed' if ok else 'failed')
 
 
 if __name__ == "__main__":

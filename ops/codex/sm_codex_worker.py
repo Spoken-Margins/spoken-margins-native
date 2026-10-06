@@ -53,6 +53,9 @@ from pathlib import Path
 from typing import Callable, Optional
 from zoneinfo import ZoneInfo
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from ledger import usage
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -581,6 +584,14 @@ def stop_text(slot: int, result: str, reason: str) -> str:
     return f'Thread "Codex worker {slot}" stopping: {result} · {reason}'
 
 
+def issue_trigger(issue: dict) -> dict:
+    stops = [c for c in issue.get('comments') or [] if re.match(
+        r'^Thread "Codex worker \d+" stopping:', c.get('body') or '')]
+    previous = max(stops, key=comment_time, default=None)
+    return {'trigger': 'retry after ' + previous['body'][:600] if previous else 'new ready issue',
+            'trigger_comment': previous.get('url') if previous else None}
+
+
 def build_prompt(number: int, title: str, body: str) -> str:
     return '\n'.join([
         f'You are working in a git worktree of Spoken Margins (branch from origin/{BASE_BRANCH}).',
@@ -676,7 +687,7 @@ def default_run(cmd: list, cwd: Optional[Path] = None, timeout: Optional[float] 
 
 def codex_command(worktree: Path, answer: Path, prompt: str) -> list:
     roots = json.dumps([str(p) for p in SANDBOX_WRITABLE_ROOTS])  # a JSON string list is a TOML array
-    return [CODEX, 'exec', '-m', MODEL, '-c', f'model_reasoning_effort="{EFFORT}"',
+    return [CODEX, 'exec', '--json', '-m', MODEL, '-c', f'model_reasoning_effort="{EFFORT}"',
             '-s', 'workspace-write', '-c', f'sandbox_workspace_write.writable_roots={roots}',
             '-C', str(worktree), '-o', str(answer), prompt]
 
@@ -750,11 +761,13 @@ class Ops:
                  run: Callable = default_run, codex: Callable = default_codex,
                  limits: Callable = read_codex_limits, now: Callable = now_utc,
                  alive: Callable = pid_alive, free_bytes: Optional[Callable] = None,
-                 echo: bool = True):
+                 echo: bool = True, ledger_dir: Optional[Path] = None):
         self.home, self.repo_root = home, repo_root
         self.run, self.codex, self.limits, self.now, self.alive = run, codex, limits, now, alive
         self.free_bytes = free_bytes or (lambda: shutil.disk_usage(str(Path.home())).free)
         self.echo = echo
+        self.ledger_dir = ledger_dir or (usage.DEFAULT_DIR if home.parent == Path.home() / 'SpokenMarginsOps'
+                                         else home / 'ledger')
 
     def log(self, msg: str) -> None:
         line = f"{dt.datetime.now().astimezone().isoformat(timespec='seconds')} {msg}"
@@ -793,8 +806,10 @@ class Ops:
                              'number,title,body,labels,state,isDraft,baseRefName,headRefName,headRefOid,'
                              'headRepository,headRepositoryOwner,isCrossRepository,files,comments,createdAt'])
 
-    def comment(self, number: int, body: str) -> None:
-        self.must(['gh', 'issue', 'comment', str(number), '-R', REPO, '--body', body], cwd=self.repo_root)
+    def comment(self, number: int, body: str) -> Optional[str]:
+        res = self.must(['gh', 'issue', 'comment', str(number), '-R', REPO, '--body', body], cwd=self.repo_root)
+        match = re.search(r'https://\S+#issuecomment-\d+', res.stdout or '')
+        return match.group(0) if match else None
 
     def label(self, number: int, add: Optional[str] = None, remove: Optional[str] = None) -> None:
         cmd = ['gh', 'issue', 'edit', str(number), '-R', REPO]
@@ -1061,14 +1076,21 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
     thread = f'Codex worker {slot}'
     claimed = stopped = wt_added = False
     branch = None
+    usage_run = None
 
     def stop(result: str, reason: str, keep_label: bool = False) -> None:
         # Best effort on both: a failed comment must not leave the issue labelled in-progress.
         nonlocal stopped
         stopped = True
+        if usage_run:
+            usage_run.checkpoint(outcome={'kind': 'PR armed' if result.startswith('PR #') else 'stop note',
+                                          'reason': reason, 'result': result,
+                                          'signature': usage.signature(result + ': ' + reason)})
         ops.log(f'#{number} slot {slot}: stopping: {result} · {reason}')
         try:
-            ops.comment(number, stop_text(slot, result, reason))
+            url = ops.comment(number, stop_text(slot, result, reason))
+            if usage_run:
+                usage_run.checkpoint(comment_url=url)
         except Exception as exc:
             ops.log(f'#{number} slot {slot}: could not post the stop note: {exc}')
         if not keep_label:
@@ -1106,7 +1128,15 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
 
         t0 = time.time()
         prompt = build_prompt(number, issue.get('title') or '', issue.get('body') or '')
-        codex_ok, codex_why = ops.codex(wt, run_dir / 'answer.md', prompt, run_dir / 'transcript.txt')
+        base_sha = usage.git_sha(ops.run, wt, f'origin/{BASE_BRANCH}', ops.log)
+        usage_run = usage.Run(ops.ledger_dir, 'issue', MODEL, EFFORT, run_dir / 'transcript.jsonl',
+                              targets=[{'pr': None, 'issues': [number], 'head_sha': base_sha,
+                                        'base_sha': base_sha, **issue_trigger(issue)}], log=ops.log)
+        try:
+            codex_ok, codex_why = ops.codex(wt, run_dir / 'answer.md', prompt, run_dir / 'transcript.jsonl')
+        finally:
+            usage_run.model_finished()
+        usage_run.checkpoint(model_result={'ok': codex_ok, 'reason': codex_why})
         ops.log(f'#{number} slot {slot}: Codex finished in {int(time.time() - t0) // 60} min: {codex_why}')
 
         changes = ops.run(['git', 'status', '--porcelain', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt).stdout
@@ -1152,6 +1182,9 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
                             '--title', title, '--body-file', str(body_file), '--label', 'automerge'], cwd=wt)
         m = re.search(r'/pull/(\d+)', created.stdout or '')
         pr = m.group(1) if m else '?'
+        if m:
+            usage_run.row['targets'][0]['pr'] = int(pr)
+        usage_run.checkpoint(result_head_sha=usage.git_sha(ops.run, wt, 'HEAD', ops.log))
         stop(f'PR #{pr} armed', 'done', keep_label=True)
         return 'pr'
     except Exception as exc:
@@ -1160,6 +1193,8 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
             stop('none', f'wrapper error: {str(exc)[:200]}')
         return 'error'
     finally:
+        if usage_run:
+            usage_run.finish()
         if wt_added:
             ops.run(['git', 'worktree', 'remove', '--force', str(wt)], cwd=ops.repo_root)
         if branch:
@@ -1184,8 +1219,12 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
     run_dir = ops.home / 'runs' / f"pr-{number}-{now.strftime('%Y%m%dT%H%M%SZ')}"
     claimed = wt_added = False
     original_labels = set()
+    usage_run = None
 
     def stop(reason: str) -> None:
+        if usage_run:
+            usage_run.checkpoint(outcome={'kind': 'stop note', 'reason': reason,
+                                          'signature': usage.signature(reason)})
         # Keep every original label except automerge, even if arming failed partway through.
         try:
             ops.label(number, remove='automerge')
@@ -1197,7 +1236,9 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
         except Exception as exc:
             ops.log(f'PR #{number}: could not restore stop labels: {exc}')
         try:
-            ops.comment(number, stop_text(slot, 'PR not armed', reason[:500]))
+            url = ops.comment(number, stop_text(slot, 'PR not armed', reason[:500]))
+            if usage_run:
+                usage_run.checkpoint(comment_url=url)
         except Exception as exc:
             ops.log(f'PR #{number}: could not post stop note: {exc}')
 
@@ -1262,7 +1303,20 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
                 'Issue body:', 'PR context:', 1)
         out = wt / OUT_DIR_NAME
         out.mkdir(exist_ok=True)
-        codex_ok, codex_why = ops.codex(wt, run_dir / 'answer.md', prompt, run_dir / 'transcript.txt')
+        base_sha = usage.git_sha(ops.run, wt, f'origin/{BASE_BRANCH}', ops.log)
+        round_number = recent_finish_rounds(pr.get('comments') or [], now) + 1
+        usage_run = usage.Run(ops.ledger_dir, 'finisher', MODEL, EFFORT, run_dir / 'transcript.jsonl',
+                              targets=[{'pr': number, 'issues': [int(n) for n in re.findall(
+                                  r'(?i)\b(?:closes|fixes|resolves)\s+#(\d+)', pr.get('body') or '')],
+                                        'head_sha': head, 'base_sha': base_sha,
+                                        'trigger': f'finisher round {round_number}: ' +
+                                        ('audit findings' if audit else 'lane failure or needs-mac'),
+                                        'trigger_comment': (audit or report or {}).get('url')}], log=ops.log)
+        try:
+            codex_ok, codex_why = ops.codex(wt, run_dir / 'answer.md', prompt, run_dir / 'transcript.jsonl')
+        finally:
+            usage_run.model_finished()
+        usage_run.checkpoint(model_result={'ok': codex_ok, 'reason': codex_why})
         changes = ops.must(['git', 'status', '--porcelain', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt).stdout
         if changes.strip():
             kept, why = save_or_keep(ops, wt, run_dir / 'codex.diff', run_dir.name)
@@ -1314,14 +1368,17 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
         # No force options, no ref rewrite. A concurrent author's push makes this fail normally.
         ops.must(['git', 'push', '--quiet', 'origin', f'HEAD:refs/heads/{branch}'], cwd=wt, timeout=600)
         summary = (out / 'pr-body.md').read_text(errors='replace').strip()
-        ops.comment(number, f'Thread "Codex worker {slot}" finished #{number}.\n\n{summary}\n\n'
-                    'Wrapper --plan fast passed. No simulator or device check.')
+        url = ops.comment(number, f'Thread "Codex worker {slot}" finished #{number}.\n\n{summary}\n\n'
+                          'Wrapper --plan fast passed. No simulator or device check.')
+        usage_run.checkpoint(comment_url=url)
         ops.label(number, remove='needs-mac')
         # Queue T3 before arming so an automerge run sees the pending request immediately.
         if request:
             ops.comment(number, request)
             ops.label(number, add='lane:queued')
         ops.label(number, add='automerge')
+        usage_run.checkpoint(outcome={'kind': 'PR armed', 'signature': usage.signature(summary)},
+                             result_head_sha=usage.git_sha(ops.run, wt, 'HEAD', ops.log))
         return 'finished'
     except Exception as exc:
         ops.log(f'PR #{number} slot {slot}: wrapper error: {exc}')
@@ -1329,6 +1386,8 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
             stop(f'wrapper error: {exc}')
         return 'error'
     finally:
+        if usage_run:
+            usage_run.finish()
         if wt_added:
             ops.run(['git', 'worktree', 'remove', '--force', str(wt)], cwd=ops.repo_root)
         try:
@@ -1351,6 +1410,8 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument('--pr', type=int, help='(child) PR to finish')
     args = ap.parse_args(argv)
     ops = Ops()
+    if not args.dry_run:
+        usage.recover(ops.ledger_dir, ops.log)
 
     if args.slot is not None or args.issue is not None or args.pr is not None:
         if args.slot is None or (args.issue is None) == (args.pr is None):
