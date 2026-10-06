@@ -1,0 +1,51 @@
+{
+  "id": "proposal-prepared-text-audio",
+  "schemaVersion": "spoken-margins.listening-map-proposal.v2",
+  "languageCode": "en",
+  "createdAt": "2026-09-30T12:00:00Z",
+  "generator": "listening-edition-shortcut",
+  "scenes": [
+    {
+      "id": "scene-001",
+      "order": 0,
+      "title": "Setting the scene",
+      "summaryText": "A narrator introduces the town and the argument that divides it.",
+      "summaryProvenance": "sender_authored",
+      "eligibility": "eligible",
+      "eligibilityReason": "User-supplied summary; source bound to prepared text.",
+      "startAnchor": {
+        "anchorType": "text",
+        "startChar": 0,
+        "mediaTimeMs": 0,
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "text",
+        "endChar": 412,
+        "mediaTimeMs": 31500,
+        "machineEvidenceAssetIds": []
+      }
+    },
+    {
+      "id": "scene-002",
+      "order": 1,
+      "title": "The council vote",
+      "summaryText": "Members weigh cost against safety before a narrow decision.",
+      "summaryProvenance": "sender_authored",
+      "eligibility": "eligible",
+      "eligibilityReason": "User-supplied summary; source bound to prepared text.",
+      "startAnchor": {
+        "anchorType": "text",
+        "startChar": 414,
+        "mediaTimeMs": 31500,
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "text",
+        "endChar": 980,
+        "mediaTimeMs": 74200,
+        "machineEvidenceAssetIds": []
+      }
+    }
+  ]
+}

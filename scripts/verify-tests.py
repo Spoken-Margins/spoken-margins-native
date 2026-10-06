@@ -356,6 +356,10 @@ def stop_process_group(process, grace=10):
     process.wait()
 
 
+PACKAGE_BUILD_TIMEOUT = 900  # SessionKit build with tests; cold, under load
+PACKAGE_TEST_TIMEOUT = 600  # the SessionKit tests alone (#844)
+
+
 class Run:
     def __init__(self, output, plan):
         self.output = output
@@ -514,7 +518,13 @@ class Run:
         expected = set()
         for target in ('SessionKitCoreTests', 'SessionKitTests', 'SessionKitTraceTests'):
             expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))
-        self.command('package', ['bash', 'scripts/run-sessionkit-tests.sh'], timeout=300,
+        # The build gets its own limit, so a cold build under load can't use up the tests' time (#844).
+        # The tests' limit covers about 1,000 tests, including real-time AVPlayer tests that took
+        # 150 s of a 230 s run with the Mac's load average at 40 to 180 (2026-10-05).
+        self.command('package-build', ['bash', 'scripts/run-sessionkit-tests.sh', '--build-only'],
+                     timeout=PACKAGE_BUILD_TIMEOUT)
+        self.command('package', ['bash', 'scripts/run-sessionkit-tests.sh', '--skip-build'],
+                     timeout=PACKAGE_TEST_TIMEOUT,
                      expected=expected, tests=True,
                      allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus'},
                      probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)

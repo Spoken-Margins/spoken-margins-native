@@ -44,6 +44,8 @@ public enum ServerService {
     public static let bridge = "bridge"
     /// Attested requests. Not used by the app yet.
     public static let attest = "attest"
+    /// Community listening maps: transcript uploads (#552) and map fetches (#553).
+    public static let maps = "maps"
 }
 
 /// Why a server feature is off. Shown in diagnostics; the listener sees "not updating".

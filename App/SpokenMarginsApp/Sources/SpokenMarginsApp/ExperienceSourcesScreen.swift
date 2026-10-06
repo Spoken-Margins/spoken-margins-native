@@ -395,8 +395,7 @@ private struct ManageFeedsScreen: View {
     private var followButton: some View {
         Button("Follow", action: model.followSource)
             .frame(minHeight: 46)
-            .buttonStyle(.borderedProminent)
-            .tint(AppColors.evergreen)
+            .filledActionButton()
             .disabled(model.followedSourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .accessibilityIdentifier("sources.follow.button")
     }

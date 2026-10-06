@@ -276,8 +276,7 @@ struct ExperienceAddSourceFlow: View {
                             Label("Add to Library", systemImage: "plus")
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(AppColors.evergreen)
+                    .filledActionButton()
                     .disabled(model.sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isResolvingSourceLink)
                     .accessibilityIdentifier("sourceLink.import.button")
                 }
@@ -327,10 +326,8 @@ struct ExperienceAddSourceFlow: View {
                 .accessibilityLabel("Source text")
                 .accessibilityIdentifier("create.text.editor")
             if let textImportError {
-                Label(textImportError, systemImage: "exclamationmark.triangle")
+                FailureMessageLabel(textImportError)
                     .font(.subheadline)
-                    .foregroundStyle(AppColors.dangerText)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .tint(AppColors.evergreen)
@@ -342,8 +339,7 @@ struct ExperienceAddSourceFlow: View {
                 Button("Choose Document or Book", systemImage: "doc.badge.plus") {
                     presentFileImporter(.documentOrBook)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.evergreen)
+                .filledActionButton()
                 .frame(minHeight: 44)
                 .accessibilityIdentifier("document.import.button")
                 Text("Documents and books stay local and retain authored structure when the format provides it.")
@@ -359,8 +355,7 @@ struct ExperienceAddSourceFlow: View {
                 Button("Choose Audiobook", systemImage: "headphones") {
                     presentFileImporter(.audiobook)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.evergreen)
+                .filledActionButton()
                 .frame(minHeight: 44)
                 .accessibilityIdentifier("audiobook.import.button")
                 Text("Audiobooks are copied into app-owned storage and protected from automatic eviction.")
@@ -379,8 +374,7 @@ struct ExperienceAddSourceFlow: View {
                 Button("Choose Folder", systemImage: "folder.badge.plus") {
                     presentFileImporter(.quickFolder)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.evergreen)
+                .filledActionButton()
                 .accessibilityIdentifier("quickFolder.choose.button")
                 if !model.quickAccessRecentFiles.isEmpty {
                     Divider()

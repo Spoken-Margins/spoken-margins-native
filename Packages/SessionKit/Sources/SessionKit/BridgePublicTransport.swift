@@ -45,3 +45,22 @@ private final class BridgePublicSessionDelegate: NSObject, URLSessionTaskDelegat
     }
 }
 #endif
+
+#if !canImport(FoundationNetworking)
+/// Posts one community map transcript (#552) to the owner's server. Like the public fetches it
+/// carries no cookies, credentials or install identity, follows no redirect, and refuses any
+/// host but the pinned one.
+public enum CommunityMapTransport {
+    public static func post(_ url: URL, _ body: Data) async throws -> Int {
+        guard BridgeManifestPolicy.production.isTrusted(url) else { throw BridgeRefreshError.untrustedURL }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+        let session = URLSession(configuration: BridgePublicTransport.configuration(), delegate: BridgePublicSessionDelegate(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let (_, response) = try await session.data(for: request)
+        return (response as? HTTPURLResponse)?.statusCode ?? 0
+    }
+}
+#endif

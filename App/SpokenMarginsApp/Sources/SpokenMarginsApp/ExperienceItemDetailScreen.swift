@@ -169,8 +169,7 @@ struct ExperienceItemDetailScreen: View {
                 Label([.waiting, .preparing].contains(model.selectedItemStartupAudioState) ? "Listen now" : primaryPlaybackLabel, systemImage: "play.fill")
                     .frame(maxWidth: .infinity, minHeight: 52)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(AppColors.evergreen)
+            .filledActionButton()
             .accessibilityIdentifier("item.start.button")
     }
 
@@ -442,7 +441,7 @@ struct ExperienceItemDetailScreen: View {
                 }
                 if let reason = model.sharedListeningMapRefusal(itemId: model.selectedItem.id) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("A shared map couldn't be placed on your copy")
+                        FailureMessageLabel("A shared map couldn't be placed on your copy")
                             .font(.subheadline.weight(.semibold))
                         Text(reason)
                             .font(.caption)

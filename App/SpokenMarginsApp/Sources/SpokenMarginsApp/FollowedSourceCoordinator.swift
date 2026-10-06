@@ -46,12 +46,16 @@ actor FollowedSourceCoordinator {
     /// error codes only, never a full link.
     private(set) var lastDiscoveryTrace: [String] = []
     private var lastDiscoveryHost = "unknown"
+    /// Where newly seen entries are logged as I4 `item_published` rows (#483).
+    private let signals: ListeningSignalRecorder?
     /// Each followed show's artwork, in a side file beside the database (#773).
     private var artwork: FollowingArtworkStore
 
-    init(repository: any SessionRepository, session: URLSession? = nil, artworkFile: URL? = nil) {
+    init(repository: any SessionRepository, session: URLSession? = nil, artworkFile: URL? = nil,
+         signals: ListeningSignalRecorder? = .app) {
         self.repository = repository
         self.artwork = FollowingArtworkStore(file: artworkFile)
+        self.signals = signals
         if let session {
             self.session = session
         } else {
@@ -482,6 +486,7 @@ actor FollowedSourceCoordinator {
             .map { $0.element }
         let retainedIDs = Set(retainedItems.map { Self.entryID(subscriptionID: subscription.id, itemID: $0.id) })
 
+        let seenAt = Date()
         var saved: [FeedEntry] = []
         for item in retainedItems {
             let id = Self.entryID(subscriptionID: subscription.id, itemID: item.id)
@@ -503,6 +508,9 @@ actor FollowedSourceCoordinator {
             )
             try repository.saveFeedEntry(entry)
             saved.append(entry)
+            // Every retained entry, stored or not: the recorder publishes each one once, so entries
+            // saved before this build (or before a re-follow) still get their publication row.
+            signals?.record(.itemPublished, source: ListeningSignalContext.source(for: subscription), item: ListeningSignalContext.item(for: entry, seenAt: seenAt, durationMs: item.durationMs), at: seenAt)
         }
 
         for entry in existingEntries where !retainedIDs.contains(entry.id) {
