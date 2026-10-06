@@ -155,6 +155,48 @@ Taking turns: the scheduled "SM integration run" is the understudy. It runs only
 desk has posted nothing on #184 for three hours, works in its own intrun-<sha7> worktree,
 and stays off the simulator while the standing device is booted.
 
+Before the understudy starts inference, its `UserPromptSubmit` hook runs
+`/usr/bin/python3 ~/SpokenMarginsOps/repo/scripts/integration-precheck.py --claude-hook`.
+It blocks an unchanged task before the model processes its prompt. The normal CLI
+prints `GO` or `STOP: ...`. `GO` means a new tip or new owner/Test Desk context
+or `/integration-retry` request remains to handle, under the three-hour rule.
+Git/GitHub/state errors give `GO`, preserving the existing fallback. The precheck
+posts at most one blocker note on #337 per reported INCONCLUSIVE blocker; its
+state is in `~/SpokenMarginsOps/integration-precheck/`. Routine Mac ticks, skip
+notes and its own note do not wake it, even though they share the owner's account.
+`--dry-run` fetches/reads current data but saves and posts nothing. On a hook `GO`,
+the model receives the decision as context and must not call the CLI again: that
+would consume its already claimed launch and incorrectly stop the fresh run.
+
+After merge, pull the ops checkout and merge this entry into the owner's existing
+`~/.claude/settings.json` hooks, preserving its `PreToolUse` lane guard:
+
+```json
+{
+  "UserPromptSubmit": [{
+    "hooks": [{
+      "type": "command",
+      "command": "/usr/bin/python3 ~/SpokenMarginsOps/repo/scripts/integration-precheck.py --claude-hook",
+      "timeout": 630
+    }]
+  }]
+}
+```
+
+Prepend this one line to the scheduled task's prompt (outside this repo):
+
+```text
+[SM-INTEGRATION-PRECHECK] Use the UserPromptSubmit gate's GO/STOP for tip/retry and Test Desk turn-taking; do not rerun it, and retain the remaining safety guards and procedure.
+```
+
+The hook also recognizes the stored task's existing exact introductory line,
+so it can guard that task before the marker is added. Other tasks and manual
+follow-up prompts pass untouched. The issue's three-hour comment gate replaces
+the older stored task's 75-minute session-activity rule; the standing Test Desk's
+own loop is unchanged. A Desktop shell/session entry may still be created, but
+the blocked prompt consumes no model turn. A prompt instruction alone does not
+provide that guarantee. See the [Claude hooks reference](https://code.claude.com/docs/en/hooks).
+
 A real FAIL: first rule out a flake (run the failing tests again, twice) and a lane fault
 (no test ran, a missing VFS overlay or XCFramework, a boot that failed). Then find the
 culprit merge, open a revert PR titled "Revert #N" into next with the automerge label, and
