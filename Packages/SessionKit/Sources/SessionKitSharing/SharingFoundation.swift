@@ -498,7 +498,8 @@ public enum SpokenMarginsPackageImporter {
                 uniquingKeysWith: { first, _ in first }
             )
         )
-        return try repository.importCommentaryLayer(layer, interjections: importedInterjections)
+        // A sender who shares again sends their earlier Margins too; the listener keeps one copy of each (#858).
+        return try ImportedMarginResends.importLayer(layer, interjections: importedInterjections, repository: repository)
     }
 
     public static func defaultLocalID(kind: String, packageScopedID: String) -> String {

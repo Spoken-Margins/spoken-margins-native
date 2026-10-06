@@ -595,6 +595,10 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
     /// The Margins this one answers, from the packet's conversation artifact (#472). Nil for an
     /// ordinary Margin; more than one link is a fork. Build 29 ignores it.
     public let replyLinks: [MarginReplyLink]?
+    /// Where else this same Margin arrived: later packets from the same sender that carried it again
+    /// are not imported a second time, so replies to their copy still find this one (#858). Nil for
+    /// a Margin that arrived once. Local only; Build 29 ignores the key when it reads the record.
+    public var alsoSharedAs: [MarginPacketIdentity]?
 
     public init(
         id: String,
@@ -608,7 +612,8 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         podcastAnchorEvidence: [ImportedPodcastAnchorEvidence]? = nil,
         resolution: ImportedAnchorResolution = .init(evidenceClass: .unresolved),
         firstHeardAt: Date? = nil,
-        replyLinks: [MarginReplyLink]? = nil
+        replyLinks: [MarginReplyLink]? = nil,
+        alsoSharedAs: [MarginPacketIdentity]? = nil
     ) {
         self.id = id
         self.layerId = layerId
@@ -622,6 +627,7 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         self.resolution = resolution
         self.firstHeardAt = firstHeardAt
         self.replyLinks = replyLinks
+        self.alsoSharedAs = alsoSharedAs
     }
 }
 
