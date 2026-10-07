@@ -56,3 +56,37 @@ test('a packet cannot be passed off as the preview', async () => {
   relabelled[7] = PART.preview;
   await assert.rejects(openPart(relabelled, PART.preview, key), damaged);
 });
+
+// A link that decrypts cleanly but holds something that is not a preview: the
+// sender's app or someone holding the key sealed it, so the tag is valid and
+// only the plaintext is wrong. The page must still show the one plain error,
+// not a SyntaxError or a preview with stray replacement characters.
+async function seal(plaintext, part, keyBytes) {
+  const header = Uint8Array.from([0x53, 0x4d, 0x4c, 0x49, 0x4e, 0x4b, 1, part]);
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const aesKey = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt']);
+  const body = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce, additionalData: header, tagLength: 128 }, aesKey, plaintext));
+  return Uint8Array.from([...header, ...nonce, ...body]);
+}
+
+test('a correctly sealed preview that is not valid JSON or not valid UTF-8 fails plainly', async () => {
+  const text = (value) => new TextEncoder().encode(value);
+  const hash = `#${vector.keyFragment}`;
+
+  // Control: the same sealing code with a good preview opens.
+  const good = await seal(text('{"schema":"spokenmargins.link-preview.v1"}'), PART.preview, key);
+  assert.deepEqual(await openPreview(good, hash), { schema: 'spokenmargins.link-preview.v1' });
+
+  const cases = {
+    'not JSON': text('not json'),
+    'empty': new Uint8Array(),
+    'truncated JSON': text('{"schema":"spokenmargins.link-pre'),
+    // Valid JSON once the invalid byte becomes U+FFFD, so only a strict UTF-8 decode refuses it.
+    'invalid UTF-8 inside a string': Uint8Array.from([...text('{"schema":"x'), 0xff, ...text('"}')]),
+    'only invalid UTF-8': Uint8Array.from([0xff, 0xfe]),
+  };
+  for (const [name, plaintext] of Object.entries(cases)) {
+    const sealed = await seal(plaintext, PART.preview, key);
+    await assert.rejects(openPreview(sealed, hash), damaged, name);
+  }
+});
