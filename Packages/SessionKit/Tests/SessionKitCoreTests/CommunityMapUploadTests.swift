@@ -591,6 +591,36 @@ final class CommunityMapUploadTests: XCTestCase {
         XCTAssertEqual(lost.diagnostic, "failed:network")
     }
 
+    /// The server's answers, and what the uploader makes of each. 200 means the server already has a map
+    /// and 202 that it took the transcript: both are done for good. A 4xx other than 429 says this body
+    /// will never be accepted, so it is not sent again. Everything else, including 429 (rate limited) and a
+    /// redirect the request does not follow, is tried again a day later. The stored record decides what
+    /// happens next, so each row checks the record and when the episode is next due, not only the outcome.
+    func testEachServerStatusIsRecordedAsTheOutcomeItMeans() async throws {
+        let table: [(status: Int, outcome: CommunityMapUploadOutcome, state: CommunityMapUploadRecord.State)] = [
+            (200, .uploaded(status: 200), .uploaded),
+            (202, .uploaded(status: 202), .uploaded),
+            (301, .failed("301"), .failed),
+            (307, .failed("307"), .failed),
+            (400, .rejected(status: 400), .rejected),
+            (404, .rejected(status: 404), .rejected),
+            (413, .rejected(status: 413), .rejected),
+            (422, .rejected(status: 422), .rejected),
+            (429, .failed("429"), .failed),
+            (500, .failed("500"), .failed),
+            (503, .failed("503"), .failed)
+        ]
+        for (status, outcome, state) in table {
+            let repository = InMemorySessionRepository()
+            let result = await upload(CommunityMapUploader { _, _ in status }, repository: repository)
+            XCTAssertEqual(result, outcome, "status \(status)")
+            let record = try XCTUnwrap(repository.loadCommunityMapUpload(episodeKey: expectedKey), "status \(status)")
+            XCTAssertEqual(record.state, state, "status \(status)")
+            let dueNextDay = CommunityMapUploadPolicy.dueForRetry(try repository.loadCommunityMapUploads(), now: now.addingTimeInterval(86_400))
+            XCTAssertEqual(dueNextDay.map(\.id), state == .failed ? [expectedKey] : [], "status \(status): due again the next day only when it failed")
+        }
+    }
+
     func testARetryWhoseEpisodeGainedAGUIDMovesToTheNewKeyAndClosesTheOldRow() throws {
         let repository = InMemorySessionRepository()
         let oldKey = try XCTUnwrap(CommunityMapEpisodeKey.key(for: episode(guid: nil)))
