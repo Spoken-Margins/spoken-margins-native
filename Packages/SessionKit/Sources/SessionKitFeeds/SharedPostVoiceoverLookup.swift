@@ -76,3 +76,26 @@ public enum SharedPostVoiceoverLookup {
         return .found(audio)
     }
 }
+
+/// The latest voiceover outcome of each recently shared post, newest last (#810). A single diagnostic line kept
+/// only the last share, so a later link (an openai.com page, `not_substack`) hid what happened to the post the
+/// listener asked about.
+public struct SharedPostVoiceoverLog: Sendable {
+    public static let capacity = 8
+
+    private var entries: [(itemId: String, status: String)] = []
+
+    public init() {}
+
+    /// Keeps `status` as `itemId`'s latest and moves that item to the end. The oldest item drops off past `capacity`.
+    public mutating func record(_ status: String, for itemId: String) {
+        entries.removeAll { $0.itemId == itemId }
+        entries.append((itemId, status))
+        if entries.count > Self.capacity { entries.removeFirst(entries.count - Self.capacity) }
+    }
+
+    /// One line per item, `<itemId>: <status>`, joined by `"; "`, newest last.
+    public var summary: String {
+        entries.map { "\($0.itemId): \($0.status)" }.joined(separator: "; ")
+    }
+}

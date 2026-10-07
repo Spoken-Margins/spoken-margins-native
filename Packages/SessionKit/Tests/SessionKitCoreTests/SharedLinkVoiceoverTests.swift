@@ -147,6 +147,26 @@ final class SharedLinkVoiceoverTests: XCTestCase {
         XCTAssertEqual(outcome, .none)
     }
 
+    /// The owner's export could only show the last share (an openai.com link, `not_substack`), not what happened
+    /// to the Substack post shared before it. The log keeps each item's latest outcome.
+    func testTheLogKeepsEachSharedItemsLatestOutcome() {
+        var log = SharedPostVoiceoverLog()
+        log.record("none", for: "item-a")
+        log.record("saved", for: "item-b")
+        log.record("not_substack", for: "item-c")
+        log.record("text map 40%", for: "item-b")
+        XCTAssertEqual(log.summary, "item-a: none; item-c: not_substack; item-b: text map 40%")
+    }
+
+    func testTheLogKeepsOnlyTheMostRecentItems() {
+        var log = SharedPostVoiceoverLog()
+        for index in 0..<(SharedPostVoiceoverLog.capacity + 3) { log.record("none", for: "item-\(index)") }
+        let lines = log.summary.components(separatedBy: "; ")
+        XCTAssertEqual(lines.count, SharedPostVoiceoverLog.capacity)
+        XCTAssertEqual(lines.first, "item-3: none")
+        XCTAssertEqual(lines.last, "item-\(SharedPostVoiceoverLog.capacity + 2): none")
+    }
+
     /// Codex audit on 749fc07: the share path fetched the post page for link resolution and then again for the
     /// voiceover. With the resolver's memo the lookup reads the page it already has: one request in all.
     func testTheSharedPostPageIsRequestedOnceForResolutionAndTheVoiceover() async throws {
