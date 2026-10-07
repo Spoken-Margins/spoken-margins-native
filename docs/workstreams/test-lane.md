@@ -82,7 +82,12 @@ Every lane job that posts a report and doesn't merge the PR, T2, T3 or automerge
 
 A PR with a T3 request merges only on a T3 PASS (#410). While its newest T3 report is FAIL or INCONCLUSIVE, or its newest T3 request has no report yet, the automerge run reports FAIL or INCONCLUSIVE and doesn't merge, even when its own checks pass. A FAIL on an earlier commit holds later commits too, until a newer T3 passes. When a T3 then passes on the PR's current head, the lane job that reports it runs the held automerge run itself, in the same job (#421), and posts its report as `<id>-auto`; nobody needs to push or re-label. It runs there because a label the runner re-added with the workflow's token would start no new run.
 
-While a `/lane T3` request whose `commit:` names the PR's head is still waiting (`lane:queued` or `lane:running`, no report yet), the automerge run doesn't run its own host tests and builds: it reports INCONCLUSIVE, held for T3, straight away, because the lane job that reports the T3 PASS runs them on the merge commit before it merges. A T3 request for an older head, or one with no `commit:` line, doesn't count, so a push after the request still gets the automerge checks.
+While a `/lane T3` request whose `commit:` names the PR's head is still waiting (`lane:queued` or `lane:running`, no report yet), where the automerge run lands decides what it does (#834):
+
+- On the build runner (`SM_LANE_RUNNER_ROLE=build`), it runs its host tests and builds under the build runner's usual room rules, so the T3 needn't wait for them. If they pass, it reports INCONCLUSIVE, held for T3, and the report carries a hidden `<!-- lane-checks: … -->` line naming the `next` they passed with. When the T3 then passes, the lane job on the simulator runner merges without running them again if `next`'s commits since touch none of the PR's files and no build inputs (the same rule as a refused push), and its merge check says it wasn't re-tested. Otherwise it tests the merge commit again first. It trusts only the newest automerge report on the head, posted by the runner itself.
+- On any other runner it skips them and reports held straight away, as before: the lane job that reports the T3 PASS runs them on the merge commit before it merges, because the simulator runner's time belongs to T3s. When the build runner's checks don't finish (no room, a timeout, a lane error), its report is held the same way, and still counts as a runner fault for the auto-revert.
+
+A T3 request for an older head, or one with no `commit:` line, doesn't count, so a push after the request still gets the automerge checks.
 
 A T3 run covers at least the app test classes the diff calls for. The runner adds every class the base branch's `scripts/test-scope.py` suggests for the PR's diff to the request's `tests:`, and the report lists what it added, with the test count and how long each plan took. A method you name inside an added class runs with its class. A diff touching `Gate1AppModel.swift` therefore runs all of `Gate1AppModelWorkflowTests` (151 tests), about 15 minutes with the boot.
 
@@ -154,6 +159,48 @@ integration report for a tip, start that tip at step 2.
 Taking turns: the scheduled "SM integration run" is the understudy. It runs only when this
 desk has posted nothing on #184 for three hours, works in its own intrun-<sha7> worktree,
 and stays off the simulator while the standing device is booted.
+
+Before the understudy starts inference, its `UserPromptSubmit` hook runs
+`/usr/bin/python3 ~/SpokenMarginsOps/repo/scripts/integration-precheck.py --claude-hook`.
+It blocks an unchanged task before the model processes its prompt. The normal CLI
+prints `GO` or `STOP: ...`. `GO` means a new tip or new owner/Test Desk context
+or `/integration-retry` request remains to handle, under the three-hour rule.
+Git/GitHub/state errors give `GO`, preserving the existing fallback. The precheck
+posts at most one blocker note on #337 per reported INCONCLUSIVE blocker; its
+state is in `~/SpokenMarginsOps/integration-precheck/`. Routine Mac ticks, skip
+notes and its own note do not wake it, even though they share the owner's account.
+`--dry-run` fetches/reads current data but saves and posts nothing. On a hook `GO`,
+the model receives the decision as context and must not call the CLI again: that
+would consume its already claimed launch and incorrectly stop the fresh run.
+
+After merge, pull the ops checkout and merge this entry into the owner's existing
+`~/.claude/settings.json` hooks, preserving its `PreToolUse` lane guard:
+
+```json
+{
+  "UserPromptSubmit": [{
+    "hooks": [{
+      "type": "command",
+      "command": "/usr/bin/python3 ~/SpokenMarginsOps/repo/scripts/integration-precheck.py --claude-hook",
+      "timeout": 630
+    }]
+  }]
+}
+```
+
+Prepend this one line to the scheduled task's prompt (outside this repo):
+
+```text
+[SM-INTEGRATION-PRECHECK] Use the UserPromptSubmit gate's GO/STOP for tip/retry and Test Desk turn-taking; do not rerun it, and retain the remaining safety guards and procedure.
+```
+
+The hook also recognizes the stored task's existing exact introductory line,
+so it can guard that task before the marker is added. Other tasks and manual
+follow-up prompts pass untouched. The issue's three-hour comment gate replaces
+the older stored task's 75-minute session-activity rule; the standing Test Desk's
+own loop is unchanged. A Desktop shell/session entry may still be created, but
+the blocked prompt consumes no model turn. A prompt instruction alone does not
+provide that guarantee. See the [Claude hooks reference](https://code.claude.com/docs/en/hooks).
 
 A real FAIL: first rule out a flake (run the failing tests again, twice) and a lane fault
 (no test ran, a missing VFS overlay or XCFramework, a boot that failed). Then find the
@@ -251,7 +298,7 @@ Three self-hosted GitHub Actions runners on the owner's Mac (the third after the
   - It tests the exact merge commit (next first), posts "**Merge check (triage desk)", then does a plain push. A push refused because next moved leads to a re-test, up to 3 times, unless next's commits since the tested one touch none of the PR's files and no build inputs (`project.yml`, any `.xcodeproj` or `.xcconfig`, `Config/`, `Package.swift` and `Package.resolved`, `package.json` and its lock, `.github/`, `scripts/`, `Contracts/schemas/`). Then it merges onto the new next and pushes without testing again, the owner's standing call being that the Test Desk tests next's merged tip end to end. The report says which way it went and lists the commits it didn't re-test against, and that merge check doesn't say "Pushing `<sha7>`", so `scripts/phone-build` runs its own checks on that tip.
   - Lane changes merge like any other, with the audit below (owner rule 2026-10-01). The lane paths are the ones `scripts/test-scope.py` lists in `LANE_PREFIXES` and `LANE_FILES`: the workflows, the runner and its helpers, the policies it loads from next, `verify-tests.py`, and the two T3 test plans. A lane PR's own run uses its own workflow and helpers, so its PASS proves less than usual; the Codex audit is the check that matters.
   - An audio, persistence, packet or lane diff merges only when the newest Codex audit that names the PR's head commit (the heading "**Codex audit (Astra) on `<sha7>`**") opens its verdict (the first line after the heading) with "No blocking findings" (#441). An audit of an older commit, or one with findings, holds it, and the report says which. It reads the comments again after testing, so an audit that lands during the run counts. An older manual "## Codex audit" counts only if its heading names the head commit.
-  - After each merge it runs `merge_audit.py --sweep-hours 2`, because pushes made with the workflow token start no workflow. `merge-audit.yml`'s hourly schedule runs only once that file is on the default branch (`main`).
+  - After each merge it runs `merge_audit.py --sweep-hours 2`, because pushes made with the workflow token start no workflow. `merge-audit.yml` audits every other push to `next`. It has no schedule: GitHub runs scheduled workflows only from the default branch (`main`), which doesn't carry the file.
 - **Stale merge refs.** GitHub builds a PR's run from its merge ref, and a label event doesn't refresh it. A PR opened before a `lane.yml` change keeps the old jobs until it merges next and pushes (#221).
 - **Auto-revert of a lane change** (owner rule 2026-10-01). Every lane job on `next` starts by finding the newest merge into `next` that touched lane paths (`scripts/test-scope.py`, `LANE_PREFIXES` and `LANE_FILES`). If the first two lane reports on PRs after it, from jobs that tested a `next` containing it, were both runner faults, the runner reverts that merge with `git revert -m 1`, pushes it like a merge, files a `ready` + `regression` issue to re-land it, and posts a comment starting "Lane auto-revert:" on #337 naming the PR, the two reports and the revert commit.
   - A runner fault is an INCONCLUSIVE report for a lane reason (a failed boot, the build runner's room wait, a crash in the runner, a missing tool or runtime, a timeout), or a job that stopped before reporting. A merge conflict, a T3 hold, a request with no tests and any FAIL are not.

@@ -27,6 +27,16 @@ Holds (every slip fails toward spending less):
 - The usage read fails, or no stop line is ticked.
 - Less than 30 GiB free disk.
 
+Freeze (Build 30, owner 2026-10-06; #902): the Dial's `**Codex focus**` group names the frozen
+milestone (`- [x] Build 30`) or lifts it (`- [x] None`). Without that group, or with no box
+ticked, FOCUS_MILESTONE applies (SM_CODEX_FOCUS_MILESTONE, default 'Build 30'). During a freeze:
+- issues: the milestone's first; outside it, only issues whose Likely files are all outside
+  App/, Packages/ and Contracts/. Anything unclear is skipped with the reason.
+- PRs: finished only when linked to a milestone issue (by branch, title or body) or when their
+  diff stays out of app code. A PR gets `automerge`, on opening or after finishing, only on the
+  same rule; otherwise it is left unarmed with a one-line note.
+If the milestone can't be read, a tick holds and a child treats every issue as outside it.
+
 Usage:
   /usr/bin/python3 ops/codex/sm_codex_worker.py [--dry-run]
   /usr/bin/python3 ops/codex/sm_codex_worker.py --slot N --issue M     (the child; launched by a tick)
@@ -83,7 +93,10 @@ CODEX_STOPS = (70, 80, 90, 97)
 CODEX_FINISHES = {'Fri noon': (4, 12), 'Sat 7 AM': (5, 7), 'Codex reset': None}
 CLAIM_WINDOW = dt.timedelta(hours=24)
 
-EXCLUDED_LABELS = {'in-progress', 'where:mac', 'regression', 'blocked'}
+EXCLUDED_LABELS = {'in-progress', 'where:mac', 'regression', 'blocked',
+                   'status: needs-human-validation'}  # a fix already merged; it waits on the owner's phone
+# Only this milestone's issues and their PRs while it is set (Build 30 freeze); '' lifts it.
+FOCUS_MILESTONE = os.environ.get('SM_CODEX_FOCUS_MILESTONE', 'Build 30')
 CLAIM_MARK = 'Claimed by project thread "'
 # Issues whose body points at SessionKit or host tests go first: Codex can verify those itself.
 HOST_HINT_RE = re.compile(
@@ -193,11 +206,48 @@ def codex_pacing(body: str, shared_stop: Optional[int]) -> dict:
             'problems': problems}
 
 
+NO_FOCUS_WORDS = ('none', 'off', 'no freeze')
+
+
+def parse_codex_focus(body: str) -> tuple[Optional[str], list[str]]:
+    """The `**Codex focus**` group: the ticked milestone, '' for None, or None (with a problem
+    when the group is there) when FOCUS_MILESTONE should apply. A milestone beats None."""
+    current, found, ticked = None, False, []
+    for line in body.splitlines():
+        heading = re.match(r'\s*\*\*(.+?)\*\*', line)
+        if heading and not line.lstrip().startswith('-'):
+            current = heading.group(1).strip().lower()
+            found = found or current.startswith('codex focus')
+            continue
+        if line.strip() == '---':
+            current = None
+            continue
+        box = re.match(r'\s*[-*]\s*\[([ xX])\]\s*(.+)', line)
+        if box and current and current.startswith('codex focus') and box.group(1).lower() == 'x':
+            # "Build 30 (only its issues ...)" -> "Build 30"
+            ticked.append(re.split(r'\s+\(|\s+[—–-]\s+', box.group(2), maxsplit=1)[0].strip())
+    if not found:
+        return None, []
+    milestones = [t for t in ticked if t and t.lower() not in NO_FOCUS_WORDS]
+    if not ticked:
+        return None, [f'no Codex focus box is ticked, so it uses {FOCUS_MILESTONE or "no focus"}']
+    if not milestones:
+        return '', []
+    problems = []
+    if len(ticked) > 1:
+        problems.append(f'{len(ticked)} Codex focus boxes are ticked, so it uses {milestones[0]}')
+    return milestones[0], problems
+
+
 def read_dial(body: str, parse_dial: Optional[Callable[[str], dict]]) -> dict:
-    """Mode, workers, Codex pacing targets and problems. Unreadable means zero workers."""
+    """Mode, workers, Codex pacing targets, focus milestone and problems. Unreadable means zero
+    workers; the focus then falls back to FOCUS_MILESTONE."""
     workers, problems = parse_codex_workers(body)
+    focus, focus_problems = parse_codex_focus(body)
+    problems += focus_problems
+    focus = FOCUS_MILESTONE if focus is None else focus
     off = {'mode': 'off', 'stop': None, 'stop_source': 'Dial Stop line',
-           'finish_by': ('Codex reset',), 'workers': 0}
+           'finish_by': ('Codex reset',), 'workers': 0, 'focus': focus}
     if parse_dial is None:
         return {**off,
                 'problems': problems + ['ops/dial/dial_gate.py could not be imported, so it reads Off']}
@@ -210,7 +260,8 @@ def read_dial(body: str, parse_dial: Optional[Callable[[str], dict]]) -> dict:
     if mode == 'off':
         workers = 0
     pacing = codex_pacing(body, stop)
-    return {**pacing, 'mode': mode, 'workers': workers, 'problems': problems + pacing['problems']}
+    return {**pacing, 'mode': mode, 'workers': workers, 'focus': focus,
+            'problems': problems + pacing['problems']}
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +418,92 @@ def label_skip(issue: dict, held: set = frozenset()) -> Optional[str]:
     if issue.get('number') in held:
         return 'held by a live Codex slot'
     return None
+
+
+BRANCH_ISSUE_RE = re.compile(r'^(?:ws|codex|claude)/(\d+)-')
+TITLE_ISSUE_RE = re.compile(r'\(#(\d+)\)')
+BODY_ISSUE_RE = re.compile(r'\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|part of)\s+#(\d+)', re.I)
+
+
+def linked_issues(pr: dict) -> set:
+    """Issue numbers a PR works on: its `ws/<n>-` style branch, `(#n)` in the title, closing words in the body."""
+    found = set()
+    branch = BRANCH_ISSUE_RE.match(pr.get('headRefName') or '')
+    if branch:
+        found.add(int(branch.group(1)))
+    found.update(int(n) for n in TITLE_ISSUE_RE.findall(pr.get('title') or ''))
+    found.update(int(n) for n in BODY_ISSUE_RE.findall(pr.get('body') or ''))
+    return found
+
+
+def in_focus(pr: dict, focus: Optional[set]) -> bool:
+    return focus is None or bool(linked_issues(pr) & focus)
+
+
+# The freeze (AGENTS.md, PR #894) lets automerge through only for the milestone or diffs outside these.
+APP_ROOTS = ('App/', 'Packages/', 'Contracts/')
+GH_FILES_CAP = 100  # gh lists at most this many files per PR; a longer list may hide app files
+# The section runs to the next bold or heading line, or a blank line that isn't followed by more list items.
+LIKELY_FILES_RE = re.compile(r'Likely files\W*?[:.]?\**[ \t]*(.*?)'
+                             r'(?:\n[ \t]*\n(?![ \t]*(?:[-*+]|\d+[.)])[ \t])|\n[ \t]*(?:\*\*|#)|\Z)', re.I | re.S)
+PATHISH_RE = re.compile(r'[\w.*-]+(?:/[\w.*-]*)+|[\w*-]+\.[A-Za-z][\w]*')
+
+
+def app_paths(paths) -> list:
+    return [p for p in paths if p.startswith(APP_ROOTS)]
+
+
+def app_code_risk(issue: dict, repo_root: Path = REPO_ROOT) -> Optional[str]:
+    """Why this issue's work might touch App/, Packages/ or Contracts/, or None when its
+    Likely files are all clearly outside them. Unclear counts as a risk."""
+    m = LIKELY_FILES_RE.search(issue.get('body') or '')
+    if not m:
+        return 'no Likely files, so it may touch app code'
+    tokens = [t.strip('`,;:()[]').rstrip('.') for t in PATHISH_RE.findall(m.group(1))]
+    paths = [t[2:] if t.startswith('./') else t for t in tokens if t]
+    if not paths:
+        return 'its Likely files name no paths, so it may touch app code'
+    app = app_paths(paths)
+    if app:
+        return f'its Likely files include app code ({app[0]})'
+    loose = [p for p in paths if '/' not in p and not (repo_root / p).is_file()]
+    if loose:
+        return f'its Likely files name `{loose[0]}` without a folder, so it may touch app code'
+    unknown = [p for p in paths if '/' in p and not (repo_root / p.split('/')[0]).is_dir()]
+    if unknown:
+        return f'its Likely files name `{unknown[0]}`, which is not under a top-level folder, so it may touch app code'
+    return None
+
+
+def diff_is_app_free(paths: list, complete: bool = True) -> bool:
+    return complete and not app_paths(paths)
+
+
+def pr_paths(pr: dict) -> tuple[list, bool]:
+    """(changed paths, whether the list is complete)."""
+    files = pr.get('files') or []
+    paths = [f.get('path') or '' for f in files]
+    total = pr.get('changedFiles')
+    complete = len(files) < GH_FILES_CAP and (total is None or total <= len(files))
+    return paths, complete
+
+
+def freeze_allows(pr: dict, focus: Optional[set], paths: Optional[list] = None) -> bool:
+    """During a freeze, only milestone PRs and diffs outside app code may be armed or finished.
+    A body's "part of #n" doesn't count: the PR may only touch the milestone issue in passing."""
+    links = linked_issues(dict(pr, body=re.sub(r'(?i)\bpart of\s+#\d+', '', pr.get('body') or '')))
+    if focus is None or links & focus:
+        return True
+    if paths is not None:
+        return diff_is_app_free(paths)
+    return diff_is_app_free(*pr_paths(pr))
+
+
+def unarmed_note(milestone: str, paths: list) -> str:
+    app = app_paths(paths)
+    shown = ', '.join(f'`{p}`' for p in app[:3]) + (' and more' if len(app) > 3 else '')
+    return (f'Left without `automerge`: the {milestone} freeze is on, this PR is not linked to a '
+            f'{milestone} issue, and its diff touches app code ({shown or "file list incomplete"}).')
 
 
 def recent_claim(comments: list, now: dt.datetime) -> bool:
@@ -797,9 +934,33 @@ class Ops:
         return self.gh_json(['issue', 'view', str(number), '-R', REPO,
                              '--json', 'number,title,body,labels,state,createdAt,comments'])
 
-    def open_prs(self) -> list:
+    def open_prs(self, with_files: bool = False) -> list:
+        fields = 'number,isDraft,createdAt,title,headRefName,body' + (',files,changedFiles' if with_files else '')
         return self.gh_json(['pr', 'list', '-R', REPO, '--state', 'open', '--base', BASE_BRANCH,
-                             '--limit', '200', '--json', 'number,isDraft,createdAt'])
+                             '--limit', '200', '--json', fields])
+
+    def focus_issues(self, milestone: str) -> Optional[set]:
+        """Open issue numbers in the milestone, or None when no focus is set. Raises if unreadable."""
+        if not milestone:
+            return None
+        return {i['number'] for i in self.gh_json(['issue', 'list', '-R', REPO, '--state', 'open',
+                                                   '--milestone', milestone, '--limit', '200',
+                                                   '--json', 'number'])}
+
+    def freeze(self) -> tuple[str, Optional[set]]:
+        """(milestone, its open issues) for a child. A Dial read error falls back to FOCUS_MILESTONE;
+        an unreadable milestone counts as empty, so only diffs outside app code are armed."""
+        try:
+            milestone, _ = parse_codex_focus(self.dial_body())
+            milestone = FOCUS_MILESTONE if milestone is None else milestone
+        except Exception as exc:
+            self.log(f'Dial read failed ({exc}); freeze falls back to {FOCUS_MILESTONE or "none"}')
+            milestone = FOCUS_MILESTONE
+        try:
+            return milestone, self.focus_issues(milestone)
+        except Exception as exc:
+            self.log(f'{milestone} milestone read failed ({exc}); treating every issue as outside it')
+            return milestone, set()
 
     def pull(self, number: int) -> dict:
         return self.gh_json(['pr', 'view', str(number), '-R', REPO, '--json',
@@ -868,7 +1029,8 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
         finish = f"{label} ({utc_stamp(dt.datetime.fromtimestamp(finish_ts, dt.timezone.utc))})"
     else:
         finish = ' / '.join(dial['finish_by']) + ' (time unavailable without usage window)'
-    say(f"Dial: mode {dial['mode']}, {stop}, finish by {finish}, Codex workers {dial['workers']}")
+    say(f"Dial: mode {dial['mode']}, {stop}, finish by {finish}, Codex workers {dial['workers']}, "
+        f"freeze {dial['focus'] or 'none'}")
     for p in dial['problems']:
         say(f'  note: {p}')
     if dry_run:
@@ -904,13 +1066,33 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
     if decision['why'] is None or dry_run:
         try:
             held_prs = {int(i['pr']) for i in live.values() if i.get('pr')}
-            pr, skipped = choose_finish(ops.open_prs(), ops.pull, now, held_prs,
+            focus = ops.focus_issues(dial['focus'])
+            prs = [p for p in ops.open_prs(with_files=focus is not None) if freeze_allows(p, focus)]
+            pr, skipped = choose_finish(prs, ops.pull, now, held_prs,
                                        on_limit=None if dry_run else lambda p: note_finish_limit(ops, p, now))
             held = {int(i.get('issue')) for i in live.values() if i.get('issue')}
             if pr is None:
-                issue, issue_skipped = choose_issue(ops.ready_issues(), lambda n: ops.issue(n).get('comments') or [],
-                                                    now, held)
+                comments = lambda n: ops.issue(n).get('comments') or []
+                ready = ops.ready_issues()
+                inside = [i for i in ready if focus is None or i['number'] in focus]
+                issue, issue_skipped = choose_issue(inside, comments, now, held)
                 skipped += issue_skipped
+                if issue is None and focus is not None:
+                    outside, risky = [], []
+                    for i in ready:
+                        if i['number'] in focus:
+                            continue
+                        why = app_code_risk(i, ops.repo_root)
+                        if why:
+                            risky.append((i['number'], f"outside {dial['focus']}: {why}"))
+                        else:
+                            outside.append(i)
+                    issue, issue_skipped = choose_issue(outside, comments, now, held)
+                    skipped += issue_skipped + risky
+                    if risky and not dry_run:
+                        ops.log(f"freeze {dial['focus']}: skipped {len(risky)} ready issues outside it that "
+                                'may touch app code: ' + ', '.join(f'#{n}' for n, _ in risky[:20])
+                                + (' ...' if len(risky) > 20 else ''))
             decision['pr'] = pr['number'] if pr else None
             decision['issue'] = issue['number'] if issue else None
             if dry_run:
@@ -922,7 +1104,8 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
             if decision['why'] is None:
                 decision['why'] = f'listing jobs failed ({exc})'
         if decision['why'] is None and issue is None and pr is None:
-            decision['why'] = 'no eligible ready issue'
+            decision['why'] = ('no eligible ready issue' if not dial['focus']
+                               else f"no eligible issue or PR under the {dial['focus']} freeze")
 
     if decision['why']:
         say(f"{tag}idle: {decision['why']}")
@@ -1007,6 +1190,14 @@ def check_staged_changes(ops: Ops, wt: Path) -> None:
               '-indent-with-non-tab,-tab-in-indent', 'diff', '--cached', '--check'], cwd=wt)
 
 
+def branch_paths(ops: Ops, wt: Path) -> list:
+    """Files the PR changes: HEAD against its merge base with origin/next. --no-renames lists both
+    sides of a move, so moving a file out of App/ still counts as touching App/."""
+    out = ops.must(['git', 'diff', '--name-only', '--no-renames', f'origin/{BASE_BRANCH}...HEAD'],
+                   cwd=wt).stdout
+    return [line for line in out.splitlines() if line.strip()]
+
+
 def run_fast_plan(ops: Ops, wt: Path, run_dir: Path) -> Result:
     """The wrapper's own --plan fast in the worktree, its evidence written to the run folder.
 
@@ -1083,7 +1274,9 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
         nonlocal stopped
         stopped = True
         if usage_run:
-            usage_run.checkpoint(outcome={'kind': 'PR armed' if result.startswith('PR #') else 'stop note',
+            kind = ('stop note' if not result.startswith('PR #') else
+                    'PR not armed' if result.endswith('unarmed') else 'PR armed')
+            usage_run.checkpoint(outcome={'kind': kind,
                                           'reason': reason, 'result': result,
                                           'signature': usage.signature(result + ': ' + reason)})
         ops.log(f'#{number} slot {slot}: stopping: {result} · {reason}')
@@ -1178,13 +1371,26 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
         body_file = run_dir / 'pr-body.md'
         body_file.write_text(pr_body(raw_body, number, slot))
         title = msg_file.read_text().splitlines()[0].strip()[:120]
+        milestone, focus = ops.freeze()
+        paths = branch_paths(ops, wt)
+        armed = focus is None or number in focus or diff_is_app_free(paths)
         created = ops.must(['gh', 'pr', 'create', '-R', REPO, '--base', BASE_BRANCH, '--head', branch,
-                            '--title', title, '--body-file', str(body_file), '--label', 'automerge'], cwd=wt)
+                            '--title', title, '--body-file', str(body_file)]
+                           + (['--label', 'automerge'] if armed else []), cwd=wt)
         m = re.search(r'/pull/(\d+)', created.stdout or '')
         pr = m.group(1) if m else '?'
         if m:
             usage_run.row['targets'][0]['pr'] = int(pr)
         usage_run.checkpoint(result_head_sha=usage.git_sha(ops.run, wt, 'HEAD', ops.log))
+        if not armed:
+            note = unarmed_note(milestone, paths)
+            if m:
+                try:
+                    ops.comment(int(pr), note)
+                except Exception as exc:
+                    ops.log(f'PR #{pr}: could not post the unarmed note: {exc}')
+            stop(f'PR #{pr} opened unarmed', note, keep_label=True)
+            return 'pr-unarmed'
         stop(f'PR #{pr} armed', 'done', keep_label=True)
         return 'pr'
     except Exception as exc:
@@ -1376,6 +1582,15 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
         if request:
             ops.comment(number, request)
             ops.label(number, add='lane:queued')
+        milestone, focus = ops.freeze()
+        paths = branch_paths(ops, wt)
+        if not freeze_allows(fresh, focus, paths):
+            note = unarmed_note(milestone, paths)
+            ops.comment(number, note)
+            usage_run.checkpoint(outcome={'kind': 'PR not armed', 'reason': note,
+                                          'signature': usage.signature(note)},
+                                 result_head_sha=usage.git_sha(ops.run, wt, 'HEAD', ops.log))
+            return 'finished-unarmed'
         ops.label(number, add='automerge')
         usage_run.checkpoint(outcome={'kind': 'PR armed', 'signature': usage.signature(summary)},
                              result_head_sha=usage.git_sha(ops.run, wt, 'HEAD', ops.log))
