@@ -4,10 +4,11 @@ import XCTest
 
 /// #866: Add Margin while a Margin plays records at the playing Margin's place, not where the source paused after it.
 final class MarginCaptureHandoffTests: XCTestCase {
-    private func snapshot(itemId: String?, mediaTimeMs: Int? = nil, textStart: Int? = nil, target: TargetType? = nil) -> SessionSnapshot {
+    private func snapshot(itemId: String?, mediaTimeMs: Int? = nil, textStart: Int? = nil, target: TargetType? = nil, targetId: String? = nil) -> SessionSnapshot {
         var snapshot = SessionSnapshot()
         snapshot.itemId = itemId
         snapshot.targetType = target?.rawValue
+        snapshot.targetId = targetId
         snapshot.currentMediaTimeMs = mediaTimeMs
         snapshot.currentTextStart = textStart
         return snapshot
@@ -68,19 +69,20 @@ final class MarginCaptureHandoffTests: XCTestCase {
         XCTAssertEqual(podcast.sourceMove(from: snapshot(itemId: "a", mediaTimeMs: 10, target: .transcriptBackedMedia)), .seekMedia(ms: 60_000))
     }
 
+    private func margin(_ anchor: Anchor, item: String = "ep", target: InterjectionTargetType = .item, targetId: String? = nil) -> Interjection {
+        Interjection(
+            id: "ij-001", itemId: item, sessionId: "session-1", targetType: target, targetId: targetId ?? item,
+            createdAt: Date(timeIntervalSince1970: 1), roughPercent: 10, anchor: anchor, audioPath: nil,
+            audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
+            displayText: "A Margin", status: "active"
+        )
+    }
+
     /// The audit's case: the source paused at 120 s, your Margin at 60 s heard from its detail sheet.
     func testYourOwnMarginsPlaceIsWhereItWasRecorded() {
-        func margin(_ anchor: Anchor, item: String = "ep") -> Interjection {
-            Interjection(
-                id: "ij-001", itemId: item, sessionId: "session-1", targetType: .item, targetId: item,
-                createdAt: Date(timeIntervalSince1970: 1), roughPercent: 10, anchor: anchor, audioPath: nil,
-                audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
-                displayText: "A Margin", status: "active"
-            )
-        }
         let spoken = MarginCaptureHandoff(localMargin: margin(Anchor(
             anchorType: .transcript, startChar: 900, endChar: 940, anchorBefore: "", anchorAfter: "", mediaTimeMs: 60_000)))
-        XCTAssertEqual(spoken, MarginCaptureHandoff(itemId: "ep", place: .media(ms: 60_000)))
+        XCTAssertEqual(spoken, MarginCaptureHandoff(itemId: "ep", place: .narration(ms: 60_000, charOffset: 900)))
         XCTAssertEqual(spoken.sourceMove(from: snapshot(itemId: "ep", mediaTimeMs: 120_000)), .seekMedia(ms: 60_000),
                        "the new Margin anchors at the heard Margin, not where the source paused")
         XCTAssertEqual(spoken.sourceMove(from: snapshot(itemId: "ep", mediaTimeMs: 60_000)), .stay)
@@ -97,7 +99,47 @@ final class MarginCaptureHandoffTests: XCTestCase {
             "a media anchor without a time has no place to go to")
         XCTAssertNil(MarginCaptureHandoff(localMargin: margin(
             Anchor(anchorType: .turn, startChar: 30, endChar: 50, anchorBefore: "", anchorAfter: "", turnSegmentIndex: 1))).place,
-            "a conversation turn's place is relative to that turn")
+            "a turn anchor on an item target has no turn to go back to")
+    }
+
+    /// The second audit's first case: a Margin recorded on narration at text 900, the article now reads aloud as live
+    /// speech at 1800. Live speech has no media clock, so the text offset places it.
+    func testANarrationMarginGoesByItsTextWhenTheArticleReadsAloud() {
+        let heard = MarginCaptureHandoff(localMargin: margin(Anchor(
+            anchorType: .transcript, startChar: 900, endChar: 940, anchorBefore: "", anchorAfter: "", mediaTimeMs: 60_000), item: "a"))
+        XCTAssertEqual(heard.sourceMove(from: snapshot(itemId: "a", textStart: 1_800, target: .itemTextTTS)), .seekText(charOffset: 900))
+        XCTAssertEqual(heard.sourceMove(from: snapshot(itemId: "a", textStart: 900, target: .itemTextTTS)), .stay)
+        XCTAssertEqual(heard.sourceMove(from: snapshot(itemId: "a", mediaTimeMs: 120_000, target: .transcriptBackedMedia)), .seekMedia(ms: 60_000),
+                       "back on the narration it still goes by its media time")
+        XCTAssertEqual(heard.sourceMove(from: snapshot(itemId: "a", mediaTimeMs: 60_000, target: .transcriptBackedMedia)), .stay)
+        for turn in [TargetType.assistantTurnTTS, .summaryTurnTTS] {
+            XCTAssertEqual(heard.sourceMove(from: snapshot(itemId: "a", textStart: 10, target: turn, targetId: "t")), .stay, "\(turn)")
+        }
+        // A podcast's transcript position is not article text: a media Margin without a narration never goes by text.
+        let podcast = MarginCaptureHandoff(localMargin: margin(Anchor(
+            anchorType: .media, startChar: 900, endChar: 940, anchorBefore: "", anchorAfter: "", mediaTimeMs: 60_000), item: "a"))
+        XCTAssertEqual(podcast.sourceMove(from: snapshot(itemId: "a", textStart: 1_800, target: .itemTextTTS)), .stay)
+    }
+
+    /// The second audit's second case: the turn paused at character 1000, your Margin on that turn at 300.
+    func testAMarginOnTheCurrentTurnMovesThatTurnToIt() {
+        let onTurn = MarginCaptureHandoff(localMargin: margin(
+            Anchor(anchorType: .turn, startChar: 300, endChar: 340, anchorBefore: "", anchorAfter: "", turnSegmentIndex: 2),
+            item: "a", target: .assistantTurn, targetId: "turn-1"))
+        XCTAssertEqual(onTurn.place, .turn(id: "turn-1", charOffset: 300))
+        XCTAssertEqual(onTurn.sourceMove(from: snapshot(itemId: "a", textStart: 1_000, target: .assistantTurnTTS, targetId: "turn-1")), .seekText(charOffset: 300))
+        XCTAssertEqual(onTurn.sourceMove(from: snapshot(itemId: "a", textStart: 300, target: .assistantTurnTTS, targetId: "turn-1")), .stay)
+        XCTAssertEqual(onTurn.sourceMove(from: snapshot(itemId: "a", textStart: 1_000, target: .assistantTurnTTS, targetId: "turn-2")), .stay,
+                       "another turn's text is a different place")
+        XCTAssertEqual(onTurn.sourceMove(from: snapshot(itemId: "a", textStart: 1_000, target: .itemTextTTS, targetId: "a")), .stay,
+                       "the article isn't the turn")
+        XCTAssertEqual(onTurn.sourceMove(from: snapshot(itemId: "a", mediaTimeMs: 5_000, target: .transcriptBackedMedia, targetId: "x")), .stay)
+        XCTAssertEqual(onTurn.sourceMove(from: snapshot(itemId: "other", textStart: 1_000, target: .assistantTurnTTS, targetId: "turn-1")), .stay)
+
+        let summary = MarginCaptureHandoff(localMargin: margin(
+            Anchor(anchorType: .turn, startChar: 12, endChar: 30, anchorBefore: "", anchorAfter: "", turnSegmentIndex: 0),
+            item: "a", target: .summaryTurn, targetId: "sum-1"))
+        XCTAssertEqual(summary.sourceMove(from: snapshot(itemId: "a", textStart: 80, target: .summaryTurnTTS, targetId: "sum-1")), .seekText(charOffset: 12))
     }
 
     func testASharedMarginsPlaceIsItsLocalPositionInThisCopy() {

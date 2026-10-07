@@ -7,6 +7,11 @@ public struct MarginCaptureHandoff: Sendable, Equatable {
     public enum Place: Sendable, Equatable {
         case media(ms: Int)
         case text(charOffset: Int)
+        /// A Margin recorded on an article's prepared narration: the media time it was heard at, and the article text
+        /// offset that time sits on. The text offset is what places it when the article reads aloud as live speech.
+        case narration(ms: Int, charOffset: Int)
+        /// A Margin recorded on one conversation turn, at an offset in that turn's own text.
+        case turn(id: String, charOffset: Int)
     }
 
     public enum SourceMove: Sendable, Equatable {
@@ -35,15 +40,24 @@ public struct MarginCaptureHandoff: Sendable, Equatable {
         )
     }
 
-    /// One of the listener's own Margins playing from its detail sheet: the place it was recorded at in its item.
-    /// A conversation turn's place is relative to that turn, so it isn't handed off.
+    /// One of the listener's own Margins playing from its detail sheet: the place it was recorded at. A conversation
+    /// turn's place is relative to that turn, so it carries the turn's identity and only moves that turn.
     public init(localMargin: Interjection) {
         let anchor = localMargin.anchor
         let place: Place?
         switch anchor.anchorType {
-        case .media, .transcript: place = anchor.mediaTimeMs.map { Place.media(ms: $0) }
+        case .media: place = anchor.mediaTimeMs.map { Place.media(ms: $0) }
+        case .transcript:
+            // On prepared narration the anchor's text range is the article's own text, so it still places the Margin
+            // when the article later reads aloud as live speech. On a podcast it is a transcript position, which no
+            // text source reads, so it is never used there.
+            place = anchor.mediaTimeMs.map { Place.narration(ms: $0, charOffset: anchor.startChar) }
         case .text: place = .text(charOffset: anchor.startChar)
-        case .turn: place = nil
+        case .turn:
+            switch localMargin.targetType {
+            case .assistantTurn, .summaryTurn: place = .turn(id: localMargin.targetId, charOffset: anchor.startChar)
+            case .item: place = nil
+            }
         }
         self.init(itemId: localMargin.itemId, place: place)
     }
@@ -55,17 +69,29 @@ public struct MarginCaptureHandoff: Sendable, Equatable {
 
     /// Where the source must go so the new Margin is anchored at the playing Margin. A Margin from another item,
     /// or one without a place, leaves the source where it is. So does a source that can't show the place: a
-    /// conversation turn has no article or media place of its own, and live speech has no media clock.
+    /// conversation turn has no article or media place of its own, a turn Margin only moves its own turn, and live
+    /// speech has no media clock (a Margin recorded on narration then goes by its text offset).
     public func sourceMove(from snapshot: SessionSnapshot) -> SourceMove {
         guard let itemId, itemId == snapshot.itemId, let place else { return .stay }
         let source = snapshot.targetType
-        if source == TargetType.assistantTurnTTS.rawValue || source == TargetType.summaryTurnTTS.rawValue { return .stay }
+        let onTurn = source == TargetType.assistantTurnTTS.rawValue || source == TargetType.summaryTurnTTS.rawValue
+        let onLiveSpeech = source == TargetType.itemTextTTS.rawValue
+        func text(_ charOffset: Int) -> SourceMove {
+            snapshot.currentTextStart == charOffset ? .stay : .seekText(charOffset: charOffset)
+        }
+        func media(_ ms: Int) -> SourceMove {
+            snapshot.currentMediaTimeMs == ms ? .stay : .seekMedia(ms: ms)
+        }
         switch place {
+        case .turn(let turnId, let charOffset):
+            return onTurn && snapshot.targetId == turnId ? text(charOffset) : .stay
         case .media(let ms):
-            if source == TargetType.itemTextTTS.rawValue { return .stay }
-            return snapshot.currentMediaTimeMs == ms ? .stay : .seekMedia(ms: ms)
+            return onTurn || onLiveSpeech ? .stay : media(ms)
+        case .narration(let ms, let charOffset):
+            if onTurn { return .stay }
+            return onLiveSpeech ? text(charOffset) : media(ms)
         case .text(let charOffset):
-            return snapshot.currentTextStart == charOffset ? .stay : .seekText(charOffset: charOffset)
+            return onTurn ? .stay : text(charOffset)
         }
     }
 }
