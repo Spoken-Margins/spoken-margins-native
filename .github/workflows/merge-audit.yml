@@ -6,8 +6,8 @@
 # could silently not run for exactly the merges it should catch. A push run always uses next's own
 # copy of this file, and it also sees a commit pushed to next without any pull request.
 #
-# It runs on a GitHub-hosted runner, so it never queues behind lane jobs on the Mac, and it never
-# reverts anything: it labels and comments.
+# It runs on the owner's VPS runner (sm-vps), so it never queues behind lane jobs on the Mac and
+# uses none of the free GitHub-hosted Linux minutes. It never reverts anything: it labels and comments.
 #
 # Hourly sweep: the lane runner merges with the workflow token (decision 3), and pushes made with
 # that token start no workflow, so a scheduled run audits every PR merged in the last two hours.
@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   audit:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, sm-vps]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
