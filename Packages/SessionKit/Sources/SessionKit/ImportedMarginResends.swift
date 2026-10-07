@@ -4,45 +4,56 @@ import Foundation
 /// digest (#858). Each packet used to become its own layer, so the listener kept a second copy of every
 /// Margin the friend had already sent.
 ///
-/// A packet carries no sender identity (signing is #22), so "the same Margin" is judged from what the
-/// packet does carry. Neither the packet's Margin id (`margin-0004` counts the Margins in that packet,
-/// so it shifts when the friend deletes one) nor the packet's created time (the moment of sharing)
-/// survives a re-share. What does is the sender's label together with the Margin's words, its place
-/// in the source and its voice length. Two different people who share a label also have to agree on
-/// all of those before one Margin hides the other.
-///
-/// Nothing is deleted or rewritten: the Margins the listener already holds stay, with their layer,
-/// their heard state and the replies pointing at them. A Margin that arrives again is not stored a
-/// second time. Its packet identity is recorded on the held copy (`alsoSharedAs`), so a reply that
-/// names the newer packet still finds its parent. The outcome is the same whichever packet arrives
-/// first, because the Margins are the same and each is held once.
+/// Cross-packet matching requires stable capture provenance. Display labels, matching words and
+/// locations cannot establish that two people are the same sender. Legacy packets without that
+/// provenance are imported whole. New exports use a Build-29-compatible representation ID.
+/// Held Margins retain their layer, heard state and replies; later packet names become aliases.
 public enum ImportedMarginResends {
     /// What identifies a Margin across one sender's packets.
     struct Fingerprint: Hashable {
         let transcript: String
         let anchor: String
         let audioDurationMs: Int?
+        let shareProvenance: String?
+        let replyLinks: Set<MarginReplyLink>
 
         init(_ margin: ImportedCommentaryInterjection) {
-            transcript = margin.approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            transcript = margin.approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).precomposedStringWithCanonicalMapping
             // The ids of the sender's acoustic signatures are named per export; the place isn't.
             let place = PortableAnchorEvidence(
                 anchorType: margin.anchorEvidence.anchorType,
                 startChar: margin.anchorEvidence.startChar,
                 endChar: margin.anchorEvidence.endChar,
-                exactText: margin.anchorEvidence.exactText,
-                prefix: margin.anchorEvidence.prefix,
-                suffix: margin.anchorEvidence.suffix,
+                exactText: margin.anchorEvidence.exactText?.precomposedStringWithCanonicalMapping,
+                prefix: margin.anchorEvidence.prefix?.precomposedStringWithCanonicalMapping,
+                suffix: margin.anchorEvidence.suffix?.precomposedStringWithCanonicalMapping,
                 mediaTimeMs: margin.anchorEvidence.mediaTimeMs,
                 roughPercent: margin.anchorEvidence.roughPercent,
-                transcriptSegmentId: margin.anchorEvidence.transcriptSegmentId,
-                chapterTitle: margin.anchorEvidence.chapterTitle
+                transcriptSegmentId: margin.anchorEvidence.transcriptSegmentId?.precomposedStringWithCanonicalMapping,
+                chapterTitle: margin.anchorEvidence.chapterTitle?.precomposedStringWithCanonicalMapping
             )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             anchor = (try? encoder.encode(place)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
             audioDurationMs = margin.audioDurationMs
+            shareProvenance = margin.shareProvenance
+            replyLinks = Set(margin.replyLinks ?? [])
         }
+    }
+
+    /// One equivalence rule for both the importer and coop-packet check. Ineligible Margins are
+    /// unique to their packet; a checker must not call ambiguous legacy Margins duplicate copies.
+    public struct CopyKey: Hashable {
+        let sender: String
+        let fingerprint: Fingerprint
+        let packetIdentity: MarginPacketIdentity?
+    }
+
+    public static func copyKey(packageDigest: String, sender: String?, margin: ImportedCommentaryInterjection) -> CopyKey {
+        let sender = sender?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let eligible = !sender.isEmpty && margin.shareProvenance.map(MarginShareProvenance.isValidToken) == true
+        return CopyKey(sender: sender, fingerprint: Fingerprint(margin), packetIdentity: eligible ? nil :
+            MarginPacketIdentity(packageDigest: packageDigest, packageScopedId: margin.packageScopedId))
     }
 
     public struct Plan: Equatable, Sendable {
@@ -63,11 +74,14 @@ public enum ImportedMarginResends {
         held: [(layerId: String, margin: ImportedCommentaryInterjection)]
     ) -> Plan {
         var heldByFingerprint: [Fingerprint: [(layerId: String, margin: ImportedCommentaryInterjection)]] = [:]
-        for entry in held { heldByFingerprint[Fingerprint(entry.margin), default: []].append(entry) }
+        for entry in held where entry.margin.shareProvenance.map(MarginShareProvenance.isValidToken) == true {
+            heldByFingerprint[Fingerprint(entry.margin), default: []].append(entry)
+        }
         var plan = Plan(newMargins: [], identitiesByHeldMargin: [:], firstHeldLayerId: nil)
         for margin in incoming {
             let fingerprint = Fingerprint(margin)
-            guard var candidates = heldByFingerprint[fingerprint], !candidates.isEmpty else {
+            guard margin.shareProvenance.map(MarginShareProvenance.isValidToken) == true,
+                  var candidates = heldByFingerprint[fingerprint], !candidates.isEmpty else {
                 plan.newMargins.append(margin)
                 continue
             }
@@ -79,6 +93,14 @@ public enum ImportedMarginResends {
             if plan.firstHeldLayerId == nil { plan.firstHeldLayerId = match.layerId }
         }
         return plan
+    }
+
+    /// Artifact-only layers still need the app's podcast placement pass after commentary deduplication.
+    public static func hasLayerArtifacts(_ layer: ImportedCommentaryLayer) -> Bool {
+        !(layer.listeningMapProposals ?? []).isEmpty
+            || !(layer.editionFingerprintSpines ?? []).isEmpty
+            || !(layer.transcriptPhraseSketches ?? []).isEmpty
+            || !(layer.episodeMapEvidencePaths ?? [:]).isEmpty
     }
 
     /// Imports a packet's layer, leaving out the Margins this sender already gave the listener on this item.
@@ -118,7 +140,9 @@ public enum ImportedMarginResends {
             margin.alsoSharedAs = (margin.alsoSharedAs ?? []) + identities.filter { !(margin.alsoSharedAs ?? []).contains($0) }
             try repository.saveImportedCommentaryInterjection(margin)
         }
-        guard !plan.newMargins.isEmpty else { return .duplicate(existingLayerId: heldLayerId) }
+        // Even with no new commentary, save a layer that carries map/placement artifacts. The app
+        // resolves maps from these layer fields, independently of its list of Margins.
+        guard !plan.newMargins.isEmpty || hasLayerArtifacts(layer) else { return .duplicate(existingLayerId: heldLayerId) }
         return try repository.importCommentaryLayer(layer, interjections: plan.newMargins)
     }
 }

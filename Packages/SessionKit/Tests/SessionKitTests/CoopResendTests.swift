@@ -2,6 +2,7 @@ import Foundation
 @testable import SessionKit
 import SessionKitPersistence
 import SessionKitSharing
+@testable import CoopPacket
 import XCTest
 
 /// A friend shares again after adding Margins (#858), with real packets: written the way the app
@@ -12,6 +13,7 @@ import XCTest
 final class CoopResendTests: XCTestCase {
     private var root: URL!
     private var packetsMade = 0
+    private var senderSessions: [String: String] = [:]
 
     override func setUpWithError() throws {
         root = FileManager.default.temporaryDirectory.appending(path: "CoopResendTests-\(UUID().uuidString)")
@@ -99,6 +101,47 @@ final class CoopResendTests: XCTestCase {
         }
     }
 
+    func testAuditSameDisplayLabelDifferentPeopleKeepBoth() throws {
+        let first = try share("Sam", [one], person: "Sam A")
+        let second = try share("Sam", [one], person: "Sam B")
+        for order in [[first, second], [second, first]] {
+            let store = try freshStore()
+            for packet in order { _ = try open(packet, in: store) }
+            XCTAssertEqual(try heard(in: store).count, 2)
+        }
+    }
+
+    func testAuditRealPacketsAgreeInAllTwentyFourOrders() throws {
+        let first = try share("Ada", [one, two])
+        let update = try share("Ada", [one, two, three])
+        let toFirst = try share("Ben", [Said("Agreed", at: 600_000)], replyingTo: (first, "margin-0002"))
+        let toUpdate = try share("Ben", [Said("Another thought", at: 1_200_000)], replyingTo: (update, "margin-0003"))
+        let report = try CoopCheck.run([first, update, toFirst, toUpdate].map { root.appending(path: "\($0.name).spokenmargins") })
+        XCTAssertTrue(report.passed, report.text)
+        XCTAssertTrue(report.text.contains("24 orders"), report.text)
+    }
+
+    func testAuditIdenticalReplyWordsToDifferentParentsKeepBoth() throws {
+        let ada = try share("Ada", [one])
+        let chris = try share("Chris", [one])
+        let benA = try share("Ben", [Said("Agreed", at: 60_000)], replyingTo: (ada, "margin-0001"))
+        let benC = try share("Ben", [Said("Agreed", at: 60_000)], replyingTo: (chris, "margin-0001"))
+        let report = try CoopCheck.run([ada, chris, benA, benC].map { root.appending(path: "\($0.name).spokenmargins") })
+        XCTAssertTrue(report.passed, report.text)
+        XCTAssertTrue(report.text.contains("4 held Margin(s)"), report.text)
+        XCTAssertTrue(report.text.contains("2 linked"), report.text)
+    }
+
+    func testAuditRepresentationProvenanceSurvivesRenumbering() throws {
+        let first = try share("Ada", [one, two])
+        let update = try share("Ada", [two, three])
+        let originalRecord = try XCTUnwrap(first.contents.commentaryLayers.first?.interjections.last)
+        let updatedRecord = try XCTUnwrap(update.contents.commentaryLayers.first?.interjections.first)
+        XCTAssertNotEqual(originalRecord.packageScopedId, updatedRecord.packageScopedId)
+        XCTAssertEqual(originalRecord.defaultRepresentationId, updatedRecord.defaultRepresentationId)
+        XCTAssertNotNil(MarginShareProvenance.token(representationID: originalRecord.defaultRepresentationId))
+    }
+
     // MARK: Helpers
 
     private struct Shared {
@@ -108,8 +151,10 @@ final class CoopResendTests: XCTestCase {
     }
 
     private func share(
-        _ sender: String, _ margins: [Said], replyingTo parent: (Shared, String)? = nil
+        _ sender: String, _ margins: [Said], replyingTo parent: (Shared, String)? = nil, person: String? = nil
     ) throws -> Shared {
+        let person = person ?? sender
+        if senderSessions[person] == nil { senderSessions[person] = "session-source-" + UUID().uuidString }
         packetsMade += 1
         let name = "\(sender)-\(packetsMade)"
         // The app stamps each share with the time of sharing, so a re-share never repeats it.
@@ -129,7 +174,7 @@ final class CoopResendTests: XCTestCase {
                     packageScopedId: String(format: "margin-%04d", index + 1),
                     revision: InterjectionShareRevision(
                         id: "revision-\(name)-\(index)", interjectionId: "note-\(sender)-\(said.atMs)", itemId: "sender-item",
-                        sessionId: "sender-session", createdAt: sharedAt,
+                        sessionId: senderSessions[person]!, createdAt: sharedAt,
                         approvedTranscript: said.words, anchorBefore: "", anchorAfter: "", status: .senderApproved
                     ),
                     anchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: said.atMs),

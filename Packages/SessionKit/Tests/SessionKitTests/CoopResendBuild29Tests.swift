@@ -4,12 +4,13 @@ import ShippedSessionKit
 import XCTest
 
 /// The database Build 29 opens (#858): a Margin marked with the names a later packet gave it still
-/// decodes there, and one that arrived once is stored exactly as before.
+/// decodes there, including optional capture provenance that the old reader ignores.
 final class CoopResendBuild29Tests: XCTestCase {
     func testBuild29StillReadsAMarginKnownByTwoPackets() throws {
         var margin = SessionKit.ImportedCommentaryInterjection(
             id: "m", layerId: "l", packageScopedId: "margin-0001", createdAt: Date(timeIntervalSince1970: 1_777_000_000),
-            anchorEvidence: SessionKit.PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 60_000), approvedTranscript: "words"
+            anchorEvidence: SessionKit.PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 60_000), approvedTranscript: "words",
+            shareProvenance: MarginShareProvenance.token(sessionId: UUID().uuidString, interjectionId: "ij-001")
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys

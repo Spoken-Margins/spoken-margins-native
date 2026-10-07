@@ -571,6 +571,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var snapshot = SessionSnapshot() {
         didSet {
             recordPlaybackEventState(previous: oldValue)
+            settleSpeechInterruptionResume()
             listeningSignals.snapshotChanged(from: oldValue, to: snapshot)
             updateNarrationVoiceNotice()
             if playingImportedCommentary != nil,
@@ -591,7 +592,7 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
             reconcilePlaybackProgressTicker()
-            reconcileTextPlaybackStartupBackgroundTask()
+            reconcileNarrationStartupProtection()
             updateSkimAvailability(refreshResources: false)
             updateGate2CompactState()
         }
@@ -619,6 +620,7 @@ final class Gate1AppModel: ObservableObject {
         automatic: true
     )
     private var lastPlaybackEventCheckpoint: TimeInterval = 0
+    var speechInterruptionResumeWatch = SpeechInterruptionResumeWatch()
 
     func recordDeveloperDiagnostic(_ kind: String, _ fields: [String: String] = [:]) {
         developerRecording.record(kind, fields)
@@ -1025,9 +1027,12 @@ final class Gate1AppModel: ObservableObject {
     private var sleepTimerTask: Task<Void, Never>?
     private var onDeviceSpeechGenerationDelayTask: Task<Void, Never>?
     private var trashUndoDismissTask: Task<Void, Never>?
-    #if canImport(UIKit) && os(iOS)
-    private var textPlaybackStartupBackgroundTask: UIBackgroundTaskIdentifier = .invalid
-    #endif
+    /// Background time while on-device narration starts, on every path into "starting" (#854).
+    private lazy var narrationStartupProtection = NarrationStartupProtection(
+        begin: NarrationStartupBackgroundTime.begin,
+        record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) },
+        outcomeChanged: { [weak self] in self?.diagnostics["textAudioBackgroundStartup"] = $0.rawValue }
+    )
     #if canImport(AVFoundation)
     private var interjectionAudioPlayer: AVPlayer?
     private var interjectionAudioCompletionTask: Task<Void, Never>?
@@ -1784,7 +1789,8 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["lockScreenLifecycleRefresh"] = snapshot.targetType ?? "none"
     }
 
-    func handleAppBecameInactiveOrBackground() {
+    func handleAppBecameInactiveOrBackground(entersBackground: Bool = false) {
+        if entersBackground { narrationStartupProtection.appEnteredBackground() }
         marginNotesDelivery.finishBeforeBackground(); readwiseHighlightSync.stop()
         supertonicRenderer?.setBackgroundInferencePacingEnabled(true)
         if snapshot.status == .starting,
@@ -1972,6 +1978,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameActive() {
+        narrationStartupProtection.appEnteredForeground()
         openReadyListeningEdition()
         marginNotesDelivery.start(); readwiseHighlightSync.start { [weak self] in self?.store }
         if let store { CommunityMapUploadService.shared.retryFailed(store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
@@ -2435,7 +2442,7 @@ final class Gate1AppModel: ObservableObject {
         stopImportedCommentaryPlayback(resumeSource: false)
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         syncPlaybackProgressForLifecycle()
-        endTextPlaybackStartupBackgroundTask()
+        narrationStartupProtection.stop()
         gate2CompactControls.endLiveActivities()
     }
 
@@ -3778,7 +3785,7 @@ final class Gate1AppModel: ObservableObject {
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
         scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
-        beginTextPlaybackStartupBackgroundTaskIfNeeded(itemId: activeItemId)
+        narrationStartupProtection.protectUpcomingStart(eligible: narrationRendersOnDevice(itemId: activeItemId))
         run { engine in
             try prepareSourceMediaPlayback(itemId: activeItemId)
             let started = try engine.startSession(itemId: activeItemId)
@@ -3795,46 +3802,20 @@ final class Gate1AppModel: ObservableObject {
             screen = .playback
             reportSuccess("Started \(snapshot.title ?? "session").")
         }
-        reconcileTextPlaybackStartupBackgroundTask()
+        reconcileNarrationStartupProtection()
     }
 
-    private func beginTextPlaybackStartupBackgroundTaskIfNeeded(itemId: String) {
-        #if canImport(UIKit) && os(iOS)
-        guard textPlaybackStartupBackgroundTask == .invalid,
-              ttsVoiceSelection.supertonicVoice != nil,
-              let item = try? store?.loadItem(id: itemId),
-              item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-            return
+    private func reconcileNarrationStartupProtection() {
+        let itemId = snapshot.itemId
+        narrationStartupProtection.statusChanged(to: snapshot.status, itemId: itemId) {
+            itemId.map { narrationRendersOnDevice(itemId: $0) } ?? false
         }
-        textPlaybackStartupBackgroundTask = UIApplication.shared.beginBackgroundTask(
-            withName: "Start native text audio"
-        ) { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.diagnostics["textAudioBackgroundStartup"] = "expired"
-                self?.endTextPlaybackStartupBackgroundTask()
-            }
-        }
-        diagnostics["textAudioBackgroundStartup"] = textPlaybackStartupBackgroundTask == .invalid
-            ? "unavailable"
-            : "protected"
-        #endif
     }
 
-    private func reconcileTextPlaybackStartupBackgroundTask() {
-        guard snapshot.status != .starting else { return }
-        endTextPlaybackStartupBackgroundTask()
-    }
-
-    private func endTextPlaybackStartupBackgroundTask() {
-        #if canImport(UIKit) && os(iOS)
-        guard textPlaybackStartupBackgroundTask != .invalid else { return }
-        let identifier = textPlaybackStartupBackgroundTask
-        textPlaybackStartupBackgroundTask = .invalid
-        UIApplication.shared.endBackgroundTask(identifier)
-        if diagnostics["textAudioBackgroundStartup"] != "expired" {
-            diagnostics["textAudioBackgroundStartup"] = "completed"
-        }
-        #endif
+    /// Supertonic renders the narration on the phone, so its start has no audio keeping a backgrounded app alive.
+    private func narrationRendersOnDevice(itemId: String) -> Bool {
+        ttsVoiceSelection.supertonicVoice != nil
+            && (try? store?.loadItem(id: itemId))?.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
     func playPause() {
@@ -10684,12 +10665,9 @@ final class Gate1AppModel: ObservableObject {
                         self.diagnostics["supertonicFallbackRestored"] = itemId
                     }
                 },
-                onStall: { [weak self] kind, fields in
-                    Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) }
-                },
-                onResumeDecision: { [weak self] fields in
-                    Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) }
-                }
+                onStall: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
+                onSystemPause: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
+                onResumeDecision: { [weak self] fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) } }
             )
         }
         diagnostics["sessionTTS"] = "System speech"
@@ -10882,15 +10860,15 @@ final class Gate1AppModel: ObservableObject {
             }
         case .endedShouldResume:
             guard snapshot.status == .paused, let engine else {
-                diagnostics["speechPlaybackInterruption"] = "resume_skipped"
+                noteSpeechInterruptionResume(.skipped)
                 return
             }
             do {
                 snapshot = try engine.resumePlayback()
                 refreshSelectedItem()
-                diagnostics["speechPlaybackInterruption"] = "resumed"
+                noteSpeechInterruptionResumeReturned()
             } catch {
-                diagnostics["speechPlaybackInterruption"] = "resume_failed:\(error.localizedDescription)"
+                noteSpeechInterruptionResume(.failed(reason: error.localizedDescription))
                 reportWarning("Playback paused after the interruption. Tap Play to resume.")
             }
         }
@@ -15910,7 +15888,7 @@ final class Gate1AppModel: ObservableObject {
             guard layer.deletedAt == nil,
                   layer.itemIdentity.itemType == .podcast,
                   let records = try? store.loadImportedCommentaryInterjections(layerId: layer.id),
-                  !records.isEmpty else { return nil }
+                  !records.isEmpty || ImportedMarginResends.hasLayerArtifacts(layer) else { return nil }
             return (layer, records)
         }
         guard !work.isEmpty else { return }

@@ -107,11 +107,10 @@ enum CoopCheck {
     /// importer keeps one copy of each (#858): this reports the re-sends it found, and `checkOrders`
     /// fails if a copy is kept for any of them.
     private static func noteResentMargins(_ group: [OpenedPacket], report: inout Report) {
-        var packetsByMargin: [String: Set<String>] = [:]
+        var packetsByMargin: [ImportedMarginResends.CopyKey: Set<String>] = [:]
         for packet in group {
-            let sender = packet.contents.manifest.senderDisplayLabel ?? "no sender"
             for margin in packet.margins {
-                packetsByMargin[copyKey(sender: sender, margin: margin), default: []].insert(packet.digest)
+                packetsByMargin[copyKey(packet: packet, margin: margin), default: []].insert(packet.digest)
             }
         }
         let resent = packetsByMargin.filter { $0.value.count > 1 }
@@ -120,26 +119,28 @@ enum CoopCheck {
         }
     }
 
-    /// Who said what, where and in what voice, as the importer judges "the same Margin" (#858).
-    private static func copyKey(sender: String, margin: SharedInterjectionPackageRecord) -> String {
-        let anchor = margin.anchor
+    /// Use exactly the importer's fields, including full anchor context, voice duration, reply
+    /// relationships and provenance eligibility. No audio decoding is needed to compare metadata.
+    private static func copyKey(packet: OpenedPacket, margin: SharedInterjectionPackageRecord) -> ImportedMarginResends.CopyKey {
         let representation = margin.defaultRepresentation
-        return [
-            sender,
-            "\(anchor.anchorType)", "\(anchor.mediaTimeMs ?? -1)", "\(anchor.startChar ?? -1)-\(anchor.endChar ?? -1)",
-            (representation?.approvedTranscript ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
-            representation?.assetId == nil ? "text" : "voice",
-        ].joined(separator: "|")
+        let asset = packet.contents.manifest.assets.first { $0.id == representation?.assetId }
+        let imported = ImportedCommentaryInterjection(
+            id: margin.packageScopedId, layerId: "check", packageScopedId: margin.packageScopedId,
+            createdAt: margin.createdAt, anchorEvidence: margin.anchor,
+            approvedTranscript: representation?.approvedTranscript ?? "", audioDurationMs: asset?.durationMs,
+            replyLinks: packet.contents.conversations.first?.linksByPackageScopedId[margin.packageScopedId],
+            shareProvenance: representation.flatMap { MarginShareProvenance.token(representationID: $0.id) }
+        )
+        return ImportedMarginResends.copyKey(packageDigest: packet.digest, sender: packet.contents.manifest.senderDisplayLabel, margin: imported)
     }
 
     /// How many of each Margin the packets carry at most: a sender who said the same thing twice at one
     /// place keeps both, but never more than one packet held.
-    private static func expectedCopies(_ group: [OpenedPacket]) -> [String: Int] {
-        var expected: [String: Int] = [:]
+    private static func expectedCopies(_ group: [OpenedPacket]) -> [ImportedMarginResends.CopyKey: Int] {
+        var expected: [ImportedMarginResends.CopyKey: Int] = [:]
         for packet in group {
-            let sender = packet.contents.manifest.senderDisplayLabel ?? "no sender"
-            var inPacket: [String: Int] = [:]
-            for margin in packet.margins { inPacket[copyKey(sender: sender, margin: margin), default: 0] += 1 }
+            var inPacket: [ImportedMarginResends.CopyKey: Int] = [:]
+            for margin in packet.margins { inPacket[copyKey(packet: packet, margin: margin), default: 0] += 1 }
             for (key, count) in inPacket { expected[key] = max(expected[key] ?? 0, count) }
         }
         return expected
@@ -154,10 +155,10 @@ enum CoopCheck {
         var replies: [MarginPacketIdentity: String] = [:]
         var threads: [String: Set<MarginThreadEdge>] = [:]
         /// How many copies of each Margin are held.
-        var copies: [String: Int] = [:]
+        var copies: [ImportedMarginResends.CopyKey: Int] = [:]
     }
 
-    private static func checkOrders(_ group: [OpenedPacket], report: inout Report) throws {
+    static func checkOrders(_ group: [OpenedPacket], report: inout Report) throws {
         let orders = importOrders(count: group.count)
         var first: Outcome?
         var firstOrder: [Int] = []
@@ -187,7 +188,7 @@ enum CoopCheck {
             }
             let outcome = try self.outcome(store: store, itemId: itemId)
             let expected = expectedCopies(group)
-            if let extra = outcome.copies.sorted(by: { $0.key < $1.key }).first(where: { $0.value > (expected[$0.key] ?? 0) }) {
+            if let extra = outcome.copies.first(where: { $0.value > (expected[$0.key] ?? 0) }) {
                 report.fail("order \(order.map { $0 + 1 }) keeps \(extra.value) copies of one Margin that no packet carries more than \(expected[extra.key] ?? 0) time(s): \(extra.key)")
                 return
             }
@@ -244,14 +245,7 @@ enum CoopCheck {
         outcome.margins = Set(allNames)
         outcome.threads = graph.threads
         for (layer, margin) in margins {
-            let sender = layer.displayLabel ?? "no sender"
-            let key = [
-                sender,
-                "\(margin.anchorEvidence.anchorType)", "\(margin.anchorEvidence.mediaTimeMs ?? -1)",
-                "\(margin.anchorEvidence.startChar ?? -1)-\(margin.anchorEvidence.endChar ?? -1)",
-                margin.approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines),
-                margin.audioDurationMs == nil ? "text" : "voice",
-            ].joined(separator: "|")
+            let key = ImportedMarginResends.copyKey(packageDigest: layer.packageDigest, sender: layer.displayLabel, margin: margin)
             outcome.copies[key, default: 0] += 1
         }
         for (reference, state) in graph.states {

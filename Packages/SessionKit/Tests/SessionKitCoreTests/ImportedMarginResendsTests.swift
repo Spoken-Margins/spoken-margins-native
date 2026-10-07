@@ -10,6 +10,7 @@ final class ImportedMarginResendsTests: XCTestCase {
     private var folder: URL!
     private var store: SQLiteSessionStore!
     private let item = SharedItemIdentity(itemType: .podcast, canonicalURL: "https://podcasts.example.com/episodes/harbour-lights", title: "Harbour Lights")
+    private var captureOrigins: [String: String] = [:]
     private var clock = Date(timeIntervalSince1970: 1_777_000_000)
 
     override func setUpWithError() throws {
@@ -226,7 +227,7 @@ final class ImportedMarginResendsTests: XCTestCase {
 
     // MARK: Storage
 
-    func testAMarginThatArrivedOnceSavesExactlyAsBefore() throws {
+    func testAMarginThatArrivedOnceHasNoPacketAliases() throws {
         _ = try send(packet("O", from: "Ada", [("one", 60_000)]))
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
@@ -243,9 +244,148 @@ final class ImportedMarginResendsTests: XCTestCase {
         )
         let decoded = try JSONDecoder().decode(ImportedCommentaryInterjection.self, from: try encoder.encode(margin))
         XCTAssertNil(decoded.alsoSharedAs)
+        XCTAssertNil(decoded.shareProvenance)
         var marked = margin
         marked.alsoSharedAs = [id("U", "U-1")]
         XCTAssertEqual(try JSONDecoder().decode(ImportedCommentaryInterjection.self, from: try encoder.encode(marked)), marked)
+    }
+
+    // Audit regressions: these run through the existing importer and real SQLite.
+    func testAuditAmbiguousSameLabelKeepsIdenticalMargins() throws {
+        _ = try send(packet("O", from: "Sam", [("Agreed", 60_000)]))
+        _ = try send(packet("U", from: "Sam", [("Agreed", 60_000)], person: "other Sam"))
+        XCTAssertEqual(try visible().count, 2)
+    }
+
+    func testAuditAmbiguousSenderNeighboursKeepBoth() throws {
+        let labels: [(String?, String?)] = [
+            ("Sam", "Sam"), ("Sam", "sam"), ("Sam", "  Sam\n"),
+            ("José", "Jose\u{301}"), ("Sam", "Sam!"), (nil, nil), ("", " \n"),
+            (String(repeating: "S", count: 120), String(repeating: "S", count: 120)),
+            ("Sam", "Sаm") // Cyrillic a is a lookalike, not Latin a.
+        ]
+        for (first, second) in labels {
+            try setUpWithError()
+            _ = try send(packet("O", from: first, [("Agreed", 60_000)], provenance: false))
+            _ = try send(packet("U", from: second, [("Agreed", 60_000)], provenance: false))
+            XCTAssertEqual(try margins().count, 2, "\(String(describing: first)) / \(String(describing: second))")
+        }
+    }
+
+    func testAuditDifferentReplyRelationshipsKeepBothInEveryOrder() throws {
+        let a = MarginReplyLink.replying(to: id("Ada", "a"), parentConversationId: nil)
+        let c = MarginReplyLink.replying(to: id("Chris", "c"), parentConversationId: nil)
+        let alternatives: [[MarginReplyLink]] = [[], [c], [a, c], [
+            MarginReplyLink(conversationId: "another-thread", parentPackageDigest: "Ada", parentPackageScopedId: "a")
+        ]]
+        for links in alternatives {
+            let packets = [packet("O", from: "Ben", [("Agreed", 60_000)], links: [a]),
+                           packet("U", from: "Ben", [("Agreed", 60_000)], links: links)]
+            for order in [packets, packets.reversed()] {
+                try setUpWithError()
+                for packet in order { _ = try send(packet) }
+                XCTAssertEqual(try margins().count, 2, "links \(links)")
+                XCTAssertEqual(Set(try margins().flatMap { $0.replyLinks ?? [] }), Set([a] + links))
+            }
+        }
+    }
+
+    func testAuditStaleResolutionCannotEraseAliases() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)]))
+        var stale = try XCTUnwrap(margins().first)
+        _ = try send(packet("U", from: "Ada", [("one", 60_000)]))
+        stale.resolution = ImportedAnchorResolution(evidenceClass: .unresolved)
+        // A stale pass may itself have a different alias; both must survive.
+        stale.alsoSharedAs = [id("V", "V-1")]
+        try store.saveImportedCommentaryInterjection(stale)
+        XCTAssertEqual(Set(try XCTUnwrap(margins().first).alsoSharedAs ?? []), Set([id("U", "U-1"), id("V", "V-1")]))
+        stale.alsoSharedAs = nil
+        try store.saveImportedCommentaryInterjection(stale)
+        XCTAssertEqual(try XCTUnwrap(margins().first).alsoSharedAs?.count, 2)
+    }
+
+    func testAuditAllDeduplicatedMarginsStillSaveLayerArtifacts() throws {
+        let proposal = PortableListeningMapProposalArtifact(id: "map", createdAt: clock, generator: "test", scenes: [
+            PortableListeningMapScene(
+                id: "scene", order: 0, summaryText: "The speaker introduces the question.",
+                summaryProvenance: .senderAuthored, eligibility: .eligible,
+                startAnchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 0),
+                endAnchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 120_000)
+            )
+        ])
+        XCTAssertTrue(PortableListeningMapContract.violations(in: proposal, itemText: nil).isEmpty)
+        let spine = EditionFingerprintSpineArtifact(id: "spine", itemId: "item-1", createdAt: clock, landmarks: [])
+        let sketch = TranscriptPhraseSketchArtifact(id: "sketch", itemId: "item-1", saltBase64: "salt", createdAt: clock, windows: [])
+        for reverse in [false, true] {
+            try setUpWithError()
+            let original = packet("O", from: "Ada", [("one", 60_000)])
+            let update = packet("U", from: "Ada", [("one", 60_000)])
+            let layer = ImportedCommentaryLayer(
+                id: "layer-U", itemId: "item-1", packageDigest: "U", packageId: "package-U",
+                itemIdentity: item, displayLabel: "Ada", importedAt: clock, isEnabled: true,
+                listeningMapProposals: [proposal], editionFingerprintSpines: [spine],
+                transcriptPhraseSketches: [sketch], episodeMapEvidencePaths: ["signature": "/local/signature"]
+            )
+            if !reverse { _ = try send(original) }
+            _ = try ImportedMarginResends.importLayer(layer, interjections: update.margins, repository: store)
+            if reverse { _ = try send(original) }
+            let saved = try XCTUnwrap(store.loadImportedCommentaryLayer(packageDigest: "U"))
+            XCTAssertTrue(ImportedMarginResends.hasLayerArtifacts(saved), "the app must schedule artifact-only layers")
+            if !reverse { XCTAssertTrue(try store.loadImportedCommentaryInterjections(layerId: saved.id).isEmpty) }
+            XCTAssertEqual(saved.listeningMapProposals, [proposal])
+            XCTAssertEqual(saved.editionFingerprintSpines, [spine])
+            XCTAssertEqual(saved.transcriptPhraseSketches, [sketch])
+            XCTAssertEqual(saved.episodeMapEvidencePaths, ["signature": "/local/signature"])
+            XCTAssertEqual(try margins().count, 1)
+        }
+    }
+
+    func testAuditProvenanceBearingSenderNeighbours() throws {
+        let labels: [(String?, String?, Int)] = [
+            ("Sam", "Sam", 1), ("Sam", "sam", 2), ("Sam", "  Sam\n", 1),
+            ("José", "Jose\u{301}", 1), ("Sam", "Sam!", 2), (nil, nil, 2), ("", " \n", 2),
+            (String(repeating: "S", count: 120), String(repeating: "S", count: 120), 1),
+            ("Sam", "Sаm", 2)
+        ]
+        for (first, second, count) in labels {
+            try setUpWithError()
+            _ = try send(packet("O", from: first, [("Agreed", 60_000)], person: "one person"))
+            _ = try send(packet("U", from: second, [("Agreed", 60_000)], person: "one person"))
+            XCTAssertEqual(try margins().count, count, "\(String(describing: first)) / \(String(describing: second))")
+        }
+    }
+
+    func testAuditProvenanceBearingWordNeighbours() throws {
+        let words: [(String, String, Int)] = [
+            ("Agreed", "agreed", 2), ("Agreed", " \nAgreed\t", 1), ("Café", "Cafe\u{301}", 1),
+            ("Agreed", "Agreed!", 2), ("", " \n", 1),
+            (String(repeating: "x", count: 50_000), String(repeating: "x", count: 50_000), 1),
+            ("Agreed", "Аgreed", 2)
+        ]
+        for (first, second, count) in words {
+            try setUpWithError()
+            _ = try send(packet("O", from: "Ada", [(first, 60_000)]))
+            _ = try send(packet("U", from: "Ada", [(second, 60_000)]))
+            XCTAssertEqual(try margins().count, count)
+        }
+    }
+
+    func testAuditReplyLinkOrderIsIrrelevant() throws {
+        let a = MarginReplyLink.replying(to: id("Ada", "a"), parentConversationId: nil)
+        let c = MarginReplyLink.replying(to: id("Chris", "c"), parentConversationId: nil)
+        _ = try send(packet("O", from: "Ben", [("Agreed", 60_000)], links: [a, c]))
+        _ = try send(packet("U", from: "Ben", [("Agreed", 60_000)], links: [c, a]))
+        XCTAssertEqual(try margins().count, 1)
+        XCTAssertEqual(try identities(of: "Agreed").count, 2)
+    }
+
+    func testAuditLegacyAndDistinctRecordingsNeverMerge() throws {
+        for legacy in [false, true] {
+            try setUpWithError()
+            _ = try send(packet("O", from: "Sam", [("Agreed", 60_000)], voiceMs: 4_000, provenance: !legacy))
+            _ = try send(packet("U", from: "Sam", [("Agreed", 60_000)], voiceMs: 4_000, provenance: !legacy, person: "another Sam"))
+            XCTAssertEqual(try margins().count, 2)
+        }
     }
 
     // MARK: Helpers
@@ -269,19 +409,27 @@ final class ImportedMarginResendsTests: XCTestCase {
     /// A packet's Margins as the importer builds them: new local ids, the packet's own scoped ids.
     private func packet(
         _ digest: String, from label: String?, _ margins: [(String, Int)],
-        voiceMs: Int? = nil, evidence: [String] = [], itemId: String? = "item-1", links: [MarginReplyLink] = []
+        voiceMs: Int? = nil, evidence: [String] = [], itemId: String? = "item-1", links: [MarginReplyLink] = [], provenance: Bool = true, person: String? = nil
     ) -> Packet {
-        Packet(
+        var occurrences: [Int: Int] = [:]
+        return Packet(
             digest: digest, label: label, itemId: itemId,
             margins: margins.enumerated().map { index, margin in
-                ImportedCommentaryInterjection(
+                let occurrence = occurrences[margin.1, default: 0]
+                occurrences[margin.1] = occurrence + 1
+                let capture = "\(person ?? label ?? "")|\(margin.1)|\(occurrence)"
+                if captureOrigins[capture] == nil {
+                    captureOrigins[capture] = MarginShareProvenance.token(sessionId: UUID().uuidString, interjectionId: capture)
+                }
+                return ImportedCommentaryInterjection(
                     id: "local-\(digest)-\(index + 1)", layerId: "layer-\(digest)", packageScopedId: "\(digest)-\(index + 1)",
                     // The time the packet was made, as the app stamps it: never the same twice.
                     createdAt: clock.addingTimeInterval(Double(digest.unicodeScalars.first!.value)),
                     anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: margin.1, machineEvidenceAssetIds: evidence),
                     approvedTranscript: margin.0,
                     audioDurationMs: voiceMs,
-                    replyLinks: links.isEmpty ? nil : links
+                    replyLinks: links.isEmpty ? nil : links,
+                    shareProvenance: provenance ? captureOrigins[capture] : nil
                 )
             },
             links: links
