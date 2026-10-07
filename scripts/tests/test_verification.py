@@ -729,6 +729,69 @@ class VerificationTests(unittest.TestCase):
                 path.unlink()
             self.assertTrue(any('Empty fixture/schema selection' in e for e in inventory.validate(root)))
 
+    def plan_root(self, root, **plans):
+        """A repo for inventory.validate(): the real contracts, traces and scripts (symlinked, never written),
+        and a made-up app of one test class (three methods) and one UI class, with plans that are correct
+        unless `plans` replaces one: {plan name: [(target, {'selectedTests': ...}), ...]}."""
+        for directory in ('Contracts', 'validation', 'Packages', 'scripts'):
+            (root / directory).symlink_to(inventory.ROOT / directory, target_is_directory=True)
+        tests, ui = root / 'App/SpokenMarginsAppTests', root / 'App/SpokenMarginsAppUITests'
+        tests.mkdir(parents=True)
+        ui.mkdir(parents=True)
+        (tests / 'Gate4WatchPackageRenderTests.swift').write_text(
+            'final class Gate4WatchPackageRenderTests: XCTestCase { func testRender() {} }')
+        (tests / 'SpeechTests.swift').write_text(
+            'final class SpeechTests: XCTestCase { func testA() {} func testB() {} func testC() {} }')
+        (ui / 'TourUITests.swift').write_text('final class TourUITests: XCTestCase { func testTour() {} func testShare() {} }')
+        app, uis = 'SpokenMarginsAppTests', 'SpokenMarginsAppUITests'
+        selecting = lambda target, *tests: (target, {'selectedTests': list(tests)} if tests else {})
+        defaults = {'AppBehavior': [selecting(app, 'SpeechTests/testA', 'SpeechTests/testC')],
+                    'AudioAdapters': [selecting(app, 'SpeechTests/testB')],
+                    'Release': [selecting(app), selecting(uis)],
+                    'UISeams': [selecting(uis, 'TourUITests/testTour')],
+                    'SpeechCanary': [selecting(uis, 'TourUITests/testShare')],
+                    'Smoke': [selecting(uis, 'TourUITests/testTour')]}
+        (root / 'TestPlans').mkdir()
+        (root / 'TestPlans/scripted-journeys.json').write_text(json.dumps({'version': 1, 'gating': [], 'probation': []}))
+        for name, targets in {**defaults, **plans}.items():
+            (root / f'TestPlans/{name}.xctestplan').write_text(json.dumps({'testTargets': [
+                dict(target={'name': target}, **selection) for target, selection in targets]}))
+
+    def test_inventory_accepts_plans_that_partition_the_app_tests_and_release_runs_everything(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.plan_root(Path(temporary))
+            self.assertEqual(inventory.validate(Path(temporary)), [])  # the others below change one plan of this
+
+    def test_inventory_rejects_app_tests_that_are_in_both_plans_or_in_neither(self):
+        partition = 'AppBehavior and AudioAdapters must partition all active app tests'
+        app = 'SpokenMarginsAppTests'
+        for label, plans in (
+                ('SpeechTests/testB runs in both plans (twice in T3)', {
+                    'AudioAdapters': [(app, {'selectedTests': ['SpeechTests/testB', 'SpeechTests/testA']})]}),
+                ('SpeechTests/testC runs in neither (never in T3)', {
+                    'AppBehavior': [(app, {'selectedTests': ['SpeechTests/testA']})]})):
+            with self.subTest(label), tempfile.TemporaryDirectory() as temporary:
+                self.plan_root(Path(temporary), **plans)
+                self.assertEqual(inventory.validate(Path(temporary)), [partition])
+
+    def test_inventory_rejects_a_release_plan_that_leaves_out_an_app_or_ui_test(self):
+        release = 'Release must include all active app and UI tests'
+        app, ui = 'SpokenMarginsAppTests', 'SpokenMarginsAppUITests'
+        for label, targets in (
+                ('a UI test missing', [(app, {}), (ui, {'selectedTests': ['TourUITests/testTour']})]),
+                ('an app test missing', [(app, {'selectedTests': ['SpeechTests/testA', 'SpeechTests/testB']}), (ui, {})])):
+            with self.subTest(label), tempfile.TemporaryDirectory() as temporary:
+                self.plan_root(Path(temporary), Release=targets)
+                self.assertEqual(inventory.validate(Path(temporary)), [release])
+
+    def test_inventory_rejects_a_ui_plan_that_selects_an_app_test(self):
+        for plan in ('UISeams', 'SpeechCanary', 'Smoke'):
+            with self.subTest(plan), tempfile.TemporaryDirectory() as temporary:
+                self.plan_root(Path(temporary), **{plan: [
+                    ('SpokenMarginsAppUITests', {'selectedTests': ['TourUITests/testTour']}),
+                    ('SpokenMarginsAppTests', {'selectedTests': ['SpeechTests/testA']})]})
+                self.assertEqual(inventory.validate(Path(temporary)), [f'{plan}: non-UI test selected'])
+
     def test_built_preprocessor_check_rejects_missing_entrypoint(self):
         with tempfile.TemporaryDirectory() as temporary:
             resource = Path(temporary) / 'broken.js'
