@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { build } from "esbuild";
 import { parseHTML } from "linkedom";
 import {
   captureReadablePage,
@@ -13,6 +14,7 @@ import {
   capturePage,
   invokeInjectedCapture
 } from "./popupCore.mjs";
+import { BUNDLES, esbuildOptions } from "./bundleConfig.mjs";
 import { browserLikePage } from "./testDocument.mjs";
 
 function articleDocument() {
@@ -586,4 +588,133 @@ test("#271: a web page share never fetches its page again", async () => {
   assert.equal(payload.isPDFDocument, false);
   assert.equal(payload.pdfBase64, undefined);
   assert.equal(fetched, false);
+});
+
+const preprocessorPath = "App/SpokenMarginsShareExtension/Resources/SourceLinkPreprocessor.js";
+
+test("Safari preprocessor hands over an article page as Markdown with its source details", () => {
+  const prose = "<p>" + "Useful article prose. ".repeat(40) + "</p>";
+  const page = browserLikePage({
+    url: "https://example.com/guide",
+    head: `<title>Retirement Guide</title><meta name="author" content="A. Writer">
+      <meta property="article:published_time" content="2026-09-01">
+      <link rel="canonical" href="https://example.com/canonical">`,
+    body: `<nav>Navigation noise</nav><article><h2>First section</h2>${prose}
+      <h3>Second section</h3>${prose}</article><footer>Footer noise</footer>`
+  });
+  Object.defineProperty(page, "contentType", { value: "text/html" });
+  const context = {
+    console,
+    URL,
+    document: page,
+    window: { location: { href: "https://example.com/guide?utm_source=newsletter" } }
+  };
+  vm.runInNewContext(fs.readFileSync(preprocessorPath, "utf8"), context);
+  let payload;
+  context.ExtensionPreprocessingJS.run({ completionFunction: (value) => { payload = JSON.parse(JSON.stringify(value)); } });
+
+  const { markdown, ...rest } = payload;
+  assert.deepEqual(rest, {
+    url: "https://example.com/guide?utm_source=newsletter",
+    documentURL: "https://example.com/guide",
+    canonicalURL: "https://example.com/canonical",
+    contentType: "text/html",
+    isPDFDocument: false,
+    title: "Retirement Guide",
+    author: "A. Writer",
+    publishedAt: "2026-09-01",
+    contentFormat: "markdown",
+    extractor: "defuddle",
+    extractorVersion: "0.19.1",
+    networkFallback: false
+  });
+  assert.match(markdown, /^## First section\n\nUseful article prose\./);
+  assert.match(markdown, /\n\n### Second section\n\nUseful article prose\./);
+  assert.doesNotMatch(markdown, /Navigation noise|Footer noise/);
+});
+
+// Timers that record themselves instead of running; the handle is the record,
+// since the page code treats a falsy handle as "no timer".
+function fakeTimers(timers) {
+  return {
+    setTimeout: (callback, milliseconds) => {
+      const timer = { callback, milliseconds, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout: (timer) => { timer.cleared = true; }
+  };
+}
+
+// A PDF fetch that never answers must not hold the share sheet open: the
+// preprocessor aborts it after eight seconds and hands over the link alone.
+function runPreprocessorWithHungFetch() {
+  const pdfURL = "https://example.com/slow.pdf";
+  const timers = [];
+  const seen = {};
+  const context = {
+    console,
+    btoa,
+    AbortController,
+    ...fakeTimers(timers),
+    fetch: (_url, options) => new Promise((_resolve, reject) => {
+      seen.signal = options.signal;
+      options.signal.addEventListener("abort", () => reject(new Error("aborted")));
+    }),
+    document: { URL: pdfURL, contentType: "application/pdf", title: "slow.pdf", body: null, querySelector: () => null },
+    window: { location: { href: pdfURL } }
+  };
+  vm.runInNewContext(fs.readFileSync(preprocessorPath, "utf8"), context);
+  const done = new Promise((resolve) => context.ExtensionPreprocessingJS.run({ completionFunction: resolve }));
+  return { pdfURL, timers, seen, done };
+}
+
+test("#271: a PDF fetch that never answers is aborted after eight seconds and the link still goes through", async () => {
+  const { pdfURL, timers, seen, done } = runPreprocessorWithHungFetch();
+
+  assert.equal(timers.length, 1, "the fetch has no timeout");
+  assert.equal(timers[0].milliseconds, 8000);
+  assert.ok(seen.signal, "the fetch is not given an abort signal");
+  assert.equal(seen.signal.aborted, false);
+  timers[0].callback();
+  assert.equal(seen.signal.aborted, true);
+
+  const payload = await done;
+  assert.equal(payload.isPDFDocument, true);
+  assert.equal(payload.documentURL, pdfURL);
+  assert.equal(payload.pdfBase64, undefined);
+  assert.equal(timers[0].cleared, true, "the timeout is left running after the fetch ended");
+});
+
+test("#271: the abort timeout is cancelled once the PDF has arrived", async () => {
+  const timers = [];
+  const bytes = new TextEncoder().encode("%PDF-1.7 small");
+  const pdfURL = "https://example.com/quick.pdf";
+  const context = {
+    console,
+    btoa,
+    AbortController,
+    ...fakeTimers(timers),
+    fetch: async () => response(bytes),
+    document: { URL: pdfURL, contentType: "application/pdf", title: "quick.pdf", body: null, querySelector: () => null },
+    window: { location: { href: pdfURL } }
+  };
+  vm.runInNewContext(fs.readFileSync(preprocessorPath, "utf8"), context);
+  const payload = await new Promise((resolve) => context.ExtensionPreprocessingJS.run({ completionFunction: resolve }));
+
+  assert.equal(Buffer.from(payload.pdfBase64, "base64").toString("latin1"), "%PDF-1.7 small");
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].cleared, true);
+});
+
+// The app ships the built scripts, and the tests above that import the
+// sources never see them. A source edit with no rebuild would otherwise pass.
+test("every shipped script is exactly what its source builds to", async () => {
+  for (const configuration of BUNDLES) {
+    const result = await build({ ...esbuildOptions(configuration), write: false });
+    // build.mjs strips trailing whitespace from each line after bundling.
+    const built = result.outputFiles[0].text.split("\n").map((line) => line.replace(/[ \t]+$/g, "")).join("\n");
+    const shipped = fs.readFileSync(configuration.outfile, "utf8");
+    assert.ok(shipped === built, `${configuration.outfile} is stale; run npm run build:browser-extraction`);
+  }
 });
