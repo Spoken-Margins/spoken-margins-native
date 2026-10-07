@@ -2290,5 +2290,67 @@ class AutoRevertTests(unittest.TestCase):
         flow.auto_revert.assert_not_called()  # a lane-check base is for testing lane changes, never reverted
 
 
+
+class BaseScriptsFallbackTests(unittest.TestCase):
+    """#904: next's lane-runner imported lane_slots from a branch that predates it and crashed before reporting."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix='lane-fallback-'))
+        self.addCleanup(subprocess.run, ['rm', '-rf', str(self.dir)])
+        self.tree = self.dir / 'tree'
+        git = ['git', '-C', str(self.tree), '-c', 'user.name=t', '-c', 'user.email=t@example.com']
+        subprocess.run(['git', 'init', '-q', str(self.tree)], check=True)
+        (self.tree / 'scripts').mkdir()
+        (self.tree / 'scripts/old_helper.py').write_text("WHERE = 'base'\n")
+        (self.tree / 'scripts/lane_slots.py').write_text("WHERE = 'base'\n")
+        (self.tree / 'scripts/test-scope.py').write_text("WHERE = 'base'\n")
+        (self.tree / 'scripts/tests').mkdir()
+        (self.tree / 'scripts/tests/test_x.py').write_text('')
+        subprocess.run(git + ['add', '-A'], check=True)
+        subprocess.run(git + ['commit', '-qm', 'next'], check=True)
+        subprocess.run(git + ['update-ref', 'refs/remotes/origin/next', 'HEAD'], check=True)
+        # The PR branch: an old checkout with its own old_helper and no lane_slots.
+        (self.tree / 'scripts/old_helper.py').write_text("WHERE = 'tree'\n")
+        (self.tree / 'scripts/lane_slots.py').unlink()
+        (self.tree / 'scripts/test-scope.py').unlink()
+        self.path = list(sys.path)
+        self.addCleanup(setattr, sys, 'path', self.path)
+
+    def importable(self, *paths):
+        code = 'import lane_slots, old_helper; print(lane_slots.WHERE, old_helper.WHERE)'
+        return subprocess.run([sys.executable, '-I', '-c', f'import sys; sys.path[:0] = {list(map(str, paths))!r}; {code}'],
+                              capture_output=True, text=True)
+
+    def test_branch_without_lane_slots_cannot_import_it(self):
+        self.assertIn("No module named 'lane_slots'", self.importable(self.tree / 'scripts').stderr)
+
+    def test_missing_helpers_come_from_the_base_and_the_tree_keeps_its_own(self):
+        into = lane.base_scripts_fallback(self.tree, 'next', into=self.dir / 'fallback')
+        self.assertEqual(sorted(p.name for p in into.iterdir()), ['lane_slots.py'])
+        self.assertEqual(sys.path[-1], str(into))
+        result = self.importable(self.tree / 'scripts', into)
+        self.assertEqual(result.stdout.split(), ['base', 'tree'], result.stderr)
+
+    def test_nothing_missing_adds_nothing(self):
+        (self.tree / 'scripts/lane_slots.py').write_text("WHERE = 'tree'\n")
+        self.assertIsNone(lane.base_scripts_fallback(self.tree, 'next', into=self.dir / 'fallback'))
+        self.assertEqual(sys.path, self.path)
+
+    def test_unknown_base_raises_for_main_to_log(self):
+        with self.assertRaises(RuntimeError):
+            lane.base_scripts_fallback(self.tree, 'no-such-base', into=self.dir / 'fallback')
+
+    def test_main_sets_it_up_before_any_lane_work(self):
+        class Stop(Exception):
+            pass
+        root = lane.ROOT
+        self.addCleanup(setattr, lane, 'ROOT', root)
+        with mock.patch.dict(os.environ, {'GH_REPO': 'o/r'}), \
+                mock.patch.object(lane, 'GitHub', side_effect=Stop), \
+                mock.patch.object(lane, 'base_scripts_fallback', return_value=None) as fallback:
+            with self.assertRaises(Stop):
+                lane.main(['--pr', '1', '--event-head', HEAD, '--run-id', '1', '--tree', str(self.tree)])
+        fallback.assert_called_once_with(self.tree.resolve(), 'next')
+
 if __name__ == '__main__':
     unittest.main()
