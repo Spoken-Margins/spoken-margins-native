@@ -491,6 +491,12 @@ class ListenerRuleTests(unittest.TestCase):
         issue = {'body': '**Steps:** open an article.\n**Expected:** a label that fits.\n'}
         self.assertEqual(self.module.owner_check({'body': '', 'issues': [issue]}),
                          'open an article. Expected: a label that fits.')
+        # #585 (#847 review): the action was step 2, and only step 1 reached the plan.
+        numbered = {'body': '**Steps**\n1. Library, with items listed.\n2. Swipe the top row and Complete it.\n\n'
+                            '**Expected:** the row slides out.\n\n**Actual:** it stays.'}
+        self.assertEqual(self.module.owner_check({'body': '', 'issues': [numbered]}),
+                         '1. Library, with items listed.\n2. Swipe the top row and Complete it.\n'
+                         'Expected: the row slides out.')
 
 
 class VerdictTests(unittest.TestCase):
@@ -748,8 +754,22 @@ class PlanGroupingTests(unittest.TestCase):
         self.assertNotIn('2. ', ten_minutes)
         waiting = plan.split('## Waiting on another change')[1].split('## ')[0]
         self.assertIn('- Publisher audio: show the source ([#809]', waiting)
+        alone = self.write({809: publisher}, items=items)
+        self.assertIn('Nothing is ready to check on the phone yet', alone)
+        self.assertNotIn('Nothing a listener would notice', alone)
         self.assertIn('[#547](https://example/issue/547)', waiting)
         self.assertIn('Play publisher audio by default', waiting)
+
+    def test_one_unknown_number_does_not_hide_the_others(self):
+        # gh fails a whole GraphQL query when one alias names no issue or PR (#847 review).
+        module = self.module
+
+        def graphql(fields):
+            if any('9999' in query for query in fields.values()):
+                return {}
+            return {alias: {'__typename': 'Issue', 'number': int(alias[1:]), 'state': 'OPEN'} for alias in fields}
+        module.graphql = graphql
+        self.assertEqual(sorted(module.fetch_items([547, 9999, 548])), [547, 548])
 
     def test_what_counts_as_a_prerequisite_still_waiting(self):
         def issue(state='OPEN', *names):
@@ -842,13 +862,14 @@ class PlanGroupingTests(unittest.TestCase):
                 (icloud / f'Test plan {sha7} files').mkdir(parents=True)
             (icloud / f'Test plan {sha[:7]} files' / 'stale.pdf').write_text('from a rewritten plan')
             (icloud / f'Test plan {"d" * 7}.md').write_text('installed, its plan still here: its files stay')
+            (icloud / 'Test plan old files').mkdir()  # the owner's own folder: never ours to delete
             with unittest.mock.patch.dict(os.environ, {'SM_PHONE_DIR': str(phone), 'SM_PHONE_ICLOUD': str(icloud)}):
                 self.module.share_files(build, sha)
             names = sorted(p.name for p in icloud.iterdir())
             shared = sorted(p.name for p in (icloud / f'Test plan {sha[:7]} files').iterdir())
         self.assertEqual(shared, ['two-margins.spokenmargins'])
         self.assertEqual(names, [f'Test plan {kept} files', f'Test plan {sha[:7]} files',
-                                 f'Test plan {"d" * 7} files', f'Test plan {"d" * 7}.md'])
+                                 f'Test plan {"d" * 7} files', f'Test plan {"d" * 7}.md', 'Test plan old files'])
 
     def test_without_icloud_drive_sharing_files_does_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:

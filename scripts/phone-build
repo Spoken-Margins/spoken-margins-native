@@ -93,6 +93,8 @@ NO_CHECK = re.compile(r'^(none|n/?a|nothing)\s*(?:[.;:,(\u2014\u2013]|-\s|$)', r
 # "#547" or a link to issue/PR 547 in a check: something it may need on the phone first (#847).
 REFERENCE = re.compile(r'(?<![\w&/])#(\d+)\b|github\.com/' + re.escape(REPO) + r'/(?:issues|pull)/(\d+)\b')
 CHECK_FIELD = re.compile(r'\*\*Owner check:?\*\*:?\s*(.*)|^Owner check:\s*(.*)')
+STEPS_FIELD = re.compile(r'\*\*Steps:?\*\*:?\s*(.*)')     # a bug report's Steps and Expected (#504)
+EXPECTED_FIELD = re.compile(r'\*\*Expected:?\*\*:?\s*(.*)')
 FIELD = r'\*\*[A-Z][\w /()-]{0,30}(?::\*\*|\*\*:)'                    # "**Taken by:**", "**Done when**:"
 NEXT_FIELD_ON_LINE = re.compile(r'\s+' + FIELD + '.*$')                # "none. **Taken by:** nobody yet."
 FIELD_START = re.compile(r'\s*(?:[-*+]\s+)?' + FIELD + r'|[A-Z][\w ]{0,30}:\s|\s*(?:#|---)')  # "Related: #5"
@@ -285,8 +287,11 @@ def fetch_items(numbers: list[int]) -> dict[int, dict]:
     """{number: issue or PR with its state} for the numbers a check names; {} when gh fails."""
     items: dict[int, dict] = {}
     for start in range(0, len(numbers), 25):
-        data = graphql({f'n{n}': f'issueOrPullRequest(number: {n}) {{ {ITEM_FIELDS} }}'
-                        for n in numbers[start:start + 25]})
+        batch = numbers[start:start + 25]
+        data = graphql({f'n{n}': f'issueOrPullRequest(number: {n}) {{ {ITEM_FIELDS} }}' for n in batch})
+        if not data and len(batch) > 1:  # gh fails the whole query when one number isn't an issue or PR
+            for n in batch:
+                data.update(graphql({f'n{n}': f'issueOrPullRequest(number: {n}) {{ {ITEM_FIELDS} }}'}))
         items.update({int(alias[1:]): value for alias, value in data.items() if value and value.get('number')})
     return items
 
@@ -336,17 +341,18 @@ def listener_facing(pr: dict) -> bool:
     return touches and not NOT_LISTENER_TITLE.search(pr['title'])
 
 
-def check_field(text: str) -> str | None:
-    """A body's "Owner check" field: its line, plus the numbered steps, bullets, quote or fenced block
-    right under it (#847: "after #551 is deployed:" lost its three steps), up to the next field."""
+def check_field(text: str, field: re.Pattern = CHECK_FIELD) -> str | None:
+    """A body's "Owner check" field (or another `field`): its line, plus the numbered steps, bullets,
+    quote or fenced block right under it (#847: "after #551 is deployed:" lost its three steps), up to
+    the next field."""
     lines = text.splitlines()
     for index, line in enumerate(lines):
-        match = CHECK_FIELD.search(line)
+        match = field.search(line)
         if match:
             break
     else:
         return None
-    first = NEXT_FIELD_ON_LINE.sub('', match.group(1) or match.group(2) or '').strip()
+    first = NEXT_FIELD_ON_LINE.sub('', next((group for group in match.groups() if group), '')).strip()
     rest: list[str] = []
     fenced = False
     for line in lines[index + 1:]:
@@ -359,11 +365,11 @@ def check_field(text: str) -> str | None:
             if not rest and first and not first.endswith(':'):
                 break
             continue  # a blank line inside the steps, or between "...:" and them
-        elif not first:
-            first = line.strip()  # "**Owner check:**" alone on its line, the check on the next
         elif STEP_LINE.match(line):
             rest.append(line.rstrip())
             fenced = line.strip().startswith('```')
+        elif not first and not rest:
+            first = line.strip()  # "**Owner check:**" alone on its line, the check on the next
         else:
             break
     return '\n'.join([first] + rest).strip() or None
@@ -391,10 +397,9 @@ def owner_check(pr: dict) -> str | None:
             return check
     texts = [issue.get('body') or '' for issue in pr['issues']] + [pr.get('body') or '']
     for text in texts:
-        steps = re.search(r'\*\*Steps:?\*\*:?\s*(.+)', text)
-        expected = re.search(r'\*\*Expected:?\*\*:?\s*(.+)', text)
-        if steps and expected:
-            return f'{steps.group(1).strip()} Expected: {expected.group(1).strip()}'
+        steps, expected = check_field(text, STEPS_FIELD), check_field(text, EXPECTED_FIELD)
+        if steps and expected:  # numbered Steps keep every step (#847: #585 lost the swipe in step 2)
+            return f'{steps}{chr(10) if chr(10) in steps else " "}Expected: {expected}'
     return None
 
 
@@ -541,7 +546,8 @@ def share_files(folder: Path, sha: str) -> None:
         kept = {build.name.rsplit('-', 1)[-1] for build in phone_dir().iterdir() if build.is_dir()}
         for old in icloud.glob('Test plan * files'):
             sha7 = old.name[len('Test plan '):-len(' files')]
-            if old.is_dir() and sha7 not in kept and not (icloud / f'Test plan {sha7}.md').exists():
+            ours = re.fullmatch(r'[0-9a-f]{7}', sha7) and old.is_dir()  # never the owner's own folders
+            if ours and sha7 not in kept and not (icloud / f'Test plan {sha7}.md').exists():
                 shutil.rmtree(str(old), ignore_errors=True)
     except OSError as error:
         say(f"couldn't copy the plan's files to iCloud Drive ({error}); they are in {folder / 'files'}")
@@ -612,7 +618,9 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     lines += [f'{len(ordered)} pull requests merged; {len(facing)} change something you see or hear.', '',
               '## Try these (about ten minutes)', '']
     if not budget:
-        lines += ['No phone checks were written for this build; the changes you might notice are listed below.'
+        lines += ['Nothing is ready to check on the phone yet; the changes you might notice are listed below.'
+                  if waiting and not unchecked else
+                  'No phone checks were written for this build; the changes you might notice are listed below.'
                   if unchecked else 'Nothing a listener would notice changed. Use the app as usual for ten minutes.', '']
     for index, entry in enumerate(budget, 1):
         pr = entry[0]
@@ -720,11 +728,13 @@ def notify(title: str, message: str) -> None:
 
 def notify_ready(sha: str, plan: Path) -> None:
     try:
-        count = len(re.findall(r'(?m)^\d+\. \*\*', plan.read_text()))
+        text = plan.read_text()
     except OSError:
-        count = 0
+        text = ''
+    count = len(re.findall(r'(?m)^\d+\. \*\*', text))
     things = (f'{count} thing{"" if count == 1 else "s"} to try' if count else
-              'nothing a listener would notice changed')
+              'nothing a listener would notice changed' if 'Nothing a listener would notice' in text else
+              'nothing to check on the phone this time')
     notify('Spoken Margins: new phone build',
            f'Commit {sha[:7]} is ready: {things}. Plug in your iPhone and double-click '
            '"Install Spoken Margins on iPhone" on the Desktop.')
