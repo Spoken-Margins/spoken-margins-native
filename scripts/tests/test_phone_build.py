@@ -4,9 +4,11 @@ The installer runs against a fake `xcrun` on PATH, so no test can reach a real p
 answers `devicectl list devices` from FAKE_DEVICES and records every other call. The build runs
 against a scratch repo and a fake xcodebuild (SM_LANE_XCODEBUILD) that makes an ad-hoc signed app.
 """
+import contextlib
 import datetime
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -621,14 +623,19 @@ class PlanGroupingTests(unittest.TestCase):
         self.assertIn('2. **Library wording**', plan)
         self.assertNotIn('3. ', plan)
 
-    def write(self, prs):
+    def write(self, prs, items=None, built=()):
         module = self.module
         module.plan_base = lambda sha: (None, 'the start')
         module.merged_prs = lambda base, sha: {n: f'Merge pull request #{n}' for n in prs}
         module.fetch_prs = lambda numbers: prs
+        module.fetch_items = lambda numbers: {n: item for n, item in (items or {}).items() if n in numbers}
+        module.built_numbers = lambda sha: set(built)
         module.report_comments = lambda: []
-        with tempfile.TemporaryDirectory() as folder:
-            return module.write_plan(Path(folder), 'a' * 40, 'host tests').read_text()
+        printed = io.StringIO()
+        with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(printed):
+            plan = module.write_plan(Path(folder), 'a' * 40, 'host tests').read_text()
+        self.printed = printed.getvalue()
+        return plan
 
     def test_only_what_the_owner_can_check_is_in_the_ten_minutes(self):
         # The 828597e plan (#504): one checkable item, one he couldn't judge, one that can't be seen on a phone.
@@ -647,15 +654,16 @@ class PlanGroupingTests(unittest.TestCase):
         ten_minutes = plan.split('## Try these')[1].split('## ')[0]
         self.assertIn("**Show the build's commit in Settings**", ten_minutes)
         self.assertIn('Double-click the Desktop icon.', ten_minutes)
-        self.assertIn('**Voice keeps going after a call** (found on your phone)', ten_minutes)
-        self.assertIn('repeat what you did when you found it', ten_minutes)
+        self.assertNotIn('Voice keeps going', ten_minutes)  # found on the phone, but nothing says how to check it (#847)
         self.assertNotIn('storage ledger', ten_minutes)
         self.assertNotIn('closing notes', ten_minutes)
         unchecked = plan.split('## Also changed (no phone check written)')[1].split('Behind the scenes')[0]
         self.assertIn('- Take the rendered speech cache out of the offline storage ledger ([#366]', unchecked)
         self.assertIn('- Article import: give closing notes one chapter ([#497]', unchecked)
+        self.assertIn('- Voice keeps going after a call (found on your phone) ([#401]', unchecked)
         self.assertNotIn('Linux', plan)
         self.assertIn('5 pull requests merged; 4 change something you see or hear.', plan)
+        self.assertNotIn('repeat what you did', plan)
         self.assertIn('Behind the scenes: 1 more pull requests', plan)
         self.assertNotIn('Check: none', plan)
         self.assertNotIn('look for what the title describes', plan)
@@ -671,7 +679,73 @@ class PlanGroupingTests(unittest.TestCase):
         self.assertNotIn('Diagnostics', ten_minutes)
         self.assertNotIn('repeat what you did', plan)
         unchecked = plan.split('## Also changed (no phone check written)')[1]
-        self.assertIn("- Diagnostics: stop reporting the previous item's failure on a new item ([#494]", unchecked)
+        self.assertIn("- Diagnostics: stop reporting the previous item's failure on a new item (found on your phone) ([#494]",
+                      unchecked)
+
+    def test_a_phone_found_bug_with_no_written_check_asks_for_one(self):
+        # The f0f4c1f plan (#847): steps 6 and 8 said "repeat what you did when you found it", which sent the
+        # owner back to the issue to rediscover his own steps and content.
+        voice = self.pr(744, 'Voice keeps going after a call', [
+            {'number': 90, 'title': 'Voice stops', 'url': 'https://example/issue/90', 'body': 'It stopped.',
+             'labels': {'nodes': [{'name': 'found-on-phone'}]}}])
+        diagnostics = self.pr(494, 'Diagnostics: name the failing item', [self.issue(283, 'none.', phone=True)])
+        library = self.pr(280, 'Library wording', [self.issue(81, 'Read the Library rows.')])
+        plan = self.write({744: voice, 494: diagnostics, 280: library})
+        ten_minutes = plan.split('## Try these')[1].split('## ')[0]
+        self.assertNotIn('repeat what you did', plan)
+        self.assertNotIn('Voice keeps going', ten_minutes)
+        self.assertIn('1. **Library wording**', ten_minutes)
+        unchecked = plan.split('## Also changed (no phone check written)')[1]
+        self.assertIn('- Voice keeps going after a call (found on your phone) ([#744]', unchecked)
+        self.assertIn('Owner check', self.printed)
+        self.assertIn('#90', self.printed)
+        self.assertNotIn('#283', self.printed)  # it says "Owner check: none", so it needs no line
+        self.assertNotIn('#81', self.printed)
+
+    def test_a_check_that_waits_on_an_open_issue_is_not_in_the_ten_minutes(self):
+        # The f0f4c1f plan (#847): step 2 asked for something that needs #547, which was still open.
+        publisher = self.pr(809, 'Publisher audio: show the source', [
+            self.issue(600, 'after #547 is also on the phone, open a BBC article: it plays the publisher audio.')])
+        library = self.pr(280, 'Library wording', [self.issue(81, 'Read the Library rows. (Fixed in #279.)')])
+        items = {547: {'__typename': 'Issue', 'number': 547, 'title': 'Play publisher audio by default',
+                       'url': 'https://example/issue/547', 'state': 'OPEN', 'labels': {'nodes': [{'name': 'ready'}]}},
+                 279: {'__typename': 'PullRequest', 'number': 279, 'title': 'Library rows',
+                       'url': 'https://example/pr/279', 'state': 'MERGED'}}
+        plan = self.write({809: publisher, 280: library}, items=items, built={279})
+        ten_minutes = plan.split('## Try these')[1].split('## ')[0]
+        self.assertNotIn('BBC', ten_minutes)
+        self.assertIn('1. **Library wording**', ten_minutes)
+        self.assertNotIn('2. ', ten_minutes)
+        waiting = plan.split('## Waiting on another change')[1].split('## ')[0]
+        self.assertIn('- Publisher audio: show the source ([#809]', waiting)
+        self.assertIn('[#547](https://example/issue/547)', waiting)
+        self.assertIn('Play publisher audio by default', waiting)
+
+    def test_what_counts_as_a_prerequisite_still_waiting(self):
+        def issue(state='OPEN', *names):
+            return {'__typename': 'Issue', 'number': 547, 'title': 'T', 'url': 'u', 'state': state,
+                    'labels': {'nodes': [{'name': name} for name in names]}}
+
+        def pr(state):
+            return {'__typename': 'PullRequest', 'number': 547, 'title': 'T', 'url': 'u', 'state': state}
+        rows = [  # (check, its own issues and PRs, numbers in the build's history, #547 on GitHub, waits?)
+            ('after #547 is on the phone, play it', set(), set(), issue(), True),
+            ('After #547, play it', set(), set(), issue('OPEN', 'status: needs-human-validation'), False),
+            ('after #547 is on the phone, play it', set(), set(), issue('CLOSED'), False),
+            ('after #547 is on the phone, play it', set(), {547}, issue(), False),
+            ('play it (this is #547)', {547}, set(), issue(), False),
+            ('once #547 merges, play it', set(), set(), pr('OPEN'), True),
+            ('once #547 merges, play it', set(), {547}, pr('MERGED'), False),
+            ('once #547 merges, play it', set(), set(), pr('MERGED'), True),  # merged after this build
+            ('once #547 merges, play it', set(), set(), pr('CLOSED'), False),
+            ('after https://github.com/uncomposed/spoken-margins-native/issues/547 lands', set(), set(), issue(), True),
+            ('after #547 is on the phone, play it', set(), set(), None, False),  # GitHub didn't say: keep the check
+            ('Build 29 still plays it; tap item 547', set(), set(), issue(), False),
+        ]
+        for check, own, built, item, waits in rows:
+            with self.subTest(check=check, item=item and (item['__typename'], item['state'])):
+                found = self.module.waiting_on(check, own, built, {547: item} if item else {})
+                self.assertEqual(bool(found), waits)
 
     def test_with_no_written_checks_the_plan_says_so(self):
         plan = self.write({366: self.pr(366, 'Take the rendered speech cache out of the offline storage ledger')})

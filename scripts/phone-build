@@ -17,7 +17,9 @@ What it does:
   older ones, the temporary worktree and its DerivedData are deleted.
 - test-plan.md lists the listener-facing PRs merged since the build the owner last installed
   (~/SpokenMargins-phone/installed.txt, written by scripts/install-phone-build.command), each with
-  its issue's "Owner check" line, sized to about ten minutes.
+  its issue's "Owner check" line, sized to about ten minutes. Only written checks go in the ten minutes:
+  a phone-found bug without one is listed with the other unchecked changes and the run names its issue
+  (#847), and a check that names an issue or PR not on the phone yet waits in its own section.
 
 Gates (the owner's rule, 2026-09-30: rebuild whenever next's tip changes and the automated checks
 pass; bugs are fine, crashes the runners would catch are not):
@@ -86,6 +88,9 @@ FIRST_ON_PHONE = {'found-on-phone', 'regression'}
 NOT_LISTENER_LABELS = {'stream:A1'}  # the test lane: its SessionKit edits are compile guards, not behaviour
 # "Owner check: none." (or "n/a", "nothing (lane only)") isn't a check; "Nothing plays twice ..." is (#504).
 NO_CHECK = re.compile(r'^(none|n/?a|nothing)\s*(?:[.;:,(\u2014\u2013]|-\s|$)', re.I)
+# "#547" or a link to issue/PR 547 in a check: something it may need on the phone first (#847).
+REFERENCE = re.compile(r'(?<![\w&/])#(\d+)\b|github\.com/' + re.escape(REPO) + r'/(?:issues|pull)/(\d+)\b')
+MERGED_ON_NEXT = 'status: needs-human-validation'  # dispatch adds it when a PR for the issue merges into next
 
 
 # ---- small helpers ------------------------------------------------------------------------------
@@ -262,6 +267,52 @@ def fetch_prs(numbers: list[int]) -> dict[int, dict] | None:
     return prs
 
 
+ITEM_FIELDS = '__typename ... on Issue { number title url state labels(first:20){nodes{name}} } ' \
+    '... on PullRequest { number title url state }'
+
+
+def fetch_items(numbers: list[int]) -> dict[int, dict]:
+    """{number: issue or PR with its state} for the numbers a check names; {} when gh fails."""
+    items: dict[int, dict] = {}
+    for start in range(0, len(numbers), 25):
+        data = graphql({f'n{n}': f'issueOrPullRequest(number: {n}) {{ {ITEM_FIELDS} }}'
+                        for n in numbers[start:start + 25]})
+        items.update({int(alias[1:]): value for alias, value in data.items() if value and value.get('number')})
+    return items
+
+
+def built_numbers(sha: str) -> set[int]:
+    """Every #N in the build's merge subjects: the PRs merged into it and the issues their titles name."""
+    subjects = git('log', '--first-parent', '--format=%s', sha, check=False)
+    return {int(n) for n in re.findall(r'#(\d+)', subjects)}
+
+
+def references(check: str) -> list[int]:
+    return list(dict.fromkeys(int(a or b) for a, b in REFERENCE.findall(check)))
+
+
+def waiting_on(check: str, own: set[int], built: set[int], items: dict[int, dict]) -> list[dict]:
+    """The issues and PRs a check names that aren't on the phone yet ("after #547 is also on the phone").
+
+    Its own issues and PRs don't count, nor anything a merge in this build names. An issue stays
+    open after its PR merges into next, so an open issue counts as built once dispatch has marked it
+    `status: needs-human-validation`. A PR counts once it is in this build; one closed unmerged never
+    will be, so it doesn't hold the check back. A number GitHub didn't answer for doesn't either.
+    """
+    waiting = []
+    for number in references(check):
+        item = items.get(number)
+        if number in own or number in built or not item:
+            continue
+        if item.get('__typename') == 'PullRequest':
+            pending = item['state'] != 'CLOSED'
+        else:
+            pending = item['state'] == 'OPEN' and MERGED_ON_NEXT not in labels(item)
+        if pending:
+            waiting.append(item)
+    return waiting
+
+
 def listener_facing(pr: dict) -> bool:
     """Changes something a listener sees or hears: the scorecard's rule on #337, made mechanical.
 
@@ -426,11 +477,29 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     facing.sort(key=lambda pr: (0 if any(FIRST_ON_PHONE & labels(i) for i in pr['issues']) else 1,
                                 0 if owner_check(pr) else 1))
     entries = plan_entries(facing)
-    # Only what the owner can check goes in the ten minutes: a written check, or a bug his phone found (#504),
-    # unless its issue says "Owner check: none" (#283's fix shows only in a diagnostics export).
-    checkable = [entry for entry in entries if any(map(owner_check, entry))
-                 or (found_on_phone(entry) and not all(map(says_no_check, entry)))]
-    unchecked = [entry for entry in entries if entry not in checkable]
+    # Only what the owner can check goes in the ten minutes: a written check (#504). A bug his phone found
+    # with none goes with the unchecked changes, and the run names its issues so one gets written (#847);
+    # "repeat what you did" sent him back to the issue for his own steps and content.
+    checks = {id(entry): next((found for found in map(owner_check, entry) if found), None) for entry in entries}
+    unchecked = [entry for entry in entries if not checks[id(entry)]]
+    needs_check = [issue['number'] for entry in unchecked
+                   if found_on_phone(entry) and not all(map(says_no_check, entry))
+                   for pr in entry for issue in pr['issues'] if FIRST_ON_PHONE & labels(issue)]
+    if needs_check:
+        say('found on the phone but no "Owner check:" line, so not in the ten minutes; add one to: '
+            + ', '.join(f'#{n}' for n in dict.fromkeys(needs_check)))
+    # A check that needs another change still open waits for it (#847: step 2 needed #547).
+    checkable = [entry for entry in entries if checks[id(entry)]]
+    named = [n for entry in checkable for n in references(checks[id(entry)])]
+    built = built_numbers(sha) if named else set()
+    items = fetch_items(list(dict.fromkeys(n for n in named if n not in built))) if named else {}
+    waits = {}
+    for entry in checkable:
+        own = {number for pr in entry for number in [pr['number'], *pr.get('linked', ())]}
+        own |= {issue['number'] for pr in entry for issue in pr['issues']}
+        waits[id(entry)] = waiting_on(checks[id(entry)], own, built, items)
+    waiting = [entry for entry in checkable if waits[id(entry)]]
+    checkable = [entry for entry in checkable if not waits[id(entry)]]
     budget = checkable[:PLAN_CHECKS]
     rest = checkable[PLAN_CHECKS:]
     if not ordered:
@@ -444,18 +513,24 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
         pr = entry[0]
         issues = list({issue['number']: issue for member in entry for issue in member['issues']}.values())
         tag = ' (found on your phone)' if found_on_phone(entry) else ''
-        check = next((found for found in map(owner_check, entry) if found), None)
         links = [f'[PR #{member["number"]}]({member["url"]})' for member in entry]
         links += [f'[issue #{issue["number"]}]({issue["url"]})' for issue in issues]
         lines += [f'{index}. **{pr["title"]}**{tag}',
-                  f'   - Check: {check or "repeat what you did when you found it, and see that it is fixed."}',
+                  f'   - Check: {checks[id(entry)]}',
                   f'   - Links: {", ".join(links)}', '']
 
     def titles(group):
-        return [f'- {entry[0]["title"]} (' + ', '.join(f'[#{pr["number"]}]({pr["url"]})' for pr in entry) + ')'
-                for entry in group]
+        return [f'- {entry[0]["title"]}' + (' (found on your phone)' if found_on_phone(entry) else '') + ' ('
+                + ', '.join(f'[#{pr["number"]}]({pr["url"]})' for pr in entry) + ')' for entry in group]
     if rest:
         lines += ['## Also changed (not in the ten minutes)', ''] + titles(rest) + ['']
+    if waiting:
+        lines += ['## Waiting on another change (not in the ten minutes)', '',
+                  'Their checks need something that is not on your phone yet.', '']
+        for entry, title in zip(waiting, titles(waiting)):
+            needed = ', '.join(f'[#{item["number"]}]({item["url"]}) ({item["title"]})' for item in waits[id(entry)])
+            lines.append(f'{title}: needs {needed}')
+        lines.append('')
     if unchecked:
         lines += ['## Also changed (no phone check written)', '',
                   "You don't need to test these. If one seems off while you use the app, open a "
