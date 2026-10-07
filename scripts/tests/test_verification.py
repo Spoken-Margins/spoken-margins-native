@@ -807,6 +807,24 @@ class VerificationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'zero tests'):
                 run.command('runner-tests', [sys.executable, '-c', 'print("Ran 0 tests in 0.0s")'])
 
+    def test_a_node_suite_that_ran_zero_tests_is_not_a_pass_for_the_browser_and_share_link_steps(self):
+        # `node --test` exits 0 and prints "# tests 0" when its glob matches no files (a renamed folder).
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'test')
+            for name in ('browser', 'share-link'):
+                for label, output in (('a TAP summary of zero tests', '# tests 0'),
+                                      ('no TAP summary at all', 'npm warn nothing to run')):
+                    with self.subTest(name=name, label=label):
+                        with self.assertRaisesRegex(RuntimeError, f'{"Browser runner" if name == "browser" else name} '
+                                                                  'executed zero tests'):
+                            run.command(name, [sys.executable, '-c', f'print({output!r})'])
+                        step = run.manifest['steps'][-1]
+                        self.assertEqual((step['executed_count'], step['exit_code']), (0, 0))  # it exited 0
+                with self.subTest(name=name, label='a TAP summary of three tests'):
+                    run.command(name, [sys.executable, '-c', 'print("TAP version 13\\n# tests 3\\n# pass 3")'])
+                    step = run.manifest['steps'][-1]
+                    self.assertEqual((step['executed_count'], step['errors']), (3, []))
+
     def test_hung_process_is_bounded_and_manifest_retains_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
             run = verification.Run(Path(temporary) / 'run', 'test')
