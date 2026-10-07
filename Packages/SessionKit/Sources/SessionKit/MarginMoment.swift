@@ -45,6 +45,8 @@ public struct MarginMomentSequence: Sendable, Equatable {
     public private(set) var phase: Phase = .leadIn
     /// Margins not yet played, in playback order.
     public private(set) var unplayed: [MarginMomentAnchor]
+    /// The Margin whose voice has the floor, with its place in the source (#866: Add Margin records there).
+    public private(set) var playing: MarginMomentAnchor?
 
     /// `otherMargins` are the item's spoken Margins when the moment starts. Margins recorded later aren't
     /// included, so a new Margin never replays right after it's saved.
@@ -93,6 +95,7 @@ public struct MarginMomentSequence: Sendable, Equatable {
         let crossedIDs = Set(crossed.map(\.marginId))
         unplayed.removeAll { crossedIDs.contains($0.marginId) }
         phase = .playingMargin(first.marginId)
+        playing = first
         return first
     }
 
@@ -101,12 +104,14 @@ public struct MarginMomentSequence: Sendable, Equatable {
         guard phase == .leadIn, unplayed.contains(target) else { return nil }
         unplayed.removeAll { $0.mediaTimeMs < target.mediaTimeMs || $0 == target }
         phase = .playingMargin(target.marginId)
+        playing = target
         return target
     }
 
     /// The Margin's voice ended, was skipped, or couldn't play. The source continues.
     public mutating func marginFinished() {
         guard isPlayingMargin else { return }
+        playing = nil
         phase = unplayed.contains(target) ? .leadIn : .listening
     }
 }

@@ -6230,19 +6230,12 @@ final class Gate1AppModel: ObservableObject {
 
     func beginInterjection() {
         guard !isFinishingInterjection, !isMarginCaptureCoolingDown else { return }
-        guard playingImportedCommentary == nil else {
-            reportWarning("Return to Source before recording a Margin.")
-            return
-        }
-        guard marginMomentConductor?.isPlayingVoice != true else {
-            reportWarning("Skip or finish the Margin that's playing before recording a new one.")
-            return
-        }
         guard snapshot.skimBridgeState == nil else {
             reportWarning("Margins are unavailable while a scene summary is playing. Pause or cancel Skim first.")
             return
         }
         guard !recordingNavigationIsLocked else { return }
+        handOffPlayingMarginToRecording()
         let voiceCaptureRequestID = UUID()
         pendingVoiceCaptureRequestID = voiceCaptureRequestID
         recordingPermissionDenied = false
@@ -6278,6 +6271,30 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         requestMicrophoneThenRecord(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
+    }
+
+    /// #866: Add Margin while a Margin plays records straight away. The voice stops without resuming the source,
+    /// and the source moves to the playing Margin's place so the new Margin is anchored there.
+    private func handOffPlayingMarginToRecording() {
+        let handoff: MarginCaptureHandoff
+        if let prompt = playingImportedCommentary {
+            handoff = MarginCaptureHandoff(sharedMargin: prompt.interjection, itemId: prompt.layer.itemId)
+            stopImportedCommentaryPlayback(resumeSource: false)
+        } else if let conductor = marginMomentConductor, conductor.isPlayingVoice {
+            handoff = MarginCaptureHandoff(moment: conductor.sequence)
+            endMarginMoment()
+        } else {
+            // A Margin heard from its detail isn't playing in the source, so the source stays where it is.
+            if playingInterjectionAudioId != nil { stopInterjectionAudioPlayback() }
+            return
+        }
+        let move = handoff.sourceMove(from: snapshot)
+        diagnostics["marginCaptureHandoff"] = String(describing: move)
+        switch move {
+        case .stay: break
+        case .seekMedia(let ms): seekMedia(toMediaTimeMs: ms)
+        case .seekText(let charOffset): seekText(toCharOffset: charOffset)
+        }
     }
 
     /// #783: Continue on the line before the microphone prompt goes on to iOS's request.
@@ -9439,6 +9456,9 @@ final class Gate1AppModel: ObservableObject {
             "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
             "requestedMediaTimeMs": String(mediaTimeMs ?? -1)
         ])
+        if command == .beginInterjection, !snapshot.isRecording, snapshot.skimBridgeState == nil {
+            handOffPlayingMarginToRecording()
+        }
         if playingImportedCommentary != nil {
             switch command {
             case .play: resumePlayback()
