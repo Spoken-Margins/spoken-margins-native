@@ -126,14 +126,17 @@ Order rules, from the mapping pass. Each issue repeats the ones that concern it.
 10. D1 and P2 never run together. Both before X14.
 11. P11 and P19 before X18, and X18 before T2 and T3.
 12. X1 before every X slice except X0.
+13. P30 before X4 PR 2, X8 and X20, because it edits `startGuidedOnboarding` and `recordSavedInterjectionForOnboarding`, which those slices move. X0 and P30 can start together: X0 leaves the two onboarding enums for P30.
+14. X20 PR 1 creates `Gate1AppModel+LibrarySeeding.swift`, and X4 PR 2 appends to it, so X4 PR 2 waits for it. X20 never runs with X4, X8 or X12.
+15. P31 edits no line of the model, so it can run at any time. X21 waits for X1, P7 and P31, and never runs with X7, X8 or X12.
 
-Open pull requests touch some of these regions. A slice in the same region waits until that pull request has merged, because Build 30 does not wait for Build 31. State on 7 October, 19:45 UTC; check before you start.
+Open pull requests touch some of these regions. A slice in the same region waits until that pull request has merged, because Build 30 does not wait for Build 31. State on 7 October, checked twice that evening; check again before you start.
 
 | Open PR | What it edits in the model | Slices to hold |
 |---|---|---|
-| #939 "Recording" only while capturing (#937) | the recording members | X8, T7 |
-| #906 Add Margin while a Margin plays (#866) | `beginInterjection`, `dispatchGate2CompactCommand`, and it moves `KeychainStore` out | X7, X8, T7, D1 (the `KeychainStore` part) |
-| #817 Save a Margin a call cut short (#771) | widens `reportWarning`, `run`, `scheduleTranscription` and four more | X1, X8, X13, X17, T7 |
+| #939 "Recording" only while capturing (#937) | the recording members; it also deletes `skipUnitForCurrentTarget`, `mediaSkipUnit` and `validatedMediaSkipSeconds` and widens `recordSavedInterjectionForOnboarding` | X8, T7, P7, X21, P30 |
+| #906 Add Margin while a Margin plays (#866) | `beginInterjection`, `dispatchGate2CompactCommand`, `seekMedia`, `seekText`, and it moves `KeychainStore` out | X7, X8, X21, T7, D1 (the `KeychainStore` part) |
+| #817 Save a Margin a call cut short (#771) | widens `reportWarning`, `run`, `scheduleTranscription` and four more, and `recordSavedInterjectionForOnboarding` | X1, X8, X13, X17, T7, P30 |
 | #931 Export folder settings (#930) | batch export folder members, `resolvedBatchExportFolderURL` | X2, X6, X19 |
 | #723 Share Margins from the Margins tab | `openMarginItemExport` | X9 |
 | #901 One copy of a Margin on re-share (#858) | one line in the placement code | X16, P25 |
@@ -192,7 +195,7 @@ The mapping pass found these in more than one place. An issue repeats the ones t
 3. **Source transcript scheduling** (`scheduleSourceTranscriptImportIfAvailable`, `scheduleFullSourceTranscriptionForListeningMap`).
 4. **Incoming URLs, read-later and browser text** (`handleIncomingURL`, `importReadLaterDocument`, `importBrowserTextItem`).
 5. **Text-audio prewarm and offline services** (`scheduleTextAudioPrewarmIfNeeded`, `observeRenderedFrontier`, `configureOfflineServices`).
-6. **Guided onboarding content** (`refreshGuidedOnboardingContent`) and the compact-control entry points (`performGate2CompactCommand` stays by design; `handleGate2CompactApplicationCommand` is next to it).
+6. **Guided onboarding content** (`refreshGuidedOnboardingContent`) and compact-control setup (`configureGate2CompactControls`, `updateGate2CompactState`). The command entry points are in X21 and the command executor is in X12.
 7. **Small groups** in the same shape: Gate 2 compact helpers, the per-item bits of session export, and a few one-caller wrappers.
 
 The second wave starts when X1 and the first X slices have landed, because the extension files the first wave creates decide where these go. It gets filed then, from the mapping notes, not now.
@@ -219,4 +222,76 @@ Each answer goes on the slice's issue. A slice waits on its answer and nothing e
 
 ## Slices
 
-{{TABLE}}
+Legend: **tag** means the Build 30 tag. D is delete, P is pure logic into SessionKit, X is a moves-only extension file, T is a new app-side type. "Waits for" lists the slices that must land first; the issues also say which slices must not run at the same time. "Codex audit" is whether the Astra audit is asked for on that slice's PR.
+
+| Slice | Issue | What moves | Where it goes | Waits for | Codex audit |
+|---|---|---|---|---|---|
+| D1 | #989 | Delete dead provider code, dead types, and move KeychainStore | Deleted; `KeychainStore` to its own file | nothing | no |
+| D2 | #967 | Delete the unused Piper voice import chain | Deleted | nothing | no |
+| D3 | #948 | Delete members that nothing calls | Deleted (13 members) | nothing | no |
+| D4 | #1017 | Decide what to do with the never-compiled Watch bridge code | Deleted or moved to its own file (Cole's call) | Cole's answer | no |
+| D5 | #971 | Decide on the unreachable Play Live Speech Instead path | Deleted (Cole's call) | Cole's answer | no |
+| D6 | #1003 | One accessor for each lazily created helper | One accessor per helper, in place | nothing | no |
+| P1 | #947 | Listening Map JSON parser | `SessionKit/ManualListeningMapParser.swift` | done | no |
+| P2 | #998 | Provider prompts and the assistant-chapter parse into SessionKit | SessionKit (Linux tests) | nothing | no |
+| P3 | #1002 | Transcript file parsers (VTT, SRT, JSON) into SessionKit | SessionKit (Linux tests) | nothing | no |
+| P4 | #955 | Quick Add selection and folder scan into SessionKit | SessionKit (Linux tests) | nothing | no |
+| P5 | #968 | Diagnostics export builder and redaction into SessionKit | SessionKit (Linux tests) | nothing | no |
+| P6 | #985 | Sleep timer rules move into SessionKit | SessionKit (Linux tests) | nothing | no |
+| P7 | #974 | One playback-rate step rule and one skip-seconds rule | SessionKit (Linux tests) | nothing | no |
+| P8 | #1001 | Playback chapter and header title logic into SessionKit | SessionKit (Linux tests) | nothing | no |
+| P9 | #976 | Small pure helpers move into SessionKit | SessionKitFeeds | nothing | no |
+| P10 | #988 | Library filter and sort move into SessionKit | SessionKit (Linux tests) | nothing | no |
+| P11 | #992 | Skim scene walk and item scenes share one SessionKit rule | SessionKit (Linux tests) | nothing | yes |
+| P12 | #959 | Welcome sample and file-import item builder into SessionKit | SessionKit (Linux tests) | nothing | yes |
+| P13 | #962 | Margins list builder and query into SessionKit | SessionKit (Linux tests) | nothing | yes |
+| P14 | #965 | Background preparation planner into SessionKit | SessionKit (Linux tests) | nothing | no |
+| P15 | #973 | Discussion and summary prompt context into SessionKit | SessionKit (Linux tests) | nothing | no |
+| P16 | #1006 | Source-context window and the local-summary reducer into SessionKit | SessionKit (Linux tests) | nothing | no |
+| P17 | #994 | Source follow suggestion rules into SessionKit | SessionKit (Linux tests) | nothing | no |
+| P18 | #978 | Shared-Margin prompt selection and eligibility into SessionKit | SessionKit (Linux tests) | nothing | yes |
+| P19 | #996 | Lock the saved ids and paths with golden tests | SessionKit (Linux tests) | nothing | no |
+| P20 | #999 | One list of transcription cache folders in SessionKitAudio | SessionKitAudio (Mac host tests) | nothing | no |
+| P21 | #977 | Pure sender share helpers into SessionKitSharing | SessionKitSharing (Mac host tests) | nothing | yes |
+| P22 | #1010 | Share-draft editing core into SessionKitSharing | SessionKitSharing (Mac host tests) | nothing | yes |
+| P23 | #1005 | Shared podcast resolution rules into SessionKitSharing | SessionKitSharing (Mac host tests) | nothing | yes |
+| P24 | #1009 | Imported-layer identity and repair logic into SessionKitSharing | SessionKitSharing (Mac host tests) | nothing | yes |
+| P25 | #1000 | Podcast Margin fusion and status rules into SessionKitAudio | SessionKitAudio (Mac host tests) | nothing | yes |
+| P26 | #1004 | Decide what to do with the legacy-library archive step | SessionKitPersistence, with tests (Cole's call) | Cole's answer | yes |
+| P27 | #1013 | Small pure helpers and speech-status types into SessionKit | SessionKit (Linux tests) | nothing | no |
+| P28 | #1014 | Podcast anchor evidence record updates into SessionKit | SessionKit (Linux tests) | nothing | yes |
+| P29 | #980 | Library rows and queue rows built in SessionKit | SessionKit (Linux tests) | X0, P9 | P29a only |
+| P30 | #1019 | Onboarding progress rules move into SessionKit | SessionKit (Linux tests) | nothing | no |
+| P31 | #1021 | Move the autoplay queue and summary rule into SessionKit | SessionKit (Linux tests) | nothing | no |
+| X0 | #964 | Move the value types before the class into their own files | 17 new app files, one per type | nothing | no |
+| X1 | #982 | Move the feedback methods to an extension file | `Gate1AppModel+Feedback.swift` | tag | no |
+| X2 | #1007 | Library action extension files (batch export, trash, completion) | `Gate1AppModel+BatchExportSelection.swift`, `Gate1AppModel+CompletionMarking.swift`, `Gate1AppModel+TrashUndo.swift` | tag, X1 | yes |
+| X3 | #1011 | Navigation and chapter-jump extension files | `Gate1AppModel+Navigation.swift`, `Gate1AppModel+ChapterNavigation.swift` | tag, X1 | yes |
+| X4 | #970 | File-import and Quick Access extension files, moves only | `Gate1AppModel+RemotePDF.swift`, `Gate1AppModel+PasteAndGo.swift`, `Gate1AppModel+FileImport.swift` and more | tag, D2, D3, P4, P12 (PR 2: X20 PR 1, P30) | yes |
+| X5 | #979 | Source-link import extension files, moves only | `Gate1AppModel+RemotePDF.swift`, `Gate1AppModel+PasteAndGo.swift`, `Gate1AppModel+SourceLinkForm.swift` and more | tag, D2, D3 | yes |
+| X6 | #983 | Export and batch export as an extension file, moves only | `Gate1AppModel+Export.swift` | tag, X1 | no |
+| X7 | #987 | Margin voice playback (own and shared) as an extension, moves only | `Gate1AppModel+MarginVoicePlayback.swift` | tag, X1, P18 | yes |
+| X8 | #990 | Margin capture, session close, curation, identity as extensions | `Gate1AppModel+MarginCapture.swift`, `Gate1AppModel+SessionClose.swift`, `Gate1AppModel+MarginCuration.swift` and more | tag, X1, P30 | yes |
+| X9 | #958 | Sender sharing extension files (moves only) | `Gate1AppModel+ShareDrafts.swift`, `Gate1AppModel+ShareExport.swift` | tag, X1, P21, P22 | yes |
+| X10 | #956 | Packet import and handoff inbox into an extension file | `Gate1AppModel+PackageImport.swift`, `Gate1AppModel+ImportInbox.swift` | tag, X1, P23, P24 | yes |
+| X11 | #1008 | Followed-source actions into the Following extension (moves only) | `Gate1AppModel+FollowedSources.swift` | tag, X1, P17 | no |
+| X12 | #961 | Settings, on-device speech status and engine install into extensions | `Gate1AppModel+SpeechSettings.swift`, `Gate1AppModel+OnDeviceSpeechStatus.swift`, `Gate1AppModel+EngineInstall.swift` | tag, X1 | yes |
+| X13 | #984 | Audio client factory and interruption handlers extension | `Gate1AppModel+SpeechInterruption.swift`, `Gate1AppModel+AudioClients.swift` | tag, X1 | yes |
+| X14 | #960 | Remote provider and AI jobs extension (moves only) | `Gate1AppModel+RemoteProvider.swift`, `Gate1AppModel+Summary.swift` | tag, X1, D1, P2 | yes (narrow) |
+| X15 | #991 | Library audio preparation extension | `Gate1AppModel+LibraryAudioQueue.swift`, `Gate1AppModel+LibraryAudioPass.swift` | tag, X1, P9, P29 | yes |
+| X16 | #1012 | Imported podcast placement and local-file readiness into an extension | `Gate1AppModel+ImportedPodcastPlacement.swift`, `Gate1AppModel+PodcastLocalAudio.swift` | tag, X1, P25 | yes |
+| X17 | #966 | Anchor evidence, source-window context, Margin transcription (moves only) | `Gate1AppModel+ListeningSignals.swift`, `Gate1AppModel+SourceWindowContext.swift`, `Gate1AppModel+AnchorEvidence.swift` | tag, X1, P16, P28 | yes |
+| X18 | #1016 | Skim bridge and episode-map extension files | `Gate1AppModel+SkimBridge.swift`, `Gate1AppModel+EpisodeMapPreparation.swift` | tag, P19, P11 | yes |
+| X19 | #986 | Small moves out of the model in four parts | `Gate1AppModel+UITestingSeeds.swift`, `Gate1AppModel+PodcastDownloads.swift` | tag, X1, P11 | yes |
+| X20 | #1020 | Library bootstrap and launch seeding as an extension file | `Gate1AppModel+LibrarySeeding.swift`, `Gate1AppModel+Onboarding.swift` | tag, X1, P30 | yes |
+| X21 | #1022 | Playback transport, rate, mix audio and compact routing | `Gate1AppModel+PlaybackTransport.swift`, `Gate1AppModel+MixWithOtherAudio.swift`, `Gate1AppModel+CompactCommands.swift` and more | tag, X1, P7, P31 | yes |
+| T1 | #995 | Audio preparation loop as its own type | New app-side type | X15 | yes |
+| T2 | #954 | SkimBridgeController as its own type | New app-side type | X18 | yes |
+| T3 | #957 | EpisodeMapPreparer as its own type | New app-side type | X18 | yes |
+| T4 | #1015 | Imported podcast placement in its own app-side type | New app-side type | X16 | yes |
+| T5 | #963 | Packet import coordinator as its own app-side type | New app-side type | X10 | yes |
+| T6 | #969 | Bulk share preparation as its own app-side type | New app-side type | X9 | yes |
+| T7 | #993 | Margin voice player and capture coordinator as app-side types | New app-side type | X8 | yes |
+| T8 | #981 | Quick Access folder state as its own app-side type | New app-side type | X4 | yes |
+| T9 | #997 | One shared-Margin listening state replaces two resume flags | New app-side type | X7, P18 | yes |
+
