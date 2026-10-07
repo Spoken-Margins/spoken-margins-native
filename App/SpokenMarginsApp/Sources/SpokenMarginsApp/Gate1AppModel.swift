@@ -710,7 +710,12 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var batchExportRows: [BatchSessionExportRow] = []
     @Published var batchExportFilter: BatchSessionExportFilter = .withInterjections
     @Published var selectedBatchExportSessionIds: Set<String> = []
-    @Published private(set) var batchExportFolderName = UserDefaults.standard.string(forKey: "batchExportFolderName") ?? "No folder selected"
+    @Published private(set) var batchExportFolderName = SavedFolderSetting.sessionExport.name() ?? "No folder selected"
+    /// The notes folder has its own setting (#930); the first launch with it copies the export folder.
+    @Published private(set) var marginNotesFolderName: String = {
+        SavedFolderSetting.separateMarginNotesFromSessionExport()
+        return SavedFolderSetting.marginNotes.name() ?? "No folder selected"
+    }()
     @Published private(set) var batchExportResult: BatchSessionExportResult?
     @Published private(set) var isWritingBatchExport = false
     @Published private(set) var retryingInterjectionTranscriptionIds: Set<String> = []
@@ -1100,7 +1105,6 @@ final class Gate1AppModel: ObservableObject {
     private let sourceWindowContextBeforeMs = SourceAnchorContextResolver.windowBeforeMs
     private let sourceWindowContextAfterMs = SourceAnchorContextResolver.windowAfterMs
     private let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
-    private let batchExportFolderBookmarkKey = "batchExportFolderBookmark"
     #if canImport(AVFoundation)
     private let speechPreviewSynthesizer = AVSpeechSynthesizer()
     private var supertonicPreviewPlayer: AVAudioPlayer?
@@ -5471,9 +5475,8 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    var hasBatchExportFolder: Bool {
-        UserDefaults.standard.data(forKey: batchExportFolderBookmarkKey) != nil
-    }
+    var hasBatchExportFolder: Bool { SavedFolderSetting.sessionExport.hasFolder() }
+    var hasMarginNotesFolder: Bool { SavedFolderSetting.marginNotes.hasFolder() }
 
     func toggleBatchExportSelection(sessionId: String) {
         if selectedBatchExportSessionIds.contains(sessionId) {
@@ -6792,28 +6795,45 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
+    /// Sets only the Export Sessions folder. It must not touch the notes folder or its destination ID,
+    /// or the notes feature copies every Margin into the folder picked for an export (#930).
     func configureBatchExportFolder(url: URL) {
-        let didAccess = url.startAccessingSecurityScopedResource()
-        defer {
-            if didAccess {
-                url.stopAccessingSecurityScopedResource()
-            }
-        }
         do {
-            let bookmark = try url.bookmarkData(
-                options: quickAccessBookmarkCreationOptions,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-            UserDefaults.standard.set(bookmark, forKey: batchExportFolderBookmarkKey)
-            UserDefaults.standard.set(url.lastPathComponent, forKey: "batchExportFolderName")
-            UserDefaults.standard.set(UUID().uuidString, forKey: "marginOutputDestinationID")
+            try saveFolder(url, to: .sessionExport)
             batchExportFolderName = url.lastPathComponent
             batchExportResult = nil
             reportSuccess("Export folder set to \(url.lastPathComponent).")
         } catch {
             reportFailure(error, context: "Export folder setup failed")
         }
+    }
+
+    /// Sets the "Save Margins to Notes Folder" destination. A new destination ID makes delivery treat
+    /// it as a fresh folder, so existing Margins are written there, as the setting says.
+    func configureMarginNotesFolder(url: URL) {
+        do {
+            try saveFolder(url, to: .marginNotes)
+            UserDefaults.standard.set(UUID().uuidString, forKey: "marginOutputDestinationID")
+            marginNotesFolderName = url.lastPathComponent
+            marginOutputStatus = MarginOutputStatus("Notes folder set to \(url.lastPathComponent).")
+        } catch {
+            reportFailure(error, context: "Notes folder setup failed")
+        }
+    }
+
+    private func saveFolder(_ url: URL, to setting: SavedFolderSetting) throws {
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+        let bookmark = try url.bookmarkData(
+            options: quickAccessBookmarkCreationOptions,
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+        setting.save(bookmark: bookmark, name: url.lastPathComponent)
     }
 
     func reportBatchExportFolderFailure(_ error: Error) {
@@ -6825,7 +6845,7 @@ final class Gate1AppModel: ObservableObject {
             reportFailure("Choose at least one session to export.")
             return
         }
-        guard let folderURL = resolvedBatchExportFolderURL() else {
+        guard let folderURL = resolvedFolderURL(.sessionExport) else {
             reportFailure("Choose an export folder first.")
             return
         }
@@ -9750,7 +9770,7 @@ final class Gate1AppModel: ObservableObject {
     func testMarginOutput() {
         Task {
             do {
-                guard let folder = resolvedBatchExportFolderURL() else { throw EditionError.invalid("Choose an output folder first.") }
+                guard let folder = resolvedFolderURL(.marginNotes) else { throw EditionError.invalid("Choose an output folder first.") }
                 marginOutputStatus = try await marginNotesDelivery.sendTestNote(to: folder, destinationID: marginOutputDestinationID)
             } catch { marginOutputStatus = .failure(error.localizedDescription) }
         }
@@ -9760,7 +9780,7 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.string(forKey: "marginOutputDestinationID") ?? "initial"
     }
     private func marginNotesTarget() throws -> MarginNotesDelivery.Target {
-        guard let store, let folder = resolvedBatchExportFolderURL() else { throw EditionError.invalid("Choose or reselect an output folder. Your Margins remain safely in the Library.") }
+        guard let store, let folder = resolvedFolderURL(.marginNotes) else { throw EditionError.invalid("Choose or reselect an output folder. Your Margins remain safely in the Library.") }
         return .init(store: store, folder: folder, destinationID: marginOutputDestinationID)
     }
     private var automaticMarginGatherMaxMs = 0
@@ -14084,8 +14104,8 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    private func resolvedBatchExportFolderURL() -> URL? {
-        guard let data = UserDefaults.standard.data(forKey: batchExportFolderBookmarkKey) else { return nil }
+    private func resolvedFolderURL(_ setting: SavedFolderSetting) -> URL? {
+        guard let data = setting.bookmark() else { return nil }
         do {
             var isStale = false
             let url = try URL(
@@ -14106,11 +14126,11 @@ final class Gate1AppModel: ObservableObject {
                     includingResourceValuesForKeys: nil,
                     relativeTo: nil
                 )
-                UserDefaults.standard.set(refreshed, forKey: batchExportFolderBookmarkKey)
+                UserDefaults.standard.set(refreshed, forKey: setting.bookmarkKey)
             }
             return url
         } catch {
-            diagnostics["batchExportBookmarkError"] = String(describing: error)
+            diagnostics["\(setting.bookmarkKey)Error"] = String(describing: error)
             return nil
         }
     }

@@ -34,11 +34,11 @@ struct MarginOutputSettingsSection: View {
     var body: some View {
         Section("Margin Output") {
             Button { choosingFolder = true } label: {
-                Label(model.hasBatchExportFolder ? model.batchExportFolderName : "Choose Output Folder", systemImage: "folder")
+                Label(model.hasMarginNotesFolder ? model.marginNotesFolderName : "Choose Notes Folder", systemImage: "folder")
             }
-            Button("Send Test Note", action: model.testMarginOutput).disabled(!model.hasBatchExportFolder)
+            Button("Send Test Note", action: model.testMarginOutput).disabled(!model.hasMarginNotesFolder)
             Toggle("Save Margins to Notes Folder", isOn: $model.automaticMarginOutputEnabled)
-                .disabled(!model.hasBatchExportFolder)
+                .disabled(!model.hasMarginNotesFolder)
                 .onChange(of: model.automaticMarginOutputEnabled) { _, _ in model.automaticMarginOutputChanged() }
             Button("Retry Delivery") { Task { await model.deliverAutomaticMargins() } }
                 .disabled(!model.automaticMarginOutputEnabled)
@@ -47,7 +47,7 @@ struct MarginOutputSettingsSection: View {
         }
         .fileImporter(isPresented: $choosingFolder, allowedContentTypes: [.folder]) { result in
             switch result {
-            case .success(let url): model.configureBatchExportFolder(url: url)
+            case .success(let url): model.configureMarginNotesFolder(url: url)
             case .failure(let error): model.reportBatchExportFolderFailure(error)
             }
         }
