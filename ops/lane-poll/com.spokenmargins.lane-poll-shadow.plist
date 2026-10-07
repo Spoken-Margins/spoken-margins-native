@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Lane poll, shadow mode (#1057): once a minute, print the lane jobs a poller would start and whether
+  GitHub Actions started them too (ops/lane-poll/README.md). Read-only. Not installed by the PR.
+  It runs the main checkout's copy, which the hourly Mac tick fast-forwards to origin/next.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.spokenmargins.lane-poll-shadow</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/colemiller/Documents/GitHub/spoken-margins-native/ops/lane-poll/sm_lane_poll.py</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>60</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/colemiller/SpokenMarginsOps/lane-poll/shadow.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/colemiller/SpokenMarginsOps/lane-poll/shadow.log</string>
+</dict>
+</plist>
