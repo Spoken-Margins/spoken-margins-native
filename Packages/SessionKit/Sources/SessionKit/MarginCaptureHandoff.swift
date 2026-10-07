@@ -10,8 +10,9 @@ public struct MarginCaptureHandoff: Sendable, Equatable {
         /// A Margin recorded on an article's prepared narration: the media time it was heard at, and the article text
         /// offset that time sits on. The text offset is what places it when the article reads aloud as live speech.
         case narration(ms: Int, charOffset: Int)
-        /// A Margin recorded on one conversation turn, at an offset in that turn's own text.
-        case turn(id: String, charOffset: Int)
+        /// A Margin recorded on one conversation turn, at an offset in that turn's own text. Turn ids repeat from one
+        /// session to the next, so the session is part of the turn's identity.
+        case turn(sessionId: String, id: String, charOffset: Int)
     }
 
     public enum SourceMove: Sendable, Equatable {
@@ -50,12 +51,15 @@ public struct MarginCaptureHandoff: Sendable, Equatable {
         case .transcript:
             // On prepared narration the anchor's text range is the article's own text, so it still places the Margin
             // when the article later reads aloud as live speech. On a podcast it is a transcript position, which no
-            // text source reads, so it is never used there.
-            place = anchor.mediaTimeMs.map { Place.narration(ms: $0, charOffset: anchor.startChar) }
+            // text source reads, so it is never used there. A segment without text positions resolves to 0...0.
+            place = anchor.mediaTimeMs.map {
+                anchor.endChar > anchor.startChar ? Place.narration(ms: $0, charOffset: anchor.startChar) : Place.media(ms: $0)
+            }
         case .text: place = .text(charOffset: anchor.startChar)
         case .turn:
             switch localMargin.targetType {
-            case .assistantTurn, .summaryTurn: place = .turn(id: localMargin.targetId, charOffset: anchor.startChar)
+            case .assistantTurn, .summaryTurn:
+                place = .turn(sessionId: localMargin.sessionId, id: localMargin.targetId, charOffset: anchor.startChar)
             case .item: place = nil
             }
         }
@@ -83,8 +87,8 @@ public struct MarginCaptureHandoff: Sendable, Equatable {
             snapshot.currentMediaTimeMs == ms ? .stay : .seekMedia(ms: ms)
         }
         switch place {
-        case .turn(let turnId, let charOffset):
-            return onTurn && snapshot.targetId == turnId ? text(charOffset) : .stay
+        case .turn(let sessionId, let turnId, let charOffset):
+            return onTurn && snapshot.sessionId == sessionId && snapshot.targetId == turnId ? text(charOffset) : .stay
         case .media(let ms):
             return onTurn || onLiveSpeech ? .stay : media(ms)
         case .narration(let ms, let charOffset):

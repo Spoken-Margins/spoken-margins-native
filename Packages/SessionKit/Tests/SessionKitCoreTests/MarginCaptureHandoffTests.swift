@@ -4,8 +4,9 @@ import XCTest
 
 /// #866: Add Margin while a Margin plays records at the playing Margin's place, not where the source paused after it.
 final class MarginCaptureHandoffTests: XCTestCase {
-    private func snapshot(itemId: String?, mediaTimeMs: Int? = nil, textStart: Int? = nil, target: TargetType? = nil, targetId: String? = nil) -> SessionSnapshot {
+    private func snapshot(itemId: String?, mediaTimeMs: Int? = nil, textStart: Int? = nil, target: TargetType? = nil, targetId: String? = nil, sessionId: String? = "session-1") -> SessionSnapshot {
         var snapshot = SessionSnapshot()
+        snapshot.sessionId = sessionId
         snapshot.itemId = itemId
         snapshot.targetType = target?.rawValue
         snapshot.targetId = targetId
@@ -115,10 +116,17 @@ final class MarginCaptureHandoffTests: XCTestCase {
         for turn in [TargetType.assistantTurnTTS, .summaryTurnTTS] {
             XCTAssertEqual(heard.sourceMove(from: snapshot(itemId: "a", textStart: 10, target: turn, targetId: "t")), .stay, "\(turn)")
         }
-        // A podcast's transcript position is not article text: a media Margin without a narration never goes by text.
-        let podcast = MarginCaptureHandoff(localMargin: margin(Anchor(
-            anchorType: .media, startChar: 900, endChar: 940, anchorBefore: "", anchorAfter: "", mediaTimeMs: 60_000), item: "a"))
-        XCTAssertEqual(podcast.sourceMove(from: snapshot(itemId: "a", textStart: 1_800, target: .itemTextTTS)), .stay)
+        // A media anchor, or a transcript anchor whose segment had no text positions (they resolve to 0...0), has no
+        // article text to go by: live speech stays put rather than jumping to the article's start.
+        for anchor in [
+            Anchor(anchorType: .media, startChar: 900, endChar: 940, anchorBefore: "", anchorAfter: "", mediaTimeMs: 60_000),
+            Anchor(anchorType: .transcript, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 60_000)
+        ] {
+            let noText = MarginCaptureHandoff(localMargin: margin(anchor, item: "a"))
+            XCTAssertEqual(noText.place, .media(ms: 60_000), "\(anchor.anchorType)")
+            XCTAssertEqual(noText.sourceMove(from: snapshot(itemId: "a", textStart: 1_800, target: .itemTextTTS)), .stay, "\(anchor.anchorType)")
+            XCTAssertEqual(noText.sourceMove(from: snapshot(itemId: "a", mediaTimeMs: 120_000, target: .transcriptBackedMedia)), .seekMedia(ms: 60_000))
+        }
     }
 
     /// The second audit's second case: the turn paused at character 1000, your Margin on that turn at 300.
@@ -126,11 +134,13 @@ final class MarginCaptureHandoffTests: XCTestCase {
         let onTurn = MarginCaptureHandoff(localMargin: margin(
             Anchor(anchorType: .turn, startChar: 300, endChar: 340, anchorBefore: "", anchorAfter: "", turnSegmentIndex: 2),
             item: "a", target: .assistantTurn, targetId: "turn-1"))
-        XCTAssertEqual(onTurn.place, .turn(id: "turn-1", charOffset: 300))
+        XCTAssertEqual(onTurn.place, .turn(sessionId: "session-1", id: "turn-1", charOffset: 300))
         XCTAssertEqual(onTurn.sourceMove(from: snapshot(itemId: "a", textStart: 1_000, target: .assistantTurnTTS, targetId: "turn-1")), .seekText(charOffset: 300))
         XCTAssertEqual(onTurn.sourceMove(from: snapshot(itemId: "a", textStart: 300, target: .assistantTurnTTS, targetId: "turn-1")), .stay)
         XCTAssertEqual(onTurn.sourceMove(from: snapshot(itemId: "a", textStart: 1_000, target: .assistantTurnTTS, targetId: "turn-2")), .stay,
                        "another turn's text is a different place")
+        XCTAssertEqual(onTurn.sourceMove(from: snapshot(itemId: "a", textStart: 1_000, target: .assistantTurnTTS, targetId: "turn-1", sessionId: "session-2")), .stay,
+                       "turn ids repeat from one session to the next: the same id in another session is another turn")
         XCTAssertEqual(onTurn.sourceMove(from: snapshot(itemId: "a", textStart: 1_000, target: .itemTextTTS, targetId: "a")), .stay,
                        "the article isn't the turn")
         XCTAssertEqual(onTurn.sourceMove(from: snapshot(itemId: "a", mediaTimeMs: 5_000, target: .transcriptBackedMedia, targetId: "x")), .stay)
