@@ -1078,7 +1078,9 @@ final class Gate1AppModel: ObservableObject {
     private var importedPodcastResolutionGenerations: [String: Int] = [:]
     private var importedPodcastResolutionURLs: [String: URL] = [:]
     /// Placement work in flight, so its shared Margins read "placing", not "unresolved" (#872).
-    private var sharedMarginPlacementPasses = SharedMarginPlacementPasses() { didSet { if oldValue != sharedMarginPlacementPasses { refreshSelectedItem(); refreshMarginRows() } } }
+    private var sharedMarginPlacementPasses = SharedMarginPlacementPasses() { didSet {
+        if oldValue.pass(itemId: activeItemId) != sharedMarginPlacementPasses.pass(itemId: activeItemId) { refreshSelectedItem() }
+        if oldValue != sharedMarginPlacementPasses { refreshMarginRows() } } }
     private var importedTranscriptRetryDates: [String: Date] = [:]
     private var transcriptAssistedResolutionItems: Set<String> = []
     private var importedPodcastRecipientLocalURLs: [String: URL] = [:]
