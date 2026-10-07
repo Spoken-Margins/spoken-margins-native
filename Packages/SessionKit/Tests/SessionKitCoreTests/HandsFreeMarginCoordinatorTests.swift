@@ -42,6 +42,31 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         return commands
     }
 
+    /// Feeds one level sample every 0.1 s, each with its own value.
+    @discardableResult
+    private func feed(samples decibels: [Double]) -> [HandsFreeMarginCommand] {
+        var commands: [HandsFreeMarginCommand] = []
+        for decibel in decibels {
+            clock.advance(0.1)
+            commands += coordinator.level(decibel)
+        }
+        return commands
+    }
+
+    /// The threshold a fresh Margin learns in a room that measures `room` dBFS, on its own clock.
+    private func thresholdLearned(inARoomAt room: Double) -> Double? {
+        let clock = FakeClock()
+        let coordinator = HandsFreeMarginCoordinator(microphonePermission: .granted, clock: { clock.now })
+        _ = coordinator.trigger(from: .headphones)
+        clock.advance(0.3)
+        _ = coordinator.toneFinished(.start)
+        for _ in 0..<5 {
+            clock.advance(0.1)
+            _ = coordinator.level(room)
+        }
+        return coordinator.speechThresholdDB
+    }
+
     func testTriggerPausesPlaysTheToneThenOpensTheMicrophone() {
         XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)])
         XCTAssertEqual(coordinator.phase, .startTone)
@@ -197,6 +222,38 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         feed(voice, for: 2)
         XCTAssertEqual(coordinator.speechThresholdDB, -27)
         XCTAssertEqual(feed(road, for: 2.5), [.finishRecording(.silence)])
+    }
+
+    /// The room is measured over the first half-second: four samples, 0.1 s to 0.4 s, and the threshold
+    /// is learned when the fifth arrives. Every other test feeds one repeated level, so first, last,
+    /// loudest, quietest and mean were the same number. A cough, a click or a breath in that half-second
+    /// must not raise the line speech has to cross.
+    func testTheBackgroundIsTheQuietestSampleOfTheFirstHalfSecond() {
+        startRecording()
+        // First -40, quietest -55 (second), loudest -30, last -45, mean -42.5: each rule gives a different answer.
+        feed(samples: [-40, -55, -30, -45])
+        XCTAssertNil(coordinator.speechThresholdDB, "still measuring the room")
+        feed(samples: [-60])
+        XCTAssertEqual(coordinator.speechThresholdDB, -47, "the quietest sample plus the 8 dB speech margin")
+        XCTAssertEqual(coordinator.phase, .listening)
+
+        // The learned line is the one that counts: -48 is under it, -46 is speech.
+        feed(samples: [-48])
+        XCTAssertEqual(coordinator.phase, .listening)
+        feed(samples: [-46])
+        XCTAssertEqual(coordinator.phase, .speaking)
+    }
+
+    /// Speech has to rise 8 dB over the room, but the line stays between -50 and -25 dBFS: a very quiet
+    /// room must not put it where the microphone's own hiss crosses it, and a loud one must not put it
+    /// out of reach of a normal voice. The edges are literals so a changed constant fails here.
+    func testTheLearnedThresholdStaysBetweenMinus50AndMinus25() {
+        XCTAssertEqual(thresholdLearned(inARoomAt: -80), -50, "a silent room is held at the lowest line")
+        XCTAssertEqual(thresholdLearned(inARoomAt: -58), -50, "the room that lands exactly on the lowest line")
+        XCTAssertEqual(thresholdLearned(inARoomAt: -57), -49, "just inside the range is not moved")
+        XCTAssertEqual(thresholdLearned(inARoomAt: -34), -26, "just inside the range is not moved")
+        XCTAssertEqual(thresholdLearned(inARoomAt: -33), -25, "the room that lands exactly on the highest line")
+        XCTAssertEqual(thresholdLearned(inARoomAt: -10), -25, "a loud room is held at the highest line")
     }
 
     func testEventsOutsideAMarginDoNothing() {
