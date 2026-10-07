@@ -120,7 +120,11 @@ jobs:
           # the models once.
           lfs: true
       - name: Take the lane runner from the base branch
-        run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
+        # lane_slots.py rides along as a fallback: the runner imports it from the PR's tree first, and a
+        # branch older than lane_slots (#904) would otherwise stop the job before it reports.
+        run: |
+          git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
+          git show "origin/$BASE_REF:scripts/lane_slots.py" > "$RUNNER_TEMP/lane_slots.py"
       - name: Run the request
         id: run
         run: >-
@@ -185,7 +189,11 @@ jobs:
           # the models once.
           lfs: true
       - name: Take the lane runner from the base branch
-        run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
+        # lane_slots.py rides along as a fallback: the runner imports it from the PR's tree first, and a
+        # branch older than lane_slots (#904) would otherwise stop the job before it reports.
+        run: |
+          git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
+          git show "origin/$BASE_REF:scripts/lane_slots.py" > "$RUNNER_TEMP/lane_slots.py"
       - name: Run the request
         id: run
         run: >-
