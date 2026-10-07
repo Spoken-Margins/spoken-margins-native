@@ -107,26 +107,34 @@ final class SharedMarginPlacementTests: XCTestCase {
 
     /// The owner's phone check on Build 30 (2026-10-07) imported the Hollywood packet, exported on Build 29 with
     /// no fingerprints and no text context: each Margin carries only the sender's clock time. The pass finished
-    /// at once (`complete:0/1`) and the screen said "unresolved", which reads as a failure. These Margins can't be
-    /// placed on any copy, so the screen should say so, and not "Placing" or "Position not matched".
-    func testAMarginSentWithoutAPositionSaysSoWhateverThePassIsDoing() {
-        let layerStates: [ImportedSourceResolutionStatus] = [.pending, .contextOnly, .ambiguous, .unavailable, .resolved]
-        for layerStatus in layerStates {
-            for pass in [nil, running()] {
-                let status = SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: layerStatus,
-                                                         pass: pass, hasPositionEvidence: false)
-                XCTAssertEqual(status, .noPositionSent, "\(layerStatus) pass:\(pass != nil)")
-                XCTAssertEqual(status.positionDescription, "Sent without a position")
-                XCTAssertEqual(status.label, "No position sent")
-                XCTAssertNil(status.previousMediaTimeMs)
-            }
+    /// at once (`complete:0/1`) and the screen said "unresolved", which reads as a failure. Once the pass is done
+    /// and has left such a Margin unplaced, the screen says it was sent without a position.
+    func testAMarginSentWithoutAPositionSaysSoOnceNoPassIsRunning() {
+        let settledLayers: [ImportedSourceResolutionStatus] = [.contextOnly, .ambiguous, .unavailable, .wrongSource, .resolved]
+        for layerStatus in settledLayers {
+            let status = SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: layerStatus,
+                                                     pass: nil, hasPositionEvidence: false)
+            XCTAssertEqual(status, .noPositionSent, "\(layerStatus)")
+            XCTAssertEqual(status.positionDescription, "Sent without a position")
+            XCTAssertEqual(status.label, "No position sent")
+            XCTAssertNil(status.previousMediaTimeMs)
+        }
+        // While a pass is scheduled or running, or before one has finished, it isn't the final word: a pass places
+        // a Margin with no evidence of its own between two neighbours it verified (interpolation).
+        XCTAssertEqual(SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: .pending,
+                                                   pass: nil, hasPositionEvidence: false), .notPlacedYet)
+        let workingLayers: [ImportedSourceResolutionStatus] = [.pending, .contextOnly]
+        for layerStatus in workingLayers {
+            XCTAssertEqual(SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: layerStatus,
+                                                       pass: running(), hasPositionEvidence: false), .placing(previousMediaTimeMs: nil))
         }
         // The same Margin with something to match on keeps the pass-based wording.
         XCTAssertEqual(SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: .contextOnly,
                                                    pass: nil, hasPositionEvidence: true), .settled)
         XCTAssertEqual(SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: .pending,
                                                    pass: running(), hasPositionEvidence: true), .placing(previousMediaTimeMs: nil))
-        // A placed Margin is placed, whatever the packet carried (an exact-edition match needs no fingerprints).
+        // A placed Margin is placed, whatever the packet carried (an exact-edition match needs no fingerprints, and
+        // interpolation places a bare one).
         XCTAssertEqual(SharedMarginPlacementStatus(resolution: placed, marginId: "a", layerStatus: .resolved,
                                                    pass: nil, hasPositionEvidence: false), .settled)
         // One that held a position before Download Again reset it is being placed again.
@@ -168,6 +176,14 @@ final class SharedMarginPlacementTests: XCTestCase {
         XCTAssertFalse(short.hasUsableTextContext)
         XCTAssertTrue(PortableAnchorEvidence(anchorType: .media, prefix: "one two three four five six").hasUsableTextContext)
         XCTAssertTrue(PortableAnchorEvidence(anchorType: .media, suffix: "it's 3 o'clock, said José, again").hasUsableTextContext)
+        // Words are runs of letters and numbers, as the matcher finds them: a combining mark or an emoji variation
+        // selector ends one. "nai\u{308}ve" (decomposed) is two words there, so this prefix is six.
+        func usable(_ prefix: String) -> Bool { PortableAnchorEvidence(anchorType: .media, prefix: prefix).hasUsableTextContext }
+        XCTAssertTrue(usable("one two three four nai\u{308}ve"))
+        XCTAssertFalse(usable("one two three four na\u{EF}ve"))
+        XCTAssertTrue(usable("a\u{2764}\u{FE0F}b c d e f"))
+        XCTAssertFalse(usable("\u{2764}\u{FE0F} \u{2764}\u{FE0F} \u{2764}\u{FE0F} \u{2764}\u{FE0F} \u{2764}\u{FE0F} \u{2764}\u{FE0F}"))
+        XCTAssertFalse(usable("one two three four five\u{301}"), "a mark after a word doesn't start a new one")
         // Articles are placed by their text, not by fingerprints; nothing here applies to them.
         XCTAssertTrue(note(PortableAnchorEvidence(anchorType: .text, startChar: 3, endChar: 9))
             .carriesPositionEvidence(in: layer(.text)))

@@ -56,15 +56,18 @@ public enum SharedMarginPlacementStatus: Equatable, Sendable {
     case placing(previousMediaTimeMs: Int?)
     /// Nothing is running and no pass has finished for this layer, for example before the episode downloads.
     case notPlacedYet
-    /// The sender gave this Margin nothing to find its spot by, only the clock time on their copy. No pass can
-    /// place it on any copy, so "unresolved" would read as a failure that waiting or downloading again could fix.
+    /// A finished pass left this Margin unplaced, and the sender gave it nothing to find its spot by, only the
+    /// clock time on their copy. The pass can place such a Margin only between two neighbours it did verify, and
+    /// didn't. "Unresolved" would read as a match that failed, when the packet never gave it anything to match.
     case noPositionSent
     /// A finished pass's result: describe the resolution itself.
     case settled
 
     /// - Parameter hasPositionEvidence: whether the packet gave this Margin anything to match on
-    ///   (`ImportedCommentaryInterjection.carriesPositionEvidence(in:)`). Defaults to true so a caller that
-    ///   doesn't know keeps the pass-based wording.
+    ///   (`ImportedCommentaryInterjection.carriesPositionEvidence(in:)`). Only a Margin that has none and is still
+    ///   unplaced once no pass is running reads as sent without a position: while a pass is scheduled or running,
+    ///   it may yet place the Margin between its verified neighbours. Defaults to true so a caller that doesn't
+    ///   know keeps the pass-based wording.
     public init(
         resolution: ImportedAnchorResolution,
         marginId: String,
@@ -74,16 +77,16 @@ public enum SharedMarginPlacementStatus: Equatable, Sendable {
     ) {
         // A pending layer's Margins were reset for a new edition, so their stored values aren't results.
         let hasResult = layerStatus != .pending && Self.isPlaced(resolution)
-        // A Margin that held a position before the reset has been placed by something, whatever the packet carries.
-        let hadPosition = pass?.previousMediaTimeMs[marginId] != nil
         if hasResult {
             self = .settled
-        } else if !hasPositionEvidence, !hadPosition, !resolution.isAmbiguous {
-            self = .noPositionSent
         } else if let pass {
             self = .placing(previousMediaTimeMs: pass.previousMediaTimeMs[marginId])
+        } else if layerStatus == .pending {
+            self = .notPlacedYet
+        } else if !hasPositionEvidence, !resolution.isAmbiguous, resolution.evidenceClass != .ambiguous {
+            self = .noPositionSent
         } else {
-            self = layerStatus == .pending ? .notPlacedYet : .settled
+            self = .settled
         }
     }
 
@@ -148,7 +151,8 @@ public enum SharedMarginPlacementStatus: Equatable, Sendable {
 extension PortableAnchorEvidence {
     /// Whether the sender's own words around the Margin are long enough to find it by in a transcript: six
     /// words before or after. This is `PodcastTranscriptAnchorResolver.hasUsableContext`'s rule, counted the
-    /// same way (runs of letters and digits); a host test keeps the two together.
+    /// same way (runs of letters and numbers, as its `[\p{L}\p{N}]+` pattern finds them, so a combining mark or
+    /// an emoji variation selector ends a word there and here). A host test keeps the two together.
     public var hasUsableTextContext: Bool {
         Self.wordCount(prefix) >= Self.minimumContextWords || Self.wordCount(suffix) >= Self.minimumContextWords
     }
@@ -158,10 +162,17 @@ extension PortableAnchorEvidence {
     private static func wordCount(_ text: String?) -> Int {
         var count = 0
         var inWord = false
-        for character in text ?? "" {
-            let isWordCharacter = character.unicodeScalars.contains { CharacterSet.alphanumerics.contains($0) }
-            if isWordCharacter, !inWord { count += 1 }
-            inWord = isWordCharacter
+        for scalar in (text ?? "").unicodeScalars {
+            let isWordScalar: Bool
+            switch scalar.properties.generalCategory {
+            case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter,
+                 .decimalNumber, .letterNumber, .otherNumber:
+                isWordScalar = true
+            default:
+                isWordScalar = false
+            }
+            if isWordScalar, !inWord { count += 1 }
+            inWord = isWordScalar
         }
         return count
     }
@@ -170,8 +181,10 @@ extension PortableAnchorEvidence {
 extension ImportedCommentaryInterjection {
     /// Whether the packet gave this Margin anything to find its spot by: audio fingerprints, a transcript
     /// context, or (through the layer) the sender's exact episode file. A Margin with none of these carries only
-    /// the sender's clock time, which is never trusted on its own, so it stays unplaced on every copy (#872).
-    /// A Margin that is already placed carries evidence by definition.
+    /// the sender's clock time, which is never trusted on its own. A pass places it only between two neighbours
+    /// it did verify (`PodcastAnchorFusionResolver.interpolatingBetweenVerifiedAnchors`), so call it sent without
+    /// a position only once no pass is running (#872). A Margin that is already placed carries evidence by
+    /// definition.
     public func carriesPositionEvidence(in layer: ImportedCommentaryLayer) -> Bool {
         guard layer.itemIdentity.itemType == .podcast else { return true }
         return !anchorEvidence.machineEvidenceAssetIds.isEmpty

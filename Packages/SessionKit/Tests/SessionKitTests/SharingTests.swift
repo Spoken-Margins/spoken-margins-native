@@ -929,6 +929,10 @@ final class SharingTests: XCTestCase {
             nil, "", "   ", "one two three four five", "one two three four five six", "one two three four, five —",
             "it's 3 o'clock, said José, again", "COVID-19 was 2020 and then 2021 happened", "a b c d e f g",
             "—— … !!! ??? ((( ))) ,,, ...", "naïve café résumé coöperate déjà vu again", "emoji 😀 😀 😀 😀 😀 😀 words",
+            // Samples that straddle six words, where a rule that treats marks differently would disagree.
+            "one two three four nai\u{308}ve", "one two three four na\u{EF}ve", "one two three four five\u{301}",
+            "a\u{2764}\u{FE0F}b c d e f", "\u{2764}\u{FE0F} \u{2764}\u{FE0F} \u{2764}\u{FE0F} \u{2764}\u{FE0F} \u{2764}\u{FE0F} \u{2764}\u{FE0F}",
+            "नमस्ते दोस्तों आप सब", "नमस्ते दोस्तों आप", "ก็ได้ ครับ ผม", "x²  y³ z½ 1 2 3",
         ]
         for prefix in samples {
             for suffix in samples {
