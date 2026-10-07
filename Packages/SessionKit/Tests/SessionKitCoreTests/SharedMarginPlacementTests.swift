@@ -173,6 +173,18 @@ final class SharedMarginPlacementTests: XCTestCase {
             .carriesPositionEvidence(in: layer(.text)))
     }
 
+    func testSummaryCountsWhatAPassDidWithEachMargin() {
+        var summary = SharedMarginPlacementSummary()
+        XCTAssertEqual(summary.diagnosticValue, "margins:0 placed:0 ambiguous:0 notFound:0 noPositionSent:0")
+        summary.add(placed, hasPositionEvidence: true)
+        summary.add(placed, hasPositionEvidence: false)
+        summary.add(.init(evidenceClass: .ambiguous, localMediaTimeMs: 9_000, isAmbiguous: true), hasPositionEvidence: true)
+        summary.add(.init(evidenceClass: .absentFromRecipientEdition), hasPositionEvidence: true)
+        summary.add(reset, hasPositionEvidence: false)
+        summary.add(reset, hasPositionEvidence: false)
+        XCTAssertEqual(summary.diagnosticValue, "margins:6 placed:2 ambiguous:1 notFound:1 noPositionSent:2")
+    }
+
     func testPlacedMatchesThePlaybackRuleItReplaces() {
         let inline: Set<AnchorResolutionEvidenceClass> = [.exactEdition, .transcriptVerified, .acousticVerified,
             .fused, .mapInterpolated, .timestampFallback, .recipientConfirmed]

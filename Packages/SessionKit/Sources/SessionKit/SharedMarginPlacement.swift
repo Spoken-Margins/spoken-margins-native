@@ -181,3 +181,44 @@ extension ImportedCommentaryInterjection {
             || SharedMarginPlacementStatus.isPlaced(resolution)
     }
 }
+
+/// What one finished placement pass did with a layer's Margins, for the diagnostics export (#872). Counts only:
+/// the export carries no Margin text or audio. It answers "why is this Margin still unplaced" without a device
+/// trace: the packet sent no position, or it did and the pass couldn't find it in this copy.
+public struct SharedMarginPlacementSummary: Equatable, Sendable {
+    public private(set) var margins = 0
+    public private(set) var placed = 0
+    public private(set) var ambiguous = 0
+    /// Had something to match on and the pass found no spot for it in this copy.
+    public private(set) var notFound = 0
+    /// Had nothing to match on: only the sender's clock time.
+    public private(set) var noPositionSent = 0
+
+    public init() {}
+
+    /// The summary of a pass over these layers, as the pass left their Margins.
+    public init(_ layers: [(ImportedCommentaryLayer, [ImportedCommentaryInterjection])]) {
+        for (layer, records) in layers {
+            for record in records {
+                add(record.resolution, hasPositionEvidence: record.carriesPositionEvidence(in: layer))
+            }
+        }
+    }
+
+    public mutating func add(_ resolution: ImportedAnchorResolution, hasPositionEvidence: Bool) {
+        margins += 1
+        if SharedMarginPlacementStatus.isPlaced(resolution) {
+            placed += 1
+        } else if resolution.isAmbiguous || resolution.evidenceClass == .ambiguous {
+            ambiguous += 1
+        } else if hasPositionEvidence {
+            notFound += 1
+        } else {
+            noPositionSent += 1
+        }
+    }
+
+    public var diagnosticValue: String {
+        "margins:\(margins) placed:\(placed) ambiguous:\(ambiguous) notFound:\(notFound) noPositionSent:\(noPositionSent)"
+    }
+}
