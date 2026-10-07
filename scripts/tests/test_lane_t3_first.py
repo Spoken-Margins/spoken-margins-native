@@ -255,6 +255,23 @@ class HeldChecksStandAfterTheT3PassTests(unittest.TestCase):
     def test_next_moving_by_a_commit_to_a_build_input_runs_the_checks_again(self):
         self.moved_next_runs_the_checks_again('scripts/verify-tests.py', 'print(1)\n')
 
+    def test_the_hot_file_ratchet_runs_again_with_the_labels_the_pr_has_now(self):
+        # The held run passed with hot-file-ok; the label came off before the T3 passed (#926 audit).
+        github = self.github()
+        github.labels.add('hot-file-ok')
+        self.held_run(github)
+        github.labels.discard('hot-file-ok')
+
+        def ratchet(tree, base, labels):
+            return [] if 'hot-file-ok' in labels else ['Gate1AppModel.swift grows past its ceiling']
+        with mock.patch.object(lane, 'hot_file_violations', side_effect=ratchet):
+            checks, released = self.t3_pass_then_release(github)
+        checks.assert_not_called()
+        self.assertIn('Lane report pr5-r43-auto — FAIL', released)
+        self.assertIn('hot-file ratchet — Gate1AppModel.swift grows past its ceiling', released)
+        self.assertNotIn('merged into next', released)
+        self.assertEqual(self.rev(self.origin, 'next'), self.rev(self.tree, 'origin/next'))  # nothing pushed
+
     def test_a_held_report_from_anyone_but_the_runner_is_not_trusted(self):
         github = self.github()
         self.held_run(github)

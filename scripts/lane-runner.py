@@ -793,6 +793,11 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             tested_base = base_sha
         elif scope is None:  # the held run's checks stand; the audit hold still reads the diff's scope
             scope = diff_scope(ROOT, base)
+            # The ratchet reads the labels, which may have changed since: hot-file-ok taken off (#926 audit).
+            too_big = hot_file_violations(ROOT, base, set(labels))
+            if too_big:
+                return 'FAIL', 'no build', 'hot-file ratchet: failed', [tested] + notes + [
+                    f'hot-file ratchet — {line}' for line in too_big]
         details = [tested] + notes + checks
         latest = github.comments()  # read now: a T3 report or an audit may have landed while this ran
         held = t3_gate(latest)
