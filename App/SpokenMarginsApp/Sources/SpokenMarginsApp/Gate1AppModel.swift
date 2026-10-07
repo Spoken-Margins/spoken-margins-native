@@ -1079,14 +1079,13 @@ final class Gate1AppModel: ObservableObject {
     @Published private var pendingSourceContextInterjectionIds: Set<String> = []
     private let sourceWindowJobQueue = SourceWindowJobQueue()
     private var pendingFullSourceTranscriptionItemIds: Set<String> = []
-    private var importedPodcastResolutionGenerations: [String: Int] = [:]
+    private let podcastPlacementPassCoordinator = PodcastPlacementPassCoordinator()
     private var importedPodcastResolutionURLs: [String: URL] = [:]
     /// Placement work in flight, so its shared Margins read "placing", not "unresolved" (#872).
     private var sharedMarginPlacementPasses = SharedMarginPlacementPasses() { didSet {
         if oldValue.pass(itemId: activeItemId) != sharedMarginPlacementPasses.pass(itemId: activeItemId) { refreshSelectedItem() }
         if oldValue != sharedMarginPlacementPasses { refreshMarginRows() } } }
     private var importedTranscriptRetryDates: [String: Date] = [:]
-    private var transcriptAssistedResolutionItems: Set<String> = []
     private var importedPodcastRecipientLocalURLs: [String: URL] = [:]
     private var pendingMapGenerationItemId: String?
     private var pendingProviderJobForConsent: PendingProviderJob?
@@ -15771,7 +15770,8 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func scheduleTransientRecipientAlignmentTranscript(for item: Item, localSourceURL: URL) {
-        guard importedTranscriptRetryDates[item.id].map({ Date().timeIntervalSince($0) >= 60 }) ?? true,
+        guard let sourceFile = try? PodcastPlacementFile(url: localSourceURL),
+              importedTranscriptRetryDates[item.id].map({ Date().timeIntervalSince($0) >= 60 }) ?? true,
               pendingFullSourceTranscriptionItemIds.insert(item.id).inserted else { return }
         importedTranscriptRetryDates[item.id] = Date()
         diagnostics["recipientAlignmentTranscript:\(item.id)"] = "transcribing_transiently"
@@ -15786,7 +15786,8 @@ final class Gate1AppModel: ObservableObject {
                     durationMs: item.media?.durationMs
                 )
                 self.pendingFullSourceTranscriptionItemIds.remove(item.id)
-                if self.importedPodcastResolutionURLs[item.id] == localSourceURL {
+                if self.importedPodcastResolutionURLs[item.id] == localSourceURL,
+                   (try? PodcastPlacementFile(url: localSourceURL)) == sourceFile {
                     self.resolveImportedPodcastCommentary(
                         itemId: item.id, localURL: localSourceURL, recipientTranscriptOverride: timeline)
                 }
@@ -15814,18 +15815,14 @@ final class Gate1AppModel: ObservableObject {
         recipientTranscriptOverride: TranscriptTimeline? = nil
     ) {
         guard let store,
+              let file = try? PodcastPlacementFile(url: localURL),
               let item = try? store.loadItem(id: itemId),
               let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
               !layers.isEmpty else { return }
-        // Playback refreshes must not cancel a stronger transient-transcript pass.
-        guard recipientTranscriptOverride != nil || !transcriptAssistedResolutionItems.contains(itemId)
-            || importedPodcastResolutionURLs[itemId] != localURL else { return }
-        if importedPodcastResolutionURLs[itemId] != localURL { transcriptAssistedResolutionItems.remove(itemId) }
         importedPodcastResolutionURLs[itemId] = localURL
         let localItem = localSharedItemIdentity(for: item)
         // Persisted transcripts have no byte-edition binding. Only this pass's
         // transient transcript is evidence for the supplied recipient file.
-        let recipientTranscript = recipientTranscriptOverride
         let work = layers.compactMap { layer -> (ImportedCommentaryLayer, [ImportedCommentaryInterjection])? in
             guard layer.deletedAt == nil,
                   layer.itemIdentity.itemType == .podcast,
@@ -15833,21 +15830,19 @@ final class Gate1AppModel: ObservableObject {
                   !records.isEmpty else { return nil }
             return (layer, records)
         }
-        guard !work.isEmpty else { return }
-        if recipientTranscript == nil, importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store) {
+        guard !work.isEmpty else { podcastPlacementPassCoordinator.cancel(itemId: itemId); sharedMarginPlacementPasses.end(.matching, itemId: itemId); return }
+        if recipientTranscriptOverride == nil, importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store) {
             scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: localURL)
         }
-        if recipientTranscriptOverride != nil { transcriptAssistedResolutionItems.insert(itemId) }
-        let generation = (importedPodcastResolutionGenerations[itemId] ?? 0) + 1
-        importedPodcastResolutionGenerations[itemId] = generation
         let applicationSupportDirectory = try? applicationSupportDirectory()
-        diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "scheduled:\(work.count)"
-        sharedMarginPlacementPasses.begin(.matching, itemId: itemId, previous: Dictionary(work.flatMap(\.1).map { ($0.id, $0.resolution) }, uniquingKeysWith: { first, _ in first }))
-        Task.detached { [weak self] in
+        let submission = podcastPlacementPassCoordinator.schedule(.init(itemId: itemId, file: file,
+            layers: work.map { .init(layer: $0.0, records: $0.1) }, transcript: recipientTranscriptOverride)) { [weak self] context in
+            let recipientTranscript = context.request.transcript
             do {
+                try Task.checkCancellation()
                 let recipientDigest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
                 let isCurrent = try await MainActor.run { [weak self] in
-                    guard let self, self.importedPodcastResolutionGenerations[itemId] == generation else { return false }
+                    guard !Task.isCancelled, let self, self.podcastPlacementPassCoordinator.isCurrent(context) else { return false }
                     try store.invalidateImportedPodcastPlacements(itemId: itemId, editionSHA256: recipientDigest)
                     if self.selectedItem.id == itemId { self.refreshSelectedItem() }; self.refreshMarginRows()
                     return true
@@ -15855,6 +15850,7 @@ final class Gate1AppModel: ObservableObject {
                 guard isCurrent else { return }
                 var resolvedWork: [(ImportedCommentaryLayer, [ImportedCommentaryInterjection], SharedListeningMapPlacement.Outcome?)] = []
                 for (var layer, records) in work {
+                    try Task.checkCancellation()
                     let queries = records.map { record in
                         let evidence = (record.podcastAnchorEvidence ?? []).compactMap { asset -> PodcastAcousticEvidenceQuery? in
                             guard let assetURL = Self.resolvedApplicationSupportAssetURL(
@@ -15884,6 +15880,7 @@ final class Gate1AppModel: ObservableObject {
                             localItem
                         )
                     )) ?? [:]
+                    try Task.checkCancellation()
                     let monotonicResolutions = PodcastAnchorFusionResolver.enforcingMonotonicOrder(
                         queries: queries,
                         resolutions: Dictionary(uniqueKeysWithValues: records.map { record in
@@ -15953,10 +15950,9 @@ final class Gate1AppModel: ObservableObject {
                     resolvedWork.append((layer, updated, mapOutcome))
                 }
                 await MainActor.run {
-                    guard let self, self.importedPodcastResolutionGenerations[itemId] == generation else { return }
+                    guard !Task.isCancelled, let self, self.podcastPlacementPassCoordinator.isCurrent(context) else { return }
                     defer { self.sharedMarginPlacementPasses.end(.matching, itemId: itemId) }
                     guard let store = self.store else { return }
-                    self.transcriptAssistedResolutionItems.remove(itemId)
                     do {
                         let outcomes = resolvedWork.sorted { $0.0.importedAt < $1.0.importedAt }.compactMap(\.2)
                         let current = try store.loadResolvedListeningMapProjection(itemId: itemId)
@@ -16007,12 +16003,16 @@ final class Gate1AppModel: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
-                    guard self?.importedPodcastResolutionGenerations[itemId] == generation else { return }
+                    guard !Task.isCancelled, self?.podcastPlacementPassCoordinator.isCurrent(context) == true else { return }
                     self?.sharedMarginPlacementPasses.end(.matching, itemId: itemId)
-                    self?.transcriptAssistedResolutionItems.remove(itemId)
                     self?.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "failed:\(error.localizedDescription)"
                 }
             }
+        }
+        if !submission.joined {
+            diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "scheduled:\(work.count)"
+            // Only a request that starts a pass records "placing"; a joined one could set it after its pass ended it.
+            sharedMarginPlacementPasses.begin(.matching, itemId: itemId, previous: Dictionary(work.flatMap(\.1).map { ($0.id, $0.resolution) }, uniquingKeysWith: { first, _ in first }))
         }
     }
 
