@@ -632,8 +632,7 @@ def push_merge(tree: Path, sha: str, base: str) -> tuple[bool, str]:
 
 def sweep_merge_audit(tree: Path, base: str) -> None:
     """Pushes made with the workflow token start no workflow, so merge-audit's push run never sees the
-    runner's merges, and its hourly schedule runs only once merge-audit.yml is on the default branch.
-    After each merge, run next's audit over the last two hours instead. Best effort: never fails a job."""
+    runner's merges. After each merge, run next's audit over the last two hours instead. Best effort: never fails a job."""
     try:
         audit = base_policy(tree, base, 'scripts/merge_audit.py')
         if audit:
