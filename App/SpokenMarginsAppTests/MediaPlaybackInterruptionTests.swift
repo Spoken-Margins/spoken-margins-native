@@ -394,8 +394,13 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         let saved = try XCTUnwrap(fixture.store.loadSessions(itemId: "real-source")
             .flatMap { try fixture.store.loadInterjections(sessionId: $0.id) }.first)
         XCTAssertEqual(try XCTUnwrap(saved.anchor.mediaTimeMs), 1_000, accuracy: 20, "anchored at the shared Margin")
-        try waitUntil("the source carries on") { model.snapshot.status == .playing }
+        try waitUntil("the source carries on past the shared Margin", timeout: 8) {
+            model.snapshot.status == .playing && (model.snapshot.currentMediaTimeMs ?? 0) > 1_500
+                || model.pendingImportedCommentary != nil
+        }
+        XCTAssertNil(model.pendingImportedCommentary, "the rejoin doesn't offer the shared Margin just answered")
         XCTAssertNil(model.playingImportedCommentary, "the shared Margin doesn't resume over the source")
+        XCTAssertEqual(model.snapshot.status, .playing)
     }
 
     private func makeTestWAV(duration: TimeInterval) throws -> URL {

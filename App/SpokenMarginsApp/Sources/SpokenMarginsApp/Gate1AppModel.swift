@@ -6279,6 +6279,7 @@ final class Gate1AppModel: ObservableObject {
         let handoff: MarginCaptureHandoff
         if let prompt = playingImportedCommentary {
             handoff = MarginCaptureHandoff(sharedMargin: prompt.interjection, itemId: prompt.layer.itemId)
+            announcedImportedInterjectionIDs.insert(prompt.id) // the rejoin mustn't offer it again
             stopImportedCommentaryPlayback(resumeSource: false)
         } else if let conductor = marginMomentConductor, conductor.isPlayingVoice {
             handoff = MarginCaptureHandoff(moment: conductor.sequence)
