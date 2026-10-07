@@ -15,6 +15,8 @@ final class MarginCaptureHealthTests: XCTestCase {
         /// After a restart the new recorder hears the microphone.
         var healthyAfterRestart = false
         var restartFails = false
+        /// The recorder died after taking in `capturedMs`. A stopped AVAudioRecorder reads 0 afterwards.
+        var stopped = false
         private(set) var restartCount = 0
         private(set) var finishCount = 0
         private(set) var cancelCount = 0
@@ -28,7 +30,9 @@ final class MarginCaptureHealthTests: XCTestCase {
         }
         func cancelRecording() throws { cancelCount += 1 }
         func captureReading() -> RecordingCaptureReading? {
-            RecordingCaptureReading(recorderRunning: true, capturedMs: capturedMs)
+            stopped
+                ? RecordingCaptureReading(recorderRunning: false, capturedMs: 0)
+                : RecordingCaptureReading(recorderRunning: true, capturedMs: capturedMs)
         }
         func restartCapture() throws {
             restartCount += 1
@@ -140,6 +144,47 @@ final class MarginCaptureHealthTests: XCTestCase {
         XCTAssertEqual(harness.model.recordingCaptureHealth, .starting)
         harness.run(seconds: 1)
         XCTAssertEqual(harness.model.recordingCaptureHealth, .capturing)
+    }
+
+    func testTryAgainIsNotOfferedOnceTheRecordingHoldsSpeech() {
+        // Three seconds of speech, then the microphone goes quiet. Try again would delete those three seconds.
+        let recorder = ScriptedRecordingClient(capturedMs: 0)
+        recorder.growsWithTime = true
+        let harness = Harness(recorder: recorder)
+        harness.run(seconds: 3)
+        recorder.growsWithTime = false
+        harness.run(seconds: 6)
+        guard case .notCapturing = harness.model.recordingCaptureHealth else {
+            return XCTFail("expected not capturing, got \(harness.model.recordingCaptureHealth)")
+        }
+        XCTAssertTrue(harness.model.recordingHasKeepableAudio)
+        XCTAssertFalse(harness.model.canRetryMicrophone, "the screen offers Save, not Try again")
+
+        harness.model.retryMicrophone()
+
+        XCTAssertEqual(recorder.restartCount, 0, "a restart deletes the recording")
+        XCTAssertTrue(harness.model.snapshot.isRecording)
+        harness.model.finishInterjection()
+        XCTAssertEqual(recorder.finishCount, 1, "what was said is saved")
+        XCTAssertEqual(recorder.cancelCount, 0)
+        XCTAssertEqual(harness.model.statusMessage.hasPrefix("Margin saved, but part of it may be missing"), true)
+    }
+
+    func testARecorderThatDiesAfterSpeechIsNotRestartedAndItsSpeechIsSaved() {
+        // The real recorder reads 0 once it stops. The ten seconds before that are still in the file.
+        let recorder = ScriptedRecordingClient(capturedMs: 0)
+        recorder.growsWithTime = true
+        let harness = Harness(recorder: recorder)
+        harness.run(seconds: 10)
+        recorder.stopped = true
+        harness.run(seconds: 20)
+
+        XCTAssertEqual(recorder.restartCount, 0, "a restart would delete the ten seconds")
+        XCTAssertTrue(harness.model.recordingHasKeepableAudio)
+        harness.model.finishInterjection()
+        XCTAssertEqual(recorder.finishCount, 1)
+        XCTAssertEqual(recorder.cancelCount, 0, "it is not discarded as empty")
+        XCTAssertEqual(harness.model.statusMessage.hasPrefix("Margin saved, but part of it may be missing"), true)
     }
 
     func testARestartThatFailsLeavesTheScreenSayingSo() {

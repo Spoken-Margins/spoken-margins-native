@@ -19,6 +19,7 @@ final class MarginCaptureWatcher {
     private var pollTask: Task<Void, Never>?
     private var lastReported: (health: MarginCaptureSupervisor.Health, restarts: Int)?
     private let autoPoll: Bool
+    private var startedAtMs = 0
     /// Milliseconds on a clock that only moves forward. Tests replace it.
     var nowMs: () -> Int
 
@@ -36,6 +37,11 @@ final class MarginCaptureWatcher {
     var restarts: Int { supervisor?.restarts ?? 0 }
     /// Enough audio is already captured that stopping now still leaves something worth saving.
     var hasKeepableAudio: Bool { supervisor?.hasKeepableAudio ?? false }
+    /// Try again restarts the recorder, which deletes what it has taken in. It is offered only while
+    /// there is nothing worth keeping (audit P1 on #939).
+    var canRetry: Bool { supervisor != nil && !hasKeepableAudio }
+    /// Milliseconds since the recording began, for the diagnostics log.
+    var elapsedMs: Int { supervisor == nil ? 0 : max(0, nowMs() - startedAtMs) }
 
     /// Begins judging a recording that has just started, and polls until `stop()`.
     func start(
@@ -47,7 +53,8 @@ final class MarginCaptureWatcher {
         self.reading = reading
         self.restart = restart
         self.changed = changed
-        supervisor = MarginCaptureSupervisor(beganAtMs: nowMs())
+        startedAtMs = nowMs()
+        supervisor = MarginCaptureSupervisor(beganAtMs: startedAtMs)
         lastReported = nil
         tick()
         guard autoPoll else { return }
@@ -78,7 +85,7 @@ final class MarginCaptureWatcher {
 
     /// The listener asked to try again after the capture failed: restart now, then judge afresh.
     func retry() {
-        guard var current = supervisor else { return }
+        guard canRetry, var current = supervisor else { return }
         current.listenerRetry(nowMs: nowMs())
         do {
             try restart()

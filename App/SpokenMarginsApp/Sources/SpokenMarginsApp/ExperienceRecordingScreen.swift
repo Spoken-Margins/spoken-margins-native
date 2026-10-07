@@ -114,7 +114,9 @@ struct ExperienceRecordingView: View {
             }
             .accessibilityIdentifier("recording.starting.label")
         } else if isNotCapturing {
-            Text("Nothing is being recorded right now.")
+            Text(model.recordingHasKeepableAudio
+                ? "The microphone stopped. What you said so far is kept if you tap Save."
+                : "Nothing is being recorded right now.")
                 .font(.title3)
                 .foregroundStyle(.white)
                 .fixedSize(horizontal: false, vertical: true)
@@ -190,7 +192,7 @@ struct ExperienceRecordingView: View {
                 .foregroundStyle(AppColors.listeningBackground)
                 .accessibilityIdentifier("recording.microphonePrimer.continue")
             }
-            if isNotCapturing {
+            if isNotCapturing, model.canRetryMicrophone {
                 Button(action: model.retryMicrophone) {
                     Label("Try again", systemImage: "arrow.clockwise")
                         .frame(maxWidth: .infinity, minHeight: 52)

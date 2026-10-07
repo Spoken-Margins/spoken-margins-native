@@ -43,10 +43,17 @@ extension Gate1AppModel {
 
     /// The listener tapped Try again on a recording screen that says the microphone isn't recording.
     func retryMicrophone() {
-        guard snapshot.isRecording else { return }
+        guard snapshot.isRecording, canRetryMicrophone else { return }
         lastError = nil
         captureWatcher.retry()
     }
+
+    /// Try again restarts the recorder and deletes what it holds, so it is not offered once the
+    /// recording holds audio worth saving.
+    var canRetryMicrophone: Bool { snapshot.isRecording && captureWatcher.canRetry }
+
+    /// The recording stopped partway but holds speech: Save keeps it.
+    var recordingHasKeepableAudio: Bool { snapshot.isRecording && captureWatcher.hasKeepableAudio }
 
     /// What saving the recording would keep. An empty recording is discarded here, not saved: nil means it was.
     func verdictForSavingRecording() -> MarginCaptureSupervisor.SaveVerdict? {
