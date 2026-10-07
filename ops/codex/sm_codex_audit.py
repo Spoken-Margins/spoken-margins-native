@@ -26,7 +26,9 @@ and again at the end of every run, the script removes and re-adds `automerge`
 on each PR that has the label, whose newest audit of the head opens "No
 blocking findings" (the runner's own rule, #441), whose newest lane report is
 a PASS on the head from before that audit, and that nobody has re-labelled
-since the audit. The label event starts the lane's
+since the audit. Re-arming waits while a same-head automerge job still holds
+a slot, without consuming the re-arm; a later pass retries when it completes.
+The label event starts the lane's
 automerge job, which tests and merges. Each audit re-arms at most once.
 
 Usage:
@@ -56,6 +58,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ledger import usage
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from lane_dedupe import GitHubApi, automerge_holds_a_slot
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -582,6 +586,9 @@ def rearm_pass(prs: list[dict], dry_run: bool) -> None:
             if not ok:
                 if dry_run:
                     print(f"  re-arm #{n}: no ({why})")
+                continue
+            if automerge_holds_a_slot(GitHubApi(REPO), n, pr['headRefOid']):
+                log(f"re-arm #{n}: deferred until the same-head automerge job completes")
                 continue
             if dry_run:
                 log(f"dry-run: would re-arm #{n} on {pr['headRefOid'][:7]} ({why})")

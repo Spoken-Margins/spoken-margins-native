@@ -71,6 +71,29 @@ def holds_a_slot(jobs, kind):
     return job is None or job['status'] in ACTIVE
 
 
+def automerge_holds_a_slot(api, pr, head):
+    """Defer audit re-arming until route would accept a fresh automerge run.
+
+    Uses the same run identity and job predicate as dedupe. API doubt raises so
+    the audit leaves the label and the pending re-arm untouched for its next pass.
+    """
+    for run_id, run in active_runs(api).items():
+        info = parse_run_name(run.get('display_title'))
+        if info and info['pr'] == pr and info['head'] == head and info['kinds']['automerge']:
+            if holds_a_slot(mac_jobs(api, run_id), 'automerge'):
+                return True
+    return False
+
+
+def mac_job_started(jobs):
+    # A job that finished since listing has started too. Be conservative if the
+    # API has populated started_at before changing the status. Skipped jobs
+    # never used the Mac and must not protect the other queued job.
+    return any(job.get('conclusion') != 'skipped' and
+               (job['status'] in ('in_progress', 'completed') or job.get('started_at'))
+               for job in jobs.values())
+
+
 def obsolete_reason(pull, pr, head):
     if pull['state'] != 'open':
         return f'PR #{pr} is {"merged" if pull.get("merged") else "closed"}'
@@ -95,7 +118,7 @@ def decide(api, pr, head, run_id, wants):
             continue
         if info['head'] != head:
             jobs = mac_jobs(api, other_id)
-            if not any(job['status'] == 'in_progress' for job in jobs.values()):
+            if not mac_job_started(jobs):
                 result['cancel'].append(other_id)
             continue
         jobs = mac_jobs(api, other_id)
@@ -122,6 +145,12 @@ def route(api, pr, head, run_id, wants):
         if why:
             print(f'Not queuing: {why}.', file=sys.stderr)
             return {kind: True for kind in KINDS}
+        try:
+            if mac_job_started(mac_jobs(api, run)):
+                continue
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+            print(f'::warning::Lane dedupe unavailable ({error!r}); running as before.', file=sys.stderr)
+            return {kind: False for kind in KINDS}
         try:
             api.post(f'actions/runs/{run}/cancel')
             print(f'Cancelled run {run}: its Mac job had not started and the PR has a newer commit.', file=sys.stderr)

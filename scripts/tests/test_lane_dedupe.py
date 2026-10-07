@@ -65,8 +65,72 @@ class DedupeTests(unittest.TestCase):
         self.assertEqual(self.route(api), {'lane': False, 'automerge': False})
         self.assertEqual(api.cancelled, [100])
 
+    def test_a_skipped_mac_job_does_not_protect_the_other_queued_job(self):
+        skipped = dict(job('lane', 'completed', 'skipped'), started_at='2026-10-07T10:00:00Z')
+        api = FakeApi([run(100, 580, OLD)], {100: [skipped, job('automerge', 'queued')]})
+        self.route(api)
+        self.assertEqual(api.cancelled, [100])
+
     def test_an_older_commits_run_whose_mac_job_started_is_left_alone(self):
         api = FakeApi([run(100, 580, OLD, 'in_progress')], {100: [job('automerge', 'in_progress')]})
+        self.route(api)
+        self.assertEqual(api.cancelled, [])
+
+    def test_jobs_are_refreshed_after_the_pr_recheck_before_cancelling(self):
+        for kind in dedupe.KINDS:
+            with self.subTest(kind=kind):
+                api = FakeApi([run(100, 580, OLD)], {100: [job(kind, 'queued')]})
+                real_get = api.get
+                pull_reads = 0
+
+                def get(path):
+                    nonlocal pull_reads
+                    if path.startswith('pulls/'):
+                        pull_reads += 1
+                        if pull_reads == 2:
+                            api.jobs[100] = [job(kind, 'in_progress')]
+                    return real_get(path)
+
+                api.get = get
+                self.assertEqual(self.route(api), {'lane': False, 'automerge': False})
+                self.assertEqual(api.cancelled, [])
+
+    def test_an_unavailable_job_refresh_falls_back_without_cancelling(self):
+        for response in (OSError('offline'), {'total_count': 2, 'jobs': []}):
+            with self.subTest(response=response):
+                api = FakeApi([run(100, 580, OLD)], {100: [job('automerge', 'queued')]})
+                real_get = api.get
+                job_reads = 0
+
+                def get(path):
+                    nonlocal job_reads
+                    if path.startswith('actions/runs/'):
+                        job_reads += 1
+                        if job_reads == 2:
+                            if isinstance(response, Exception):
+                                raise response
+                            return response
+                    return real_get(path)
+
+                api.get = get
+                self.assertEqual(self.route(api), {'lane': False, 'automerge': False})
+                self.assertEqual(api.cancelled, [])
+
+    def test_a_job_that_finished_during_listing_is_left_alone(self):
+        api = FakeApi([run(100, 580, OLD)], {100: [job('automerge', 'queued')]})
+        real_get = api.get
+
+        def get(path):
+            if path.startswith('pulls/') and api.jobs[100][0]['status'] == 'queued':
+                # Only change the snapshot after decide has listed this run's jobs.
+                if api.jobs_read:
+                    api.jobs[100] = [job('automerge', 'completed', 'success')]
+            if path.startswith('actions/runs/'):
+                api.jobs_read = True
+            return real_get(path)
+
+        api.jobs_read = False
+        api.get = get
         self.route(api)
         self.assertEqual(api.cancelled, [])
 
