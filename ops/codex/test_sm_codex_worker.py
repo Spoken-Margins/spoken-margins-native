@@ -368,6 +368,32 @@ class IssueTests(unittest.TestCase):
     def test_choose_none(self):
         self.assertEqual(w.choose_issue([issue(1, labels=('ready', 'in-progress'))], lambda n: [], NOW)[0], None)
 
+    def test_awaiting_owner_validation_is_skipped(self):
+        ok, why = w.eligible(issue(1, labels=('ready', 'status: needs-human-validation')), [], NOW)
+        self.assertFalse(ok)
+        self.assertIn('needs-human-validation', why)
+
+
+class FocusLinkTests(unittest.TestCase):
+    def test_branch_title_and_closing_words_link_issues(self):
+        self.assertEqual(w.linked_issues({'headRefName': 'ws/854-build30-fix-9okbzn', 'title': 'Keep narration'}), {854})
+        self.assertEqual(w.linked_issues({'headRefName': 'codex/868-bound-edition-digest'}), {868})
+        self.assertEqual(w.linked_issues({'headRefName': 'claude/following-score-lyp08z',
+                                          'title': 'Following: order new items (#484)'}), {484})
+        self.assertEqual(w.linked_issues({'headRefName': 'ws/c1-322-upgrade', 'body': 'Fixes #322. See #100.'}), {322})
+        self.assertEqual(w.linked_issues({'headRefName': 'x', 'body': 'part of #538; closes #12'}), {538, 12})
+
+    def test_unrelated_mentions_do_not_link(self):
+        self.assertEqual(w.linked_issues({'headRefName': 'ws/c1-344-control', 'title': 'Control for #344',
+                                          'body': 'Like #100 and PR #200'}), set())
+
+    def test_in_focus(self):
+        pr = {'headRefName': 'ws/858-one-copy-per-margin'}
+        self.assertTrue(w.in_focus(pr, None))
+        self.assertTrue(w.in_focus(pr, {858, 1}))
+        self.assertFalse(w.in_focus(pr, {1}))
+        self.assertFalse(w.in_focus(pr, set()))
+
 
 # ---------------------------------------------------------------------------
 # Fakes for the tick and the child
@@ -517,6 +543,8 @@ class FinishChildTests(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix='cw-finish-'))
         self.addCleanup(shutil.rmtree, self.home, True)
+        self.addCleanup(setattr, w, 'FOCUS_MILESTONE', w.FOCUS_MILESTONE)
+        w.FOCUS_MILESTONE = ''  # no freeze; FreezeFinishTests turns it on from the Dial
         w.write_lock(self.home, 1, {'pid': os.getpid(), 'pr': 73})
 
     def test_finisher_records_one_run_with_round_and_pr(self):
@@ -893,6 +921,8 @@ class ChildTests(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix='cw-'))
         w.write_lock(self.home, 1, {'pid': os.getpid(), 'issue': 42})
+        self.addCleanup(setattr, w, 'FOCUS_MILESTONE', w.FOCUS_MILESTONE)
+        w.FOCUS_MILESTONE = ''  # no freeze; FreezeChildTests turns it on from the Dial
 
     def tearDown(self):
         shutil.rmtree(self.home, ignore_errors=True)
@@ -1259,14 +1289,18 @@ class SandboxTests(unittest.TestCase):
 
 
 class TickTests(unittest.TestCase):
+    focus = ''  # the tick's own rules, without a milestone focus; FocusTickTests turns it on
+
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix='cw-'))
+        self._focus, w.FOCUS_MILESTONE = w.FOCUS_MILESTONE, self.focus
 
     def tearDown(self):
+        w.FOCUS_MILESTONE = self._focus
         shutil.rmtree(self.home, ignore_errors=True)
 
     def ops(self, workers=2, used=10, free=100 * 2**30, alive=lambda pid: True, issues=None,
-            body=None, resets_at=None, prs=None):
+            body=None, resets_at=None, prs=None, milestone=None):
         body = body if body is not None else dial(codex_group(workers) if workers is not None else '')
         listing = issues if issues is not None else [issue(42, title='Fix the thing')]
 
@@ -1278,6 +1312,11 @@ class TickTests(unittest.TestCase):
                 return w.Result(0, json.dumps(next(p for p in prs if p['number'] == int(cmd[3]))))
             if cmd[:3] == ['gh', 'issue', 'view'] and cmd[3] == str(w.DIAL_ISSUE):
                 return w.Result(0, json.dumps({'body': body}))
+            if cmd[:3] == ['gh', 'issue', 'list'] and '--milestone' in cmd:
+                self.assertEqual(cmd[cmd.index('--milestone') + 1], w.FOCUS_MILESTONE)
+                if milestone is None:
+                    return w.Result(1, '', 'milestone not found')
+                return w.Result(0, json.dumps([{'number': n} for n in milestone]))
             if cmd[:3] == ['gh', 'issue', 'list']:
                 return w.Result(0, json.dumps(listing))
             if cmd[:3] == ['gh', 'issue', 'view']:
@@ -1480,6 +1519,333 @@ class TickTests(unittest.TestCase):
         out = buf.getvalue()
         for word in ('Dial:', 'Codex usage:', 'Slots:', 'Chosen issue: #42'):
             self.assertIn(word, out)
+
+
+
+class FocusTickTests(unittest.TestCase):
+    """Build 30 freeze: only milestone issues, and only PRs linked to one."""
+    focus = 'Build 30'
+    setUp, tearDown, ops, spawner = TickTests.setUp, TickTests.tearDown, TickTests.ops, TickTests.spawner
+
+    def test_takes_only_milestone_issues(self):
+        issues = [issue(42, created='2026-09-01T00:00:00Z'), issue(43, created='2026-09-02T00:00:00Z')]
+        spawn = self.spawner()
+        d = w.tick(self.ops(issues=issues, milestone=[43, 99]), spawn=spawn)
+        self.assertEqual(spawn.started, [(1, 43)])
+        self.assertEqual(d['issue'], 43)
+
+    def test_skips_frozen_pr_and_finishes_milestone_pr(self):
+        frozen = pull(labels=['needs-mac'])  # ws/73-playback, not in the milestone
+        focused = dict(frozen, number=74, headRefName='ws/866-build30-fix', createdAt='2026-10-05T00:00:00Z')
+        spawn = self.spawner()
+        d = w.tick(self.ops(prs=[frozen, focused], milestone=[866]), spawn=spawn)
+        self.assertEqual(d['pr'], 74)
+        self.assertEqual(spawn.started, [(1, 74)])
+
+    def test_nothing_in_focus_idles(self):
+        spawn = self.spawner()
+        d = w.tick(self.ops(prs=[pull(labels=['needs-mac'])], milestone=[866]), spawn=spawn)
+        self.assertEqual(spawn.started, [])
+        self.assertIn('Build 30', d['why'])
+
+    def test_unreadable_milestone_holds(self):
+        spawn = self.spawner()
+        d = w.tick(self.ops(milestone=None), spawn=spawn)
+        self.assertEqual(spawn.started, [])
+        self.assertIn('listing jobs failed', d['why'])
+
+
+
+# ---------------------------------------------------------------------------
+# Freeze from the Dial (#902)
+# ---------------------------------------------------------------------------
+
+def focus_group(*ticked: str, options=('Build 30', 'None (any ready issue)')) -> str:
+    lines = ['**Codex focus** (during a freeze, Codex works only on this milestone and non-app work)']
+    lines += [f"- [{'x' if o.split(' (')[0] in ticked else ' '}] {o}" for o in options]
+    return '\n'.join(lines)
+
+
+OPS_ONLY = '**Likely files.** `ops/codex/sm_codex_worker.py` (`label_skip`, `choose_issue`) and its tests.\n\n**Size.** S'
+APP_WORK = '**Likely files.** `App/SpokenMarginsApp/Gate1AppModel.swift`, `scripts/x.py`\n\n**Size.** S'
+
+
+class FreezeDialTests(unittest.TestCase):
+    def setUp(self):
+        self._focus, w.FOCUS_MILESTONE = w.FOCUS_MILESTONE, 'Build 30'
+        self.addCleanup(setattr, w, 'FOCUS_MILESTONE', self._focus)
+
+    def test_ticked_milestone(self):
+        self.assertEqual(w.parse_codex_focus(focus_group('Build 30')), ('Build 30', []))
+        group = focus_group('Build 31', options=('Build 31 (only its issues)', 'None'))
+        self.assertEqual(w.parse_codex_focus(group), ('Build 31', []))
+
+    def test_none_lifts_the_freeze(self):
+        self.assertEqual(w.parse_codex_focus(focus_group('None')), ('', []))
+        d = w.read_dial(dial(codex_group(1) + '\n\n' + focus_group('None')), lambda b: {'mode': 'paced', 'stop': 90})
+        self.assertEqual(d['focus'], '')
+
+    def test_no_group_uses_the_default(self):
+        self.assertEqual(w.parse_codex_focus(dial(codex_group(1))), (None, []))
+        d = w.read_dial(dial(codex_group(1)), lambda b: {'mode': 'paced', 'stop': 90})
+        self.assertEqual(d['focus'], 'Build 30')
+        w.FOCUS_MILESTONE = ''
+        self.assertEqual(w.read_dial(dial(codex_group(1)), lambda b: {'mode': 'paced', 'stop': 90})['focus'], '')
+
+    def test_muddled_group_stays_frozen(self):
+        focus, problems = w.parse_codex_focus(focus_group())
+        self.assertIsNone(focus)
+        self.assertIn('no Codex focus box', problems[0])
+        focus, problems = w.parse_codex_focus(focus_group('Build 30', 'None'))
+        self.assertEqual(focus, 'Build 30')
+        self.assertIn('2 Codex focus boxes', problems[0])
+
+    def test_unreadable_dial_keeps_the_default_focus(self):
+        self.assertEqual(w.read_dial('', None)['focus'], 'Build 30')
+        self.assertEqual(w.read_dial(focus_group('None'), lambda b: 1 / 0)['focus'], '')
+
+
+class AppCodeRiskTests(unittest.TestCase):
+    """Neighbouring Likely files forms: each row is what an issue body actually says."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix='cw-root-'))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        (self.root / 'AGENTS.md').write_text('x')
+        for folder in ('ops', 'scripts', 'docs', '.github', 'App', 'Packages', 'Contracts'):
+            (self.root / folder).mkdir()
+
+    def risk(self, body):
+        return w.app_code_risk(issue(1, body=body), self.root)
+
+    def test_table(self):
+        clear = [
+            OPS_ONLY,
+            '## Likely files\n- `scripts/lane-runner.py`\n- `docs/workstreams/test-lane.md`\n\n## Size\nS',
+            'Likely files: ops/dial/dial_gate.py, ./scripts/verify-tests.py',
+            '**Likely files.** `AGENTS.md`, `.github/workflows/lane.yml`, `scripts/lane*`',
+        ]
+        for body in clear:
+            self.assertIsNone(self.risk(body), body)
+        risky = {
+            APP_WORK: 'app code (App/SpokenMarginsApp/Gate1AppModel.swift)',
+            '**Likely files.** `Packages/SessionKit/Sources/SessionKit/Margin.swift`': 'app code (Packages/',
+            '**Likely files.** `Contracts/schemas/packet.json`': 'app code (Contracts/',
+            '**Likely files.** `Gate1AppModel.swift`': '`Gate1AppModel.swift` without a folder',
+            '**Likely files.** the worker and its tests': 'name no paths',
+            '**Outcome.** something': 'no Likely files',
+            '': 'no Likely files',
+            '**Likely files.** `SessionKit/Sources/SessionKit/Margin.swift`': 'not under a top-level folder',
+            '**Likely files.** `SpokenMarginsApp/Gate1AppModel.swift`': 'not under a top-level folder',
+            '**Likely files.** https://github.com/uncomposed/spoken-margins-native/blob/next/App/x.swift':
+                'not under a top-level folder',
+            '## Likely files\n- `ops/x.py`\n\n- `App/y.swift`\n\n## Size': 'app code (App/y.swift)',
+        }
+        for body, why in risky.items():
+            self.assertIn(why, self.risk(body) or '', body)
+
+    def test_pr_paths(self):
+        self.assertTrue(w.freeze_allows({'files': [{'path': 'ops/x.py'}]}, {1}))
+        self.assertFalse(w.freeze_allows({'files': [{'path': 'ops/x.py'}, {'path': 'App/y.swift'}]}, {1}))
+        self.assertFalse(w.freeze_allows({'files': [{'path': 'ops/x.py'}], 'changedFiles': 2}, {1}))
+        self.assertFalse(w.freeze_allows({'files': [{'path': f'ops/{n}.py'} for n in range(100)]}, {1}))
+        self.assertTrue(w.freeze_allows({'headRefName': 'ws/1-x', 'files': [{'path': 'App/y.swift'}]}, {1}))
+        self.assertTrue(w.freeze_allows({'files': [{'path': 'App/y.swift'}]}, None))
+        self.assertTrue(w.freeze_allows({'headRefName': 'ws/2-x'}, {1}, paths=['docs/a.md']))
+        self.assertFalse(w.freeze_allows({'headRefName': 'ws/2-x'}, {1}, paths=['Contracts/a.json']))
+        # "part of" a milestone issue is not enough to arm an app diff; closing words are.
+        self.assertFalse(w.freeze_allows({'headRefName': 'ws/2-x', 'body': 'Part of #1.'}, {1}, paths=['App/a']))
+        self.assertTrue(w.freeze_allows({'headRefName': 'ws/2-x', 'body': 'Closes #1.'}, {1}, paths=['App/a']))
+
+
+class FreezeTickTests(unittest.TestCase):
+    """The Dial's freeze line: milestone first, then only issues and PRs that stay out of app code."""
+    focus = 'Build 30'
+    setUp, tearDown, spawner = TickTests.setUp, TickTests.tearDown, TickTests.spawner
+
+    def ops(self, group, milestone=(), expect='Build 30', **kw):
+        body = dial(codex_group(2) + ('\n\n' + group if group else ''))
+        ops = TickTests.ops(self, body=body, milestone=list(milestone), **kw)
+        inner = ops.run
+        self.milestone_asks = []
+
+        def run(cmd, cwd=None, timeout=None):
+            cmd = [str(c) for c in cmd]
+            if cmd[:3] == ['gh', 'issue', 'list'] and '--milestone' in cmd:
+                self.milestone_asks.append(cmd[cmd.index('--milestone') + 1])
+                self.assertEqual(self.milestone_asks[-1], expect)
+                return w.Result(0, json.dumps([{'number': n} for n in milestone]))
+            return inner(cmd, cwd, timeout)
+        ops.run = run
+        return ops
+
+    def test_milestone_issue_beats_an_older_priority_issue_outside_it(self):
+        issues = [issue(41, labels=('ready', 'priority'), created='2026-09-01T00:00:00Z', body=OPS_ONLY),
+                  issue(43, created='2026-09-20T00:00:00Z', body=APP_WORK)]
+        spawn = self.spawner()
+        d = w.tick(self.ops(focus_group('Build 30'), milestone=[43], issues=issues), spawn=spawn)
+        self.assertEqual(spawn.started, [(1, 43)])
+        self.assertEqual(d['issue'], 43)
+
+    def test_app_code_issue_outside_the_milestone_is_skipped_and_logged(self):
+        spawn = self.spawner()
+        d = w.tick(self.ops(focus_group('Build 30'), milestone=[99], issues=[issue(44, body=APP_WORK)]), spawn=spawn)
+        self.assertEqual(spawn.started, [])
+        self.assertIn('Build 30 freeze', d['why'])
+        log = (self.home / 'log.txt').read_text()
+        self.assertIn('skipped 1 ready issues outside it that may touch app code: #44', log)
+
+    def test_ops_only_issue_outside_the_milestone_is_taken(self):
+        issues = [issue(44, created='2026-09-01T00:00:00Z', body=APP_WORK),
+                  issue(45, created='2026-09-02T00:00:00Z', body=OPS_ONLY)]
+        (self.home / 'ops').mkdir()  # the tick checks Likely files against the checkout's folders
+        spawn = self.spawner()
+        d = w.tick(self.ops(focus_group('Build 30'), milestone=[99], issues=issues), spawn=spawn)
+        self.assertEqual(spawn.started, [(1, 45)])
+        self.assertEqual(d['issue'], 45)
+
+    def test_ops_only_pr_outside_the_milestone_is_finished(self):
+        app = pull(labels=['needs-mac'])  # ws/73-playback, SessionKit diff
+        ops_pr = dict(app, number=75, headRefName='ws/75-lane-fix', createdAt='2026-10-02T00:00:00Z',
+                      files=[{'path': 'ops/codex/sm_codex_worker.py'}])
+        spawn = self.spawner()
+        d = w.tick(self.ops(focus_group('Build 30'), milestone=[866], prs=[app, ops_pr]), spawn=spawn)
+        self.assertEqual(d['pr'], 75)
+
+    def test_files_are_listed_only_during_a_freeze(self):
+        for group, wanted in ((focus_group('Build 30'), True), (focus_group('None'), False)):
+            ops = self.ops(group, milestone=[42])
+            inner, asked = ops.run, []
+
+            def run(cmd, cwd=None, timeout=None, inner=inner, asked=asked):
+                asked.append([str(c) for c in cmd])
+                return inner(cmd, cwd, timeout)
+            ops.run = run
+            w.tick(ops, spawn=self.spawner())
+            listing = next(c for c in asked if c[:3] == ['gh', 'pr', 'list'])
+            self.assertEqual('files' in listing[-1].split(','), wanted)
+
+    def test_dial_names_the_next_milestone(self):
+        group = focus_group('Build 31', options=('Build 31', 'None'))
+        spawn = self.spawner()
+        d = w.tick(self.ops(group, milestone=[42], expect='Build 31'), spawn=spawn)
+        self.assertEqual(self.milestone_asks, ['Build 31'])
+        self.assertEqual(d['issue'], 42)
+
+    def test_none_on_the_dial_lifts_the_freeze(self):
+        spawn = self.spawner()
+        d = w.tick(self.ops(focus_group('None'), issues=[issue(44, body=APP_WORK)]), spawn=spawn)
+        self.assertEqual(self.milestone_asks, [])
+        self.assertEqual(d['issue'], 44)
+
+    def test_no_focus_group_keeps_the_default(self):
+        spawn = self.spawner()
+        d = w.tick(self.ops('', milestone=[99], issues=[issue(44, body=APP_WORK)]), spawn=spawn)
+        self.assertEqual(self.milestone_asks, ['Build 30'])
+        self.assertIsNone(d['issue'])
+
+
+class FreezeChildRun(FakeRun):
+    """FakeRun plus the Dial, the milestone and the PR's changed files."""
+
+    def __init__(self, test, group, milestone, paths, **kw):
+        super().__init__(test, **kw)
+        self.group, self.milestone, self.paths = group, milestone, paths
+
+    def __call__(self, cmd, cwd=None, timeout=None):
+        cmd = [str(c) for c in cmd]
+        if cmd[:4] == ['gh', 'issue', 'view', str(w.DIAL_ISSUE)]:
+            self.calls.append(cmd)
+            return w.Result(0, json.dumps({'body': dial(codex_group(1) + '\n\n' + self.group)}))
+        if cmd[:3] == ['gh', 'issue', 'list'] and '--milestone' in cmd:
+            self.calls.append(cmd)
+            if self.milestone is None:
+                return w.Result(1, '', 'HTTP 502')
+            return w.Result(0, json.dumps([{'number': n} for n in self.milestone]))
+        if cmd[:2] == ['git', 'diff'] and '--name-only' in cmd and 'origin/next...HEAD' in cmd:
+            self.calls.append(cmd)
+            # Like git: without --no-renames a move lists only its new path.
+            paths = [p.split(' -> ')[-1] if '--no-renames' not in cmd else p.replace(' -> ', '\n')
+                     for p in self.paths]
+            return w.Result(0, ''.join(p + '\n' for p in paths))
+        return super().__call__(cmd, cwd, timeout)
+
+
+class FreezeChildTests(unittest.TestCase):
+    setUp, tearDown, child = ChildTests.setUp, ChildTests.tearDown, ChildTests.child
+
+    def open_pr(self, milestone, paths, group=None):
+        run = FreezeChildRun(self, group or focus_group('Build 30'), milestone, paths, status=' M x\n')
+        codex = fake_codex({'commit-msg.txt': 'Fix X\n\nWhy.', 'pr-body.md': 'Body.'})
+        return self.child(run, codex), run
+
+    def pr_labels(self, run):
+        pr = next(c for c in run.calls if c[:3] == ['gh', 'pr', 'create'])
+        return [pr[i + 1] for i, a in enumerate(pr) if a == '--label']
+
+    def test_app_diff_outside_the_milestone_opens_unarmed(self):
+        outcome, run = self.open_pr([99], ['App/SpokenMarginsApp/Gate1AppModel.swift', 'ops/x.py'])
+        self.assertEqual(outcome, 'pr-unarmed')
+        self.assertEqual(self.pr_labels(run), [])
+        note = next(c for c in run.calls if c[:4] == ['gh', 'issue', 'comment', '777'])
+        self.assertIn('Build 30 freeze is on', note[note.index('--body') + 1])
+        self.assertIn('`App/SpokenMarginsApp/Gate1AppModel.swift`', note[note.index('--body') + 1])
+        self.assertTrue(run.comments()[-1].startswith('Thread "Codex worker 1" stopping: PR #777 opened unarmed · '))
+
+    def test_moving_a_file_out_of_app_counts_as_app_code(self):
+        outcome, run = self.open_pr([99], ['App/Foo.swift -> ops/Foo.swift'])
+        self.assertEqual((outcome, self.pr_labels(run)), ('pr-unarmed', []))
+
+    def test_milestone_issue_is_armed_whatever_its_diff(self):
+        outcome, run = self.open_pr([42], ['App/SpokenMarginsApp/Gate1AppModel.swift'])
+        self.assertEqual((outcome, self.pr_labels(run)), ('pr', ['automerge']))
+
+    def test_diff_outside_app_code_is_armed(self):
+        outcome, run = self.open_pr([99], ['ops/codex/sm_codex_worker.py', 'docs/a.md'])
+        self.assertEqual((outcome, self.pr_labels(run)), ('pr', ['automerge']))
+
+    def test_unreadable_milestone_arms_only_a_diff_outside_app_code(self):
+        outcome, run = self.open_pr(None, ['Packages/SessionKit/x.swift'])
+        self.assertEqual((outcome, self.pr_labels(run)), ('pr-unarmed', []))
+
+    def test_no_freeze_arms_as_before(self):
+        outcome, run = self.open_pr([], ['App/x.swift'], group=focus_group('None'))
+        self.assertEqual((outcome, self.pr_labels(run)), ('pr', ['automerge']))
+        self.assertFalse(run.has('gh', 'issue', 'list'))
+
+
+class FreezeFinishTests(unittest.TestCase):
+    setUp, run_finish = FinishChildTests.setUp, FinishChildTests.run_finish
+
+    def finish(self, milestone, paths):
+        group = focus_group('Build 30')
+
+        def patched_call(self_run, cmd, cwd=None, timeout=None):
+            cmd = [str(c) for c in cmd]
+            if cmd[:4] == ['gh', 'issue', 'view', str(w.DIAL_ISSUE)]:
+                return w.Result(0, json.dumps({'body': dial(codex_group(1) + '\n\n' + group)}))
+            if cmd[:3] == ['gh', 'issue', 'list'] and '--milestone' in cmd:
+                return w.Result(0, json.dumps([{'number': n} for n in milestone]))
+            if cmd[:2] == ['git', 'diff'] and 'origin/next...HEAD' in cmd:
+                return w.Result(0, ''.join(p + '\n' for p in paths))
+            return original(self_run, cmd, cwd, timeout)
+        original = FakeRun.__call__
+        with unittest.mock.patch.object(FakeRun, '__call__', patched_call):
+            return self.run_finish()
+
+    def test_finisher_does_not_rearm_a_frozen_pr(self):
+        outcome, run, data, _ = self.finish([866], ['Packages/SessionKit/Sources/SessionKit/Playback.swift'])
+        self.assertEqual(outcome, 'finished-unarmed')
+        self.assertNotIn('automerge', data['labels'])
+        self.assertFalse(any(c[-2:] == ['--add-label', 'automerge'] for c in run.calls))
+        self.assertIn('Build 30 freeze is on', run.comments()[-1])
+        rows = [json.loads(line) for line in (self.home / 'ledger/usage.jsonl').read_text().splitlines()]
+        self.assertEqual(rows[0]['outcome']['kind'], 'PR not armed')
+
+    def test_finisher_rearms_a_milestone_pr(self):
+        outcome, run, data, _ = self.finish([73], ['Packages/SessionKit/Sources/SessionKit/Playback.swift'])
+        self.assertEqual(outcome, 'finished')
+        self.assertIn('automerge', data['labels'])
 
 
 if __name__ == '__main__':

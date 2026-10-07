@@ -237,8 +237,9 @@ struct ExperienceTimelineRailScreen: View {
 
         for layer in item.importedCommentaryLayers where layer.deletedAt == nil {
             for margin in item.importedCommentaryInterjections[layer.id, default: []] {
-                let row = SharedMarginRow(interjection: margin, layer: layer, itemTitle: item.title)
-                let position = margin.resolution.localMediaTimeMs.map {
+                let row = SharedMarginRow(interjection: margin, layer: layer, itemTitle: item.title, placement: item.sharedMarginPlacement)
+                // A Margin being placed again stays at its old position until the pass writes the new one (#872).
+                let position = (margin.resolution.localMediaTimeMs ?? row.placementStatus.previousMediaTimeMs).map {
                     max(0, min(100, Int((Double($0) / Double(duration) * 100).rounded())))
                 } ?? margin.anchorEvidence.roughPercent ?? 100
                 result.append(TimelineRailEntry(
