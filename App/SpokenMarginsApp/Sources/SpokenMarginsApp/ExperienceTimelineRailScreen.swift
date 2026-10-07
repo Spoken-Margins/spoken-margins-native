@@ -28,8 +28,8 @@ struct ExperienceTimelineRailScreen: View {
                                 systemImage: "list.bullet.rectangle",
                                 title: "This session is just beginning",
                                 detail: "Source positions, Margins, and reflections will appear here in listening order.",
-                                actionTitle: "Return to Now Playing",
-                                action: model.openPlayback
+                                actionTitle: "Return to \(model.timelineExitTitle)",
+                                action: model.leaveTimeline
                             )
                         } else {
                             timelineRail
@@ -85,7 +85,7 @@ struct ExperienceTimelineRailScreen: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: returnToPlayback) {
-                        Label("Now Playing", systemImage: "arrow.left")
+                        Label(model.timelineExitTitle, systemImage: "arrow.left")
                     }
                     .accessibilityIdentifier("timeline.nowPlaying.button")
                 }
@@ -420,7 +420,7 @@ struct ExperienceTimelineRailScreen: View {
     private func returnToPlayback() {
         responseEditorFocused = false
         withAnimation(.snappy(duration: 0.34)) {
-            model.openPlayback()
+            model.leaveTimeline()
         }
     }
 
