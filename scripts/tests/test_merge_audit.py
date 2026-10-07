@@ -71,7 +71,7 @@ class PushTests(unittest.TestCase):
 
 
 class SweepTests(unittest.TestCase):
-    """The hourly sweep: the runner's token-made merges start no push run (decision 3)."""
+    """The sweep after each runner merge: the runner's token-made merges start no push run (decision 3)."""
 
     def test_it_takes_prs_into_next_merged_within_the_window(self):
         import datetime

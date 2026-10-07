@@ -17,8 +17,9 @@ labels each morning (docs/workstreams/kickoff.md).
   scripts/merge_audit.py --sweep-hours 2                    PRs merged into next in the last 2 hours
 
 The sweep exists because the lane runner merges with the workflow token (decision 3), and pushes
-made with that token don't start other workflows, so no push run audits them. The runner posts its
-merge check before it pushes, so its own merges pass.
+made with that token don't start other workflows, so no push run audits them. lane-runner.py runs
+the sweep after each merge it pushes. The runner posts its merge check before it pushes, so its own
+merges pass.
 """
 from __future__ import annotations
 
