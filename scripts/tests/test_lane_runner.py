@@ -1,3 +1,4 @@
+import contextlib
 import importlib.util
 import json
 import os
@@ -458,6 +459,108 @@ class T3Tests(unittest.TestCase):
                 mock.patch.object(lane_sim, 'create_temporary', side_effect=AssertionError('no simulator should be made')):
             self.assertEqual(lane.run_t3([], 'r', Path('/tmp'))[0], 'INCONCLUSIVE')
             self.assertEqual(lane.run_t3(['NoSuchTestClassAnywhere'], 'r', Path('/tmp'))[0], 'FAIL')
+
+
+FAKE_VERIFY_TESTS = r"""
+import json, os, sys, time
+from pathlib import Path
+
+# Stands in for scripts/verify-tests.py inside a temporary lane ROOT: records how it was launched, then does
+# what scripts/fake-verify-behavior.json says (the test writes that file before each run).
+here = Path(__file__).resolve().parent
+behavior = json.loads((here / 'fake-verify-behavior.json').read_text())
+with (here / 'fake-verify-launches.jsonl').open('a') as record:
+    record.write(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd()}) + '\n')
+output = Path(sys.argv[sys.argv.index('--output') + 1])
+output.mkdir(parents=True, exist_ok=True)
+if behavior.get('manifest') is not None:
+    (output / 'manifest.json').write_text(json.dumps(behavior['manifest']))
+if behavior.get('sleep'):
+    time.sleep(behavior['sleep'])
+"""
+
+
+class T3VerifyTestsLaunchTests(unittest.TestCase):
+    """The command the T3 job runs on the simulator it claimed (`run_plan` in `_t3_on_claimed_device`), and what
+    it makes of what comes back. Every other T3 test hands `run_plans` a fake `run_plan`, so the closure that
+    decides which simulator, which tests and which verdict was never executed: the real child process runs here
+    (a Python stand-in for verify-tests.py in a temporary ROOT); only the simulator calls are replaced."""
+
+    UDID = 'CLAIMED-0000-UDID'
+    RUNTIME = 'com.apple.CoreSimulator.SimRuntime.iOS-26-5'
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name) / 'checkout'
+        (self.root / 'scripts').mkdir(parents=True)
+        (self.root / 'scripts/verify-tests.py').write_text(FAKE_VERIFY_TESTS)
+        self.evidence = Path(temporary.name) / 'evidence'
+        self.evidence.mkdir()
+        patcher = mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(Path(temporary.name) / 'state')})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def behave(self, manifest=None, sleep=0):
+        (self.root / 'scripts/fake-verify-behavior.json').write_text(json.dumps({'manifest': manifest, 'sleep': sleep}))
+
+    def launches(self):
+        log = self.root / 'scripts/fake-verify-launches.jsonl'
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def run_t3(self, grouped, timeout=None):
+        import lane_sim
+        patches = [mock.patch.object(lane, 'ROOT', self.root),
+                   mock.patch.object(lane_sim, 'create_temporary', return_value=self.UDID),
+                   mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release'),
+                   mock.patch.object(lane_sim, 'unsafe_devices', return_value={}),
+                   mock.patch.object(lane_sim, 'is_available', return_value=True),
+                   mock.patch.object(lane_sim, 'back_to_one_simulator', return_value=False),
+                   mock.patch.object(lane, 'first_boot', return_value=(None, {'pressure': 'normal',
+                                                                                'period': 'one-simulator'}))]
+        if timeout is not None:
+            patches.append(mock.patch.object(lane, 'T3_TIMEOUT', timeout))
+        with contextlib.ExitStack() as stack:
+            for patch in patches:
+                stack.enter_context(patch)
+            return lane._t3_on_fresh_device(grouped, 'r7', self.evidence, self.RUNTIME)
+
+    def test_each_plan_runs_verify_tests_on_the_claimed_simulator_with_exactly_its_selectors(self):
+        self.behave({'status': 'verified', 'steps': []})
+        verdict, _, _, _, _, _ = self.run_t3({'app': ['AppTests/AlphaTests', 'AppTests/BetaTests/testOne'],
+                                              'adapters': ['AudioTests/GammaTests']})
+        self.assertEqual(verdict, 'PASS')
+        self.assertEqual([launch['argv'] for launch in self.launches()], [
+            ['--plan', 'app', '--device', self.UDID, '--output', str(self.evidence / 'verify-app'),
+             '--only-testing', 'AppTests/AlphaTests', '--only-testing', 'AppTests/BetaTests/testOne'],
+            ['--plan', 'adapters', '--device', self.UDID, '--output', str(self.evidence / 'verify-adapters'),
+             '--only-testing', 'AudioTests/GammaTests']])
+        # `scripts/verify-tests.py` is a relative path, so the child must start in the checkout
+        self.assertEqual({launch['cwd'] for launch in self.launches()}, {str(self.root.resolve())})
+
+    def test_a_run_that_wrote_no_manifest_is_not_a_pass(self):
+        self.behave(manifest=None)
+        verdict, _, _, details, _, _ = self.run_t3({'app': ['AppTests/AlphaTests']})
+        self.assertEqual(len(self.launches()), 1)  # it did run: the verdict is about what it left behind
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertTrue(any(line.startswith('app: verify-tests.py wrote no manifest.') for line in details), details)
+
+    def test_the_manifest_status_decides_the_verdict(self):
+        failed = {'status': 'failed_or_incomplete', 'steps': [{'name': 'xcode-tests', 'exit_code': 65, 'tests': {
+            'AppTests/AlphaTests/testBad': {'status': 'failed'}}}]}
+        for manifest, expected in (({'status': 'verified', 'steps': []}, 'PASS'), (failed, 'FAIL')):
+            with self.subTest(status=manifest['status']):
+                self.behave(manifest)
+                self.assertEqual(self.run_t3({'app': ['AppTests/AlphaTests']})[0], expected)
+
+    def test_a_run_that_outlasts_the_budget_is_interrupted_and_reported_as_timed_out(self):
+        self.behave(manifest=None, sleep=60)
+        started = time.monotonic()
+        verdict, _, _, details, _, _ = self.run_t3({'app': ['AppTests/AlphaTests']}, timeout=1)
+        self.assertLess(time.monotonic() - started, 30)  # interrupted at the budget, not after the child's sleep
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertTrue(any("the runner's 1s budget for the whole verify-tests.py run" in line for line in details), details)
+        self.assertFalse(any('wrote no manifest' in line for line in details), details)
 
 
 class RunnerDeviceTests(unittest.TestCase):
