@@ -67,6 +67,22 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         return coordinator.speechThresholdDB
     }
 
+    /// Every command after the start tone is requested, up to the end of the listening window, in a room that
+    /// reads `room` dBFS throughout bar one sample at `blip` (0.7 s after the microphone opens), on a fresh
+    /// coordinator.
+    private func commandsThroughTheListeningWindow(room: Double, oneSampleAt blip: Double) -> [HandsFreeMarginCommand] {
+        let clock = FakeClock()
+        let coordinator = HandsFreeMarginCoordinator(microphonePermission: .granted, clock: { clock.now })
+        var commands = coordinator.trigger(from: .headphones)
+        clock.advance(0.3)
+        commands += coordinator.toneFinished(.start)
+        for index in 0..<60 {
+            clock.advance(0.1)
+            commands += coordinator.level(index == 6 ? blip : room)
+        }
+        return Array(commands.dropFirst(2))
+    }
+
     func testTriggerPausesPlaysTheToneThenOpensTheMicrophone() {
         XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)])
         XCTAssertEqual(coordinator.phase, .startTone)
@@ -371,6 +387,29 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         feed(-50, for: 0.5)
         // The threshold is -42; a quiet talker at -44 never crosses it but is clearly not silence.
         XCTAssertEqual(feed(-44, for: 5.5), [.finishRecording(.silence)])
+    }
+
+    /// The faint-speech rule above has only one positive case, a talker 6 dB over the room. These two
+    /// pin the 4 dB margin from both sides: a quiet room whose microphone jitters a few dB must still
+    /// end as a flag, and a talker just over the margin is kept. (Exactly 4.0 dB is left unpinned.)
+    func testAQuietRoomWithAFewDecibelsOfJitterStillEndsAsAFlag() {
+        for blip in [-54.0, -52.0] {
+            XCTAssertEqual(
+                commandsThroughTheListeningWindow(room: quiet, oneSampleAt: blip),
+                [.beginRecording, .cancelRecording, .requestFlag, .playTone(.flag)],
+                "one sample \(blip - quiet) dB over a room at \(quiet) dBFS is jitter, not an attempt to talk"
+            )
+        }
+    }
+
+    func testASampleMoreThanFourDecibelsOverTheRoomIsKeptNotFlagged() {
+        for blip in [-50.5, -45.0] {
+            XCTAssertEqual(
+                commandsThroughTheListeningWindow(room: quiet, oneSampleAt: blip),
+                [.beginRecording, .finishRecording(.silence)],
+                "one sample \(blip - quiet) dB over a room at \(quiet) dBFS is words the threshold missed"
+            )
+        }
     }
 
     func testAbandonReturnsToIdle() {
