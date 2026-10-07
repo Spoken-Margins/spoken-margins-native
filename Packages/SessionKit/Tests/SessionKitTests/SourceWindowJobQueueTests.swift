@@ -90,47 +90,36 @@ final class SourceWindowJobQueueTests: XCTestCase {
         XCTAssertEqual(queue.runningCount, 0)
     }
 
-    func testAJobThatNeverReturnsGivesUpItsSlotAndIsToldToStop() async {
-        let queue = SourceWindowJobQueue(maxConcurrent: 1, jobTimeout: .milliseconds(50))
-        let probe = Probe()
-        let stuckEnded = AsyncGate()
-        let stoppedWhenAsked = Flag()
-        queue.enqueue(id: "stuck", anchorMediaTimeMs: 0, playheadMediaTimeMs: 0) {
-            // Waits far longer than the timeout, but wakes early if the queue cancels it.
-            try? await Task.sleep(for: .seconds(60))
-            stoppedWhenAsked.value = Task.isCancelled
-            await stuckEnded.open()
-        }
-        queue.enqueue(id: "after", anchorMediaTimeMs: 1, playheadMediaTimeMs: 0) { probe.begin("after"); probe.end("after") }
-        await queue.waitUntilIdle()
-        XCTAssertEqual(probe.finished, ["after"], "the second job ran although the first never returned")
-        XCTAssertEqual(queue.timedOutCount, 1)
-        await stuckEnded.wait()
-        XCTAssertTrue(stoppedWhenAsked.value, "a job that watches for cancellation was asked to stop")
-        XCTAssertEqual(queue.runningCount, 0)
-    }
-
-    func testAJobThatIgnoresCancellationStillFreesItsSlotAndItsLateFinishIsHarmless() async {
+    func testAJobThatTakesTooLongGivesUpItsSlotButIsNotCancelled() async {
         let queue = SourceWindowJobQueue(maxConcurrent: 1, jobTimeout: .milliseconds(50))
         let probe = Probe()
         let hold = AsyncGate()
-        let stuckEnded = AsyncGate()
-        queue.enqueue(id: "stuck", anchorMediaTimeMs: 0, playheadMediaTimeMs: 0) {
+        let slowEnded = AsyncGate()
+        let wasCancelled = Flag()
+        queue.enqueue(id: "slow", anchorMediaTimeMs: 0, playheadMediaTimeMs: 0) {
+            probe.begin("slow")
             await hold.wait()
-            await stuckEnded.open()
+            wasCancelled.value = Task.isCancelled
+            probe.end("slow")
+            await slowEnded.open()
         }
         queue.enqueue(id: "after", anchorMediaTimeMs: 1, playheadMediaTimeMs: 0) { probe.begin("after"); probe.end("after") }
         await queue.waitUntilIdle()
-        XCTAssertEqual(probe.finished, ["after"])
+        XCTAssertEqual(probe.finished, ["after"], "the second job ran although the first had not returned")
+        XCTAssertEqual(queue.timedOutCount, 1)
+        XCTAssertEqual(probe.peak, 2, "the slow job was still running when the next one started")
+
         await hold.open()
-        await stuckEnded.wait()
-        await Task.yield()
-        XCTAssertEqual(queue.runningCount, 0, "the late finish must not free a slot twice")
+        await slowEnded.wait()
+        XCTAssertEqual(probe.finished, ["after", "slow"], "the slow job was left to finish")
+        XCTAssertFalse(wasCancelled.value, "a slow job (a first speech-model download) is not a stalled one")
+        XCTAssertEqual(queue.runningCount, 0, "its late finish must not free a slot twice")
+
         let later = queue.enqueue(id: "later", anchorMediaTimeMs: 2, playheadMediaTimeMs: 0) { probe.begin("later"); probe.end("later") }
         XCTAssertTrue(later)
         await queue.waitUntilIdle()
-        XCTAssertEqual(probe.finished, ["after", "later"])
-        XCTAssertEqual(probe.peak, 1)
+        XCTAssertEqual(probe.finished, ["after", "slow", "later"])
+        XCTAssertEqual(queue.queuedCount, 0)
     }
 }
 

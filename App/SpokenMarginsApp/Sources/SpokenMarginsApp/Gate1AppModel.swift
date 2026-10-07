@@ -12397,13 +12397,13 @@ final class Gate1AppModel: ObservableObject {
         }
         // #871: at most two of these run at once, nearest the playhead first. A finished download used to start
         // one per Margin, all together.
+        // A retry the listener asked for goes first; otherwise the order follows the playhead of the episode that's playing.
         let identity = Self.marginIdentity(interjection)
-        sourceWindowJobQueue.enqueue(
-            id: identity,
-            anchorMediaTimeMs: anchorMediaTimeMs,
-            playheadMediaTimeMs: snapshot.itemId == item.id ? snapshot.currentMediaTimeMs : nil
-        ) { [weak self, interjectionId = interjection.id, itemId = item.id, durationMs = item.media?.durationMs, windowBeforeMs = sourceWindowContextBeforeMs, windowAfterMs = sourceWindowContextAfterMs] in
+        let playheadMs = reportsResult ? anchorMediaTimeMs : (snapshot.itemId == item.id ? snapshot.currentMediaTimeMs : nil)
+        sourceWindowJobQueue.enqueue(id: identity, anchorMediaTimeMs: anchorMediaTimeMs, playheadMediaTimeMs: playheadMs) { [weak self, interjectionId = interjection.id, itemId = item.id, durationMs = item.media?.durationMs, windowBeforeMs = sourceWindowContextBeforeMs, windowAfterMs = sourceWindowContextAfterMs] in
             guard let self else { return }
+            // Every way out clears the mark, so a failure inside `run` can't leave the Margin stuck as pending.
+            defer { self.pendingSourceContextInterjectionIds.remove(identity) }
             let request = PostResumeAudioSampleRequest(
                 interjectionId: interjectionId,
                 sessionId: interjection.sessionId,
@@ -12411,11 +12411,8 @@ final class Gate1AppModel: ObservableObject {
                 anchorMediaTimeMs: anchorMediaTimeMs,
                 targetDurationMs: PodcastAnchorEvidenceGenerator.flankDurationMs
             )
-            // It may have waited in line a while. A Margin deleted meanwhile has nothing to recover.
-            guard self.storedInterjection(request: request) != nil else {
-                self.pendingSourceContextInterjectionIds.remove(identity)
-                return
-            }
+            // It may have waited in line a while. A Margin deleted meanwhile (kept, with status "deleted") has nothing to recover.
+            guard let stored = self.storedInterjection(request: request), stored.status != "deleted" else { return }
             do {
                 let analysis = try await self.sourceTranscriptionClient.transcribeSourceAudioWindowWithEvidence(
                     url: transcriptionURL,
@@ -12478,6 +12475,7 @@ final class Gate1AppModel: ObservableObject {
             let interjections = (try? store.loadInterjections(sessionId: session.id)) ?? []
             for interjection in interjections where interjection.targetType == .item
                 && interjection.anchor.mediaTimeMs != nil
+                && interjection.status != "deleted"
                 && interjection.anchorContextStatus != .ready
                 && !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) {
                 scheduleSourceWindowContextIfNeeded(for: interjection)

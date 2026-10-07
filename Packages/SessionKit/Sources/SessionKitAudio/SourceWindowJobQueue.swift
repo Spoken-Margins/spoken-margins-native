@@ -12,10 +12,13 @@ import Foundation
 @MainActor
 public final class SourceWindowJobQueue {
     public static let defaultMaxConcurrent = 2
-    /// A job that takes longer than this gives up its slot. A transcription that never returns (no network for a
-    /// speech asset, a stalled export) would otherwise hold one of the two slots until the app restarts, and two
-    /// of them would stop source context for every Margin.
-    public static let defaultJobTimeout: Duration = .seconds(300)
+    /// A job that takes longer than this gives up its slot, but keeps running. A transcription that never returns
+    /// (no network for a speech asset, a stalled export) would otherwise hold one of the two slots until the app
+    /// restarts, and two of them would stop source context for every Margin. The job is not cancelled: a slow first
+    /// download of the speech model is not a stall, and the job clears its own state when it does return. The limit
+    /// is wall-clock time, so it also runs while the app is suspended; a job that was merely suspended may then
+    /// overlap the next one for a moment.
+    public static let defaultJobTimeout: Duration = .seconds(600)
 
     private struct Pending {
         let id: String
@@ -26,7 +29,6 @@ public final class SourceWindowJobQueue {
     }
 
     private struct Running {
-        var work: Task<Void, Never>?
         var timeout: Task<Void, Never>?
     }
 
@@ -40,7 +42,7 @@ public final class SourceWindowJobQueue {
     private var idleWaiters: [CheckedContinuation<Void, Never>] = []
     /// The most jobs that ever ran at once. Tests read it; nothing else should.
     public private(set) var peakRunning = 0
-    /// How many jobs gave up their slot after `jobTimeout`.
+    /// How many jobs gave up their slot after `jobTimeout` and kept running.
     public private(set) var timedOutCount = 0
 
     public init(maxConcurrent: Int = SourceWindowJobQueue.defaultMaxConcurrent,
@@ -119,7 +121,7 @@ public final class SourceWindowJobQueue {
         let timeout = jobTimeout
         running[key] = Running()
         peakRunning = max(peakRunning, running.count)
-        running[key]?.work = Task { [weak self] in
+        Task { [weak self] in
             await work()
             self?.finish(key)
         }
@@ -138,11 +140,9 @@ public final class SourceWindowJobQueue {
     }
 
     private func expire(_ key: Int) {
-        guard let job = running.removeValue(forKey: key) else { return }
+        // The job keeps running without a slot. Its late `finish` finds nothing and does nothing.
+        guard running.removeValue(forKey: key) != nil else { return }
         timedOutCount += 1
-        // A job that watches for cancellation stops and cleans up. One that doesn't keeps running, but no longer
-        // holds a slot.
-        job.work?.cancel()
         startAvailable()
     }
 }
