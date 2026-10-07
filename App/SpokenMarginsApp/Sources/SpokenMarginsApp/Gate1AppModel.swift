@@ -976,7 +976,7 @@ final class Gate1AppModel: ObservableObject {
     private(set) var store: SQLiteSessionStore?
     lazy var listeningSignals = ListeningSignalsCoordinator(repository: { [weak self] in self?.store })
     private var databaseURLOverride: URL?
-    private let gate2CompactControls: Gate2CompactControlController
+    let gate2CompactControls: Gate2CompactControlController
     private let featureFlags: SpokenMarginsFeatureFlags
     private let localFoundationModelClient: any LocalFoundationModelClient
     #if SPOKEN_MARGINS_WATCH

@@ -19,11 +19,13 @@ extension Gate1AppModel {
     func endCaptureWatch() {
         captureWatcher.stop()
         recordingCaptureHealth = .capturing
+        gate2CompactControls.setMicrophone(.capturing)
     }
 
     private func captureHealthChanged(_ health: MarginCaptureSupervisor.Health, restarts: Int) {
         let wasCapturing = recordingCaptureHealth == .capturing
         recordingCaptureHealth = health
+        gate2CompactControls.setMicrophone(health.liveActivityMicrophone)
         var fields = engine?.recordingCaptureDiagnostics() ?? [:]
         fields["health"] = health.diagnosticName
         fields["restarts"] = String(restarts)
@@ -34,7 +36,7 @@ extension Gate1AppModel {
             reportSuccess("Recording Margin.")
         case .notCapturing:
             reportFailure(captureWatcher.hasKeepableAudio
-                ? "The microphone stopped partway. What you said before is kept if you tap Save."
+                ? Self.keptAudioMessage
                 : "The microphone isn't recording, so nothing is being saved. Tap Try again, or cancel and write the Margin instead.")
         default:
             break
@@ -43,13 +45,22 @@ extension Gate1AppModel {
 
     /// The listener tapped Try again on a recording screen that says the microphone isn't recording.
     func retryMicrophone() {
-        guard snapshot.isRecording, canRetryMicrophone else { return }
-        lastError = nil
-        captureWatcher.retry()
+        guard snapshot.isRecording else { return }
+        if captureWatcher.retry() {
+            lastError = nil
+        } else {
+            // Speech arrived since the last poll: a restart would delete it. Redraw without Try again.
+            if case .notCapturing = captureWatcher.health, lastError != Self.keptAudioMessage {
+                reportFailure(Self.keptAudioMessage)
+            }
+            objectWillChange.send()
+        }
     }
 
+    private static let keptAudioMessage = "The microphone stopped partway. What you said before is kept if you tap Save."
+
     /// Try again restarts the recorder and deletes what it holds, so it is not offered once the
-    /// recording holds audio worth saving.
+    /// recording holds audio worth saving. `retryMicrophone()` checks the recorder again itself.
     var canRetryMicrophone: Bool { snapshot.isRecording && captureWatcher.canRetry }
 
     /// The recording stopped partway but holds speech: Save keeps it.
@@ -105,6 +116,17 @@ extension Gate1AppModel {
             reportWarning("Margin saved, but part of it may be missing. The microphone stopped early.")
         } else {
             reportConfirmation("Margin saved. Transcription is continuing in the background.")
+        }
+    }
+}
+
+extension MarginCaptureSupervisor.Health {
+    /// What the Live Activity and Dynamic Island say about the microphone.
+    var liveActivityMicrophone: Gate2LiveActivityMicrophone {
+        switch self {
+        case .starting: .starting
+        case .capturing: .capturing
+        case .notCapturing: .stopped
         }
     }
 }
