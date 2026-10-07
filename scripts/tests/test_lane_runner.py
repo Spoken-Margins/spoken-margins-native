@@ -845,6 +845,26 @@ class AutomergeTests(unittest.TestCase):
                 self.assertEqual(verdict, expected)
 
 
+    def test_the_host_tests_are_verify_tests_py_s_fast_plan_writing_into_the_evidence_folder(self):
+        # The runners above write a verified manifest into whatever --output they get, whatever plan they were
+        # asked for, so none of them could tell the fast plan from a retired one (`--plan ui`).
+        launched = []
+
+        def run(command, log, timeout):
+            launched.append((command, timeout))
+            output = Path(command[command.index('--output') + 1])
+            output.mkdir(parents=True)
+            (output / 'manifest.json').write_text('{"status": "verified"}')
+            return 0
+
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(lane.run_fast(Path(folder), runner=run), ('PASS', []))
+            [(command, timeout)] = launched
+            self.assertEqual(command[1:], ['scripts/verify-tests.py', '--plan', 'fast', '--output',
+                                           str(Path(folder) / 'fast')])
+        self.assertIn(command[0], (str(lane.ROOT / '.venv/bin/python'), sys.executable))
+        self.assertEqual(timeout, lane.FAST_TIMEOUT)
+
 class MergeTests_Runner(unittest.TestCase):
     """The runner merges what it passes (decision 3): blockers, order, retries. Git is faked here;
     PushTests below uses real git."""
@@ -1062,6 +1082,17 @@ class MergeTests_Runner(unittest.TestCase):
         packet_too = dict(scope, files=scope['files'] + [{'path': 'A/Share.swift', 'category': 'packet'}])
         self.assertIn('it touches packets and the lane and has no "Codex audit (Astra)" comment yet',
                       lane.merge_blockers(packet_too, [], HEAD))
+
+    def test_audio_persistence_and_packet_changes_are_each_held_for_a_codex_audit(self):
+        # The lane change above is held by its own rule; these kinds come from AUDITED, one entry each.
+        for category, what in (('audio', 'the audio session'), ('persistence', 'persistence'), ('packet', 'packets')):
+            with self.subTest(category=category):
+                scope = {'tier': 'T3', 'why': [], 'lane_paths': [], 'files': [
+                    {'path': 'App/X.swift', 'category': 'app-ui'}, {'path': 'App/Y.swift', 'category': category}]}
+                self.assertEqual(lane.merge_blockers(scope, [], HEAD),
+                                 [f'it touches {what} and has no "Codex audit (Astra)" comment yet'])
+                clean = [comment('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.')]
+                self.assertEqual(lane.merge_blockers(scope, clean, HEAD), [])
 
     def test_an_ordinary_pr_is_not_held_for_an_audit(self):
         scope = {'tier': 'T2', 'why': [], 'lane_paths': [], 'files': [{'path': 'App/X.swift', 'category': 'app-ui'}]}
@@ -2065,6 +2096,44 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(len(found), 1, found)
         self.assertIn('Gate1AppModel.swift would be 3 lines, above its ceiling of 2', found[0])
         self.assertEqual(lane.hot_file_violations(self.tree, 'next', {'hot-file-ok'}), [])
+
+    def run_auto_on_the_real_ratchet(self, labels):
+        """run_auto and run_automerge as they are, over a tree whose PR grows a hot file past next's ceiling.
+
+        Every other run_auto test replaces run_automerge, so the `ratchet=` it is handed was never called."""
+        model = 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift'
+        (self.origin / model).parent.mkdir(parents=True)
+        self.commit(self.origin, model, 'one\ntwo\n')
+        (self.origin / 'scripts').mkdir()
+        self.commit(self.origin, 'scripts/hot_file_ratchet.py', (SCRIPTS / 'hot_file_ratchet.py').read_text())
+        subprocess.run(self.git + ['-C', str(self.tree), 'pull', '-q', 'origin', 'next'], check=True)
+        self.commit(self.tree, model, 'one\ntwo\nthree\n')
+        head = subprocess.check_output(['git', '-C', str(self.tree), 'rev-parse', 'HEAD'], text=True).strip()
+        base_sha = lane.fetch_base(self.tree, 'next')
+        docs_only = {'tier': 'T0', 'why': ['docs'], 'files': [{'path': 'docs/x.md', 'category': 'docs'}]}
+        github, pushed = FakeGitHub(labels=('automerge',), head=head), []
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.object(lane, 'ROOT', self.tree), \
+                mock.patch.object(lane, 'TESTED_RECORD', Path(folder) / 'tested.json'), \
+                mock.patch.object(lane, 'build_merge_commit', return_value=('m' * 40, [])), \
+                mock.patch.object(lane, 'push_merge', side_effect=lambda tree, sha, base: pushed.append(sha) or (True, '')), \
+                mock.patch.object(lane, 'sweep_merge_audit'), \
+                mock.patch.object(lane, 'warm_build_folders', return_value='build folders: warm'), \
+                mock.patch.object(lane, 'diff_scope', return_value=docs_only):
+            result = lane.run_auto(github, {'title': 'T'}, 5, 'next', head, base_sha, Path(folder), [],
+                                   labels=labels)
+        return result, github, pushed
+
+    def test_run_auto_refuses_to_merge_a_pr_that_grows_a_hot_file_past_its_ceiling(self):
+        (verdict, where, ran, details), github, pushed = self.run_auto_on_the_real_ratchet(labels=['automerge'])
+        self.assertEqual((verdict, where, ran), ('FAIL', 'no build', 'hot-file ratchet: failed'))
+        self.assertIn('hot-file ratchet — Gate1AppModel.swift would be 3 lines, above its ceiling of 2', details[-1])
+        self.assertEqual((pushed, github.posted), ([], []))  # nothing pushed, no merge check posted
+
+    def test_run_auto_passes_the_pr_s_labels_to_the_ratchet_so_hot_file_ok_still_merges_it(self):
+        (verdict, _, _, details), github, pushed = self.run_auto_on_the_real_ratchet(labels=['automerge', 'hot-file-ok'])
+        self.assertEqual((verdict, pushed), ('PASS', ['m' * 40]), details)
+        self.assertIn('merged into next as mmmmmmm', details[-1])
 
     def test_a_conflict_names_the_files_and_leaves_the_tree_clean(self):
         self.commit(self.tree, 'shared.txt', 'pr side\n')
