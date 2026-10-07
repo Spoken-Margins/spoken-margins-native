@@ -113,63 +113,80 @@ final class SharedMarginPlacementTests: XCTestCase {
         let settledLayers: [ImportedSourceResolutionStatus] = [.contextOnly, .ambiguous, .unavailable, .resolved]
         for layerStatus in settledLayers {
             let status = SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: layerStatus,
-                pass: nil, hasPositionEvidence: false, placementPassCompleted: true)
+                pass: nil, hasPositionEvidence: false, awaitingPlacementPass: false)
             XCTAssertEqual(status, .noPositionSent, "\(layerStatus)")
             XCTAssertEqual(status.positionDescription, "Sent without a position")
             XCTAssertEqual(status.label, "No position sent")
             XCTAssertNil(status.previousMediaTimeMs)
         }
-        // A podcast layer is `.contextOnly` from the moment it is imported, before the episode has downloaded and
-        // before any pass has run. A pass may still place a Margin with no evidence of its own between two
-        // neighbours it verifies (interpolation), so this isn't the final word.
+        // Until a pass has finished it isn't the final word: a pass can place a Margin with no evidence of its own
+        // between two neighbours it verifies (interpolation).
         let importedNotYetPlaced = SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: .contextOnly,
-            pass: nil, hasPositionEvidence: false, placementPassCompleted: false)
+            pass: nil, hasPositionEvidence: false, awaitingPlacementPass: true)
         XCTAssertEqual(importedNotYetPlaced, .notPlacedYet)
         XCTAssertEqual(importedNotYetPlaced.positionDescription, "Not placed yet")
-        // A layer that isn't this item's gets no pass, ever; it keeps the resolution's own wording.
-        XCTAssertEqual(SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: .wrongSource,
-            pass: nil, hasPositionEvidence: false, placementPassCompleted: false), .settled)
         // A pending layer (a new edition cleared it) is not placed yet, whatever the packet carried.
         XCTAssertEqual(SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: .pending,
-            pass: nil, hasPositionEvidence: false, placementPassCompleted: false), .notPlacedYet)
+            pass: nil, hasPositionEvidence: false), .notPlacedYet)
+        // A layer that isn't this item's gets no pass, ever; it keeps the resolution's own wording.
+        XCTAssertEqual(SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: .wrongSource,
+            pass: nil, hasPositionEvidence: false, awaitingPlacementPass: false), .settled)
         // While a pass is scheduled or running it isn't the final word either.
         let workingLayers: [ImportedSourceResolutionStatus] = [.pending, .contextOnly]
         for layerStatus in workingLayers {
-            for completed in [false, true] {
+            for awaiting in [false, true] {
                 XCTAssertEqual(SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: layerStatus,
-                    pass: running(), hasPositionEvidence: false, placementPassCompleted: completed),
-                    .placing(previousMediaTimeMs: nil), "\(layerStatus) completed:\(completed)")
+                    pass: running(), hasPositionEvidence: false, awaitingPlacementPass: awaiting),
+                    .placing(previousMediaTimeMs: nil), "\(layerStatus) awaiting:\(awaiting)")
             }
         }
-        // The same Margin with something to match on keeps the pass-based wording.
-        XCTAssertEqual(SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: .contextOnly,
-            pass: nil, hasPositionEvidence: true, placementPassCompleted: false), .settled)
-        XCTAssertEqual(SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: .pending,
-            pass: running(), hasPositionEvidence: true), .placing(previousMediaTimeMs: nil))
         // A placed Margin is placed, whatever the packet carried (an exact-edition match needs no fingerprints, and
-        // interpolation places a bare one).
-        XCTAssertEqual(SharedMarginPlacementStatus(resolution: placed, marginId: "a", layerStatus: .resolved,
-            pass: nil, hasPositionEvidence: false, placementPassCompleted: true), .settled)
+        // interpolation places a bare one) and whatever the layer is awaiting.
+        for awaiting in [false, true] {
+            XCTAssertEqual(SharedMarginPlacementStatus(resolution: placed, marginId: "a", layerStatus: .resolved,
+                pass: nil, hasPositionEvidence: false, awaitingPlacementPass: awaiting), .settled)
+        }
         // One that held a position before Download Again reset it is being placed again.
         XCTAssertEqual(SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: .pending,
             pass: running(previous: ["a": placed]), hasPositionEvidence: false), .placing(previousMediaTimeMs: 45_000))
         // An ambiguous result is a position to review, not an absent one.
         let ambiguous = ImportedAnchorResolution(evidenceClass: .ambiguous, localMediaTimeMs: 9_000, isAmbiguous: true)
         XCTAssertEqual(SharedMarginPlacementStatus(resolution: ambiguous, marginId: "c", layerStatus: .ambiguous,
-            pass: nil, hasPositionEvidence: false, placementPassCompleted: true), .settled)
+            pass: nil, hasPositionEvidence: false, awaitingPlacementPass: false), .settled)
+    }
+
+    /// #872 "Done when" 2: "Unresolved" appears only after a finished pass couldn't place the Margin. A Margin that
+    /// does carry evidence, imported into a podcast whose audio hasn't downloaded, has had no pass yet either.
+    func testAMarginWithEvidenceIsNotPlacedYetUntilAPassHasFinishedForItsLayer() {
+        func status(_ layerStatus: ImportedSourceResolutionStatus, awaiting: Bool, pass: SharedMarginPlacementPasses.Pass? = nil)
+            -> SharedMarginPlacementStatus {
+            SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: layerStatus, pass: pass,
+                                        hasPositionEvidence: true, awaitingPlacementPass: awaiting)
+        }
+        // The state right after import: `.contextOnly`, no file digest, nothing running.
+        let imported = status(.contextOnly, awaiting: true)
+        XCTAssertEqual(imported, .notPlacedYet)
+        XCTAssertEqual(imported.label, "Not placed yet")
+        // After a pass found nothing for it: the failure wording, from the resolution itself.
+        XCTAssertEqual(status(.contextOnly, awaiting: false), .settled)
+        // A pass running for it: placing.
+        XCTAssertEqual(status(.contextOnly, awaiting: true, pass: running()), .placing(previousMediaTimeMs: nil))
     }
 
     /// A finished pass saves the listener's file digest with the layer; a new edition clears it (and the layer goes
     /// back to `.pending`). A freshly imported podcast layer has neither, whatever its status says.
-    func testALayerHasCompletedAPassOnlyOnceItHoldsTheFilesDigest() {
-        func layer(_ status: ImportedSourceResolutionStatus, digest: String?) -> ImportedCommentaryLayer {
+    func testAPodcastLayerAwaitsAPlacementPassUntilItHoldsTheFilesDigest() {
+        func layer(_ status: ImportedSourceResolutionStatus, type: SharedItemType = .podcast, digest: String?)
+            -> ImportedCommentaryLayer {
             ImportedCommentaryLayer(id: "layer", itemId: "item", packageDigest: "d", packageId: "p",
-                itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"), importedAt: Date(),
+                itemIdentity: SharedItemIdentity(itemType: type, title: "Episode"), importedAt: Date(),
                 sourceResolutionStatus: status, isEnabled: true, resolvedRecipientEditionSHA256: digest)
         }
-        XCTAssertFalse(layer(.contextOnly, digest: nil).hasCompletedPlacementPass, "just imported")
-        XCTAssertFalse(layer(.pending, digest: nil).hasCompletedPlacementPass, "cleared by a new edition")
-        XCTAssertTrue(layer(.contextOnly, digest: String(repeating: "a", count: 64)).hasCompletedPlacementPass)
+        XCTAssertTrue(layer(.contextOnly, digest: nil).awaitsPlacementPass, "just imported")
+        XCTAssertTrue(layer(.pending, digest: nil).awaitsPlacementPass, "cleared by a new edition")
+        XCTAssertFalse(layer(.contextOnly, digest: String(repeating: "a", count: 64)).awaitsPlacementPass, "a pass finished")
+        XCTAssertFalse(layer(.wrongSource, digest: nil).awaitsPlacementPass, "not this item's: no pass ever")
+        XCTAssertFalse(layer(.contextOnly, type: .text, digest: nil).awaitsPlacementPass, "an article is placed by its text at import")
     }
 
     func testOnlyAPodcastMarginWithNothingToMatchOnCountsAsSentWithoutAPosition() throws {

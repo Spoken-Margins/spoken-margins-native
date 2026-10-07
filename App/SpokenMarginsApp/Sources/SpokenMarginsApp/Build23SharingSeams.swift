@@ -360,7 +360,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                         let placement = SharedMarginPlacementStatus(resolution: margin.resolution, marginId: margin.id,
                             layerStatus: layer.sourceResolutionStatus, pass: item.sharedMarginPlacement,
                             hasPositionEvidence: margin.carriesPositionEvidence(in: layer),
-                            placementPassCompleted: layer.hasCompletedPlacementPass)
+                            awaitingPlacementPass: layer.awaitsPlacementPass)
                         return Build23ImportedMarginSnapshot(
                             id: margin.id,
                             reviewedText: margin.approvedTranscript,
