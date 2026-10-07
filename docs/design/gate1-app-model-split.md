@@ -137,7 +137,6 @@ Open pull requests touch some of these regions. A slice in the same region waits
 | #939 "Recording" only while capturing (#937) | the recording members; it also deletes `skipUnitForCurrentTarget`, `mediaSkipUnit` and `validatedMediaSkipSeconds` and widens `recordSavedInterjectionForOnboarding` | X8, T7, P7, X21, P30 |
 | #906 Add Margin while a Margin plays (#866) | `beginInterjection`, `dispatchGate2CompactCommand`, `seekMedia`, `seekText`, and it moves `KeychainStore` out | X7, X8, X21, T7, D1 (the `KeychainStore` part) |
 | #817 Save a Margin a call cut short (#771) | widens `reportWarning`, `run`, `scheduleTranscription` and four more, and `recordSavedInterjectionForOnboarding` | X1, X8, X13, X17, T7, P30 |
-| #931 Export folder settings (#930) | batch export folder members, `resolvedBatchExportFolderURL` | X2, X6, X19 |
 | #723 Share Margins from the Margins tab | `openMarginItemExport` | X9 |
 | #901 One copy of a Margin on re-share (#858) | one line in the placement code | X16, P25 |
 | #832 Text items show time left (#305) | `LibraryItemRow` and the row builder | X0, P29 |
@@ -145,7 +144,7 @@ Open pull requests touch some of these regions. A slice in the same region waits
 | #607 Skim destination on the Lock Screen | `updateSkimAvailability`, `updateGate2CompactState` | X18, T2, X12 |
 | #344 Re-imported PDF with prepared audio | import and audio-preparation members | X5, X15, T1 |
 
-#935 (placement passes) and #896 (source-window jobs) have merged. #938 (Timeline Back), #925 (Substack voiceover) and #570 (Following order) do not edit the model file. #903 (diagnostics ids) is an issue with no pull request yet; it holds P5.
+#935 (placement passes), #896 (source-window jobs) and #931 (export folder settings) have merged. #931 moved the folder bookmark save and resolve into `SavedFolderSetting.swift` and renamed `resolvedBatchExportFolderURL` to `resolvedFolderURL(_:)`; X2, X6 and X19 name the old member, so read the new code before you move it. #938 (Timeline Back), #925 (Substack voiceover) and #570 (Following order) do not edit the model file. #903 (diagnostics ids) is an issue with no pull request yet; it holds P5.
 
 **The lane is the bottleneck.** A diff that touches the model runs all 151 tests in `Gate1AppModelWorkflowTests`, about 15 minutes with the simulator boot, on one Mac. A slice that only adds a SessionKit type needs a Linux run and nothing else. Do not start more model-touching pull requests than the lane can run in a day.
 
