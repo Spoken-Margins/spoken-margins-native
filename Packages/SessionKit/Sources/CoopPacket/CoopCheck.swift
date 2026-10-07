@@ -253,7 +253,9 @@ enum CoopCheck {
             switch state {
             case .linked: outcome.replies[identity] = "linked"
             case .parentMissing: outcome.replies[identity] = "parent missing"
-            case .fork(let parents): outcome.replies[identity] = "fork " + parents.map { name($0.parent) }.joined(separator: ",")
+            // A held copy keeps the link order of whichever packet came first, and the parents are a
+            // set (the importer matches them as one), so name them in a fixed order.
+            case .fork(let parents): outcome.replies[identity] = "fork " + parents.map { name($0.parent) }.sorted().joined(separator: ",")
             }
         }
         return outcome
