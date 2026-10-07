@@ -116,6 +116,31 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(result['findings'], [])
         self.assertEqual(result['finding_count'], 0)
 
+    def test_nonblocking_sections_do_not_change_new_finding_count_or_identity(self):
+        confirmed = '**[P1] Play the right `item`** — `App/Player.swift:10`'
+        accepted = '- **[P2] Old cue finding** — `App/Cue.swift:4`; follow-up #842.'
+        expected = usage.audit_outcome(confirmed)
+        for heading in ('Previously accepted', '## Previously accepted', '**Previously accepted:**',
+                        'Suspected sibling cases', '### Suspected sibling cases (not confirmed)',
+                        'Unconfirmed sibling cases'):
+            with self.subTest(heading=heading):
+                section = confirmed + '\n\n' + heading + '\n' + accepted
+                outcome = usage.audit_outcome(section)
+                self.assertEqual(outcome['finding_count'], 1)
+                self.assertEqual(outcome['findings'], expected['findings'])
+                self.assertEqual(outcome['signature'], expected['signature'])
+                changed = usage.audit_outcome(section.replace('right `item`', 'right `edition`'))
+                self.assertNotEqual(changed['signature'], expected['signature'])
+
+    def test_confirmed_section_can_follow_nonblocking_context_without_losing_bugs(self):
+        section = ('Suspected sibling cases\n[P2] Unconfirmed case — `App/File.swift:1`\n\n'
+                   '## Confirmed findings\n[P1] A real bug — `App/File.swift:2`\n'
+                   'Suspected cause is the wrong item identity.\n'
+                   '[P2] Another real bug — `App/Other.swift:3`')
+        outcome = usage.audit_outcome(section)
+        self.assertEqual(outcome['finding_count'], 2)
+        self.assertEqual([f['title'] for f in outcome['findings']], ['A real bug', 'Another real bug'])
+
     def test_real_killed_wrapper_is_recovered_from_its_retained_transcript(self):
         code = ('import sys, time; from pathlib import Path; import usage; '
                 'r=usage.Run(Path(sys.argv[1]), "audit", "model", "high", Path(sys.argv[2])); '

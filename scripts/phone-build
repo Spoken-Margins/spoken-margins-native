@@ -17,7 +17,11 @@ What it does:
   older ones, the temporary worktree and its DerivedData are deleted.
 - test-plan.md lists the listener-facing PRs merged since the build the owner last installed
   (~/SpokenMargins-phone/installed.txt, written by scripts/install-phone-build.command), each with
-  its issue's "Owner check" line, sized to about ten minutes.
+  its issue's "Owner check" line, sized to about ten minutes. Only written checks go in the ten minutes:
+  a phone-found bug without one is listed with the other unchecked changes and the run names its issue
+  (#847), and a check that names an issue or PR not on the phone yet waits in its own section. A step
+  carries the check's own numbered steps, its URLs as links, and the repo files it names (copied to
+  files/ and to iCloud Drive as "Test plan <sha7> files", beside the plan the installer puts there).
 
 Gates (the owner's rule, 2026-09-30: rebuild whenever next's tip changes and the automated checks
 pass; bugs are fine, crashes the runners would catch are not):
@@ -35,7 +39,7 @@ Environment (tests): SM_PHONE_DIR (default ~/SpokenMargins-phone), SM_PHONE_KEEP
 SM_PHONE_NOTIFY (the notification command, default osascript; `off` skips it),
 SM_PHONE_DISK_FREE_GB (instead of measuring), SM_LANE_* (scripts/lane_slots.py, xcodebuild-lane),
 SM_PHONE_GH (the gh command), SM_PHONE_NO_FETCH=1 (skip the fetch), SM_PHONE_REPO (the repo to
-build from; default this checkout).
+build from; default this checkout), SM_PHONE_ICLOUD (the iCloud Drive plans folder, as the installer).
 Stdlib only, Python 3.9-compatible: launchd runs it under /usr/bin/python3.
 """
 from __future__ import annotations
@@ -86,6 +90,19 @@ FIRST_ON_PHONE = {'found-on-phone', 'regression'}
 NOT_LISTENER_LABELS = {'stream:A1'}  # the test lane: its SessionKit edits are compile guards, not behaviour
 # "Owner check: none." (or "n/a", "nothing (lane only)") isn't a check; "Nothing plays twice ..." is (#504).
 NO_CHECK = re.compile(r'^(none|n/?a|nothing)\s*(?:[.;:,(\u2014\u2013]|-\s|$)', re.I)
+# "#547" or a link to issue/PR 547 in a check: something it may need on the phone first (#847).
+REFERENCE = re.compile(r'(?<![\w&/])#(\d+)\b|github\.com/' + re.escape(REPO) + r'/(?:issues|pull)/(\d+)\b')
+CHECK_FIELD = re.compile(r'\*\*Owner check:?\*\*:?\s*(.*)|^Owner check:\s*(.*)')
+STEPS_FIELD = re.compile(r'\*\*Steps:?\*\*:?\s*(.*)')     # a bug report's Steps and Expected (#504)
+EXPECTED_FIELD = re.compile(r'\*\*Expected:?\*\*:?\s*(.*)')
+FIELD = r'\*\*[A-Z][\w /()-]{0,30}(?::\*\*|\*\*:)'                    # "**Taken by:**", "**Done when**:"
+NEXT_FIELD_ON_LINE = re.compile(r'\s+' + FIELD + '.*$')                # "none. **Taken by:** nobody yet."
+FIELD_START = re.compile(r'\s*(?:[-*+]\s+)?' + FIELD + r'|[A-Z][\w ]{0,30}:\s|\s*(?:#|---)')  # "Related: #5"
+STEP_LINE = re.compile(r'\s*(?:\d+[.)]|[-*+]|>)\s|\s{2,}\S|\s*```')
+CODE_URL = re.compile(r'`(https?://[^`\s]+)`')                       # a URL in code: not tappable
+REPO_FILE = re.compile(r'`([\w.-]+(?:/[\w.-]+)+)`')                     # `Contracts/fixtures/x.spokenmargins`
+ATTACH_LIMIT = 50_000_000
+MERGED_ON_NEXT = 'status: needs-human-validation'  # dispatch adds it when a PR for the issue merges into next
 
 
 # ---- small helpers ------------------------------------------------------------------------------
@@ -262,6 +279,55 @@ def fetch_prs(numbers: list[int]) -> dict[int, dict] | None:
     return prs
 
 
+ITEM_FIELDS = '__typename ... on Issue { number title url state labels(first:20){nodes{name}} } ' \
+    '... on PullRequest { number title url state }'
+
+
+def fetch_items(numbers: list[int]) -> dict[int, dict]:
+    """{number: issue or PR with its state} for the numbers a check names; {} when gh fails."""
+    items: dict[int, dict] = {}
+    for start in range(0, len(numbers), 25):
+        batch = numbers[start:start + 25]
+        data = graphql({f'n{n}': f'issueOrPullRequest(number: {n}) {{ {ITEM_FIELDS} }}' for n in batch})
+        if not data and len(batch) > 1:  # gh fails the whole query when one number isn't an issue or PR
+            for n in batch:
+                data.update(graphql({f'n{n}': f'issueOrPullRequest(number: {n}) {{ {ITEM_FIELDS} }}'}))
+        items.update({int(alias[1:]): value for alias, value in data.items() if value and value.get('number')})
+    return items
+
+
+def built_numbers(sha: str) -> set[int]:
+    """Every #N in the build's merge subjects: the PRs merged into it and the issues their titles name."""
+    subjects = git('log', '--first-parent', '--format=%s', sha, check=False)
+    return {int(n) for n in re.findall(r'#(\d+)', subjects)}
+
+
+def references(check: str) -> list[int]:
+    return list(dict.fromkeys(int(a or b) for a, b in REFERENCE.findall(check)))
+
+
+def waiting_on(check: str, own: set[int], built: set[int], items: dict[int, dict]) -> list[dict]:
+    """The issues and PRs a check names that aren't on the phone yet ("after #547 is also on the phone").
+
+    Its own issues and PRs don't count, nor anything a merge in this build names. An issue stays
+    open after its PR merges into next, so an open issue counts as built once dispatch has marked it
+    `status: needs-human-validation`. A PR counts once it is in this build; one closed unmerged never
+    will be, so it doesn't hold the check back. A number GitHub didn't answer for doesn't either.
+    """
+    waiting = []
+    for number in references(check):
+        item = items.get(number)
+        if number in own or number in built or not item:
+            continue
+        if item.get('__typename') == 'PullRequest':
+            pending = item['state'] != 'CLOSED'
+        else:
+            pending = item['state'] == 'OPEN' and MERGED_ON_NEXT not in labels(item)
+        if pending:
+            waiting.append(item)
+    return waiting
+
+
 def listener_facing(pr: dict) -> bool:
     """Changes something a listener sees or hears: the scorecard's rule on #337, made mechanical.
 
@@ -275,12 +341,44 @@ def listener_facing(pr: dict) -> bool:
     return touches and not NOT_LISTENER_TITLE.search(pr['title'])
 
 
+def check_field(text: str, field: re.Pattern = CHECK_FIELD) -> str | None:
+    """A body's "Owner check" field (or another `field`): its line, plus the numbered steps, bullets,
+    quote or fenced block right under it (#847: "after #551 is deployed:" lost its three steps), up to
+    the next field."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        match = field.search(line)
+        if match:
+            break
+    else:
+        return None
+    first = NEXT_FIELD_ON_LINE.sub('', next((group for group in match.groups() if group), '')).strip()
+    rest: list[str] = []
+    fenced = False
+    for line in lines[index + 1:]:
+        if fenced:
+            rest.append(line.rstrip())
+            fenced = not line.strip().startswith('```')
+        elif FIELD_START.match(line):
+            break
+        elif not line.strip():
+            if not rest and first and not first.endswith(':'):
+                break
+            continue  # a blank line inside the steps, or between "...:" and them
+        elif STEP_LINE.match(line):
+            rest.append(line.rstrip())
+            fenced = line.strip().startswith('```')
+        elif not first and not rest:
+            first = line.strip()  # "**Owner check:**" alone on its line, the check on the next
+        else:
+            break
+    return '\n'.join([first] + rest).strip() or None
+
+
 def written_checks(pr: dict) -> list[str]:
-    """Every "Owner check" line, issues first, then the PR's own."""
+    """Every "Owner check" field, issues first, then the PR's own."""
     texts = [issue.get('body') or '' for issue in pr['issues']] + [pr.get('body') or '']
-    found = [re.search(r'\*\*Owner check:?\*\*:?\s*(.+)', text) or re.search(r'(?m)^Owner check:\s*(.+)', text)
-             for text in texts]
-    return [match.group(1).strip() for match in found if match]
+    return [check for check in map(check_field, texts) if check]
 
 
 def says_no_check(pr: dict) -> bool:
@@ -299,10 +397,9 @@ def owner_check(pr: dict) -> str | None:
             return check
     texts = [issue.get('body') or '' for issue in pr['issues']] + [pr.get('body') or '']
     for text in texts:
-        steps = re.search(r'\*\*Steps:?\*\*:?\s*(.+)', text)
-        expected = re.search(r'\*\*Expected:?\*\*:?\s*(.+)', text)
-        if steps and expected:
-            return f'{steps.group(1).strip()} Expected: {expected.group(1).strip()}'
+        steps, expected = check_field(text, STEPS_FIELD), check_field(text, EXPECTED_FIELD)
+        if steps and expected:  # numbered Steps keep every step (#847: #585 lost the swipe in step 2)
+            return f'{steps}{chr(10) if chr(10) in steps else " "}Expected: {expected}'
     return None
 
 
@@ -392,6 +489,70 @@ def latest_verdict(sha: str, bodies: list[str] | None = None) -> str | None:
     return report_line(bodies, 'integration', sha) if bodies is not None else None
 
 
+def step_lines(check: str, sha: str, folder: Path) -> list[str]:
+    """A check as plan lines that carry what it needs (#847): its steps under it, a URL in code as a
+    link, and a repo file it names (a packet, a PDF) copied into the build's files/ folder, which
+    share_files puts next to the plan in iCloud Drive."""
+    head, *tail = CODE_URL.sub(r'<\1>', check).split('\n')
+    if STEP_LINE.match(head):
+        head, tail = '', [head, *tail]
+    lines = [f'   - Check: {head}'.rstrip()] + [f'     {line}'.rstrip() for line in tail]
+    for name in attach_files(check, sha, folder):
+        lines.append(f'   - File: `{name}` comes with this plan. On the phone: Files > iCloud Drive > '
+                     f'Spoken Margins test plans > Test plan {sha[:7]} files. On the Mac: the files folder '
+                     'next to this plan.')
+    return lines
+
+
+def attach_files(check: str, sha: str, folder: Path) -> list[str]:
+    """Copy the repo files a check names in backticks, as of the built commit, into folder/files."""
+    names = []
+    for path in dict.fromkeys(REPO_FILE.findall(check)):
+        spec = f'{sha}:{path}'
+        size = git('cat-file', '-s', spec, check=False)
+        if git('cat-file', '-t', spec, check=False) != 'blob' or not size.isdigit() or int(size) > ATTACH_LIMIT:
+            continue
+        data = subprocess.run(['git', 'cat-file', 'blob', spec], cwd=str(ROOT), capture_output=True).stdout
+        (folder / 'files').mkdir(exist_ok=True)
+        (folder / 'files' / Path(path).name).write_bytes(data)
+        names.append(Path(path).name)
+    return names
+
+
+def icloud_dir() -> Path:
+    """The iCloud Drive folder the Desktop installer copies plans to (scripts/install-phone-build.command)."""
+    return Path(os.environ.get('SM_PHONE_ICLOUD') or Path.home() / 'Library/Mobile Documents/com~apple~CloudDocs'
+                / 'Spoken Margins test plans')
+
+
+def share_files(folder: Path, sha: str) -> None:
+    """Put the plan's files/ in iCloud Drive as "Test plan <sha7> files", where the plan's steps say they are.
+
+    Done here, not by the installer, so the owner's Desktop copy of the installer needn't change (#847).
+    A files folder goes once its plan has left iCloud Drive (the installer keeps five) and its build has
+    left ~/SpokenMargins-phone. Trouble here never fails the build: the files are still in the folder.
+    """
+    icloud = icloud_dir()
+    if not icloud.parent.is_dir():
+        return  # no iCloud Drive on this Mac
+    try:
+        target = icloud / f'Test plan {sha[:7]} files'
+        shutil.rmtree(str(target), ignore_errors=True)
+        if (folder / 'files').is_dir():
+            icloud.mkdir(exist_ok=True)
+            shutil.copytree(str(folder / 'files'), str(target))
+        if not icloud.is_dir():
+            return
+        kept = {build.name.rsplit('-', 1)[-1] for build in phone_dir().iterdir() if build.is_dir()}
+        for old in icloud.glob('Test plan * files'):
+            sha7 = old.name[len('Test plan '):-len(' files')]
+            ours = re.fullmatch(r'[0-9a-f]{7}', sha7) and old.is_dir()  # never the owner's own folders
+            if ours and sha7 not in kept and not (icloud / f'Test plan {sha7}.md').exists():
+                shutil.rmtree(str(old), ignore_errors=True)
+    except OSError as error:
+        say(f"couldn't copy the plan's files to iCloud Drive ({error}); they are in {folder / 'files'}")
+
+
 def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) -> Path:
     base, base_why = plan_base(sha)
     merged = merged_prs(base, sha)
@@ -414,6 +575,7 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
         lines.append(f'Latest journeys run for this commit: {journeys}.')
     lines.append('')
     path = folder / 'test-plan.md'
+    shutil.rmtree(str(folder / 'files'), ignore_errors=True)  # --plan-only rewrites: only this plan's files
     if prs is None:
         lines += ['GitHub could not be reached, so here are the merges by title only:', '']
         lines += [f'- {subject}' for subject in list(merged.values())[:20]]
@@ -426,11 +588,29 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     facing.sort(key=lambda pr: (0 if any(FIRST_ON_PHONE & labels(i) for i in pr['issues']) else 1,
                                 0 if owner_check(pr) else 1))
     entries = plan_entries(facing)
-    # Only what the owner can check goes in the ten minutes: a written check, or a bug his phone found (#504),
-    # unless its issue says "Owner check: none" (#283's fix shows only in a diagnostics export).
-    checkable = [entry for entry in entries if any(map(owner_check, entry))
-                 or (found_on_phone(entry) and not all(map(says_no_check, entry)))]
-    unchecked = [entry for entry in entries if entry not in checkable]
+    # Only what the owner can check goes in the ten minutes: a written check (#504). A bug his phone found
+    # with none goes with the unchecked changes, and the run names its issues so one gets written (#847);
+    # "repeat what you did" sent him back to the issue for his own steps and content.
+    check_of = {id(entry): next((found for found in map(owner_check, entry) if found), None) for entry in entries}
+    unchecked = [entry for entry in entries if not check_of[id(entry)]]
+    needs_check = [issue['number'] for entry in unchecked
+                   if found_on_phone(entry) and not all(map(says_no_check, entry))
+                   for pr in entry for issue in pr['issues'] if FIRST_ON_PHONE & labels(issue)]
+    if needs_check:
+        say('found on the phone but no "Owner check:" line, so not in the ten minutes; add one to: '
+            + ', '.join(f'#{n}' for n in dict.fromkeys(needs_check)))
+    # A check that needs another change still open waits for it (#847: step 2 needed #547).
+    checkable = [entry for entry in entries if check_of[id(entry)]]
+    named = [n for entry in checkable for n in references(check_of[id(entry)])]
+    built = built_numbers(sha) if named else set()
+    items = fetch_items(list(dict.fromkeys(n for n in named if n not in built))) if named else {}
+    waits = {}
+    for entry in checkable:
+        own = {number for pr in entry for number in [pr['number'], *pr.get('linked', ())]}
+        own |= {issue['number'] for pr in entry for issue in pr['issues']}
+        waits[id(entry)] = waiting_on(check_of[id(entry)], own, built, items)
+    waiting = [entry for entry in checkable if waits[id(entry)]]
+    checkable = [entry for entry in checkable if not waits[id(entry)]]
     budget = checkable[:PLAN_CHECKS]
     rest = checkable[PLAN_CHECKS:]
     if not ordered:
@@ -438,24 +618,31 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     lines += [f'{len(ordered)} pull requests merged; {len(facing)} change something you see or hear.', '',
               '## Try these (about ten minutes)', '']
     if not budget:
-        lines += ['No phone checks were written for this build; the changes you might notice are listed below.'
+        lines += ['Nothing is ready to check on the phone yet; the changes you might notice are listed below.'
+                  if waiting and not unchecked else
+                  'No phone checks were written for this build; the changes you might notice are listed below.'
                   if unchecked else 'Nothing a listener would notice changed. Use the app as usual for ten minutes.', '']
     for index, entry in enumerate(budget, 1):
         pr = entry[0]
         issues = list({issue['number']: issue for member in entry for issue in member['issues']}.values())
         tag = ' (found on your phone)' if found_on_phone(entry) else ''
-        check = next((found for found in map(owner_check, entry) if found), None)
         links = [f'[PR #{member["number"]}]({member["url"]})' for member in entry]
         links += [f'[issue #{issue["number"]}]({issue["url"]})' for issue in issues]
-        lines += [f'{index}. **{pr["title"]}**{tag}',
-                  f'   - Check: {check or "repeat what you did when you found it, and see that it is fixed."}',
+        lines += [f'{index}. **{pr["title"]}**{tag}', *step_lines(check_of[id(entry)], sha, folder),
                   f'   - Links: {", ".join(links)}', '']
 
     def titles(group):
-        return [f'- {entry[0]["title"]} (' + ', '.join(f'[#{pr["number"]}]({pr["url"]})' for pr in entry) + ')'
-                for entry in group]
+        return [f'- {entry[0]["title"]}' + (' (found on your phone)' if found_on_phone(entry) else '') + ' ('
+                + ', '.join(f'[#{pr["number"]}]({pr["url"]})' for pr in entry) + ')' for entry in group]
     if rest:
         lines += ['## Also changed (not in the ten minutes)', ''] + titles(rest) + ['']
+    if waiting:
+        lines += ['## Waiting on another change (not in the ten minutes)', '',
+                  'Their checks need something that is not on your phone yet.', '']
+        for entry, title in zip(waiting, titles(waiting)):
+            needed = ', '.join(f'[#{item["number"]}]({item["url"]}) ({item["title"]})' for item in waits[id(entry)])
+            lines.append(f'{title}: needs {needed}')
+        lines.append('')
     if unchecked:
         lines += ['## Also changed (no phone check written)', '',
                   "You don't need to test these. If one seems off while you use the app, open a "
@@ -541,11 +728,13 @@ def notify(title: str, message: str) -> None:
 
 def notify_ready(sha: str, plan: Path) -> None:
     try:
-        count = len(re.findall(r'(?m)^\d+\. \*\*', plan.read_text()))
+        text = plan.read_text()
     except OSError:
-        count = 0
+        text = ''
+    count = len(re.findall(r'(?m)^\d+\. \*\*', text))
     things = (f'{count} thing{"" if count == 1 else "s"} to try' if count else
-              'nothing a listener would notice changed')
+              'nothing a listener would notice changed' if 'Nothing a listener would notice' in text else
+              'nothing to check on the phone this time')
     notify('Spoken Margins: new phone build',
            f'Commit {sha[:7]} is ready: {things}. Plug in your iPhone and double-click '
            '"Install Spoken Margins on iPhone" on the Desktop.')
@@ -615,6 +804,7 @@ def build(sha: str) -> int:
         point_latest(folder)
         record_attempt(sha, 'built')
         prune()
+        share_files(folder, sha)
         say(f'done: {folder}')
         say(f'app {size / 1e6:.0f} MB, built in {seconds} s; test plan: {plan}')
         notify_ready(sha, plan)
@@ -652,6 +842,7 @@ def main(argv) -> int:
             say('no latest build yet')
             return 1
         say(f'rewrote {write_plan(folder, info["sha"], info.get("checks", "unknown"), bool(info.get("commit_in_app")))}')
+        share_files(folder, info['sha'])
         return 0
     lock = open(phone_dir() / '.phone-build.lock', 'a+')
     try:

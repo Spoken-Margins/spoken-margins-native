@@ -118,7 +118,7 @@ struct SpokenMarginsApp: App {
                     if phase == .active {
                         model.handleAppBecameActive()
                     } else if phase == .inactive || phase == .background {
-                        model.handleAppBecameInactiveOrBackground()
+                        model.handleAppBecameInactiveOrBackground(entersBackground: phase == .background)
                     }
                 }
                 #if canImport(UIKit)
