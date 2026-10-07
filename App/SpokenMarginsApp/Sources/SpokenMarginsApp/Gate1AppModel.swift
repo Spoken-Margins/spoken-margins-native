@@ -15873,7 +15873,6 @@ final class Gate1AppModel: ObservableObject {
             scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: localURL)
         }
         let applicationSupportDirectory = try? applicationSupportDirectory()
-        sharedMarginPlacementPasses.begin(.matching, itemId: itemId, previous: Dictionary(work.flatMap(\.1).map { ($0.id, $0.resolution) }, uniquingKeysWith: { first, _ in first }))
         let submission = podcastPlacementPassCoordinator.schedule(.init(itemId: itemId, file: file,
             layers: work.map { .init(layer: $0.0, records: $0.1) }, transcript: recipientTranscriptOverride)) { [weak self] context in
             let recipientTranscript = context.request.transcript
@@ -16048,7 +16047,13 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
         }
-        if !submission.joined { diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "scheduled:\(work.count)" }
+        if !submission.joined {
+            diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "scheduled:\(work.count)"
+            // Only a request that started a pass records "placing". A joined request would set it again for a
+            // pass that may already have ended it and not yet left the coordinator, and nothing would clear it.
+            // The pass's own end runs on the main actor, so it cannot run before this line.
+            sharedMarginPlacementPasses.begin(.matching, itemId: itemId, previous: Dictionary(work.flatMap(\.1).map { ($0.id, $0.resolution) }, uniquingKeysWith: { first, _ in first }))
+        }
     }
 
     private func importedPodcastCommentaryNeedsTranscript(
