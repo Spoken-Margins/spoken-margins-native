@@ -12397,10 +12397,14 @@ final class Gate1AppModel: ObservableObject {
         }
         // #871: at most two of these run at once, nearest the playhead first. A finished download used to start
         // one per Margin, all together.
-        // A retry the listener asked for goes first; otherwise the order follows the playhead of the episode that's playing.
         let identity = Self.marginIdentity(interjection)
-        let playheadMs = reportsResult ? anchorMediaTimeMs : (snapshot.itemId == item.id ? snapshot.currentMediaTimeMs : nil)
-        sourceWindowJobQueue.enqueue(id: identity, anchorMediaTimeMs: anchorMediaTimeMs, playheadMediaTimeMs: playheadMs) { [weak self, interjectionId = interjection.id, itemId = item.id, durationMs = item.media?.durationMs, windowBeforeMs = sourceWindowContextBeforeMs, windowAfterMs = sourceWindowContextAfterMs] in
+        sourceWindowJobQueue.enqueue(id: identity, anchorMediaTimeMs: anchorMediaTimeMs, playhead: { [weak self, itemId = item.id] in
+            // Asked each time the queue picks a job, so a seek while jobs wait is followed. A retry the listener
+            // asked for goes first; otherwise the order follows the playhead of the episode that's playing.
+            if reportsResult { return anchorMediaTimeMs }
+            guard let self, self.snapshot.itemId == itemId else { return nil }
+            return self.snapshot.currentMediaTimeMs
+        }) { [weak self, interjectionId = interjection.id, itemId = item.id, durationMs = item.media?.durationMs, windowBeforeMs = sourceWindowContextBeforeMs, windowAfterMs = sourceWindowContextAfterMs] in
             guard let self else { return }
             // Every way out clears the mark, so a failure inside `run` can't leave the Margin stuck as pending.
             defer { self.pendingSourceContextInterjectionIds.remove(identity) }
