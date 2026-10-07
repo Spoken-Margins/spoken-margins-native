@@ -4,9 +4,11 @@ The installer runs against a fake `xcrun` on PATH, so no test can reach a real p
 answers `devicectl list devices` from FAKE_DEVICES and records every other call. The build runs
 against a scratch repo and a fake xcodebuild (SM_LANE_XCODEBUILD) that makes an ad-hoc signed app.
 """
+import contextlib
 import datetime
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -304,7 +306,8 @@ class PhoneBuildTests(unittest.TestCase):
                     'SM_PHONE_GH': str(self.bin / 'gh'), 'SM_PHONE_DISK_FREE_GB': '100',
                     'SM_LANE_XCODEBUILD': str(self.bin / 'xcodebuild'), 'SM_LANE_STATE_DIR': str(self.tmp / 'lane'),
                     'SM_LANE_MEMORY_PRESSURE': '1', 'FAKE_LOG': str(self.log), 'FAKE_TIP': self.tip,
-                    'FAKE_PLIST_KEY': '1', 'SM_PHONE_NOTIFY': str(self.bin / 'notify')}
+                    'FAKE_PLIST_KEY': '1', 'SM_PHONE_NOTIFY': str(self.bin / 'notify'),
+                    'SM_PHONE_ICLOUD': str(self.tmp / 'icloud' / 'plans')}
 
     def git(self, *args):
         return subprocess.run(['git', *args], cwd=str(self.repo), check=True, capture_output=True,
@@ -455,10 +458,45 @@ class ListenerRuleTests(unittest.TestCase):
         self.assertEqual(self.module.owner_check({'body': 'Owner check: from the PR', 'issues': []}), 'from the PR')
         self.assertIsNone(self.module.owner_check({'body': '', 'issues': []}))
 
+    def test_an_owner_check_field_is_its_line_and_the_steps_under_it(self):
+        field = self.module.check_field
+        rows = [  # (body, the check)
+            ('**Owner check:** open it.\n**Taken by:** nobody yet.', 'open it.'),
+            ('**Owner check:** none needed. **Taken by:** none.', 'none needed.'),
+            ('**Owner check:** tap **Add a Margin** and hold.', 'tap **Add a Margin** and hold.'),
+            ('**Owner check:** after #551 is deployed:\n1. Opt in.\n2. Play it.\n\n**Taken by:** none',
+             'after #551 is deployed:\n1. Opt in.\n2. Play it.'),
+            ('**Owner check:** open Safari:\n\n- go to a page\n- share it\n\nSplit from #144.',
+             'open Safari:\n- go to a page\n- share it'),
+            ('**Owner check:** open it.\n\n- an unrelated list', 'open it.'),
+            ('**Owner check:** open it.\nRelated: #5', 'open it.'),
+            ('**Owner check:** play it:\n- Expected: the Margin plays.\nRelated: #5',
+             'play it:\n- Expected: the Margin plays.'),
+            ('**Owner check:**\nOpen the Library.\nMore prose.', 'Open the Library.'),
+            ('**Owner check:**\n1. Open the Library.\n2. Tap a row.', '1. Open the Library.\n2. Tap a row.'),
+            ('**Owner check:** paste this:\n```\nHello\n\n- not a step\n```\n**Taken by:** x',
+             'paste this:\n```\nHello\n\n- not a step\n```'),
+            ('- **Owner check:** open it.\n- **Taken by:** none', 'open it.'),
+            ('Closes #5\n\nOwner check: open the Library\n- tap a row\n\n## How\n- moved',
+             'open the Library\n- tap a row'),
+            ('**Owner check:** open it.\n---\n_Filed by a session_', 'open it.'),
+            ('**Owner check**: open it.', 'open it.'),
+            ('No check here.', None),
+        ]
+        for body, check in rows:
+            with self.subTest(body=body):
+                self.assertEqual(field(body), check)
+
     def test_bug_report_steps_stand_in_for_a_missing_owner_check(self):
         issue = {'body': '**Steps:** open an article.\n**Expected:** a label that fits.\n'}
         self.assertEqual(self.module.owner_check({'body': '', 'issues': [issue]}),
                          'open an article. Expected: a label that fits.')
+        # #585 (#847 review): the action was step 2, and only step 1 reached the plan.
+        numbered = {'body': '**Steps**\n1. Library, with items listed.\n2. Swipe the top row and Complete it.\n\n'
+                            '**Expected:** the row slides out.\n\n**Actual:** it stays.'}
+        self.assertEqual(self.module.owner_check({'body': '', 'issues': [numbered]}),
+                         '1. Library, with items listed.\n2. Swipe the top row and Complete it.\n'
+                         'Expected: the row slides out.')
 
 
 class VerdictTests(unittest.TestCase):
@@ -621,14 +659,19 @@ class PlanGroupingTests(unittest.TestCase):
         self.assertIn('2. **Library wording**', plan)
         self.assertNotIn('3. ', plan)
 
-    def write(self, prs):
+    def write(self, prs, items=None, built=()):
         module = self.module
         module.plan_base = lambda sha: (None, 'the start')
         module.merged_prs = lambda base, sha: {n: f'Merge pull request #{n}' for n in prs}
         module.fetch_prs = lambda numbers: prs
+        module.fetch_items = lambda numbers: {n: item for n, item in (items or {}).items() if n in numbers}
+        module.built_numbers = lambda sha: set(built)
         module.report_comments = lambda: []
-        with tempfile.TemporaryDirectory() as folder:
-            return module.write_plan(Path(folder), 'a' * 40, 'host tests').read_text()
+        printed = io.StringIO()
+        with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(printed):
+            plan = module.write_plan(Path(folder), 'a' * 40, 'host tests').read_text()
+        self.printed = printed.getvalue()
+        return plan
 
     def test_only_what_the_owner_can_check_is_in_the_ten_minutes(self):
         # The 828597e plan (#504): one checkable item, one he couldn't judge, one that can't be seen on a phone.
@@ -647,15 +690,16 @@ class PlanGroupingTests(unittest.TestCase):
         ten_minutes = plan.split('## Try these')[1].split('## ')[0]
         self.assertIn("**Show the build's commit in Settings**", ten_minutes)
         self.assertIn('Double-click the Desktop icon.', ten_minutes)
-        self.assertIn('**Voice keeps going after a call** (found on your phone)', ten_minutes)
-        self.assertIn('repeat what you did when you found it', ten_minutes)
+        self.assertNotIn('Voice keeps going', ten_minutes)  # found on the phone, but nothing says how to check it (#847)
         self.assertNotIn('storage ledger', ten_minutes)
         self.assertNotIn('closing notes', ten_minutes)
         unchecked = plan.split('## Also changed (no phone check written)')[1].split('Behind the scenes')[0]
         self.assertIn('- Take the rendered speech cache out of the offline storage ledger ([#366]', unchecked)
         self.assertIn('- Article import: give closing notes one chapter ([#497]', unchecked)
+        self.assertIn('- Voice keeps going after a call (found on your phone) ([#401]', unchecked)
         self.assertNotIn('Linux', plan)
         self.assertIn('5 pull requests merged; 4 change something you see or hear.', plan)
+        self.assertNotIn('repeat what you did', plan)
         self.assertIn('Behind the scenes: 1 more pull requests', plan)
         self.assertNotIn('Check: none', plan)
         self.assertNotIn('look for what the title describes', plan)
@@ -671,7 +715,169 @@ class PlanGroupingTests(unittest.TestCase):
         self.assertNotIn('Diagnostics', ten_minutes)
         self.assertNotIn('repeat what you did', plan)
         unchecked = plan.split('## Also changed (no phone check written)')[1]
-        self.assertIn("- Diagnostics: stop reporting the previous item's failure on a new item ([#494]", unchecked)
+        self.assertIn("- Diagnostics: stop reporting the previous item's failure on a new item (found on your phone) ([#494]",
+                      unchecked)
+
+    def test_a_phone_found_bug_with_no_written_check_asks_for_one(self):
+        # The f0f4c1f plan (#847): steps 6 and 8 said "repeat what you did when you found it", which sent the
+        # owner back to the issue to rediscover his own steps and content.
+        voice = self.pr(744, 'Voice keeps going after a call', [
+            {'number': 90, 'title': 'Voice stops', 'url': 'https://example/issue/90', 'body': 'It stopped.',
+             'labels': {'nodes': [{'name': 'found-on-phone'}]}}])
+        diagnostics = self.pr(494, 'Diagnostics: name the failing item', [self.issue(283, 'none.', phone=True)])
+        library = self.pr(280, 'Library wording', [self.issue(81, 'Read the Library rows.')])
+        plan = self.write({744: voice, 494: diagnostics, 280: library})
+        ten_minutes = plan.split('## Try these')[1].split('## ')[0]
+        self.assertNotIn('repeat what you did', plan)
+        self.assertNotIn('Voice keeps going', ten_minutes)
+        self.assertIn('1. **Library wording**', ten_minutes)
+        unchecked = plan.split('## Also changed (no phone check written)')[1]
+        self.assertIn('- Voice keeps going after a call (found on your phone) ([#744]', unchecked)
+        self.assertIn('Owner check', self.printed)
+        self.assertIn('#90', self.printed)
+        self.assertNotIn('#283', self.printed)  # it says "Owner check: none", so it needs no line
+        self.assertNotIn('#81', self.printed)
+
+    def test_a_check_that_waits_on_an_open_issue_is_not_in_the_ten_minutes(self):
+        # The f0f4c1f plan (#847): step 2 asked for something that needs #547, which was still open.
+        publisher = self.pr(809, 'Publisher audio: show the source', [
+            self.issue(600, 'after #547 is also on the phone, open a BBC article: it plays the publisher audio.')])
+        library = self.pr(280, 'Library wording', [self.issue(81, 'Read the Library rows. (Fixed in #279.)')])
+        items = {547: {'__typename': 'Issue', 'number': 547, 'title': 'Play publisher audio by default',
+                       'url': 'https://example/issue/547', 'state': 'OPEN', 'labels': {'nodes': [{'name': 'ready'}]}},
+                 279: {'__typename': 'PullRequest', 'number': 279, 'title': 'Library rows',
+                       'url': 'https://example/pr/279', 'state': 'MERGED'}}
+        plan = self.write({809: publisher, 280: library}, items=items, built={279})
+        ten_minutes = plan.split('## Try these')[1].split('## ')[0]
+        self.assertNotIn('BBC', ten_minutes)
+        self.assertIn('1. **Library wording**', ten_minutes)
+        self.assertNotIn('2. ', ten_minutes)
+        waiting = plan.split('## Waiting on another change')[1].split('## ')[0]
+        self.assertIn('- Publisher audio: show the source ([#809]', waiting)
+        alone = self.write({809: publisher}, items=items)
+        self.assertIn('Nothing is ready to check on the phone yet', alone)
+        self.assertNotIn('Nothing a listener would notice', alone)
+        self.assertIn('[#547](https://example/issue/547)', waiting)
+        self.assertIn('Play publisher audio by default', waiting)
+
+    def test_one_unknown_number_does_not_hide_the_others(self):
+        # gh fails a whole GraphQL query when one alias names no issue or PR (#847 review).
+        module = self.module
+
+        def graphql(fields):
+            if any('9999' in query for query in fields.values()):
+                return {}
+            return {alias: {'__typename': 'Issue', 'number': int(alias[1:]), 'state': 'OPEN'} for alias in fields}
+        module.graphql = graphql
+        self.assertEqual(sorted(module.fetch_items([547, 9999, 548])), [547, 548])
+
+    def test_what_counts_as_a_prerequisite_still_waiting(self):
+        def issue(state='OPEN', *names):
+            return {'__typename': 'Issue', 'number': 547, 'title': 'T', 'url': 'u', 'state': state,
+                    'labels': {'nodes': [{'name': name} for name in names]}}
+
+        def pr(state):
+            return {'__typename': 'PullRequest', 'number': 547, 'title': 'T', 'url': 'u', 'state': state}
+        rows = [  # (check, its own issues and PRs, numbers in the build's history, #547 on GitHub, waits?)
+            ('after #547 is on the phone, play it', set(), set(), issue(), True),
+            ('After #547, play it', set(), set(), issue('OPEN', 'status: needs-human-validation'), False),
+            ('after #547 is on the phone, play it', set(), set(), issue('CLOSED'), False),
+            ('after #547 is on the phone, play it', set(), {547}, issue(), False),
+            ('play it (this is #547)', {547}, set(), issue(), False),
+            ('once #547 merges, play it', set(), set(), pr('OPEN'), True),
+            ('once #547 merges, play it', set(), {547}, pr('MERGED'), False),
+            ('once #547 merges, play it', set(), set(), pr('MERGED'), True),  # merged after this build
+            ('once #547 merges, play it', set(), set(), pr('CLOSED'), False),
+            ('after https://github.com/uncomposed/spoken-margins-native/issues/547 lands', set(), set(), issue(), True),
+            ('after #547 is on the phone, play it', set(), set(), None, False),  # GitHub didn't say: keep the check
+            ('Build 29 still plays it; tap item 547', set(), set(), issue(), False),
+        ]
+        for check, own, built, item, waits in rows:
+            with self.subTest(check=check, item=item and (item['__typename'], item['state'])):
+                found = self.module.waiting_on(check, own, built, {547: item} if item else {})
+                self.assertEqual(bool(found), waits)
+
+    def test_a_check_carries_its_steps_and_links_in_the_step(self):
+        # #552's check is "after #551 is deployed:" plus three numbered steps; only the first line reached
+        # the plan (#847). #758's check names a URL in code, which no viewer makes tappable.
+        steps = self.pr(552, 'Upload transcript maps', [self.issue(
+            552, 'open Settings:\n1. Opt in.\n2. Play a public episode.\n\n**Taken by:** nobody yet.')])
+        steps['issues'][0]['body'] = ('**Where:** cloud.\n**Owner check:** open Settings:\n1. Opt in.\n'
+                                      '2. Play a public episode.\n\n**Taken by:** nobody yet.\n\nPart of #51.')
+        arxiv = self.pr(758, 'Add arXiv PDFs', [self.issue(
+            759, 'Library > + > Link, paste `https://arxiv.org/pdf/2608.09666`, Add. **Taken by:** none.')])
+        plan = self.write({552: steps, 758: arxiv})
+        ten_minutes = plan.split('## Try these')[1].split('## ')[0]
+        self.assertIn('   - Check: open Settings:\n     1. Opt in.\n     2. Play a public episode.\n   - Links:',
+                      ten_minutes)
+        self.assertIn('paste <https://arxiv.org/pdf/2608.09666>, Add.\n', ten_minutes)
+        self.assertNotIn('Taken by', plan)
+        self.assertNotIn('Part of', plan)
+
+    def test_a_repo_file_named_in_a_check_comes_with_the_plan(self):
+        with tempfile.TemporaryDirectory() as repo:
+            def git(*args):
+                return subprocess.run(['git', *args], cwd=repo, check=True, capture_output=True,
+                                      text=True).stdout.strip()
+            git('init', '-q')
+            git('-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '--allow-empty', '-m', 'base')
+            fixtures = Path(repo) / 'Contracts' / 'fixtures'
+            fixtures.mkdir(parents=True)
+            (fixtures / 'two-margins.spokenmargins').write_bytes(b'PK\x03\x04 packet')
+            git('add', '-A')
+            git('-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '-m', 'packet')
+            sha = git('rev-parse', 'HEAD')
+            (fixtures / 'two-margins.spokenmargins').write_bytes(b'changed after the build')
+            with unittest.mock.patch.dict(os.environ, {'SM_PHONE_REPO': repo}):
+                module = load_phone_build()
+            module.plan_base = lambda target: (None, 'the start')
+            module.merged_prs = lambda base, target: {500: 'Merge pull request #500'}
+            module.fetch_prs = lambda numbers: {500: self.pr(500, 'Import shared Margins', [self.issue(
+                501, 'open `Contracts/fixtures/two-margins.spokenmargins` from Files; both Margins import. '
+                     '`Contracts/fixtures/missing.spokenmargins` and `Contracts/fixtures` are not files.')])}
+            module.report_comments = lambda: []
+            with tempfile.TemporaryDirectory() as folder:
+                plan = module.write_plan(Path(folder), sha, 'host tests').read_text()
+                files = sorted(p.name for p in (Path(folder) / 'files').iterdir())
+                copied = (Path(folder) / 'files' / 'two-margins.spokenmargins').read_bytes()
+                (Path(folder) / 'files' / 'stale.pdf').write_text('from an older plan')
+                module.write_plan(Path(folder), sha, 'host tests')
+                rewritten = sorted(p.name for p in (Path(folder) / 'files').iterdir())
+        self.assertEqual(files, ['two-margins.spokenmargins'])
+        self.assertEqual(copied, b'PK\x03\x04 packet')  # as built, not as the checkout is now
+        self.assertEqual(rewritten, ['two-margins.spokenmargins'])
+        self.assertIn(f'   - File: `two-margins.spokenmargins` comes with this plan. On the phone: Files > iCloud '
+                      f'Drive > Spoken Margins test plans > Test plan {sha[:7]} files.', plan)
+        self.assertNotIn('missing.spokenmargins` comes', plan)
+
+    def test_the_plans_files_go_to_icloud_drive_and_old_ones_leave(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            phone, icloud = Path(tmp) / 'phone', Path(tmp) / 'CloudDocs' / 'plans'
+            sha, kept, gone = 'c' * 40, 'b' * 7, 'a' * 7
+            build = phone / f'20261007-120000-{sha[:7]}'
+            (build / 'files').mkdir(parents=True)
+            (build / 'files' / 'two-margins.spokenmargins').write_bytes(b'packet')
+            (phone / f'20261006-120000-{kept}').mkdir()     # built, not installed yet: its files stay
+            for sha7 in (sha[:7], kept, gone, 'd' * 7):
+                (icloud / f'Test plan {sha7} files').mkdir(parents=True)
+            (icloud / f'Test plan {sha[:7]} files' / 'stale.pdf').write_text('from a rewritten plan')
+            (icloud / f'Test plan {"d" * 7}.md').write_text('installed, its plan still here: its files stay')
+            (icloud / 'Test plan old files').mkdir()  # the owner's own folder: never ours to delete
+            with unittest.mock.patch.dict(os.environ, {'SM_PHONE_DIR': str(phone), 'SM_PHONE_ICLOUD': str(icloud)}):
+                self.module.share_files(build, sha)
+            names = sorted(p.name for p in icloud.iterdir())
+            shared = sorted(p.name for p in (icloud / f'Test plan {sha[:7]} files').iterdir())
+        self.assertEqual(shared, ['two-margins.spokenmargins'])
+        self.assertEqual(names, [f'Test plan {kept} files', f'Test plan {sha[:7]} files',
+                                 f'Test plan {"d" * 7} files', f'Test plan {"d" * 7}.md', 'Test plan old files'])
+
+    def test_without_icloud_drive_sharing_files_does_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'build' / 'files').mkdir(parents=True)
+            icloud = Path(tmp) / 'no-icloud' / 'plans'
+            with unittest.mock.patch.dict(os.environ, {'SM_PHONE_DIR': tmp, 'SM_PHONE_ICLOUD': str(icloud)}):
+                self.module.share_files(Path(tmp) / 'build', 'c' * 40)
+            self.assertFalse(icloud.parent.exists())
 
     def test_with_no_written_checks_the_plan_says_so(self):
         plan = self.write({366: self.pr(366, 'Take the rendered speech cache out of the offline storage ledger')})
