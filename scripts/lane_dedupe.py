@@ -86,11 +86,10 @@ def automerge_holds_a_slot(api, pr, head):
 
 
 def mac_job_started(jobs):
-    # A job that finished since listing has started too. Be conservative if the
-    # API has populated started_at before changing the status. Skipped jobs
-    # never used the Mac and must not protect the other queued job.
-    return any(job.get('conclusion') != 'skipped' and
-               (job['status'] in ('in_progress', 'completed') or job.get('started_at'))
+    # The status decides, never started_at: GitHub fills that timestamp in when it queues a job, so a
+    # queued job can carry one. A job that finished since listing has started too. Skipped jobs never
+    # used the Mac and must not protect the other queued job.
+    return any(job['status'] in ('in_progress', 'completed') and job.get('conclusion') != 'skipped'
                for job in jobs.values())
 
 

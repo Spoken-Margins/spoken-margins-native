@@ -71,6 +71,34 @@ class DedupeTests(unittest.TestCase):
         self.route(api)
         self.assertEqual(api.cancelled, [100])
 
+    def test_a_queued_mac_job_that_already_carries_started_at_is_still_cancelled(self):
+        # GitHub fills in started_at when it queues a job (Octokit's workflow_job "queued" example does),
+        # so the status decides whether the job has started, never the timestamp.
+        for status in ('queued', 'waiting', 'pending'):
+            for kind in dedupe.KINDS:
+                with self.subTest(status=status, kind=kind):
+                    queued = dict(job(kind, status), started_at='2026-10-07T10:00:00Z')
+                    api = FakeApi([run(100, 580, OLD)], {100: [queued]})
+                    self.assertEqual(self.route(api), {'lane': False, 'automerge': False})
+                    self.assertEqual(api.cancelled, [100])
+
+    def test_the_refresh_before_cancelling_also_ignores_a_queued_jobs_started_at(self):
+        api = FakeApi([run(100, 580, OLD)], {100: [job('automerge', 'queued')]})
+        real_get = api.get
+        pull_reads = 0
+
+        def get(path):
+            nonlocal pull_reads
+            if path.startswith('pulls/'):
+                pull_reads += 1
+                if pull_reads == 2:
+                    api.jobs[100] = [dict(job('automerge', 'queued'), started_at='2026-10-07T10:00:00Z')]
+            return real_get(path)
+
+        api.get = get
+        self.assertEqual(self.route(api), {'lane': False, 'automerge': False})
+        self.assertEqual(api.cancelled, [100])
+
     def test_an_older_commits_run_whose_mac_job_started_is_left_alone(self):
         api = FakeApi([run(100, 580, OLD, 'in_progress')], {100: [job('automerge', 'in_progress')]})
         self.route(api)
