@@ -6,12 +6,14 @@ import { parseHTML } from "linkedom";
 import {
   captureReadablePage,
   fallbackReadableMarkdown,
-  normalizeSocialEmbedsForReading
+  normalizeSocialEmbedsForReading,
+  sourceMetadata
 } from "./browserExtractionCore.mjs";
 import {
   capturePage,
   invokeInjectedCapture
 } from "./popupCore.mjs";
+import { browserLikePage } from "./testDocument.mjs";
 
 function articleDocument() {
   const body = "<p>" + "Useful article prose. ".repeat(80) + "</p>";
@@ -131,6 +133,125 @@ test("readable capture falls back to local semantic Markdown when the test DOM c
   assert.match(payload.text, /## First section/i);
   assert.match(payload.text, /### Second section/i);
   assert.doesNotMatch(payload.text, /Navigation noise|Footer noise/);
+  // The rest of the hand-off the app reads: where the page came from, which
+  // schema it is, and that capturing must not start a listening session.
+  assert.deepEqual(payload.source, {
+    url: "https://example.com/guide",
+    title: "Retirement Guide",
+    author: "A. Writer",
+    publishedAt: null
+  });
+  assert.equal(payload.id, "test-id");
+  assert.equal(payload.schemaVersion, "browser-text-handoff.v1");
+  assert.equal(payload.selection, null);
+  assert.deepEqual(payload.requestedContinuation, { startSession: false, preferredPlaybackOwner: "app" });
+});
+
+// The real extractor, not the fallback: the page is a linkedom document with
+// the one browser feature Defuddle's Markdown step needs (testDocument.mjs).
+function withGlobalDocument(document, run) {
+  const previous = globalThis.document;
+  globalThis.document = document;
+  try {
+    return run();
+  } finally {
+    globalThis.document = previous;
+  }
+}
+
+const articleProse = "<p>" + "Useful article prose. ".repeat(40) + "</p>";
+
+test("readable capture hands the app Defuddle's Markdown with the page's source details", () => {
+  const document = browserLikePage({
+    head: `<title>Retirement Guide</title><meta name="author" content="A. Writer">
+      <meta property="article:published_time" content="2026-09-01">`,
+    body: `<nav>Navigation noise</nav><article><h2>First section</h2>${articleProse}
+      <h3>Second section</h3>${articleProse}</article><footer>Footer noise</footer>`
+  });
+  const payload = withGlobalDocument(document, () =>
+    captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: { userAgent: "test-agent" } }, document)
+  );
+
+  assert.equal(payload.id, "test-id");
+  assert.equal(payload.schemaVersion, "browser-text-handoff.v1");
+  assert.equal(payload.captureMode, "readable_page");
+  assert.equal(payload.contentFormat, "markdown");
+  assert.deepEqual(payload.source, {
+    url: "https://example.com/guide",
+    title: "Retirement Guide",
+    author: "A. Writer",
+    publishedAt: "2026-09-01"
+  });
+  assert.equal(payload.selection, null);
+  assert.deepEqual(payload.requestedContinuation, { startSession: false, preferredPlaybackOwner: "app" });
+  assert.match(payload.createdAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+  assert.deepEqual(payload.metadata, {
+    extractor: "defuddle",
+    extractorVersion: "0.19.1",
+    networkFallback: false,
+    userAgent: "test-agent"
+  });
+  assert.match(payload.text, /^## First section\n\nUseful article prose\./);
+  assert.match(payload.text, /\n\n### Second section\n\nUseful article prose\./);
+  assert.doesNotMatch(payload.text, /Navigation noise|Footer noise/);
+});
+
+test("readable capture speaks a social card as a sentence, not as link and view-count markup", () => {
+  const document = browserLikePage({
+    head: "<title>Retirement Guide</title>",
+    body: `<article><h2>First section</h2>${articleProse}
+      <a href="https://x.com/netflix/status/2087192315823538471"><div><p>Netflix@netflix</p></div>
+      <div><p>DANG! A new adult animated series premieres September 8.</p></div>
+      <div>3:00 PM · Aug 11, 2026 · 29.7M Views</div>
+      <div>1.42K Replies · 975 Reposts · 23.3K Likes</div></a>${articleProse}</article>`
+  });
+  const payload = withGlobalDocument(document, () =>
+    captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, document)
+  );
+
+  assert.equal(payload.metadata.extractor, "defuddle");
+  assert.match(payload.text, /\n\nPost from Netflix\. DANG! A new adult animated series premieres September 8\.\n\n/);
+  assert.doesNotMatch(payload.text, /29\.7M|Replies|Reposts|Likes|x\.com|Netflix@netflix|\[|\]/);
+});
+
+test("source details come from the extractor first, then the page's meta tags, then plain defaults", () => {
+  const meta = (name, value) => `<meta ${name.startsWith("og:") || name.startsWith("article:") ? "property" : "name"}="${name}" content="${value}">`;
+  const page = (head, body = "") => browserLikePage({ head, body });
+
+  // Extractor values beat every meta tag; whitespace is collapsed.
+  assert.deepEqual(
+    sourceMetadata(
+      page(`<title>Tab Title</title>${meta("og:title", "OG Title")}${meta("author", "Meta Author")}${meta("date", "2020-01-01")}`),
+      { title: "  Extracted \n Title ", author: " Extracted  Author", published: "2026-01-02" }
+    ),
+    { url: "https://example.com/guide", title: "Extracted Title", author: "Extracted Author", publishedAt: "2026-01-02" }
+  );
+
+  // Title: og:title, then twitter:title, then the tab title, then "Browser Text".
+  assert.equal(sourceMetadata(page(`<title>Tab</title>${meta("og:title", "OG")}${meta("twitter:title", "Tw")}`)).title, "OG");
+  assert.equal(sourceMetadata(page(`<title>Tab</title>${meta("twitter:title", "Tw")}`)).title, "Tw");
+  assert.equal(sourceMetadata(page("<title>  Tab   Title </title>")).title, "Tab Title");
+  assert.equal(sourceMetadata(page("")).title, "Browser Text");
+
+  // Author: name=author, then article:author, then byl; none is null.
+  assert.equal(sourceMetadata(page(`${meta("author", "A")}${meta("article:author", "B")}${meta("byl", "C")}`)).author, "A");
+  assert.equal(sourceMetadata(page(`${meta("article:author", "B")}${meta("byl", "C")}`)).author, "B");
+  assert.equal(sourceMetadata(page(`${meta("byl", "C")}`)).author, "C");
+  assert.equal(sourceMetadata(page("")).author, null);
+
+  // Published: article:published_time, then name=date, then citation_publication_date, then <time datetime>.
+  const published = `${meta("article:published_time", "2026-03-01")}${meta("date", "2026-03-02")}${meta("citation_publication_date", "2026-03-03")}`;
+  assert.equal(sourceMetadata(page(published, `<time datetime="2026-03-04">March</time>`)).publishedAt, "2026-03-01");
+  assert.equal(sourceMetadata(page(`${meta("date", "2026-03-02")}${meta("citation_publication_date", "2026-03-03")}`)).publishedAt, "2026-03-02");
+  assert.equal(sourceMetadata(page(meta("citation_publication_date", "2026-03-03"))).publishedAt, "2026-03-03");
+  assert.equal(sourceMetadata(page("", `<time datetime="2026-03-04">March</time>`)).publishedAt, "2026-03-04");
+  assert.equal(sourceMetadata(page("")).publishedAt, null);
+
+  // Address: location.href, then document.URL, then about:blank.
+  const bare = { querySelector: () => null, title: "" };
+  assert.equal(sourceMetadata({ ...bare, location: { href: "https://a.example/x" }, URL: "https://b.example/y" }).url, "https://a.example/x");
+  assert.equal(sourceMetadata({ ...bare, URL: "https://b.example/y" }).url, "https://b.example/y");
+  assert.equal(sourceMetadata(bare).url, "about:blank");
 });
 
 test("semantic DOM fallback preserves article headings and excludes surrounding navigation", () => {
