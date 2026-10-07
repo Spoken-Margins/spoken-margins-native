@@ -1133,4 +1133,125 @@ final class PublicPodcastLinkResolverEntryPointTests: XCTestCase {
             XCTAssertEqual(result.failureReason, "spotify_episode_match_ambiguous")
         }
     }
+
+    // MARK: Why a link did not resolve
+    //
+    // The resolver never guesses. When it cannot name one playable episode it says why, and the app shows
+    // a different sentence for each reason (Gate1AppModel.sourceLinkFailureMessage). A request that fails to
+    // reach the server is different again: it throws, so the app offers a retry instead of claiming the
+    // page has no audio. Each case runs through both entry points on its own stubbed fetch.
+
+    private func request(_ link: String) -> LinkResolutionRequest {
+        LinkResolutionRequest(id: "request-failure", inputURL: link, sourceSurface: "paste", createdAt: Date(timeIntervalSince1970: 1))
+    }
+
+    private func assertNeedsReview(
+        _ results: [LinkResolutionResult], reason: String, _ message: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        for result in results {
+            XCTAssertEqual(result.status, .needsReview, message, file: file, line: line)
+            XCTAssertEqual(result.failureReason, reason, message, file: file, line: line)
+            XCTAssertNil(result.selectedCandidate, "\(message): nothing is selected when the link did not resolve", file: file, line: line)
+            XCTAssertTrue(result.candidates.allSatisfy { $0.audioURL == nil }, "\(message): no candidate may carry audio", file: file, line: line)
+        }
+    }
+
+    /// A feed with a channel but no episodes is reported as empty. Without the report the resolver would
+    /// carry on and scrape the feed address as if it were a web page.
+    func testFeedWithoutEpisodesIsReportedAsEmpty() async throws {
+        let feed = #"<?xml version="1.0"?><rss version="2.0"><channel><title>Show</title></channel></rss>"#
+        let results = try await resolveBothWays(request("https://feeds.example.com/show.rss"), fetch: { _ in Data(feed.utf8) })
+        assertNeedsReview(results, reason: "rss_feed_empty", "an empty feed")
+    }
+
+    /// An episode with no `<enclosure>` is reported as missing its audio, not as an ambiguous pick.
+    func testFeedEpisodeWithoutAnEnclosureIsReportedAsMissingAudio() async throws {
+        let feed = """
+        <?xml version="1.0"?><rss version="2.0"><channel><title>Show</title>
+        <item><title>Text-only post</title><guid>g1</guid></item></channel></rss>
+        """
+        let results = try await resolveBothWays(request("https://feeds.example.com/show.rss"), fetch: { _ in Data(feed.utf8) })
+        assertNeedsReview(results, reason: "rss_audio_enclosure_missing", "an episode without an enclosure")
+    }
+
+    /// What a dead link usually returns is a page or nothing at all, never a feed. All of it ends in the
+    /// general "no public audio found" answer; none of it may resolve to something playable.
+    func testBodiesThatAreNotFeedsAreReportedAsNoAudioFound() async throws {
+        let bodies: [(name: String, body: String)] = [
+            ("an HTML error page", "<html><head><title>404 Not Found</title></head><body>Nothing here</body></html>"),
+            ("plain text", "Service temporarily unavailable"),
+            ("zero bytes", "")
+        ]
+        for link in ["https://feeds.example.com/show.rss", "https://example.com/episodes/12"] {
+            for (name, body) in bodies {
+                let results = try await resolveBothWays(request(link), fetch: { _ in Data(body.utf8) })
+                assertNeedsReview(results, reason: "audio_enclosure_not_found", "\(name) at \(link)")
+            }
+        }
+    }
+
+    /// When the request itself fails, both entry points throw the error rather than answering "no audio".
+    func testFailedRequestForTheLinkThrowsInsteadOfAnswering() async throws {
+        let offline: @Sendable (URL) throws -> Data = { _ in throw URLError(.notConnectedToInternet) }
+        let resolver = PublicPodcastLinkResolver(fetch: offline, asynchronousFetch: { try offline($0) })
+        for link in ["https://feeds.example.com/show.rss", "https://example.com/feed"] {
+            XCTAssertThrowsError(try resolver.resolve(request(link)), "resolve \(link)") {
+                XCTAssertEqual(($0 as? URLError)?.code, .notConnectedToInternet)
+            }
+            do {
+                let result = try await resolver.resolveAsync(request(link))
+                XCTFail("resolveAsync answered \(result.status) for \(link) instead of throwing")
+            } catch {
+                XCTAssertEqual((error as? URLError)?.code, .notConnectedToInternet, "resolveAsync \(link)")
+            }
+        }
+    }
+
+    /// An Apple link that names no episode, one Apple's lookup does not know, and a page with no stream
+    /// each get their own reason, because each needs a different next step from the listener.
+    func testAppleLinksThatCannotBePlayedSayWhy() async throws {
+        let emptyLookup = Data(#"{"resultCount":0,"results":[]}"#.utf8)
+        let pageWithoutAudio = Data("<html><head><title>Some Episode - Apple Podcasts</title></head><body></body></html>".utf8)
+
+        // A show link has no `?i=` episode id; nothing else can be reached.
+        var results = try await resolveBothWays(
+            request("https://podcasts.apple.com/us/podcast/show/id123456"),
+            fetch: { _ in throw URLError(.badServerResponse) }
+        )
+        assertNeedsReview(results, reason: "apple_episode_id_missing", "an Apple link without an episode id")
+
+        // The episode id is there but lookup returns nothing, and the Apple page cannot be read.
+        results = try await resolveBothWays(
+            request("https://podcasts.apple.com/us/podcast/show/id123456?i=999"),
+            fetch: { url in
+                guard url.host == "itunes.apple.com" else { throw URLError(.badServerResponse) }
+                return emptyLookup
+            }
+        )
+        assertNeedsReview(results, reason: "apple_lookup_empty", "an Apple episode that lookup does not return")
+
+        // Lookup returns nothing and the page loads but exposes no audio stream.
+        results = try await resolveBothWays(
+            request("https://podcasts.apple.com/us/podcast/show/id123456?i=999"),
+            fetch: { url in url.host == "itunes.apple.com" ? emptyLookup : pageWithoutAudio }
+        )
+        assertNeedsReview(results, reason: "apple_audio_enclosure_not_found", "an Apple page without an audio stream")
+    }
+
+    /// Spotify gives the resolver nothing to search with, so it stops and says so rather than searching
+    /// Apple for a guess.
+    func testSpotifyEpisodeWithoutReadableMetadataSaysSo() async throws {
+        let unreadable: [(name: String, fetch: @Sendable (URL) throws -> Data)] = [
+            ("both requests fail", { _ in throw URLError(.timedOut) }),
+            ("neither answer names the episode", { url in
+                XCTAssertTrue(url.host?.contains("spotify.com") == true, "no Apple search without a title, but \(url) was requested")
+                return Data("<html><body>Please enable JavaScript</body></html>".utf8)
+            })
+        ]
+        for (name, fetch) in unreadable {
+            let results = try await resolveBothWays(request("https://open.spotify.com/episode/abc123"), fetch: fetch)
+            assertNeedsReview(results, reason: "spotify_metadata_unavailable", name)
+        }
+    }
 }
