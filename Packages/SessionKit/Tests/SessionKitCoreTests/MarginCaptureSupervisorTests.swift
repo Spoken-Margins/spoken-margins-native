@@ -133,6 +133,28 @@ final class MarginCaptureSupervisorTests: XCTestCase {
         XCTAssertEqual(supervisor.observe(reading(running: false, capturedMs: 0), nowMs: 12_000), .none, "and it stays kept")
     }
 
+    func testSaveAndTryAgainShareOneKeepThreshold() {
+        // Audit P1 on #939: Save kept from 250 ms but Try again protected audio only from 1 s, so a
+        // 500 ms recording that stalled could be deleted by Try again while Save would have kept it.
+        XCTAssertEqual(MarginCaptureTimings.keepAudioMs, 250)
+        for capturedMs in [250, 500, 900, 1_000] {
+            var supervisor = MarginCaptureSupervisor(beganAtMs: 0)
+            XCTAssertEqual(supervisor.observe(reading(capturedMs: capturedMs), nowMs: 500), .none)
+            XCTAssertEqual(supervisor.observe(reading(capturedMs: capturedMs), nowMs: 4_000), .none, "stalled with \(capturedMs) ms: kept, not restarted")
+            XCTAssertTrue(supervisor.hasKeepableAudio, "\(capturedMs) ms is worth keeping")
+            XCTAssertNotEqual(
+                supervisor.saveVerdict(reading: reading(capturedMs: capturedMs), nowMs: 4_000),
+                .discardEmpty,
+                "and Save keeps it too"
+            )
+        }
+        var below = MarginCaptureSupervisor(beganAtMs: 0)
+        XCTAssertEqual(below.observe(reading(capturedMs: 249), nowMs: 500), .none)
+        XCTAssertEqual(below.observe(reading(capturedMs: 249), nowMs: 4_000), .restartCapture, "under the threshold is still restarted")
+        XCTAssertFalse(below.hasKeepableAudio)
+        XCTAssertEqual(below.saveVerdict(reading: reading(capturedMs: 249), nowMs: 4_000), .discardEmpty)
+    }
+
     func testARecorderThatCannotTellCountsAsRunning() {
         var supervisor = MarginCaptureSupervisor(beganAtMs: 0)
         XCTAssertEqual(supervisor.observe(nil, nowMs: 250), .none)

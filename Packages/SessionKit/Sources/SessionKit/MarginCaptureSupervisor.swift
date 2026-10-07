@@ -26,10 +26,10 @@ public enum MarginCaptureTimings {
     public static let stallMs = 2_000
     /// Restarts the app tries by itself before it tells the listener.
     public static let automaticRestarts = 2
-    /// Audio at or above this is kept when the capture later stops. A restart would throw it away.
-    public static let keepAudioMs = 1_000
-    /// Less audio than this, after `judgeAfterMs` on the clock, is an empty recording.
-    public static let emptyBelowMs = 250
+    /// The one line between audio worth keeping and an empty recording. At or above it a stopped
+    /// capture is never restarted (a restart deletes the file), Try again is refused, and Save keeps the
+    /// Margin. Below it, after `judgeAfterMs` on the clock, a recording is empty.
+    public static let keepAudioMs = 250
     /// A recording shorter than this on the clock is too brief to judge.
     public static let judgeAfterMs = 1_500
     /// On the clock for at least this long, with under half of it captured, a recording was cut short.
@@ -152,7 +152,7 @@ public struct MarginCaptureSupervisor: Equatable, Sendable {
         let onClockMs = max(0, nowMs - beganAtMs)
         guard onClockMs >= MarginCaptureTimings.judgeAfterMs else { return .save }
         let capturedMs = max(lastCapturedMs, reading.capturedMs)
-        if capturedMs < MarginCaptureTimings.emptyBelowMs { return .discardEmpty }
+        if capturedMs < MarginCaptureTimings.keepAudioMs { return .discardEmpty }
         if onClockMs >= MarginCaptureTimings.cutShortAfterMs, capturedMs * 2 < onClockMs { return .saveCutShort }
         return .save
     }

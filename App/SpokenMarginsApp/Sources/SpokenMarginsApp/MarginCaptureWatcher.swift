@@ -77,29 +77,43 @@ final class MarginCaptureWatcher {
         guard var current = supervisor else { return }
         let now = nowMs()
         if current.observe(reading(), nowMs: now) == .restartCapture {
-            do {
-                try restart()
-                current.captureRestarted(nowMs: nowMs())
-            } catch {
-                current.restartFailed()
-            }
+            restartNow(&current)
         }
         supervisor = current
         report()
     }
 
     /// The listener asked to try again after the capture failed: restart now, then judge afresh.
-    func retry() {
-        guard canRetry, var current = supervisor else { return }
+    ///
+    /// A restart deletes the recorder's file, and the screen's Try again comes from the last poll, which
+    /// can be old. So the recorder is read again here, and nothing is restarted over audio worth keeping.
+    /// Returns whether a restart was attempted: false when the recording holds audio worth keeping.
+    @discardableResult
+    func retry() -> Bool {
+        guard var current = supervisor else { return false }
+        _ = current.observe(reading(), nowMs: nowMs())
+        guard !current.hasKeepableAudio else {
+            supervisor = current
+            report()
+            return false
+        }
         current.listenerRetry(nowMs: nowMs())
+        restartNow(&current)
+        supervisor = current
+        report()
+        return true
+    }
+
+    /// Starts a new recorder. If the client refuses (the finalized file holds audio) or fails, the
+    /// capture is not capturing, and the supervisor learns what the recorder now holds.
+    private func restartNow(_ current: inout MarginCaptureSupervisor) {
         do {
             try restart()
             current.captureRestarted(nowMs: nowMs())
         } catch {
             current.restartFailed()
+            _ = current.observe(reading(), nowMs: nowMs())
         }
-        supervisor = current
-        report()
     }
 
     /// Whether the recording that would be saved now holds anything.

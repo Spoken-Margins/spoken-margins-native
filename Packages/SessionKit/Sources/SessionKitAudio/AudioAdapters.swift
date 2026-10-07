@@ -3205,6 +3205,8 @@ public final class SystemRecordingClient: RecordingClient {
     /// The most `currentTime` the current recorder has shown. A stopped `AVAudioRecorder` reads 0, but
     /// the audio it took in is still in its file.
     private var capturedHighWaterMs = 0
+    /// The stopped recorder's finalized file has been measured (reset while it records or restarts).
+    private var stoppedFileMeasured = false
     #endif
     private let fileManager: FileManager
     private let baseDirectory: URL?
@@ -3301,6 +3303,7 @@ public final class SystemRecordingClient: RecordingClient {
         }
         recorderDelegate = delegate
         capturedHighWaterMs = 0
+        stoppedFileMeasured = false
         return (recorder, url)
     }
 
@@ -3394,6 +3397,15 @@ public final class SystemRecordingClient: RecordingClient {
         let peak = recorder.peakPower(forChannel: 0)
         peakPowerDb = max(peakPowerDb ?? peak, peak)
         capturedHighWaterMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
+        if recorder.isRecording {
+            stoppedFileMeasured = false
+        } else if !stoppedFileMeasured, let currentURL,
+                  let fileMs = RecordedFileDuration.milliseconds(of: currentURL) {
+            // The polls can miss audio taken in just before the stop, and a stopped recorder reads 0.
+            // The finalized file says how much it really holds (audit P1 on #939).
+            stoppedFileMeasured = true
+            capturedHighWaterMs = max(capturedHighWaterMs, fileMs)
+        }
         return RecordingCaptureReading(recorderRunning: recorder.isRecording, capturedMs: capturedHighWaterMs)
         #else
         return nil
@@ -3405,6 +3417,14 @@ public final class SystemRecordingClient: RecordingClient {
         guard isCaptureActive else { throw SessionKitError.invalidCommandForState("restartCapture") }
         let previousURL = currentURL
         recorder?.stop()
+        // The stop finalizes the file, and a restart deletes it. The poll that asked for this restart may be
+        // old, so read what the file really holds first and refuse to delete audio worth keeping.
+        if let previousURL, let fileMs = RecordedFileDuration.milliseconds(of: previousURL) {
+            capturedHighWaterMs = max(capturedHighWaterMs, fileMs)
+        }
+        if capturedHighWaterMs >= MarginCaptureTimings.keepAudioMs {
+            throw SessionKitError.persistenceFailed("recording_has_audio")
+        }
         recorder?.delegate = nil
         recorder = nil
         recorderDelegate = nil
@@ -3426,6 +3446,7 @@ public final class SystemRecordingClient: RecordingClient {
         if let recorder {
             fields["recorderRunning"] = String(recorder.isRecording)
             fields["capturedMs"] = String(max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded())))
+            fields["fileMeasured"] = String(stoppedFileMeasured)
         }
         if let currentURL, let bytes = (try? currentURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
             fields["fileBytes"] = String(bytes)
