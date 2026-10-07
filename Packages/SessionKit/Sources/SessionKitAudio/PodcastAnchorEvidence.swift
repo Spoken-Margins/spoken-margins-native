@@ -99,9 +99,15 @@ public enum PodcastAnchorEvidenceGenerator {
         defer { try? handle.close() }
         var hasher = SHA256()
         while true {
-            let data = try handle.read(upToCount: 1_048_576) ?? Data()
-            guard !data.isEmpty else { break }
-            hasher.update(data: data)
+            // FileHandle's reads are autoreleased. Release each buffer here so a synchronous digest (or
+            // several exact-edition resolutions without a suspension) never retains the whole episode.
+            let didRead = try autoreleasepool {
+                let data = try handle.read(upToCount: 1_048_576) ?? Data()
+                guard !data.isEmpty else { return false }
+                hasher.update(data: data)
+                return true
+            }
+            guard didRead else { break }
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
