@@ -238,11 +238,46 @@ class VerificationTests(unittest.TestCase):
         self.assertTrue(steps['package'][1]['tests'])  # the exact-test-ID check stays on the tests
         self.assertFalse(steps['package-build'][1].get('tests'))
 
-    def test_the_sessionkit_script_still_builds_and_tests_with_no_argument(self):
-        script = (SCRIPTS / 'run-sessionkit-tests.sh').read_text()
-        self.assertIn('"") exec "$ROOT/scripts/host-test-lane" swift test ', script)
-        self.assertIn('--build-only) exec "$ROOT/scripts/host-test-lane" swift build --build-tests', script)
-        self.assertIn('--skip-build) exec "$ROOT/scripts/host-test-lane" swift test --skip-build', script)
+    def run_sessionkit_script(self, *args, exit_code=0, **env):
+        """Run scripts/run-sessionkit-tests.sh from a copy in a temporary ROOT whose host-test-lane records what it
+        was asked to run (and where), so the script's real argument handling executes. Returns (done, calls)."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'scripts').mkdir()
+            (root / 'Packages/SessionKit').mkdir(parents=True)
+            shutil.copy(SCRIPTS / 'run-sessionkit-tests.sh', root / 'scripts/run-sessionkit-tests.sh')
+            lane = root / 'scripts/host-test-lane'
+            lane.write_text(f'#!/bin/sh\nprintf "%s|" "$PWD" "$@" >> "{root}/calls"\necho >> "{root}/calls"\n'
+                            f'exit {exit_code}\n')
+            lane.chmod(0o755)
+            environment = {key: value for key, value in os.environ.items() if key != 'CODEX_SANDBOX'}
+            done = subprocess.run(['bash', str(root / 'scripts/run-sessionkit-tests.sh'), *args], env={**environment, **env},
+                                  capture_output=True, text=True, timeout=30)
+            calls = [line.split('|')[:-1] for line in (root / 'calls').read_text().splitlines()] \
+                if (root / 'calls').exists() else []
+            return done, [(Path(call[0]).resolve().relative_to(root.resolve()).as_posix(), call[1:]) for call in calls]
+
+    def test_the_sessionkit_script_builds_and_tests_with_no_argument_and_splits_the_two_steps(self):
+        package = 'Packages/SessionKit'
+        for args, command in (((), ['swift', 'test']), (('--build-only',), ['swift', 'build', '--build-tests']),
+                              (('--skip-build',), ['swift', 'test', '--skip-build'])):
+            with self.subTest(args=args):
+                done, calls = self.run_sessionkit_script(*args)
+                self.assertEqual((done.returncode, calls), (0, [(package, command)]), done.stderr)  # run in the package
+
+    def test_the_sessionkit_script_passes_on_the_exit_code_and_refuses_an_unknown_argument(self):
+        done, calls = self.run_sessionkit_script('--skip-build', exit_code=3)
+        self.assertEqual((done.returncode, len(calls)), (3, 1))  # a failing `swift test` fails the step
+        done, calls = self.run_sessionkit_script('--everything')
+        self.assertEqual((done.returncode, calls), (2, []))  # nothing ran
+        self.assertIn('usage:', done.stderr)
+
+    def test_inside_the_codex_sandbox_the_sessionkit_script_disables_swiftpm_s_own_sandbox(self):
+        for args, command in (((), ['swift', 'test']), (('--build-only',), ['swift', 'build', '--build-tests']),
+                              (('--skip-build',), ['swift', 'test', '--skip-build'])):
+            with self.subTest(args=args):
+                done, calls = self.run_sessionkit_script(*args, CODEX_SANDBOX='seatbelt')
+                self.assertEqual(calls, [('Packages/SessionKit', command + ['--disable-sandbox'])], done.stderr)
 
     def test_ops_files_count_as_verification_inputs(self):
         with patch.object(verification, 'capture', return_value='ops/dial/dial_gate.py\n'), \
