@@ -254,8 +254,9 @@ with open(os.environ["FAKE_LOG"], "a") as log:
     log.write("gh " + " ".join(args) + "\n")
 tip = os.environ["FAKE_TIP"]
 if args[:1] == ["api"] and args[1].endswith("/issues/12/comments"):
-    print("**Merge check (triage desk) on `1234567`: PASS.**\n- Tested the merge commit `%s`.\n"
-          "- Ran: --plan fast and both builds.\n- Pushing `%s` to next now." % (tip[:7], tip[:7]))
+    print("**Merge check (triage desk) on `1234567`: %s.**\n- Tested the merge commit `%s`.\n"
+          "- Ran: --plan fast and both builds.\n- Pushing `%s` to next now."
+          % (os.environ.get("FAKE_MERGE_VERDICT", "PASS"), tip[:7], tip[:7]))
 elif args[:1] == ["api"] and args[1].endswith("/issues/184/comments"):
     for body in ("```text\nLane report integration-%s — PASS\nran: --plan app (pass: 564 of 564 tests)\n```" % tip[:7],
                  "```text\nLane report journeys-%s — PASS\nran: J4 (pass)\n```" % tip[:7]):
@@ -373,6 +374,69 @@ class PhoneBuildTests(unittest.TestCase):
         self.assertIn('fast scripts/verify-tests.py --plan fast', calls)
         self.assertIn('build-for-testing', calls)
         self.assertIn('passed here', json.loads((self.phone / 'latest/build.json').read_text())['checks'])
+
+    def commit_the_host_check_python(self, subject):
+        """Commit a fake `.venv/bin/python` (what the build runs verify-tests.py with) as the new tip.
+
+        It logs its command line to FAKE_LOG and exits with FAKE_FAST_EXIT."""
+        (self.repo / '.venv/bin').mkdir(parents=True)
+        python = self.repo / '.venv/bin/python'
+        python.write_text('#!/bin/sh\necho "fast $*" >> "$FAKE_LOG"\nexit ${FAKE_FAST_EXIT:-0}\n')
+        python.chmod(0o755)
+        self.git('add', '-f', '.venv/bin/python')
+        self.git('commit', '-q', '-m', subject)
+        self.tip = self.git('rev-parse', 'HEAD')
+
+    def build_the_merge_commit(self, runs_checks, **extra):
+        """Build a tip that reads "Merge pull request #12: ..." (the fake gh serves PR 12's merge check)."""
+        self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing')
+        done = self.run_build(**{'FAKE_TIP': self.tip, **extra})
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        calls = self.log.read_text()
+        self.assertEqual('fast scripts/verify-tests.py --plan fast' in calls, runs_checks, calls)
+        self.assertEqual('build-for-testing' in calls, runs_checks, calls)
+        self.assertIn('-configuration Release', calls)  # either way the phone build itself ran
+        checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
+        self.assertEqual('passed here' in checks, runs_checks, checks)
+
+    def test_a_merge_check_that_passed_and_pushed_this_commit_skips_the_host_checks(self):
+        self.build_the_merge_commit(runs_checks=False)
+
+    def test_a_merge_check_that_pushed_another_commit_does_not_count_so_the_host_checks_run(self):
+        # The PR was re-merged after the runner's test (its comment says "Pushing `<sha7>`" of the old merge).
+        self.build_the_merge_commit(runs_checks=True, FAKE_TIP='deadbee' + '0' * 33)
+
+    def test_a_merge_check_that_says_fail_does_not_count_so_the_host_checks_run(self):
+        self.build_the_merge_commit(runs_checks=True, FAKE_MERGE_VERDICT='FAIL')
+
+    def assert_build_stopped(self, done, why, builds_after):
+        """A build that failed its checks: exit 1, the reason recorded, and nothing installable made."""
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn(f'FAILED on {self.tip[:7]}: {why}', done.stdout)
+        attempt = json.loads((self.phone / 'last-attempt.json').read_text())
+        self.assertEqual((attempt['sha'], attempt['result']), (self.tip, f'failed: {why}'))
+        self.assertTrue((self.phone / 'last-failure.log').exists())
+        self.assertFalse((self.phone / 'latest').exists())
+        calls = self.log.read_text()
+        self.assertEqual('-configuration Release' in calls, builds_after, calls)  # the Release build never ran
+        self.assertNotIn('is ready', calls)  # and the owner was not told to install anything
+
+    def test_failing_host_tests_stop_the_build_before_any_xcodebuild(self):
+        self.commit_the_host_check_python('Merge pull request #14 from someone/venv')  # no merge check: runs them
+        done = self.run_build(FAKE_FAST_EXIT='1')
+        self.assert_build_stopped(done, 'host tests (--plan fast) failed', builds_after=False)
+        calls = self.log.read_text()
+        self.assertIn('fast scripts/verify-tests.py --plan fast', calls)
+        self.assertNotIn('build-for-testing', calls)  # not even the simulator build
+
+    def test_a_failing_simulator_build_stops_the_build_before_the_release_build(self):
+        self.commit_the_host_check_python('Merge pull request #14 from someone/venv')
+        done = self.run_build(FAKE_FAIL='error: cannot find type in scope')
+        self.assert_build_stopped(done, 'the simulator build failed', builds_after=False)
+        calls = self.log.read_text()
+        self.assertIn('fast scripts/verify-tests.py --plan fast', calls)  # the host tests passed first
+        self.assertIn('build-for-testing', calls)
+        self.assertNotIn('Signing needs the owner', done.stdout)
 
     def test_signing_failure_names_the_owner_step_and_is_not_retried(self):
         done = self.run_build(FAKE_FAIL='error: errSecInternalComponent')
