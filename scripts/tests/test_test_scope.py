@@ -284,7 +284,9 @@ class LaneRunnerRoutingTests(unittest.TestCase):
     def test_workflow_routes_both_jobs_with_normal_defaults(self):
         workflow = (SCRIPTS.parent / '.github/workflows/lane.yml').read_text()
         route, mac_jobs = workflow.split('\n  lane:\n', 1)
-        self.assertIn('runs-on: ubuntu-latest', route)
+        # Routing runs on the owner's VPS runner, never a Mac runner, so it can't queue behind lane jobs.
+        self.assertIn('runs-on: [self-hosted, Linux, sm-vps]', route)
+        self.assertNotIn('macOS', route)
         self.assertIn('--paginate --slurp', route)
         self.assertIn('actions/runners?per_page=100', route)
         self.assertIn('pulls/$PR_NUMBER/files?per_page=100', route)

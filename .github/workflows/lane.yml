@@ -43,7 +43,8 @@ jobs:
         (github.event.action != 'labeled' || github.event.label.name == 'lane:queued')) ||
        (contains(github.event.pull_request.labels.*.name, 'automerge') &&
         (github.event.action != 'labeled' || github.event.label.name == 'automerge')))
-    runs-on: ubuntu-latest
+    # The owner's VPS runner (sm-vps), not a GitHub-hosted one: the free Linux minutes ran out in October.
+    runs-on: [self-hosted, Linux, sm-vps]
     timeout-minutes: 3
     permissions:
       contents: read
