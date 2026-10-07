@@ -220,6 +220,7 @@ struct ItemDetailState {
     var interjections: [Interjection] = []
     var importedCommentaryLayers: [ImportedCommentaryLayer] = []
     var importedCommentaryInterjections: [String: [ImportedCommentaryInterjection]] = [:]
+    var sharedMarginPlacement: SharedMarginPlacementPasses.Pass?
     var turns: [ConversationTurn] = []
 }
 
@@ -1076,6 +1077,8 @@ final class Gate1AppModel: ObservableObject {
     private var pendingFullSourceTranscriptionItemIds: Set<String> = []
     private var importedPodcastResolutionGenerations: [String: Int] = [:]
     private var importedPodcastResolutionURLs: [String: URL] = [:]
+    /// Placement work in flight, so its shared Margins read "placing", not "unresolved" (#872).
+    private var sharedMarginPlacementPasses = SharedMarginPlacementPasses() { didSet { if oldValue != sharedMarginPlacementPasses { refreshSelectedItem(); refreshMarginRows() } } }
     private var importedTranscriptRetryDates: [String: Date] = [:]
     private var transcriptAssistedResolutionItems: Set<String> = []
     private var importedPodcastRecipientLocalURLs: [String: URL] = [:]
@@ -2080,7 +2083,8 @@ final class Gate1AppModel: ObservableObject {
                 .filter { $0.deletedAt == nil && ($0.itemId == nil || activeItems[$0.itemId ?? ""] != nil) }
                 .flatMap { layer in
                     try store.loadImportedCommentaryInterjections(layerId: layer.id).map {
-                        SharedMarginRow(interjection: $0, layer: layer, itemTitle: activeItems[layer.itemId ?? ""] ?? layer.itemIdentity.title)
+                        SharedMarginRow(interjection: $0, layer: layer, itemTitle: activeItems[layer.itemId ?? ""] ?? layer.itemIdentity.title,
+                                        placement: sharedMarginPlacementPasses.pass(itemId: layer.itemId))
                     }
                 }
                 .sorted { $0.interjection.createdAt > $1.interjection.createdAt }
@@ -7212,7 +7216,7 @@ final class Gate1AppModel: ObservableObject {
     private func markSharedMarginHeard(_ margin: ImportedCommentaryInterjection) {
         guard margin.isNewToListener, let heard = try? store?.markImportedCommentaryInterjectionHeard(id: margin.id, at: Date()) else { return }
         selectedItem.importedCommentaryInterjections = SharedMarginHearing.replacing(heard, in: selectedItem.importedCommentaryInterjections)
-        sharedMarginRows = sharedMarginRows.map { $0.interjection.id == heard.id ? SharedMarginRow(interjection: heard, layer: $0.layer, itemTitle: $0.itemTitle) : $0 }
+        sharedMarginRows = sharedMarginRows.map { $0.interjection.id == heard.id ? SharedMarginRow(interjection: heard, layer: $0.layer, itemTitle: $0.itemTitle, placement: $0.placement) : $0 }
     }
 
     private func stopImportedCommentaryPlayback(resumeSource: Bool) {
@@ -7330,21 +7334,8 @@ final class Gate1AppModel: ObservableObject {
             ?? .max
     }
 
-    nonisolated static func isPlayableImportedCommentaryResolution(
-        _ resolution: ImportedAnchorResolution
-    ) -> Bool {
-        guard !resolution.isAmbiguous else { return false }
-        if resolution.localMediaTimeMs != nil {
-            return isInlinePodcastResolution(resolution)
-        }
-        guard resolution.localStartChar != nil else { return false }
-        switch resolution.evidenceClass {
-        case .articleTextVerified, .exactEdition, .recipientConfirmed:
-            return true
-        case .transcriptVerified, .acousticVerified, .fused, .mapInterpolated,
-             .timestampFallback, .ambiguous, .absentFromRecipientEdition, .unresolved:
-            return false
-        }
+    nonisolated static func isPlayableImportedCommentaryResolution(_ resolution: ImportedAnchorResolution) -> Bool {
+        SharedMarginPlacementStatus.isPlaced(resolution)
     }
 
     nonisolated static func marginPlaybackRate(itemPlaybackRate: Double) -> Double {
@@ -14709,6 +14700,7 @@ final class Gate1AppModel: ObservableObject {
             interjections: interjections,
             importedCommentaryLayers: importedLayers,
             importedCommentaryInterjections: importedInterjections,
+            sharedMarginPlacement: sharedMarginPlacementPasses.pass(itemId: item.id),
             turns: turns
         )
     }
@@ -15815,8 +15807,10 @@ final class Gate1AppModel: ObservableObject {
               pendingFullSourceTranscriptionItemIds.insert(item.id).inserted else { return }
         importedTranscriptRetryDates[item.id] = Date()
         diagnostics["recipientAlignmentTranscript:\(item.id)"] = "transcribing_transiently"
+        sharedMarginPlacementPasses.begin(.transcript, itemId: item.id)
         Task { [weak self] in
             guard let self else { return }
+            defer { self.sharedMarginPlacementPasses.end(.transcript, itemId: item.id) }
             do {
                 let timeline = try await self.sourceTranscriptionClient.transcribeSourceAudio(
                     url: localSourceURL,
@@ -15835,26 +15829,6 @@ final class Gate1AppModel: ObservableObject {
                 try? self.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
                 self.diagnostics["recipientAlignmentTranscript:\(item.id)"] = "failed_and_deleted:\(error.localizedDescription)"
             }
-        }
-    }
-
-    nonisolated static func invalidatePodcastEdition(itemId: String, digest: String, store: SQLiteSessionStore) throws {
-        for var layer in try store.loadImportedCommentaryLayers(itemId: itemId)
-        where layer.deletedAt == nil && layer.itemIdentity.itemType == .podcast
-            && layer.resolvedRecipientEditionSHA256 != digest {
-            layer.sourceResolutionStatus = .pending
-            layer.resolvedRecipientEditionSHA256 = nil
-            try store.saveImportedCommentaryLayer(layer)
-            for var note in try store.loadImportedCommentaryInterjections(layerId: layer.id) {
-                note.resolution = ImportedAnchorResolution(evidenceClass: .unresolved)
-                try store.saveImportedCommentaryInterjection(note)
-            }
-        }
-        if let projection = try store.loadResolvedListeningMapProjection(itemId: itemId),
-           projection.recipientEditionSHA256 != digest {
-            try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(
-                id: projection.id, itemId: itemId, proposalId: projection.proposalId,
-                recipientEditionSHA256: digest, points: [], intervals: []))
         }
     }
 
@@ -15900,13 +15874,14 @@ final class Gate1AppModel: ObservableObject {
         importedPodcastResolutionGenerations[itemId] = generation
         let applicationSupportDirectory = try? applicationSupportDirectory()
         diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "scheduled:\(work.count)"
+        sharedMarginPlacementPasses.begin(.matching, itemId: itemId, previous: Dictionary(work.flatMap(\.1).map { ($0.id, $0.resolution) }, uniquingKeysWith: { first, _ in first }))
         Task.detached { [weak self] in
             do {
                 let recipientDigest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
                 let isCurrent = try await MainActor.run { [weak self] in
                     guard let self, self.importedPodcastResolutionGenerations[itemId] == generation else { return false }
-                    try Self.invalidatePodcastEdition(itemId: itemId, digest: recipientDigest, store: store)
-                    if self.selectedItem.id == itemId { self.refreshSelectedItem() }
+                    try store.invalidateImportedPodcastPlacements(itemId: itemId, editionSHA256: recipientDigest)
+                    if self.selectedItem.id == itemId { self.refreshSelectedItem() }; self.refreshMarginRows()
                     return true
                 }
                 guard isCurrent else { return }
@@ -16010,9 +15985,9 @@ final class Gate1AppModel: ObservableObject {
                     resolvedWork.append((layer, updated, mapOutcome))
                 }
                 await MainActor.run {
-                    guard let self,
-                          self.importedPodcastResolutionGenerations[itemId] == generation,
-                          let store = self.store else { return }
+                    guard let self, self.importedPodcastResolutionGenerations[itemId] == generation else { return }
+                    defer { self.sharedMarginPlacementPasses.end(.matching, itemId: itemId) }
+                    guard let store = self.store else { return }
                     self.transcriptAssistedResolutionItems.remove(itemId)
                     do {
                         let outcomes = resolvedWork.sorted { $0.0.importedAt < $1.0.importedAt }.compactMap(\.2)
@@ -16065,6 +16040,7 @@ final class Gate1AppModel: ObservableObject {
             } catch {
                 await MainActor.run {
                     guard self?.importedPodcastResolutionGenerations[itemId] == generation else { return }
+                    self?.sharedMarginPlacementPasses.end(.matching, itemId: itemId)
                     self?.transcriptAssistedResolutionItems.remove(itemId)
                     self?.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "failed:\(error.localizedDescription)"
                 }
