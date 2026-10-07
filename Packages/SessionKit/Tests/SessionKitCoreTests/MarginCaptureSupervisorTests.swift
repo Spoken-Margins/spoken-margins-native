@@ -5,8 +5,8 @@ import XCTest
 /// #937: the screen said "Recording" over a recorder that took in 22 ms of audio in 34 seconds.
 /// The supervisor judges capture from what the recorder has taken in, never from its say-so.
 final class MarginCaptureSupervisorTests: XCTestCase {
-    private func reading(running: Bool = true, capturedMs: Int) -> RecordingCaptureReading {
-        RecordingCaptureReading(recorderRunning: running, capturedMs: capturedMs)
+    private func reading(running: Bool = true, capturedMs: Int, durationKnown: Bool = true) -> RecordingCaptureReading {
+        RecordingCaptureReading(recorderRunning: running, capturedMs: capturedMs, durationKnown: durationKnown)
     }
 
     /// Polls every 250 ms for `seconds`, with `capturedMs(atMs:)` as what the recorder reports. Carries
@@ -153,6 +153,32 @@ final class MarginCaptureSupervisorTests: XCTestCase {
         XCTAssertEqual(below.observe(reading(capturedMs: 249), nowMs: 4_000), .restartCapture, "under the threshold is still restarted")
         XCTAssertFalse(below.hasKeepableAudio)
         XCTAssertEqual(below.saveVerdict(reading: reading(capturedMs: 249), nowMs: 4_000), .discardEmpty)
+    }
+
+    func testAStoppedRecorderWhoseFileCannotBeMeasuredIsKeptNotRestartedOrDiscarded() {
+        // Audit round 3 on #939: a stopped recorder's file would not open, so its length was unknown.
+        // Unknown was treated as empty, and the file was deleted. Unknown means keep.
+        var supervisor = MarginCaptureSupervisor(beganAtMs: 0)
+        XCTAssertEqual(supervisor.observe(reading(capturedMs: 100), nowMs: 250), .none)
+        let unknown = reading(running: false, capturedMs: 100, durationKnown: false)
+        XCTAssertEqual(supervisor.observe(unknown, nowMs: 10_000), .none, "no restart over a file that may hold speech")
+        XCTAssertEqual(supervisor.health, .notCapturing(.recorderStopped))
+        XCTAssertTrue(supervisor.hasKeepableAudio, "so Try again is not offered")
+        XCTAssertEqual(
+            supervisor.saveVerdict(reading: unknown, nowMs: 34_000),
+            .saveCutShort,
+            "Save keeps it and says part of it may be missing, never discards it as empty"
+        )
+    }
+
+    func testAnUnknownLengthDoesNotUseUpTheRestartsOrBlockThemOnceTheLengthIsKnown() {
+        // The measurement of a stopped recorder lands a poll later. If the file turns out to hold almost
+        // nothing, the dead recorder is still restarted, as before.
+        var supervisor = MarginCaptureSupervisor(beganAtMs: 0)
+        XCTAssertEqual(supervisor.observe(reading(running: false, capturedMs: 0, durationKnown: false), nowMs: 250), .none)
+        XCTAssertTrue(supervisor.hasKeepableAudio)
+        XCTAssertEqual(supervisor.observe(reading(running: false, capturedMs: 22), nowMs: 500), .restartCapture)
+        XCTAssertFalse(supervisor.hasKeepableAudio, "22 ms is not worth keeping once it is known")
     }
 
     func testARecorderThatCannotTellCountsAsRunning() {

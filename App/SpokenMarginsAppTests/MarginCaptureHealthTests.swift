@@ -21,6 +21,8 @@ final class MarginCaptureHealthTests: XCTestCase {
         var stopped = false
         /// The recorder stopped but, like `SystemRecordingClient`, still reports what it took in.
         var stoppedButReports = false
+        /// The stopped recorder's file is still being measured, or would not open: its length is unknown.
+        var durationUnknown = false
         private(set) var restartCount = 0
         private(set) var finishCount = 0
         private(set) var cancelCount = 0
@@ -36,7 +38,11 @@ final class MarginCaptureHealthTests: XCTestCase {
         func captureReading() -> RecordingCaptureReading? {
             stopped
                 ? RecordingCaptureReading(recorderRunning: false, capturedMs: 0)
-                : RecordingCaptureReading(recorderRunning: !stoppedButReports, capturedMs: capturedMs)
+                : RecordingCaptureReading(
+                    recorderRunning: !stoppedButReports,
+                    capturedMs: capturedMs,
+                    durationKnown: !durationUnknown
+                )
         }
         func restartCapture() throws {
             restartCount += 1
@@ -335,6 +341,26 @@ final class MarginCaptureHealthTests: XCTestCase {
         harness.model.finishInterjection()
         XCTAssertEqual(recorder.finishCount, 1, "Save keeps what was said")
         XCTAssertEqual(recorder.cancelCount, 0)
+    }
+
+    func testAStoppedRecorderWhoseFileCannotBeMeasuredIsKeptAndSavedNeverDiscarded() {
+        // Audit round 3 on #939: an unreadable file is unknown, not empty. Nothing restarts or deletes it.
+        let recorder = ScriptedRecordingClient(capturedMs: 100)
+        recorder.stoppedButReports = true
+        recorder.durationUnknown = true
+        let harness = Harness(recorder: recorder)
+
+        harness.run(seconds: 6)
+
+        XCTAssertEqual(recorder.restartCount, 0, "no restart over a file that may hold speech")
+        XCTAssertTrue(harness.model.recordingHasKeepableAudio)
+        XCTAssertFalse(harness.model.canRetryMicrophone)
+        harness.model.retryMicrophone()
+        XCTAssertEqual(recorder.restartCount, 0)
+        harness.model.finishInterjection()
+        XCTAssertEqual(recorder.finishCount, 1, "Save keeps it")
+        XCTAssertEqual(recorder.cancelCount, 0, "and does not cancel it as empty")
+        XCTAssertEqual(harness.model.statusMessage.hasPrefix("Margin saved, but part of it may be missing"), true)
     }
 
     func testAShortRecordingThatStallsIsKeptBySaveAndNotDeletedByTryAgain() {

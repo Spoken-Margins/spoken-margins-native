@@ -8,10 +8,14 @@ import Foundation
 public struct RecordingCaptureReading: Equatable, Sendable {
     public var recorderRunning: Bool
     public var capturedMs: Int
+    /// False while a stopped recorder's file is still being measured, or could not be read. `capturedMs` is
+    /// then only a lower bound, and the recording may hold speech: it is kept, never restarted or discarded.
+    public var durationKnown: Bool
 
-    public init(recorderRunning: Bool, capturedMs: Int) {
+    public init(recorderRunning: Bool, capturedMs: Int, durationKnown: Bool = true) {
         self.recorderRunning = recorderRunning
         self.capturedMs = max(0, capturedMs)
+        self.durationKnown = durationKnown
     }
 }
 
@@ -78,11 +82,13 @@ public struct MarginCaptureSupervisor: Equatable, Sendable {
     /// what it took in before the stop is still in its file, so this never goes down.
     public var capturedMs: Int { lastCapturedMs }
     /// The current recorder holds enough audio that a stop is worth saving, not restarting.
-    public var hasKeepableAudio: Bool { lastCapturedMs >= MarginCaptureTimings.keepAudioMs }
+    public var hasKeepableAudio: Bool { durationUnknown || lastCapturedMs >= MarginCaptureTimings.keepAudioMs }
 
     private var beganAtMs: Int
     private var lastProgressAtMs: Int
     private var lastCapturedMs = 0
+    /// The last reading could not say how much the recorder holds. Unknown is treated as worth keeping.
+    private var durationUnknown = false
     private var restartAllowance = MarginCaptureTimings.automaticRestarts
 
     /// `beganAtMs` is the clock reading when the recorder accepted its start.
@@ -98,6 +104,7 @@ public struct MarginCaptureSupervisor: Equatable, Sendable {
             health = .capturing
             return .none
         }
+        durationUnknown = !reading.durationKnown
         if reading.capturedMs > lastCapturedMs {
             lastCapturedMs = reading.capturedMs
             lastProgressAtMs = nowMs
@@ -117,7 +124,7 @@ public struct MarginCaptureSupervisor: Equatable, Sendable {
             return .none
         }
         health = .notCapturing(reason)
-        guard lastCapturedMs < MarginCaptureTimings.keepAudioMs, restartAllowance > 0 else { return .none }
+        guard !hasKeepableAudio, restartAllowance > 0 else { return .none }
         restartAllowance -= 1
         return .restartCapture
     }
@@ -128,6 +135,7 @@ public struct MarginCaptureSupervisor: Equatable, Sendable {
         beganAtMs = nowMs
         lastProgressAtMs = nowMs
         lastCapturedMs = 0
+        durationUnknown = false
         health = .starting
     }
 
@@ -143,6 +151,7 @@ public struct MarginCaptureSupervisor: Equatable, Sendable {
         beganAtMs = nowMs
         lastProgressAtMs = nowMs
         lastCapturedMs = 0
+        durationUnknown = false
         health = .starting
     }
 
@@ -151,6 +160,8 @@ public struct MarginCaptureSupervisor: Equatable, Sendable {
         guard let reading else { return .save }
         let onClockMs = max(0, nowMs - beganAtMs)
         guard onClockMs >= MarginCaptureTimings.judgeAfterMs else { return .save }
+        // A recorder that stopped and whose file can't be measured may hold speech: keep it.
+        if !reading.durationKnown { return .saveCutShort }
         let capturedMs = max(lastCapturedMs, reading.capturedMs)
         if capturedMs < MarginCaptureTimings.keepAudioMs { return .discardEmpty }
         if onClockMs >= MarginCaptureTimings.cutShortAfterMs, capturedMs * 2 < onClockMs { return .saveCutShort }

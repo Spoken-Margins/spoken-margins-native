@@ -3205,8 +3205,9 @@ public final class SystemRecordingClient: RecordingClient {
     /// The most `currentTime` the current recorder has shown. A stopped `AVAudioRecorder` reads 0, but
     /// the audio it took in is still in its file.
     private var capturedHighWaterMs = 0
-    /// The stopped recorder's finalized file has been measured (reset while it records or restarts).
-    private var stoppedFileMeasured = false
+    /// The length of a stopped recorder's finalized file, measured once off the main thread. Nil while the
+    /// recorder runs. Until it lands, or if the file can't be read, the length is unknown and kept (#937).
+    private var stoppedMeasurement: StoppedFileMeasurement?
     #endif
     private let fileManager: FileManager
     private let baseDirectory: URL?
@@ -3303,7 +3304,7 @@ public final class SystemRecordingClient: RecordingClient {
         }
         recorderDelegate = delegate
         capturedHighWaterMs = 0
-        stoppedFileMeasured = false
+        stoppedMeasurement = nil
         return (recorder, url)
     }
 
@@ -3397,16 +3398,27 @@ public final class SystemRecordingClient: RecordingClient {
         let peak = recorder.peakPower(forChannel: 0)
         peakPowerDb = max(peakPowerDb ?? peak, peak)
         capturedHighWaterMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
+        var durationKnown = true
         if recorder.isRecording {
-            stoppedFileMeasured = false
-        } else if !stoppedFileMeasured, let currentURL,
-                  let fileMs = RecordedFileDuration.milliseconds(of: currentURL) {
-            // The polls can miss audio taken in just before the stop, and a stopped recorder reads 0.
-            // The finalized file says how much it really holds (audit P1 on #939).
-            stoppedFileMeasured = true
-            capturedHighWaterMs = max(capturedHighWaterMs, fileMs)
+            stoppedMeasurement = nil
+        } else {
+            // The polls can miss audio taken in just before the stop, and a stopped recorder reads 0. The
+            // finalized file says how much it really holds. It is measured once, off the main thread, and
+            // until that lands (or if the file can't be read) the length is unknown, which means keep.
+            if stoppedMeasurement == nil, let currentURL {
+                stoppedMeasurement = StoppedFileMeasurement.start(url: currentURL)
+            }
+            if case .milliseconds(let fileMs)? = stoppedMeasurement?.outcome {
+                capturedHighWaterMs = max(capturedHighWaterMs, fileMs)
+            } else {
+                durationKnown = false
+            }
         }
-        return RecordingCaptureReading(recorderRunning: recorder.isRecording, capturedMs: capturedHighWaterMs)
+        return RecordingCaptureReading(
+            recorderRunning: recorder.isRecording,
+            capturedMs: capturedHighWaterMs,
+            durationKnown: durationKnown
+        )
         #else
         return nil
         #endif
@@ -3419,8 +3431,13 @@ public final class SystemRecordingClient: RecordingClient {
         recorder?.stop()
         // The stop finalizes the file, and a restart deletes it. The poll that asked for this restart may be
         // old, so read what the file really holds first and refuse to delete audio worth keeping.
-        if let previousURL, let fileMs = RecordedFileDuration.milliseconds(of: previousURL) {
+        // This one read is on the main thread, once, and only for a recorder that is already stopped.
+        switch previousURL.map(RecordedFileDuration.measure) ?? .milliseconds(0) {
+        case .milliseconds(let fileMs):
             capturedHighWaterMs = max(capturedHighWaterMs, fileMs)
+        case .unreadable:
+            // The length is unknown, so the file may hold speech: keep it, never delete on a failed read.
+            throw SessionKitError.persistenceFailed("recording_unreadable")
         }
         if capturedHighWaterMs >= MarginCaptureTimings.keepAudioMs {
             throw SessionKitError.persistenceFailed("recording_has_audio")
@@ -3446,7 +3463,11 @@ public final class SystemRecordingClient: RecordingClient {
         if let recorder {
             fields["recorderRunning"] = String(recorder.isRecording)
             fields["capturedMs"] = String(max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded())))
-            fields["fileMeasured"] = String(stoppedFileMeasured)
+            switch stoppedMeasurement?.outcome {
+            case nil: fields["stoppedFile"] = stoppedMeasurement == nil ? "recording" : "measuring"
+            case .milliseconds(let fileMs)?: fields["stoppedFile"] = "\(fileMs)ms"
+            case .unreadable?: fields["stoppedFile"] = "unreadable"
+            }
         }
         if let currentURL, let bytes = (try? currentURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
             fields["fileBytes"] = String(bytes)
