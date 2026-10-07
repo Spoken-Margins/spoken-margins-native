@@ -90,6 +90,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -383,6 +384,36 @@ def base_policy(tree: Path, base: str, path: str):
     module.__file__ = str(tree / path)
     exec(compile(shown.stdout, f'origin/{base}:{path}', 'exec'), module.__dict__)
     return module
+
+
+def base_scripts_fallback(tree: Path, base: str, into: Path | None = None) -> Path | None:
+    """Put the base branch's copy of each scripts/*.py module the tree lacks at the end of sys.path, and
+    return the folder (None when the tree lacks none).
+
+    The workflow runs next's lane-runner.py, but its helpers (lane_slots and friends) are imported from the
+    tree's scripts/. A PR branched before a helper existed has no copy, so `from lane_slots import ...`
+    raised ModuleNotFoundError before the job could report (#904: #886, about 1,400 commits behind next, on
+    sm-lane-mac-2's wait for room). The tree's own copies still come first; lane_slots_helper covers a copy
+    that is there but older.
+    """
+    listed = subprocess.run(['git', '-C', str(tree), 'ls-tree', '--name-only', f'origin/{base}', 'scripts/'],
+                            capture_output=True, text=True)
+    if listed.returncode != 0:
+        raise RuntimeError(f'git ls-tree origin/{base} failed: {listed.stderr.strip()[:200]}')
+    missing = [name for name in (Path(line).name for line in listed.stdout.splitlines())
+               if name.endswith('.py') and name[:-3].isidentifier() and not (tree / 'scripts' / name).exists()]
+    if not missing:
+        return None
+    into = into or Path(tempfile.mkdtemp(prefix='sm-lane-base-scripts-', dir=os.environ.get('RUNNER_TEMP') or None))
+    into.mkdir(parents=True, exist_ok=True)
+    for name in missing:
+        shown = subprocess.run(['git', '-C', str(tree), 'show', f'origin/{base}:scripts/{name}'],
+                               capture_output=True, text=True)
+        if shown.returncode == 0:
+            (into / name).write_text(shown.stdout)
+    if str(into) not in sys.path:
+        sys.path.append(str(into))
+    return into
 
 
 def diff_scope(tree: Path, base: str) -> dict:
@@ -1799,6 +1830,13 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     ROOT = args.tree.resolve()
     sys.path.insert(0, str(ROOT / 'scripts'))
+    try:
+        fallback = base_scripts_fallback(ROOT, args.base)
+        if fallback:
+            print(f'Lane helpers this branch predates come from origin/{args.base}: '
+                  + ', '.join(sorted(p.stem for p in fallback.glob('*.py'))))
+    except Exception as error:  # noqa: BLE001 - without it a stale branch fails as before; a fresh one is fine
+        print(f'Lane helper fallback skipped: {error!r}')
     repo = os.environ['GH_REPO']
     github = GitHub(repo, args.pr)
     run_url = f'{os.environ.get("GITHUB_SERVER_URL", "https://github.com")}/{repo}/actions/runs/{args.run_id}'
