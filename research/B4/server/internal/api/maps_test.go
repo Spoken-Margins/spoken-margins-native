@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -262,6 +263,83 @@ func TestMapUploadRateLimitPerAddress(t *testing.T) {
 	}
 	if status, _ := h.post(t, bad, "198.51.100.2"); status != 400 {
 		t.Fatalf("another address: HTTP %d, want 400", status)
+	}
+}
+
+// postFrom sends one refused (empty-object) upload straight to the handler as
+// if it came from remoteAddr, with the given X-Forwarded-For, and returns the
+// status. Every such upload counts against the sender's hourly limit.
+func postFrom(handler http.Handler, remoteAddr, forwardedFor string) int {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/maps/transcripts", strings.NewReader(`{}`))
+	req.RemoteAddr = remoteAddr
+	if forwardedFor != "" {
+		req.Header.Set("X-Forwarded-For", forwardedFor)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+// The limit is per sender. A sender that can pick its own X-Forwarded-For
+// must not get a fresh allowance by changing it: by default the header is
+// ignored, and behind Caddy only the hop Caddy appended (the last) counts.
+func TestMapUploadLimitIgnoresForwardedForUnlessTrusted(t *testing.T) {
+	h := newMapsHarness(t)
+	handler := h.srv.Handler() // TrustForwardedFor is off
+	for _, peer := range []string{"198.51.100.9:4000", "127.0.0.1:4000"} {
+		for i := 0; i < 30; i++ {
+			if status := postFrom(handler, peer, fmt.Sprintf("10.0.0.%d", i)); status != 400 {
+				t.Fatalf("%s upload %d: HTTP %d, want 400", peer, i+1, status)
+			}
+		}
+		if status := postFrom(handler, peer, "10.0.0.200"); status != 429 {
+			t.Fatalf("%s upload 31 with a new X-Forwarded-For: HTTP %d, want 429", peer, status)
+		}
+	}
+}
+
+func TestMapUploadLimitCountsOnlyTheLastForwardedHop(t *testing.T) {
+	h := newMapsHarness(t)
+	h.srv.TrustForwardedFor = true
+	handler := h.srv.Handler()
+	const caddy = "127.0.0.1:4000"
+	// The sender controls every hop but the last one Caddy appends.
+	for i := 0; i < 30; i++ {
+		if status := postFrom(handler, caddy, fmt.Sprintf("10.9.8.%d, 203.0.113.7", i)); status != 400 {
+			t.Fatalf("upload %d: HTTP %d, want 400", i+1, status)
+		}
+	}
+	for _, header := range []string{"5.6.7.8, 203.0.113.7", "203.0.113.7", " 203.0.113.7 ", "a, b, c, 203.0.113.7"} {
+		if status := postFrom(handler, caddy, header); status != 429 {
+			t.Errorf("X-Forwarded-For %q: HTTP %d, want 429 (the same sender)", header, status)
+		}
+	}
+	if status := postFrom(handler, caddy, "10.9.8.0, 203.0.113.8"); status != 400 {
+		t.Errorf("another last hop: HTTP %d, want 400 (a different sender)", status)
+	}
+	// Without the header the sender is the peer itself, which is not that sender.
+	if status := postFrom(handler, caddy, ""); status != 400 {
+		t.Errorf("no X-Forwarded-For: HTTP %d, want 400", status)
+	}
+}
+
+// Only a loopback peer (Caddy on the same machine) is believed. Anyone who
+// reaches the server directly could otherwise name themselves.
+func TestMapUploadLimitDoesNotTrustForwardedForFromOtherPeers(t *testing.T) {
+	h := newMapsHarness(t)
+	h.srv.TrustForwardedFor = true
+	handler := h.srv.Handler()
+	const stranger = "198.51.100.9:4000"
+	for i := 0; i < 30; i++ {
+		if status := postFrom(handler, stranger, fmt.Sprintf("10.0.0.%d", i)); status != 400 {
+			t.Fatalf("upload %d: HTTP %d, want 400", i+1, status)
+		}
+	}
+	if status := postFrom(handler, stranger, "10.0.0.200"); status != 429 {
+		t.Fatalf("upload 31 with a new X-Forwarded-For: HTTP %d, want 429", status)
+	}
+	if status := postFrom(handler, "198.51.100.10:4000", "10.0.0.1"); status != 400 {
+		t.Fatalf("another peer: HTTP %d, want 400", status)
 	}
 }
 
