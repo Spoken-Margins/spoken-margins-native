@@ -136,6 +136,54 @@ final class ChatGPTSharedPageTests: XCTestCase {
         XCTAssertEqual(handoff.text, text)
     }
 
+    // MARK: Data the page format allows but the real page rarely sends
+    //
+    // The page's data is a table of positions that the parser follows. The chat lives on chatgpt.com, but
+    // the table's shape is the site's to change: a loop must not hang or crash the app, and a value of
+    // another kind must not leak into the response.
+
+    /// A table whose first object names itself: `[{"_1": 0}, "a"]`. Following it forever would overflow
+    /// the stack and take the whole app down, so it is read as an object without that entry, which holds
+    /// no response.
+    func testATableThatPointsBackAtItselfEndsInAnErrorNotACrash() {
+        let page = pageEnqueuing(flat: "[{\"_1\":0},\"a\"]\n")
+        XCTAssertThrowsError(try ChatGPTSharedPage.handoff(fromPageSource: page, url: shareURL)) {
+            XCTAssertEqual($0 as? ChatGPTSharedPage.ParseError, .noResponse)
+        }
+    }
+
+    /// The same loop inside a real page: the response is still imported, minus the entry that looped.
+    func testAReferenceBackToTheRootIsDroppedAndTheResponseStillImports() throws {
+        let page = sharedPage(
+            title: "Looping Page",
+            messages: [message(id: "m1", role: "assistant", time: 1_791_227_954.5, text: "The answer is forty-two.")],
+            extras: ["parent": BackReferenceToRoot()]
+        )
+        let handoff = try ChatGPTSharedPage.handoff(fromPageSource: page, url: shareURL)
+        XCTAssertEqual(handoff.text, "The answer is forty-two.")
+        XCTAssertEqual(handoff.source.title, "Looping Page")
+    }
+
+    /// A typed value (the page marks a date or a still-loading promise as `["P", position]`) is not part of
+    /// the response. Reading it as a list would import whatever it points to, here a message that is not in
+    /// the shared chat.
+    func testATypedValueIsNotReadAsPartOfTheResponse() throws {
+        let notShared: [String: Any] = [
+            "id": "pending",
+            "author": ["role": "assistant", "name": NSNull()],
+            "create_time": 5.0,
+            "content": ["content_type": "text", "parts": ["A promise that never resolved, not part of the shared chat."]],
+            "metadata": [String: Any]()
+        ]
+        let page = sharedPage(
+            title: "Typed Value",
+            messages: [message(id: "m1", role: "assistant", time: 1_791_227_954.5, text: "The answer is forty-two.")],
+            extras: ["streaming": DeferredValue(value: notShared)]
+        )
+        let handoff = try ChatGPTSharedPage.handoff(fromPageSource: page, url: shareURL)
+        XCTAssertEqual(handoff.text, "The answer is forty-two.")
+    }
+
     // MARK: Building a page in the real encoding
 
     private struct Turn {
@@ -150,7 +198,20 @@ final class ChatGPTSharedPageTests: XCTestCase {
         Turn(id: id, role: role, time: time, text: text, hidden: hidden)
     }
 
-    private func sharedPage(title: String?, messages: [Turn]) -> String {
+    /// A reference from inside the data back to the root object, which makes a loop.
+    private struct BackReferenceToRoot {}
+
+    /// A value the page marks as deferred: `["P", position]`, the position being the payload's.
+    private struct DeferredValue { var value: Any }
+
+    /// A page whose only data chunk is `flat`, written as the string literal the page would enqueue.
+    private func pageEnqueuing(flat: String) -> String {
+        let literal = String(data: try! JSONSerialization.data(withJSONObject: [flat], options: []), encoding: .utf8)!
+            .dropFirst().dropLast()
+        return "<html><head><title>ChatGPT - T</title></head><body><script>window.__reactRouterContext.streamController.enqueue(\(literal));</script></body></html>"
+    }
+
+    private func sharedPage(title: String?, messages: [Turn], extras: [String: Any] = [:]) -> String {
         var post: [String: Any] = [
             "id": "t_0123456789abcdef0123456789abcdef",
             "posted_at": 1_791_228_076.777_635,
@@ -171,6 +232,7 @@ final class ChatGPTSharedPageTests: XCTestCase {
             ] as [String: Any]]
         ]
         if let title { post["text"] = title }
+        for (key, value) in extras { post[key] = value }
         let root: [String: Any] = [
             "loaderData": [
                 "root": ["featureFlags": ["enqueue_strategy": "kafka"]],
@@ -207,6 +269,12 @@ final class ChatGPTSharedPageTests: XCTestCase {
 
         private mutating func add(_ value: Any) -> Int {
             if value is NSNull { return -5 }
+            if value is BackReferenceToRoot { return 0 }
+            if let deferred = value as? DeferredValue {
+                let payload = add(deferred.value)
+                table.append(["P", payload])
+                return table.count - 1
+            }
             if let string = value as? String {
                 if let existing = strings[string] { return existing }
                 table.append(string)
