@@ -23,15 +23,13 @@ final class PodcastEditionDigestTests: XCTestCase {
             _ = try physicalFootprint()
         }
 
-        // One outer pool holds any leaked autoreleased reads across all three calls. Measuring inside it
-        // catches retention even if XCTest happens to drain its own pool immediately after this block.
-        try autoreleasepool {
-            let before = try physicalFootprint()
-            for _ in 0..<3 {
-                XCTAssertEqual(try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: episode), Self.largeFileDigest)
-            }
-            try assertBoundedGrowth(since: before, workload: "three synchronous edition digests")
+        // Don't drain a pool between the direct calls and the resolutions: a placement pass can stack
+        // both workloads without suspending. Bound each phase and the complete six-call sequence.
+        let before = try physicalFootprint()
+        for _ in 0..<3 {
+            XCTAssertEqual(try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: episode), Self.largeFileDigest)
         }
+        try assertBoundedGrowth(since: before, workload: "three synchronous edition digests")
 
         let queries = [
             PodcastPortableAnchorQuery(packageScopedId: "placed", senderMediaTimeMs: 120_000, evidence: []),
@@ -54,6 +52,7 @@ final class PodcastEditionDigestTests: XCTestCase {
             XCTAssertNil(resolutions["unplaced"]?.localMediaTimeMs)
         }
         try assertBoundedGrowth(since: beforeResolution, workload: "three exact-edition resolutions")
+        try assertBoundedGrowth(since: before, workload: "three digests followed by three exact-edition resolutions")
     }
 
     func testDigestIncludesPartialFinalChunkAndHandlesEmptyFile() throws {
