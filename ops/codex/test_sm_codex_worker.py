@@ -368,6 +368,32 @@ class IssueTests(unittest.TestCase):
     def test_choose_none(self):
         self.assertEqual(w.choose_issue([issue(1, labels=('ready', 'in-progress'))], lambda n: [], NOW)[0], None)
 
+    def test_awaiting_owner_validation_is_skipped(self):
+        ok, why = w.eligible(issue(1, labels=('ready', 'status: needs-human-validation')), [], NOW)
+        self.assertFalse(ok)
+        self.assertIn('needs-human-validation', why)
+
+
+class FocusLinkTests(unittest.TestCase):
+    def test_branch_title_and_closing_words_link_issues(self):
+        self.assertEqual(w.linked_issues({'headRefName': 'ws/854-build30-fix-9okbzn', 'title': 'Keep narration'}), {854})
+        self.assertEqual(w.linked_issues({'headRefName': 'codex/868-bound-edition-digest'}), {868})
+        self.assertEqual(w.linked_issues({'headRefName': 'claude/following-score-lyp08z',
+                                          'title': 'Following: order new items (#484)'}), {484})
+        self.assertEqual(w.linked_issues({'headRefName': 'ws/c1-322-upgrade', 'body': 'Fixes #322. See #100.'}), {322})
+        self.assertEqual(w.linked_issues({'headRefName': 'x', 'body': 'part of #538; closes #12'}), {538, 12})
+
+    def test_unrelated_mentions_do_not_link(self):
+        self.assertEqual(w.linked_issues({'headRefName': 'ws/c1-344-control', 'title': 'Control for #344',
+                                          'body': 'Like #100 and PR #200'}), set())
+
+    def test_in_focus(self):
+        pr = {'headRefName': 'ws/858-one-copy-per-margin'}
+        self.assertTrue(w.in_focus(pr, None))
+        self.assertTrue(w.in_focus(pr, {858, 1}))
+        self.assertFalse(w.in_focus(pr, {1}))
+        self.assertFalse(w.in_focus(pr, set()))
+
 
 # ---------------------------------------------------------------------------
 # Fakes for the tick and the child
@@ -1259,14 +1285,18 @@ class SandboxTests(unittest.TestCase):
 
 
 class TickTests(unittest.TestCase):
+    focus = ''  # the tick's own rules, without a milestone focus; FocusTickTests turns it on
+
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix='cw-'))
+        self._focus, w.FOCUS_MILESTONE = w.FOCUS_MILESTONE, self.focus
 
     def tearDown(self):
+        w.FOCUS_MILESTONE = self._focus
         shutil.rmtree(self.home, ignore_errors=True)
 
     def ops(self, workers=2, used=10, free=100 * 2**30, alive=lambda pid: True, issues=None,
-            body=None, resets_at=None, prs=None):
+            body=None, resets_at=None, prs=None, milestone=None):
         body = body if body is not None else dial(codex_group(workers) if workers is not None else '')
         listing = issues if issues is not None else [issue(42, title='Fix the thing')]
 
@@ -1278,6 +1308,11 @@ class TickTests(unittest.TestCase):
                 return w.Result(0, json.dumps(next(p for p in prs if p['number'] == int(cmd[3]))))
             if cmd[:3] == ['gh', 'issue', 'view'] and cmd[3] == str(w.DIAL_ISSUE):
                 return w.Result(0, json.dumps({'body': body}))
+            if cmd[:3] == ['gh', 'issue', 'list'] and '--milestone' in cmd:
+                self.assertEqual(cmd[cmd.index('--milestone') + 1], w.FOCUS_MILESTONE)
+                if milestone is None:
+                    return w.Result(1, '', 'milestone not found')
+                return w.Result(0, json.dumps([{'number': n} for n in milestone]))
             if cmd[:3] == ['gh', 'issue', 'list']:
                 return w.Result(0, json.dumps(listing))
             if cmd[:3] == ['gh', 'issue', 'view']:
@@ -1480,6 +1515,40 @@ class TickTests(unittest.TestCase):
         out = buf.getvalue()
         for word in ('Dial:', 'Codex usage:', 'Slots:', 'Chosen issue: #42'):
             self.assertIn(word, out)
+
+
+
+class FocusTickTests(unittest.TestCase):
+    """Build 30 freeze: only milestone issues, and only PRs linked to one."""
+    focus = 'Build 30'
+    setUp, tearDown, ops, spawner = TickTests.setUp, TickTests.tearDown, TickTests.ops, TickTests.spawner
+
+    def test_takes_only_milestone_issues(self):
+        issues = [issue(42, created='2026-09-01T00:00:00Z'), issue(43, created='2026-09-02T00:00:00Z')]
+        spawn = self.spawner()
+        d = w.tick(self.ops(issues=issues, milestone=[43, 99]), spawn=spawn)
+        self.assertEqual(spawn.started, [(1, 43)])
+        self.assertEqual(d['issue'], 43)
+
+    def test_skips_frozen_pr_and_finishes_milestone_pr(self):
+        frozen = pull(labels=['needs-mac'])  # ws/73-playback, not in the milestone
+        focused = dict(frozen, number=74, headRefName='ws/866-build30-fix', createdAt='2026-10-05T00:00:00Z')
+        spawn = self.spawner()
+        d = w.tick(self.ops(prs=[frozen, focused], milestone=[866]), spawn=spawn)
+        self.assertEqual(d['pr'], 74)
+        self.assertEqual(spawn.started, [(1, 74)])
+
+    def test_nothing_in_focus_idles(self):
+        spawn = self.spawner()
+        d = w.tick(self.ops(prs=[pull(labels=['needs-mac'])], milestone=[866]), spawn=spawn)
+        self.assertEqual(spawn.started, [])
+        self.assertIn('Build 30', d['why'])
+
+    def test_unreadable_milestone_holds(self):
+        spawn = self.spawner()
+        d = w.tick(self.ops(milestone=None), spawn=spawn)
+        self.assertEqual(spawn.started, [])
+        self.assertIn('listing jobs failed', d['why'])
 
 
 if __name__ == '__main__':

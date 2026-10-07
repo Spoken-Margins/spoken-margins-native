@@ -27,6 +27,10 @@ Holds (every slip fails toward spending less):
 - The usage read fails, or no stop line is ticked.
 - Less than 30 GiB free disk.
 
+Focus (Build 30 freeze, owner 2026-10-06): while FOCUS_MILESTONE is set, the worker takes only
+issues in that milestone and finishes only PRs linked to one (by branch, title or body). If the
+milestone can't be read, it holds. Set SM_CODEX_FOCUS_MILESTONE='' to lift the focus after the tag.
+
 Usage:
   /usr/bin/python3 ops/codex/sm_codex_worker.py [--dry-run]
   /usr/bin/python3 ops/codex/sm_codex_worker.py --slot N --issue M     (the child; launched by a tick)
@@ -83,7 +87,10 @@ CODEX_STOPS = (70, 80, 90, 97)
 CODEX_FINISHES = {'Fri noon': (4, 12), 'Sat 7 AM': (5, 7), 'Codex reset': None}
 CLAIM_WINDOW = dt.timedelta(hours=24)
 
-EXCLUDED_LABELS = {'in-progress', 'where:mac', 'regression', 'blocked'}
+EXCLUDED_LABELS = {'in-progress', 'where:mac', 'regression', 'blocked',
+                   'status: needs-human-validation'}  # a fix already merged; it waits on the owner's phone
+# Only this milestone's issues and their PRs while it is set (Build 30 freeze); '' lifts it.
+FOCUS_MILESTONE = os.environ.get('SM_CODEX_FOCUS_MILESTONE', 'Build 30')
 CLAIM_MARK = 'Claimed by project thread "'
 # Issues whose body points at SessionKit or host tests go first: Codex can verify those itself.
 HOST_HINT_RE = re.compile(
@@ -367,6 +374,26 @@ def label_skip(issue: dict, held: set = frozenset()) -> Optional[str]:
     if issue.get('number') in held:
         return 'held by a live Codex slot'
     return None
+
+
+BRANCH_ISSUE_RE = re.compile(r'^(?:ws|codex|claude)/(\d+)-')
+TITLE_ISSUE_RE = re.compile(r'\(#(\d+)\)')
+BODY_ISSUE_RE = re.compile(r'\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|part of)\s+#(\d+)', re.I)
+
+
+def linked_issues(pr: dict) -> set:
+    """Issue numbers a PR works on: its `ws/<n>-` style branch, `(#n)` in the title, closing words in the body."""
+    found = set()
+    branch = BRANCH_ISSUE_RE.match(pr.get('headRefName') or '')
+    if branch:
+        found.add(int(branch.group(1)))
+    found.update(int(n) for n in TITLE_ISSUE_RE.findall(pr.get('title') or ''))
+    found.update(int(n) for n in BODY_ISSUE_RE.findall(pr.get('body') or ''))
+    return found
+
+
+def in_focus(pr: dict, focus: Optional[set]) -> bool:
+    return focus is None or bool(linked_issues(pr) & focus)
 
 
 def recent_claim(comments: list, now: dt.datetime) -> bool:
@@ -799,7 +826,15 @@ class Ops:
 
     def open_prs(self) -> list:
         return self.gh_json(['pr', 'list', '-R', REPO, '--state', 'open', '--base', BASE_BRANCH,
-                             '--limit', '200', '--json', 'number,isDraft,createdAt'])
+                             '--limit', '200', '--json', 'number,isDraft,createdAt,title,headRefName,body'])
+
+    def focus_issues(self) -> Optional[set]:
+        """Open issue numbers in FOCUS_MILESTONE, or None when no focus is set. Raises if unreadable."""
+        if not FOCUS_MILESTONE:
+            return None
+        return {i['number'] for i in self.gh_json(['issue', 'list', '-R', REPO, '--state', 'open',
+                                                   '--milestone', FOCUS_MILESTONE, '--limit', '200',
+                                                   '--json', 'number'])}
 
     def pull(self, number: int) -> dict:
         return self.gh_json(['pr', 'view', str(number), '-R', REPO, '--json',
@@ -904,11 +939,14 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
     if decision['why'] is None or dry_run:
         try:
             held_prs = {int(i['pr']) for i in live.values() if i.get('pr')}
-            pr, skipped = choose_finish(ops.open_prs(), ops.pull, now, held_prs,
+            focus = ops.focus_issues()
+            prs = [p for p in ops.open_prs() if in_focus(p, focus)]
+            pr, skipped = choose_finish(prs, ops.pull, now, held_prs,
                                        on_limit=None if dry_run else lambda p: note_finish_limit(ops, p, now))
             held = {int(i.get('issue')) for i in live.values() if i.get('issue')}
             if pr is None:
-                issue, issue_skipped = choose_issue(ops.ready_issues(), lambda n: ops.issue(n).get('comments') or [],
+                ready = [i for i in ops.ready_issues() if focus is None or i['number'] in focus]
+                issue, issue_skipped = choose_issue(ready, lambda n: ops.issue(n).get('comments') or [],
                                                     now, held)
                 skipped += issue_skipped
             decision['pr'] = pr['number'] if pr else None
@@ -922,7 +960,8 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
             if decision['why'] is None:
                 decision['why'] = f'listing jobs failed ({exc})'
         if decision['why'] is None and issue is None and pr is None:
-            decision['why'] = 'no eligible ready issue'
+            decision['why'] = ('no eligible ready issue' if not FOCUS_MILESTONE
+                               else f'no eligible {FOCUS_MILESTONE} issue or PR')
 
     if decision['why']:
         say(f"{tag}idle: {decision['why']}")
