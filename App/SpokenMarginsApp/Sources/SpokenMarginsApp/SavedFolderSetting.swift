@@ -21,6 +21,36 @@ struct SavedFolderSetting: Sendable {
         defaults.set(name, forKey: nameKey)
     }
 
+    /// Bookmarks a folder the listener picked and saves it under this setting with its name.
+    func save(folder url: URL, in defaults: UserDefaults = .standard) throws {
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+        let bookmark = try url.bookmarkData(options: Self.creationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
+        save(bookmark: bookmark, name: url.lastPathComponent, in: defaults)
+    }
+
+    /// The saved folder, or nil when none is set. A stale bookmark is refreshed in place.
+    func resolvedURL(in defaults: UserDefaults = .standard) throws -> URL? {
+        guard let data = bookmark(in: defaults) else { return nil }
+        var isStale = false
+        let url = try URL(resolvingBookmarkData: data, options: Self.resolutionOptions, relativeTo: nil, bookmarkDataIsStale: &isStale)
+        if isStale {
+            let didAccess = url.startAccessingSecurityScopedResource()
+            defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+            let refreshed = try url.bookmarkData(options: Self.creationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
+            defaults.set(refreshed, forKey: bookmarkKey)
+        }
+        return url
+    }
+
+    #if os(macOS)
+    private static var creationOptions: URL.BookmarkCreationOptions { [.withSecurityScope] }
+    private static var resolutionOptions: URL.BookmarkResolutionOptions { [.withSecurityScope] }
+    #else
+    private static var creationOptions: URL.BookmarkCreationOptions { [] }
+    private static var resolutionOptions: URL.BookmarkResolutionOptions { [] }
+    #endif
+
     /// Before #930 the notes feature read the export bookmark. On the first launch with separate
     /// settings, the notes folder starts as that same folder, so notes keep landing where they did;
     /// only later picks diverge. Returns true when it copied.

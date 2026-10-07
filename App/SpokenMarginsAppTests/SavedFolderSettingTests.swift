@@ -63,6 +63,25 @@ final class SavedFolderSettingTests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: "marginNotesFolderName"), "Vault")
     }
 
+    func testSavedFolderResolvesBackToTheSameFolder() throws {
+        let suite = "saved-folder-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Vault-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: folder)
+        }
+
+        XCTAssertNil(try SavedFolderSetting.marginNotes.resolvedURL(in: defaults))
+        try SavedFolderSetting.marginNotes.save(folder: folder, in: defaults)
+
+        XCTAssertEqual(SavedFolderSetting.marginNotes.name(in: defaults), folder.lastPathComponent)
+        let resolved = try XCTUnwrap(SavedFolderSetting.marginNotes.resolvedURL(in: defaults))
+        XCTAssertEqual(resolved.lastPathComponent, folder.lastPathComponent)
+        XCTAssertFalse(SavedFolderSetting.sessionExport.hasFolder(in: defaults))
+    }
+
     func testFirstLaunchWithoutAnExportFolderSetsNoNotesFolder() throws {
         let suite = "saved-folder-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

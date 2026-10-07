@@ -6799,7 +6799,7 @@ final class Gate1AppModel: ObservableObject {
     /// or the notes feature copies every Margin into the folder picked for an export (#930).
     func configureBatchExportFolder(url: URL) {
         do {
-            try saveFolder(url, to: .sessionExport)
+            try SavedFolderSetting.sessionExport.save(folder: url)
             batchExportFolderName = url.lastPathComponent
             batchExportResult = nil
             reportSuccess("Export folder set to \(url.lastPathComponent).")
@@ -6812,28 +6812,13 @@ final class Gate1AppModel: ObservableObject {
     /// it as a fresh folder, so existing Margins are written there, as the setting says.
     func configureMarginNotesFolder(url: URL) {
         do {
-            try saveFolder(url, to: .marginNotes)
+            try SavedFolderSetting.marginNotes.save(folder: url)
             UserDefaults.standard.set(UUID().uuidString, forKey: "marginOutputDestinationID")
             marginNotesFolderName = url.lastPathComponent
             marginOutputStatus = MarginOutputStatus("Notes folder set to \(url.lastPathComponent).")
         } catch {
             reportFailure(error, context: "Notes folder setup failed")
         }
-    }
-
-    private func saveFolder(_ url: URL, to setting: SavedFolderSetting) throws {
-        let didAccess = url.startAccessingSecurityScopedResource()
-        defer {
-            if didAccess {
-                url.stopAccessingSecurityScopedResource()
-            }
-        }
-        let bookmark = try url.bookmarkData(
-            options: quickAccessBookmarkCreationOptions,
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
-        )
-        setting.save(bookmark: bookmark, name: url.lastPathComponent)
     }
 
     func reportBatchExportFolderFailure(_ error: Error) {
@@ -14105,30 +14090,8 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func resolvedFolderURL(_ setting: SavedFolderSetting) -> URL? {
-        guard let data = setting.bookmark() else { return nil }
         do {
-            var isStale = false
-            let url = try URL(
-                resolvingBookmarkData: data,
-                options: quickAccessBookmarkResolutionOptions,
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
-            if isStale {
-                let didAccess = url.startAccessingSecurityScopedResource()
-                defer {
-                    if didAccess {
-                        url.stopAccessingSecurityScopedResource()
-                    }
-                }
-                let refreshed = try url.bookmarkData(
-                    options: quickAccessBookmarkCreationOptions,
-                    includingResourceValuesForKeys: nil,
-                    relativeTo: nil
-                )
-                UserDefaults.standard.set(refreshed, forKey: setting.bookmarkKey)
-            }
-            return url
+            return try setting.resolvedURL()
         } catch {
             diagnostics["\(setting.bookmarkKey)Error"] = String(describing: error)
             return nil
