@@ -59,6 +59,8 @@ public enum SharedMarginPlacementStatus: Equatable, Sendable {
     /// A finished pass left this Margin unplaced, and the sender gave it nothing to find its spot by, only the
     /// clock time on their copy. The pass can place such a Margin only between two neighbours it did verify, and
     /// didn't. "Unresolved" would read as a match that failed, when the packet never gave it anything to match.
+    /// (A podcast layer is `.contextOnly` from the moment it is imported, so its status doesn't say a pass ran;
+    /// `ImportedCommentaryLayer.hasCompletedPlacementPass` does.)
     case noPositionSent
     /// A finished pass's result: describe the resolution itself.
     case settled
@@ -68,12 +70,16 @@ public enum SharedMarginPlacementStatus: Equatable, Sendable {
     ///   unplaced once no pass is running reads as sent without a position: while a pass is scheduled or running,
     ///   it may yet place the Margin between its verified neighbours. Defaults to true so a caller that doesn't
     ///   know keeps the pass-based wording.
+    /// - Parameter placementPassCompleted: whether a pass has finished for this Margin's layer on the listener's
+    ///   file (`ImportedCommentaryLayer.hasCompletedPlacementPass`). Without one, an unplaced Margin with nothing
+    ///   to match on is "not placed yet", not "sent without a position": a pass may still come and place it.
     public init(
         resolution: ImportedAnchorResolution,
         marginId: String,
         layerStatus: ImportedSourceResolutionStatus,
         pass: SharedMarginPlacementPasses.Pass?,
-        hasPositionEvidence: Bool = true
+        hasPositionEvidence: Bool = true,
+        placementPassCompleted: Bool = true
     ) {
         // A pending layer's Margins were reset for a new edition, so their stored values aren't results.
         let hasResult = layerStatus != .pending && Self.isPlaced(resolution)
@@ -84,7 +90,14 @@ public enum SharedMarginPlacementStatus: Equatable, Sendable {
         } else if layerStatus == .pending {
             self = .notPlacedYet
         } else if !hasPositionEvidence, !resolution.isAmbiguous, resolution.evidenceClass != .ambiguous {
-            self = .noPositionSent
+            if placementPassCompleted {
+                self = .noPositionSent
+            } else if layerStatus == .wrongSource {
+                // No pass will ever run for a layer that isn't this item's.
+                self = .settled
+            } else {
+                self = .notPlacedYet
+            }
         } else {
             self = .settled
         }
@@ -146,6 +159,13 @@ public enum SharedMarginPlacementStatus: Equatable, Sendable {
             ? String(format: "%d:%02d:%02d", seconds / 3_600, seconds / 60 % 60, seconds % 60)
             : String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
+}
+
+extension ImportedCommentaryLayer {
+    /// Whether a placement pass has finished for this layer on the listener's file. A finished pass saves the
+    /// file's digest with the layer, and a new edition clears it. The layer's status doesn't say: a podcast layer
+    /// is `.contextOnly` from the moment it is imported, before the episode has even downloaded.
+    public var hasCompletedPlacementPass: Bool { resolvedRecipientEditionSHA256 != nil }
 }
 
 extension PortableAnchorEvidence {
