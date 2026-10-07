@@ -1074,6 +1074,7 @@ final class Gate1AppModel: ObservableObject {
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
     private var completedStreamingTurnIds: Set<String> = []
     @Published private var pendingSourceContextInterjectionIds: Set<String> = []
+    private let sourceWindowJobQueue = SourceWindowJobQueue()
     private var pendingFullSourceTranscriptionItemIds: Set<String> = []
     private var importedPodcastResolutionGenerations: [String: Int] = [:]
     private var importedPodcastResolutionURLs: [String: URL] = [:]
@@ -12394,8 +12395,28 @@ final class Gate1AppModel: ObservableObject {
             snapshot = try engine.sourceWindowContextPending(interjectionId: interjection.id, sessionId: interjection.sessionId)
             refreshSelectedItem()
         }
-        Task { [weak self, interjectionId = interjection.id, itemId = item.id, durationMs = item.media?.durationMs, windowBeforeMs = sourceWindowContextBeforeMs, windowAfterMs = sourceWindowContextAfterMs] in
+        // #871: at most two of these run at once, nearest the playhead first. A finished download used to start
+        // one per Margin, all together.
+        let identity = Self.marginIdentity(interjection)
+        sourceWindowJobQueue.enqueue(id: identity, anchorMediaTimeMs: anchorMediaTimeMs, playhead: { [weak self, itemId = item.id] in
+            // Asked each time the queue picks a job, so a seek while jobs wait is followed. A retry the listener
+            // asked for goes first; otherwise the order follows the playhead of the episode that's playing.
+            if reportsResult { return anchorMediaTimeMs }
+            guard let self, self.snapshot.itemId == itemId else { return nil }
+            return self.snapshot.currentMediaTimeMs
+        }) { [weak self, interjectionId = interjection.id, itemId = item.id, durationMs = item.media?.durationMs, windowBeforeMs = sourceWindowContextBeforeMs, windowAfterMs = sourceWindowContextAfterMs] in
             guard let self else { return }
+            // Every way out clears the mark, so a failure inside `run` can't leave the Margin stuck as pending.
+            defer { self.pendingSourceContextInterjectionIds.remove(identity) }
+            let request = PostResumeAudioSampleRequest(
+                interjectionId: interjectionId,
+                sessionId: interjection.sessionId,
+                itemId: itemId,
+                anchorMediaTimeMs: anchorMediaTimeMs,
+                targetDurationMs: PodcastAnchorEvidenceGenerator.flankDurationMs
+            )
+            // It may have waited in line a while. A Margin deleted meanwhile (kept, with status "deleted") has nothing to recover.
+            guard let stored = self.storedInterjection(request: request), stored.status != "deleted" else { return }
             do {
                 let analysis = try await self.sourceTranscriptionClient.transcribeSourceAudioWindowWithEvidence(
                     url: transcriptionURL,
@@ -12405,89 +12426,47 @@ final class Gate1AppModel: ObservableObject {
                     windowBeforeMs: windowBeforeMs,
                     windowAfterMs: windowAfterMs
                 )
-                var referenceEvidence: [CapturedPodcastAnchorEvidence] = []
-                var referenceEvidenceFailure: String?
-                if let localAudioURL = analysis.localAudioURL {
-                    do {
-                        let request = PostResumeAudioSampleRequest(
-                            interjectionId: interjectionId,
-                            sessionId: interjection.sessionId,
-                            itemId: itemId,
-                            anchorMediaTimeMs: anchorMediaTimeMs,
-                            targetDurationMs: PodcastAnchorEvidenceGenerator.flankDurationMs
+                let reference = await SourceWindowReferenceEvidence.generate(
+                    from: analysis,
+                    anchorMediaTimeMs: anchorMediaTimeMs,
+                    outputDirectory: Result { try self.podcastAnchorEvidenceDirectory(for: request) },
+                    idPrefix: self.podcastAnchorEvidenceID(request: request, suffix: "source-window")
+                )
+                self.run { engine in
+                    self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjectionId, sessionId: interjection.sessionId, timeline: analysis.timeline)
+                    if !reference.evidence.isEmpty {
+                        try self.persistPodcastAnchorEvidence(
+                            request: request,
+                            evidence: reference.evidence,
+                            sourceExactEditionSHA256: nil
                         )
-                        let outputDirectory = try self.podcastAnchorEvidenceDirectory(for: request)
-                        let localAnchorMs = max(0, anchorMediaTimeMs - analysis.sourceStartMs)
-                        let generated = try await PodcastAnchorEvidenceGenerator.generate(
-                            sourceURL: localAudioURL,
-                            anchorMediaTimeMs: localAnchorMs,
-                            outputDirectory: outputDirectory,
-                            idPrefix: self.podcastAnchorEvidenceID(request: request, suffix: "source-window")
-                        )
-                        referenceEvidence = generated.map { generated in
-                            CapturedPodcastAnchorEvidence(
-                                id: generated.id,
-                                localPath: generated.fileURL.path,
-                                durationMs: generated.durationMs,
-                                anchorOffsetMs: generated.anchorOffsetMs,
-                                provenance: analysis.provenance == .downloadedSourceReference
-                                    ? .downloadedSourceReference
-                                    : .sourceWindowReference,
-                                windowRole: generated.id.hasSuffix("-pre")
-                                    ? .sourceWindowBefore
-                                    : .sourceWindowAfter
-                            )
-                        }
-                    } catch {
-                        referenceEvidenceFailure = error.localizedDescription
                     }
-                    try? FileManager.default.removeItem(at: localAudioURL.deletingLastPathComponent())
-                }
-                await MainActor.run {
-                    self.run { engine in
-                        self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjectionId, sessionId: interjection.sessionId, timeline: analysis.timeline)
-                        if !referenceEvidence.isEmpty {
-                            try self.persistPodcastAnchorEvidence(
-                                request: PostResumeAudioSampleRequest(
-                                    interjectionId: interjectionId,
-                                    sessionId: interjection.sessionId,
-                                    itemId: itemId,
-                                    anchorMediaTimeMs: anchorMediaTimeMs,
-                                    targetDurationMs: PodcastAnchorEvidenceGenerator.flankDurationMs
-                                ),
-                                evidence: referenceEvidence,
-                                sourceExactEditionSHA256: nil
-                            )
-                        }
-                        self.refreshSelectedItem()
-                        self.refreshMarginRows()
-                        self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "complete:speech_window"
-                        self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", sessionId: interjection.sessionId, interjectionId: interjectionId)] = provenance
-                        self.diagnostics[Self.marginDiagnosticKey("sourceWindowSignature", sessionId: interjection.sessionId, interjectionId: interjectionId)] = referenceEvidence.isEmpty
-                            ? "unavailable:\(referenceEvidenceFailure ?? "temporary_audio_unavailable")"
-                            : "complete:\(referenceEvidence.count)"
-                        self.pendingSourceContextInterjectionIds.remove(Self.marginIdentity(interjection))
-                        if reportsResult { self.reportConfirmation("Source context recovered.") }
-                    }
+                    self.refreshSelectedItem()
+                    self.refreshMarginRows()
+                    self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "complete:speech_window"
+                    self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", sessionId: interjection.sessionId, interjectionId: interjectionId)] = provenance
+                    self.diagnostics[Self.marginDiagnosticKey("sourceWindowSignature", sessionId: interjection.sessionId, interjectionId: interjectionId)] = reference.evidence.isEmpty
+                        ? "unavailable:\(reference.failure ?? "temporary_audio_unavailable")"
+                        : "complete:\(reference.evidence.count)"
+                    self.pendingSourceContextInterjectionIds.remove(identity)
+                    if reportsResult { self.reportConfirmation("Source context recovered.") }
                 }
             } catch {
-                await MainActor.run {
-                    self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "failed:\(error.localizedDescription)"
-                    self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "unavailable"
-                    self.pendingSourceContextInterjectionIds.remove(Self.marginIdentity(interjection))
-                    self.run { engine in
-                        self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjectionId, sessionId: interjection.sessionId)
-                        self.refreshSelectedItem()
-                        self.refreshMarginRows()
-                    }
-                    if reportsResult {
-                        self.reportWarning("Source context could not be recovered: \(error.localizedDescription)")
-                    }
-                    // Source-window context is redundant, best-effort evidence.
-                    // The Margin and its timestamp are already durable, and the
-                    // Timeline exposes the retry state. Do not turn this expected
-                    // degradation into a global error banner after every Margin.
+                self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "failed:\(error.localizedDescription)"
+                self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "unavailable"
+                self.pendingSourceContextInterjectionIds.remove(identity)
+                self.run { engine in
+                    self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjectionId, sessionId: interjection.sessionId)
+                    self.refreshSelectedItem()
+                    self.refreshMarginRows()
                 }
+                if reportsResult {
+                    self.reportWarning("Source context could not be recovered: \(error.localizedDescription)")
+                }
+                // Source-window context is redundant, best-effort evidence.
+                // The Margin and its timestamp are already durable, and the
+                // Timeline exposes the retry state. Do not turn this expected
+                // degradation into a global error banner after every Margin.
             }
         }
         return true
@@ -12500,6 +12479,7 @@ final class Gate1AppModel: ObservableObject {
             let interjections = (try? store.loadInterjections(sessionId: session.id)) ?? []
             for interjection in interjections where interjection.targetType == .item
                 && interjection.anchor.mediaTimeMs != nil
+                && interjection.status != "deleted"
                 && interjection.anchorContextStatus != .ready
                 && !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) {
                 scheduleSourceWindowContextIfNeeded(for: interjection)
