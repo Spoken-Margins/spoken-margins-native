@@ -73,7 +73,8 @@ public struct MarginCaptureSupervisor: Equatable, Sendable {
 
     public private(set) var health: Health = .starting
     public private(set) var restarts = 0
-    /// Audio the current recorder has taken in, as of the last poll.
+    /// The most audio the current recorder has reported. A recorder that stops reads 0 afterwards, but
+    /// what it took in before the stop is still in its file, so this never goes down.
     public var capturedMs: Int { lastCapturedMs }
     /// The current recorder holds enough audio that a stop is worth saving, not restarting.
     public var hasKeepableAudio: Bool { lastCapturedMs >= MarginCaptureTimings.keepAudioMs }
@@ -115,7 +116,7 @@ public struct MarginCaptureSupervisor: Equatable, Sendable {
             return .none
         }
         health = .notCapturing(reason)
-        guard reading.capturedMs < MarginCaptureTimings.keepAudioMs, restartAllowance > 0 else { return .none }
+        guard lastCapturedMs < MarginCaptureTimings.keepAudioMs, restartAllowance > 0 else { return .none }
         restartAllowance -= 1
         return .restartCapture
     }
@@ -149,8 +150,9 @@ public struct MarginCaptureSupervisor: Equatable, Sendable {
         guard let reading else { return .save }
         let onClockMs = max(0, nowMs - beganAtMs)
         guard onClockMs >= MarginCaptureTimings.judgeAfterMs else { return .save }
-        if reading.capturedMs < MarginCaptureTimings.emptyBelowMs { return .discardEmpty }
-        if onClockMs >= MarginCaptureTimings.cutShortAfterMs, reading.capturedMs * 2 < onClockMs { return .saveCutShort }
+        let capturedMs = max(lastCapturedMs, reading.capturedMs)
+        if capturedMs < MarginCaptureTimings.emptyBelowMs { return .discardEmpty }
+        if onClockMs >= MarginCaptureTimings.cutShortAfterMs, capturedMs * 2 < onClockMs { return .saveCutShort }
         return .save
     }
 }

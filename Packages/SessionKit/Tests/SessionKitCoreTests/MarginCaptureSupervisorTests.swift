@@ -121,6 +121,18 @@ final class MarginCaptureSupervisorTests: XCTestCase {
         XCTAssertEqual(supervisor.health, .notCapturing(.recorderStopped))
     }
 
+    func testAStoppedRecorderThatReadsZeroAfterRealAudioIsNotRestarted() {
+        // A stopped AVAudioRecorder reports currentTime 0. The ten seconds it took in are still on disk,
+        // and a restart would delete them (audit P1 on #939).
+        var supervisor = MarginCaptureSupervisor(beganAtMs: 0)
+        XCTAssertEqual(supervisor.observe(reading(capturedMs: 10_000), nowMs: 10_000), .none)
+        XCTAssertEqual(supervisor.observe(reading(running: false, capturedMs: 0), nowMs: 10_250), .none)
+        XCTAssertEqual(supervisor.health, .notCapturing(.recorderStopped))
+        XCTAssertTrue(supervisor.hasKeepableAudio, "the audio taken in before the stop is still there to keep")
+        XCTAssertEqual(supervisor.capturedMs, 10_000)
+        XCTAssertEqual(supervisor.observe(reading(running: false, capturedMs: 0), nowMs: 12_000), .none, "and it stays kept")
+    }
+
     func testARecorderThatCannotTellCountsAsRunning() {
         var supervisor = MarginCaptureSupervisor(beganAtMs: 0)
         XCTAssertEqual(supervisor.observe(nil, nowMs: 250), .none)
@@ -170,6 +182,24 @@ final class MarginCaptureSupervisorTests: XCTestCase {
     func testARecordingThatStoppedEarlyIsSavedAndMarkedCutShort() {
         let supervisor = MarginCaptureSupervisor(beganAtMs: 0)
         XCTAssertEqual(supervisor.saveVerdict(reading: reading(running: false, capturedMs: 3_000), nowMs: 34_000), .saveCutShort)
+    }
+
+    func testARecordingThatStoppedAndReadsZeroIsStillSavedWithItsAudio() {
+        // Ten seconds of speech, then the recorder stopped and reads 0. Save must keep what was said.
+        var supervisor = MarginCaptureSupervisor(beganAtMs: 0)
+        XCTAssertEqual(supervisor.observe(reading(capturedMs: 10_000), nowMs: 10_000), .none)
+        XCTAssertEqual(supervisor.observe(reading(running: false, capturedMs: 0), nowMs: 10_250), .none)
+        XCTAssertEqual(
+            supervisor.saveVerdict(reading: reading(running: false, capturedMs: 0), nowMs: 34_000),
+            .saveCutShort,
+            "never discarded as empty, and the listener is told part of it may be missing"
+        )
+    }
+
+    func testAStoppedRecordingWithOnlyAFewMillisecondsStillReadsAsEmpty() {
+        var supervisor = MarginCaptureSupervisor(beganAtMs: 0)
+        XCTAssertEqual(supervisor.observe(reading(capturedMs: 22), nowMs: 250), .none)
+        XCTAssertEqual(supervisor.saveVerdict(reading: reading(running: false, capturedMs: 0), nowMs: 34_000), .discardEmpty)
     }
 
     func testARecorderThatCannotTellIsAlwaysSaved() {

@@ -3202,6 +3202,9 @@ public final class SystemRecordingClient: RecordingClient {
     /// A Margin is being captured: from `beginRecording` until it is finished or cancelled.
     private var isCaptureActive = false
     private var captureRestarts = 0
+    /// The most `currentTime` the current recorder has shown. A stopped `AVAudioRecorder` reads 0, but
+    /// the audio it took in is still in its file.
+    private var capturedHighWaterMs = 0
     #endif
     private let fileManager: FileManager
     private let baseDirectory: URL?
@@ -3297,6 +3300,7 @@ public final class SystemRecordingClient: RecordingClient {
             throw SessionKitError.persistenceFailed("recording_failed")
         }
         recorderDelegate = delegate
+        capturedHighWaterMs = 0
         return (recorder, url)
     }
 
@@ -3389,10 +3393,8 @@ public final class SystemRecordingClient: RecordingClient {
         recorder.updateMeters()
         let peak = recorder.peakPower(forChannel: 0)
         peakPowerDb = max(peakPowerDb ?? peak, peak)
-        return RecordingCaptureReading(
-            recorderRunning: recorder.isRecording,
-            capturedMs: Int((recorder.currentTime * 1_000).rounded())
-        )
+        capturedHighWaterMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
+        return RecordingCaptureReading(recorderRunning: recorder.isRecording, capturedMs: capturedHighWaterMs)
         #else
         return nil
         #endif
@@ -3423,7 +3425,7 @@ public final class SystemRecordingClient: RecordingClient {
         var fields: [String: String] = ["captureRestarts": String(captureRestarts)]
         if let recorder {
             fields["recorderRunning"] = String(recorder.isRecording)
-            fields["capturedMs"] = String(Int((recorder.currentTime * 1_000).rounded()))
+            fields["capturedMs"] = String(max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded())))
         }
         if let currentURL, let bytes = (try? currentURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
             fields["fileBytes"] = String(bytes)
