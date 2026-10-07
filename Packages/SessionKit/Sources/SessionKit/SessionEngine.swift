@@ -1309,6 +1309,19 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// What the recorder has taken in so far while a Margin is recording (#937). Nil when it can't tell.
+    public func recordingCaptureReading() -> RecordingCaptureReading? { recorder.captureReading() }
+
+    /// Starts a new recorder after one that never got audio; the session stays in `recordingInterjection`.
+    public func restartRecordingCapture() throws {
+        guard currentSession?.phase == .recordingInterjection else {
+            throw SessionKitError.invalidCommandForState("restartRecordingCapture")
+        }
+        try recorder.restartCapture()
+    }
+
+    public func recordingCaptureDiagnostics() -> [String: String] { recorder.captureDiagnostics() }
+
     @discardableResult
     public func beginWrittenInterjection() throws -> WrittenInterjectionCapture {
         try requireNavigationAllowed("beginWrittenInterjection")
