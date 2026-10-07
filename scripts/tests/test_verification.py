@@ -432,6 +432,26 @@ class VerificationTests(unittest.TestCase):
                     ('TourUITests', 'testTour', 'failed'), ('ShareUITests', 'testShare', 'passed')) + '; raise SystemExit(65)'],
                     expected={tour, share}, tests=True, probation={share})
 
+    def test_a_test_step_that_exits_non_zero_fails_even_when_every_recorded_test_passed(self):
+        # The shape of a real xcodebuild failure after the tests: the host crashes on teardown, the simulator
+        # dies after the last test, `swift test` exits 1. Only a failing *probation* test excuses the exit code.
+        tour, share = 'SpokenMarginsAppUITests/TourUITests/testTour', 'SpokenMarginsAppUITests/ShareUITests/testShare'
+        passed = self.xctest_log(('TourUITests', 'testTour', 'passed'), ('ShareUITests', 'testShare', 'passed'))
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'journeys')
+            for label, probation in (('no probation', None), ('probation that passed', {share})):
+                with self.subTest(label):
+                    with self.assertRaisesRegex(RuntimeError, 'Process exit 65'):
+                        run.command(f'xcode-tests-{len(run.manifest["steps"])}',
+                                    [sys.executable, '-c', passed + '; raise SystemExit(65)'],
+                                    expected={tour, share}, tests=True, probation=probation)
+                    step = run.manifest['steps'][-1]
+                    self.assertEqual((step['exit_code'], step['errors'][0]), (65, 'Process exit 65'))
+                    self.assertEqual(step['counts']['passed'], 2)  # the tests did pass: the exit code is the failure
+            # and the same step with a zero exit is clean, so the above is the exit code and nothing else
+            run.command('xcode-tests-clean', [sys.executable, '-c', passed], expected={tour, share}, tests=True)
+            self.assertEqual(run.manifest['steps'][-1]['errors'], [])
+
     def test_journeys_plan_passes_ui_test_selectors_and_names_the_probation_ones(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / 'repo'
