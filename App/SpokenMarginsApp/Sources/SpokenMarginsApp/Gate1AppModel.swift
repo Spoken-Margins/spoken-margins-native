@@ -573,6 +573,7 @@ final class Gate1AppModel: ObservableObject {
         didSet {
             recordPlaybackEventState(previous: oldValue)
             if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
+            if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
             settleSpeechInterruptionResume()
             listeningSignals.snapshotChanged(from: oldValue, to: snapshot)
             updateNarrationVoiceNotice()
@@ -6293,7 +6294,6 @@ final class Gate1AppModel: ObservableObject {
                 )
                 let latencyMs = max(0, Int(Date().timeIntervalSince(requestedAt) * 1000))
                 diagnostics["lastInterjectionRecordingStartLatencyMs"] = "\(latencyMs)"
-                startCaptureWatch()
             }
         }
         if !snapshot.isRecording {
@@ -6349,6 +6349,7 @@ final class Gate1AppModel: ObservableObject {
             recordingPresentationContext = nil
             return
         }
+        recordFinalCaptureDiagnostics("cancelled")
         run { engine in
             snapshot = try engine.cancelInterjection()
             refreshSelectedItem()
@@ -9458,6 +9459,7 @@ final class Gate1AppModel: ObservableObject {
         if command == .beginInterjection {
             streamingSpeechQueue.pauseForInterjection()
         }
+        guard let captureVerdict = verdictForCompactCommand(command) else { return }
         do {
             let result = try gate2CompactControls.dispatch(
                 command,
@@ -9507,6 +9509,7 @@ final class Gate1AppModel: ObservableObject {
                 streamingSpeechQueue.relinquishToCanonicalPlayback()
             }
             reportSuccess("Compact control \(command.rawValue) \(result.delegatedToCanonicalRuntime ? "delegated" : "handled").")
+            if command == .finishInterjection, captureVerdict == .saveCutShort { reportMarginSaved(captureVerdict) }
         } catch {
             if command == .finishInterjection { recordSpokenMarginSavedBeforeFailure(engine?.lastScheduledTranscriptionInterjectionId) }
             if command == .beginInterjection || command == .finishInterjection || command == .cancelInterjection {

@@ -28,7 +28,7 @@ extension Gate1AppModel {
         fields["health"] = health.diagnosticName
         fields["restarts"] = String(restarts)
         recordDeveloperDiagnostic("margin.capture.health", fields)
-        diagnostics["lastVoiceCapture"] = fields.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ";")
+        diagnostics["lastVoiceCapture"] = Self.captureSummary(fields)
         switch health {
         case .capturing where !wasCapturing:
             reportSuccess("Recording Margin.")
@@ -58,16 +58,43 @@ extension Gate1AppModel {
     /// What saving the recording would keep. An empty recording is discarded here, not saved: nil means it was.
     func verdictForSavingRecording() -> MarginCaptureSupervisor.SaveVerdict? {
         let verdict = captureWatcher.saveVerdict()
+        recordFinalCaptureDiagnostics(verdict.rawValue)
         guard verdict == .discardEmpty else { return verdict }
         discardEmptyRecording()
         return nil
     }
 
+    /// Finish from the Lock Screen, a Live Activity or a widget goes around `finishInterjection()`, so it
+    /// asks here first. Nil means the recording was empty and is gone: Finish must not save it. Cancel from
+    /// there is logged. Every other command passes.
+    func verdictForCompactCommand(_ command: CompactControlCommand) -> MarginCaptureSupervisor.SaveVerdict? {
+        if command == .cancelInterjection { recordFinalCaptureDiagnostics("cancelled") }
+        guard command == .finishInterjection, snapshot.isRecording else { return .save }
+        return verdictForSavingRecording()
+    }
+
+    /// One line at the end of every recording, written while the recorder can still be asked: the audio it
+    /// really took in against the time on the clock, the restarts, the route and category, and what happened
+    /// to the Margin. `lastVoiceCapture` becomes this line, so a Margin that failed names its cause (#937).
+    func recordFinalCaptureDiagnostics(_ outcome: String) {
+        guard snapshot.isRecording, !captureWatcher.finalRecorded else { return }
+        captureWatcher.finalRecorded = true
+        var fields = engine?.recordingCaptureDiagnostics() ?? [:]
+        fields["health"] = (captureWatcher.health ?? .capturing).diagnosticName
+        fields["restarts"] = String(captureWatcher.restarts)
+        fields["watchedCapturedMs"] = String(captureWatcher.capturedMs)
+        fields["wallMs"] = String(captureWatcher.elapsedMs)
+        fields["outcome"] = outcome
+        recordDeveloperDiagnostic("margin.capture.final", fields)
+        diagnostics["lastVoiceCapture"] = Self.captureSummary(fields)
+    }
+
+    private static func captureSummary(_ fields: [String: String]) -> String {
+        fields.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ";")
+    }
+
     /// Save was tapped on a recording that took in no audio: say so, and don't keep an empty voice as a Margin.
     private func discardEmptyRecording() {
-        var fields = engine?.recordingCaptureDiagnostics() ?? [:]
-        fields["verdict"] = "discard_empty"
-        recordDeveloperDiagnostic("margin.capture.empty", fields)
         cancelInterjection()
         reportFailure("Nothing was recorded, so no Margin was saved. The microphone didn't pick up any sound. Try again, or write the Margin instead.")
     }

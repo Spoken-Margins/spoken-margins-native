@@ -53,15 +53,20 @@ final class MarginCaptureHealthTests: XCTestCase {
         private(set) var everShownAsCapturing = false
         private var nowMs = 0
 
-        init(recorder: ScriptedRecordingClient) {
+        /// `startFromLiveActivity` begins the Margin with the Lock Screen / Live Activity command instead of the in-app button.
+        init(recorder: ScriptedRecordingClient, startFromLiveActivity: Bool = false) {
             self.recorder = recorder
             model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: recorder)
             let clock: () -> Int = { [unowned self] in self.nowMs }
             model.captureWatcher = MarginCaptureWatcher(autoPoll: false, nowMs: clock)
             model.resetAndSeed()
             model.startItem(id: "item-pill")
-            model.pause()
-            model.beginInterjection()
+            if startFromLiveActivity {
+                model.dispatchGate2CompactCommand(.beginInterjection)
+            } else {
+                model.pause()
+                model.beginInterjection()
+            }
         }
 
         /// Polls every 250 ms for `seconds`, as the app does while recording.
@@ -185,6 +190,105 @@ final class MarginCaptureHealthTests: XCTestCase {
         XCTAssertEqual(recorder.finishCount, 1)
         XCTAssertEqual(recorder.cancelCount, 0, "it is not discarded as empty")
         XCTAssertEqual(harness.model.statusMessage.hasPrefix("Margin saved, but part of it may be missing"), true)
+    }
+
+    // MARK: Lock Screen and Live Activity commands (audit P2 on #939)
+
+    func testAMarginStartedFromTheLiveActivityIsWatchedAndNeverShownAsRecording() {
+        let harness = Harness(recorder: ScriptedRecordingClient(capturedMs: 22), startFromLiveActivity: true)
+        XCTAssertTrue(harness.model.snapshot.isRecording)
+        XCTAssertEqual(harness.model.recordingCaptureHealth, .starting)
+
+        harness.run(seconds: 10)
+
+        XCTAssertFalse(harness.everShownAsCapturing, "22 ms of audio must never read as Recording, from any start")
+        XCTAssertEqual(harness.recorder.restartCount, MarginCaptureTimings.automaticRestarts)
+        guard case .notCapturing = harness.model.recordingCaptureHealth else {
+            return XCTFail("expected not capturing, got \(harness.model.recordingCaptureHealth)")
+        }
+    }
+
+    func testFinishingAnEmptyRecordingFromTheLiveActivitySavesNoMargin() {
+        let harness = Harness(recorder: ScriptedRecordingClient(capturedMs: 22), startFromLiveActivity: true)
+        harness.run(seconds: 10)
+
+        harness.model.dispatchGate2CompactCommand(.finishInterjection)
+
+        XCTAssertFalse(harness.model.snapshot.isRecording)
+        XCTAssertEqual(harness.recorder.finishCount, 0, "the Live Activity must not save an empty voice either")
+        XCTAssertEqual(harness.recorder.cancelCount, 1)
+        XCTAssertEqual(harness.model.lastError?.hasPrefix("Nothing was recorded"), true)
+        XCTAssertEqual(harness.model.selectedItem.interjections.count, 0)
+    }
+
+    func testFinishingARecordingWithSpeechFromTheLiveActivitySavesIt() {
+        let recorder = ScriptedRecordingClient(capturedMs: 0)
+        recorder.growsWithTime = true
+        let harness = Harness(recorder: recorder, startFromLiveActivity: true)
+        harness.run(seconds: 10)
+
+        harness.model.dispatchGate2CompactCommand(.finishInterjection)
+
+        XCTAssertFalse(harness.model.snapshot.isRecording)
+        XCTAssertEqual(recorder.finishCount, 1)
+        XCTAssertEqual(recorder.cancelCount, 0)
+        XCTAssertEqual(harness.model.selectedItem.interjections.count, 1)
+    }
+
+    func testFinishingACutShortRecordingFromTheLiveActivitySavesItAndSaysPartMayBeMissing() {
+        let recorder = ScriptedRecordingClient(capturedMs: 0)
+        recorder.growsWithTime = true
+        let harness = Harness(recorder: recorder, startFromLiveActivity: true)
+        harness.run(seconds: 3)
+        recorder.growsWithTime = false
+        harness.run(seconds: 7)
+
+        harness.model.dispatchGate2CompactCommand(.finishInterjection)
+
+        XCTAssertEqual(recorder.finishCount, 1)
+        XCTAssertEqual(harness.model.statusMessage.hasPrefix("Margin saved, but part of it may be missing"), true)
+    }
+
+    // MARK: Final capture numbers (audit P2 on #939)
+
+    func testASavedMarginLeavesTheFinalCaptureNumbers() {
+        let recorder = ScriptedRecordingClient(capturedMs: 0)
+        recorder.growsWithTime = true
+        let harness = Harness(recorder: recorder)
+        harness.run(seconds: 10)
+
+        harness.model.finishInterjection()
+
+        let summary = harness.model.diagnostics["lastVoiceCapture"] ?? ""
+        XCTAssertTrue(summary.contains("outcome=save"), summary)
+        XCTAssertTrue(summary.contains("wallMs=10000"), "time on the clock, not the startup reading: \(summary)")
+        XCTAssertTrue(summary.contains("watchedCapturedMs=10000"), summary)
+        XCTAssertTrue(summary.contains("restarts=0"), summary)
+        XCTAssertTrue(summary.contains("health=capturing"), summary)
+    }
+
+    func testACancelledMarginLeavesTheFinalCaptureNumbers() {
+        let recorder = ScriptedRecordingClient(capturedMs: 0)
+        recorder.growsWithTime = true
+        let harness = Harness(recorder: recorder)
+        harness.run(seconds: 6)
+
+        harness.model.cancelInterjection()
+
+        let summary = harness.model.diagnostics["lastVoiceCapture"] ?? ""
+        XCTAssertTrue(summary.contains("outcome=cancelled"), summary)
+        XCTAssertTrue(summary.contains("wallMs=6000"), summary)
+    }
+
+    func testADiscardedEmptyMarginIsLoggedAsDiscardedNotCancelled() {
+        let harness = Harness(recorder: ScriptedRecordingClient(capturedMs: 22))
+        harness.run(seconds: 10)
+
+        harness.model.finishInterjection()
+
+        let summary = harness.model.diagnostics["lastVoiceCapture"] ?? ""
+        XCTAssertTrue(summary.contains("outcome=discard_empty"), summary)
+        XCTAssertTrue(summary.contains("restarts=2"), summary)
     }
 
     func testARestartThatFailsLeavesTheScreenSayingSo() {

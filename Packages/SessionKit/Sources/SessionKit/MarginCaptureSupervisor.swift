@@ -63,12 +63,13 @@ public struct MarginCaptureSupervisor: Equatable, Sendable {
         case restartCapture
     }
 
-    public enum SaveVerdict: Equatable, Sendable {
+    /// The raw value is the word the diagnostics log uses.
+    public enum SaveVerdict: String, Equatable, Sendable {
         case save
         /// Save it, and say part of it may be missing.
-        case saveCutShort
+        case saveCutShort = "save_cut_short"
         /// Nothing was captured: do not save a Margin with an empty voice.
-        case discardEmpty
+        case discardEmpty = "discard_empty"
     }
 
     public private(set) var health: Health = .starting

@@ -40,8 +40,12 @@ final class MarginCaptureWatcher {
     /// Try again restarts the recorder, which deletes what it has taken in. It is offered only while
     /// there is nothing worth keeping (audit P1 on #939).
     var canRetry: Bool { supervisor != nil && !hasKeepableAudio }
+    /// The most audio the current recorder has reported, for the diagnostics log.
+    var capturedMs: Int { supervisor?.capturedMs ?? 0 }
     /// Milliseconds since the recording began, for the diagnostics log.
     var elapsedMs: Int { supervisor == nil ? 0 : max(0, nowMs() - startedAtMs) }
+    /// The final diagnostics line for this recording is written (once per recording).
+    var finalRecorded = false
 
     /// Begins judging a recording that has just started, and polls until `stop()`.
     func start(
@@ -56,6 +60,7 @@ final class MarginCaptureWatcher {
         startedAtMs = nowMs()
         supervisor = MarginCaptureSupervisor(beganAtMs: startedAtMs)
         lastReported = nil
+        finalRecorded = false
         tick()
         guard autoPoll else { return }
         pollTask = Task { @MainActor [weak self] in
