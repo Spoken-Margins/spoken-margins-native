@@ -2166,6 +2166,103 @@ class OnlyTestingTests(unittest.TestCase):
                     run.xcode('app', None, False, None, ['Nope'])
 
 
+class GhCliTests(unittest.TestCase):
+    """lane.GitHub and lane.Repo against a fake `gh` on PATH that records its argv and prints queued answers.
+
+    Every other test replaces both classes (FakeGitHub, FakeRepo), so the REST paths, the `labels[]` field, the
+    `%3A` label encoding and the `--paginate --jq` flags were never produced: a wrong field name or a label
+    DELETE that missed would leave the PR on `lane:queued` forever with every test green."""
+
+    FAKE_GH = "#!{python}\nimport json, os, sys\n" \
+              "folder = os.environ['FAKE_GH_DIR']\n" \
+              "with open(folder + '/calls.jsonl', 'a') as calls:\n" \
+              "    calls.write(json.dumps(sys.argv[1:]) + '\\n')\n" \
+              "answers = json.load(open(folder + '/answers.json'))\n" \
+              "answer = answers.pop(0) if answers else {{'stdout': '', 'exit': 0}}\n" \
+              "json.dump(answers, open(folder + '/answers.json', 'w'))\n" \
+              "sys.stdout.write(answer['stdout'])\n" \
+              "sys.exit(answer['exit'])\n"
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.folder = Path(temporary.name)
+        (self.folder / 'bin').mkdir()
+        gh = self.folder / 'bin/gh'
+        gh.write_text(self.FAKE_GH.format(python=sys.executable))
+        gh.chmod(0o755)
+        patcher = mock.patch.dict(os.environ, {'PATH': f'{self.folder / "bin"}:{os.environ["PATH"]}',
+                                               'FAKE_GH_DIR': str(self.folder)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.answer()
+
+    def answer(self, *answers):
+        """What the next gh calls print: a string (exit 0) or (string, exit code); then silence, exit 0."""
+        (self.folder / 'answers.json').write_text(json.dumps([
+            {'stdout': a, 'exit': 0} if isinstance(a, str) else {'stdout': a[0], 'exit': a[1]} for a in answers]))
+
+    def calls(self):
+        log = self.folder / 'calls.jsonl'
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def test_pull_comments_and_comment_use_the_pr_s_rest_paths(self):
+        github = lane.GitHub('owner/repo', 5)
+        self.answer('{"head": {"sha": "abc"}, "labels": []}',
+                    json.dumps({'body': 'one'}) + '\n\n' + json.dumps({'body': 'two'}) + '\n',
+                    json.dumps({'html_url': 'https://example.test/c1'}))
+        self.assertEqual(github.pull(), {'head': {'sha': 'abc'}, 'labels': []})
+        self.assertEqual([c['body'] for c in github.comments()], ['one', 'two'])  # blank lines are skipped
+        body = 'Lane report pr5-r1 — PASS\n```text\nran: it\n```'
+        self.assertEqual(github.comment(body), 'https://example.test/c1')
+        self.assertEqual(self.calls(), [
+            ['api', 'repos/owner/repo/pulls/5'],
+            ['api', '--paginate', '--jq', '.[] | @json', 'repos/owner/repo/issues/5/comments'],
+            ['api', 'repos/owner/repo/issues/5/comments', '-f', f'body={body}']])
+
+    def test_relabel_deletes_the_encoded_old_label_then_adds_the_new_one_as_a_labels_field(self):
+        lane.GitHub('owner/repo', 5).relabel('lane:queued', 'lane:running')
+        self.assertEqual(self.calls(), [
+            ['api', '-X', 'DELETE', 'repos/owner/repo/issues/5/labels/lane%3Aqueued'],
+            ['api', '-X', 'POST', 'repos/owner/repo/issues/5/labels', '-f', 'labels[]=lane:running']])
+
+    def test_relabel_with_only_one_side_makes_only_that_call(self):
+        github = lane.GitHub('owner/repo', 5)
+        github.relabel(None, 'lane:done')
+        github.relabel('lane:running', None)
+        self.assertEqual(self.calls(), [
+            ['api', '-X', 'POST', 'repos/owner/repo/issues/5/labels', '-f', 'labels[]=lane:done'],
+            ['api', '-X', 'DELETE', 'repos/owner/repo/issues/5/labels/lane%3Arunning']])
+
+    def test_removing_a_label_the_pr_no_longer_has_does_not_stop_the_new_label_being_added(self):
+        self.answer(('', 1))  # DELETE answers 404 when the label is already gone
+        lane.GitHub('owner/repo', 5).relabel('lane:queued', 'lane:running')
+        self.assertEqual([call[1:3] for call in self.calls()], [['-X', 'DELETE'], ['-X', 'POST']])
+
+    def test_repo_reads_comments_a_page_at_a_time_until_a_short_page(self):
+        repo = lane.Repo('owner/repo')
+        self.answer(json.dumps([{'n': n} for n in range(100)]), json.dumps([{'n': 100}]))
+        self.assertEqual([c['n'] for c in repo.comments_since('2026-10-01T00:00:00Z')], list(range(101)))
+        self.assertEqual(self.calls(), [
+            ['api', 'repos/owner/repo/issues/comments?since=2026-10-01T00:00:00Z&sort=created&direction=asc'
+                    f'&per_page=100&page={page}'] for page in (1, 2)])
+
+    def test_repo_comments_title_and_new_issue_use_the_expected_paths_and_fields(self):
+        repo = lane.Repo('owner/repo')
+        self.answer(json.dumps({'body': 'x'}) + '\n', json.dumps({'html_url': 'https://example.test/c2'}),
+                    json.dumps({'title': 'Change the lane'}), json.dumps({'html_url': 'https://example.test/i9'}))
+        self.assertEqual([c['body'] for c in repo.issue_comments(337)], ['x'])
+        self.assertEqual(repo.comment(337, 'Lane auto-revert: x'), 'https://example.test/c2')
+        self.assertEqual(repo.title(441), 'Change the lane')
+        self.assertEqual(repo.open_issue('Lane broke', 'details', ['lane-fault', 'urgent']), 'https://example.test/i9')
+        self.assertEqual(self.calls(), [
+            ['api', '--paginate', '--jq', '.[] | @json', 'repos/owner/repo/issues/337/comments'],
+            ['api', 'repos/owner/repo/issues/337/comments', '-f', 'body=Lane auto-revert: x'],
+            ['api', 'repos/owner/repo/pulls/441'],
+            ['api', 'repos/owner/repo/issues', '-f', 'title=Lane broke', '-f', 'body=details',
+             '-f', 'labels[]=lane-fault', '-f', 'labels[]=urgent']])
+
+
 class FakeRepo:
     """Repository-wide GitHub calls for the auto-revert: comments everywhere, #337, new issues."""
 
