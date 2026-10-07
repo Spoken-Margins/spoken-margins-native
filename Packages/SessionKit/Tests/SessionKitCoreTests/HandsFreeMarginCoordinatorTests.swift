@@ -412,6 +412,46 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         }
     }
 
+    /// A second press before the microphone opened: nothing to keep, so a flag, and the source resumes.
+    func testASecondPressBeforeTheMicrophoneOpensMakesAFlagAndResumesTheSource() {
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)])
+        clock.advance(0.6)
+        XCTAssertEqual(coordinator.trigger(from: .lockScreen), [.requestFlag, .playTone(.flag)])
+        XCTAssertEqual(coordinator.phase, .rejoining)
+        XCTAssertEqual(coordinator.toneFinished(.start), [], "the start tone ending late must not open the microphone")
+        XCTAssertEqual(coordinator.toneFinished(.flag), [.resumeSource])
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
+    /// The start tone was playing in the headphones when they came out: the phone microphone must not
+    /// open once it ends, and the source stays paused.
+    func testHeadphonesPulledDuringTheStartToneFlagAndNeverOpenTheMicrophone() {
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)])
+        XCTAssertEqual(coordinator.headphonesRemoved(), [.requestFlag])
+        XCTAssertEqual(coordinator.phase, .idle)
+        XCTAssertEqual(coordinator.toneFinished(.start), [], "no recording through the phone microphone")
+        clock.advance(1)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)], "ready for the next one")
+    }
+
+    /// A call arrives while the start tone plays: a flag keeps the spot, the microphone stays closed, and
+    /// the tone and the resume wait for the call to end.
+    func testACallDuringTheStartToneFlagsTheSpotAndResumesOnlyWhenItEnds() {
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)])
+        XCTAssertEqual(coordinator.interruptionBegan(), [.requestFlag])
+        XCTAssertEqual(coordinator.toneFinished(.start), [], "the microphone stays closed during the call")
+        XCTAssertEqual(coordinator.phase, .saving)
+        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: true), [.playTone(.flag)])
+        XCTAssertEqual(coordinator.toneFinished(.flag), [.resumeSource])
+        XCTAssertEqual(coordinator.phase, .idle)
+
+        clock.advance(1)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)])
+        XCTAssertEqual(coordinator.interruptionBegan(), [.requestFlag])
+        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: false), [.playTone(.flag)])
+        XCTAssertEqual(coordinator.toneFinished(.flag), [], "iOS said not to resume")
+    }
+
     func testAbandonReturnsToIdle() {
         startRecording()
         feed(quiet, for: 0.5)
