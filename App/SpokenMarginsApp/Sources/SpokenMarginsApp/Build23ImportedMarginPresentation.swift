@@ -279,15 +279,10 @@ private struct Build23ImportedLayerList: View, Equatable {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityLabel("Margin placement. \(margin.positionDescription)")
 
-            Label(
-                Build23ImportedLayerPresentation.marginResolutionLabel(margin.resolution),
-                systemImage: "scope"
-            )
+            Label(resolutionLabel(margin), systemImage: "scope")
             .font(.caption)
             .foregroundStyle(AppColors.secondaryText)
-            .accessibilityLabel(
-                Text("Placement resolution. \(Build23ImportedLayerPresentation.marginResolutionLabel(margin.resolution))")
-            )
+            .accessibilityLabel(Text("Placement resolution. \(resolutionLabel(margin))"))
 
             if margin.hasVoice {
                 Button {
@@ -309,6 +304,10 @@ private struct Build23ImportedLayerList: View, Equatable {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(AppColors.border, lineWidth: 1)
         }
+    }
+
+    private func resolutionLabel(_ margin: Build23ImportedMarginSnapshot) -> String {
+        margin.placementLabel ?? Build23ImportedLayerPresentation.marginResolutionLabel(margin.resolution)
     }
 
     private func stateLabel(_ text: String, systemImage: String) -> some View {

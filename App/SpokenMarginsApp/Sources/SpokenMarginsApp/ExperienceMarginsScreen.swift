@@ -240,6 +240,8 @@ struct SharedMarginDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var shouldOpenItem = false
     let row: SharedMarginRow
+    /// The model's current copy, so placement progress updates while the sheet is open (#872).
+    private var current: SharedMarginRow { model.sharedMarginRows.first { $0.id == row.id } ?? row }
 
     var body: some View {
         NavigationStack {
@@ -254,7 +256,7 @@ struct SharedMarginDetailView: View {
                 }
                 Section("Source & position") {
                     Text(row.itemTitle)
-                    Text(row.positionDescription)
+                    Text(current.positionDescription)
                     if row.layer.itemId != nil {
                         Button("Open item and shared controls", systemImage: "doc.text") {
                             shouldOpenItem = true

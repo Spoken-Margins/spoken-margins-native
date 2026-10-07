@@ -363,12 +363,19 @@ struct SharedMarginRow: Identifiable, Equatable, Sendable {
     let interjection: ImportedCommentaryInterjection
     let layer: ImportedCommentaryLayer
     let itemTitle: String
+    /// The item's placement work in flight, if any (#872).
+    var placement: SharedMarginPlacementPasses.Pass? = nil
 
     var id: String { "shared::\(layer.id)::\(interjection.id)" }
+    var placementStatus: SharedMarginPlacementStatus {
+        SharedMarginPlacementStatus(resolution: interjection.resolution, marginId: interjection.id,
+                                    layerStatus: layer.sourceResolutionStatus, pass: placement)
+    }
     /// Its voice hasn't played for this listener yet (#469).
     var isNew: Bool { interjection.isNewToListener }
     var collectionLabel: String { layer.displayLabel.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? "Imported collection" }
     var positionDescription: String {
+        if let placing = placementStatus.positionDescription { return placing }
         if interjection.resolution.isAmbiguous { return "Position needs review" }
         switch interjection.resolution.evidenceClass {
         case .unresolved, .absentFromRecipientEdition, .ambiguous: return "Position not matched"
