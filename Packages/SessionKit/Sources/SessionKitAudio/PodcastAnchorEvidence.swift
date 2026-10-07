@@ -152,7 +152,7 @@ public enum PodcastAnchorEvidenceGenerator {
                 duration: CMTime(value: CMTimeValue(window.endMs - window.startMs), timescale: 1_000)
             )
             try track.insertTimeRange(range, of: sourceTrack, at: .zero)
-            let signature = try await SHSignatureGenerator.signature(from: composition)
+            let signature = try await PodcastAssetSignatureGenerator.signature(from: composition)
             let data = signature.dataRepresentation
             guard !data.isEmpty else { throw PodcastAnchorEvidenceError.signatureGenerationFailed }
             let safePrefix = idPrefix.replacingOccurrences(
@@ -212,7 +212,7 @@ public enum PodcastAnchorEvidenceGenerator {
             of: sourceTrack,
             at: .zero
         )
-        let signature = try await SHSignatureGenerator.signature(from: composition)
+        let signature = try await PodcastAssetSignatureGenerator.signature(from: composition)
         let data = signature.dataRepresentation
         guard !data.isEmpty else { throw PodcastAnchorEvidenceError.signatureGenerationFailed }
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
@@ -383,7 +383,7 @@ public enum PodcastAcousticAnchorResolver {
               let sourceTrack = try? await asset.loadTracks(withMediaType: .audio).first else {
             // Unknown length: fall back to a single reference for the whole file.
             do {
-                let reference = try await SHSignatureGenerator.signature(from: asset)
+                let reference = try await PodcastAssetSignatureGenerator.signature(from: asset)
                 try catalog.addReferenceSignature(reference, representing: [SHMediaItem(properties: [
                     .title: "Spoken Margins recipient edition", referenceChunkStartKey: NSNumber(value: 0)
                 ])])
@@ -433,7 +433,7 @@ public enum PodcastAcousticAnchorResolver {
                     of: sourceTrack,
                     at: .zero
                 )
-                let signature = try await SHSignatureGenerator.signature(from: composition)
+                let signature = try await PodcastAssetSignatureGenerator.signature(from: composition)
                 chunks.append((startMs, lengthMs, signature))
             } catch {
                 throw PodcastAnchorEvidenceError.referenceGenerationFailed

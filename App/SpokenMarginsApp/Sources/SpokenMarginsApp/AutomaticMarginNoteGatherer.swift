@@ -31,12 +31,7 @@ enum AutomaticMarginNoteGatherer {
                     guard SessionExportMarkdownRenderer.writesMarginNote(
                         captureKind: margin.captureKind, text: margin.cleanedTranscript ?? margin.transcript
                     ) else { continue }
-                    let export = try engine.buildExport(options: ExportOptions(
-                        sessionId: session.id,
-                        includeFullText: false, includeReference: true, includeListeningMap: false,
-                        includeInterjections: true, includeTurns: false,
-                        scope: "selected_interjections", interjectionIds: [margin.id]
-                    ))
+                    let export = try engine.buildExport(options: .marginNote(sessionId: session.id, marginId: margin.id))
                     let markdown = SessionExportMarkdownRenderer.renderMargin(export, createdAt: margin.recordedAt(in: session))
                     guard !markdown.isEmpty else { continue }
                     notes.append(.init(id: session.id + ":" + margin.id, markdown: markdown))

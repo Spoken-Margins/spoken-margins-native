@@ -2609,6 +2609,56 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    // #538: the owner's export showed speech "paused" when he left the app, with no cause. Each
+    // system pause now reports why, whether it paused, and the app's state, for the event log.
+    func testSystemPausesReportTheirCause() async throws {
+        let template = try makeTestWAV(duration: 5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let notificationCenter = NotificationCenter()
+        let pauses = SystemPauseCapture()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionNotificationCenter: notificationCenter,
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient(),
+            onSystemPause: { pauses.record($0, $1) }
+        )
+        _ = try client.prepareSpeechText("Leaving the app should never pause this without saying why.")
+        try client.play(targetId: "system-pause")
+        for _ in 0..<50 where client.playbackStartStatus(targetId: "system-pause") != .confirmed {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(client.playbackStartStatus(targetId: "system-pause"), .confirmed)
+
+        notificationCenter.post(name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), userInfo: [
+            AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue,
+            AVAudioSessionInterruptionReasonKey: UInt(1),
+        ])
+        notificationCenter.post(name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), userInfo: [
+            AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.ended.rawValue,
+            AVAudioSessionInterruptionOptionKey: UInt(0),
+        ])
+        try? await Task.sleep(for: .milliseconds(50))
+
+        let recorded = pauses.values
+        XCTAssertEqual(recorded.map(\.kind), ["speech.interruption_began", "speech.interruption_ended"])
+        XCTAssertEqual(recorded.first?.fields["reason"], "app_was_suspended")
+        XCTAssertEqual(recorded.first?.fields["paused"], "true")
+        XCTAssertNotNil(recorded.first?.fields["appState"])
+        XCTAssertNotNil(recorded.first?.fields["lowPowerMode"])
+        XCTAssertEqual(recorded.last?.fields["shouldResume"], "false")
+        XCTAssertEqual(recorded.last?.fields["resumeRequested"], "false", "no resume without shouldResume")
+        XCTAssertEqual(client.playbackTransportState(targetId: "system-pause"), .paused)
+        try client.stop()
+    }
+
     func testMediaServicesResetCheckpointsIntraChunkProgressBeforeCanonicalPause() async throws {
         let template = try makeTestWAV(duration: 5)
         defer { try? FileManager.default.removeItem(at: template) }
@@ -3020,6 +3070,15 @@ private final class GenerationStateCapture: @unchecked Sendable {
             recordedValues.append(state)
             if state == .stopped { recordedStopReasons.append(stopReason) }
         }
+    }
+}
+
+private final class SystemPauseCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [(kind: String, fields: [String: String])] = []
+    var values: [(kind: String, fields: [String: String])] { lock.withLock { entries } }
+    func record(_ kind: String, _ fields: [String: String]) {
+        lock.withLock { entries.append((kind, fields)) }
     }
 }
 
