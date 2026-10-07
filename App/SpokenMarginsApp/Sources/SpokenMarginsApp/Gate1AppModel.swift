@@ -15864,11 +15864,7 @@ final class Gate1AppModel: ObservableObject {
                   !records.isEmpty else { return nil }
             return (layer, records)
         }
-        guard !work.isEmpty else {
-            podcastPlacementPassCoordinator.cancel(itemId: itemId)
-            sharedMarginPlacementPasses.end(.matching, itemId: itemId)
-            return
-        }
+        guard !work.isEmpty else { podcastPlacementPassCoordinator.cancel(itemId: itemId); sharedMarginPlacementPasses.end(.matching, itemId: itemId); return }
         if recipientTranscriptOverride == nil, importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store) {
             scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: localURL)
         }
@@ -16049,9 +16045,7 @@ final class Gate1AppModel: ObservableObject {
         }
         if !submission.joined {
             diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "scheduled:\(work.count)"
-            // Only a request that started a pass records "placing". A joined request would set it again for a
-            // pass that may already have ended it and not yet left the coordinator, and nothing would clear it.
-            // The pass's own end runs on the main actor, so it cannot run before this line.
+            // Only a request that starts a pass records "placing"; a joined one could set it after its pass ended it.
             sharedMarginPlacementPasses.begin(.matching, itemId: itemId, previous: Dictionary(work.flatMap(\.1).map { ($0.id, $0.resolution) }, uniquingKeysWith: { first, _ in first }))
         }
     }
