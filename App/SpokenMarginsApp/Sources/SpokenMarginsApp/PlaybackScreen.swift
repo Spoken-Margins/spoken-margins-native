@@ -576,6 +576,14 @@ struct PlaybackScreen: View {
                         .font(.headline)
                         .foregroundStyle(.white)
                         .contentTransition(.numericText())
+                    // A shared Margin still being placed says so (#872); it plays from its approximate time meanwhile.
+                    if let placing = model.sharedMarginRows.first(where: { $0.id == moment.target.marginId })?
+                        .placementStatus.positionDescription {
+                        Text(placing)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .accessibilityIdentifier("marginMoment.placing")
+                    }
                     if model.marginMomentPositionIsApproximate {
                         Text("Approximate position: ads can differ between copies.")
                             .font(.footnote)
