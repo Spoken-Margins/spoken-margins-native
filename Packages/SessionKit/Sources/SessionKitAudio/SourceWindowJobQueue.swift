@@ -18,10 +18,10 @@ public actor SourceWindowJobQueue {
     private let maxConcurrent: Int
     private var pending: [Pending] = []
     private var queuedIds: Set<String> = []
-    private var runningIds: Set<String> = []
     private var playheadMediaTimeMs: Int = 0
     private var nextSequence = 0
     private var idleWaiters: [CheckedContinuation<Void, Never>] = []
+    public private(set) var runningCount = 0
     /// The most jobs that ever ran at once. Tests read it; nothing else should.
     public private(set) var peakRunning = 0
 
@@ -29,11 +29,12 @@ public actor SourceWindowJobQueue {
         self.maxConcurrent = max(1, maxConcurrent)
     }
 
-    public var runningCount: Int { runningIds.count }
     public var queuedCount: Int { pending.count }
 
-    /// Queues `work` under `id`. A job whose id is already queued or running is ignored, so a second download
-    /// callback can't double the work. Returns whether the job was accepted.
+    /// Queues `work` under `id`. A job whose id is already waiting is ignored, so a second download callback
+    /// can't double the work. An id that is running may be queued again: the caller's own pending flag is what
+    /// stops a duplicate, and dropping a request that arrives just as its job ends would leave that flag set for
+    /// good. Returns whether the job was accepted.
     @discardableResult
     public func enqueue(
         id: String,
@@ -42,7 +43,7 @@ public actor SourceWindowJobQueue {
         work: @escaping @Sendable () async -> Void
     ) -> Bool {
         if let playheadMediaTimeMs { self.playheadMediaTimeMs = playheadMediaTimeMs }
-        guard !queuedIds.contains(id), !runningIds.contains(id) else { return false }
+        guard !queuedIds.contains(id) else { return false }
         queuedIds.insert(id)
         pending.append(Pending(id: id, anchorMediaTimeMs: anchorMediaTimeMs, sequence: nextSequence, work: work))
         nextSequence += 1
@@ -52,17 +53,17 @@ public actor SourceWindowJobQueue {
 
     /// Returns once nothing is queued or running.
     public func waitUntilIdle() async {
-        if pending.isEmpty && runningIds.isEmpty { return }
+        if pending.isEmpty && runningCount == 0 { return }
         await withCheckedContinuation { idleWaiters.append($0) }
     }
 
     private func startAvailable() {
-        while runningIds.count < maxConcurrent, let job = takeNearest() {
-            runningIds.insert(job.id)
-            peakRunning = max(peakRunning, runningIds.count)
-            Task { [work = job.work, id = job.id] in
+        while runningCount < maxConcurrent, let job = takeNearest() {
+            runningCount += 1
+            peakRunning = max(peakRunning, runningCount)
+            Task { [work = job.work] in
                 await work()
-                self.finished(id: id)
+                self.finished()
             }
         }
     }
@@ -79,10 +80,10 @@ public actor SourceWindowJobQueue {
         return job
     }
 
-    private func finished(id: String) {
-        runningIds.remove(id)
+    private func finished() {
+        runningCount -= 1
         startAvailable()
-        if pending.isEmpty && runningIds.isEmpty {
+        if pending.isEmpty && runningCount == 0 {
             let waiters = idleWaiters
             idleWaiters = []
             for waiter in waiters { waiter.resume() }

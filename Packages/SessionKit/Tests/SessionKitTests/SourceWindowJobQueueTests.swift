@@ -29,6 +29,10 @@ final class SourceWindowJobQueueTests: XCTestCase {
         XCTAssertEqual(Set(finished).count, 22)
         let queuePeak = await queue.peakRunning
         XCTAssertLessThanOrEqual(queuePeak, 2)
+        let running = await queue.runningCount
+        let queued = await queue.queuedCount
+        XCTAssertEqual(running, 0)
+        XCTAssertEqual(queued, 0)
     }
 
     func testNearestToPlayheadStartsFirstAfterTheFirstTwo() async {
@@ -65,6 +69,23 @@ final class SourceWindowJobQueueTests: XCTestCase {
         await queue.waitUntilIdle()
         let finished = await probe.finished
         XCTAssertEqual(finished, ["b"])
+    }
+
+    func testAnIdThatIsRunningCanBeQueuedAgain() async {
+        // The app's own pending flag stops duplicates. A request that lands just as its job ends must not be
+        // dropped, or that flag would never clear.
+        let queue = SourceWindowJobQueue(maxConcurrent: 1)
+        let gate = AsyncGate()
+        let probe = Probe()
+        await queue.enqueue(id: "a", anchorMediaTimeMs: 0, playheadMediaTimeMs: 0) { await gate.wait() }
+        let again = await queue.enqueue(id: "a", anchorMediaTimeMs: 0, playheadMediaTimeMs: 0) { await probe.begin("again"); await probe.end("again") }
+        XCTAssertTrue(again)
+        await gate.open()
+        await queue.waitUntilIdle()
+        let finished = await probe.finished
+        XCTAssertEqual(finished, ["again"])
+        let running = await queue.runningCount
+        XCTAssertEqual(running, 0)
     }
 }
 
