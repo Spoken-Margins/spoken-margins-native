@@ -3681,6 +3681,12 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
     public init() {}
 
     public func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+        try await SourceAudioWorkQueue.shared.run {
+            try await self.transcribeSourceAudioSerially(url: url, itemId: itemId, durationMs: durationMs)
+        }
+    }
+
+    private func transcribeSourceAudioSerially(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
         #if canImport(Speech) && canImport(AVFoundation)
         let status = await requestAuthorization()
         guard status == .authorized else {
@@ -3742,6 +3748,18 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         durationMs: Int?,
         windowBeforeMs: Int,
         windowAfterMs: Int
+    ) async throws -> TranscriptTimeline {
+        try await SourceAudioWorkQueue.shared.run {
+            try await self.transcribeSourceAudioWindowSerially(
+                url: url, itemId: itemId, anchorMediaTimeMs: anchorMediaTimeMs,
+                durationMs: durationMs, windowBeforeMs: windowBeforeMs, windowAfterMs: windowAfterMs
+            )
+        }
+    }
+
+    private func transcribeSourceAudioWindowSerially(
+        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?,
+        windowBeforeMs: Int, windowAfterMs: Int
     ) async throws -> TranscriptTimeline {
         #if canImport(Speech) && canImport(AVFoundation)
         let status = await requestAuthorization()
