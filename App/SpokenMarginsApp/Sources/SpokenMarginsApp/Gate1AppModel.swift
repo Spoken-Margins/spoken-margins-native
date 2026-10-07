@@ -6287,7 +6287,7 @@ final class Gate1AppModel: ObservableObject {
         case .seekMedia(let ms): moved = seekMedia(toMediaTimeMs: ms)
         case .seekText(let charOffset): moved = seekText(toCharOffset: charOffset)
         }
-        if !moved { reportFailure("Couldn't go back to that Margin's place, so no Margin was started.") }
+        if !moved { reportFailure("Couldn't go back to that Margin's place, so no Margin was started. Tap Add Margin again to record where the source is.") }
         return moved
     }
 

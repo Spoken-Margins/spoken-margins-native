@@ -50,9 +50,19 @@ final class PreparedNarrationTextSeekTests: XCTestCase {
         XCTAssertEqual(audio.seeks, [], "nothing moved, so the caller can tell and not record at the wrong place")
     }
 
+    /// A restored, paused session has no player until it plays: the move is staged, as a media seek is.
+    func testSeekTextOnARestoredPausedNarrationStagesThePlace() throws {
+        let (engine, audio) = try narrationEngine(playing: false, hasPlayer: false)
+        let staged = try engine.seekText(toCharOffset: 24)
+        XCTAssertEqual(staged.status, .paused)
+        XCTAssertEqual(staged.currentMediaTimeMs, 1_500, "the next start opens the narration at the Margin")
+        XCTAssertEqual(staged.currentTextStart, 24)
+        XCTAssertEqual(audio.seeks, [], "no player to move")
+    }
+
     // MARK: - Fixture
 
-    private func narrationEngine(renderedSegments: Int = 3) throws -> (SessionEngine, NarrationAudioClient) {
+    private func narrationEngine(renderedSegments: Int = 3, playing: Bool = true, hasPlayer: Bool = true) throws -> (SessionEngine, NarrationAudioClient) {
         let file = FileManager.default.temporaryDirectory.appending(path: "narration-\(UUID().uuidString).m4a")
         try Data("narration".utf8).write(to: file)
         addTeardownBlock { try? FileManager.default.removeItem(at: file) }
@@ -71,6 +81,7 @@ final class PreparedNarrationTextSeekTests: XCTestCase {
             timeline: TranscriptTimeline(segments: Array(timeline.segments.prefix(renderedSegments)), chapters: [], durationMs: 3_000)
         ))
         let audio = NarrationAudioClient()
+        audio.hasPlayer = hasPlayer
         let engine = SessionEngine(
             profile: RuntimeCapabilityProfile(
                 id: "phone", displayName: "Phone",
@@ -80,8 +91,10 @@ final class PreparedNarrationTextSeekTests: XCTestCase {
         )
         _ = try engine.inspectSession(sessionId: session.id)
         XCTAssertEqual(engine.currentSession?.currentTargetType, .transcriptBackedMedia, "the narration file is there, so it plays")
-        _ = try engine.resumePlayback()
-        XCTAssertEqual(try engine.syncPlaybackProgress().status, .playing)
+        if playing {
+            _ = try engine.resumePlayback()
+            XCTAssertEqual(try engine.syncPlaybackProgress().status, .playing)
+        }
         return (engine, audio)
     }
 }
@@ -91,6 +104,14 @@ private final class NarrationAudioClient: AudioPlaybackClient {
     var activeTargetId: String?
     var mediaTimeMs: Int?
     var seeks: [Int] = []
+    /// A session restored at launch has no player until it plays, as AVPlayerStreamPlaybackClient reports it.
+    var hasPlayer = true
+
+    func requestMediaSeek(toMediaTimeMs mediaTimeMs: Int) throws -> MediaSeekRequest {
+        guard hasPlayer else { throw SessionKitError.invalidCommandForState("media_seek_player_unavailable") }
+        try seek(toMediaTimeMs: mediaTimeMs)
+        return MediaSeekRequest(id: 0, targetId: activeTargetId, requestedMediaTimeMs: mediaTimeMs)
+    }
 
     func prepareSpeechText(_ text: String) throws -> String { text }
     func play(targetId: String) throws { activeTargetId = targetId }

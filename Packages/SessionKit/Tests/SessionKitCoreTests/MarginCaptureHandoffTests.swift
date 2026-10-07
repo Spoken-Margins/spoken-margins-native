@@ -4,9 +4,10 @@ import XCTest
 
 /// #866: Add Margin while a Margin plays records at the playing Margin's place, not where the source paused after it.
 final class MarginCaptureHandoffTests: XCTestCase {
-    private func snapshot(itemId: String?, mediaTimeMs: Int? = nil, textStart: Int? = nil) -> SessionSnapshot {
+    private func snapshot(itemId: String?, mediaTimeMs: Int? = nil, textStart: Int? = nil, target: TargetType? = nil) -> SessionSnapshot {
         var snapshot = SessionSnapshot()
         snapshot.itemId = itemId
+        snapshot.targetType = target?.rawValue
         snapshot.currentMediaTimeMs = mediaTimeMs
         snapshot.currentTextStart = textStart
         return snapshot
@@ -48,6 +49,23 @@ final class MarginCaptureHandoffTests: XCTestCase {
         let article = MarginCaptureHandoff(itemId: "article", place: .text(charOffset: 120))
         XCTAssertEqual(article.sourceMove(from: snapshot(itemId: "article", textStart: 160)), .seekText(charOffset: 120))
         XCTAssertEqual(article.sourceMove(from: snapshot(itemId: "article", textStart: 120)), .stay)
+    }
+
+    /// A place only moves a source that can show it. A conversation turn's position is relative to that turn, so an
+    /// article place must not move it; live speech has no media clock; narration and podcasts take either seek.
+    func testASourceThatCantShowThePlaceStaysWhereItIs() {
+        let article = MarginCaptureHandoff(itemId: "a", place: .text(charOffset: 5_000))
+        let podcast = MarginCaptureHandoff(itemId: "a", place: .media(ms: 60_000))
+        for turn in [TargetType.assistantTurnTTS, .summaryTurnTTS] {
+            XCTAssertEqual(article.sourceMove(from: snapshot(itemId: "a", textStart: 10, target: turn)), .stay, "\(turn)")
+            XCTAssertEqual(podcast.sourceMove(from: snapshot(itemId: "a", mediaTimeMs: 10, target: turn)), .stay, "\(turn)")
+        }
+        XCTAssertEqual(podcast.sourceMove(from: snapshot(itemId: "a", textStart: 10, target: .itemTextTTS)), .stay,
+                       "a Margin recorded on narration, heard while the article reads aloud as live speech")
+        XCTAssertEqual(article.sourceMove(from: snapshot(itemId: "a", textStart: 10, target: .itemTextTTS)), .seekText(charOffset: 5_000))
+        XCTAssertEqual(article.sourceMove(from: snapshot(itemId: "a", mediaTimeMs: 10, target: .transcriptBackedMedia)), .seekText(charOffset: 5_000),
+                       "prepared narration plays as media; the engine finds the text place on its timeline")
+        XCTAssertEqual(podcast.sourceMove(from: snapshot(itemId: "a", mediaTimeMs: 10, target: .transcriptBackedMedia)), .seekMedia(ms: 60_000))
     }
 
     /// The audit's case: the source paused at 120 s, your Margin at 60 s heard from its detail sheet.

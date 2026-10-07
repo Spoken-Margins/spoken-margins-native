@@ -54,11 +54,15 @@ public struct MarginCaptureHandoff: Sendable, Equatable {
     }
 
     /// Where the source must go so the new Margin is anchored at the playing Margin. A Margin from another item,
-    /// or one without a place, leaves the source where it is.
+    /// or one without a place, leaves the source where it is. So does a source that can't show the place: a
+    /// conversation turn has no article or media place of its own, and live speech has no media clock.
     public func sourceMove(from snapshot: SessionSnapshot) -> SourceMove {
         guard let itemId, itemId == snapshot.itemId, let place else { return .stay }
+        let source = snapshot.targetType
+        if source == TargetType.assistantTurnTTS.rawValue || source == TargetType.summaryTurnTTS.rawValue { return .stay }
         switch place {
         case .media(let ms):
+            if source == TargetType.itemTextTTS.rawValue { return .stay }
             return snapshot.currentMediaTimeMs == ms ? .stay : .seekMedia(ms: ms)
         case .text(let charOffset):
             return snapshot.currentTextStart == charOffset ? .stay : .seekText(charOffset: charOffset)

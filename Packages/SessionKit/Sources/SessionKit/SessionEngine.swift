@@ -718,7 +718,13 @@ public final class SessionEngine {
            isGeneratedTextMedia(item.media),
            let timeline = sourceTranscriptTimeline(itemId: item.id),
            let mediaTimeMs = PreparedNarrationFallback.mediaTimeMs(textOffset: charOffset, timeline: timeline) {
-            return try seekMedia(toMediaTimeMs: mediaTimeMs)
+            do {
+                return try seekMedia(toMediaTimeMs: mediaTimeMs)
+            } catch SessionKitError.invalidCommandForState(let reason)
+                where reason == "media_seek_player_unavailable" && snapshot.status == .paused {
+                // A restored, paused session has no player yet: the next start opens the narration there.
+                return try stagePausedMediaPosition(toMediaTimeMs: mediaTimeMs)
+            }
         }
         guard var session = currentSession,
               session.currentTargetType == .itemTextTTS,
