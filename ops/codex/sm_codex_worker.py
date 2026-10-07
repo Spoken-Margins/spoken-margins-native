@@ -443,7 +443,9 @@ def in_focus(pr: dict, focus: Optional[set]) -> bool:
 # The freeze (AGENTS.md, PR #894) lets automerge through only for the milestone or diffs outside these.
 APP_ROOTS = ('App/', 'Packages/', 'Contracts/')
 GH_FILES_CAP = 100  # gh lists at most this many files per PR; a longer list may hide app files
-LIKELY_FILES_RE = re.compile(r'Likely files\W*?[:.]?\**[ \t]*(.*?)(?:\n[ \t]*\n|\n[ \t]*(?:\*\*|#)|\Z)', re.I | re.S)
+# The section runs to the next bold or heading line, or a blank line that isn't followed by more list items.
+LIKELY_FILES_RE = re.compile(r'Likely files\W*?[:.]?\**[ \t]*(.*?)'
+                             r'(?:\n[ \t]*\n(?![ \t]*(?:[-*+]|\d+[.)])[ \t])|\n[ \t]*(?:\*\*|#)|\Z)', re.I | re.S)
 PATHISH_RE = re.compile(r'[\w.*-]+(?:/[\w.*-]*)+|[\w*-]+\.[A-Za-z][\w]*')
 
 
@@ -457,7 +459,7 @@ def app_code_risk(issue: dict, repo_root: Path = REPO_ROOT) -> Optional[str]:
     m = LIKELY_FILES_RE.search(issue.get('body') or '')
     if not m:
         return 'no Likely files, so it may touch app code'
-    tokens = [t.strip('`.,;:()[]') for t in PATHISH_RE.findall(m.group(1))]
+    tokens = [t.strip('`,;:()[]').rstrip('.') for t in PATHISH_RE.findall(m.group(1))]
     paths = [t[2:] if t.startswith('./') else t for t in tokens if t]
     if not paths:
         return 'its Likely files name no paths, so it may touch app code'
@@ -467,6 +469,9 @@ def app_code_risk(issue: dict, repo_root: Path = REPO_ROOT) -> Optional[str]:
     loose = [p for p in paths if '/' not in p and not (repo_root / p).is_file()]
     if loose:
         return f'its Likely files name `{loose[0]}` without a folder, so it may touch app code'
+    unknown = [p for p in paths if '/' in p and not (repo_root / p.split('/')[0]).is_dir()]
+    if unknown:
+        return f'its Likely files name `{unknown[0]}`, which is not under a top-level folder, so it may touch app code'
     return None
 
 
@@ -484,8 +489,10 @@ def pr_paths(pr: dict) -> tuple[list, bool]:
 
 
 def freeze_allows(pr: dict, focus: Optional[set], paths: Optional[list] = None) -> bool:
-    """During a freeze, only milestone PRs and diffs outside app code may be armed or finished."""
-    if focus is None or linked_issues(pr) & focus:
+    """During a freeze, only milestone PRs and diffs outside app code may be armed or finished.
+    A body's "part of #n" doesn't count: the PR may only touch the milestone issue in passing."""
+    links = linked_issues(dict(pr, body=re.sub(r'(?i)\bpart of\s+#\d+', '', pr.get('body') or '')))
+    if focus is None or links & focus:
         return True
     if paths is not None:
         return diff_is_app_free(paths)
@@ -927,10 +934,10 @@ class Ops:
         return self.gh_json(['issue', 'view', str(number), '-R', REPO,
                              '--json', 'number,title,body,labels,state,createdAt,comments'])
 
-    def open_prs(self) -> list:
+    def open_prs(self, with_files: bool = False) -> list:
+        fields = 'number,isDraft,createdAt,title,headRefName,body' + (',files,changedFiles' if with_files else '')
         return self.gh_json(['pr', 'list', '-R', REPO, '--state', 'open', '--base', BASE_BRANCH,
-                             '--limit', '200', '--json',
-                             'number,isDraft,createdAt,title,headRefName,body,files,changedFiles'])
+                             '--limit', '200', '--json', fields])
 
     def focus_issues(self, milestone: str) -> Optional[set]:
         """Open issue numbers in the milestone, or None when no focus is set. Raises if unreadable."""
@@ -1060,7 +1067,7 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
         try:
             held_prs = {int(i['pr']) for i in live.values() if i.get('pr')}
             focus = ops.focus_issues(dial['focus'])
-            prs = [p for p in ops.open_prs() if freeze_allows(p, focus)]
+            prs = [p for p in ops.open_prs(with_files=focus is not None) if freeze_allows(p, focus)]
             pr, skipped = choose_finish(prs, ops.pull, now, held_prs,
                                        on_limit=None if dry_run else lambda p: note_finish_limit(ops, p, now))
             held = {int(i.get('issue')) for i in live.values() if i.get('issue')}
@@ -1184,8 +1191,10 @@ def check_staged_changes(ops: Ops, wt: Path) -> None:
 
 
 def branch_paths(ops: Ops, wt: Path) -> list:
-    """Files the PR changes: HEAD against its merge base with origin/next."""
-    out = ops.must(['git', 'diff', '--name-only', f'origin/{BASE_BRANCH}...HEAD'], cwd=wt).stdout
+    """Files the PR changes: HEAD against its merge base with origin/next. --no-renames lists both
+    sides of a move, so moving a file out of App/ still counts as touching App/."""
+    out = ops.must(['git', 'diff', '--name-only', '--no-renames', f'origin/{BASE_BRANCH}...HEAD'],
+                   cwd=wt).stdout
     return [line for line in out.splitlines() if line.strip()]
 
 

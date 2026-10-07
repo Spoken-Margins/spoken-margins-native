@@ -1612,6 +1612,8 @@ class AppCodeRiskTests(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp(prefix='cw-root-'))
         self.addCleanup(shutil.rmtree, self.root, True)
         (self.root / 'AGENTS.md').write_text('x')
+        for folder in ('ops', 'scripts', 'docs', '.github', 'App', 'Packages', 'Contracts'):
+            (self.root / folder).mkdir()
 
     def risk(self, body):
         return w.app_code_risk(issue(1, body=body), self.root)
@@ -1633,6 +1635,11 @@ class AppCodeRiskTests(unittest.TestCase):
             '**Likely files.** the worker and its tests': 'name no paths',
             '**Outcome.** something': 'no Likely files',
             '': 'no Likely files',
+            '**Likely files.** `SessionKit/Sources/SessionKit/Margin.swift`': 'not under a top-level folder',
+            '**Likely files.** `SpokenMarginsApp/Gate1AppModel.swift`': 'not under a top-level folder',
+            '**Likely files.** https://github.com/uncomposed/spoken-margins-native/blob/next/App/x.swift':
+                'not under a top-level folder',
+            '## Likely files\n- `ops/x.py`\n\n- `App/y.swift`\n\n## Size': 'app code (App/y.swift)',
         }
         for body, why in risky.items():
             self.assertIn(why, self.risk(body) or '', body)
@@ -1646,6 +1653,9 @@ class AppCodeRiskTests(unittest.TestCase):
         self.assertTrue(w.freeze_allows({'files': [{'path': 'App/y.swift'}]}, None))
         self.assertTrue(w.freeze_allows({'headRefName': 'ws/2-x'}, {1}, paths=['docs/a.md']))
         self.assertFalse(w.freeze_allows({'headRefName': 'ws/2-x'}, {1}, paths=['Contracts/a.json']))
+        # "part of" a milestone issue is not enough to arm an app diff; closing words are.
+        self.assertFalse(w.freeze_allows({'headRefName': 'ws/2-x', 'body': 'Part of #1.'}, {1}, paths=['App/a']))
+        self.assertTrue(w.freeze_allows({'headRefName': 'ws/2-x', 'body': 'Closes #1.'}, {1}, paths=['App/a']))
 
 
 class FreezeTickTests(unittest.TestCase):
@@ -1688,6 +1698,7 @@ class FreezeTickTests(unittest.TestCase):
     def test_ops_only_issue_outside_the_milestone_is_taken(self):
         issues = [issue(44, created='2026-09-01T00:00:00Z', body=APP_WORK),
                   issue(45, created='2026-09-02T00:00:00Z', body=OPS_ONLY)]
+        (self.home / 'ops').mkdir()  # the tick checks Likely files against the checkout's folders
         spawn = self.spawner()
         d = w.tick(self.ops(focus_group('Build 30'), milestone=[99], issues=issues), spawn=spawn)
         self.assertEqual(spawn.started, [(1, 45)])
@@ -1700,6 +1711,19 @@ class FreezeTickTests(unittest.TestCase):
         spawn = self.spawner()
         d = w.tick(self.ops(focus_group('Build 30'), milestone=[866], prs=[app, ops_pr]), spawn=spawn)
         self.assertEqual(d['pr'], 75)
+
+    def test_files_are_listed_only_during_a_freeze(self):
+        for group, wanted in ((focus_group('Build 30'), True), (focus_group('None'), False)):
+            ops = self.ops(group, milestone=[42])
+            inner, asked = ops.run, []
+
+            def run(cmd, cwd=None, timeout=None, inner=inner, asked=asked):
+                asked.append([str(c) for c in cmd])
+                return inner(cmd, cwd, timeout)
+            ops.run = run
+            w.tick(ops, spawn=self.spawner())
+            listing = next(c for c in asked if c[:3] == ['gh', 'pr', 'list'])
+            self.assertEqual('files' in listing[-1].split(','), wanted)
 
     def test_dial_names_the_next_milestone(self):
         group = focus_group('Build 31', options=('Build 31', 'None'))
@@ -1740,7 +1764,10 @@ class FreezeChildRun(FakeRun):
             return w.Result(0, json.dumps([{'number': n} for n in self.milestone]))
         if cmd[:2] == ['git', 'diff'] and '--name-only' in cmd and 'origin/next...HEAD' in cmd:
             self.calls.append(cmd)
-            return w.Result(0, ''.join(p + '\n' for p in self.paths))
+            # Like git: without --no-renames a move lists only its new path.
+            paths = [p.split(' -> ')[-1] if '--no-renames' not in cmd else p.replace(' -> ', '\n')
+                     for p in self.paths]
+            return w.Result(0, ''.join(p + '\n' for p in paths))
         return super().__call__(cmd, cwd, timeout)
 
 
@@ -1764,6 +1791,10 @@ class FreezeChildTests(unittest.TestCase):
         self.assertIn('Build 30 freeze is on', note[note.index('--body') + 1])
         self.assertIn('`App/SpokenMarginsApp/Gate1AppModel.swift`', note[note.index('--body') + 1])
         self.assertTrue(run.comments()[-1].startswith('Thread "Codex worker 1" stopping: PR #777 opened unarmed · '))
+
+    def test_moving_a_file_out_of_app_counts_as_app_code(self):
+        outcome, run = self.open_pr([99], ['App/Foo.swift -> ops/Foo.swift'])
+        self.assertEqual((outcome, self.pr_labels(run)), ('pr-unarmed', []))
 
     def test_milestone_issue_is_armed_whatever_its_diff(self):
         outcome, run = self.open_pr([42], ['App/SpokenMarginsApp/Gate1AppModel.swift'])
