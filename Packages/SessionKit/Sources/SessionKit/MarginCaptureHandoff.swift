@@ -35,6 +35,19 @@ public struct MarginCaptureHandoff: Sendable, Equatable {
         )
     }
 
+    /// One of the listener's own Margins playing from its detail sheet: the place it was recorded at in its item.
+    /// A conversation turn's place is relative to that turn, so it isn't handed off.
+    public init(localMargin: Interjection) {
+        let anchor = localMargin.anchor
+        let place: Place?
+        switch anchor.anchorType {
+        case .media, .transcript: place = anchor.mediaTimeMs.map { Place.media(ms: $0) }
+        case .text: place = .text(charOffset: anchor.startChar)
+        case .turn: place = nil
+        }
+        self.init(itemId: localMargin.itemId, place: place)
+    }
+
     /// The Margin a Margin moment is playing inline, if any.
     public init(moment: MarginMomentSequence) {
         self.init(itemId: moment.itemId, place: moment.playing.map { Place.media(ms: $0.mediaTimeMs) })

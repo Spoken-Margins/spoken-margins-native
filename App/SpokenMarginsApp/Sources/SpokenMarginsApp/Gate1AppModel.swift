@@ -2272,7 +2272,7 @@ final class Gate1AppModel: ObservableObject {
             source: .init(
                 pause: { [weak self] in self?.pause() },
                 resume: { [weak self] in self?.resumePlayback() },
-                seek: { [weak self] in self?.seekMedia(toMediaTimeMs: $0) }
+                seek: { [weak self] in _ = self?.seekMedia(toMediaTimeMs: $0) }
             ),
             voiceURL: { voiceURLs[$0] }
         )
@@ -5982,10 +5982,11 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func seekMedia(toMediaTimeMs mediaTimeMs: Int) {
+    @discardableResult
+    func seekMedia(toMediaTimeMs mediaTimeMs: Int) -> Bool {
         recordDeveloperDiagnostic("seek.media.request", ["timeMs": String(mediaTimeMs)])
         restoreSkimOriginBeforeCanonicalTransport()
-        run { engine in
+        return run { engine in
             snapshot = try seekOrStageMedia(engine, toMediaTimeMs: mediaTimeMs)
             recordMediaSeekEvidence(from: engine)
             refreshSelectedItem()
@@ -6121,11 +6122,12 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["mediaSeek"] = evidence
     }
 
-    func seekText(toCharOffset charOffset: Int) {
+    @discardableResult
+    func seekText(toCharOffset charOffset: Int) -> Bool {
         if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }
         recordDeveloperDiagnostic("seek.text.request", ["offset": String(charOffset)])
         synchronizeStreamingSpeechAnchorIfNeeded()
-        run { engine in
+        return run { engine in
             snapshot = try engine.seekText(toCharOffset: charOffset)
             streamingSpeechQueue.relinquishToCanonicalPlayback()
             refreshSelectedItem()
@@ -6234,8 +6236,7 @@ final class Gate1AppModel: ObservableObject {
             reportWarning("Margins are unavailable while a scene summary is playing. Pause or cancel Skim first.")
             return
         }
-        guard !recordingNavigationIsLocked else { return }
-        handOffPlayingMarginToRecording()
+        guard !recordingNavigationIsLocked, handOffPlayingMarginToRecording() else { return }
         let voiceCaptureRequestID = UUID()
         pendingVoiceCaptureRequestID = voiceCaptureRequestID
         recordingPermissionDenied = false
@@ -6274,8 +6275,9 @@ final class Gate1AppModel: ObservableObject {
     }
 
     /// #866: Add Margin while a Margin plays records straight away. The voice stops without resuming the source,
-    /// and the source moves to the playing Margin's place so the new Margin is anchored there.
-    private func handOffPlayingMarginToRecording() {
+    /// and the source moves to the playing Margin's place so the new Margin is anchored there. False when that move
+    /// failed: nothing records, rather than recording at the wrong place.
+    private func handOffPlayingMarginToRecording() -> Bool {
         let handoff: MarginCaptureHandoff
         if let prompt = playingImportedCommentary {
             handoff = MarginCaptureHandoff(sharedMargin: prompt.interjection, itemId: prompt.layer.itemId)
@@ -6284,18 +6286,24 @@ final class Gate1AppModel: ObservableObject {
         } else if let conductor = marginMomentConductor, conductor.isPlayingVoice {
             handoff = MarginCaptureHandoff(moment: conductor.sequence)
             endMarginMoment()
+        } else if let playingID = playingInterjectionAudioId {
+            // Your own Margin heard from its detail: it sits where it was recorded.
+            let margin = playingInterjectionAudioSessionID.flatMap { try? store?.loadInterjections(sessionId: $0) }?.first { $0.id == playingID }
+            handoff = margin.map { MarginCaptureHandoff(localMargin: $0) } ?? MarginCaptureHandoff(itemId: nil, place: nil)
+            stopInterjectionAudioPlayback()
         } else {
-            // A Margin heard from its detail isn't playing in the source, so the source stays where it is.
-            if playingInterjectionAudioId != nil { stopInterjectionAudioPlayback() }
-            return
+            return true
         }
         let move = handoff.sourceMove(from: snapshot)
         diagnostics["marginCaptureHandoff"] = String(describing: move)
+        let moved: Bool
         switch move {
-        case .stay: break
-        case .seekMedia(let ms): seekMedia(toMediaTimeMs: ms)
-        case .seekText(let charOffset): seekText(toCharOffset: charOffset)
+        case .stay: return true
+        case .seekMedia(let ms): moved = seekMedia(toMediaTimeMs: ms)
+        case .seekText(let charOffset): moved = seekText(toCharOffset: charOffset)
         }
+        if !moved { reportFailure("Couldn't go back to that Margin's place, so no Margin was started.") }
+        return moved
     }
 
     /// #783: Continue on the line before the microphone prompt goes on to iOS's request.
@@ -9457,9 +9465,8 @@ final class Gate1AppModel: ObservableObject {
             "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
             "requestedMediaTimeMs": String(mediaTimeMs ?? -1)
         ])
-        if command == .beginInterjection, !snapshot.isRecording, snapshot.skimBridgeState == nil {
-            handOffPlayingMarginToRecording()
-        }
+        if command == .beginInterjection, !snapshot.isRecording, snapshot.skimBridgeState == nil,
+           !handOffPlayingMarginToRecording() { return }
         if playingImportedCommentary != nil {
             switch command {
             case .play: resumePlayback()
@@ -9826,7 +9833,8 @@ final class Gate1AppModel: ObservableObject {
 
     func deliverAutomaticMargins() async { await marginNotesDelivery.pass() }
 
-    func run(_ operation: (SessionEngine) throws -> Void) {
+    @discardableResult
+    func run(_ operation: (SessionEngine) throws -> Void) -> Bool {
         if engine == nil {
             do {
                 let store = try requireStore()
@@ -9835,11 +9843,13 @@ final class Gate1AppModel: ObservableObject {
                 reportFailure(error, context: "Playback setup failed")
             }
         }
-        guard let engine else { return }
+        guard let engine else { return false }
         do {
             try operation(engine)
+            return true
         } catch {
             reportFailure(error)
+            return false
         }
     }
 

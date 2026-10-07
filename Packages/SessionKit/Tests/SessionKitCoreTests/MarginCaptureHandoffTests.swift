@@ -50,6 +50,38 @@ final class MarginCaptureHandoffTests: XCTestCase {
         XCTAssertEqual(article.sourceMove(from: snapshot(itemId: "article", textStart: 120)), .stay)
     }
 
+    /// The audit's case: the source paused at 120 s, your Margin at 60 s heard from its detail sheet.
+    func testYourOwnMarginsPlaceIsWhereItWasRecorded() {
+        func margin(_ anchor: Anchor, item: String = "ep") -> Interjection {
+            Interjection(
+                id: "ij-001", itemId: item, sessionId: "session-1", targetType: .item, targetId: item,
+                createdAt: Date(timeIntervalSince1970: 1), roughPercent: 10, anchor: anchor, audioPath: nil,
+                audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
+                displayText: "A Margin", status: "active"
+            )
+        }
+        let spoken = MarginCaptureHandoff(localMargin: margin(Anchor(
+            anchorType: .transcript, startChar: 900, endChar: 940, anchorBefore: "", anchorAfter: "", mediaTimeMs: 60_000)))
+        XCTAssertEqual(spoken, MarginCaptureHandoff(itemId: "ep", place: .media(ms: 60_000)))
+        XCTAssertEqual(spoken.sourceMove(from: snapshot(itemId: "ep", mediaTimeMs: 120_000)), .seekMedia(ms: 60_000),
+                       "the new Margin anchors at the heard Margin, not where the source paused")
+        XCTAssertEqual(spoken.sourceMove(from: snapshot(itemId: "ep", mediaTimeMs: 60_000)), .stay)
+        XCTAssertEqual(spoken.sourceMove(from: snapshot(itemId: "other", mediaTimeMs: 120_000)), .stay,
+                       "a Margin from another item never moves this source")
+
+        let written = MarginCaptureHandoff(localMargin: margin(
+            Anchor(anchorType: .text, startChar: 120, endChar: 140, anchorBefore: "", anchorAfter: ""), item: "article"))
+        XCTAssertEqual(written.place, .text(charOffset: 120))
+        XCTAssertEqual(written.sourceMove(from: snapshot(itemId: "article", textStart: 400)), .seekText(charOffset: 120))
+
+        XCTAssertNil(MarginCaptureHandoff(localMargin: margin(
+            Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: ""))).place,
+            "a media anchor without a time has no place to go to")
+        XCTAssertNil(MarginCaptureHandoff(localMargin: margin(
+            Anchor(anchorType: .turn, startChar: 30, endChar: 50, anchorBefore: "", anchorAfter: "", turnSegmentIndex: 1))).place,
+            "a conversation turn's place is relative to that turn")
+    }
+
     func testASharedMarginsPlaceIsItsLocalPositionInThisCopy() {
         func shared(_ resolution: ImportedAnchorResolution) -> ImportedCommentaryInterjection {
             ImportedCommentaryInterjection(id: "note", layerId: "layer", packageScopedId: "note", createdAt: Date(),

@@ -403,6 +403,39 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .playing)
     }
 
+    /// #866 audit: your own Margin heard from its detail sheet (the source paused far from it) is the Margin that plays.
+    /// Add Margin records at that Margin's place, not wherever the source paused.
+    func testAddMarginWhileYourOwnMarginPlaysFromItsDetailRecordsAtThatMargin() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, recordingClient: NoopRecordingClient())
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.startItem(id: "real-source")
+        defer { model.pause() }
+        try waitUntil("the source plays") { (model.snapshot.currentMediaTimeMs ?? 0) > 0 || model.snapshot.status == .playing }
+        model.seekMedia(toMediaTimeMs: 5_000)
+        let own = Interjection(
+            id: "own-margin", itemId: "real-source", sessionId: try XCTUnwrap(model.snapshot.sessionId),
+            targetType: .item, targetId: "real-source", createdAt: Date(), roughPercent: 3,
+            anchor: Anchor(anchorType: .transcript, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 1_000),
+            audioPath: fixture.record.audioPath, audioStatus: "recorded", transcriptionStatus: "complete",
+            transcript: nil, cleanedTranscript: nil, displayText: "My Margin", status: "active"
+        )
+        try fixture.store.saveInterjection(own)
+        model.toggleInterjectionAudioPlayback(own)
+        XCTAssertTrue(model.isPlayingInterjectionAudio(own))
+        XCTAssertEqual(model.snapshot.status, .paused, "hearing a Margin from its detail pauses the source")
+
+        model.beginInterjection()
+        XCTAssertTrue(model.snapshot.isRecording, "Add Margin records straight away")
+        XCTAssertFalse(model.isPlayingInterjectionAudio(own), "your Margin's voice stopped")
+        XCTAssertEqual(model.diagnostics["marginCaptureHandoff"], "seekMedia(ms: 1000)")
+
+        model.finishInterjection()
+        let saved = try XCTUnwrap(fixture.store.loadSessions(itemId: "real-source")
+            .flatMap { try fixture.store.loadInterjections(sessionId: $0.id) }.first { $0.id != own.id })
+        XCTAssertEqual(try XCTUnwrap(saved.anchor.mediaTimeMs), 1_000, accuracy: 20, "anchored at the Margin that played, not at 5 s")
+    }
+
     private func makeTestWAV(duration: TimeInterval) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "media-interruption-\(UUID().uuidString).wav")
