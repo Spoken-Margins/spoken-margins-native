@@ -3196,6 +3196,12 @@ public final class SystemRecordingClient: RecordingClient {
     #if canImport(AVFoundation)
     private var recorder: AVAudioRecorder?
     private var currentURL: URL?
+    private var recorderDelegate: CaptureDelegate?
+    /// The loudest the microphone has been since the Margin began, in dB (diagnostics only, #937).
+    private var peakPowerDb: Float?
+    /// A Margin is being captured: from `beginRecording` until it is finished or cancelled.
+    private var isCaptureActive = false
+    private var captureRestarts = 0
     #endif
     private let fileManager: FileManager
     private let baseDirectory: URL?
@@ -3258,6 +3264,67 @@ public final class SystemRecordingClient: RecordingClient {
     }
     #endif
 
+    #if canImport(AVFoundation)
+    /// Puts the session in `playAndRecord`, then starts a recorder on a new file. A restart passes
+    /// `cycleSession` to drop and retake the session, which makes iOS settle the route again (#937).
+    private func startRecorder(cycleSession: Bool) throws -> (recorder: AVAudioRecorder, url: URL) {
+        #if os(iOS) || os(watchOS)
+        let session = AVAudioSession.sharedInstance()
+        if cycleSession { try? session.setActive(false) }
+        #if os(watchOS)
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetoothHFP])
+        #else
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        #endif
+        try session.setActive(true)
+        #endif
+        let directory = try recordingsDirectory()
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let url = directory.appending(path: "\(stamp)\(captureRestarts == 0 ? "" : "-r\(captureRestarts)").m4a")
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 44_100,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+        ]
+        let recorder = try AVAudioRecorder(url: url, settings: settings)
+        let delegate = CaptureDelegate()
+        recorder.delegate = delegate
+        recorder.isMeteringEnabled = true
+        recorder.prepareToRecord()
+        guard recorder.record() else {
+            throw SessionKitError.persistenceFailed("recording_failed")
+        }
+        recorderDelegate = delegate
+        return (recorder, url)
+    }
+
+    /// What `AVAudioRecorder` reported when it stopped by itself, kept for the diagnostics log.
+    private final class CaptureDelegate: NSObject, AVAudioRecorderDelegate, @unchecked Sendable {
+        private let lock = NSLock()
+        private var finishedSuccessfully: Bool?
+        private var encodeError: String?
+
+        func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+            lock.withLock { finishedSuccessfully = flag }
+        }
+
+        func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
+            lock.withLock { encodeError = error.map { String(describing: type(of: $0)) } ?? "unknown" }
+        }
+
+        var fields: [String: String] {
+            lock.withLock {
+                var result: [String: String] = [:]
+                if let finishedSuccessfully { result["recorderFinished"] = finishedSuccessfully ? "ok" : "failed" }
+                if let encodeError { result["encodeError"] = encodeError }
+                return result
+            }
+        }
+    }
+    #endif
+
     public func beginRecording() throws {
         #if canImport(AVFoundation)
         #if os(iOS)
@@ -3300,33 +3367,76 @@ public final class SystemRecordingClient: RecordingClient {
             throw SessionKitError.persistenceFailed("recording_permission_unknown")
         }
         #endif
+        captureRestarts = 0
+        peakPowerDb = nil
         #if os(iOS) || os(watchOS)
         shouldNotifyOtherAudioOnFinish = session.categoryOptions.contains(.mixWithOthers)
-        #if os(watchOS)
-        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetoothHFP])
-        #else
-        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP])
         #endif
-        try session.setActive(true)
-        #endif
-        let directory = try recordingsDirectory()
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appending(path: "\(ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")).m4a")
-        let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 44_100,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
-        ]
-        let recorder = try AVAudioRecorder(url: url, settings: settings)
-        recorder.prepareToRecord()
-        guard recorder.record() else {
-            throw SessionKitError.persistenceFailed("recording_failed")
-        }
+        let (recorder, url) = try startRecorder(cycleSession: false)
+        isCaptureActive = true
         self.recorder = recorder
         self.currentURL = url
         #else
         throw SessionKitError.persistenceFailed("recording_unavailable")
+        #endif
+    }
+
+    public func captureReading() -> RecordingCaptureReading? {
+        #if canImport(AVFoundation)
+        guard isCaptureActive else { return nil }
+        // No recorder while a capture is active means a restart failed: report that, not "can't tell".
+        guard let recorder else { return RecordingCaptureReading(recorderRunning: false, capturedMs: 0) }
+        recorder.updateMeters()
+        let peak = recorder.peakPower(forChannel: 0)
+        peakPowerDb = max(peakPowerDb ?? peak, peak)
+        return RecordingCaptureReading(
+            recorderRunning: recorder.isRecording,
+            capturedMs: Int((recorder.currentTime * 1_000).rounded())
+        )
+        #else
+        return nil
+        #endif
+    }
+
+    public func restartCapture() throws {
+        #if canImport(AVFoundation)
+        guard isCaptureActive else { throw SessionKitError.invalidCommandForState("restartCapture") }
+        let previousURL = currentURL
+        recorder?.stop()
+        recorder?.delegate = nil
+        recorder = nil
+        recorderDelegate = nil
+        currentURL = nil
+        if let previousURL { try? fileManager.removeItem(at: previousURL) }
+        captureRestarts += 1
+        // The first restart only replaces the recorder. A second retakes the session too.
+        let started = try startRecorder(cycleSession: captureRestarts >= 2)
+        recorder = started.recorder
+        currentURL = started.url
+        #else
+        throw SessionKitError.persistenceFailed("recording_restart_unsupported")
+        #endif
+    }
+
+    public func captureDiagnostics() -> [String: String] {
+        #if canImport(AVFoundation)
+        var fields: [String: String] = ["captureRestarts": String(captureRestarts)]
+        if let recorder {
+            fields["recorderRunning"] = String(recorder.isRecording)
+            fields["capturedMs"] = String(Int((recorder.currentTime * 1_000).rounded()))
+        }
+        if let currentURL, let bytes = (try? currentURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
+            fields["fileBytes"] = String(bytes)
+        }
+        if let peakPowerDb { fields["peakDb"] = String(Int(peakPowerDb.rounded())) }
+        if let recorderDelegate { fields.merge(recorderDelegate.fields) { current, _ in current } }
+        #if os(iOS)
+        // The session fields name only the output route; a silent microphone is about the input.
+        fields["inputs"] = AVAudioSession.sharedInstance().currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
+        #endif
+        return fields.merging(AudioSessionDiagnostics.fields()) { current, _ in current }
+        #else
+        return [:]
         #endif
     }
 
@@ -3336,6 +3446,8 @@ public final class SystemRecordingClient: RecordingClient {
             if let audioRef { return audioRef }
             throw SessionKitError.invalidCommandForState("finishRecording")
         }
+        isCaptureActive = false
+        recorderDelegate = nil
         recorder.stop()
         self.recorder = nil
         self.currentURL = nil
@@ -3354,6 +3466,8 @@ public final class SystemRecordingClient: RecordingClient {
     public func cancelRecording() throws {
         #if canImport(AVFoundation)
         let url = currentURL
+        isCaptureActive = false
+        recorderDelegate = nil
         recorder?.stop()
         recorder?.deleteRecording()
         recorder = nil
