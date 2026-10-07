@@ -22,6 +22,11 @@ What it does:
   (#847), and a check that names an issue or PR not on the phone yet waits in its own section. A step
   carries the check's own numbered steps, its URLs as links, and the repo files it names (copied to
   files/ and to iCloud Drive as "Test plan <sha7> files", beside the plan the installer puts there).
+  After those, "Still waiting on your check" lists open issues labelled `status: needs-human-validation` whose
+  fix is in this build but wasn't in the changes above, for as long as nobody has checked them (#927). A check
+  is read from the issue body or the PR as "Owner check", "Phone check" or a "## Steps" heading, and the newest
+  one in the issue's comments wins; a comment saying "Owner check: none" or "leave this off the owner's plans"
+  keeps the issue out. They share the ten minutes with the new changes; the rest are listed with links.
 
 Gates (the owner's rule, 2026-09-30: rebuild whenever next's tip changes and the automated checks
 pass; bugs are fine, crashes the runners would catch are not):
@@ -89,12 +94,30 @@ NOT_LISTENER_TITLE = re.compile(r'to its own file|^(tests?|docs|lane|runner|veri
 FIRST_ON_PHONE = {'found-on-phone', 'regression'}
 NOT_LISTENER_LABELS = {'stream:A1'}  # the test lane: its SessionKit edits are compile guards, not behaviour
 # "Owner check: none." (or "n/a", "nothing (lane only)") isn't a check; "Nothing plays twice ..." is (#504).
-NO_CHECK = re.compile(r'^(none|n/?a|nothing)\s*(?:[.;:,(\u2014\u2013]|-\s|$)', re.I)
+# "None this time: ..." and "none needed." aren't either (#927: #811's heading section).
+NO_CHECK = re.compile(r'^(none|n/?a|nothing)(?:\s+(?:this time|needed|for now|yet))?\s*(?:[.;:,(\u2014\u2013]|-\s|$)',
+                      re.I)
 # "#547" or a link to issue/PR 547 in a check: something it may need on the phone first (#847).
 REFERENCE = re.compile(r'(?<![\w&/])#(\d+)\b|github\.com/' + re.escape(REPO) + r'/(?:issues|pull)/(\d+)\b')
-CHECK_FIELD = re.compile(r'\*\*Owner check:?\*\*:?\s*(.*)|^Owner check:\s*(.*)')
+# "**Owner check:**", "**Owner check (phone):**", "4. Owner check:", "**Phone check:**" (#927). Plain text
+# only at the start of a line or list item: "the phone check covers that" in prose isn't one.
+CHECK_LABEL = r'(?i:owner check(?: \([^)\n]*\))?|phone check)'
+LIST_ITEM = r'\s*(?:(?:\d+[.)]|[-*+])\s+)?'
+CHECK_FIELD = re.compile(r'\*\*' + CHECK_LABEL + r'(?::\*\*|\*\*:|\*\*\s*$)\s*(.*)|^' + LIST_ITEM + CHECK_LABEL
+                         + r':\s*(.*)')
 STEPS_FIELD = re.compile(r'\*\*Steps:?\*\*:?\s*(.*)')     # a bug report's Steps and Expected (#504)
 EXPECTED_FIELD = re.compile(r'\*\*Expected:?\*\*:?\s*(.*)')
+# The same fields written as a heading, the section under it being the field (#927: #854's "## Steps").
+CHECK_HEADING = re.compile(r'\s{0,3}#{1,6}\s+' + CHECK_LABEL + r'\s*(?::\s*(.*))?$')  # "## Owner check: none"
+STEPS_HEADING = re.compile(r'\s{0,3}#{1,6}\s+Steps\b[^\n]*$')
+EXPECTED_HEADING = re.compile(r'\s{0,3}#{1,6}\s+Expected\b[^\n]*$')
+HEADINGS = {CHECK_FIELD: CHECK_HEADING, STEPS_FIELD: STEPS_HEADING, EXPECTED_FIELD: EXPECTED_HEADING}
+LIST_MARKER = re.compile(r'(\s*)(?:\d+[.)]|[-*+])\s')
+# A later comment taking an issue off the plans without the words "Owner check: none" (#288, #927).
+OFF_PLANS = re.compile(r"\bleave (?:this|it) off (?:the owner's|his|your|the) (?:phone )?(?:test )?plans?\b", re.I)
+# A comment naming the PR that fixed the issue: dispatch's "Merged in #907", #180's "PR #257 (merged as ...)".
+FIXED_IN = re.compile(r'\b(?:merged|fixed|landed) (?:in|by|with) #(\d+)\b|\bPR #(\d+) \(merged\b', re.I)
+ALSO_WAITING = 10  # the "Also waiting" list stays short; the rest are one link away
 FIELD = r'\*\*[A-Z][\w /()-]{0,30}(?::\*\*|\*\*:)'                    # "**Taken by:**", "**Done when**:"
 NEXT_FIELD_ON_LINE = re.compile(r'\s+' + FIELD + '.*$')                # "none. **Taken by:** nobody yet."
 FIELD_START = re.compile(r'\s*(?:[-*+]\s+)?' + FIELD + r'|[A-Z][\w ]{0,30}:\s|\s*(?:#|---)')  # "Related: #5"
@@ -230,9 +253,10 @@ def merged_prs(base: str | None, target: str) -> dict[int, str]:
     return merged
 
 
+COMMENTS = 'comments(last:30){nodes{body}}'  # a check written in a comment (#927)
 PR_FIELDS = '''number title url mergedAt body labels(first:20){nodes{name}} files(first:100){nodes{path}}
-closingIssuesReferences(first:5){nodes{number title url body labels(first:20){nodes{name}}}}'''
-ISSUE_FIELDS = 'number title url body labels(first:20){nodes{name}}'
+closingIssuesReferences(first:5){nodes{number title url body labels(first:20){nodes{name}} %s}}''' % COMMENTS
+ISSUE_FIELDS = 'number title url body labels(first:20){nodes{name}} ' + COMMENTS
 
 
 def graphql(fields_by_alias: dict[str, str]) -> dict:
@@ -246,6 +270,13 @@ def graphql(fields_by_alias: dict[str, str]) -> dict:
         return (json.loads(raw) if raw else {}).get('data', {}).get('repository', {}) or {}
     except ValueError:
         return {}
+
+
+def linked_numbers(pr: dict) -> list[int]:
+    """The issues a PR says it fixes: its title's "(#347, #355)" and its body's "Fixes #N" / "for #N"."""
+    found = re.findall(r'#(\d+)', pr.get('title') or '') + re.findall(
+        r'\b(?:fixes|fixed|closes|closed|resolves|for|part of|issue)\s+#(\d+)', pr.get('body') or '', re.I)
+    return list(dict.fromkeys(int(n) for n in found if int(n) != pr.get('number')))
 
 
 def fetch_prs(numbers: list[int]) -> dict[int, dict] | None:
@@ -263,9 +294,7 @@ def fetch_prs(numbers: list[int]) -> dict[int, dict] | None:
         if not linked:
             # Closing keywords don't link issues on next (not the default branch), so read the
             # title's "(#347, #355)" and the body's "Fixes #N" / "for #N" by hand.
-            found = re.findall(r'#(\d+)', pr['title']) + re.findall(
-                r'\b(?:fixes|fixed|closes|closed|resolves|for|part of|issue)\s+#(\d+)', pr.get('body') or '', re.I)
-            linked = list(dict.fromkeys(int(n) for n in found if int(n) != pr['number']))[:3]
+            linked = linked_numbers(pr)[:3]
             wanted.update({n: None for n in linked})
         pr['linked'] = linked
     issues = {issue['number']: issue for pr in prs.values() for issue in pr['closingIssuesReferences']['nodes']}
@@ -294,6 +323,83 @@ def fetch_items(numbers: list[int]) -> dict[int, dict]:
                 data.update(graphql({f'n{n}': f'issueOrPullRequest(number: {n}) {{ {ITEM_FIELDS} }}'}))
         items.update({int(alias[1:]): value for alias, value in data.items() if value and value.get('number')})
     return items
+
+
+WAITING_QUERY = '''query($cursor: String) { repository(owner: "%s", name: "%s") {
+issues(states: OPEN, labels: ["%s"], first: 25, after: $cursor, orderBy: {field: CREATED_AT, direction: ASC}) {
+pageInfo { hasNextPage endCursor }
+nodes { %s createdAt milestone { title state }
+timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 25) { nodes { ... on CrossReferencedEvent {
+source { ... on PullRequest { number title url body merged } } } } } } } } }'''
+
+
+def fetch_waiting() -> list[dict] | None:
+    """Open issues marked `status: needs-human-validation` (dispatch adds it when their fix merges into next),
+    oldest first, with their comments and the PRs that mention them; None when GitHub can't be reached (#927)."""
+    owner, name = REPO.split('/')
+    query = WAITING_QUERY % (owner, name, MERGED_ON_NEXT, ISSUE_FIELDS)
+    issues: list[dict] = []
+    cursor = None
+    for _ in range(20):  # 500 issues at most
+        raw = gh('api', 'graphql', '-f', f'query={query}', *(['-f', f'cursor={cursor}'] if cursor else []))
+        try:
+            page = json.loads(raw)['data']['repository']['issues'] if raw else None
+        except (ValueError, KeyError, TypeError):
+            page = None
+        if not isinstance(page, dict):
+            return None
+        issues += [issue for issue in page.get('nodes') or [] if issue and issue.get('number')]
+        info = page.get('pageInfo') or {}
+        if not info.get('hasNextPage') or not info.get('endCursor'):
+            break
+        cursor = info['endCursor']
+    return issues
+
+
+def build_prs(sha: str) -> set[int]:
+    """The PRs merged into the build: its first-parent "Merge pull request #N" subjects."""
+    subjects = git('log', '--first-parent', '--format=%s', sha, check=False)
+    return {int(n) for n in re.findall(r'(?m)^Merge pull request #(\d+)\b', subjects)}
+
+
+def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in_build: set[int] = frozenset()) \
+        -> list[dict]:
+    """The issues still waiting on the owner's check whose fix is in this build, in plan order: the current
+    build milestone first, then found on the phone, then oldest (#927). `shown` holds the issue and PR
+    numbers the plan already lists. Each is {'issue', 'prs': its fixing PRs in the build, 'check': the
+    check to try, or None, and 'none': True when an issue says there is no check}.
+
+    `built` holds the build's merged PRs, `named_in_build` every #N its merge subjects name. The fix is in the
+    build when a merged PR there says it fixes the issue (title "(#854)", "Closes #854"), the issue's
+    comments name one ("Merged in #907", "PR #257"), or a merge names the issue ("Merge play-this-moment
+    into next (#156, #158)"). The label alone isn't enough: the fix may have merged after this build
+    (#927: the label had been read as "waiting on your phone").
+    """
+    def build_number(issue):
+        milestone = issue.get('milestone') or {}
+        found = re.fullmatch(r'Build (\d+)', milestone.get('title') or '')
+        return int(found.group(1)) if found and milestone.get('state', 'OPEN') == 'OPEN' else None
+    current = min(filter(None, map(build_number, issues)), default=None)
+    fixes = []
+    for issue in issues:
+        comments = [(comment or {}).get('body') or '' for comment in (issue.get('comments') or {}).get('nodes') or []]
+        named = {int(a or b) for body in comments for a, b in FIXED_IN.findall(body)}
+        sources = [(node or {}).get('source') or {} for node in (issue.get('timelineItems') or {}).get('nodes') or []]
+        prs = {pr['number']: pr for pr in sources if pr.get('number') in built and pr.get('merged')
+               and (issue['number'] in linked_numbers(pr) or pr['number'] in named)}
+        for number in sorted(named & built - set(prs)):
+            prs[number] = {'number': number, 'title': '', 'body': '', 'url': f'https://github.com/{REPO}/pull/{number}'}
+        if not (prs or issue['number'] in named_in_build) or issue['number'] in shown or shown & set(prs):
+            continue
+        body = next((pr.get('body') or '' for pr in prs.values() if check_field(pr.get('body') or '')), '')
+        alone = {'issues': [issue], 'body': body}
+        none = says_no_check(alone)
+        check = None if none else owner_check(alone)
+        fixes.append({'issue': issue, 'prs': list(prs.values()), 'check': check, 'none': none})
+    fixes.sort(key=lambda fix: (0 if current and build_number(fix['issue']) == current else 1,
+                                0 if FIRST_ON_PHONE & labels(fix['issue']) else 1,
+                                fix['issue'].get('createdAt') or ''))
+    return fixes
 
 
 def built_numbers(sha: str) -> set[int]:
@@ -344,22 +450,39 @@ def listener_facing(pr: dict) -> bool:
 def check_field(text: str, field: re.Pattern = CHECK_FIELD) -> str | None:
     """A body's "Owner check" field (or another `field`): its line, plus the numbered steps, bullets,
     quote or fenced block right under it (#847: "after #551 is deployed:" lost its three steps), up to
-    the next field."""
+    the next field. Written as a heading ("## Steps"), the field is the section under it (#927)."""
     lines = text.splitlines()
+    heading = HEADINGS.get(field)
     for index, line in enumerate(lines):
         match = field.search(line)
         if match:
             break
+        found = heading and heading.match(line)
+        if found:
+            return heading_section(lines[index + 1:], (found.groups() or ('',))[0] or '')
     else:
         return None
     first = NEXT_FIELD_ON_LINE.sub('', next((group for group in match.groups() if group), '')).strip()
+    # "4. Owner check: ..." in a numbered Done when list: item 5 is the next item, not its step (#927).
+    item = LIST_MARKER.match(line)
+    item_indent = len(item.group(1)) if item and not line[item.end():match.start()].strip() else None
     rest: list[str] = []
     fenced = False
+    last = 0  # the last number among the steps: "4. Owner check:" may be followed by "1. ..." at the same indent
     for line in lines[index + 1:]:
+        sibling = LIST_MARKER.match(line)
+        number = re.match(r'\s*(\d+)[.)]\s', line)
+        if sibling and number and (int(number.group(1)) == 1 or int(number.group(1)) == last + 1 > 1) and \
+                len(sibling.group(1)) <= (item_indent or 0) and item_indent is not None:
+            last = int(number.group(1))
+            rest.append(line.rstrip())
+            continue
         if fenced:
             rest.append(line.rstrip())
             fenced = not line.strip().startswith('```')
         elif FIELD_START.match(line):
+            break
+        elif item_indent is not None and sibling and len(sibling.group(1)) <= item_indent:
             break
         elif not line.strip():
             if not rest and first and not first.endswith(':'):
@@ -375,23 +498,78 @@ def check_field(text: str, field: re.Pattern = CHECK_FIELD) -> str | None:
     return '\n'.join([first] + rest).strip() or None
 
 
+def heading_section(lines: list[str], first: str = '') -> str | None:
+    """The section under a "## Owner check" or "## Steps" heading: its first paragraph and the steps, bullets
+    or fenced block after it, up to the next heading, rule, bold field or other paragraph (#811's PR
+    footer isn't a step). Blank lines go, except inside a fenced block. `first` is text on the heading line
+    itself ("## Owner check: none")."""
+    if NO_CHECK.match(first.strip()):
+        return first.strip()  # "## Owner check: none" is the whole answer
+    kept: list[str] = [first.strip()] if first.strip() else []
+    fenced = gap = False
+    for line in lines:
+        if fenced:
+            kept.append(line.rstrip())
+            fenced = not line.strip().startswith('```')
+        elif re.match(r'\s{0,3}(?:#{1,6}\s|---)', line) or re.match(r'\s*(?:[-*+]\s+)?' + FIELD, line):
+            break
+        elif not line.strip():
+            gap = bool(kept)
+        elif gap and not STEP_LINE.match(line):
+            break
+        else:
+            kept.append(line.rstrip())
+            fenced = line.strip().startswith('```')
+    return '\n'.join(kept).strip() or None
+
+
+def comment_check(issue: dict) -> str | None:
+    """The newest "Owner check" or "Phone check" in an issue's comments (#927: #180's, #158's and #237's
+    checks were written there), or "none (...)" when the newest such comment takes it off the plans
+    (#288: "Leave this off the owner's plans until ..."). GitHub lists comments oldest first."""
+    for comment in reversed((issue.get('comments') or {}).get('nodes') or []):
+        body = (comment or {}).get('body') or ''
+        off = next((line.strip() for line in body.splitlines() if OFF_PLANS.search(line)), None)
+        if off:
+            return f'none ({off})'
+        check = check_field(body)
+        if check:
+            return check
+    return None
+
+
+def issue_check(issue: dict) -> str | None:
+    """An issue's check: the newest one in its comments wins over its body's (#927)."""
+    return comment_check(issue) or check_field(issue.get('body') or '')
+
+
 def written_checks(pr: dict) -> list[str]:
     """Every "Owner check" field, issues first, then the PR's own."""
-    texts = [issue.get('body') or '' for issue in pr['issues']] + [pr.get('body') or '']
-    return [check for check in map(check_field, texts) if check]
+    checks = [issue_check(issue) for issue in pr['issues']] + [check_field(pr.get('body') or '')]
+    return [check for check in checks if check]
+
+
+def taken_off(pr: dict) -> bool:
+    """A linked issue's newest comment says there's no check, and no other issue's comment gives one: a
+    later call than any body, the PR's included."""
+    checks = [check for check in map(comment_check, pr['issues']) if check]
+    return bool(checks) and all(NO_CHECK.match(check) for check in checks)
 
 
 def says_no_check(pr: dict) -> bool:
     """An issue or the PR says "Owner check: none" and nothing gives a real one."""
     checks = written_checks(pr)
-    return bool(checks) and all(NO_CHECK.match(check) for check in checks)
+    return taken_off(pr) or bool(checks) and all(NO_CHECK.match(check) for check in checks)
 
 
 def owner_check(pr: dict) -> str | None:
     """The issue's "Owner check" line; else a bug report's Steps and Expected; else the PR's own.
 
-    "Owner check: none" counts as no check, so it never reaches the plan as a thing to try.
+    "Owner check: none" counts as no check, so it never reaches the plan as a thing to try; said in an
+    issue's newest comment, it holds even when the PR's body has one (#927).
     """
+    if taken_off(pr):
+        return None
     for check in written_checks(pr):
         if not NO_CHECK.match(check):
             return check
@@ -399,7 +577,8 @@ def owner_check(pr: dict) -> str | None:
     for text in texts:
         steps, expected = check_field(text, STEPS_FIELD), check_field(text, EXPECTED_FIELD)
         if steps and expected:  # numbered Steps keep every step (#847: #585 lost the swipe in step 2)
-            return f'{steps}{chr(10) if chr(10) in steps else " "}Expected: {expected}'
+            numbered = chr(10) in steps or STEP_LINE.match(steps)
+            return f'{steps}{chr(10) if numbered else " "}Expected: {expected}'
     return None
 
 
@@ -601,23 +780,44 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
             + ', '.join(f'#{n}' for n in dict.fromkeys(needs_check)))
     # A check that needs another change still open waits for it (#847: step 2 needed #547).
     checkable = [entry for entry in entries if check_of[id(entry)]]
+    # Fixes from earlier builds still waiting on his check go after these (#927: the 887c560 plan had
+    # none while ten Build 30 fixes on the phone waited on him).
+    pending = fetch_waiting()
+    shown = {number for entry in entries for pr in entry
+             for number in [pr['number'], *pr.get('linked', ()), *(issue['number'] for issue in pr['issues'])]}
+    fixes = waiting_fixes(pending, build_prs(sha), shown, built_numbers(sha)) if pending else []
+    unwritten = [fix['issue']['number'] for fix in fixes if not fix['check'] and not fix['none']]
+    if unwritten:
+        say('waiting on the owner\'s check but no "Owner check:" written, so not in the plan; add one to: '
+            + ', '.join(f'#{n}' for n in unwritten))
+    fixes = [fix for fix in fixes if fix['check']]
     named = [n for entry in checkable for n in references(check_of[id(entry)])]
-    built = built_numbers(sha) if named else set()
+    named += [n for fix in fixes for n in references(fix['check'])]
+    built = built_numbers(sha) if named or pending else set()
     items = fetch_items(list(dict.fromkeys(n for n in named if n not in built))) if named else {}
     waits = {}
     for entry in checkable:
         own = {number for pr in entry for number in [pr['number'], *pr.get('linked', ())]}
         own |= {issue['number'] for pr in entry for issue in pr['issues']}
         waits[id(entry)] = waiting_on(check_of[id(entry)], own, built, items)
+    for fix in fixes:
+        fix['needs'] = waiting_on(fix['check'], {fix['issue']['number'], *(pr['number'] for pr in fix['prs'])},
+                                  built, items)
     waiting = [entry for entry in checkable if waits[id(entry)]]
     checkable = [entry for entry in checkable if not waits[id(entry)]]
     budget = checkable[:PLAN_CHECKS]
     rest = checkable[PLAN_CHECKS:]
+    # They share the ten minutes, new changes first; the rest are listed with their links.
+    still = [fix for fix in fixes if not fix['needs']][:PLAN_CHECKS - len(budget)]
+    also_waiting = [fix for fix in fixes if fix not in still]
     if not ordered:
         lines += ['Nothing new since that build: this is the same code, rebuilt.', '']
     lines += [f'{len(ordered)} pull requests merged; {len(facing)} change something you see or hear.', '',
               '## Try these (about ten minutes)', '']
-    if not budget:
+    if not budget and still:
+        lines += ['No change new in this build has a phone check. The fixes below, from earlier builds, '
+                  'still wait on yours.', '']
+    elif not budget:
         lines += ['Nothing is ready to check on the phone yet; the changes you might notice are listed below.'
                   if waiting and not unchecked else
                   'No phone checks were written for this build; the changes you might notice are listed below.'
@@ -630,6 +830,33 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
         links += [f'[issue #{issue["number"]}]({issue["url"]})' for issue in issues]
         lines += [f'{index}. **{pr["title"]}**{tag}', *step_lines(check_of[id(entry)], sha, folder),
                   f'   - Links: {", ".join(links)}', '']
+
+    def fix_links(fix, label=True):
+        issue = fix['issue']
+        return [f'[{"issue " if label else ""}#{issue["number"]}]({issue["url"]})'] + \
+            [f'[{"PR " if label else ""}#{pr["number"]}]({pr["url"]})' for pr in fix['prs']]
+
+    def fix_tag(fix):
+        return ' (found on your phone)' if FIRST_ON_PHONE & labels(fix['issue']) else ''
+    if still:
+        lines += ['## Still waiting on your check', '',
+                  'Fixed in an earlier build and on your phone now, but nobody has checked them yet.', '']
+        for index, fix in enumerate(still, len(budget) + 1):
+            lines += [f'{index}. **{fix["issue"]["title"]}**{fix_tag(fix)}', *step_lines(fix['check'], sha, folder),
+                      f'   - Links: {", ".join(fix_links(fix))}', '']
+    if also_waiting:
+        lines += ['## Also waiting on your check (not in the ten minutes)', '']
+        for fix in also_waiting[:ALSO_WAITING]:
+            needs = ', '.join(f'[#{item["number"]}]({item["url"]})' for item in fix['needs'])
+            lines.append(f'- {fix["issue"]["title"]}{fix_tag(fix)} ({", ".join(fix_links(fix, label=False))})'
+                         + (f': needs {needs} on your phone first' if needs else ''))
+        if len(also_waiting) > ALSO_WAITING:
+            query = 'is%3Aissue+is%3Aopen+label%3A%22' + MERGED_ON_NEXT.replace(':', '%3A').replace(' ', '+') + '%22'
+            lines.append(f'- and {len(also_waiting) - ALSO_WAITING} more: '
+                         f'[every fix waiting on a check](https://github.com/{REPO}/issues?q={query})')
+        lines.append('')
+    if pending is None:
+        lines += ["GitHub could not be reached, so earlier fixes still waiting on your check aren't listed.", '']
 
     def titles(group):
         return [f'- {entry[0]["title"]}' + (' (found on your phone)' if found_on_phone(entry) else '') + ' ('
