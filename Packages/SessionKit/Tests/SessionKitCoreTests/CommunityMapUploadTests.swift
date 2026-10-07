@@ -284,6 +284,18 @@ final class CommunityMapUploadTests: XCTestCase {
         XCTAssertEqual(CommunityMapEpisodeKey.key(episodeGUID: "  guid-123\n", enclosureURL: "https://other.example.com/x.mp3"), expectedKey)
     }
 
+    /// With no feed GUID the key hashes the enclosure's file identity under its own `enclosure:` namespace, so
+    /// an enclosure never lands on the key of a GUID with the same text. Two installs must agree on every byte
+    /// of it, or each makes its own map of the same episode, so the digest is pinned as a literal (sha256 of
+    /// the key prefix, `enclosure:` and `cdn.example.com/show/episode-7.mp3`, computed outside the app).
+    func testEnclosureKeyIsPinnedToTheNamespaceTheOtherInstallsUse() {
+        let enclosure = "https://cdn.example.com/show/episode-7.mp3"
+        let key = CommunityMapEpisodeKey.key(episodeGUID: nil, enclosureURL: enclosure)
+        XCTAssertEqual(key, "7013f25cbc88f09d1dda36238057be2e8f4636371f48d904e781051385363dd7")
+        // The same text as a GUID is a different episode key.
+        XCTAssertNotEqual(key, CommunityMapEpisodeKey.key(episodeGUID: "cdn.example.com/show/episode-7.mp3", enclosureURL: nil))
+    }
+
     func testTwoInstallsGetTheSameKeyForTheSameEpisode() throws {
         // Different item ids, different tracking redirects and different feed copies.
         let first = episode(id: "install-a-item", enclosure: "https://dts.podtrac.com/redirect.mp3/cdn.example.com/show/episode-7.mp3?utm=a")
@@ -426,6 +438,37 @@ final class CommunityMapUploadTests: XCTestCase {
                                                        timeline: TranscriptTimeline(segments: [], chapters: [])))
         XCTAssertNil(CommunityMapTranscriptUpload.make(episodeKey: expectedKey, durationMs: 0, language: "en",
                                                        timeline: fullTranscript()))
+    }
+
+    /// The server answers 400 to a body over its limits, and the uploader records a 400 as a permanent
+    /// refusal, so a body past a limit must never be built: an episode longer than 48 hours, a segment
+    /// ending past 48 hours, and a body over 2 MiB. Each limit also has a row just inside it.
+    func testRequestBodyNeverExceedsTheServersLimits() throws {
+        let hour = 3_600_000
+        // Reports only whether a body was built; a failing assertion would otherwise print the whole body.
+        func builds(durationMs: Int, _ timeline: TranscriptTimeline) -> Bool {
+            CommunityMapTranscriptUpload.make(episodeKey: expectedKey, durationMs: durationMs, language: "en", timeline: timeline) != nil
+        }
+
+        // Episode length: 48 h is the server's largest.
+        XCTAssertTrue(builds(durationMs: 48 * hour, fullTranscript(durationMs: 48 * hour)), "a 48 hour episode is within the limit")
+        XCTAssertFalse(builds(durationMs: 48 * hour + 1, fullTranscript(durationMs: 48 * hour)), "an episode over 48 hours is never built")
+
+        // A segment's end is held to 48 h, whatever the transcript claims.
+        let late = TranscriptTimeline(segments: [MediaTimelineSegment(id: "a", startMs: 1_000, endMs: 200_000_000, text: "runs past the end")], chapters: [])
+        let clamped = try XCTUnwrap(CommunityMapTranscriptUpload.make(episodeKey: expectedKey, durationMs: 10_000, language: "en", timeline: late))
+        XCTAssertEqual(clamped.segments.map(\.endMs), [48 * hour])
+
+        // Body size: 2 MiB. 400 words a segment, so the segment count decides which side of the limit it lands on.
+        func transcript(segments count: Int) -> TranscriptTimeline {
+            let words = String(repeating: "word ", count: 400)
+            return TranscriptTimeline(segments: (0..<count).map {
+                MediaTimelineSegment(id: "h\($0)", startMs: $0 * 1_000, endMs: $0 * 1_000 + 900, text: words)
+            }, chapters: [])
+        }
+        let fits = try XCTUnwrap(CommunityMapTranscriptUpload.make(episodeKey: expectedKey, durationMs: hour, language: "en", timeline: transcript(segments: 900)))
+        XCTAssertLessThanOrEqual(try fits.encoded().count, CommunityMapTranscriptUpload.maximumBytes)
+        XCTAssertFalse(builds(durationMs: hour, transcript(segments: 1_500)), "a body over 2 MiB is never built")
     }
 
     // MARK: Uploader outcomes
