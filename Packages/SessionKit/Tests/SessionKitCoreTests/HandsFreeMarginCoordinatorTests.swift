@@ -311,6 +311,61 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.phase, .idle)
     }
 
+    /// A press has already started the save when the headphones come out: no save tone from the phone
+    /// speaker and no resume. (Pulling them out while talking is `testRemovedHeadphonesSaveAnd...`.)
+    func testHeadphonesPulledWhileASaveIsInFlightStillLeaveTheSourcePausedWithNoTone() {
+        startRecording()
+        feed(quiet, for: 0.5)
+        feed(voice, for: 2)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.finishRecording(.press)])
+        XCTAssertEqual(coordinator.headphonesRemoved(), [])
+        XCTAssertEqual(coordinator.saveCompleted(), [], "no save tone and no resume from the phone speaker")
+        XCTAssertEqual(coordinator.phase, .idle)
+        clock.advance(1)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)], "ready for the next one")
+    }
+
+    /// The save tone is already playing when the headphones come out: nothing resumes the source.
+    func testHeadphonesPulledDuringTheClosingToneDoNotResumeTheSource() {
+        startRecording()
+        feed(quiet, for: 0.5)
+        feed(voice, for: 2)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.finishRecording(.press)])
+        XCTAssertEqual(coordinator.saveCompleted(), [.playTone(.saved)])
+        XCTAssertEqual(coordinator.phase, .rejoining)
+        XCTAssertEqual(coordinator.headphonesRemoved(), [])
+        XCTAssertEqual(coordinator.phase, .idle, "nothing is left to wait for")
+        XCTAssertEqual(coordinator.toneFinished(.saved), [], "the headphones are out, so the source stays paused")
+        clock.advance(1)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)], "ready for the next one")
+    }
+
+    /// The call begins after the save was already requested: the save tone, and the resume after it,
+    /// wait for the call to end, whichever of the save and the call ends first.
+    func testACallThatBeginsWhileASaveIsInFlightHoldsTheSaveToneUntilItEnds() {
+        startRecording()
+        feed(quiet, for: 0.5)
+        feed(voice, for: 2)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.finishRecording(.press)])
+        XCTAssertEqual(coordinator.interruptionBegan(), [])
+        XCTAssertEqual(coordinator.saveCompleted(), [], "the save tone would play into the call")
+        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: true), [.playTone(.saved)])
+        XCTAssertEqual(coordinator.toneFinished(.saved), [.resumeSource])
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
+    func testACallThatEndsBeforeTheSaveFinishesStillWaitsForTheSave() {
+        startRecording()
+        feed(quiet, for: 0.5)
+        feed(voice, for: 2)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.finishRecording(.press)])
+        XCTAssertEqual(coordinator.interruptionBegan(), [])
+        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: false), [], "the Margin is not stored yet")
+        XCTAssertEqual(coordinator.saveCompleted(), [.playTone(.saved)])
+        XCTAssertEqual(coordinator.toneFinished(.saved), [], "iOS said not to resume")
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
     func testFaintSpeechTheThresholdMissedIsKeptNotFlagged() {
         startRecording()
         feed(-50, for: 0.5)
