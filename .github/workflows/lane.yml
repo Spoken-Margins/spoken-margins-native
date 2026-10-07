@@ -97,7 +97,8 @@ jobs:
         run: |
           # Closed or moved-on PRs and duplicate runs stop here; older-head runs still waiting for a Mac are
           # cancelled. Any failure (including a base without the helper) leaves both outputs unset: run as before.
-          if python3 scripts/lane_dedupe.py --pr "$PR_NUMBER" --head "$EVENT_HEAD" --run-id "$RUN_ID" \
+          # Bound all API calls together; discovery uses at most 60s, leaving 60s for checkout and routing.
+          if timeout 60s python3 scripts/lane_dedupe.py --pr "$PR_NUMBER" --head "$EVENT_HEAD" --run-id "$RUN_ID" \
               --lane "$WANT_LANE" --auto "$WANT_AUTO" > "$RUNNER_TEMP/dedupe.json"; then
             jq -r 'to_entries[] | "\(.key)=\(.value | tojson)"' "$RUNNER_TEMP/dedupe.json" >> "$GITHUB_OUTPUT"
           else

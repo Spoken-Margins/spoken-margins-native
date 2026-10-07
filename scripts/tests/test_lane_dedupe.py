@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import re
 import subprocess
 import unittest
 import unittest.mock as mock
@@ -67,6 +68,70 @@ class DedupeTests(unittest.TestCase):
     def test_an_older_commits_run_whose_mac_job_started_is_left_alone(self):
         api = FakeApi([run(100, 580, OLD, 'in_progress')], {100: [job('automerge', 'in_progress')]})
         self.route(api)
+        self.assertEqual(api.cancelled, [])
+
+    def test_a_newer_run_for_a_different_head_is_never_cancelled(self):
+        api = FakeApi([run(300, 580, OLD)], {300: [job('automerge', 'queued')]})
+        self.assertEqual(self.route(api), {'lane': False, 'automerge': False})
+        self.assertEqual(api.cancelled, [])
+
+    def test_a_push_during_listing_stops_this_run_without_cancelling_anything(self):
+        api = FakeApi([run(100, 580, OLD), run(300, 580, 'c' * 40)],
+                      {100: [job('automerge', 'queued')], 300: [job('automerge', 'queued')]})
+        real_get = api.get
+
+        def get(path):
+            if path.startswith('actions/workflows/'):
+                api.pull = dict(api.pull, head={'sha': 'c' * 40})
+            return real_get(path)
+
+        api.get = get
+        self.assertEqual(self.route(api), {'lane': True, 'automerge': True})
+        self.assertEqual(api.cancelled, [])
+
+    def test_a_pr_closed_during_listing_cancels_nothing(self):
+        for merged in (True, False):
+            with self.subTest(merged=merged):
+                api = FakeApi([run(100, 580, OLD)], {100: [job('automerge', 'queued')]})
+                real_get = api.get
+
+                def get(path):
+                    if path.startswith('actions/workflows/'):
+                        api.pull = dict(api.pull, state='closed', merged=merged)
+                    return real_get(path)
+
+                api.get = get
+                self.assertEqual(self.route(api), {'lane': True, 'automerge': True})
+                self.assertEqual(api.cancelled, [])
+
+    def test_the_head_is_rechecked_before_each_cancellation(self):
+        api = FakeApi([run(100, 580, OLD), run(150, 580, OLD)],
+                      {100: [job('automerge', 'queued')], 150: [job('automerge', 'queued')]})
+        real_post = api.post
+
+        def post(path):
+            real_post(path)
+            api.pull = dict(api.pull, head={'sha': 'c' * 40})
+
+        api.post = post
+        self.assertEqual(self.route(api), {'lane': True, 'automerge': True})
+        self.assertEqual(api.cancelled, [100])
+
+    def test_a_failed_head_recheck_falls_back_without_cancelling(self):
+        api = FakeApi([run(100, 580, OLD)], {100: [job('automerge', 'queued')]})
+        real_get = api.get
+        pull_reads = 0
+
+        def get(path):
+            nonlocal pull_reads
+            if path.startswith('pulls/'):
+                pull_reads += 1
+                if pull_reads > 1:
+                    raise subprocess.TimeoutExpired('gh', 30)
+            return real_get(path)
+
+        api.get = get
+        self.assertEqual(self.route(api), {'lane': False, 'automerge': False})
         self.assertEqual(api.cancelled, [])
 
     def test_another_prs_runs_are_never_cancelled(self):
@@ -151,6 +216,18 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn("needs.route.outputs.skip_lane != 'true'", self.workflow)
         self.assertIn("needs.route.outputs.skip_automerge != 'true'", self.workflow)
         self.assertIn('timeout-minutes: 3', route)
+
+    def test_dedupe_has_a_total_timeout_with_room_for_routing_and_fallback(self):
+        route = self.workflow.split('\n  route:\n')[1].split('\n  lane:\n')[0]
+        match = re.search(r'if timeout (\d+)s python3 scripts/lane_dedupe\.py', route)
+        self.assertIsNotNone(match, 'Serial API calls must share an overall helper timeout')
+        discovery_budgets = [int(value) for value in re.findall(r'timeout (\d+)s gh api', route)]
+        job_budget = int(re.search(r'timeout-minutes: (\d+)', route)[1]) * 60
+        self.assertLessEqual(sum(discovery_budgets) + int(match[1]), job_budget - 60)
+        # A timeout must take the same unset-output fallback as a missing helper or API failure.
+        step = route.split('      - name: Drop stale and duplicate runs\n')[1].split('      - name: Choose queues\n')[0]
+        self.assertIn('>> "$GITHUB_OUTPUT"\n          else\n', step)
+        self.assertIn('Lane dedupe unavailable; running as before.', step)
 
 
 if __name__ == '__main__':

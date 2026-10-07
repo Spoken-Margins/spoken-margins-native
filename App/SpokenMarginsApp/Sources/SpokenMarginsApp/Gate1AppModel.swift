@@ -571,6 +571,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var snapshot = SessionSnapshot() {
         didSet {
             recordPlaybackEventState(previous: oldValue)
+            settleSpeechInterruptionResume()
             listeningSignals.snapshotChanged(from: oldValue, to: snapshot)
             updateNarrationVoiceNotice()
             if playingImportedCommentary != nil,
@@ -619,6 +620,7 @@ final class Gate1AppModel: ObservableObject {
         automatic: true
     )
     private var lastPlaybackEventCheckpoint: TimeInterval = 0
+    var speechInterruptionResumeWatch = SpeechInterruptionResumeWatch()
 
     func recordDeveloperDiagnostic(_ kind: String, _ fields: [String: String] = [:]) {
         developerRecording.record(kind, fields)
@@ -10684,12 +10686,9 @@ final class Gate1AppModel: ObservableObject {
                         self.diagnostics["supertonicFallbackRestored"] = itemId
                     }
                 },
-                onStall: { [weak self] kind, fields in
-                    Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) }
-                },
-                onResumeDecision: { [weak self] fields in
-                    Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) }
-                }
+                onStall: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
+                onSystemPause: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
+                onResumeDecision: { [weak self] fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) } }
             )
         }
         diagnostics["sessionTTS"] = "System speech"
@@ -10882,15 +10881,15 @@ final class Gate1AppModel: ObservableObject {
             }
         case .endedShouldResume:
             guard snapshot.status == .paused, let engine else {
-                diagnostics["speechPlaybackInterruption"] = "resume_skipped"
+                noteSpeechInterruptionResume(.skipped)
                 return
             }
             do {
                 snapshot = try engine.resumePlayback()
                 refreshSelectedItem()
-                diagnostics["speechPlaybackInterruption"] = "resumed"
+                noteSpeechInterruptionResumeReturned()
             } catch {
-                diagnostics["speechPlaybackInterruption"] = "resume_failed:\(error.localizedDescription)"
+                noteSpeechInterruptionResume(.failed(reason: error.localizedDescription))
                 reportWarning("Playback paused after the interruption. Tap Play to resume.")
             }
         }

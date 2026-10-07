@@ -71,33 +71,38 @@ def holds_a_slot(jobs, kind):
     return job is None or job['status'] in ACTIVE
 
 
+def obsolete_reason(pull, pr, head):
+    if pull['state'] != 'open':
+        return f'PR #{pr} is {"merged" if pull.get("merged") else "closed"}'
+    if pull['head']['sha'] != head:
+        return f'the PR moved on to {pull["head"]["sha"][:7]}; this run is for {head[:7]}'
+    return None
+
+
 def decide(api, pr, head, run_id, wants):
     """What this run should do. Raises on any API doubt; the caller falls back to running normally."""
     result = {'skip': {kind: False for kind in KINDS}, 'cancel': [], 'why': []}
     pull = api.get(f'pulls/{pr}')
-    if pull['state'] != 'open':
+    why = obsolete_reason(pull, pr, head)
+    if why:
         result['skip'] = {kind: True for kind in KINDS}
-        result['why'].append(f'PR #{pr} is {"merged" if pull.get("merged") else "closed"}')
-        return result
-    if pull['head']['sha'] != head:
-        result['skip'] = {kind: True for kind in KINDS}
-        result['why'].append(f'the PR moved on to {pull["head"]["sha"][:7]}; this run is for {head[:7]}')
+        result['why'].append(why)
         return result
     for other_id, run in sorted(active_runs(api).items()):
         info = parse_run_name(run.get('display_title'))
-        if other_id == run_id or not info or info['pr'] != pr:
+        # A push may have created a newer run since we read the PR. Never cancel it.
+        if other_id >= run_id or not info or info['pr'] != pr:
             continue
         if info['head'] != head:
             jobs = mac_jobs(api, other_id)
             if not any(job['status'] == 'in_progress' for job in jobs.values()):
                 result['cancel'].append(other_id)
             continue
-        if other_id < run_id:
-            jobs = mac_jobs(api, other_id)
-            for kind in KINDS:
-                if wants[kind] and info['kinds'][kind] and holds_a_slot(jobs, kind):
-                    result['skip'][kind] = True
-                    result['why'].append(f'run {other_id} already has a {kind} job for {head[:7]}')
+        jobs = mac_jobs(api, other_id)
+        for kind in KINDS:
+            if wants[kind] and info['kinds'][kind] and holds_a_slot(jobs, kind):
+                result['skip'][kind] = True
+                result['why'].append(f'run {other_id} already has a {kind} job for {head[:7]}')
     return result
 
 
@@ -108,6 +113,15 @@ def route(api, pr, head, run_id, wants):
         print(f'::warning::Lane dedupe unavailable ({error!r}); running as before.', file=sys.stderr)
         return {kind: False for kind in KINDS}
     for run in result['cancel']:
+        # Listing runs/jobs takes time. Revalidate before every destructive request.
+        try:
+            why = obsolete_reason(api.get(f'pulls/{pr}'), pr, head)
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+            print(f'::warning::Lane dedupe unavailable ({error!r}); running as before.', file=sys.stderr)
+            return {kind: False for kind in KINDS}
+        if why:
+            print(f'Not queuing: {why}.', file=sys.stderr)
+            return {kind: True for kind in KINDS}
         try:
             api.post(f'actions/runs/{run}/cancel')
             print(f'Cancelled run {run}: its Mac job had not started and the PR has a newer commit.', file=sys.stderr)
