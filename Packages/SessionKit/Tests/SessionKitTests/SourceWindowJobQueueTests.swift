@@ -1,8 +1,10 @@
 import XCTest
 @testable import SessionKitAudio
 
+@MainActor
 final class SourceWindowJobQueueTests: XCTestCase {
-    private actor Probe {
+    @MainActor
+    private final class Probe {
         var running = 0
         var peak = 0
         var finished: [String] = []
@@ -16,77 +18,125 @@ final class SourceWindowJobQueueTests: XCTestCase {
         let probe = Probe()
         for index in 0..<22 {
             let id = "margin-\(index)"
-            await queue.enqueue(id: id, anchorMediaTimeMs: index * 60_000, playheadMediaTimeMs: 0) {
-                await probe.begin(id)
+            queue.enqueue(id: id, anchorMediaTimeMs: index * 60_000, playheadMediaTimeMs: 0) {
+                probe.begin(id)
                 try? await Task.sleep(nanoseconds: 5_000_000)
-                await probe.end(id)
+                probe.end(id)
             }
         }
         await queue.waitUntilIdle()
-        let peak = await probe.peak
-        let finished = await probe.finished
-        XCTAssertLessThanOrEqual(peak, 2)
-        XCTAssertEqual(Set(finished).count, 22)
-        let queuePeak = await queue.peakRunning
-        XCTAssertLessThanOrEqual(queuePeak, 2)
-        let running = await queue.runningCount
-        let queued = await queue.queuedCount
-        XCTAssertEqual(running, 0)
-        XCTAssertEqual(queued, 0)
+        XCTAssertEqual(probe.peak, 2, "two at a time: never more, and the bound isn't one")
+        XCTAssertEqual(Set(probe.finished).count, 22)
+        XCTAssertEqual(queue.peakRunning, 2)
+        XCTAssertEqual(queue.runningCount, 0)
+        XCTAssertEqual(queue.queuedCount, 0)
     }
 
-    func testNearestToPlayheadStartsFirstAfterTheFirstTwo() async {
+    func testTheNearestToThePlayheadStartsFirstEvenWhenItIsQueuedLast() async {
         let queue = SourceWindowJobQueue(maxConcurrent: 1)
         let probe = Probe()
-        let gate = AsyncGate()
-        await queue.enqueue(id: "blocker", anchorMediaTimeMs: 0, playheadMediaTimeMs: 100_000) {
-            await probe.begin("blocker")
-            await gate.wait()
-            await probe.end("blocker")
-        }
-        for (id, anchor) in [("far", 3_000_000), ("near", 110_000), ("mid", 900_000)] {
-            await queue.enqueue(id: id, anchorMediaTimeMs: anchor, playheadMediaTimeMs: 100_000) {
-                await probe.begin(id)
-                await probe.end(id)
+        // Queued in one burst, as a finished download does. Nothing may start before all four are in line.
+        for (id, anchor) in [("far", 3_000_000), ("mid", 900_000), ("behind", 40_000), ("near", 110_000)] {
+            queue.enqueue(id: id, anchorMediaTimeMs: anchor, playheadMediaTimeMs: 100_000) {
+                probe.begin(id)
+                probe.end(id)
             }
         }
-        await gate.open()
         await queue.waitUntilIdle()
-        let started = await probe.started
-        XCTAssertEqual(started, ["blocker", "near", "mid", "far"])
+        XCTAssertEqual(probe.started, ["near", "behind", "mid", "far"])
+    }
+
+    func testAJobWithNoPlayheadIsOrderedFromTheStartOfTheEpisode() async {
+        let queue = SourceWindowJobQueue(maxConcurrent: 1)
+        let probe = Probe()
+        for (id, anchor) in [("late", 3_000_000), ("early", 20_000), ("middle", 900_000)] {
+            queue.enqueue(id: id, anchorMediaTimeMs: anchor, playheadMediaTimeMs: nil) {
+                probe.begin(id)
+                probe.end(id)
+            }
+        }
+        await queue.waitUntilIdle()
+        XCTAssertEqual(probe.started, ["early", "middle", "late"])
     }
 
     func testDuplicateIdWhileQueuedIsIgnored() async {
         let queue = SourceWindowJobQueue(maxConcurrent: 1)
-        let gate = AsyncGate()
         let probe = Probe()
-        await queue.enqueue(id: "a", anchorMediaTimeMs: 0, playheadMediaTimeMs: 0) { await gate.wait() }
-        let first = await queue.enqueue(id: "b", anchorMediaTimeMs: 1, playheadMediaTimeMs: 0) { await probe.begin("b"); await probe.end("b") }
-        let second = await queue.enqueue(id: "b", anchorMediaTimeMs: 1, playheadMediaTimeMs: 0) { await probe.begin("b"); await probe.end("b") }
+        let first = queue.enqueue(id: "b", anchorMediaTimeMs: 1, playheadMediaTimeMs: 0) { probe.begin("b"); probe.end("b") }
+        let second = queue.enqueue(id: "b", anchorMediaTimeMs: 1, playheadMediaTimeMs: 0) { probe.begin("b"); probe.end("b") }
         XCTAssertTrue(first)
         XCTAssertFalse(second)
-        await gate.open()
         await queue.waitUntilIdle()
-        let finished = await probe.finished
-        XCTAssertEqual(finished, ["b"])
+        XCTAssertEqual(probe.finished, ["b"])
     }
 
     func testAnIdThatIsRunningCanBeQueuedAgain() async {
         // The app's own pending flag stops duplicates. A request that lands just as its job ends must not be
         // dropped, or that flag would never clear.
         let queue = SourceWindowJobQueue(maxConcurrent: 1)
-        let gate = AsyncGate()
+        let running = AsyncGate()
+        let release = AsyncGate()
         let probe = Probe()
-        await queue.enqueue(id: "a", anchorMediaTimeMs: 0, playheadMediaTimeMs: 0) { await gate.wait() }
-        let again = await queue.enqueue(id: "a", anchorMediaTimeMs: 0, playheadMediaTimeMs: 0) { await probe.begin("again"); await probe.end("again") }
+        queue.enqueue(id: "a", anchorMediaTimeMs: 0, playheadMediaTimeMs: 0) {
+            await running.open()
+            await release.wait()
+        }
+        await running.wait()
+        let again = queue.enqueue(id: "a", anchorMediaTimeMs: 0, playheadMediaTimeMs: 0) { probe.begin("again"); probe.end("again") }
         XCTAssertTrue(again)
-        await gate.open()
+        await release.open()
         await queue.waitUntilIdle()
-        let finished = await probe.finished
-        XCTAssertEqual(finished, ["again"])
-        let running = await queue.runningCount
-        XCTAssertEqual(running, 0)
+        XCTAssertEqual(probe.finished, ["again"])
+        XCTAssertEqual(queue.runningCount, 0)
     }
+
+    func testAJobThatNeverReturnsGivesUpItsSlotAndIsToldToStop() async {
+        let queue = SourceWindowJobQueue(maxConcurrent: 1, jobTimeout: .milliseconds(50))
+        let probe = Probe()
+        let stuckEnded = AsyncGate()
+        let stoppedWhenAsked = Flag()
+        queue.enqueue(id: "stuck", anchorMediaTimeMs: 0, playheadMediaTimeMs: 0) {
+            // Waits far longer than the timeout, but wakes early if the queue cancels it.
+            try? await Task.sleep(for: .seconds(60))
+            stoppedWhenAsked.value = Task.isCancelled
+            await stuckEnded.open()
+        }
+        queue.enqueue(id: "after", anchorMediaTimeMs: 1, playheadMediaTimeMs: 0) { probe.begin("after"); probe.end("after") }
+        await queue.waitUntilIdle()
+        XCTAssertEqual(probe.finished, ["after"], "the second job ran although the first never returned")
+        XCTAssertEqual(queue.timedOutCount, 1)
+        await stuckEnded.wait()
+        XCTAssertTrue(stoppedWhenAsked.value, "a job that watches for cancellation was asked to stop")
+        XCTAssertEqual(queue.runningCount, 0)
+    }
+
+    func testAJobThatIgnoresCancellationStillFreesItsSlotAndItsLateFinishIsHarmless() async {
+        let queue = SourceWindowJobQueue(maxConcurrent: 1, jobTimeout: .milliseconds(50))
+        let probe = Probe()
+        let hold = AsyncGate()
+        let stuckEnded = AsyncGate()
+        queue.enqueue(id: "stuck", anchorMediaTimeMs: 0, playheadMediaTimeMs: 0) {
+            await hold.wait()
+            await stuckEnded.open()
+        }
+        queue.enqueue(id: "after", anchorMediaTimeMs: 1, playheadMediaTimeMs: 0) { probe.begin("after"); probe.end("after") }
+        await queue.waitUntilIdle()
+        XCTAssertEqual(probe.finished, ["after"])
+        await hold.open()
+        await stuckEnded.wait()
+        await Task.yield()
+        XCTAssertEqual(queue.runningCount, 0, "the late finish must not free a slot twice")
+        let later = queue.enqueue(id: "later", anchorMediaTimeMs: 2, playheadMediaTimeMs: 0) { probe.begin("later"); probe.end("later") }
+        XCTAssertTrue(later)
+        await queue.waitUntilIdle()
+        XCTAssertEqual(probe.finished, ["after", "later"])
+        XCTAssertEqual(probe.peak, 1)
+    }
+}
+
+@MainActor
+private final class Flag {
+    var value = false
 }
 
 private actor AsyncGate {
