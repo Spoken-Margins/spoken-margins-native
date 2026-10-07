@@ -105,6 +105,74 @@ final class SharedMarginPlacementTests: XCTestCase {
         XCTAssertEqual(try store.loadImportedCommentaryInterjections(layerId: layer.id).first?.resolution, note.resolution)
     }
 
+    /// The owner's phone check on Build 30 (2026-10-07) imported the Hollywood packet, exported on Build 29 with
+    /// no fingerprints and no text context: each Margin carries only the sender's clock time. The pass finished
+    /// at once (`complete:0/1`) and the screen said "unresolved", which reads as a failure. These Margins can't be
+    /// placed on any copy, so the screen should say so, and not "Placing" or "Position not matched".
+    func testAMarginSentWithoutAPositionSaysSoWhateverThePassIsDoing() {
+        let layerStates: [ImportedSourceResolutionStatus] = [.pending, .contextOnly, .ambiguous, .unavailable, .resolved]
+        for layerStatus in layerStates {
+            for pass in [nil, running()] {
+                let status = SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: layerStatus,
+                                                         pass: pass, hasPositionEvidence: false)
+                XCTAssertEqual(status, .noPositionSent, "\(layerStatus) pass:\(pass != nil)")
+                XCTAssertEqual(status.positionDescription, "Sent without a position")
+                XCTAssertEqual(status.label, "No position sent")
+                XCTAssertNil(status.previousMediaTimeMs)
+            }
+        }
+        // The same Margin with something to match on keeps the pass-based wording.
+        XCTAssertEqual(SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: .contextOnly,
+                                                   pass: nil, hasPositionEvidence: true), .settled)
+        XCTAssertEqual(SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: .pending,
+                                                   pass: running(), hasPositionEvidence: true), .placing(previousMediaTimeMs: nil))
+        // A placed Margin is placed, whatever the packet carried (an exact-edition match needs no fingerprints).
+        XCTAssertEqual(SharedMarginPlacementStatus(resolution: placed, marginId: "a", layerStatus: .resolved,
+                                                   pass: nil, hasPositionEvidence: false), .settled)
+        // One that held a position before Download Again reset it is being placed again.
+        XCTAssertEqual(SharedMarginPlacementStatus(resolution: reset, marginId: "a", layerStatus: .pending,
+                                                   pass: running(previous: ["a": placed]), hasPositionEvidence: false),
+                       .placing(previousMediaTimeMs: 45_000))
+        // An ambiguous result is a position to review, not an absent one.
+        let ambiguous = ImportedAnchorResolution(evidenceClass: .ambiguous, localMediaTimeMs: 9_000, isAmbiguous: true)
+        XCTAssertEqual(SharedMarginPlacementStatus(resolution: ambiguous, marginId: "c", layerStatus: .ambiguous,
+                                                   pass: nil, hasPositionEvidence: false), .settled)
+    }
+
+    func testOnlyAPodcastMarginWithNothingToMatchOnCountsAsSentWithoutAPosition() throws {
+        func layer(_ type: SharedItemType, digest: String? = nil) -> ImportedCommentaryLayer {
+            ImportedCommentaryLayer(id: "layer", itemId: "item", packageDigest: "d", packageId: "p",
+                itemIdentity: SharedItemIdentity(itemType: type, title: "Episode", exactEditionSHA256: digest),
+                importedAt: Date(), sourceResolutionStatus: .pending, isEnabled: true)
+        }
+        func note(_ anchor: PortableAnchorEvidence, fingerprints: [ImportedPodcastAnchorEvidence]? = nil,
+                  resolution: ImportedAnchorResolution? = nil) -> ImportedCommentaryInterjection {
+            ImportedCommentaryInterjection(id: "n", layerId: "layer", packageScopedId: "n", createdAt: Date(),
+                anchorEvidence: anchor, approvedTranscript: "Words", podcastAnchorEvidence: fingerprints,
+                resolution: resolution ?? reset)
+        }
+        let bare = PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 134_000, roughPercent: 4)
+        // The Hollywood packet's Margins: a media time and a rough percent, nothing else.
+        XCTAssertFalse(note(bare).carriesPositionEvidence(in: layer(.podcast)))
+        // Each thing a packet can give a Margin to find its spot by.
+        let declared = PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 134_000, machineEvidenceAssetIds: ["pre"])
+        XCTAssertTrue(note(declared).carriesPositionEvidence(in: layer(.podcast)))
+        let words = PortableAnchorEvidence(anchorType: .media, prefix: "and then the studio head said we should",
+                                           mediaTimeMs: 134_000)
+        XCTAssertTrue(note(words).carriesPositionEvidence(in: layer(.podcast)))
+        XCTAssertTrue(note(bare).carriesPositionEvidence(in: layer(.podcast, digest: String(repeating: "a", count: 64))),
+                      "the sender's exact file can place a bare time")
+        XCTAssertTrue(note(bare, resolution: placed).carriesPositionEvidence(in: layer(.podcast)))
+        // Five words are too few to find a place by; punctuation and spaces aren't words.
+        let short = PortableAnchorEvidence(anchorType: .media, prefix: "one two three four, five —", suffix: " ", mediaTimeMs: 1)
+        XCTAssertFalse(short.hasUsableTextContext)
+        XCTAssertTrue(PortableAnchorEvidence(anchorType: .media, prefix: "one two three four five six").hasUsableTextContext)
+        XCTAssertTrue(PortableAnchorEvidence(anchorType: .media, suffix: "it's 3 o'clock, said José, again").hasUsableTextContext)
+        // Articles are placed by their text, not by fingerprints; nothing here applies to them.
+        XCTAssertTrue(note(PortableAnchorEvidence(anchorType: .text, startChar: 3, endChar: 9))
+            .carriesPositionEvidence(in: layer(.text)))
+    }
+
     func testPlacedMatchesThePlaybackRuleItReplaces() {
         let inline: Set<AnchorResolutionEvidenceClass> = [.exactEdition, .transcriptVerified, .acousticVerified,
             .fused, .mapInterpolated, .timestampFallback, .recipientConfirmed]

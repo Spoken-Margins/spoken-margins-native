@@ -528,6 +528,25 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         ))
     }
 
+    /// #872: the Hollywood packet's Margins carry only the sender's clock time, so no pass can place them. The
+    /// Timeline row must say that, not "Position not matched", which reads as a match that failed.
+    func testSharedMarginRowSaysSentWithoutAPositionOnlyWhenThePacketGaveNothingToMatch() {
+        let layer = ImportedCommentaryLayer(id: "layer", itemId: "item", packageDigest: "digest", packageId: "package",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Hollywood Was Cooked"),
+            importedAt: Date(), sourceResolutionStatus: .contextOnly, isEnabled: true)
+        func row(_ anchor: PortableAnchorEvidence) -> SharedMarginRow {
+            SharedMarginRow(interjection: ImportedCommentaryInterjection(id: "note", layerId: layer.id,
+                packageScopedId: "note", createdAt: Date(), anchorEvidence: anchor, approvedTranscript: "Words",
+                resolution: ImportedAnchorResolution(evidenceClass: .unresolved)), layer: layer, itemTitle: "Hollywood")
+        }
+        let bare = row(PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 134_000, roughPercent: 4))
+        XCTAssertEqual(bare.placementStatus, .noPositionSent)
+        XCTAssertEqual(bare.positionDescription, "Sent without a position")
+        let fingerprinted = row(PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 134_000, machineEvidenceAssetIds: ["pre"]))
+        XCTAssertEqual(fingerprinted.placementStatus, .settled)
+        XCTAssertEqual(fingerprinted.positionDescription, "Position not matched")
+    }
+
     func testLinklessTextSharingOffersPrivateRightsOrRecipientSuppliedTransport() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

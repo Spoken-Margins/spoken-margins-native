@@ -369,7 +369,8 @@ struct SharedMarginRow: Identifiable, Equatable, Sendable {
     var id: String { "shared::\(layer.id)::\(interjection.id)" }
     var placementStatus: SharedMarginPlacementStatus {
         SharedMarginPlacementStatus(resolution: interjection.resolution, marginId: interjection.id,
-                                    layerStatus: layer.sourceResolutionStatus, pass: placement)
+                                    layerStatus: layer.sourceResolutionStatus, pass: placement,
+                                    hasPositionEvidence: interjection.carriesPositionEvidence(in: layer))
     }
     /// Its voice hasn't played for this listener yet (#469).
     var isNew: Bool { interjection.isNewToListener }

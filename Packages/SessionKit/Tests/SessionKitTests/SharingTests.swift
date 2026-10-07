@@ -922,6 +922,23 @@ final class SharingTests: XCTestCase {
         ).evidenceClass, .unresolved)
     }
 
+    /// The Margin's "sent without a position" wording (#872) counts context words in SessionKit, where the
+    /// matcher can't be linked. It must say "usable" exactly when the matcher would try the context.
+    func testSessionKitUsableContextRuleAgreesWithTheTranscriptResolver() {
+        let samples: [String?] = [
+            nil, "", "   ", "one two three four five", "one two three four five six", "one two three four, five —",
+            "it's 3 o'clock, said José, again", "COVID-19 was 2020 and then 2021 happened", "a b c d e f g",
+            "—— … !!! ??? ((( ))) ,,, ...", "naïve café résumé coöperate déjà vu again", "emoji 😀 😀 😀 😀 😀 😀 words",
+        ]
+        for prefix in samples {
+            for suffix in samples {
+                let anchor = PortableAnchorEvidence(anchorType: .media, prefix: prefix, suffix: suffix, mediaTimeMs: 1)
+                XCTAssertEqual(anchor.hasUsableTextContext, PodcastTranscriptAnchorResolver.hasUsableContext(anchor),
+                               "prefix \(prefix ?? "nil") suffix \(suffix ?? "nil")")
+            }
+        }
+    }
+
     func testPodcastTranscriptResolutionFusionAndMonotonicGuard() {
         let prefix = "the durable prefix has exactly enough unique words here"
         let suffix = "the following suffix is also uniquely present right now"

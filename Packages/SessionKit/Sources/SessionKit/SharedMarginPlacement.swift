@@ -56,19 +56,30 @@ public enum SharedMarginPlacementStatus: Equatable, Sendable {
     case placing(previousMediaTimeMs: Int?)
     /// Nothing is running and no pass has finished for this layer, for example before the episode downloads.
     case notPlacedYet
+    /// The sender gave this Margin nothing to find its spot by, only the clock time on their copy. No pass can
+    /// place it on any copy, so "unresolved" would read as a failure that waiting or downloading again could fix.
+    case noPositionSent
     /// A finished pass's result: describe the resolution itself.
     case settled
 
+    /// - Parameter hasPositionEvidence: whether the packet gave this Margin anything to match on
+    ///   (`ImportedCommentaryInterjection.carriesPositionEvidence(in:)`). Defaults to true so a caller that
+    ///   doesn't know keeps the pass-based wording.
     public init(
         resolution: ImportedAnchorResolution,
         marginId: String,
         layerStatus: ImportedSourceResolutionStatus,
-        pass: SharedMarginPlacementPasses.Pass?
+        pass: SharedMarginPlacementPasses.Pass?,
+        hasPositionEvidence: Bool = true
     ) {
         // A pending layer's Margins were reset for a new edition, so their stored values aren't results.
         let hasResult = layerStatus != .pending && Self.isPlaced(resolution)
+        // A Margin that held a position before the reset has been placed by something, whatever the packet carries.
+        let hadPosition = pass?.previousMediaTimeMs[marginId] != nil
         if hasResult {
             self = .settled
+        } else if !hasPositionEvidence, !hadPosition, !resolution.isAmbiguous {
+            self = .noPositionSent
         } else if let pass {
             self = .placing(previousMediaTimeMs: pass.previousMediaTimeMs[marginId])
         } else {
@@ -88,6 +99,7 @@ public enum SharedMarginPlacementStatus: Equatable, Sendable {
         case .placing(let previous?): "Placing again · was \(Self.clock(previous))"
         case .placing(nil): "Placing in your copy…"
         case .notPlacedYet: "Not placed yet"
+        case .noPositionSent: "Sent without a position"
         case .settled: nil
         }
     }
@@ -97,6 +109,7 @@ public enum SharedMarginPlacementStatus: Equatable, Sendable {
         switch self {
         case .placing: "Placing"
         case .notPlacedYet: "Not placed yet"
+        case .noPositionSent: "No position sent"
         case .settled: nil
         }
     }
@@ -129,5 +142,42 @@ public enum SharedMarginPlacementStatus: Equatable, Sendable {
         return seconds >= 3_600
             ? String(format: "%d:%02d:%02d", seconds / 3_600, seconds / 60 % 60, seconds % 60)
             : String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+extension PortableAnchorEvidence {
+    /// Whether the sender's own words around the Margin are long enough to find it by in a transcript: six
+    /// words before or after. This is `PodcastTranscriptAnchorResolver.hasUsableContext`'s rule, counted the
+    /// same way (runs of letters and digits); a host test keeps the two together.
+    public var hasUsableTextContext: Bool {
+        Self.wordCount(prefix) >= Self.minimumContextWords || Self.wordCount(suffix) >= Self.minimumContextWords
+    }
+
+    static let minimumContextWords = 6
+
+    private static func wordCount(_ text: String?) -> Int {
+        var count = 0
+        var inWord = false
+        for character in text ?? "" {
+            let isWordCharacter = character.unicodeScalars.contains { CharacterSet.alphanumerics.contains($0) }
+            if isWordCharacter, !inWord { count += 1 }
+            inWord = isWordCharacter
+        }
+        return count
+    }
+}
+
+extension ImportedCommentaryInterjection {
+    /// Whether the packet gave this Margin anything to find its spot by: audio fingerprints, a transcript
+    /// context, or (through the layer) the sender's exact episode file. A Margin with none of these carries only
+    /// the sender's clock time, which is never trusted on its own, so it stays unplaced on every copy (#872).
+    /// A Margin that is already placed carries evidence by definition.
+    public func carriesPositionEvidence(in layer: ImportedCommentaryLayer) -> Bool {
+        guard layer.itemIdentity.itemType == .podcast else { return true }
+        return !anchorEvidence.machineEvidenceAssetIds.isEmpty
+            || !(podcastAnchorEvidence ?? []).isEmpty
+            || anchorEvidence.hasUsableTextContext
+            || layer.itemIdentity.exactEditionSHA256 != nil
+            || SharedMarginPlacementStatus.isPlaced(resolution)
     }
 }
