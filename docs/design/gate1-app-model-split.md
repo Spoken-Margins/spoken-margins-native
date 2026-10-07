@@ -1,6 +1,6 @@
 # Taking Gate1AppModel apart
 
-*Spoken Margins · architecture plan · 7 October 2026 · written against `next` at `be9faf86`*
+*Spoken Margins · architecture plan · 7 October 2026 · written against `next` at `be9faf86`; #935 has merged since and left the model at the same length*
 
 This is a plan for a refactor. Nothing here changes what a listener sees. Claims about the code cite names on `next` at `be9faf86`. Line numbers drift, so check the code before you rely on one. Issue numbers are in the table at the end.
 
@@ -10,12 +10,12 @@ This is a plan for a refactor. Nothing here changes what a listener sees. Claims
 
 1. **The model is one 16,386-line file that almost every change touches.** 26 of the last 60 merges to `next` (4 to 7 October) edited it. That is why branches collide and why the hot-file ratchet keeps failing pull requests.
 2. **A plain split into eight extension files was tried on 2 October and left as a branch.** It moved lines, not ideas. It had to remove `private` from 338 declarations, every method still read the same state, and it conflicted with every open branch. Extension files are still the right tool for what is left at the end. They are not the right first move.
-3. **The plan is four kinds of slice, in this order.**
-   - **D, delete.** Remove code that nothing calls. About 700 lines.
-   - **P, pure.** Move logic that needs no model state into SessionKit, where it gets tests that run on Linux. About 28 slices and 3,500 lines.
-   - **X, extension files.** Move what is left into extension files, one per concern. After the Build 30 tag.
-   - **T, types.** Give the biggest stateful loops their own types. After the extension file for that concern exists.
-4. **The class keeps its stored properties, `init`, `deinit` and `didSet`s.** SwiftUI watches them, so they cannot move. The target is a model file of about 3,000 lines.
+3. **The plan is four kinds of slice, in this order.** There are 68 of them, one issue each.
+   - **D, delete.** Six slices. Remove code that nothing calls or that never compiles. About 900 lines.
+   - **P, pure.** 31 slices. Move logic that needs little or no model state into SessionKit, where it gets tests that run on Linux. About 2,700 lines leave the model.
+   - **X, extension files.** 22 slices. Move what is left into extension files, one per concern. After the Build 30 tag, except X0, which only moves value types that sit in front of the class.
+   - **T, types.** Nine slices. Give the biggest stateful loops their own types. After the extension file for that concern exists.
+4. **The class keeps its stored properties, `init`, `deinit` and `didSet`s.** SwiftUI watches them, so they cannot move. The D, P and X slices cover about 11,200 of the 16,386 lines. **They take the file to about 5,000 lines, not 3,000.** About 1,300 of those are the stored properties and `init`. The other 3,500 are members no slice claims yet. Section 7 lists them, and a second wave takes them once the first has landed.
 5. **The first slice is done.** The Listening Map JSON parser moved into SessionKit (#947). The model is 351 lines shorter, 18 new tests run on Linux, and the whole Linux suite passes (993 tests).
 6. **Four calls are Cole's.** They are at the end of this page.
 
@@ -23,30 +23,31 @@ This is a plan for a refactor. Nothing here changes what a listener sees. Claims
 
 ## 1. What is in the file today
 
-The class runs from line 523 to line 16186. It has 677 methods (13,531 lines), about 420 stored properties (1,066 lines) and 158 `@Published` ones. The value types before the class take about 500 lines more.
+The class runs from line 523 to line 16186. It has 677 methods (13,531 lines), 292 stored properties (157 of them `@Published`) and 97 computed ones. The declarations take about 1,066 lines. The value types before the class take about 500 lines more.
 
-The mapping pass read all of it. These are the concerns, with rough sizes. The sizes overlap at the edges and add up to about 14,500 of the file's 16,386 lines. The rest is blank lines and comments.
+The mapping pass read all of it. These are the concerns, with rough sizes. The sizes overlap at the edges, so they do not add up to the file's length.
 
 | Concern | Lines | Where it ends up |
 |---|---|---|
-| Stored properties, `init`, `deinit`, `didSet`s | about 1,600 | stays in the class |
-| Library audio preparation (Supertonic) | 975 | X15, T1 |
-| Importing sources (links, files, Quick Add, browser text) | 1,060 | P4, P12, X4, X5, T8 |
+| Stored properties, `init`, `deinit`, `didSet`s | about 1,300 | stays in the class |
+| Library audio preparation (Supertonic) | 975 | P9, P14, P29, X15, T1 |
+| Importing sources (links, files, Quick Add, browser text) | 1,060 | P4, P12, X4, X5, T8, D2 |
 | Receiving shared Margins (packet import, placement, playback) | 1,230 | P18, P23 to P25, X7, X10, X16, T4, T5, T9 |
 | Sending Margins (share sheet, packet export) | 850 | P21, P22, X9, T6 |
 | Session export and batch export | 240 | X6 |
 | Spoken and written Margins (capture, curation, Margins tab) | 780 | P13, X8, T7 |
-| Playback transport, rate, skip, sleep timer, turns | 600 | P6 to P8 |
-| Skim, episode maps, summary bridge, Listening Map generation | 960 | P1, P11, P19, X18, T2, T3 |
+| Playback transport, rate, skip, sleep timer, turns | 600 | P6 to P8, P31, X21 |
+| Skim, episode maps, summary bridge, Listening Map generation | 960 | P1, P11, P19, P20, X18, T2, T3 |
 | Library list, trash, completion, navigation, chapter jumps | 700 | P10, X2, X3 |
 | Following | 410 | P17, X11 |
-| Settings, voices, speech preview, engine install, audio clients | 1,300 | X12, X13 |
-| AI summary, discussion, provider (off in shipped builds) | 760 | P2, P15, X14 |
+| Settings, voices, speech preview, engine install, audio clients | 1,300 | P27, X12, X13 |
+| AI summary, discussion, provider (off in shipped builds) | 760 | D1, P2, P15, X14 |
 | Transcripts, source-window context, anchor evidence | 890 | P3, P16, P28, X17 |
-| Item detail, feedback, bookmarks, bootstrap, onboarding, seeds | 725 | X1, X19, P27 |
+| Item detail, feedback, bookmarks, bootstrap, onboarding, seeds | 725 | X1, X19, X20, P30 |
 | Watch bridge (never compiled) | 290 | D4 |
-| Dead code and copy-paste | 650 | D1 to D3, D6, P9 |
+| Dead code and copy-paste | 650 | D1 to D3, D5, D6, P9 |
 | Value types before the class | 500 | X0 |
+| Members no slice claims yet | about 2,700 | second wave (section 7) |
 
 Three facts shape the plan.
 
@@ -104,21 +105,44 @@ Every slice is one issue and one pull request. Every slice changes nothing the l
 
 ## 4. The order, and what waits for what
 
-1. **Now, in parallel: D1 to D3, D6 and all `ready` P slices.** They sit in different regions, so several can run together. `P19` only adds tests and touches no model code.
-2. **After the Build 30 tag, in a quiet window: X0 and X1, then the X slices one at a time.** Each X slice names the P slices it waits for.
-3. **After each X slice: the T slice for the same concern.**
+Every pull request in this plan stays unarmed until the Build 30 tag (the freeze, #894). "Starts now" means a thread may open the pull request now. It does not mean the pull request merges now.
+
+1. **Now, in parallel: the `ready` D and P slices, and X0.** They sit in different regions, so several can run together. P19 only adds tests and touches no model code. The pairs below must not run at the same time or must run in the stated order, because their edits touch each other in git.
+2. **After the Build 30 tag, in a quiet window: X1 first, then the other X slices one at a time.** Each X slice names the slices it waits for.
+3. **After each X slice: the T slice for the same concern.** Each T slice starts with a short design note.
 4. **Anything that needs Cole waits on his answer** (D4, D5, P26) and does not block the rest.
 
-Open Build 30 pull requests touch some of these regions. A slice in the same region waits until that pull request has merged, because Build 30 does not wait for Build 31.
+Order rules, from the mapping pass. Each issue repeats the ones that concern it.
 
-| Open PR | Region | Slices to hold |
+1. D3 (#948), then P4, then P12. X0 leaves their value types where they are.
+2. D2 before X4 and X5. D3 before X4 and X5.
+3. P23, then P24, then X10, then X12.
+4. P27 before P29. P8 and P27 are neighbours and do not share a hot-file window.
+5. P9a, then P9b, then P29b. X0 before P29.
+6. P18 before X7. X7 and X8 never run together. X7 before T9.
+7. P21 before X9. P22 is independent of P21.
+8. P17 before D6 and X11. P25 before X16. X11 and X16 never run together.
+9. P16 and P28 before X17.
+10. D1 and P2 never run together. Both before X14.
+11. P11 and P19 before X18, and X18 before T2 and T3.
+12. X1 before every X slice except X0.
+
+Open pull requests touch some of these regions. A slice in the same region waits until that pull request has merged, because Build 30 does not wait for Build 31. State on 7 October, 19:45 UTC; check before you start.
+
+| Open PR | What it edits in the model | Slices to hold |
 |---|---|---|
-| #935 podcast placement | imported podcast placement | X16, T4 |
-| #938 Timeline Back | navigation | X3 |
-| #896 source-window jobs | source-window context | X17, P16 |
-| #906 Add Margin while a Margin plays | spoken Margin capture | X8, T7 |
-| #931 export folder settings | export and share folders | X6, X9 |
-| #903 diagnostics IDs | diagnostics export | P5 |
+| #939 "Recording" only while capturing (#937) | the recording members | X8, T7 |
+| #906 Add Margin while a Margin plays (#866) | `beginInterjection`, `dispatchGate2CompactCommand`, and it moves `KeychainStore` out | X7, X8, T7, D1 (the `KeychainStore` part) |
+| #817 Save a Margin a call cut short (#771) | widens `reportWarning`, `run`, `scheduleTranscription` and four more | X1, X8, X13, X17, T7 |
+| #931 Export folder settings (#930) | batch export folder members, `resolvedBatchExportFolderURL` | X2, X6, X19 |
+| #723 Share Margins from the Margins tab | `openMarginItemExport` | X9 |
+| #901 One copy of a Margin on re-share (#858) | one line in the placement code | X16, P25 |
+| #832 Text items show time left (#305) | `LibraryItemRow` and the row builder | X0, P29 |
+| #713 Feed plain text (#711) | `importBrowserTextInBackground`, `sanitizedBrowserTextHandoff`, the followed-article import | X5, X11, X17 |
+| #607 Skim destination on the Lock Screen | `updateSkimAvailability`, `updateGate2CompactState` | X18, T2, X12 |
+| #344 Re-imported PDF with prepared audio | import and audio-preparation members | X5, X15, T1 |
+
+#935 (placement passes) and #896 (source-window jobs) have merged. #938 (Timeline Back), #925 (Substack voiceover) and #570 (Following order) do not edit the model file. #903 (diagnostics ids) is an issue with no pull request yet; it holds P5.
 
 **The lane is the bottleneck.** A diff that touches the model runs all 151 tests in `Gate1AppModelWorkflowTests`, about 15 minutes with the simulator boot, on one Mac. A slice that only adds a SessionKit type needs a Linux run and nothing else. Do not start more model-touching pull requests than the lane can run in a day.
 
@@ -136,6 +160,7 @@ Open Build 30 pull requests touch some of these regions. A slice in the same reg
 6. **Ask for the right lane tier.** `scripts/test-scope.py` says T3 for any change to the model. SessionKit-only changes are T1. The lane runs T2 and T3.
 7. **Get a Codex audit for packets, sharing, persistence, owner files or the audio session.** Each issue says yes or no.
 8. **Stay unarmed until the Build 30 tag.** Open the pull request into `next`, request the lane, and do not add `automerge`.
+   A slice that is several pull requests says so in its issue. Each pull request says `Part of #N`, and the last says `Closes #N`.
 9. **Post the claim and stop notes** in the formats in the project instructions.
 
 ---
@@ -158,20 +183,23 @@ The mapping pass found these in more than one place. An issue repeats the ones t
 
 ## 7. Seen on the way, not part of any slice
 
-Two of these are filed as bugs. The rest are observations I read in the code and did not reproduce or file.
+**Bugs.** Two are filed: #949 (curly quotes around Listening Map keys do not repair) and #950 (heard-audio files for a streamed Margin stay in `Caches` when the context is already ready). The rest were read in the code and not run. They are in one issue, #972, with a repro to try for each. None is a reason to stop a slice. A moves-only slice never fixes one.
 
-1. #949: curly quotes around Listening Map keys and strings do not repair. Filed.
-2. #950: heard-audio files for a streamed Margin stay in `Caches` when the context is already ready. Filed.
-3. A background-task expiry saves the episode-map job as cancelled, so fingerprinting restarts from landmark 0 next time. Not filed.
-4. `enqueueStartupAudioPreparation` runs in a Task with no handle, so its cancellation checks never fire. Not filed.
-5. `refreshAudioPreparationPresentation` deletes SQLite job rows as a side effect of building a list. Not filed.
-6. The filter menu says "Pdf" where the model says "PDF" (`ExperienceLibraryScreen.swift:386`). P10 asks Cole to pick one.
+**What no slice covers yet.** About 2,700 lines of members are in no slice. The biggest groups are:
 
----
+1. **Margin moments** (`startMarginMoment`, `playMarginMoment`, `playSharedMarginMoment`, about 110 lines).
+2. **Playback ticks and session resume** (`tickPlaybackProgress`, `resumeSession`, `prioritizeOfflinePreparation`).
+3. **Source transcript scheduling** (`scheduleSourceTranscriptImportIfAvailable`, `scheduleFullSourceTranscriptionForListeningMap`).
+4. **Incoming URLs, read-later and browser text** (`handleIncomingURL`, `importReadLaterDocument`, `importBrowserTextItem`).
+5. **Text-audio prewarm and offline services** (`scheduleTextAudioPrewarmIfNeeded`, `observeRenderedFrontier`, `configureOfflineServices`).
+6. **Guided onboarding content** (`refreshGuidedOnboardingContent`) and the compact-control entry points (`performGate2CompactCommand` stays by design; `handleGate2CompactApplicationCommand` is next to it).
+7. **Small groups** in the same shape: Gate 2 compact helpers, the per-item bits of session export, and a few one-caller wrappers.
+
+The second wave starts when X1 and the first X slices have landed, because the extension files the first wave creates decide where these go. It gets filed then, from the mapping notes, not now.
 
 ## 8. How we will know it worked
 
-1. **The model file's size.** 16,386 lines at the start. 16,035 with the first slice. The target is about 3,000.
+1. **The model file's size.** 16,386 lines at the start. 16,035 with the first slice. About 5,000 when this plan is done, and the second wave takes it lower.
 2. **Merges that touch the model.** 26 of the last 60 (43%) on 4 to 7 October. The critic's bar from #298 was under 10% of the next 20. Measure again after the extension files land.
 3. **Linux tests.** 975 before the first slice, 993 after it. Each P slice adds tests that did not exist.
 4. **Conflicts.** If merge syncs per pull request do not fall after the extension files land, the collisions are about meaning, not text, and only the playback coordinator (#185) helps. That is the "what would show this wrong" line from #319.
