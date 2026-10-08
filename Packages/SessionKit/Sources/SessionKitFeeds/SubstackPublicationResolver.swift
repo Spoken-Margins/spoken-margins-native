@@ -333,7 +333,7 @@ public struct SubstackPublicationResolver: Sendable {
 
     /// A private feed link without its token, for reasons, logs and diagnostics.
     public static func redact(_ link: String) -> String {
-        link.replacingOccurrences(of: #"/private/[^/]+"#, with: "/private/…", options: .regularExpression)
+        link.replacingOccurrences(of: #"/private/[^/]+"#, with: "/private/…", options: [.regularExpression, .caseInsensitive])
     }
 
     /// Drops tracking and share parameters and the fragment; keeps any meaningful query.

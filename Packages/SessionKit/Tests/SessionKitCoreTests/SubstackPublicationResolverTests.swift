@@ -199,6 +199,17 @@ final class SubstackPublicationResolverTests: XCTestCase {
         )
     }
 
+    /// `isPrivateFeedURL` has always read the path in any case, so `redact` has to mask the token in any case too.
+    func testRedactMasksTheTokenWhateverTheCaseOfTheMarker() {
+        for link in [
+            "https://api.substack.com/FEED/PODCAST/69345/PRIVATE/AbC-not-a-token.RSS",
+            "https://www.example.com/Feed/Private/AbC-not-a-token?x=1"
+        ] {
+            XCTAssertTrue(SubstackPublicationResolver.isPrivateFeedURL(link), link)
+            XCTAssertFalse(SubstackPublicationResolver.redact(link).contains("not-a-token"), link)
+        }
+    }
+
     /// Links that look a little like a private feed and must stay what they were.
     func testLookalikesOfPrivateFeedLinksStayPublic() {
         let notPrivate = [
