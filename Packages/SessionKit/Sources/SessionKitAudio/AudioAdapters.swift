@@ -1056,6 +1056,17 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
         #endif
     }
 
+    /// The client's own intent for `playback.state` diagnostics (#1109), in the words the on-device voice
+    /// client uses: `paused` after a pause that stopped speech, `playing` while speech is queued or
+    /// spoken, otherwise `stopped`.
+    public var diagnosticIntent: String {
+        if paused { return "paused" }
+        #if canImport(AVFoundation)
+        if synthesizer.isSpeaking || !chunksByUtteranceId.isEmpty { return "playing" }
+        #endif
+        return "stopped"
+    }
+
     public func currentCharOffset() -> Int? {
         currentOffset
     }

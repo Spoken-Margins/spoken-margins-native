@@ -80,6 +80,64 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    /// #1109: the client says what it intends and which voice is speaking in every status. A pause
+    /// that no request explains can then be traced to the client's own intent or to the iOS voice.
+    func testNarrationDiagnosticsFollowTheClientsIntentAndVoice() async throws {
+        let template = try makeTestWAV(duration: 0.2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let fallback = RecordingFallbackAudioClient()
+        let fellBack = expectation(description: "resource fallback")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in }, observesPlayerLifecycle: false,
+            onDeviceRenderingAllowed: { false },
+            fallbackClient: fallback,
+            onFallback: { _, _, _ in fellBack.fulfill() }
+        )
+        XCTAssertEqual(client.narrationDiagnostics(), ["clientIntent": "stopped", "clientVoice": "on_device", "clientStandIn": "false"])
+        _ = try client.prepareSpeechText("The phone refuses to render, so the iOS voice reads this.")
+        try client.play(targetId: "diagnostics")
+        await fulfillment(of: [fellBack], timeout: 2)
+        XCTAssertEqual(client.narrationDiagnostics(), ["clientIntent": "playing", "clientVoice": "system_voice", "clientStandIn": "false"])
+
+        try client.pause()
+        XCTAssertEqual(client.narrationDiagnostics(), ["clientIntent": "paused", "clientVoice": "system_voice", "clientStandIn": "false"])
+
+        try client.stop()
+        XCTAssertEqual(client.narrationDiagnostics(), ["clientIntent": "stopped", "clientVoice": "on_device", "clientStandIn": "false"])
+    }
+
+    /// #1109: the audio session's and the player's fields join a playback.state record only while
+    /// playing, which left a pause with nothing from the client. The client's own fields are always there.
+    func testPlaybackStateRecordKeepsTheClientsFieldsWhenPaused() {
+        var snapshot = SessionSnapshot()
+        snapshot.status = .paused
+        let fields = DeveloperDiagnosticRecording.playbackStateFields(
+            snapshot,
+            player: ["playerRate": "0"],
+            narration: PlaybackDiagnosticFields.narration(intent: "paused", systemVoiceActive: true, standInPassage: false)
+        )
+        XCTAssertEqual(fields["status"], "paused")
+        XCTAssertEqual(fields["clientIntent"], "paused")
+        XCTAssertEqual(fields["clientVoice"], "system_voice")
+        XCTAssertNil(fields["playerRate"], "the player's own fields still join the record only while playing")
+    }
+
+    /// #1109 (Codex audit): with the iOS voice chosen, the client says what it intends in the same words, so
+    /// a pause record from system-voice narration carries the client's state too.
+    func testSystemVoiceClientReportsItsIntentForPlaybackRecords() throws {
+        let client = SystemSpeechPlaybackClient(voiceIdentifier: nil, speechRate: 0.5)
+        XCTAssertEqual(client.diagnosticIntent, "stopped")
+        _ = try client.prepareSpeechText(String(repeating: "The iOS voice reads this long enough to pause. ", count: 20))
+        try client.play(targetId: "system-intent", from: 0)
+        XCTAssertEqual(client.diagnosticIntent, "playing")
+        try client.pause()
+        XCTAssertEqual(client.diagnosticIntent, "paused")
+        try client.stop()
+        XCTAssertEqual(client.diagnosticIntent, "stopped")
+    }
+
     /// A slow render would likely be slow again, so that fallback waits for Retry.
     func testSlowRenderFallbackWaitsForRetryInsteadOfReturningAtTheNextPlay() async throws {
         let template = try makeTestWAV(duration: 0.5)
