@@ -159,7 +159,7 @@ struct ExperienceLibraryScreen: View {
     }
 
     private var preparationSummaryDetail: String {
-        let queued = model.audioPreparationQueue.count
+        let queued = Set(model.audioPreparationQueue.map(\.itemId)).count // items, not jobs (#883)
         let recent = model.recentlyPreparedAudio.count
         if queued > 0, recent > 0 {
             return "\(queued) queued · \(recent) recently ready"

@@ -9527,18 +9527,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func shouldPrewarmTextAudio(for item: Item) -> Bool {
-        guard item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return false }
-        if item.mediaType == TargetType.browserOwnedMedia.rawValue {
-            return false
-        }
-        switch item.media?.sourceType {
-        case .none, .some(.generatedTTSRealtime):
-            return true
-        case .some(.generatedTTSPrerendered):
-            return PreparedNarrationFallback.isMissing(item.media) || isStarterPreparedTextMedia(item.media)
-        case .some(.nativeMediaFile), .some(.browserOwnedMedia), .some(.remoteStream):
-            return false
-        }
+        guard item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+              !LibraryAudioPreparationAdmission.playsItsOwnAudio(item) else { return false }
+        guard item.media?.sourceType == .generatedTTSPrerendered else { return true }
+        return PreparedNarrationFallback.isMissing(item.media) || isStarterPreparedTextMedia(item.media)
     }
 
     private func isStarterPreparedTextMedia(_ media: ItemMedia?) -> Bool {
@@ -10181,17 +10173,13 @@ final class Gate1AppModel: ObservableObject {
         let manifests = try store.loadPreparedAudioManifests()
         let manifestsById = Dictionary(uniqueKeysWithValues: manifests.map { ($0.id, $0) })
         let activeItemId = activePlaybackItemId
-        let completedItemIds = Set(itemsById.values.filter { $0.sourceCompletedAt != nil }.map(\.id)).union(Set(
-            Dictionary(grouping: try store.loadSessions(), by: \.itemId)
-                .filter { PreparationChunkGate.itemAlreadyListened($0.value) }
-                .keys
-        ))
         let storedJobs = try store.loadAudioPreparationJobs()
-        try store.deleteAudioPreparationJobs(
-            ids: storedJobs.filter { $0.policy != .explicit && completedItemIds.contains($0.itemId) }.map(\.id)
-        )
+        let staleJobIds = Set(LibraryAudioPreparationAdmission.staleJobIds(
+            storedJobs, items: Array(itemsById.values), sessionsByItemId: Dictionary(grouping: try store.loadSessions(), by: \.itemId)
+        ))
+        try store.deleteAudioPreparationJobs(ids: Array(staleJobIds))
         let jobs = storedJobs
-            .filter { !$0.isCancelled && ($0.policy == .explicit || !completedItemIds.contains($0.itemId)) }
+            .filter { !$0.isCancelled && !staleJobIds.contains($0.id) }
             .sorted { lhs, rhs in
                 Self.audioPreparationJobPrecedes(lhs, rhs, activeItemId: activeItemId)
             }
@@ -13074,10 +13062,11 @@ final class Gate1AppModel: ObservableObject {
             let sessionsByItemId = Dictionary(grouping: try store.loadSessions(), by: \.itemId)
             for row in libraryItems {
                 guard let item = try? store.loadItem(id: row.id),
+                      !LibraryAudioPreparationAdmission.playsItsOwnAudio(item),
                       let text = PreparedSpeechHooks.preparedText(of: item, in: store),
                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else { continue }
-                guard item.sourceCompletedAt == nil, !PreparationChunkGate.itemAlreadyListened(sessionsByItemId[item.id] ?? []) else {
+                guard LibraryAudioPreparationAdmission.admitsAutomatically(item, sessions: sessionsByItemId[item.id] ?? []) else {
                     diagnostics["automaticAudioPreparation:\(item.id)"] = "skipped_existing_progress"
                     continue
                 }
@@ -13149,7 +13138,7 @@ final class Gate1AppModel: ObservableObject {
                libraryItems.first(where: { $0.id == previous })?.startupAudioState == .preparing { updateLibraryStartupAudioState(itemId: previous, state: .waiting) }
             if libraryItems.first(where: { $0.id == job.itemId })?.startupAudioState == .waiting { updateLibraryStartupAudioState(itemId: job.itemId, state: .preparing) }
             guard var manifest = try store.loadPreparedAudioManifest(id: job.manifestId),
-                  let item = try? store.loadItem(id: job.itemId),
+                  let item = try? store.loadItem(id: job.itemId), item.deletedAt == nil, // a job saved back mid-render for an item since trashed (#883)
                   let sourceText = PreparedSpeechHooks.preparedText(of: item, in: store) else {
                 try store.deleteAudioPreparationJob(id: job.id)
                 diagnostics["backgroundAudioPreparation"] = "discarded_missing_source_job"
