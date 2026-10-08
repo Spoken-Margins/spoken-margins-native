@@ -263,6 +263,45 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         restored.shutdown()
     }
 
+    /// #936: Download Again tapped while a copy is already coming down must not cancel it and start over.
+    func testDownloadAgainWhileDownloadingDoesNotRestartTheDownload() async throws {
+        let fixture = try makeFixture()
+        let directory = fixture.support.appending(path: "PodcastAudio")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let saved = directory.appending(path: "saved.mp3")
+        try Data([1, 2, 3, 4]).write(to: saved)
+        try fixture.store.savePodcastDownload(PodcastDownloadRecord(
+            id: "download-episode", itemId: "episode", remoteURL: "https://example.com/audio",
+            localRelativePath: saved.lastPathComponent, state: .availableOffline,
+            bytesWritten: 4, expectedBytes: 4
+        ))
+        let head = DownloadHeadGate()
+        let coordinator = try PodcastDownloadCoordinator(
+            store: fixture.store, applicationSupportDirectory: fixture.support,
+            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false,
+            contentLength: { _, _ in await head.length() }, startDownload: { _, _ in }
+        )
+
+        coordinator.redownload(itemId: "episode")
+        await head.waitUntilRequested()
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .downloading)
+        let retriesAfterFirstTap = coordinator.recordsByItemId["episode"]?.retryCount
+
+        coordinator.redownload(itemId: "episode")
+        coordinator.redownload(itemId: "episode")
+        let preparation = try XCTUnwrap(coordinator.preparationTasks["episode"])
+
+        XCTAssertEqual(coordinator.recordsByItemId["episode"]?.retryCount, retriesAfterFirstTap,
+                       "Extra taps must not count as new attempts")
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .downloading)
+        await head.finish(8)
+        await preparation.value
+        let requests = await head.requests
+        XCTAssertEqual(requests, 1, "Extra taps must not ask for the file's size again, which means starting over")
+        XCTAssertEqual(coordinator.validatedLocalURL(for: "episode"), saved, "The saved copy stays playable meanwhile")
+        coordinator.shutdown()
+    }
+
     func testFirstDownloadInProgressIsNotMarkedFailedWhenQueried() async throws {
         let fixture = try makeFixture()
         let head = DownloadHeadGate()
@@ -550,7 +589,8 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
 
 private actor DownloadHeadGate {
     private var continuation: CheckedContinuation<Int64, Never>?
-    func length() async -> Int64 { await withCheckedContinuation { continuation = $0 } }
+    private(set) var requests = 0
+    func length() async -> Int64 { requests += 1; return await withCheckedContinuation { continuation = $0 } }
     func waitUntilRequested() async {
         while continuation == nil { await Task.yield() }
     }
