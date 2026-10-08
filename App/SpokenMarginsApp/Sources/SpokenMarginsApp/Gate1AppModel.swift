@@ -8695,10 +8695,6 @@ final class Gate1AppModel: ObservableObject {
         pendingPreparedTextStartItemId == activeItemId
     }
 
-    var canFinishInterjection: Bool {
-        snapshot.isRecording
-    }
-
     var canSummarizeInterjections: Bool {
         aiSummaryExperienceAvailable && hasActiveSession && !unsummarizedInterjectionsForCurrentTarget().isEmpty
     }
