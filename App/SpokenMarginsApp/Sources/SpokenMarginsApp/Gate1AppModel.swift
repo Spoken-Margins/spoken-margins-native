@@ -7761,7 +7761,12 @@ final class Gate1AppModel: ObservableObject {
             }
             let store = try requireStore()
             if let existing = try store.loadImportedCommentaryLayer(packageDigest: digest),
-               importedLayerHasValidItemAssociation(existing, store: store) {
+               existing.sourceResolutionStatus != .wrongSource,
+               let associatedItemId = existing.itemId,
+               let associatedItem = try? store.loadItem(id: associatedItemId),
+               associatedItem.deletedAt == nil,
+               SharedPacketItemMatcher.layerHasValidItemAssociation(existing, item: associatedItem,
+                   ownedAudiobookDigest: localAudiobookDigest(for: associatedItem)) {
                 if let itemId = existing.itemId {
                     openItem(id: itemId)
                     if let item = try? store.loadItem(id: itemId), item.mediaType == "audiobook" {
@@ -7882,7 +7887,7 @@ final class Gate1AppModel: ObservableObject {
                     itemId = nil
                 }
                 let item = try itemId.map { try store.loadItem(id: $0) }
-                let localItem = item.map(self.localSharedItemIdentity(for:))
+                let localItem = item.map { SharedPacketItemMatcher.localIdentity(for: $0, ownedAudiobookDigest: self.localAudiobookDigest(for: $0)) }
                 var localAudioAdmission: LocalAudioPacketAdmission?
                 if let item, item.mediaType == "audiobook" {
                     localAudioAdmission = try await self.verifyLocalAudioForImport(item, contents: review.contents)
@@ -7891,14 +7896,15 @@ final class Gate1AppModel: ObservableObject {
                 let disposition: ImportedCommentaryImportDisposition
                 if let digest = review.contents.manifest.contentDigest,
                    let existing = try store.loadImportedCommentaryLayer(packageDigest: digest) {
-                    try self.repairImportedLayerAssociation(
-                        existing,
+                    try SpokenMarginsPackageImporter.repairAssociation(
+                        existing: existing,
                         contents: review.contents,
                         itemId: itemId,
                         localItem: localItem,
                         itemText: itemText,
-                        store: store
+                        repository: store
                     )
+                    if let itemId { self.diagnostics["lastSpokenMarginsPackageRepair"] = "reassociated:\(existing.id):\(itemId)" }
                     disposition = .duplicate(existingLayerId: existing.id)
                 } else {
                     disposition = try SpokenMarginsPackageImporter.importPackage(
@@ -7957,7 +7963,7 @@ final class Gate1AppModel: ObservableObject {
             try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: url)
         }.value
         return try LocalAudioPacketAdmission.admitted(
-            contents, recipient: localSharedItemIdentity(for: item), itemId: item.id, actualDigest: actualDigest)
+            contents, recipient: SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: localAudiobookDigest(for: item)), itemId: item.id, actualDigest: actualDigest)
     }
 
     /// Exact maps project at the sender's times; a podcast packet on the listener's copy is placed like a download.
@@ -7968,7 +7974,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func activateImportedLocalAudioMaps(item: Item, contents: VerifiedSpokenMarginsPackage) async throws {
         let store = try requireStore()
-        let recipient = localSharedItemIdentity(for: item)
+        let recipient = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: localAudiobookDigest(for: item))
         for proposal in contents.listeningMapProposals {
             let projection = try ExactLocalAudioImport.projection(
                 proposal: proposal, source: contents.manifest.item, recipient: recipient, itemId: item.id
@@ -8165,54 +8171,6 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    private func importedLayerHasValidItemAssociation(
-        _ layer: ImportedCommentaryLayer,
-        store: SQLiteSessionStore
-    ) -> Bool {
-        guard layer.sourceResolutionStatus != .wrongSource,
-              let itemId = layer.itemId,
-              let item = try? store.loadItem(id: itemId) else { return false }
-        guard item.deletedAt == nil else { return false }
-        return ImportedItemResolver.canRepresentSameWork(
-            layer.itemIdentity,
-            localSharedItemIdentity(for: item)
-        )
-    }
-
-    private func repairImportedLayerAssociation(
-        _ existing: ImportedCommentaryLayer,
-        contents: VerifiedSpokenMarginsPackage,
-        itemId: String?,
-        localItem: SharedItemIdentity?,
-        itemText: String?,
-        store: SQLiteSessionStore
-    ) throws {
-        guard let itemId,
-              let localItem,
-              let commentary = contents.commentaryLayers.first else {
-            throw SessionKitError.persistenceFailed("shared_package_repair_item_is_unavailable")
-        }
-        let resolution = ImportedItemResolver.resolve(
-            item: contents.manifest.item,
-            interjections: commentary.interjections,
-            against: localItem,
-            itemText: itemText
-        )
-        guard resolution.status != .wrongSource else {
-            throw SessionKitError.persistenceFailed("shared_package_repair_source_did_not_match")
-        }
-        var layer = existing
-        layer.itemId = itemId
-        layer.sourceResolutionStatus = resolution.status
-        try store.saveImportedCommentaryLayer(layer)
-        for var interjection in try store.loadImportedCommentaryInterjections(layerId: layer.id) {
-            interjection.resolution = resolution.anchorsByPackageScopedId[interjection.packageScopedId]
-                ?? ImportedAnchorResolution(evidenceClass: .unresolved)
-            try store.saveImportedCommentaryInterjection(interjection)
-        }
-        diagnostics["lastSpokenMarginsPackageRepair"] = "reassociated:\(layer.id):\(itemId)"
-    }
-
     private func matchingItemID(
         for itemIdentity: SharedItemIdentity,
         store: SQLiteSessionStore
@@ -8226,15 +8184,8 @@ final class Gate1AppModel: ObservableObject {
             for: itemIdentity, among: try store.listItems(), ownedAudiobookDigest: localAudiobookDigest(for:))
     }
 
-    func localSharedItemIdentity(for item: Item) -> SharedItemIdentity {
-        SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: localAudiobookDigest(for: item))
-    }
-
     private func localAudiobookDigest(for item: Item) -> String? {
-        guard item.mediaType == "audiobook" else { return nil }
-        return (try? store?.loadOwnedOfflineAssets())?.first(where: {
-            $0.itemId == item.id && $0.category == .audiobook && $0.integrity == .valid
-        })?.checksumSHA256
+        item.mediaType == "audiobook" ? SharedPacketItemMatcher.ownedAudiobookDigest(for: item, assets: (try? store?.loadOwnedOfflineAssets()) ?? []) : nil
     }
 
     private func normalizedSharingURL(_ value: String?) -> String? {
@@ -13683,8 +13634,8 @@ final class Gate1AppModel: ObservableObject {
     /// Mirrors the link the packet builder keeps, so the share screen never promises a private feed link (#168).
     private func secureSharedItemURL(for item: Item) -> String? {
         ShareableLinkPolicy.shareableLink(
-            item.externalReference.flatMap(normalizedSharingURL)
-                ?? item.media?.url.flatMap(normalizedSharingURL)
+            item.externalReference.flatMap(SharedItemIdentityBuilder.normalizedSharingURL)
+                ?? item.media?.url.flatMap(SharedItemIdentityBuilder.normalizedSharingURL)
         )
     }
 
@@ -15837,7 +15788,7 @@ final class Gate1AppModel: ObservableObject {
               let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
               !layers.isEmpty else { return }
         importedPodcastResolutionURLs[itemId] = localURL
-        let localItem = localSharedItemIdentity(for: item)
+        let localItem = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: localAudiobookDigest(for: item))
         // Persisted transcripts have no byte-edition binding. Only this pass's
         // transient transcript is evidence for the supplied recipient file.
         let work = layers.compactMap { layer -> (ImportedCommentaryLayer, [ImportedCommentaryInterjection])? in
