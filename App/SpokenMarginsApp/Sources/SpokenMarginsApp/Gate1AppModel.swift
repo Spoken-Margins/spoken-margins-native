@@ -11421,10 +11421,6 @@ final class Gate1AppModel: ObservableObject {
         return detector.matches(in: text, options: [], range: range).compactMap(\.url).first
     }
 
-    private func isUserImportedItem(_ id: String) -> Bool {
-        id.hasPrefix("item-import-") || id.hasPrefix("item-obsidian-") || id.hasPrefix("item-browser-") || id.hasPrefix("item-source-")
-    }
-
     private func submitProviderJobIfNeeded(kind: String, itemId: String, turnId: String, messages: [String], force: Bool = false) {
         guard remoteProviderExperienceEnabled else {
             markProviderFailure("remote_provider_disabled", userMessage: "Remote AI is disabled in this release.", itemId: itemId)
