@@ -3,6 +3,7 @@ package manifest
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -104,4 +105,48 @@ func TestPublishRefusesWithoutTouchingTheLiveFile(t *testing.T) {
 	if string(now) != string(good) {
 		t.Fatal("refused publish changed the live manifest")
 	}
+}
+
+// A selector goes into the app's page script, so each fragment no CSS
+// selector needs but an injection would is refused on its own: with the
+// others absent, so removing one entry from the deny-list is noticed. The
+// fragments are spelled out here, not read from selectorForbidden, so the
+// test can't shrink along with the list.
+func TestEachForbiddenSelectorFragmentIsRefusedOnItsOwn(t *testing.T) {
+	fragments := []string{"{", "}", ";", "<", "`", `\`, "/*", "*/", "url(", "expression(", "javascript:", "@import"}
+	if len(selectorForbidden) != len(fragments) {
+		t.Fatalf("selectorForbidden has %d entries and this test knows %d: list the new one here", len(selectorForbidden), len(fragments))
+	}
+	for _, fragment := range fragments {
+		for _, selector := range []string{"div" + fragment + "x", "DIV" + strings.ToUpper(fragment) + "X"} {
+			m := load(t)
+			firstSource(m)["recipe"].(map[string]any)["content"] = []any{selector}
+			data, _ := json.Marshal(m)
+			_, err := Validate(data)
+			if err == nil || !strings.Contains(err.Error(), "contains "+strconv.Quote(strings.ToLower(fragment))) {
+				t.Errorf("selector %q: want a refusal naming %q, got %v", selector, fragment, err)
+			}
+		}
+	}
+
+	// A plain selector, a control character and the length bounds.
+	refuseWith := func(selector, want string) {
+		t.Helper()
+		m := load(t)
+		firstSource(m)["recipe"].(map[string]any)["content"] = []any{selector}
+		data, _ := json.Marshal(m)
+		if _, err := Validate(data); want == "" {
+			if err != nil {
+				t.Errorf("selector %q refused: %v", selector, err)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("selector %q: want %q, got %v", selector, want, err)
+		}
+	}
+	refuseWith("article > p.body, main [data-x='y']", "")
+	refuseWith(strings.Repeat("a", MaxSelectorLength), "")
+	refuseWith(strings.Repeat("a", MaxSelectorLength+1), "selector must be 1 to")
+	refuseWith("", "selector must be 1 to")
+	refuseWith("div\nspan", "control character")
+	refuseWith("div\x00span", "control character")
 }

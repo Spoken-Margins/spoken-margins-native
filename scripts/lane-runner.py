@@ -103,7 +103,10 @@ QUEUED, RUNNING, DONE = 'lane:queued', 'lane:running', 'lane:done'
 AUTOMERGE = 'automerge'
 FAST_TIMEOUT = 2400
 MERGE_ATTEMPTS = 3
-WARM_KEEP = 2
+# #863: keep more exact-key hits across interleaved PRs. Cloning across SessionKit keys also copies
+# Xcode metadata pointing at the donor cache; retain strict keys to avoid stale modules instead.
+# WARM_FREE_FLOOR still takes precedence over this per-checkout retention limit.
+WARM_KEEP = 4
 BUILD_RUNNER_WAIT = 90 * 60
 BUILD_RUNNER_FREE_DISK = 20 * 10**9
 # Trial (2026-10-01): host-only jobs on the build runner may run beside a simulator job, with this much disk.
@@ -1933,6 +1936,9 @@ def main(argv=None) -> int:
     automerge = AUTOMERGE in labels
     if head != args.event_head:
         print(f'The PR moved on to {head[:7]} since this run was queued; the newer run tests it.')
+        return 0
+    if pull.get('state', 'open') != 'open':  # merged or closed while queued: don't spend a test cycle on it (#860)
+        print(f'PR #{args.pr} is {pull["state"]}; nothing to test.')
         return 0
     comments = github.comments()
     request, desk_waiting = pending_requests(comments)

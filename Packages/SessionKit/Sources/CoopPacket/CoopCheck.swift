@@ -8,8 +8,9 @@ import ShippedPacketReader
 ///
 /// 1. Each packet reads in the current reader, and imports into Build 29 with the same Margins.
 /// 2. Packets on the same item import into a fresh SQLite Library in every order (all orders up
-///    to five packets, then 120 shuffles). Every order must give the same layers, Margins and
+///    to five packets, then 120 shuffles). Every order must give the same packets, Margins and
 ///    threads, and opening every packet again must add nothing.
+/// 3. A sender who shared again (#858) must not leave the listener a second copy of any Margin.
 enum CoopCheck {
     struct Report {
         var lines: [String] = []
@@ -97,36 +98,67 @@ enum CoopCheck {
                 }
             }
             try checkOrders(group, report: &report)
-            warnAboutResentMargins(group, report: &report)
+            noteResentMargins(group, report: &report)
         }
         return report
     }
 
-    /// A sender who shares again after adding Margins sends the earlier ones in a new packet. Each
-    /// packet is its own layer, so the listener keeps a copy per packet.
-    private static func warnAboutResentMargins(_ group: [OpenedPacket], report: inout Report) {
-        var packetsByMargin: [String: Set<String>] = [:]
+    /// A sender who shares again after adding Margins sends the earlier ones in a new packet. The
+    /// importer keeps one copy of each (#858): this reports the re-sends it found, and `checkOrders`
+    /// fails if a copy is kept for any of them.
+    private static func noteResentMargins(_ group: [OpenedPacket], report: inout Report) {
+        var packetsByMargin: [ImportedMarginResends.CopyKey: Set<String>] = [:]
         for packet in group {
-            let sender = packet.contents.manifest.senderDisplayLabel ?? "no sender"
             for margin in packet.margins {
-                let text = margin.defaultRepresentation?.approvedTranscript ?? ""
-                packetsByMargin["\(sender): \(text.prefix(60))", default: []].insert(packet.digest)
+                packetsByMargin[copyKey(packet: packet, margin: margin), default: []].insert(packet.digest)
             }
         }
-        for (margin, packets) in packetsByMargin.sorted(by: { $0.key < $1.key }) where packets.count > 1 {
-            report.warn("the same Margin arrives in \(packets.count) different packets and is kept \(packets.count) times: \(margin)")
+        let resent = packetsByMargin.filter { $0.value.count > 1 }
+        if !resent.isEmpty {
+            report.note("\(resent.count) Margin(s) arrive in more than one packet (a sender who shared again); each should be kept once")
         }
     }
 
-    /// What a listener ends up with, named by packet identity so orders can be compared.
+    /// Use exactly the importer's fields, including full anchor context, voice duration, reply
+    /// relationships and provenance eligibility. No audio decoding is needed to compare metadata.
+    private static func copyKey(packet: OpenedPacket, margin: SharedInterjectionPackageRecord) -> ImportedMarginResends.CopyKey {
+        let representation = margin.defaultRepresentation
+        let asset = packet.contents.manifest.assets.first { $0.id == representation?.assetId }
+        let imported = ImportedCommentaryInterjection(
+            id: margin.packageScopedId, layerId: "check", packageScopedId: margin.packageScopedId,
+            createdAt: margin.createdAt, anchorEvidence: margin.anchor,
+            approvedTranscript: representation?.approvedTranscript ?? "", audioDurationMs: asset?.durationMs,
+            replyLinks: packet.contents.conversations.first?.linksByPackageScopedId[margin.packageScopedId],
+            shareProvenance: representation.flatMap { MarginShareProvenance.token(representationID: $0.id) }
+        )
+        return ImportedMarginResends.copyKey(packageDigest: packet.digest, sender: packet.contents.manifest.senderDisplayLabel, margin: imported)
+    }
+
+    /// How many of each Margin the packets carry at most: a sender who said the same thing twice at one
+    /// place keeps both, but never more than one packet held.
+    private static func expectedCopies(_ group: [OpenedPacket]) -> [ImportedMarginResends.CopyKey: Int] {
+        var expected: [ImportedMarginResends.CopyKey: Int] = [:]
+        for packet in group {
+            var inPacket: [ImportedMarginResends.CopyKey: Int] = [:]
+            for margin in packet.margins { inPacket[copyKey(packet: packet, margin: margin), default: 0] += 1 }
+            for (key, count) in inPacket { expected[key] = max(expected[key] ?? 0, count) }
+        }
+        return expected
+    }
+
+    /// What a listener ends up with, named by packet identity so orders can be compared. A Margin a
+    /// sender sent in two packets is held once, under whichever packet came first; it is known by both
+    /// names, so the packets and Margins are counted by every name and replies by the smallest.
     private struct Outcome: Equatable {
-        var layers: Set<String> = []
+        var packets: Set<String> = []
         var margins: Set<MarginPacketIdentity> = []
         var replies: [MarginPacketIdentity: String] = [:]
         var threads: [String: Set<MarginThreadEdge>] = [:]
+        /// How many copies of each Margin are held.
+        var copies: [ImportedMarginResends.CopyKey: Int] = [:]
     }
 
-    private static func checkOrders(_ group: [OpenedPacket], report: inout Report) throws {
+    static func checkOrders(_ group: [OpenedPacket], report: inout Report) throws {
         let orders = importOrders(count: group.count)
         var first: Outcome?
         var firstOrder: [Int] = []
@@ -155,6 +187,11 @@ enum CoopCheck {
                 }
             }
             let outcome = try self.outcome(store: store, itemId: itemId)
+            let expected = expectedCopies(group)
+            if let extra = outcome.copies.first(where: { $0.value > (expected[$0.key] ?? 0) }) {
+                report.fail("order \(order.map { $0 + 1 }) keeps \(extra.value) copies of one Margin that no packet carries more than \(expected[extra.key] ?? 0) time(s): \(extra.key)")
+                return
+            }
             if let first {
                 if outcome != first {
                     mismatches += 1
@@ -170,7 +207,7 @@ enum CoopCheck {
         guard let outcome = first else { return }
         let ordersText = orders.count == 1 ? "1 order" : "\(orders.count) orders"
         if mismatches == 0 {
-            report.pass("\(ordersText) give the same \(outcome.layers.count) layer(s), \(outcome.margins.count) Margin(s), \(outcome.threads.count) thread(s); re-imports add nothing")
+            report.pass("\(ordersText) give the same \(outcome.packets.count) packet(s), \(outcome.margins.count) Margin name(s) on \(outcome.copies.values.reduce(0, +)) held Margin(s), \(outcome.threads.count) thread(s); re-imports add nothing")
         }
         let states = outcome.replies.values
         let linked = states.filter { $0 == "linked" }.count
@@ -186,33 +223,46 @@ enum CoopCheck {
 
     private static func outcome(store: SQLiteSessionStore, itemId: String) throws -> Outcome {
         let layers = try store.loadImportedCommentaryLayers(itemId: itemId)
-        let margins = try layers.flatMap { try store.loadImportedCommentaryInterjections(layerId: $0.id) }
-        let digestOfLayer = Dictionary(uniqueKeysWithValues: layers.map { ($0.id, $0.packageDigest) })
-        let identityOfMargin = Dictionary(uniqueKeysWithValues: margins.map {
-            ($0.id, MarginPacketIdentity(packageDigest: digestOfLayer[$0.layerId] ?? "", packageScopedId: $0.packageScopedId))
+        let margins = try layers.flatMap { layer in
+            try store.loadImportedCommentaryInterjections(layerId: layer.id).map { (layer, $0) }
+        }
+        // Every name a held Margin is known by: its own packet's, and any packet that carried it again.
+        let identitiesOfMargin = Dictionary(uniqueKeysWithValues: margins.map { layer, margin in
+            (margin.id, [MarginPacketIdentity(packageDigest: layer.packageDigest, packageScopedId: margin.packageScopedId)]
+                + (margin.alsoSharedAs ?? []))
         })
-        let graph = MarginReplyGraph.build(localMargins: [], layers: layers, importedMargins: margins)
+        func smallest(_ identities: [MarginPacketIdentity]) -> MarginPacketIdentity? {
+            identities.min { ($0.packageDigest, $0.packageScopedId) < ($1.packageDigest, $1.packageScopedId) }
+        }
+        let graph = MarginReplyGraph.build(localMargins: [], layers: layers, importedMargins: margins.map(\.1))
         func name(_ reference: MarginReference?) -> String {
-            guard case .imported(let id)? = reference, let identity = identityOfMargin[id] else { return "none" }
+            guard case .imported(let id)? = reference, let identity = smallest(identitiesOfMargin[id] ?? []) else { return "none" }
             return "\(identity.packageDigest.prefix(8))/\(identity.packageScopedId)"
         }
         var outcome = Outcome()
-        outcome.layers = Set(layers.map(\.packageDigest))
-        outcome.margins = Set(identityOfMargin.values)
+        let allNames = identitiesOfMargin.values.flatMap { $0 }
+        outcome.packets = Set(layers.map(\.packageDigest) + allNames.map(\.packageDigest))
+        outcome.margins = Set(allNames)
         outcome.threads = graph.threads
+        for (layer, margin) in margins {
+            let key = ImportedMarginResends.copyKey(packageDigest: layer.packageDigest, sender: layer.displayLabel, margin: margin)
+            outcome.copies[key, default: 0] += 1
+        }
         for (reference, state) in graph.states {
-            guard case .imported(let id) = reference, let identity = identityOfMargin[id] else { continue }
+            guard case .imported(let id) = reference, let identity = smallest(identitiesOfMargin[id] ?? []) else { continue }
             switch state {
             case .linked: outcome.replies[identity] = "linked"
             case .parentMissing: outcome.replies[identity] = "parent missing"
-            case .fork(let parents): outcome.replies[identity] = "fork " + parents.map { name($0.parent) }.joined(separator: ",")
+            // A held copy keeps the link order of whichever packet came first, and the parents are a
+            // set (the importer matches them as one), so name them in a fixed order.
+            case .fork(let parents): outcome.replies[identity] = "fork " + parents.map { name($0.parent) }.sorted().joined(separator: ",")
             }
         }
         return outcome
     }
 
     private static func describeDifference(_ a: Outcome, _ b: Outcome) -> String {
-        if a.layers != b.layers { return "layers \(a.layers.count) vs \(b.layers.count)" }
+        if a.packets != b.packets { return "packets \(a.packets.count) vs \(b.packets.count)" }
         if a.margins != b.margins { return "Margins \(a.margins.count) vs \(b.margins.count)" }
         if a.replies != b.replies { return "reply states differ" }
         return "threads differ"

@@ -223,6 +223,27 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         XCTAssertEqual(feed(quiet, for: 2.5), [.finishRecording(.silence)])
     }
 
+    func testACallKeepsSpeechRecoveredFromTheInitialCalibration() {
+        // The interrupted-save rule needs a second of speech. Words misread as calibration
+        // must contribute to that duration after the quiet pause reveals the room.
+        startRecording()
+        XCTAssertEqual(feed(-30, for: 1.2), [])
+        XCTAssertEqual(feed(quiet, for: 0.6), [])
+        XCTAssertEqual(coordinator.phase, .trailingSilence)
+        XCTAssertEqual(coordinator.speechSeconds, 1.2, accuracy: 0.001)
+        XCTAssertEqual(coordinator.interruptionBegan(), [.finishRecording(.interruption)])
+        XCTAssertEqual(coordinator.saveCompleted(), [], "the save tone waits for the call to end")
+        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: true), [.playTone(.saved)])
+        XCTAssertEqual(coordinator.toneFinished(.saved), [.resumeSource])
+
+        // A new silent capture must not inherit the recovered words or the quieter run.
+        clock.advance(1)
+        startRecording()
+        XCTAssertEqual(coordinator.speechSeconds, 0)
+        XCTAssertNil(coordinator.speechThresholdDB)
+        XCTAssertEqual(feed(quiet, for: 6), [.cancelRecording, .requestFlag, .playTone(.flag)])
+    }
+
     func testLoudSpeechFromTheFirstSampleIsKept() {
         // Control: -20 clears the top clamp (-25) even when the first samples read as the room.
         startRecording()

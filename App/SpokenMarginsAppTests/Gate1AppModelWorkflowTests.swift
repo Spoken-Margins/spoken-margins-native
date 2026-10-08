@@ -159,10 +159,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(recorder.events.count, 1)
     }
 
-    #if canImport(UIKit)
-    func testDiagnosticsCopyPublishesSafePayloadAndSuccessFeedback() throws {
-        let priorClipboard = UIPasteboard.general.items
-        defer { UIPasteboard.general.items = priorClipboard }
+    func testDiagnosticsExportFileCarriesSafePayload() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.diagnostics = [
             "runtimeProfile": "test-profile",
@@ -173,8 +170,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             model.recordDeveloperDiagnostic("sample", ["textOffset": "0"])
         }
         model.recordDeveloperDiagnostic("transport.request", ["command": "skipForward", "origin": "now_playing"])
-        model.copyDiagnosticsExport()
-        let text = try XCTUnwrap(UIPasteboard.general.string)
+        let file = try XCTUnwrap(model.diagnosticsExportFileURL())
+        defer { try? FileManager.default.removeItem(at: file) }
+        XCTAssertEqual(file.pathExtension, "json")
+        XCTAssertTrue(file.lastPathComponent.hasPrefix("Spoken Margins diagnostics "))
+        let text = try String(contentsOf: file, encoding: .utf8)
         let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String])
         XCTAssertEqual(payload["schemaVersion"], "spoken-margins.diagnostics.v1")
         XCTAssertEqual(payload["runtimeProfile"], "test-profile")
@@ -184,10 +184,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let events = try JSONDecoder().decode(DeveloperDiagnosticRecording.Capture.self, from: eventJSON).events
         XCTAssertFalse(events.contains { $0.kind == "sample" || $0.kind.hasPrefix("scrub.") })
         XCTAssertEqual(events.last?.fields["origin"], "now_playing")
-        XCTAssertEqual(model.feedbackEvent?.kind, .success)
-        XCTAssertEqual(model.feedbackEvent?.message, "Copied privacy-safe diagnostics.")
+        XCTAssertNotEqual(model.feedbackEvent?.kind, .error)
     }
-    #endif
 
     func testLibraryAudioIconUsesPlaybackRepresentationRatherThanFileExtension() {
         for type in ["text", "pdf", "epub", "mp4", "podcast", "audiobook"] {
@@ -526,6 +524,42 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(Gate1AppModel.isPlayableImportedCommentaryResolution(
             ImportedAnchorResolution(evidenceClass: .unresolved)
         ))
+    }
+
+    /// #872: the Hollywood packet's Margins carry only the sender's clock time. After a placement pass has run and
+    /// left them unplaced, the Timeline row says that, not "Position not matched", which reads as a match that
+    /// failed. Before any pass has run, a freshly imported podcast layer (`.contextOnly`, no file digest) says
+    /// "Not placed yet" for every unplaced Margin, bare or fingerprinted: a pass may still place it.
+    func testSharedMarginRowSaysUnresolvedWordingOnlyAfterAPassLeftTheMarginUnplaced() {
+        func layer(passDigest: String?) -> ImportedCommentaryLayer {
+            ImportedCommentaryLayer(id: "layer", itemId: "item", packageDigest: "digest", packageId: "package",
+                itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Hollywood Was Cooked"),
+                importedAt: Date(), sourceResolutionStatus: .contextOnly, isEnabled: true,
+                resolvedRecipientEditionSHA256: passDigest)
+        }
+        func row(_ anchor: PortableAnchorEvidence, in layer: ImportedCommentaryLayer) -> SharedMarginRow {
+            SharedMarginRow(interjection: ImportedCommentaryInterjection(id: "note", layerId: layer.id,
+                packageScopedId: "note", createdAt: Date(), anchorEvidence: anchor, approvedTranscript: "Words",
+                resolution: ImportedAnchorResolution(evidenceClass: .unresolved)), layer: layer, itemTitle: "Hollywood")
+        }
+        let bareAnchor = PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 134_000, roughPercent: 4)
+        let fingerprintedAnchor = PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 134_000, machineEvidenceAssetIds: ["pre"])
+        let afterPass = layer(passDigest: String(repeating: "a", count: 64))
+        let beforePass = layer(passDigest: nil)
+
+        let bare = row(bareAnchor, in: afterPass)
+        XCTAssertEqual(bare.placementStatus, .noPositionSent)
+        XCTAssertEqual(bare.positionDescription, "Sent without a position")
+        let fingerprinted = row(fingerprintedAnchor, in: afterPass)
+        XCTAssertEqual(fingerprinted.placementStatus, .settled)
+        XCTAssertEqual(fingerprinted.positionDescription, "Position not matched")
+
+        // The state a packet is in right after import into a podcast whose download hasn't finished.
+        for anchor in [bareAnchor, fingerprintedAnchor] {
+            let imported = row(anchor, in: beforePass)
+            XCTAssertEqual(imported.placementStatus, .notPlacedYet)
+            XCTAssertEqual(imported.positionDescription, "Not placed yet")
+        }
     }
 
     func testLinklessTextSharingOffersPrivateRightsOrRecipientSuppliedTransport() throws {

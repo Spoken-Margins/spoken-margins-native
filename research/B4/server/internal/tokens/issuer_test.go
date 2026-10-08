@@ -205,6 +205,62 @@ func TestMonthlyKeysRollOverAndExpire(t *testing.T) {
 	}
 }
 
+// A month's key stays valid through the next month, so an October token can
+// be spent in November. Its spent record must therefore live with the token's
+// key, not with the month it is spent in: otherwise the same October token
+// spends once in October and once more in November, which doubles the money
+// it stands for. Every other double-spend test stays inside one month.
+func TestSpentTokenStaysSpentAcrossTheMonthBoundary(t *testing.T) {
+	dir := t.TempDir()
+	i := openIssuer(t, dir)
+	november := october.AddDate(0, 1, 0)
+
+	// Spent in October, tried again in November.
+	spentOct := issue(t, i, october, "maps")
+	if err := i.Redeem(october, spentOct, "maps"); err != nil {
+		t.Fatal(err)
+	}
+	if err := i.Check(november, spentOct, "maps"); !errors.Is(err, ErrSpent) {
+		t.Errorf("check in november of a token spent in october: got %v, want ErrSpent", err)
+	}
+	if err := i.Redeem(november, spentOct, "maps"); !errors.Is(err, ErrSpent) {
+		t.Errorf("redeem in november of a token spent in october: got %v, want ErrSpent", err)
+	}
+
+	// Issued in October, spent in November, tried again in November, and
+	// again after a restart.
+	lateOct := issue(t, i, october, "maps")
+	if err := i.Redeem(november, lateOct, "maps"); err != nil {
+		t.Fatalf("october token in november: %v", err)
+	}
+	if err := i.Redeem(november, lateOct, "maps"); !errors.Is(err, ErrSpent) {
+		t.Errorf("second spend in november: got %v, want ErrSpent", err)
+	}
+	if err := i.Check(november, lateOct, "maps"); !errors.Is(err, ErrSpent) {
+		t.Errorf("check after the november spend: got %v, want ErrSpent", err)
+	}
+	if err := openIssuer(t, dir).Redeem(november, lateOct, "maps"); !errors.Is(err, ErrSpent) {
+		t.Errorf("spend in november after a restart: got %v, want ErrSpent", err)
+	}
+	// The record sits under the key's month, where a pruned month takes it away.
+	if _, err := os.Stat(filepath.Join(dir, "spent", "2026-10")); err != nil {
+		t.Errorf("no october spent folder: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "spent", "2026-11")); err == nil {
+		t.Error("an october token left a record under november")
+	}
+
+	// Once December arrives October's key is gone: the token is unknown, not
+	// spendable, even though its spent record is pruned with the key.
+	december := october.AddDate(0, 2, 0)
+	if _, err := i.Prune(december); err != nil {
+		t.Fatal(err)
+	}
+	if err := i.Redeem(december, spentOct, "maps"); !errors.Is(err, ErrUnknownKey) {
+		t.Errorf("october token in december after the prune: got %v, want ErrUnknownKey", err)
+	}
+}
+
 func TestRestartKeepsTheKey(t *testing.T) {
 	dir := t.TempDir()
 	a, err := openIssuer(t, dir).PublicKeys(october)

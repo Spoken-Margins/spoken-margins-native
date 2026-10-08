@@ -94,7 +94,7 @@ When you use the system share sheet, copy an export, or email support, the desti
 
 ### Deletion and retention
 
-You can move library items to Recently Deleted, permanently delete them in the app, or remove the app to remove its local app data. **Removing the app does not delete a share link you already created; it expires after 30 days, or you can ask us to remove it sooner.** An upgrade from an earlier private beta may archive an old local test database before creating the current database; the app reports that archive in its privacy-safe diagnostics.
+You can move library items to Recently Deleted, permanently delete them in the app, or remove the app to remove its local app data. **Removing the app does not delete a share link you already created; it expires after 30 days, or you can ask us to remove it sooner.** An upgrade from an earlier private beta may archive an old local test database before creating the current database; the app reports that archive in its diagnostics.
 
 ### Contact
 

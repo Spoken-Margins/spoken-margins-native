@@ -572,6 +572,8 @@ final class Gate1AppModel: ObservableObject {
     @Published var snapshot = SessionSnapshot() {
         didSet {
             recordPlaybackEventState(previous: oldValue)
+            if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
+            if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
             settleSpeechInterruptionResume()
             listeningSignals.snapshotChanged(from: oldValue, to: snapshot)
             updateNarrationVoiceNotice()
@@ -765,6 +767,8 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var offlineStorageSnapshot = OfflineStorageSnapshot()
     @Published private(set) var recordingPresentationContext: RecordingPresentationContext?
     @Published private(set) var isRequestingRecordingPermission = false
+    @Published var recordingCaptureHealth: MarginCaptureSupervisor.Health = .capturing // written by Gate1AppModel+MarginCapture only
+    var captureWatcher = MarginCaptureWatcher()
     /// #783: the line shown before iOS's first microphone prompt.
     @Published private(set) var microphonePrimer = MicrophonePrimer()
     @Published private(set) var isFinishingInterjection = false
@@ -973,11 +977,11 @@ final class Gate1AppModel: ObservableObject {
         "Source link, public podcast, and share-extension intake are experimental until they have their own human validation record."
     ]
 
-    private var engine: SessionEngine?
+    private(set) var engine: SessionEngine?
     private(set) var store: SQLiteSessionStore?
     lazy var listeningSignals = ListeningSignalsCoordinator(repository: { [weak self] in self?.store })
     private var databaseURLOverride: URL?
-    private let gate2CompactControls: Gate2CompactControlController
+    let gate2CompactControls: Gate2CompactControlController
     private let featureFlags: SpokenMarginsFeatureFlags
     private let localFoundationModelClient: any LocalFoundationModelClient
     #if SPOKEN_MARGINS_WATCH
@@ -2269,6 +2273,9 @@ final class Gate1AppModel: ObservableObject {
             isApproximate: position.isApproximate
         )
         marginMomentConductor?.onVoiceStarted = { [weak self] in if $0 == targetID { self?.markSharedMarginHeard(row.interjection) } }
+        // Their voice gets the same chime as the automatic prompt, unless the layer is muted (#932).
+        marginMomentConductor?.chimedMarginIds = row.layer.isMuted ? [] : [targetID]
+        marginMomentConductor?.onChimeStarted = { [weak self] in self?.diagnostics["marginMoment.chime"] = "played:\($0)" }
         if !snapshot.status.isPlaybackActive { resumePlayback() }
         screen = .playback
     }
@@ -2287,7 +2294,7 @@ final class Gate1AppModel: ObservableObject {
             source: .init(
                 pause: { [weak self] in self?.pause() },
                 resume: { [weak self] in self?.resumePlayback() },
-                seek: { [weak self] in self?.seekMedia(toMediaTimeMs: $0) }
+                seek: { [weak self] in _ = self?.seekMedia(toMediaTimeMs: $0) }
             ),
             voiceURL: { voiceURLs[$0] }
         )
@@ -2313,6 +2320,7 @@ final class Gate1AppModel: ObservableObject {
         marginMomentTitle = title
         marginMomentPositionIsApproximate = isApproximate
         conductor.start()
+        diagnostics["marginMoment.chime"] = nil
         diagnostics["marginMoment"] = "started:lead_in_ms=\(target.mediaTimeMs - sequence.startMediaTimeMs);others=\(sequence.unplayed.count - 1);approximate=\(isApproximate)"
     }
 
@@ -5970,10 +5978,11 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func seekMedia(toMediaTimeMs mediaTimeMs: Int) {
+    @discardableResult
+    func seekMedia(toMediaTimeMs mediaTimeMs: Int) -> Bool {
         recordDeveloperDiagnostic("seek.media.request", ["timeMs": String(mediaTimeMs)])
         restoreSkimOriginBeforeCanonicalTransport()
-        run { engine in
+        return run { engine in
             snapshot = try seekOrStageMedia(engine, toMediaTimeMs: mediaTimeMs)
             recordMediaSeekEvidence(from: engine)
             refreshSelectedItem()
@@ -6109,11 +6118,12 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["mediaSeek"] = evidence
     }
 
-    func seekText(toCharOffset charOffset: Int) {
+    @discardableResult
+    func seekText(toCharOffset charOffset: Int) -> Bool {
         if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }
         recordDeveloperDiagnostic("seek.text.request", ["offset": String(charOffset)])
         synchronizeStreamingSpeechAnchorIfNeeded()
-        run { engine in
+        return run { engine in
             snapshot = try engine.seekText(toCharOffset: charOffset)
             streamingSpeechQueue.relinquishToCanonicalPlayback()
             refreshSelectedItem()
@@ -6199,38 +6209,13 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func skipUnitForCurrentTarget() -> String {
-        switch snapshot.targetType {
-        case TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue:
-            return mediaSkipUnit(seconds: mediaSkipForwardSeconds)
-        default:
-            return skipUnit
-        }
-    }
-
-    private func mediaSkipUnit(seconds: Int) -> String {
-        "time_\(Self.validatedMediaSkipSeconds(seconds))s"
-    }
-
-    private static func validatedMediaSkipSeconds(_ seconds: Int) -> Int {
-        supportedMediaSkipSeconds.contains(seconds) ? seconds : 15
-    }
-
     func beginInterjection() {
         guard !isFinishingInterjection, !isMarginCaptureCoolingDown else { return }
-        guard playingImportedCommentary == nil else {
-            reportWarning("Return to Source before recording a Margin.")
-            return
-        }
-        guard marginMomentConductor?.isPlayingVoice != true else {
-            reportWarning("Skip or finish the Margin that's playing before recording a new one.")
-            return
-        }
         guard snapshot.skimBridgeState == nil else {
             reportWarning("Margins are unavailable while a scene summary is playing. Pause or cancel Skim first.")
             return
         }
-        guard !recordingNavigationIsLocked else { return }
+        guard !recordingNavigationIsLocked, handOffPlayingMarginToRecording() else { return }
         let voiceCaptureRequestID = UUID()
         pendingVoiceCaptureRequestID = voiceCaptureRequestID
         recordingPermissionDenied = false
@@ -6266,6 +6251,38 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         requestMicrophoneThenRecord(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
+    }
+
+    /// #866: Add Margin while a Margin plays records straight away. The voice stops without resuming the source,
+    /// and the source moves to the playing Margin's place so the new Margin is anchored there. False when that move
+    /// failed: nothing records, rather than recording at the wrong place.
+    private func handOffPlayingMarginToRecording() -> Bool {
+        let handoff: MarginCaptureHandoff
+        if let prompt = playingImportedCommentary {
+            handoff = MarginCaptureHandoff(sharedMargin: prompt.interjection, itemId: prompt.layer.itemId)
+            announcedImportedInterjectionIDs.insert(prompt.id) // the rejoin mustn't offer it again
+            stopImportedCommentaryPlayback(resumeSource: false)
+        } else if let conductor = marginMomentConductor, conductor.isPlayingVoice {
+            handoff = MarginCaptureHandoff(moment: conductor.sequence)
+            endMarginMoment()
+        } else if let playingID = playingInterjectionAudioId {
+            // Your own Margin heard from its detail: it sits where it was recorded.
+            let margin = playingInterjectionAudioSessionID.flatMap { try? store?.loadInterjections(sessionId: $0) }?.first { $0.id == playingID }
+            handoff = margin.map { MarginCaptureHandoff(localMargin: $0) } ?? MarginCaptureHandoff(itemId: nil, place: nil)
+            stopInterjectionAudioPlayback()
+        } else {
+            return true
+        }
+        let move = handoff.sourceMove(from: snapshot)
+        diagnostics["marginCaptureHandoff"] = String(describing: move)
+        let moved: Bool
+        switch move {
+        case .stay: return true
+        case .seekMedia(let ms): moved = seekMedia(toMediaTimeMs: ms)
+        case .seekText(let charOffset): moved = seekText(toCharOffset: charOffset)
+        }
+        if !moved { reportFailure("Couldn't go back to that Margin's place, so no Margin was started. Tap Add Margin again to record where the source is.") }
+        return moved
     }
 
     /// #783: Continue on the line before the microphone prompt goes on to iOS's request.
@@ -6310,7 +6327,6 @@ final class Gate1AppModel: ObservableObject {
                 )
                 let latencyMs = max(0, Int(Date().timeIntervalSince(requestedAt) * 1000))
                 diagnostics["lastInterjectionRecordingStartLatencyMs"] = "\(latencyMs)"
-                reportSuccess("Recording Margin.")
             }
         }
         if !snapshot.isRecording {
@@ -6335,14 +6351,14 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func finishInterjection() {
-        guard snapshot.isRecording else { return }
+        guard snapshot.isRecording, let verdict = verdictForSavingRecording() else { return }
         run { engine in
             defer { recordSpokenMarginSavedBeforeFailure(engine.lastScheduledTranscriptionInterjectionId) }
             snapshot = try engine.finishInterjection(audioRef: nil)
             refreshSelectedItem()
             recordSavedInterjectionForOnboarding()
             transcribeAndRecordSavedSpokenMargin()
-            reportConfirmation("Margin saved. Transcription is continuing in the background.")
+            reportMarginSaved(verdict)
         }
         if !snapshot.isRecording {
             recordingPresentationContext = nil
@@ -6351,7 +6367,7 @@ final class Gate1AppModel: ObservableObject {
         streamingSpeechQueue.resumeAfterInterjection()
     }
 
-    private func recordSavedInterjectionForOnboarding() {
+    func recordSavedInterjectionForOnboarding() {
         markOnboardingSteps([.firstInterjection])
         if guidedOnboardingStage == .practiceInterjection {
             setGuidedOnboardingStage(.reviewTimeline)
@@ -6366,6 +6382,7 @@ final class Gate1AppModel: ObservableObject {
             recordingPresentationContext = nil
             return
         }
+        recordFinalCaptureDiagnostics("cancelled")
         run { engine in
             snapshot = try engine.cancelInterjection()
             refreshSelectedItem()
@@ -7352,11 +7369,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func playImportedCommentaryCue() {
         #if canImport(AVFoundation)
-        do {
-            commentaryCuePlayer = try AVAudioPlayer(data: SharedMarginCue.doubleChimeWAVData())
-            commentaryCuePlayer?.volume = 0.65
-            commentaryCuePlayer?.play()
-        } catch {
+        do { commentaryCuePlayer = try SharedMarginChime.play() } catch {
             diagnostics["importedCommentaryCue"] = "failed:\(error.localizedDescription)"
         }
         #endif
@@ -7535,55 +7548,34 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func copyDiagnosticsExport() {
-        var safe = diagnostics
-            .filter { !Self.diagnosticKeyMayContainUserContent($0.key) }
-            .mapValues(Self.redactedDiagnosticValue)
+    func diagnosticsExportText() -> String? {
+        var stored: [String: String] = [:]
         if let store {
-            let stored = PodcastAnchorCaptureDiagnostics.exportEntries(
+            stored = PodcastAnchorCaptureDiagnostics.exportEntries(
                 sessions: (try? store.loadSessions()) ?? [],
                 interjections: { try store.loadInterjections(sessionId: $0) }
             )
-            safe.merge(stored.mapValues(Self.redactedDiagnosticValue)) { _, stored in stored }
         }
-        safe["developerBuild"] = developerDiagnosticBuild
-        safe["developerRecording"] = developerRecording.exportJSON()
-        safe["playbackEvents"] = playbackEventRecording.exportJSON()
-        safe["schemaVersion"] = "spoken-margins.diagnostics.v1"
-        safe["exportedAt"] = ISO8601DateFormatter().string(from: Date())
-        safe["playbackStatus"] = snapshot.status.rawValue
-        safe["sessionPhase"] = snapshot.phase.rawValue
-        safe["targetType"] = snapshot.targetType ?? "none"
-        safe["pendingAIJobs"] = "\(snapshot.pendingAiJobCount)"
+        let entries = DiagnosticsExport.entries(
+            live: diagnostics,
+            stored: stored,
+            fixed: DiagnosticsExport.Fixed(
+                developerBuild: developerDiagnosticBuild,
+                developerRecording: developerRecording.exportJSON(),
+                playbackEvents: playbackEventRecording.exportJSON(),
+                exportedAt: Date(),
+                playbackStatus: snapshot.status.rawValue,
+                sessionPhase: snapshot.phase.rawValue,
+                targetType: snapshot.targetType,
+                pendingAIJobs: snapshot.pendingAiJobCount
+            )
+        )
         do {
-            let data = try JSONSerialization.data(withJSONObject: safe, options: [.prettyPrinted, .sortedKeys])
-            guard let text = String(data: data, encoding: .utf8) else { return }
-            #if canImport(UIKit)
-            UIPasteboard.general.string = text
-            reportConfirmation("Copied privacy-safe diagnostics.")
-            #else
-            exportPreview = text
-            reportSuccess("Built privacy-safe diagnostics.")
-            #endif
+            return try DiagnosticsExport.jsonText(entries)
         } catch {
             reportFailure(error, context: "Diagnostics export failed")
+            return nil
         }
-    }
-
-    private static func redactedDiagnosticValue(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: #"https?://[^\s]+"#, with: "<redacted-url>", options: .regularExpression)
-            .replacingOccurrences(of: #"/(?:private|Users|var)/[^\s]+"#, with: "<redacted-path>", options: .regularExpression)
-    }
-
-    private static func diagnosticKeyMayContainUserContent(_ key: String) -> Bool {
-        [
-            "lastStatus",
-            "recentFailure",
-            "quickAccessFolder",
-            "lastSourceLinkClipboardPaste",
-            "lastBrowserTextSource"
-        ].contains(key)
     }
 
     func dispatchGate2CompactCommand(
@@ -9416,6 +9408,8 @@ final class Gate1AppModel: ObservableObject {
             "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
             "requestedMediaTimeMs": String(mediaTimeMs ?? -1)
         ])
+        if command == .beginInterjection, !snapshot.isRecording, snapshot.skimBridgeState == nil,
+           !handOffPlayingMarginToRecording() { return }
         if playingImportedCommentary != nil {
             switch command {
             case .play: resumePlayback()
@@ -9477,6 +9471,7 @@ final class Gate1AppModel: ObservableObject {
         if command == .beginInterjection {
             streamingSpeechQueue.pauseForInterjection()
         }
+        guard let captureVerdict = verdictForCompactCommand(command) else { return }
         do {
             let result = try gate2CompactControls.dispatch(
                 command,
@@ -9526,6 +9521,7 @@ final class Gate1AppModel: ObservableObject {
                 streamingSpeechQueue.relinquishToCanonicalPlayback()
             }
             reportSuccess("Compact control \(command.rawValue) \(result.delegatedToCanonicalRuntime ? "delegated" : "handled").")
+            if command == .finishInterjection, captureVerdict == .saveCutShort { reportMarginSaved(captureVerdict) }
         } catch {
             if command == .finishInterjection { recordSpokenMarginSavedBeforeFailure(engine?.lastScheduledTranscriptionInterjectionId) }
             if command == .beginInterjection || command == .finishInterjection || command == .cancelInterjection {
@@ -9782,7 +9778,8 @@ final class Gate1AppModel: ObservableObject {
 
     func deliverAutomaticMargins() async { await marginNotesDelivery.pass() }
 
-    func run(_ operation: (SessionEngine) throws -> Void) {
+    @discardableResult
+    func run(_ operation: (SessionEngine) throws -> Void) -> Bool {
         if engine == nil {
             do {
                 let store = try requireStore()
@@ -9791,11 +9788,13 @@ final class Gate1AppModel: ObservableObject {
                 reportFailure(error, context: "Playback setup failed")
             }
         }
-        guard let engine else { return }
+        guard let engine else { return false }
         do {
             try operation(engine)
+            return true
         } catch {
             reportFailure(error)
+            return false
         }
     }
 
@@ -14442,7 +14441,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Presents degraded-but-successful behavior without styling it as either a
     /// normal confirmation or a failure.
-    private func reportWarning(_ message: String) {
+    func reportWarning(_ message: String) {
         statusMessage = message
         lastError = nil
         presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
@@ -15824,7 +15823,7 @@ final class Gate1AppModel: ObservableObject {
             guard layer.deletedAt == nil,
                   layer.itemIdentity.itemType == .podcast,
                   let records = try? store.loadImportedCommentaryInterjections(layerId: layer.id),
-                  !records.isEmpty else { return nil }
+                  !records.isEmpty || ImportedMarginResends.hasLayerArtifacts(layer) else { return nil }
             return (layer, records)
         }
         guard !work.isEmpty else { podcastPlacementPassCoordinator.cancel(itemId: itemId); sharedMarginPlacementPasses.end(.matching, itemId: itemId); return }
@@ -15990,7 +15989,7 @@ final class Gate1AppModel: ObservableObject {
                         }
                         if self.selectedItem.id == itemId { self.refreshSelectedItem() }
                         let resolvedCount = resolvedWork.filter { $0.0.sourceResolutionStatus == .resolved }.count
-                        self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "complete:\(resolvedCount)/\(resolvedWork.count)"
+                        self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "complete:\(resolvedCount)/\(resolvedWork.count) \(SharedMarginPlacementSummary(resolvedWork.map { ($0.0, $0.1) }).diagnosticValue)"
                         if recipientTranscript == nil, self.importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store) {
                             self.scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: localURL)
                         }
@@ -16326,44 +16325,3 @@ private func voiceQualityName(_ voice: AVSpeechSynthesisVoice) -> String {
     return "Default"
 }
 #endif
-
-enum KeychainStore {
-    @discardableResult
-    static func save(_ value: String, service: String, account: String) -> OSStatus {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        guard let data = value.data(using: .utf8), !value.isEmpty else {
-            let deleteStatus = SecItemDelete(query as CFDictionary)
-            return deleteStatus == errSecItemNotFound ? errSecSuccess : deleteStatus
-        }
-        let protectedAttributes: [String: Any] = [
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        ]
-        let updateStatus = SecItemUpdate(query as CFDictionary, protectedAttributes as CFDictionary)
-        guard updateStatus == errSecItemNotFound else { return updateStatus }
-
-        var addAttributes = query
-        protectedAttributes.forEach { addAttributes[$0.key] = $0.value }
-        return SecItemAdd(addAttributes as CFDictionary, nil)
-    }
-
-    static func load(service: String, account: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else {
-            return nil
-        }
-        return String(data: data, encoding: .utf8)
-    }
-}
