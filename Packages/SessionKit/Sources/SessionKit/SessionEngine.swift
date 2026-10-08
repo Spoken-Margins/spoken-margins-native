@@ -42,6 +42,9 @@ public final class SessionEngine {
     private var playbackRequestedAt: Date?
     private(set) var recordingAnchor: Anchor?
     private var recordingTargetType: InterjectionTargetType?
+    /// The file the recorder closed for a Margin that isn't saved yet. The recorder forgets it once finished and
+    /// Save passes no path, so a Save that failed once could never be tried again (#911).
+    private var closedRecordingRef: String?
     private var recordingTargetId: String?
     private var priorPhase: SessionPhase?
     /// The Margin being recorded started on a finished source, at its end (#142).
@@ -1299,6 +1302,7 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("beginInterjection")
         }
         guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
+        let wasPlaying = snapshot.status.isPlaybackActive
         let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
             || session.currentTargetType == .browserOwnedMedia
         recordingOnFinishedSource = isFinishedAtEnd(session)
@@ -1327,12 +1331,47 @@ public final class SessionEngine {
         recordingTargetType = target.type
         recordingTargetId = target.id
         recordingAnchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
-        try recorder.beginRecording()
+        closedRecordingRef = nil
+        do {
+            try recorder.beginRecording()
+        } catch {
+            try? recorder.cancelRecording() // let go of whatever the failed start grabbed, such as the audio session
+            abandonInterjectionStart(session, wasPlaying: wasPlaying)
+            throw error
+        }
         session.phase = .recordingInterjection
         currentSession = session
         snapshot.recordingTargetId = target.id
         publish(status: .recording, phase: .recordingInterjection)
         return snapshot
+    }
+
+    /// The recorder wouldn't start after the source was paused for it (#1034), so nothing is recording. Forget the
+    /// recording target and put the transport back as the listener left it, the way `cancelInterjection` does:
+    /// a source that was playing plays on, anything else stays stopped, and the snapshot says which.
+    private func abandonInterjectionStart(_ session: Session, wasPlaying: Bool) {
+        let resumes = wasPlaying && !recordingOnFinishedSource
+        recordingAnchor = nil
+        recordingTargetType = nil
+        recordingTargetId = nil
+        priorPhase = nil
+        recordingOnFinishedSource = false
+        guard resumes else {
+            publish(status: .paused, phase: session.phase)
+            return
+        }
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
+        if externallyStreamedTurnId == session.currentTargetId {
+            publish(status: .starting, phase: session.phase)
+            return
+        }
+        do {
+            try playCurrentTarget(session)
+            publishPlaybackStart(for: session, phase: session.phase)
+        } catch {
+            // The player wouldn't restart either; say so rather than claim it plays.
+            publish(status: .paused, phase: session.phase)
+        }
     }
 
     /// What the recorder has taken in so far while a Margin is recording (#937). Nil when it can't tell.
@@ -1642,9 +1681,11 @@ public final class SessionEngine {
               let targetId = recordingTargetId else {
             throw SessionKitError.invalidCommandForState("finishInterjection")
         }
-        let savedAudioRef = try recorder.finishRecording(audioRef: audioRef)
+        let savedAudioRef = try recorder.finishRecording(audioRef: audioRef ?? closedRecordingRef)
+        closedRecordingRef = savedAudioRef
         if profile.has("sync", "queue_offline_events"), let package = currentWatchPackage {
             let event = try queueWatchInterjectionEvent(audioRef: savedAudioRef, session: session, package: package)
+            closedRecordingRef = nil
             lastQueuedWatchSyncEvent = event
             snapshot.lastInterjectionAnchorType = anchor.anchorType
             snapshot.lastInterjectionTargetType = targetType
@@ -1688,6 +1729,7 @@ public final class SessionEngine {
                 : nil
         )
         try repository.saveInterjection(interjection)
+        closedRecordingRef = nil // owned by a Margin now; a later failure must not store it again
         lastMediaPercentageRepair = nil
         if shouldCapturePostResumePodcastEvidence,
            let anchorMediaTimeMs = anchor.mediaTimeMs {
@@ -1754,6 +1796,7 @@ public final class SessionEngine {
         recordingAnchor = nil
         recordingTargetType = nil
         recordingTargetId = nil
+        closedRecordingRef = nil
         if returnsToFinished {
             return try settleFinishedSourceAfterInterjection(session)
         }
@@ -2426,6 +2469,7 @@ public final class SessionEngine {
         recordingAnchor = nil
         recordingTargetType = nil
         recordingTargetId = nil
+        closedRecordingRef = nil
         priorPhase = nil
         recordingOnFinishedSource = false
         // A protected position belongs to the session that just ended. Left set, it would
@@ -3667,16 +3711,19 @@ public final class SessionEngine {
 
         let parsedMarkdown: ParsedObsidianMarkdown?
         if document == nil, handoff.contentFormat == .markdown {
-            parsedMarkdown = try? ObsidianMarkdownParser.parse(fileName: fallbackTitle, contents: rawText)
+            parsedMarkdown = try? ObsidianMarkdownParser.parse(fileName: fallbackTitle, contents: rawText, fallbackTitle: fallbackTitle)
         } else {
             parsedMarkdown = nil
         }
         let title = parsedMarkdown?.title ?? fallbackTitle
+        // The id keeps the title this importer gave before page titles stopped being read as file
+        // names (#1059), so a page already in the Library is found again on re-import.
+        let idTitle = parsedMarkdown.map { $0.titleIsFallback ? ObsidianMarkdownParser.fileNameTitle(fallbackTitle) : $0.title } ?? fallbackTitle
         let text = document?.text ?? (parsedMarkdown?.text ?? rawText).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
-        var itemId = handoff.itemId ?? browserTextItemId(title: title, url: handoff.source.url)
+        var itemId = handoff.itemId ?? browserTextItemId(title: idTitle, url: handoff.source.url)
         if handoff.itemId == nil, handoff.captureMode == .readablePage || isPDF {
             // A corrected extraction (or a new PDF extractor) must not move existing
             // Margin anchors. Retain the original edition and give changed text its
@@ -3714,9 +3761,15 @@ public final class SessionEngine {
                 policy: mapPolicy
             )
         let source = parsedMarkdown?.source ?? handoff.source.url
+        // A front-matter title or a heading beats the page title; only a title that came from the page
+        // can be a whole X post (#885).
+        let titleCameFromPage = document == nil && (parsedMarkdown.map { $0.metadata["title"] == nil && $0.headings.isEmpty } ?? true)
+        let displayTitle = titleCameFromPage
+            ? BrowserTextTitle.postTitle(pageTitle: fallbackTitle, url: handoff.source.url) ?? title
+            : title
         let item = Item(
             id: itemId,
-            title: title,
+            title: displayTitle,
             mediaType: isPDF || sourceExtension == "pdf" ? "pdf" : "text",
             text: text,
             externalReference: source,

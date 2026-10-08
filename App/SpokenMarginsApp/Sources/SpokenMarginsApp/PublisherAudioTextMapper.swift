@@ -1,6 +1,7 @@
 import Foundation
 import Speech
 import SessionKit
+import SessionKitAudio
 import SessionKitPersistence
 
 /// Makes the text-to-time map for an article's publisher audio, once per item, after import
@@ -107,11 +108,11 @@ enum PublisherAudioTextMapper {
         return try await transcriber.transcribeSourceAudio(url: localURL, itemId: cacheKey, durationMs: durationMs)
     }
 
-    /// The same folders `Gate1AppModel.purgeSourceTranscriptionAudioCaches` clears for an item.
+    /// Clear each transcriber cache independently, even if another folder cannot be removed.
     private nonisolated static func removeTranscriptionCaches(_ key: String) {
         guard let caches = try? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: false) else { return }
-        for relative in ["SourceAudioTranscriptionChunksV3/\(key)", "SourceAudioTranscriptionWindows/\(key)"] {
-            try? FileManager.default.removeItem(at: caches.appending(path: relative, directoryHint: .isDirectory))
+        for folder in SourceTranscriptionCaches.Folder.allCases {
+            try? SourceTranscriptionCaches.remove(folder, itemId: key, cachesDirectory: caches)
         }
     }
 }

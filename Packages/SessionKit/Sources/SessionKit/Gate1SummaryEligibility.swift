@@ -1,8 +1,7 @@
 import Foundation
-import SessionKit
 
-struct Gate1SummaryEligibility {
-    static func unsummarizedInterjections(
+public struct Gate1SummaryEligibility {
+    public static func unsummarizedInterjections(
         turns: [ConversationTurn],
         interjections: [Interjection],
         currentTargetType: String,

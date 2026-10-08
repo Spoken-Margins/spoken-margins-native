@@ -1,6 +1,8 @@
 import Foundation
 import SessionKit
 
+extension LibraryItemRow: LibraryQueryRow {}
+
 struct WrittenMarginDraft: Equatable {
     let capture: WrittenInterjectionCapture
     var text: String
@@ -13,38 +15,6 @@ struct WrittenMarginDraft: Equatable {
     var lockedSessionID: String { capture.sessionId }
     var lockedItemID: String { capture.itemId }
     var lockedTargetID: String { capture.targetId }
-}
-
-enum MarginCollectionFilter: String, CaseIterable, Equatable, Sendable {
-    case all
-    case starred
-    case attention
-    case shared
-
-    var title: String {
-        switch self {
-        case .all: "Mine"
-        case .starred: "Starred"
-        case .attention: "Needs attention"
-        case .shared: "Shared"
-        }
-    }
-}
-
-struct MarginCollectionQuery: Equatable, Sendable {
-    var text = ""
-    var filter: MarginCollectionFilter = .all
-    var itemID: String? = nil
-
-    func includes(itemID: String?) -> Bool { self.itemID == nil || self.itemID == itemID }
-
-    func matches(_ values: [String]) -> Bool {
-        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-        return query.isEmpty || values.joined(separator: " ")
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            .contains(query)
-    }
 }
 
 enum AppRoot: String, CaseIterable, Identifiable, Hashable, Sendable {
@@ -235,31 +205,6 @@ enum LibraryPresentation {
     static func compactItems(_ rows: [LibraryItemRow], excluding continueItem: LibraryItemRow?) -> [LibraryItemRow] {
         guard let continueItem else { return rows }
         return rows.filter { $0.id != continueItem.id }
-    }
-}
-
-enum OnboardingEvidenceClassifier {
-    static let defaultSeededItemIDs: Set<String> = [
-        "item-spoken-margins-overview",
-        "guided-onboarding"
-    ]
-
-    static func sourceSteps(
-        items: [Item],
-        seededItemIDs: Set<String> = defaultSeededItemIDs
-    ) -> Set<OnboardingStep> {
-        let userItems = items.filter { !seededItemIDs.contains($0.id) }
-        var evidence: Set<OnboardingStep> = []
-        if !userItems.isEmpty {
-            evidence.insert(.addedOwnSource)
-        }
-        if userItems.contains(where: { $0.mediaType == "text" && $0.externalReferenceType == "url" }) {
-            evidence.formUnion([.addedOwnSource, .addedFromSafari])
-        }
-        if userItems.contains(where: { $0.externalReferenceType == "file" }) {
-            evidence.formUnion([.addedOwnSource, .addedFromFiles])
-        }
-        return evidence
     }
 }
 

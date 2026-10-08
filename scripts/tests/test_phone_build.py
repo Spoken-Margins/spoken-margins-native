@@ -1228,5 +1228,153 @@ class PlanGroupingTests(unittest.TestCase):
         self.assertNotIn('1. ', plan)
 
 
+class PassedChecksTests(unittest.TestCase):
+    """#1100: the plan for 41a591e listed four checks the owner had already passed (#854, #537, #281, #223) and
+    eight passed fixes under "Also changed". Their issues are closed after an owner pass."""
+    pr, issue, write = (staticmethod(PlanGroupingTests.pr), staticmethod(PlanGroupingTests.issue),
+                        PlanGroupingTests.write)
+
+    def setUp(self):
+        self.module = load_phone_build()
+
+    def closed(self, number, check, phone=False):
+        issue = self.issue(number, check, phone)
+        issue['state'] = 'CLOSED'
+        return issue
+
+    def opened(self, number, check, phone=False):
+        issue = self.issue(number, check, phone)
+        issue['state'] = 'OPEN'
+        return issue
+
+    def prs(self):
+        both = self.pr(906, 'Half passed', [self.closed(7, 'Hear the half.'), self.opened(8, 'Hear the other half.')])
+        return {n: pr for n, pr in {
+            901: self.pr(901, 'James keeps his voice', [self.closed(854, 'Hear James through numbers.', phone=True)]),
+            902: self.pr(902, 'Skim lands on the sentence', [self.closed(537, 'Skim twice.', phone=True)]),
+            903: self.pr(903, 'Speech settings wording', [self.closed(281, 'Read the settings page.')]),
+            904: self.pr(904, 'Open fix', [self.opened(905, 'Hear the open fix.')]),
+            905: self.pr(905, 'No issue linked', body='Owner check: look at the new banner.'),
+            906: both,
+            907: self.pr(907, 'Passed fix with no check written', [{
+                **self.closed(223, 'x'), 'body': 'It always did this.', 'labels': {'nodes': [{'name': 'found-on-phone'}]}}]),
+        }.items()}
+
+    def test_closed_issues_keep_their_changes_out_of_every_section(self):
+        self.module.PLAN_CHECKS = 2  # so "Also changed (not in the ten minutes)" has entries too
+        plan = self.write(self.prs())
+        for passed in ('James keeps his voice', 'Skim lands on the sentence', 'Speech settings wording',
+                       'Passed fix with no check written'):
+            self.assertNotIn(passed, plan)
+        for kept in ('Open fix', 'No issue linked', 'Half passed'):
+            self.assertIn(kept, plan)
+        self.assertIn('4 changes whose issues are already closed are left out.', plan)
+        self.assertIn('7 pull requests merged; ', plan)  # the count of merges stays honest
+
+    def test_the_closed_ones_are_gone_from_the_checks_and_the_unchecked_list_alike(self):
+        plan = self.write(self.prs())
+        ten_minutes = plan.split('## Try these')[1].split('\n## ')[0]
+        self.assertEqual(ten_minutes.count('Links:'), 3, ten_minutes)  # Open fix, No issue linked, Half passed
+        self.assertNotIn('## Also changed (no phone check written)', plan)  # the only unchecked one had passed
+        self.assertNotIn('found on the phone but no "Owner check:" line', self.printed)  # nor asks for its check
+
+    def test_a_follow_up_pr_merged_after_its_issue_closed_is_still_a_pass(self):
+        # The real #223 (read from GitHub, 2026-10-08): closed 10-04 with the owner's pass; PR #578's follow-up
+        # #677 merged on 10-05 ("Closes #223") and the owner confirmed it in a later comment on the closed issue.
+        issue = self.closed(223, 'Share a Substack post.')
+        issue['closedAt'] = '2026-10-04T16:31:31Z'
+        first = self.pr(578, 'Fall back to the article extractor (#223)', [issue])
+        first['mergedAt'] = '2026-10-01T15:38:45Z'
+        follow_up = self.pr(677, 'Preserve article extractor errors for shared links (#223)', [issue])
+        follow_up['mergedAt'] = '2026-10-05T15:00:10Z'
+        self.assertTrue(self.module.passed_on_phone([follow_up, first]))
+        plan = self.write({677: follow_up, 578: first})
+        self.assertNotIn('extractor', plan)
+
+    def test_a_plan_of_only_passed_changes_says_nothing_is_left_to_check(self):
+        plan = self.write({n: pr for n, pr in self.prs().items() if n in (901, 902)})
+        self.assertIn('Nothing a listener would notice changed.', plan)
+        self.assertIn('2 changes whose issues are already closed are left out.', plan)
+
+    def test_the_plan_asks_github_for_each_issue_s_state(self):
+        # The filter reads issue['state']; without it in the queries every issue looks open and nothing is dropped.
+        self.assertRegex(self.module.PR_FIELDS, r'closingIssuesReferences\(first:5\)\{nodes\{[^}]*\bstate\b')
+        self.assertRegex(self.module.ISSUE_FIELDS, r'\bstate\b')
+
+
+class PlanBaseTests(unittest.TestCase):
+    """#1100: installed.txt named a build made on the Mac before its changes reached next, so the commit was
+    known but not behind next's tip; the plan fell back to Build 29 and listed 332 pull requests."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.repo, self.phone = Path(temporary.name) / 'repo', Path(temporary.name) / 'phone'
+        self.repo.mkdir()
+        self.phone.mkdir()
+        self.git('init', '-q', '-b', 'next')
+        self.first = self.commit('Merge pull request #1 from a/b')
+        self.git('tag', 'testflight/0.1-build-29')
+        self.second = self.commit('Merge pull request #2 from a/b')
+        self.git('switch', '-q', '-c', 'candidate')
+        self.candidate = self.commit('Merge pull request #9 from a/local-only')  # built on the Mac, never on next
+        self.git('switch', '-q', 'next')
+        self.tip = self.commit('Merge pull request #3 from a/b')
+        environment = unittest.mock.patch.dict(os.environ, {'SM_PHONE_REPO': str(self.repo), 'SM_PHONE_DIR': str(self.phone)})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.module = load_phone_build()
+
+    def git(self, *args):
+        return subprocess.run(['git', '-c', 'user.email=t@example.com', '-c', 'user.name=T', *args], cwd=self.repo,
+                              check=True, capture_output=True, text=True).stdout.strip()
+
+    def commit(self, subject):
+        self.git('commit', '-q', '--allow-empty', '-m', subject)
+        return self.git('rev-parse', 'HEAD')
+
+    def installed(self, sha):
+        (self.phone / 'installed.txt').write_text(f'{sha} 2026-10-08T08:00:00 phone\n')
+
+    def test_a_build_behind_next_is_the_base(self):
+        self.installed(self.second)
+        base, why = self.module.plan_base(self.tip)
+        self.assertEqual((base, list(self.module.merged_prs(base, self.tip))), (self.second, [3]))
+        self.assertEqual(why, f'the build you last installed (`{self.second[:7]}`, from installed.txt)')
+
+    def test_a_candidate_that_is_not_in_nexts_history_is_still_the_base(self):
+        self.installed(self.candidate)
+        base, why = self.module.plan_base(self.tip)
+        self.assertEqual(base, self.candidate)  # not the TestFlight build
+        self.assertEqual(list(self.module.merged_prs(base, self.tip)), [3])  # what next has beyond it, not #1 to #3
+        self.assertIn("it isn't part of next's history", why)
+
+    def test_a_commit_this_checkout_does_not_have_falls_back_and_says_so(self):
+        self.installed('f' * 40)
+        base, why = self.module.plan_base(self.tip)
+        self.assertEqual(base, self.first)
+        self.assertIn("`fffffff`, which this checkout doesn't have", why)
+        self.assertEqual(list(self.module.merged_prs(base, self.tip)), [3, 2])
+
+    def test_a_commit_newer_than_the_build_falls_back_instead_of_planning_nothing(self):
+        # --plan-only or --commit for an older tip while the phone has a newer one: "since the installed build"
+        # would be empty and the plan would say "this is the same code, rebuilt".
+        newer = self.commit('Merge pull request #4 from a/b')
+        self.installed(newer)
+        base, why = self.module.plan_base(self.tip)
+        self.assertEqual(base, self.first)
+        self.assertIn('which is newer than this build', why)
+
+    def test_the_build_itself_installed_is_the_base_and_plans_nothing_new(self):
+        self.installed(self.tip)
+        base, _ = self.module.plan_base(self.tip)
+        self.assertEqual((base, self.module.merged_prs(base, self.tip)), (self.tip, {}))
+
+    def test_nothing_installed_yet_falls_back_to_the_last_testflight_build(self):
+        base, why = self.module.plan_base(self.tip)
+        self.assertEqual(base, self.first)
+        self.assertIn('nothing recorded in installed.txt yet', why)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -145,9 +145,11 @@ final class PreparationChunkGateTests: XCTestCase {
         }
     }
 
-    /// The gate's decisions alone, over a model of one-chunk passes: heat mid-article pauses, cooling
-    /// resumes. It doesn't run the app's pass; the app-hosted test of the real pass is #64 Done when 2.
-    func testHeatMidArticlePausesAndResumesWithoutRenderingAChunkTwice() {
+    /// The gate's decisions alone, over a model of one-chunk passes: serious and critical heat pause the manifest,
+    /// cooling renders again. The model picks its next chunk from its own list of committed ones, so it can't show
+    /// that no chunk is rendered twice; that belongs to the app's pass (the app-hosted test of the real pass is
+    /// #64 Done when 2).
+    func testGateDecisionsPauseTheManifestOnSeriousHeatAndRenderAgainWhenItCools() {
         let plannedChunks = 6
         var committed: Set<Int> = []
         var renders: [Int] = []

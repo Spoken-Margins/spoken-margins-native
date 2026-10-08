@@ -27,6 +27,28 @@ public enum SharedPacketItemMatcher {
         )
     }
 
+    public static func layerHasValidItemAssociation(
+        _ layer: ImportedCommentaryLayer,
+        item: Item?,
+        ownedAudiobookDigest: String?
+    ) -> Bool {
+        guard layer.sourceResolutionStatus != .wrongSource,
+              layer.itemId != nil,
+              let item else { return false }
+        guard item.deletedAt == nil else { return false }
+        return ImportedItemResolver.canRepresentSameWork(
+            layer.itemIdentity,
+            localIdentity(for: item, ownedAudiobookDigest: ownedAudiobookDigest)
+        )
+    }
+
+    public static func ownedAudiobookDigest(for item: Item, assets: [OwnedOfflineAsset]) -> String? {
+        guard item.mediaType == "audiobook" else { return nil }
+        return assets.first(where: {
+            $0.itemId == item.id && $0.category == .audiobook && $0.integrity == .valid
+        })?.checksumSHA256
+    }
+
     public static func itemType(for item: Item) -> SharedItemType {
         SharedItemIdentityBuilder.itemType(for: item)
     }

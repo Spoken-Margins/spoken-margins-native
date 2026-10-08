@@ -1056,6 +1056,17 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
         #endif
     }
 
+    /// The client's own intent for `playback.state` diagnostics (#1109), in the words the on-device voice
+    /// client uses: `paused` after a pause that stopped speech, `playing` while speech is queued or
+    /// spoken, otherwise `stopped`.
+    public var diagnosticIntent: String {
+        if paused { return "paused" }
+        #if canImport(AVFoundation)
+        if synthesizer.isSpeaking || !chunksByUtteranceId.isEmpty { return "playing" }
+        #endif
+        return "stopped"
+    }
+
     public func currentCharOffset() -> Int? {
         currentOffset
     }
@@ -3925,7 +3936,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             appropriateFor: nil,
             create: true
         )
-        let directory = caches.appending(path: "SourceAudioTranscriptionWindows/\(itemId)", directoryHint: .isDirectory)
+        let directory = SourceTranscriptionCaches.directory(for: .windows, itemId: itemId, cachesDirectory: caches)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let windowDirectory = directory.appending(path: "window-\(anchorMediaTimeMs)-v3", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: windowDirectory, withIntermediateDirectories: true)
@@ -4026,8 +4037,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             appropriateFor: nil,
             create: true
         )
-        let localWindowURL = caches
-            .appending(path: "SourceAudioTranscriptionWindows/\(itemId)", directoryHint: .isDirectory)
+        let localWindowURL = SourceTranscriptionCaches.directory(for: .windows, itemId: itemId, cachesDirectory: caches)
             .appending(path: "window-\(anchorMediaTimeMs)-v3", directoryHint: .isDirectory)
             .appending(path: "source-window.m4a")
         let startMs = max(0, anchorMediaTimeMs - windowBeforeMs)
@@ -4151,7 +4161,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             appropriateFor: nil,
             create: true
         )
-        let directory = caches.appending(path: "SourceAudioTranscriptionChunksV3/\(itemId)", directoryHint: .isDirectory)
+        let directory = SourceTranscriptionCaches.directory(for: .chunks, itemId: itemId, cachesDirectory: caches)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var chunks: [SourceAudioChunk] = []
         for (index, range) in ranges.enumerated() {

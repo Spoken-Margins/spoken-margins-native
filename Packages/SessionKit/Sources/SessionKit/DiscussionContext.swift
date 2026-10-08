@@ -111,6 +111,23 @@ public enum DiscussionContext {
         return String(data: data, encoding: .utf8) ?? "{}"
     }
 
+    /// Retain the candidate extraction's public argument order while using the landed implementation.
+    public static func targetContext(
+        itemTitle: String,
+        overview: String,
+        turns: [ConversationTurn],
+        currentTargetType: String,
+        currentTargetId: String?
+    ) -> [String: Any] {
+        targetContext(
+            currentTargetType: currentTargetType,
+            currentTargetId: currentTargetId,
+            turns: turns,
+            itemTitle: itemTitle,
+            overview: overview
+        )
+    }
+
     /// What the provider is told is being discussed right now: the summary or response turn when one is playing
     /// and still in the conversation, otherwise the item itself.
     static func targetContext(
