@@ -6667,10 +6667,6 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    private func shouldPlayPendingTurnNow(turnId: String, completedCurrentAudio: Bool = false) -> Bool {
-        pendingAutoPlayQueue.shouldPlayPendingTurnNow(snapshot: snapshot, turnId: turnId, completedCurrentAudio: completedCurrentAudio)
-    }
-
     private func enqueuePendingAutoPlayTurn(_ turnId: String) {
         pendingAutoPlayQueue.enqueue(turnId)
         updatePendingAutoPlayDiagnostics(reason: "waiting_for_current_audio")
