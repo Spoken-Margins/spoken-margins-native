@@ -1,8 +1,8 @@
 # Sharing test kit: one pass over the sharing failure modes
 
-About fifteen minutes, on your phone, one time through. It uses four prepared packets made from public content, so you don't need a friend or the original setup. It is for issue #848.
+About twenty minutes, on your phone, one time through. It uses four prepared packets made from public content, so you don't need a friend or the original setup. It is for issue #848.
 
-Short on time? Skip part 5 of step 2 and all of step 6. That is about ten minutes.
+Short on time? Do parts 1 to 5 and part 10 of step 1, then steps 2 to 5, and stop. Skip parts 6 to 9 of step 1, part 5 of step 2, and steps 6 and 7. That is about ten minutes. It leaves the streamed share (#536) and the article for another day.
 
 Each step says what you should see. When a step works, say "works" for that step number in the project thread. When it doesn't, say what you saw or heard, and attach a screenshot if you can. Claude updates the issues. Only you mark anything validated.
 
@@ -30,9 +30,9 @@ Both episodes come from Hacker Public Radio, which is licensed CC BY-SA 4.0. A i
 3. Close Settings.
 4. Find the four files in the project thread. To open one: tap the file, tap the share icon, then pick **Spoken Margins**. If Spoken Margins is not offered, pick **Save to Files**, then open the file from the Files app.
 
-## 1. Add episode A and stream it (3 minutes)
+## 1. Add episode A and stream it (5 minutes)
 
-This is issue #536: sharing Margins from an episode that is streaming, not downloaded. On Wi-Fi the app downloads a new episode at once, so this step turns Wi-Fi off first. Without cellular data, skip to step 2 and say so.
+This is issue #536: sharing Margins from an episode that is streaming, not downloaded. On Wi-Fi the app downloads a new episode at once, so this step turns Wi-Fi off first. It pauses any download of your other episodes, and they start again when Wi-Fi is back. With no cellular data, leave Wi-Fi on and say so. The episode then downloads, and this step tests sharing from a downloaded episode instead.
 
 1. Open Control Center and turn Wi-Fi off. Keep cellular on.
 2. Copy the whole grey block below. Tap and hold in it, then tap **Copy**, or use the copy button.
@@ -45,22 +45,22 @@ https://hpr.nyc3.cdn.digitaloceanspaces.com/eps/hpr4737/hpr4737.mp3
 4. Tap **Paste & go**, at the bottom of the sheet. iOS may ask to allow paste. Allow it.
 5. Open the new item from the Library.
 
-**You should see:** one new item, about 8 minutes long. The app names it after the file, so expect "hpr4737". The page says **Streaming available** and has **Download Now**. If it says **Downloading** or **Available offline**, the phone fetched it anyway. Say so, and go on to step 2.
+**You should see:** one new item, about 8 minutes long. The app names it after the file, so expect "hpr4737". The page says **Streaming available** and has **Download Now**. If it says **Downloading** or has **Download Again**, the phone fetched it anyway. Say so, and go on.
 
-6. Tap play. Let it play for about a minute.
-7. Record a Margin. Tap the record button on the mini player, or **Add a Margin** on Now Playing. Say one short sentence. Tap **Save & resume**.
-8. Open the **Margins** tab. Find "hpr4737" and tap **Share** next to its name.
-9. Tap **Share Margins (1)**. Tap **Review 1**. If it asks "Clean selected Margins automatically?", tap **Not now**. Tap **Share 1**.
+6. Tap play. Leave it playing for two minutes with the app open. It takes that long because the app saves fingerprints of a streaming episode only after about 70 seconds of playing.
+7. Drag the scrubber back to about 1:00. Let it play for 15 seconds.
+8. Record a Margin. Tap the record button on the mini player, or **Add a Margin** on Now Playing. Say one short sentence. Tap **Save & resume**.
+9. Open the **Margins** tab. Find "hpr4737" and tap **Share** next to its name. Tap **Share Margins (1)**. Tap **Review 1**. If it asks "Clean selected Margins automatically?", tap **Not now**. Tap **Share 1**.
 
 **You should see:** the iOS share sheet opens. Cancel it. That is the pass for #536.
 
 If sharing fails, the screen should say what went wrong and offer **Share without episode matching**. Take a screenshot.
 
-10. Turn Wi-Fi back on. On the item page, tap **Download Now**. Wait for **Available offline**. The next steps need the downloaded file.
+10. Turn Wi-Fi back on. The page starts **Downloading** by itself. If it still shows **Download Now**, tap it. Wait until the page shows **Download Again**. That is how the page says the episode is downloaded. The next steps need the downloaded file.
 
 ## 2. Import Margins onto an episode you already have (3 minutes)
 
-This is the normal case. Do it once the download from step 1 has finished.
+This is the normal case. Do it once the page for episode A shows **Download Again**.
 
 1. Open `kit-1-episode-a.spokenmargins` in Spoken Margins.
 
@@ -125,7 +125,7 @@ This is the case where the packet's source isn't in your Library. It is also the
 
 **You should see:**
 - a new item in the Library that you did not add yourself, about 5 minutes long. The app names it after the file, so expect "hpr4736". Write down any other name;
-- the item downloads by itself: **Downloading**, then **Available offline**. The app fetches the episode when a packet needs it;
+- the item downloads by itself: **Downloading**, then **Download Again** when it is done. The app fetches the episode when a packet needs it;
 - on it, Ben's card with three Margins. After up to two minutes they read 0:04, 1:00 and 4:00, with **Combined evidence** or **Audio verified**;
 - nothing from Ben on episode A. Open episode A again and check that it still shows only Ada's card and Cy's card.
 
@@ -141,7 +141,7 @@ This is the case where the packet's source isn't in your Library. It is also the
 
 2. Tap **Import**.
 
-**You should see:** a message that the Margins are imported. No new item appears in the Library, because the app does not fetch an article for a packet. In the **Margins** tab, Dee's three Margins are listed under "Declaration of Independence: A Transcription", marked as shared.
+**You should see:** a message that the Margins are imported. No new item appears in the Library, because the app does not fetch an article for a packet. Open the **Margins** tab and tap **Shared**. Dee's three Margins are listed there under "Declaration of Independence: A Transcription". The tab opens on **Mine**, which does not show them.
 
 3. Now add the article. Copy the grey block below. Tap **Add**, then **Paste & go**.
 
@@ -161,9 +161,9 @@ https://www.archives.gov/founding-docs/declaration-transcript
 
 ## 7. Send Margins back out from an episode that holds imported Margins (1 minute)
 
-Episode A is downloaded now and holds Ada's and Cy's Margins. It also holds the Margin you recorded in step 1. If you skipped that Margin, record one now (step 1, part 7).
+Episode A is downloaded now and holds Ada's and Cy's Margins. It also holds the Margin you recorded in step 1. If you skipped that Margin, record one now (step 1, part 8).
 
-1. Open the **Margins** tab. Find "hpr4737" and tap **Share** next to its name.
+1. Open the **Margins** tab, on **Mine**. Find "hpr4737" and tap **Share** next to its name.
 2. Tap **Share Margins (1)**.
 
 **You should see:** the **Choose Margins** list holds only your own Margin. Ada's and Cy's Margins are not offered. A packet from here never re-sends someone else's Margins.

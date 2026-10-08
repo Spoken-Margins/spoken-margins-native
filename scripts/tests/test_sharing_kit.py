@@ -470,6 +470,18 @@ class PacketLintTests(unittest.TestCase):
     def test_an_asset_with_the_wrong_type_for_its_role_is_refused(self):
         self.assertProblem(self.lint('kit-1-episode-a', lambda m, l, f: m['assets'][0].update(mimeType='audio/mpeg')), 'a original_voice is')
 
+    def test_two_assets_that_would_extract_to_one_file_are_refused(self):
+        def clash(manifest, layer, files):
+            data = b'sig'
+            files['assets/evidence/x.shazamsignature'] = data
+            for asset_id in ('Clash', 'clash'):
+                manifest['assets'].append({'id': asset_id, 'role': 'acoustic_signature',
+                                           'path': f'assets/evidence/{asset_id}.shazamsignature',
+                                           'mimeType': 'application/vnd.apple.shazam.signature', 'provenance': 'test',
+                                           'byteCount': 3, 'sha256': hashlib.sha256(data).hexdigest()})
+                files[f'assets/evidence/{asset_id}.shazamsignature'] = data
+        self.assertProblem(self.lint('kit-1-episode-a', clash), 'same file name')
+
     def test_a_changed_file_no_longer_matches_the_manifest(self):
         problems = self.lint('kit-1-episode-a', lambda m, l, f: f.update({'assets/audio/margin-0001-original.m4a': b'changed'}))
         self.assertProblem(problems, 'does not match its size or hash')
@@ -658,6 +670,20 @@ class VerifyContentTests(unittest.TestCase):
             self.assertEqual(len(twice), 3)
             gone = kit_tool.verify_content(kit, work, page_text=lambda url: ('Moved', 'nothing here'), log=lambda *a: None)
             self.assertEqual(len(gone), 4)
+
+    def test_a_host_that_stops_announcing_the_size_is_reported(self):
+        kit = kit_tool.load_kit()
+        item = kit['items']['episode-a']
+        good = {'status': '200', 'content-length': str(item['audio']['bytes']), 'accept-ranges': 'bytes'}
+        self.assertEqual(kit_tool.head_problems('episode-a', item, good), [])
+        for broken, fragment in (
+            ({**good, 'status': '403'}, 'not 200'),
+            ({k: v for k, v in good.items() if k != 'content-length'}, 'HEAD says None'),
+            ({**good, 'content-length': '1'}, 'kit.json says'),
+            ({k: v for k, v in good.items() if k != 'accept-ranges'}, 'byte ranges'),
+        ):
+            problems = kit_tool.head_problems('episode-a', item, broken)
+            self.assertTrue(any(fragment in p for p in problems), (fragment, problems))
 
     def test_changed_public_audio_is_reported(self):
         kit = kit_tool.load_kit()

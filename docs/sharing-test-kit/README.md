@@ -59,7 +59,7 @@ python3 scripts/sharing_kit.py stage      # copy them, with SHA256SUMS, into doc
 ## Keeping it honest
 
 - `lint` checks `kit.json` and `procedure.md` against each other: every packet file, sender, Margin count and spoken line must appear in the procedure. Every label the procedure puts in bold must be text the app has (it reads the string literals under `App/SpokenMarginsApp/Sources` and `Packages/SessionKit/Sources`), so a renamed button fails here, not on his phone. The wording of the old import sheet (`SpokenMarginsPackageImportView`, which no screen presents) is refused outright. It also holds the packet limits and the wrong-cut rule (most of the packet's fingerprints must come from outside the shared intro, because SessionKit places nothing when half or fewer of a packet's fingerprints match).
-- `verify-content` needs the network. It re-downloads the audio and checks its hash, length, license, host and shared intro, and it checks that each quote appears once on the page. Run it before rebuilding, and when a step of the procedure fails for no clear reason.
+- `verify-content` needs the network. It re-downloads the audio and checks its hash, length, license, host and shared intro, that the host still answers HEAD with the file's size and accepts byte ranges (the app sizes a download that way before it starts one), and that each quote appears once on the page. Run it before rebuilding, and when a step of the procedure fails for no clear reason.
 - `scripts/tests/test_sharing_kit.py` also reads the field names in `PacketBuilder.swift` and `SharingModels.swift`, so a plan can't drift from what `coop-packet` decodes.
 - When a staged packet or the procedure changes, change `kit.json` first and rebuild. Don't edit packets by hand.
 
@@ -69,4 +69,11 @@ The Mac build proves the packets are well formed and that Build 29 can open them
 
 Not covered: the #536 failures that need a very long episode or an `http` link (host tests cover those; he passed #536 on his own phone on 2026-10-07), a packet with exactly one Margin inside a shared intro (SessionKit places it; see the podcast anchor plan), and reply threads.
 
-Known behaviors the procedure is written around: importing a packet for an article that is not in the Library creates no item and fetches nothing (the Margins show in the Margins tab until he adds the article and opens the packet again); an item added from a bare audio link is named after the file ("hpr4737"); and **Listen** on a Margin plays its voice only, while the chime and the pause come from playing the episode past a placed Margin.
+Known behaviors the procedure is written around:
+
+- Importing a packet for an article that is not in the Library creates no item and fetches nothing. The Margins show in the Margins tab under its **Shared** chip (the tab opens on **Mine**) until he adds the article and opens the packet again.
+- An item added from a bare audio link is named after the file ("hpr4737").
+- **Listen** on a Margin plays its voice only. The chime and the pause come from playing the episode past a placed Margin.
+- The item page shows **Download Again** once an episode is downloaded. It never shows "Available offline".
+- The app saves fingerprints of a playing episode only after about 70 seconds (`SparseFingerprintSchedule`), so a share from an episode played for less has no fingerprint spine to check, and #536 passes vacuously. Step 1 plays two minutes and scrubs once.
+- Wi-Fi back on starts a download for every episode that is waiting or streaming only, not just A.

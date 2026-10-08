@@ -476,6 +476,11 @@ def _manifest_problems(name, manifest):
         if descriptor.get('kind') == 'commentary_layer' and (
                 descriptor.get('schemaVersion') != COMMENTARY_CAPABILITY or descriptor.get('required') is not True):
             problems.append(f'{name}: the commentary layer must be required and use {COMMENTARY_CAPABILITY}')
+    # Packages/SessionKit SpokenMarginsPackageArchive.requireDistinctDescriptors (newer builds): two assets whose
+    # ids differ only by case or by characters outside letters, digits and `._-` would extract to one file.
+    extracted = [(re.sub(r'[^A-Za-z0-9._-]', '-', str(a.get('id'))) + Path(str(a.get('path'))).suffix).lower() for a in assets]
+    if len(set(extracted)) != len(extracted):
+        problems.append(f'{name}: two assets would extract to the same file name')
     ids = [a.get('id') for a in artifacts + assets]
     paths = [a.get('path') for a in artifacts + assets]
     if len(set(ids)) != len(ids) or len(set(paths)) != len(paths):
@@ -717,7 +722,34 @@ def _page_text(url):
     return (html.unescape(title.group(1)).strip() if title else ''), text
 
 
-def verify_content(kit, work, fetch=download, page_text=_page_text, log=print):
+def _head(url):
+    """The response headers of a HEAD request, names in lower case, with the status under 'status'."""
+    raw = subprocess.run(['curl', '--silent', '--show-error', '--head', '--location', '--max-time', '30',
+                          '--user-agent', 'spoken-margins-sharing-kit', url],
+                         capture_output=True, check=True).stdout.decode('utf-8', 'replace')
+    last = raw.replace('\r', '').strip().split('\n\n')[-1].splitlines()
+    headers = {'status': last[0].split()[1] if last and len(last[0].split()) > 1 else ''}
+    for line in last[1:]:
+        name, _, value = line.partition(':')
+        headers[name.strip().lower()] = value.strip()
+    return headers
+
+
+def head_problems(key, item, headers):
+    """The app sizes a download with HEAD (then a one-byte ranged GET) before it starts one, and a host that refuses
+    or says nothing makes the download fail (PodcastDownloadCoordinator.announcedContentLength). Both episodes must
+    answer, or step 1 and the import in step 5 fail for a reason that is not the app's sharing."""
+    problems = []
+    if headers.get('status') != '200':
+        problems.append(f"{key}: HEAD on the audio answers {headers.get('status')!r}, not 200")
+    if headers.get('content-length') != str(item['audio']['bytes']):
+        problems.append(f"{key}: HEAD says {headers.get('content-length')!r} bytes, kit.json says {item['audio']['bytes']}")
+    if headers.get('accept-ranges', '').lower() != 'bytes':
+        problems.append(f'{key}: the host no longer accepts byte ranges')
+    return problems
+
+
+def verify_content(kit, work, fetch=download, page_text=_page_text, log=print, head=_head):
     """Re-checks every claim kit.json and the procedure make about the public content. Returns the problems."""
     problems = []
     work = Path(work)
@@ -736,12 +768,13 @@ def verify_content(kit, work, fetch=download, page_text=_page_text, log=print):
                                             str(path)], capture_output=True, text=True).stdout)
             if abs(seconds * 1000 - item['identity']['durationMs']) > 50:
                 problems.append(f"{key}: lasts {seconds * 1000:.0f} ms, kit.json says {item['identity']['durationMs']} ms")
+        problems += head_problems(key, item, head(item['audio']['url']))
         title, text = page_text(item['source']['page'])
         if 'CC-BY-SA' not in text and 'CC BY-SA' not in text:
             problems.append(f"{key}: the episode page no longer says CC BY-SA")
         if f"Hosted by {item['source']['host']}" not in text:
             problems.append(f"{key}: the episode page no longer names {item['source']['host']} as host")
-        log(f'{key}: audio, length, license and host checked')
+        log(f'{key}: audio, length, size on HEAD, license and host checked')
     podcasts = [k for k, v in kit['items'].items() if v['kind'] == 'podcast']
     if len(podcasts) >= 2 and all(k in paths for k in podcasts) and subprocess.run(['which', 'ffmpeg'], capture_output=True).returncode == 0:
         first = _decode(paths[podcasts[0]])
