@@ -55,7 +55,7 @@ public final class MarginMomentConductor {
     private var voiceDelegate: VoiceDelegate?
     private var chime: AVAudioPlayer?
     #if os(iOS)
-    private var routeObserver: NSObjectProtocol?
+    private var audioSessionObservers: [NSObjectProtocol] = []
     #endif
     /// Waiting out the chime. The Margin whose voice is loaded but not yet started, and the task that starts it.
     private var voiceAwaitingChime: (marginId: String, task: Task<Void, Never>)?
@@ -156,7 +156,7 @@ public final class MarginMomentConductor {
             player.volume = voiceVolume
             voice = player
             voiceDelegate = delegate
-            holdVoiceWhenTheRouteIsLost()
+            holdVoiceWhenAudioIsLost()
             if chimedMarginIds.contains(margin.marginId), let chimeSeconds = startChime(for: margin.marginId) {
                 voiceAwaitingChime = (margin.marginId, startVoiceTask(after: chimeSeconds, playerID: playerID, marginId: margin.marginId))
             } else {
@@ -168,18 +168,26 @@ public final class MarginMomentConductor {
         }
     }
 
-    /// Headphones unplugged or a Bluetooth route lost: hold the voice, like every other player in the app, so a
-    /// friend's voice never starts, or carries on, through the speaker without a Play (#932 audit).
-    private func holdVoiceWhenTheRouteIsLost() {
+    /// Headphones unplugged, a Bluetooth route lost or a call coming in: hold the voice, like every other player
+    /// in the app, so a friend's voice never starts, or carries on, without a Play (#932 audit). An interrupted
+    /// voice that is waiting for its chime would otherwise be refused by the system and lost as unplayable.
+    private func holdVoiceWhenAudioIsLost() {
         #if os(iOS)
-        guard routeObserver == nil else { return }
-        routeObserver = NotificationCenter.default.addObserver(
-            forName: AVAudioSession.routeChangeNotification, object: AVAudioSession.sharedInstance(), queue: .main
-        ) { [weak self] notification in
-            guard let raw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
-                  AVAudioSession.RouteChangeReason(rawValue: raw) == .oldDeviceUnavailable else { return }
-            Task { @MainActor [weak self] in self?.setVoicePaused(true) }
-        }
+        guard audioSessionObservers.isEmpty else { return }
+        let session = AVAudioSession.sharedInstance()
+        let center = NotificationCenter.default
+        audioSessionObservers = [
+            center.addObserver(forName: AVAudioSession.routeChangeNotification, object: session, queue: .main) { [weak self] notification in
+                guard let raw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                      AVAudioSession.RouteChangeReason(rawValue: raw) == .oldDeviceUnavailable else { return }
+                Task { @MainActor [weak self] in self?.setVoicePaused(true) }
+            },
+            center.addObserver(forName: AVAudioSession.interruptionNotification, object: session, queue: .main) { [weak self] notification in
+                guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                      AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
+                Task { @MainActor [weak self] in self?.setVoicePaused(true) }
+            }
+        ]
         #endif
     }
 
@@ -223,8 +231,8 @@ public final class MarginMomentConductor {
 
     private func stopVoice() {
         #if os(iOS)
-        if let routeObserver { NotificationCenter.default.removeObserver(routeObserver) }
-        routeObserver = nil
+        for observer in audioSessionObservers { NotificationCenter.default.removeObserver(observer) }
+        audioSessionObservers = []
         #endif
         voiceAwaitingChime?.task.cancel()
         voiceAwaitingChime = nil

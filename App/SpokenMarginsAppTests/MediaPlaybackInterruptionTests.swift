@@ -364,6 +364,22 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
     /// #932 (Codex audit): losing the headphones during the chime must not let their voice start through the
     /// speaker. The voice waits for Play.
     func testLosingTheHeadphonesDuringTheChimeHoldsTheVoiceUntilPlay() throws {
+        try assertTheChimedVoiceWaitsForPlay(after: [
+            AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue
+        ], posting: AVAudioSession.routeChangeNotification)
+    }
+
+    /// #932 (Codex audit): a call during the chime makes the system refuse the voice that starts after it, and the
+    /// refusal used to consume the Margin as unplayable. The voice waits for Play instead.
+    func testACallDuringTheChimeHoldsTheVoiceUntilPlay() throws {
+        try assertTheChimedVoiceWaitsForPlay(after: [
+            AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue
+        ], posting: AVAudioSession.interruptionNotification)
+    }
+
+    private func assertTheChimedVoiceWaitsForPlay(
+        after userInfo: [AnyHashable: Any], posting name: Notification.Name
+    ) throws {
         let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, layerIsMuted: false)
         defer { fixture.cleanUp() }
         let model = fixture.model
@@ -374,13 +390,11 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         model.playMarginMomentNow()
         XCTAssertNotNil(model.diagnostics["marginMoment.chime"], "the chime is playing")
 
-        NotificationCenter.default.post(
-            name: AVAudioSession.routeChangeNotification, object: AVAudioSession.sharedInstance(),
-            userInfo: [AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue]
-        )
+        NotificationCenter.default.post(name: name, object: AVAudioSession.sharedInstance(), userInfo: userInfo)
         try waitUntil("the Margin is held") { model.marginMomentVoiceIsPaused }
         RunLoop.main.run(until: Date().addingTimeInterval(1))
-        XCTAssertNil(try fixture.storedRecord()?.firstHeardAt, "their voice didn't start on the new route")
+        XCTAssertNil(try fixture.storedRecord()?.firstHeardAt, "their voice didn't start by itself")
+        XCTAssertNotNil(model.marginMoment?.playing, "the Margin is still waiting, not consumed")
 
         model.playPause()
         XCTAssertNotNil(try fixture.storedRecord()?.firstHeardAt, "Play starts their voice")
