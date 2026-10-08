@@ -331,6 +331,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// `stopReason` is set only with `.stopped`: the code that stopped generation (#314).
     typealias GenerationStateHandler = @Sendable (_ state: RenderedSpeechGenerationState, _ stopReason: String?) -> Void
     typealias GenerationProgressHandler = @Sendable (RenderedSpeechGenerationProgress) -> Void
+    /// A new longest gap between one chunk ending and the next playing (#586).
+    typealias ChunkHandOverGapHandler = @Sendable (ChunkHandOverGapRecorder.Gap) -> Void
     typealias PreparedAudioHandler = @Sendable (_ itemId: String, _ prepared: PreparedTextAudio) -> Void
     // Prepared audio is matched by the article plan's identity (NarrationChunkPlanner, #312), not by
     // comparing texts: plans are in the article's own coordinates, never the spoken preface's.
@@ -403,6 +405,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let onFallback: FallbackHandler?
     private let onGenerationStateChange: GenerationStateHandler?
     private let onGenerationProgress: GenerationProgressHandler?
+    private let onChunkHandOverGap: ChunkHandOverGapHandler?
     private let onPreparedAudio: PreparedAudioHandler?
     private let preparedChunkLookup: PreparedChunkLookup?
     private let onPreparationPlan: PreparationPlanHandler?
@@ -436,6 +439,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var activeAudioURL: URL?
     private var activeAudioDuration: TimeInterval = 0
     private var generation = UUID()
+    /// Guarded by `lock`.
+    private var handOverGaps = ChunkHandOverGapRecorder()
     private var currentTargetId: String?
     private var currentStartOffset = 0
     private var currentChunkLength = 0
@@ -536,6 +541,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         interruptionHandler: InterruptionHandler? = nil,
         onGenerationStateChange: GenerationStateHandler? = nil,
         onGenerationProgress: GenerationProgressHandler? = nil,
+        onChunkHandOverGap: ChunkHandOverGapHandler? = nil,
         onPreparationPlan: PreparationPlanHandler? = nil,
         onPreparedChunk: PreparedChunkHandler? = nil,
         articleText: ArticleTextLookup? = nil,
@@ -580,6 +586,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.preparedAudioDirectory = preparedAudioDirectory
         self.onGenerationStateChange = onGenerationStateChange
         self.onGenerationProgress = onGenerationProgress
+        self.onChunkHandOverGap = onChunkHandOverGap
         self.onPreparationPlan = onPreparationPlan
         self.onPreparedChunk = onPreparedChunk
         self.preparedChunkLookup = preparedChunkLookup
@@ -896,6 +903,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let snapshot = lock.withLock { () -> (Bool, AVPlayer?) in
             transportIntent = .paused
             shouldResumeAfterInterruption = false
+            handOverGaps.discardPending()
             return (fallbackIsActive, player)
         }
         if snapshot.0 {
@@ -1081,7 +1089,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private func playbackItemFinished(_ item: AVPlayerItem) {
         guard lock.withLock({ player?.currentItem === item && transportIntent == .playing }) else { return }
         removePlaybackEndObserver()
-        let snapshot = lock.withLock { () -> (Int, String?, Int, CachedAudio?, TimeInterval, UUID, URL?) in
+        let snapshot = lock.withLock { () -> (Int, String?, Int, CachedAudio?, TimeInterval, UUID, URL?, RenderedSpeechChunkBoundary) in
             let nextOffset = currentStartOffset + max(1, currentChunkLength)
             // Commit audible progress before detaching the finished player.
             // During an underrun, timeout/fallback and pause/resume must start
@@ -1102,7 +1110,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 cached,
                 currentChunkBoundary.transitionDelay,
                 generation,
-                finishedURL
+                finishedURL,
+                currentChunkBoundary
             )
         }
         if let finishedURL = snapshot.6,
@@ -1126,6 +1135,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             try? releaseBackgroundAudio()
             reportGenerationState(stateAfterPlayback.0, stopReason: stateAfterPlayback.1)
             return
+        }
+        lock.withLock {
+            handOverGaps.chunkFinished(
+                at: ProcessInfo.processInfo.systemUptime,
+                generation: snapshot.5,
+                boundary: snapshot.7,
+                nextChunkWasReady: snapshot.3 != nil
+            )
         }
         if let cached = snapshot.3 {
             playRenderedAudio(cached.url, duration: cached.duration, request: cached.request, delay: snapshot.4)
@@ -2095,6 +2112,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             activateSystemFallback(request: request, reason: "supertonic_playback_failed")
             return
         }
+        let longestGap = lock.withLock {
+            handOverGaps.chunkStarted(at: ProcessInfo.processInfo.systemUptime, generation: request.generation)
+        }
+        if let longestGap { onChunkHandOverGap?(longestGap) }
         if let audioPlayerStarter {
             audioPlayerStarter(nextPlayer, rate)
         } else {
@@ -2417,6 +2438,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             guard transportIntent == .playing else { return (false, false, nil) }
             transportIntent = .paused
             shouldResumeAfterInterruption = allowsAutomaticResume
+            handOverGaps.discardPending()
             return (true, fallbackIsActive, player)
         }
         // A lost route while nothing plays (Bluetooth dropping between listens) isn't worth a log entry.
@@ -2503,6 +2525,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             player = nil
             transportIntent = .paused
             shouldResumeAfterInterruption = false
+            handOverGaps.discardPending()
             playbackFailure = nil
             pendingStartTargetId = nil
             startedTargetId = nil
