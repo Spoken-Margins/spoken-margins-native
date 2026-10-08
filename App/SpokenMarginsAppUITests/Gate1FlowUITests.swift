@@ -644,17 +644,18 @@ final class Gate1FlowUITests: XCTestCase {
         )
     }
 
-    func testDiagnosticsCopyShowsLocalConfirmation() throws {
+    func testShareDiagnosticsOpensTheShareSheet() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         openLibrarySettings()
-        let copy = scrollToElement("settings.copyDiagnostics.button")
+        let share = scrollToElement("settings.shareDiagnostics.button")
 
-        copy.tap()
+        share.tap()
 
-        XCTAssertTrue(app.buttons["Copied"].waitForExistence(timeout: 2))
-        // The global success banner expires after three seconds while XCTest
-        // waits for idle. Its event and exported payload are verified by
-        // testDiagnosticsCopyPublishesSafePayloadAndSuccessFeedback.
+        // The exported file's payload is verified by testDiagnosticsExportFileCarriesSafePayload.
+        let shareSheet = element("ActivityListView")
+        XCTAssertTrue(shareSheet.waitForExistence(timeout: 8), "Share Diagnostics did not open the system share sheet.")
+        dismissTopSystemSheet()
+        XCTAssertTrue(waitForDisappearance(shareSheet, timeout: 5))
     }
 
     func testPrivateExperienceRootsPreserveNowPlayingAndStateConsentBoundaries() throws {

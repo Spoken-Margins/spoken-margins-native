@@ -7548,7 +7548,19 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func copyDiagnosticsExport() {
+    /// Writes the diagnostics export to a file for the share sheet (#903), or nil after reporting why not.
+    func diagnosticsExportFileURL() -> URL? {
+        guard let text = diagnosticsExportText() else { return nil }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Diagnostics", isDirectory: true)
+        do {
+            return try DiagnosticsExportFile.write(text, build: developerDiagnosticBuild, exportedAt: Date(), to: directory)
+        } catch {
+            reportFailure(error, context: "Diagnostics export failed")
+            return nil
+        }
+    }
+
+    func diagnosticsExportText() -> String? {
         var safe = diagnostics
             .filter { !Self.diagnosticKeyMayContainUserContent($0.key) }
             .mapValues(Self.redactedDiagnosticValue)
@@ -7570,16 +7582,10 @@ final class Gate1AppModel: ObservableObject {
         safe["pendingAIJobs"] = "\(snapshot.pendingAiJobCount)"
         do {
             let data = try JSONSerialization.data(withJSONObject: safe, options: [.prettyPrinted, .sortedKeys])
-            guard let text = String(data: data, encoding: .utf8) else { return }
-            #if canImport(UIKit)
-            UIPasteboard.general.string = text
-            reportConfirmation("Copied privacy-safe diagnostics.")
-            #else
-            exportPreview = text
-            reportSuccess("Built privacy-safe diagnostics.")
-            #endif
+            return String(data: data, encoding: .utf8)
         } catch {
             reportFailure(error, context: "Diagnostics export failed")
+            return nil
         }
     }
 
