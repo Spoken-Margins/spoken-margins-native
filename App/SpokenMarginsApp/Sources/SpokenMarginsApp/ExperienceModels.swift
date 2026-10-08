@@ -1,6 +1,8 @@
 import Foundation
 import SessionKit
 
+extension LibraryItemRow: LibraryQueryRow {}
+
 struct WrittenMarginDraft: Equatable {
     let capture: WrittenInterjectionCapture
     var text: String
