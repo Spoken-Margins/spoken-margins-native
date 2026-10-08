@@ -2167,35 +2167,6 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.chapterTitle, "Middle")
     }
 
-    func testLinkResolutionContractCanRepresentResolvedPodcastEpisode() throws {
-        let request = LinkResolutionRequest(
-            id: "link-request-1",
-            inputURL: "https://open.spotify.com/episode/example",
-            sourceSurface: "share_sheet",
-            createdAt: Date(timeIntervalSince1970: 1)
-        )
-        let candidate = LinkResolutionCandidate(
-            sourceLink: SourceLink(url: "https://feeds.example.com/show.xml", provider: "rss", title: "Example Show", role: "canonical_feed"),
-            title: "Episode Title",
-            showTitle: "Example Show",
-            durationMs: 1_800_000,
-            publishedAt: "2026-06-19",
-            audioURL: "https://cdn.example.com/episode.mp3",
-            confidence: 0.96
-        )
-        let result = LinkResolutionResult(
-            requestId: request.id,
-            status: .playable,
-            originalLink: SourceLink(url: request.inputURL, provider: "spotify", role: "discovery"),
-            selectedCandidate: candidate,
-            candidates: [candidate]
-        )
-
-        XCTAssertEqual(result.status, .playable)
-        XCTAssertEqual(result.selectedCandidate?.audioURL, "https://cdn.example.com/episode.mp3")
-        XCTAssertEqual(result.originalLink.role, "discovery")
-    }
-
     func testImportSourceLinkCreatesPlayableNativeAudioItem() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",

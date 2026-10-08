@@ -1106,7 +1106,7 @@ private final class Gate2LiveSpeechNowPlayingController {
         center.stopCommand.isEnabled = availability.canStop
         center.changePlaybackPositionCommand.isEnabled = availability.canSeek
         center.changePlaybackRateCommand.isEnabled = availability.canSetPlaybackRate
-        center.changePlaybackRateCommand.supportedPlaybackRates = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+        center.changePlaybackRateCommand.supportedPlaybackRates = SpeechRateRule.supportedMultipliers.map { NSNumber(value: $0) }
         #endif
     }
 
@@ -1126,7 +1126,7 @@ private final class Gate2LiveSpeechNowPlayingController {
         #if canImport(MediaPlayer)
         guard remoteCommandTargets.isEmpty else { return }
         let center = MPRemoteCommandCenter.shared()
-        center.changePlaybackRateCommand.supportedPlaybackRates = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+        center.changePlaybackRateCommand.supportedPlaybackRates = SpeechRateRule.supportedMultipliers.map { NSNumber(value: $0) }
         center.skipBackwardCommand.preferredIntervals = [15]
         center.skipForwardCommand.preferredIntervals = [15]
         register(center.playCommand, command: .play, detail: "none")

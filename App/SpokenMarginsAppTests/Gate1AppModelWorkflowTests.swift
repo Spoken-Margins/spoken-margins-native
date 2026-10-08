@@ -925,6 +925,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let databaseURL = root.appending(path: "library.sqlite")
         let store = try SQLiteSessionStore(path: databaseURL.path)
+        // Jobs for an item that isn't in the Library are dropped on refresh (#883), so each job's item has to exist.
+        for id in ["old", "selected", "new"] {
+            try store.saveItem(Item(id: id, title: id, mediaType: "text", text: "Words to read aloud.", externalReference: nil, status: "ready"))
+        }
         let old = AudioPreparationJob(id: "old", itemId: "old", manifestId: "old", policy: .demandWindow, requestedAt: Date(timeIntervalSince1970: 1), maximumChunkCount: 2)
         let selected = AudioPreparationJob(id: "selected", itemId: "selected", manifestId: "selected", policy: .demandWindow, requestedAt: Date(timeIntervalSince1970: 0), maximumChunkCount: 2)
         try store.saveAudioPreparationJob(old)
@@ -2180,6 +2184,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         )
         model.resetAndSeed()
         let store = try SQLiteSessionStore(path: databaseURL.path)
+        // Jobs for an item that isn't in the Library are dropped on refresh (#883), so the second item has to exist.
+        try store.saveItem(Item(
+            id: "item-essay", title: "Essay", mediaType: "text", text: "Words to read aloud.",
+            externalReference: nil, status: "ready"
+        ))
         for index in 0..<200 {
             let itemId = index.isMultiple(of: 2) ? "item-pill" : "item-essay"
             try store.saveAudioPreparationJob(AudioPreparationJob(
@@ -2190,6 +2199,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
                 maximumChunkCount: index.isMultiple(of: 2) ? 2 : nil
             ))
         }
+        try model.refreshLibraryRows(store: store)
         model.refreshAudioPreparationPresentation()
         let itemCount = model.libraryItems.count
         XCTAssertEqual(model.audioPreparationQueue.count, 200)
@@ -2240,6 +2250,52 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(reloadedModel.libraryItems.first(where: { $0.id == "item-pill" })?.isCompleted, true)
         XCTAssertFalse(reloadedModel.audioPreparationQueue.contains(where: { $0.itemId == "item-pill" }))
         XCTAssertFalse(try store.loadAudioPreparationJobs().contains(where: { $0.itemId == "item-pill" }))
+    }
+
+    func testPreparationQueueDropsPodcastTranscriptsAndTrashedItemsButKeepsUnfinishedArticles() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "queue-admission-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        try store.saveItem(Item(
+            id: "episode-with-transcript",
+            title: "Episode",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: "A transcript the episode's own audio already says.",
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 900_000)
+        ))
+        try store.saveItem(Item(
+            id: "article-in-the-trash", title: "Trashed", mediaType: "text", text: "Words to read aloud.",
+            externalReference: nil, status: "ready"
+        ))
+        try store.moveItemToTrash(id: "article-in-the-trash")
+        let jobs: [(id: String, itemId: String, policy: PreparationJobPolicy)] = [
+            ("pill-charging", "item-pill", .whileCharging),
+            ("episode-charging", "episode-with-transcript", .whileCharging),
+            ("episode-buffer", "episode-with-transcript", .demandWindow),
+            ("trashed-charging", "article-in-the-trash", .whileCharging),
+            ("trashed-asked-for", "article-in-the-trash", .explicit),
+        ]
+        for (id, itemId, policy) in jobs {
+            try store.saveAudioPreparationJob(AudioPreparationJob(
+                id: id, itemId: itemId, manifestId: "manifest-\(id)", policy: policy
+            ))
+        }
+
+        model.refreshAudioPreparationPresentation()
+
+        XCTAssertEqual(model.audioPreparationQueue.map(\.id), ["pill-charging"])
+        XCTAssertEqual(try store.loadAudioPreparationJobs().map(\.id), ["pill-charging"])
     }
 
     func testActivePlaybackPreparationSortsAheadOfOtherWork() {

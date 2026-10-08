@@ -8,14 +8,18 @@ final class OfflineLedgerReconciliationTests: XCTestCase {
         category: OfflineAssetCategory = .preparedChunk,
         itemId: String? = nil,
         reproducible: Bool = true,
-        protections: Set<OfflineProtectionReason> = []
+        protections: Set<OfflineProtectionReason> = [],
+        accessed: Double = 100,
+        created: Double = 50
     ) -> OwnedOfflineAsset {
         OwnedOfflineAsset(
             id: id, itemId: itemId, category: category, relativePath: path, byteCount: bytes,
             isReproducible: reproducible, protections: protections,
-            lastAccessedAt: Date(timeIntervalSinceReferenceDate: 100), createdAt: Date(timeIntervalSinceReferenceDate: 50)
+            lastAccessedAt: date(accessed), createdAt: date(created)
         )
     }
+
+    private func date(_ seconds: Double) -> Date { Date(timeIntervalSinceReferenceDate: seconds) }
 
     func testRowsForMissingFilesAreDroppedAndSizesComeFromDisk() {
         let assets = [
@@ -153,5 +157,54 @@ final class OfflineLedgerReconciliationTests: XCTestCase {
         let before = moved
         OfflineLedgerReconciliation.apply(recorded: recorded, planned: planned, to: &moved)
         XCTAssertEqual(moved, before, "a row that now names another file is not touched")
+    }
+
+    // #1048 (PERSIST-10): every row used to carry the same dates and a nil owner, so max and min
+    // could be swapped, and the owner dropped, without a test noticing. Eviction ranks by
+    // lastAccessedAt, and deleting an item removes the rows it owns.
+    func testAMergedRowTakesTheNewestAccessTheOldestCreationAndAnOwnerFromEitherRow() throws {
+        let path = "PreparedAudio/item/chunks/0.wav"
+        let cases: [(name: String, keeper: OwnedOfflineAsset, alias: OwnedOfflineAsset, accessed: Double, created: Double, owner: String?)] = [
+            ("the alias is newer and older; the keeper owns the file",
+             asset("prepared-item-chunk-0", path, 4, itemId: "item", accessed: 100, created: 50),
+             asset("adopted-abc", path, 4, accessed: 300, created: 20), 300, 20, "item"),
+            ("the keeper is newer and older; only the alias names an owner",
+             asset("prepared-item-chunk-0", path, 4, accessed: 400, created: 10),
+             asset("adopted-abc", path, 4, itemId: "item", accessed: 100, created: 50), 400, 10, "item"),
+        ]
+        for testCase in cases {
+            let plan = OfflineLedgerReconciliation.plan(assets: [testCase.alias, testCase.keeper]) { _ in .file(byteCount: 4) }
+            let merged = try XCTUnwrap(plan.updatedAssets.first { $0.id == testCase.keeper.id }, testCase.name)
+            XCTAssertEqual(plan.removedAssetIds, [testCase.alias.id], testCase.name)
+            XCTAssertEqual(merged.lastAccessedAt, date(testCase.accessed), "newest access: \(testCase.name)")
+            XCTAssertEqual(merged.createdAt, date(testCase.created), "oldest creation: \(testCase.name)")
+            XCTAssertEqual(merged.itemId, testCase.owner, "owner kept: \(testCase.name)")
+        }
+    }
+
+    // The write-back takes the plan's newer dates and owner only where the row has not moved on
+    // since the plan read it (#287), so playback that touched the row in between is never undone.
+    func testApplyingAMergeTakesTheAliasDatesAndOwnerOnlyWhereTheRowHasNotMovedOn() throws {
+        let path = "PreparedAudio/item/chunks/0.wav"
+        let keeper = asset("prepared-item-chunk-0", path, 4, accessed: 100, created: 50)
+        let alias = asset("adopted-abc", path, 4, itemId: "item", accessed: 300, created: 20)
+        let plan = OfflineLedgerReconciliation.plan(assets: [keeper, alias]) { _ in .file(byteCount: 4) }
+        let planned = try XCTUnwrap(plan.updatedAssets.first)
+
+        var played = keeper // played since the read, but by less than the alias's access
+        played.lastAccessedAt = date(200)
+        OfflineLedgerReconciliation.apply(recorded: keeper, planned: planned, to: &played)
+        XCTAssertEqual(played.lastAccessedAt, date(300), "the alias's newer access wins over an older touch")
+        XCTAssertEqual(played.createdAt, date(20))
+        XCTAssertEqual(played.itemId, "item")
+
+        var movedOn = keeper // played after the alias's access, and given another owner since the read
+        movedOn.lastAccessedAt = date(400)
+        movedOn.createdAt = date(10)
+        movedOn.itemId = "other"
+        OfflineLedgerReconciliation.apply(recorded: keeper, planned: planned, to: &movedOn)
+        XCTAssertEqual(movedOn.lastAccessedAt, date(400), "a later touch is never moved back")
+        XCTAssertEqual(movedOn.createdAt, date(10))
+        XCTAssertEqual(movedOn.itemId, "other", "an owner set since the read stands")
     }
 }
