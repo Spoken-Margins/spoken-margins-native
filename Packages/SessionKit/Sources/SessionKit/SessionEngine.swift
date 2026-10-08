@@ -3638,16 +3638,19 @@ public final class SessionEngine {
 
         let parsedMarkdown: ParsedObsidianMarkdown?
         if document == nil, handoff.contentFormat == .markdown {
-            parsedMarkdown = try? ObsidianMarkdownParser.parse(fileName: fallbackTitle, contents: rawText)
+            parsedMarkdown = try? ObsidianMarkdownParser.parse(fileName: fallbackTitle, contents: rawText, fallbackTitle: fallbackTitle)
         } else {
             parsedMarkdown = nil
         }
         let title = parsedMarkdown?.title ?? fallbackTitle
+        // The id keeps the title this importer gave before page titles stopped being read as file
+        // names (#1059), so a page already in the Library is found again on re-import.
+        let idTitle = parsedMarkdown.map { $0.titleIsFallback ? ObsidianMarkdownParser.fileNameTitle(fallbackTitle) : $0.title } ?? fallbackTitle
         let text = document?.text ?? (parsedMarkdown?.text ?? rawText).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
-        var itemId = handoff.itemId ?? browserTextItemId(title: title, url: handoff.source.url)
+        var itemId = handoff.itemId ?? browserTextItemId(title: idTitle, url: handoff.source.url)
         if handoff.itemId == nil, handoff.captureMode == .readablePage || isPDF {
             // A corrected extraction (or a new PDF extractor) must not move existing
             // Margin anchors. Retain the original edition and give changed text its
