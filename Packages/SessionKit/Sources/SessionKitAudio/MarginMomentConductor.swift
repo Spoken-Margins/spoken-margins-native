@@ -6,6 +6,9 @@ import SessionKit
 /// Runs a `MarginMomentSequence` against real audio: pauses the source when a Margin is reached, plays the
 /// Margin's saved voice, and resumes the source when the voice ends (#159).
 ///
+/// Another listener's Margins (`chimedMarginIds`) get the shared-Margin chime first, so their voice never
+/// starts unannounced (#932).
+///
 /// The app owns the source transport and supplies it as closures; this type owns only the Margin voice.
 @MainActor
 public final class MarginMomentConductor {
@@ -36,12 +39,23 @@ public final class MarginMomentConductor {
     public var prepareAudioSession: (@MainActor () throws -> Void)?
     public var voiceRate: Float = 1
     public var voiceVolume: Float = 1
+    /// Margins that get the shared-Margin chime before their voice (#932): another listener's, never your own.
+    /// The app leaves a Margin out when its layer is muted. Empty means no chime.
+    public var chimedMarginIds: Set<String> = []
+    public var chimeVolume: Float = SharedMarginChime.defaultVolume
+    /// Called when the chime starts playing, just before that Margin's voice (#932).
+    public var onChimeStarted: (@MainActor (_ marginId: String) -> Void)?
+    /// Silence between the end of the chime and the start of the voice, matching the inline prompt's pause.
+    static let pauseAfterChimeSeconds = 0.15
 
     private let source: Source
     private let voiceURL: (String) -> URL?
     private var lastObservedMs: Int?
     private var voice: AVAudioPlayer?
     private var voiceDelegate: VoiceDelegate?
+    private var chime: AVAudioPlayer?
+    /// Waiting out the chime. The Margin whose voice is loaded but not yet started, and the task that starts it.
+    private var voiceAwaitingChime: (marginId: String, task: Task<Void, Never>)?
 
     public init(sequence: MarginMomentSequence, source: Source, voiceURL: @escaping (String) -> URL?) {
         self.sequence = sequence
@@ -60,6 +74,15 @@ public final class MarginMomentConductor {
             voice.pause()
         } else {
             try? prepareAudioSession?()
+            if let waiting = voiceAwaitingChime {
+                // Paused during the chime: the voice hasn't started yet, so resuming is its first start.
+                waiting.task.cancel()
+                voiceAwaitingChime = nil
+                isVoicePaused = false
+                beginVoice(voice, marginId: waiting.marginId)
+                onChange?()
+                return
+            }
             guard voice.play() else { return finishVoice() }
         }
         isVoicePaused = paused
@@ -125,11 +148,45 @@ public final class MarginMomentConductor {
             player.volume = voiceVolume
             voice = player
             voiceDelegate = delegate
-            guard player.play() else { throw VoiceError.didNotStart }
-            onVoiceStarted?(margin.marginId)
+            if chimedMarginIds.contains(margin.marginId), let chimeSeconds = startChime(for: margin.marginId) {
+                voiceAwaitingChime = (margin.marginId, startVoiceTask(after: chimeSeconds, playerID: playerID, marginId: margin.marginId))
+            } else {
+                beginVoice(player, marginId: margin.marginId)
+            }
         } catch {
             onVoiceUnavailable?(margin.marginId, String(describing: error))
             finishVoice()
+        }
+    }
+
+    /// Starts the voice, or gives up on it like any voice that can't play.
+    private func beginVoice(_ player: AVAudioPlayer, marginId: String) {
+        guard player.play() else {
+            onVoiceUnavailable?(marginId, String(describing: VoiceError.didNotStart))
+            return finishVoice()
+        }
+        onVoiceStarted?(marginId)
+    }
+
+    /// Plays the shared-Margin chime and returns how long it runs. A chime that can't play is skipped: the
+    /// voice matters more than the cue.
+    private func startChime(for marginId: String) -> TimeInterval? {
+        guard let player = try? SharedMarginChime.play(volume: chimeVolume), player.isPlaying else { return nil }
+        chime = player
+        onChimeStarted?(marginId)
+        return player.duration
+    }
+
+    /// Starts the loaded voice once the chime and the short pause after it are over, unless the Margin was
+    /// skipped, cancelled or paused meanwhile.
+    private func startVoiceTask(after chimeSeconds: TimeInterval, playerID: ObjectIdentifier, marginId: String) -> Task<Void, Never> {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(chimeSeconds + Self.pauseAfterChimeSeconds))
+            guard !Task.isCancelled, let self, let voice = self.voice, ObjectIdentifier(voice) == playerID,
+                  !self.isVoicePaused else { return }
+            self.voiceAwaitingChime = nil
+            self.chime = nil
+            self.beginVoice(voice, marginId: marginId)
         }
     }
 
@@ -141,6 +198,10 @@ public final class MarginMomentConductor {
     }
 
     private func stopVoice() {
+        voiceAwaitingChime?.task.cancel()
+        voiceAwaitingChime = nil
+        chime?.stop()
+        chime = nil
         voice?.stop()
         voice?.delegate = nil
         voice = nil
