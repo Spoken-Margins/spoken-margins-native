@@ -3925,7 +3925,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             appropriateFor: nil,
             create: true
         )
-        let directory = caches.appending(path: "SourceAudioTranscriptionWindows/\(itemId)", directoryHint: .isDirectory)
+        let directory = SourceTranscriptionCaches.directory(for: .windows, itemId: itemId, cachesDirectory: caches)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let windowDirectory = directory.appending(path: "window-\(anchorMediaTimeMs)-v3", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: windowDirectory, withIntermediateDirectories: true)
@@ -4026,8 +4026,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             appropriateFor: nil,
             create: true
         )
-        let localWindowURL = caches
-            .appending(path: "SourceAudioTranscriptionWindows/\(itemId)", directoryHint: .isDirectory)
+        let localWindowURL = SourceTranscriptionCaches.directory(for: .windows, itemId: itemId, cachesDirectory: caches)
             .appending(path: "window-\(anchorMediaTimeMs)-v3", directoryHint: .isDirectory)
             .appending(path: "source-window.m4a")
         let startMs = max(0, anchorMediaTimeMs - windowBeforeMs)
@@ -4151,7 +4150,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             appropriateFor: nil,
             create: true
         )
-        let directory = caches.appending(path: "SourceAudioTranscriptionChunksV3/\(itemId)", directoryHint: .isDirectory)
+        let directory = SourceTranscriptionCaches.directory(for: .chunks, itemId: itemId, cachesDirectory: caches)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var chunks: [SourceAudioChunk] = []
         for (index, range) in ranges.enumerated() {
