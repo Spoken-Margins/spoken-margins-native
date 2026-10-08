@@ -103,7 +103,10 @@ QUEUED, RUNNING, DONE = 'lane:queued', 'lane:running', 'lane:done'
 AUTOMERGE = 'automerge'
 FAST_TIMEOUT = 2400
 MERGE_ATTEMPTS = 3
-WARM_KEEP = 2
+# #863: keep more exact-key hits across interleaved PRs. Cloning across SessionKit keys also copies
+# Xcode metadata pointing at the donor cache; retain strict keys to avoid stale modules instead.
+# WARM_FREE_FLOOR still takes precedence over this per-checkout retention limit.
+WARM_KEEP = 4
 BUILD_RUNNER_WAIT = 90 * 60
 BUILD_RUNNER_FREE_DISK = 20 * 10**9
 # Trial (2026-10-01): host-only jobs on the build runner may run beside a simulator job, with this much disk.
