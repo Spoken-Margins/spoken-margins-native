@@ -10165,7 +10165,7 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             let item = try store.loadItem(id: itemId)
             guard item.sourceCompletedAt == nil,
-                  !Self.itemIsCompleted(try store.loadSessions(itemId: itemId)),
+                  !PreparationChunkGate.itemAlreadyListened(try store.loadSessions(itemId: itemId)),
                   shouldPrewarmTextAudio(for: item),
                   item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
                 return
@@ -10191,7 +10191,7 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             let item = try store.loadItem(id: itemId)
             guard item.sourceCompletedAt == nil,
-                  !Self.itemIsCompleted(try store.loadSessions(itemId: itemId)),
+                  !PreparationChunkGate.itemAlreadyListened(try store.loadSessions(itemId: itemId)),
                   let sourceText = PreparedSpeechHooks.preparedText(of: item, in: store),
                   shouldPrewarmTextAudio(for: item),
                   let voice = ttsVoiceSelection.supertonicVoice,
@@ -10364,18 +10364,9 @@ final class Gate1AppModel: ObservableObject {
         case .none, .some(.generatedTTSRealtime):
             return true
         case .some(.generatedTTSPrerendered):
-            return !isPreparedTextMediaAvailable(item.media) || isStarterPreparedTextMedia(item.media)
+            return PreparedNarrationFallback.isMissing(item.media) || isStarterPreparedTextMedia(item.media)
         case .some(.nativeMediaFile), .some(.browserOwnedMedia), .some(.remoteStream):
             return false
-        }
-    }
-
-    nonisolated static func itemIsCompleted(_ sessions: [Session]) -> Bool {
-        sessions.contains { session in
-            session.completedAt != nil
-                || session.status == "finished"
-                || session.phase == .finished
-                || session.completionPercent > 98
         }
     }
 
@@ -10383,15 +10374,6 @@ final class Gate1AppModel: ObservableObject {
         guard media?.sourceType == .generatedTTSPrerendered else { return false }
         let identifier = media?.nativeMediaId ?? media?.url ?? ""
         return identifier.contains("-starter.caf") || identifier.contains("-starter.")
-    }
-
-    private func isPreparedTextMediaAvailable(_ media: ItemMedia?) -> Bool {
-        guard media?.sourceType == .generatedTTSPrerendered else { return false }
-        let identifier = [media?.url, media?.nativeMediaId]
-            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .first(where: { !$0.isEmpty }) ?? ""
-        guard let url = URL(string: identifier), url.isFileURL else { return true }
-        return FileManager.default.fileExists(atPath: url.path)
     }
 
     private func cancelTextAudioPrewarmTasks() {
@@ -10921,7 +10903,7 @@ final class Gate1AppModel: ObservableObject {
         return items.enumerated().map { storageRank, item in
             let sessions = sessionsByItemId[item.id] ?? []
             let continuation = Self.preferredContinuationSession(in: sessions)
-            let isCompleted = item.sourceCompletedAt != nil || Self.itemIsCompleted(sessions)
+            let isCompleted = item.sourceCompletedAt != nil || PreparationChunkGate.itemAlreadyListened(sessions)
             let compatibleManifests = manifestsByItemId[item.id]?.filter { manifest in
                 currentSupertonicRenderSignature.map { manifest.signature == $0 } ?? true
             }
@@ -10967,7 +10949,7 @@ final class Gate1AppModel: ObservableObject {
                 storageRecencyRank: storageRank
             )
             row.usesNewReader = data.structuredDocumentItemIds.contains(item.id)
-            row.canMarkUnfinished = item.sourceCompletedAt != nil && !Self.itemIsCompleted(sessions)
+            row.canMarkUnfinished = item.sourceCompletedAt != nil && !PreparationChunkGate.itemAlreadyListened(sessions)
             return row
         }
     }
@@ -10985,7 +10967,7 @@ final class Gate1AppModel: ObservableObject {
             return (.notRequired, 0, 0)
         }
         if item.media?.sourceType == .generatedTTSPrerendered,
-           isPreparedTextMediaAvailable(item.media),
+           !PreparedNarrationFallback.isMissing(item.media),
            !isStarterPreparedTextMedia(item.media) {
             return (.ready, Self.startupAudioChunkCount, Self.startupAudioChunkCount)
         }
@@ -11141,7 +11123,7 @@ final class Gate1AppModel: ObservableObject {
         let activeItemId = activePlaybackItemId
         let completedItemIds = Set(itemsById.values.filter { $0.sourceCompletedAt != nil }.map(\.id)).union(Set(
             Dictionary(grouping: try store.loadSessions(), by: \.itemId)
-                .filter { Self.itemIsCompleted($0.value) }
+                .filter { PreparationChunkGate.itemAlreadyListened($0.value) }
                 .keys
         ))
         let storedJobs = try store.loadAudioPreparationJobs()

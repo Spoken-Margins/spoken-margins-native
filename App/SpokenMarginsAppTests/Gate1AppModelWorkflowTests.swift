@@ -2876,9 +2876,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(PreparationChunkGate.itemAlreadyListened([completed]))
         XCTAssertTrue(PreparationChunkGate.itemAlreadyListened([completedAtOnly]))
         XCTAssertTrue(PreparationChunkGate.itemAlreadyListened([belowCutoff, completed]))
-        XCTAssertFalse(Gate1AppModel.itemIsCompleted([belowCutoff]))
-        XCTAssertTrue(Gate1AppModel.itemIsCompleted([atCutoff]))
-        XCTAssertTrue(Gate1AppModel.itemIsCompleted([completed]))
     }
 
     func testResumeCompletedSessionAfterExportRequiresExplicitRestart() throws {
