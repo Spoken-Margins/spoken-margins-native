@@ -41,7 +41,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let item = Item(id: "local-test", title: "Exact local source", mediaType: "audiobook", text: nil, externalReference: audio.absoluteString, status: "ready", externalReferenceType: "audiobook", media: ItemMedia(sourceType: .nativeMediaFile, url: audio.absoluteString, durationMs: 10_000, nativeMediaId: "source-audio"))
         try store.seed(item: item)
         try store.saveOwnedOfflineAsset(OwnedOfflineAsset(id: "owned", itemId: item.id, category: .audiobook, relativePath: sourcePath, byteCount: Int64(bytes.count), checksumSHA256: hash, isReproducible: false))
-        let identity = model.localSharedItemIdentity(for: item)
+        let identity = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: hash)
         XCTAssertEqual(identity.itemType, .other)
         XCTAssertEqual(identity.exactEditionSHA256, hash)
         let proposal = PortableListeningMapProposalArtifact(id: "local-map", createdAt: Date(), generator: "test", scenes: (0..<2).map { index in
@@ -323,7 +323,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         )
         let revision = InterjectionShareRevision(id: "revision", interjectionId: "margin", itemId: "friend-episode", sessionId: "friend-session", createdAt: Date(), approvedTranscript: "Listen to this part.", anchorBefore: "", anchorAfter: "", status: .senderApproved)
         let prepared = try SpokenMarginsPackageBuilder.prepare(
-            packageId: "shared-podcast-map", createdAt: Date(), item: model.localSharedItemIdentity(for: item),
+            packageId: "shared-podcast-map", createdAt: Date(), item: SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: nil),
             itemTransportSelection: .reference,
             selections: [ReviewedInterjectionSelection(packageScopedId: "friend-margin", revision: revision, anchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 2_000), representation: .textOnly)],
             mapProposals: [proposal], fingerprintSpines: [spine], senderDisplayLabel: "Friend"

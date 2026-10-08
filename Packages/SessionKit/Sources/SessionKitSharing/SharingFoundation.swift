@@ -504,6 +504,39 @@ public enum SpokenMarginsPackageImporter {
         return try ImportedMarginResends.importLayer(layer, interjections: importedInterjections, repository: repository)
     }
 
+    public static func repairAssociation(
+        existing: ImportedCommentaryLayer,
+        contents: VerifiedSpokenMarginsPackage,
+        itemId: String?,
+        localItem: SharedItemIdentity?,
+        itemText: String?,
+        repository: SessionRepository
+    ) throws {
+        guard let itemId,
+              let localItem,
+              let commentary = contents.commentaryLayers.first else {
+            throw SessionKitError.persistenceFailed("shared_package_repair_item_is_unavailable")
+        }
+        let resolution = ImportedItemResolver.resolve(
+            item: contents.manifest.item,
+            interjections: commentary.interjections,
+            against: localItem,
+            itemText: itemText
+        )
+        guard resolution.status != .wrongSource else {
+            throw SessionKitError.persistenceFailed("shared_package_repair_source_did_not_match")
+        }
+        var layer = existing
+        layer.itemId = itemId
+        layer.sourceResolutionStatus = resolution.status
+        try repository.saveImportedCommentaryLayer(layer)
+        for var interjection in try repository.loadImportedCommentaryInterjections(layerId: layer.id) {
+            interjection.resolution = resolution.anchorsByPackageScopedId[interjection.packageScopedId]
+                ?? ImportedAnchorResolution(evidenceClass: .unresolved)
+            try repository.saveImportedCommentaryInterjection(interjection)
+        }
+    }
+
     public static func defaultLocalID(kind: String, packageScopedID: String) -> String {
         "imported-\(kind)-\(UUID().uuidString.lowercased())"
     }
