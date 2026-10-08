@@ -640,8 +640,9 @@ final class Gate1AppModel: ObservableObject {
             || previous.lastFailure != snapshot.lastFailure
         guard changed || (snapshot.status.isPlaybackActive && now - lastPlaybackEventCheckpoint >= 30) else { return }
         lastPlaybackEventCheckpoint = now
+        let supertonic = speechPlaybackClient as? SupertonicSpeechPlaybackClient
         playbackEventRecording.record("playback.state", DeveloperDiagnosticRecording.playbackStateFields(
-            snapshot, player: (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.playerDiagnostics() ?? [:]
+            snapshot, player: supertonic?.playerDiagnostics() ?? [:], narration: supertonic?.narrationDiagnostics() ?? [:]
         ))
     }
 
@@ -10661,10 +10662,11 @@ final class Gate1AppModel: ObservableObject {
                         let conditions = SupertonicResourcePolicy.currentConditions(
                             isOnExternalPower: SupertonicResourcePolicy.isOnExternalPower()
                         )
-                        let fallbackReason = SpeechFallbackReason(
-                            supertonicCode: reason,
-                            resourceBlock: SpeechEnginePolicy.onDeviceRenderingBlock(conditions)
-                        )
+                        let policyBlock = SpeechEnginePolicy.onDeviceRenderingBlock(conditions)
+                        let fallbackReason = SpeechFallbackReason(supertonicCode: reason, resourceBlock: policyBlock)
+                        self.recordDeveloperDiagnostic("supertonic.fallback", PlaybackDiagnosticFields.supertonicFallback(
+                            code: reason, reason: fallbackReason, policyBlock: policyBlock, conditions: conditions, offset: offset
+                        ))
                         self.speechFallbackReason = fallbackReason
                         self.diagnostics["supertonicFallback"] = reason
                         self.diagnostics["supertonicFallbackReason"] = fallbackReason.rawValue
