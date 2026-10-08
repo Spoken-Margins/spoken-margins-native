@@ -111,6 +111,7 @@ final class RealPlayerMarginMomentTests: XCTestCase {
         fixture.reachTheMargin()
         XCTAssertEqual(fixture.events, ["source.pause", "chime:shared"], "the chime is the first sound; the voice waits for it")
         XCTAssertTrue(fixture.conductor.isPlayingVoice, "the Margin already has the floor during its chime")
+        XCTAssertTrue(fixture.conductor.isPlayingChime, "the chime is sounding")
 
         try fixture.pump(until: { fixture.events.contains("voice:shared") }, "the voice starts after the chime")
         XCTAssertEqual(fixture.events, ["source.pause", "chime:shared", "voice:shared"])
@@ -140,9 +141,11 @@ final class RealPlayerMarginMomentTests: XCTestCase {
         defer { fixture.cleanUp() }
 
         fixture.reachTheMargin()
+        XCTAssertTrue(fixture.conductor.isPlayingChime)
         fixture.conductor.skipVoice()
         XCTAssertEqual(fixture.resumed, 1)
         XCTAssertFalse(fixture.conductor.isPlayingVoice)
+        XCTAssertFalse(fixture.conductor.isPlayingChime, "skip stops the chime too")
         fixture.pump(forSeconds: 1)
         XCTAssertEqual(fixture.events, ["source.pause", "chime:shared", "source.resume"], "the voice never started")
         XCTAssertEqual(fixture.conductor.sequence.phase, .listening)
@@ -154,19 +157,23 @@ final class RealPlayerMarginMomentTests: XCTestCase {
         defer { fixture.cleanUp() }
 
         fixture.reachTheMargin()
+        XCTAssertTrue(fixture.conductor.isPlayingChime)
         fixture.conductor.cancel()
+        XCTAssertFalse(fixture.conductor.isPlayingChime, "cancel stops the chime too")
         fixture.pump(forSeconds: 1)
         XCTAssertEqual(fixture.events, ["source.pause", "chime:shared"])
         XCTAssertFalse(fixture.conductor.isPlayingVoice)
     }
 
-    /// Pause during the chime holds the voice; resume starts it, once, and marks it started.
+    /// Pause during the chime stops the chime and holds the voice; resume starts the voice, once, and marks it started.
     func testPausingDuringTheChimeHoldsTheVoiceUntilResumed() throws {
         let fixture = try ChimeFixture(chimed: true)
         defer { fixture.cleanUp() }
 
         fixture.reachTheMargin()
+        XCTAssertTrue(fixture.conductor.isPlayingChime)
         fixture.conductor.setVoicePaused(true)
+        XCTAssertFalse(fixture.conductor.isPlayingChime, "paused means silent: the chime stops with the voice")
         fixture.pump(forSeconds: 1)
         XCTAssertEqual(fixture.events, ["source.pause", "chime:shared"], "paused, so the voice stays silent")
         XCTAssertTrue(fixture.conductor.isVoicePaused)

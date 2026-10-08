@@ -66,20 +66,23 @@ public final class MarginMomentConductor {
     /// A Margin's voice is loaded, playing or paused.
     public var isPlayingVoice: Bool { voice != nil }
     public private(set) var isVoicePaused = false
+    /// The shared-Margin chime is sounding (#932).
+    public var isPlayingChime: Bool { chime?.isPlaying == true }
 
     /// Pause and play act on the Margin's voice while it has the floor; the source stays paused.
     public func setVoicePaused(_ paused: Bool) {
         guard let voice, paused != isVoicePaused else { return }
         if paused {
             voice.pause()
+            // Paused during the chime: the voice hasn't started, so cut the chime too. Resume starts the voice.
+            chime?.stop()
+            chime = nil
         } else {
             try? prepareAudioSession?()
             if let waiting = voiceAwaitingChime {
                 // Paused during the chime: the voice hasn't started yet, so resuming is its first start.
                 waiting.task.cancel()
                 voiceAwaitingChime = nil
-                chime?.stop()
-                chime = nil
                 isVoicePaused = false
                 beginVoice(voice, marginId: waiting.marginId)
                 onChange?()
