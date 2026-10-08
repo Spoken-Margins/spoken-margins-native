@@ -9,6 +9,8 @@ final class AddMarginShortcutIntentTests: XCTestCase {
     private func makeModel() -> Gate1AppModel {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
+        // Finish the first-use system-voice choice; until then startItem waits on it and nothing plays.
+        model.declineCurrentTerms()
         return model
     }
 
