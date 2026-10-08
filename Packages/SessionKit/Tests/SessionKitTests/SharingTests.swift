@@ -2039,7 +2039,7 @@ final class SharingTests: XCTestCase {
         tampering prepared: PreparedSpokenMarginsPackage, in root: URL, _ tamper: (inout SpokenMarginsPackageManifest) -> Void
     ) throws -> VerifiedSpokenMarginsPackage {
         let goodURL = root.appendingPathComponent("good-\(UUID().uuidString).spokenmargins")
-        _ = try SpokenMarginsPackageArchive.write(prepared, to: goodURL)
+        _ = try exportPacket(prepared, to: goodURL)
         var entries = try readRawArchive(goodURL)
         var manifest = try SpokenMarginsPackageArchive.decodeManifest(XCTUnwrap(entries["manifest.json"]))
         tamper(&manifest)
@@ -2124,8 +2124,7 @@ final class SharingTests: XCTestCase {
                 artifactData[path] = Data(text.utf8)
             }
             let clashing = PreparedSpokenMarginsPackage(manifest: manifest, artifactData: artifactData, assetFiles: prepared.assetFiles)
-            XCTAssertThrowsError(
-                try SpokenMarginsPackageArchive.write(clashing, to: root.appendingPathComponent("clash-\(UUID().uuidString).spokenmargins")),
+            XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(clashing, to: root.appendingPathComponent("clash-\(UUID().uuidString).spokenmargins")),
                 "\(firstID) and \(secondID)"
             ) { error in
                 XCTAssertEqual(error as? SpokenMarginsPackageArchiveError, .invalidManifest("asset ids would extract to the same file"))
@@ -2141,7 +2140,7 @@ final class SharingTests: XCTestCase {
         let prepared = try voicePackage(in: root)
         let destination = root.appendingPathComponent("assets-clash")
         let goodURL = root.appendingPathComponent("good.spokenmargins")
-        _ = try SpokenMarginsPackageArchive.write(prepared, to: goodURL)
+        _ = try exportPacket(prepared, to: goodURL)
         var entries = try readRawArchive(goodURL)
         var manifest = try SpokenMarginsPackageArchive.decodeManifest(XCTUnwrap(entries["manifest.json"]))
         let first = manifest.assets[0]
