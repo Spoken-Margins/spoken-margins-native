@@ -14,10 +14,6 @@ extension Gate1AppModel {
     }
 
     func mediaSkipUnit(seconds: Int) -> String {
-        "time_\(Self.validatedMediaSkipSeconds(seconds))s"
-    }
-
-    static func validatedMediaSkipSeconds(_ seconds: Int) -> Int {
-        supportedMediaSkipSeconds.contains(seconds) ? seconds : 15
+        MediaSkipRule.unit(seconds: seconds)
     }
 }

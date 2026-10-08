@@ -1,5 +1,6 @@
 import contextlib
 import importlib.util
+import inspect
 import io
 import json
 import os
@@ -264,6 +265,24 @@ class VerificationTests(unittest.TestCase):
         self.assertGreaterEqual(steps['package'][1]['timeout'], 600)
         self.assertTrue(steps['package'][1]['tests'])  # the exact-test-ID check stays on the tests
         self.assertFalse(steps['package-build'][1].get('tests'))
+
+    def test_runner_tests_have_their_own_limit_with_room_over_their_measured_time(self):
+        # #1110: the runner's own suite takes 164.5 to 172.3 s on a quiet Mac, and the 180 s command default
+        # killed it (exit 124, "executed zero tests") on PR #1103's head twice, beside a simulator job.
+        measured = 172.3
+        default = inspect.signature(verification.Run.command).parameters['timeout'].default
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+            verification.os.environ.pop('CODEX_SANDBOX', None)
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                    patch.object(run, 'ops_steps'), \
+                    patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                run.host_steps()
+        timeout = dict(calls)['runner-tests'].get('timeout', default)
+        self.assertGreaterEqual(timeout, 2 * measured)  # the suite grows and runs beside a simulator job
+        self.assertGreater(timeout, default)
 
     def run_sessionkit_script(self, *args, exit_code=0, **env):
         """Run scripts/run-sessionkit-tests.sh from a copy in a temporary ROOT whose host-test-lane records what it

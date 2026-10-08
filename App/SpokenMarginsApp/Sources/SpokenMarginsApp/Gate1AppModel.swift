@@ -538,7 +538,7 @@ final class Gate1AppModel: ObservableObject {
     private static let suppressedAudioPreparationItemIdsKey = "suppressedAudioPreparationItemIdsV1"
     static let mixedPlaybackVolumeMaximum = 1.0
     static let exportPreviewCharacterLimit = 24_000
-    nonisolated static let supportedPlaybackRates: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
+    nonisolated static let supportedPlaybackRates: [Double] = SpeechRateRule.supportedMultipliers
     static let privateSharingNoteCharacterLimit = 500
     private static var isRunningUnitTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
@@ -888,13 +888,12 @@ final class Gate1AppModel: ObservableObject {
     @Published var speechRate: Double = {
         let stored = UserDefaults.standard.double(forKey: "speechRate")
         let rawRate = stored == 0 ? 0.5 : stored
-        let multiplier = max(0.5, min(2.0, ((rawRate / 0.5) * 4).rounded() / 4))
-        return multiplier * 0.5
+        return SpeechRateRule.quarterStepMultiplier(rawRate / 0.5) * 0.5
     }()
     @Published var mediaPlaybackRate: Double = {
         let stored = UserDefaults.standard.double(forKey: "mediaPlaybackRate")
         let rawRate = stored == 0 ? 1.0 : stored
-        return max(0.5, min(2.0, (rawRate * 4).rounded() / 4))
+        return SpeechRateRule.quarterStepMultiplier(rawRate)
     }()
     @Published var showsMixWithOtherAudioOption = UserDefaults.standard.bool(
         forKey: Gate1AppModel.showsMixWithOtherAudioOptionKey
@@ -1583,7 +1582,7 @@ final class Gate1AppModel: ObservableObject {
         return "Listening Map generation is unavailable."
     }
 
-    static let supportedMediaSkipSeconds = [10, 15, 30, 45, 60]
+    static let supportedMediaSkipSeconds = MediaSkipRule.supportedSeconds
     static let supportedPodcastCacheLimitsGB = PodcastCacheLimitGB.allCases.map(\.rawValue)
     static let supportedRenderedSpeechCacheLimitsMB = [128, 256, 512, 1_024]
 
@@ -1618,8 +1617,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private static func storedMediaSkipSeconds(forKey key: String) -> Int {
-        let value = UserDefaults.standard.integer(forKey: key)
-        return supportedMediaSkipSeconds.contains(value) ? value : 15
+        MediaSkipRule.validated(UserDefaults.standard.integer(forKey: key))
     }
 
     private static func storedRenderedSpeechCacheLimitMB() -> Int {
@@ -5933,8 +5931,8 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func mediaSkipSettingsChanged() {
-        mediaSkipBackSeconds = Self.validatedMediaSkipSeconds(mediaSkipBackSeconds)
-        mediaSkipForwardSeconds = Self.validatedMediaSkipSeconds(mediaSkipForwardSeconds)
+        mediaSkipBackSeconds = MediaSkipRule.validated(mediaSkipBackSeconds)
+        mediaSkipForwardSeconds = MediaSkipRule.validated(mediaSkipForwardSeconds)
         UserDefaults.standard.set(mediaSkipBackSeconds, forKey: "mediaSkipBackSeconds")
         UserDefaults.standard.set(mediaSkipForwardSeconds, forKey: "mediaSkipForwardSeconds")
         mediaPlaybackClient?.setPreferredSkipIntervals(
@@ -5947,7 +5945,7 @@ final class Gate1AppModel: ObservableObject {
 
     func setMediaPlaybackRate(_ rate: Double) {
         guard !rejectNavigationOrSessionMutationWhileRecording("set_media_playback_rate") else { return }
-        let clamped = max(0.5, min(2.0, (rate * 4).rounded() / 4))
+        let clamped = SpeechRateRule.quarterStepMultiplier(rate)
         mediaPlaybackRate = clamped
         UserDefaults.standard.set(clamped, forKey: "mediaPlaybackRate")
         if var bridge = snapshot.skimBridgeState {
@@ -6095,7 +6093,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     nonisolated static func nextPlaybackRate(after current: Double) -> Double {
-        supportedPlaybackRates.first(where: { $0 > current + 0.001 }) ?? supportedPlaybackRates[0]
+        SpeechRateRule.next(after: current)
     }
 
     private func recordMediaSeekEvidence(from engine: SessionEngine) {
@@ -7549,48 +7547,33 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func diagnosticsExportText() -> String? {
-        var safe = diagnostics
-            .filter { !Self.diagnosticKeyMayContainUserContent($0.key) }
-            .mapValues(Self.redactedDiagnosticValue)
+        var stored: [String: String] = [:]
         if let store {
-            let stored = PodcastAnchorCaptureDiagnostics.exportEntries(
+            stored = PodcastAnchorCaptureDiagnostics.exportEntries(
                 sessions: (try? store.loadSessions()) ?? [],
                 interjections: { try store.loadInterjections(sessionId: $0) }
             )
-            safe.merge(stored.mapValues(Self.redactedDiagnosticValue)) { _, stored in stored }
         }
-        safe["developerBuild"] = developerDiagnosticBuild
-        safe["developerRecording"] = developerRecording.exportJSON()
-        safe["playbackEvents"] = playbackEventRecording.exportJSON()
-        safe["schemaVersion"] = "spoken-margins.diagnostics.v1"
-        safe["exportedAt"] = ISO8601DateFormatter().string(from: Date())
-        safe["playbackStatus"] = snapshot.status.rawValue
-        safe["sessionPhase"] = snapshot.phase.rawValue
-        safe["targetType"] = snapshot.targetType ?? "none"
-        safe["pendingAIJobs"] = "\(snapshot.pendingAiJobCount)"
+        let entries = DiagnosticsExport.entries(
+            live: diagnostics,
+            stored: stored,
+            fixed: DiagnosticsExport.Fixed(
+                developerBuild: developerDiagnosticBuild,
+                developerRecording: developerRecording.exportJSON(),
+                playbackEvents: playbackEventRecording.exportJSON(),
+                exportedAt: Date(),
+                playbackStatus: snapshot.status.rawValue,
+                sessionPhase: snapshot.phase.rawValue,
+                targetType: snapshot.targetType,
+                pendingAIJobs: snapshot.pendingAiJobCount
+            )
+        )
         do {
-            let data = try JSONSerialization.data(withJSONObject: safe, options: [.prettyPrinted, .sortedKeys])
-            return String(data: data, encoding: .utf8)
+            return try DiagnosticsExport.jsonText(entries)
         } catch {
             reportFailure(error, context: "Diagnostics export failed")
             return nil
         }
-    }
-
-    private static func redactedDiagnosticValue(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: #"https?://[^\s]+"#, with: "<redacted-url>", options: .regularExpression)
-            .replacingOccurrences(of: #"/(?:private|Users|var)/[^\s]+"#, with: "<redacted-path>", options: .regularExpression)
-    }
-
-    private static func diagnosticKeyMayContainUserContent(_ key: String) -> Bool {
-        [
-            "lastStatus",
-            "recentFailure",
-            "quickAccessFolder",
-            "lastSourceLinkClipboardPaste",
-            "lastBrowserTextSource"
-        ].contains(key)
     }
 
     func dispatchGate2CompactCommand(
@@ -8749,7 +8732,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var speechPlaybackRateMultiplier: Double {
-        max(0.5, min(2.0, ((speechRate / 0.5) * 4).rounded() / 4))
+        SpeechRateRule.quarterStepMultiplier(speechRate / 0.5)
     }
 
     var mediaPlaybackRateDescription: String {
@@ -9478,7 +9461,7 @@ final class Gate1AppModel: ObservableObject {
             .play, .pause, .togglePlayPause, .skipBack, .skipForward, .jumpToChapter
         ]
         let normalizedPlaybackRate = command == .setPlaybackRate
-            ? playbackRate.map { max(0.5, min(2.0, ($0 * 4).rounded() / 4)) }
+            ? playbackRate.map { SpeechRateRule.quarterStepMultiplier($0) }
             : playbackRate
         if command == .beginInterjection || canonicalTransportCommands.contains(command) {
             synchronizeStreamingSpeechAnchorIfNeeded()
@@ -10356,18 +10339,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func shouldPrewarmTextAudio(for item: Item) -> Bool {
-        guard item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return false }
-        if item.mediaType == TargetType.browserOwnedMedia.rawValue {
-            return false
-        }
-        switch item.media?.sourceType {
-        case .none, .some(.generatedTTSRealtime):
-            return true
-        case .some(.generatedTTSPrerendered):
-            return PreparedNarrationFallback.isMissing(item.media) || isStarterPreparedTextMedia(item.media)
-        case .some(.nativeMediaFile), .some(.browserOwnedMedia), .some(.remoteStream):
-            return false
-        }
+        guard item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+              !LibraryAudioPreparationAdmission.playsItsOwnAudio(item) else { return false }
+        guard item.media?.sourceType == .generatedTTSPrerendered else { return true }
+        return PreparedNarrationFallback.isMissing(item.media) || isStarterPreparedTextMedia(item.media)
     }
 
     private func isStarterPreparedTextMedia(_ media: ItemMedia?) -> Bool {
@@ -11121,17 +11096,13 @@ final class Gate1AppModel: ObservableObject {
         let manifests = try store.loadPreparedAudioManifests()
         let manifestsById = Dictionary(uniqueKeysWithValues: manifests.map { ($0.id, $0) })
         let activeItemId = activePlaybackItemId
-        let completedItemIds = Set(itemsById.values.filter { $0.sourceCompletedAt != nil }.map(\.id)).union(Set(
-            Dictionary(grouping: try store.loadSessions(), by: \.itemId)
-                .filter { PreparationChunkGate.itemAlreadyListened($0.value) }
-                .keys
-        ))
         let storedJobs = try store.loadAudioPreparationJobs()
-        try store.deleteAudioPreparationJobs(
-            ids: storedJobs.filter { $0.policy != .explicit && completedItemIds.contains($0.itemId) }.map(\.id)
-        )
+        let staleJobIds = Set(LibraryAudioPreparationAdmission.staleJobIds(
+            storedJobs, items: Array(itemsById.values), sessionsByItemId: Dictionary(grouping: try store.loadSessions(), by: \.itemId)
+        ))
+        try store.deleteAudioPreparationJobs(ids: Array(staleJobIds))
         let jobs = storedJobs
-            .filter { !$0.isCancelled && ($0.policy == .explicit || !completedItemIds.contains($0.itemId)) }
+            .filter { !$0.isCancelled && !staleJobIds.contains($0.id) }
             .sorted { lhs, rhs in
                 Self.audioPreparationJobPrecedes(lhs, rhs, activeItemId: activeItemId)
             }
@@ -14838,10 +14809,11 @@ final class Gate1AppModel: ObservableObject {
             let sessionsByItemId = Dictionary(grouping: try store.loadSessions(), by: \.itemId)
             for row in libraryItems {
                 guard let item = try? store.loadItem(id: row.id),
+                      !LibraryAudioPreparationAdmission.playsItsOwnAudio(item),
                       let text = PreparedSpeechHooks.preparedText(of: item, in: store),
                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else { continue }
-                guard item.sourceCompletedAt == nil, !PreparationChunkGate.itemAlreadyListened(sessionsByItemId[item.id] ?? []) else {
+                guard LibraryAudioPreparationAdmission.admitsAutomatically(item, sessions: sessionsByItemId[item.id] ?? []) else {
                     diagnostics["automaticAudioPreparation:\(item.id)"] = "skipped_existing_progress"
                     continue
                 }
@@ -14913,7 +14885,7 @@ final class Gate1AppModel: ObservableObject {
                libraryItems.first(where: { $0.id == previous })?.startupAudioState == .preparing { updateLibraryStartupAudioState(itemId: previous, state: .waiting) }
             if libraryItems.first(where: { $0.id == job.itemId })?.startupAudioState == .waiting { updateLibraryStartupAudioState(itemId: job.itemId, state: .preparing) }
             guard var manifest = try store.loadPreparedAudioManifest(id: job.manifestId),
-                  let item = try? store.loadItem(id: job.itemId),
+                  let item = try? store.loadItem(id: job.itemId), item.deletedAt == nil, // a job saved back mid-render for an item since trashed (#883)
                   let sourceText = PreparedSpeechHooks.preparedText(of: item, in: store) else {
                 try store.deleteAudioPreparationJob(id: job.id)
                 diagnostics["backgroundAudioPreparation"] = "discarded_missing_source_job"

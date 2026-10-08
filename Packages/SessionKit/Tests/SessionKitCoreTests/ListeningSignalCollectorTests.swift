@@ -109,6 +109,38 @@ final class ListeningSignalCollectorTests: XCTestCase {
         XCTAssertEqual(recorder.signals().map { $0.source.title }, ["Notes", "Renamed"])
     }
 
+    /// #1048 (PERSIST-11): the test above renames the subscription between the spells, which makes
+    /// the collector re-resolve whatever stopping did. Here nothing about the follows changes, only
+    /// the item's link to a feed entry, so a cache that survived the stop would keep the old entry.
+    func testStoppingForgetsTheItemsContextEvenWhenTheFollowsDidNotChange() throws {
+        let count = Counter()
+        let collector = ListeningSignalCollector(recorder: recorder, resolve: { id, repository in
+            count.increment()
+            return ListeningSignalContext.load(forItemId: id, from: repository)
+        })
+        for second in 0...4 {
+            collector.playbackProgress(itemId: "item", status: .playing, repository: store, at: epoch.addingTimeInterval(Double(second)))
+        }
+        collector.endListening()
+        collector.flush()
+        XCTAssertEqual(count.value, 1)
+
+        try store.saveFeedEntry(FeedEntry(id: "entry-2", subscriptionId: "subscription",
+            canonicalURL: "https://example.com/posts/2", title: "Two", publishedAt: epoch))
+        var item = try store.loadItem(id: "item")
+        item.externalReference = "https://example.com/posts/2"
+        try store.saveItem(item)
+        for second in 10...11 {
+            collector.playbackProgress(itemId: "item", status: .playing, repository: store, at: epoch.addingTimeInterval(Double(second)))
+        }
+        collector.endListening()
+        collector.flush()
+
+        XCTAssertEqual(count.value, 2, "the second spell resolves the item again")
+        XCTAssertEqual(recorder.signals().map { $0.item?.id }, ["entry", "entry-2"],
+                       "and files its listening under the entry the item is linked to now")
+    }
+
     func testQueuedArticleActionsAreIncludedInExplicitExportAndKeepPacketProvenance() throws {
         let collector = ListeningSignalCollector(recorder: recorder)
         collector.record(.margin(kind: .written, length: 12), itemId: "item", repository: store, at: epoch)
