@@ -4150,14 +4150,14 @@ final class Gate1AppModel: ObservableObject {
             }
             let model = modelForAIJob(kind: "listening_map")
             diagnostics["lastListeningMapModel"] = model
-            let firstPrompt = listeningMapPrompt(sourceText: text)
+            let firstPrompt = ProviderPrompts.listeningMap(sourceText: text)
             let firstResponse = try await callProvider(messages: [firstPrompt], model: model, systemPrompt: systemPromptForAIJob(kind: "listening_map"))
             do {
                 try saveProviderListeningMapResponse(firstResponse, item: &item, store: store)
                 diagnostics["lastListeningMapRepairAttempt"] = "0"
                 reportConfirmation("Generated Listening Map with \(model).")
             } catch {
-                let repairPrompt = listeningMapRepairPrompt(sourceText: text, invalidResponse: firstResponse, error: String(describing: error))
+                let repairPrompt = ProviderPrompts.listeningMapRepair(sourceText: text, invalidResponse: firstResponse, error: String(describing: error))
                 let repairedResponse = try await callProvider(messages: [repairPrompt], model: model, systemPrompt: systemPromptForAIJob(kind: "listening_map"))
                 try saveProviderListeningMapResponse(repairedResponse, item: &item, store: store)
                 diagnostics["lastListeningMapRepairAttempt"] = "1"
@@ -11644,14 +11644,14 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         do {
-            let messages = [assistantChapterPrompt(responseText: text)]
+            let messages = [ProviderPrompts.assistantChapters(responseText: text)]
             let response = try await openAIResponsesClient.complete(
                 credentials: .apiKey(providerAPIKey),
                 model: model,
                 instructions: "Return only strict JSON for assistant response chapters. Do not use Markdown.",
                 messages: messages
             )
-            let chapters = try assistantChapters(from: response, responseText: text)
+            let chapters = try AssistantChapterParser.chapters(from: response, responseText: text)
             if let engine {
                 snapshot = try engine.aiChaptersCompleted(turnId: turnId, chapters: chapters)
                 refreshSelectedItem()
@@ -11659,44 +11659,6 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["assistantChapters:\(turnId)"] = "complete:\(chapters.count)"
         } catch {
             diagnostics["assistantChapters:\(turnId)"] = "unavailable:\(error.localizedDescription)"
-        }
-    }
-
-    private func assistantChapterPrompt(responseText: String) -> String {
-        """
-        Create 2 to 5 navigation chapters for the spoken response below. If it has fewer than two meaningful sections, return an empty chapters array.
-        Return exactly {"schemaVersion":"assistant-response-map.v1","chapters":[{"id":"ch-1","title":"Short title","anchor":"exact phrase copied from RESPONSE"}]}.
-        Every anchor must be an exact contiguous phrase from RESPONSE and identify the start of its section.
-        RESPONSE:
-        <<<
-        \(responseText)
-        >>>
-        """
-    }
-
-    private func assistantChapters(from raw: String, responseText: String) throws -> [Chapter] {
-        let data = Data(raw.utf8)
-        let envelope = try JSONDecoder().decode(AssistantChapterEnvelope.self, from: data)
-        guard envelope.schemaVersion == "assistant-response-map.v1" else {
-            throw SessionKitError.persistenceFailed("assistant_chapter_schema")
-        }
-        var seen = Set<String>()
-        return try envelope.chapters.map { candidate in
-            guard !candidate.id.isEmpty,
-                  !candidate.title.isEmpty,
-                  seen.insert(candidate.id).inserted,
-                  let range = responseText.range(of: candidate.anchor) else {
-                throw SessionKitError.persistenceFailed("assistant_chapter_anchor")
-            }
-            let start = responseText.distance(from: responseText.startIndex, to: range.lowerBound)
-            let end = responseText.distance(from: responseText.startIndex, to: range.upperBound)
-            return Chapter(
-                id: candidate.id,
-                title: candidate.title,
-                startChar: start,
-                endChar: end,
-                percent: responseText.isEmpty ? 0 : Int((Double(start) / Double(responseText.count) * 100).rounded())
-            )
         }
     }
 
@@ -11825,62 +11787,6 @@ final class Gate1AppModel: ObservableObject {
             return raw
         }
         throw ProviderCallError.emptyResponse
-    }
-
-    private func listeningMapPrompt(sourceText: String) -> String {
-        """
-        Create a Listening Map for the item content below.
-        The user will listen to this content through text-to-speech, so the map must support quick navigation and situational awareness.
-        Return only strict JSON. Use schemaVersion "listening-map.v1".
-        Required object shape:
-        {
-          "schemaVersion": "listening-map.v1",
-          "overview": "one or two sentence overview",
-          "chapters": [
-            {
-              "id": "ch-1",
-              "title": "short navigation title",
-              "description": "what this chapter covers",
-              "anchor": "exact contiguous phrase copied from ITEM CONTENT"
-            }
-          ]
-        }
-        Requirements: brief overview, navigable chapters, exact contiguous anchors copied from source, no invented anchors, no percent estimates, no start/end character offsets.
-        JSON syntax rules: use ASCII double quotes for object keys and string delimiters. Preserve source punctuation, including curly quotes and apostrophes, only inside string values.
-        Anchor quality rules: every anchor must be at least five words when possible; copy ordinary prose from the source, not headings; do not paraphrase; do not use ellipses.
-        ITEM CONTENT:
-        <<<
-        \(sourceText)
-        >>>
-        """
-    }
-
-    private func listeningMapRepairPrompt(sourceText: String, invalidResponse: String, error: String) -> String {
-        """
-        Repair the Listening Map JSON below. Return only strict JSON with schemaVersion "listening-map.v1".
-
-        Parser/validator error:
-        \(error)
-
-        Requirements:
-        - Keep only JSON. No Markdown fences.
-        - Use ASCII double quotes for JSON object keys and string delimiters.
-        - Preserve source punctuation, including curly quotes and apostrophes, only inside string values.
-        - Every chapter must have id, title, description, and anchor.
-        - Every anchor must be an exact contiguous phrase copied from ITEM CONTENT, preferably at least five words.
-        - Do not include percent estimates.
-        - Prefer preserving the previous chapter intent if the anchor can be fixed.
-
-        INVALID RESPONSE:
-        <<<
-        \(invalidResponse)
-        >>>
-
-        ITEM CONTENT:
-        <<<
-        \(sourceText)
-        >>>
-        """
     }
 
     private func markProviderFailure(_ error: String, userMessage: String, itemId: String, retry: UserFeedbackEvent.Retry? = nil) {
@@ -16191,17 +16097,6 @@ private struct ChatCompletionRequest: Encodable {
 private struct ChatMessage: Codable {
     let role: String
     let content: String
-}
-
-private struct AssistantChapterEnvelope: Decodable {
-    struct Candidate: Decodable {
-        var id: String
-        var title: String
-        var anchor: String
-    }
-
-    var schemaVersion: String
-    var chapters: [Candidate]
 }
 
 private struct ChatCompletionResponse: Decodable {
