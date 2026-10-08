@@ -56,12 +56,114 @@ final class EPUBSafetyTests: XCTestCase {
         }
     }
 
+    /// Entries are checked one at a time against the entry limit, then added up against the expanded limit.
+    /// The limits are exact: the total itself is allowed, one byte less is not.
     func testOversizedExpansionIsRejected() throws {
-        let url = try makeEPUB(entries: validEntries())
+        let entries = validEntries()
+        let sizes = entries.values.map { Int64($0.utf8.count) }
+        let largest = try XCTUnwrap(sizes.max()), total = sizes.reduce(0, +)
+        let url = try makeEPUB(entries: entries)
         defer { try? FileManager.default.removeItem(at: url) }
-        let parser = EPUBParser(limits: EPUBParserLimits(maximumEntries: 20, maximumEntryBytes: 32, maximumExpandedBytes: 64, maximumXMLDepth: 32))
+
+        // Every entry is under the entry limit; only their sum is over the expanded limit.
+        let tooSmallToHoldThem = EPUBParser(limits: EPUBParserLimits(maximumEntries: 20, maximumEntryBytes: 10_000, maximumExpandedBytes: total - 1, maximumXMLDepth: 32))
+        XCTAssertThrowsError(try tooSmallToHoldThem.parse(url: url, itemId: "book", sourceDocumentId: "source")) {
+            XCTAssertEqual($0 as? EPUBImportError, .archiveLimitExceeded("expanded_size"))
+        }
+        let justEnough = EPUBParser(limits: EPUBParserLimits(maximumEntries: 20, maximumEntryBytes: largest, maximumExpandedBytes: total, maximumXMLDepth: 32))
+        XCTAssertNoThrow(try justEnough.parse(url: url, itemId: "book", sourceDocumentId: "source"))
+    }
+
+    func testAnEntryOverTheEntryLimitIsRejectedWithItsReason() throws {
+        let entries = validEntries()
+        let largest = try XCTUnwrap(entries.values.map { Int64($0.utf8.count) }.max())
+        let url = try makeEPUB(entries: entries)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let parser = EPUBParser(limits: EPUBParserLimits(maximumEntries: 20, maximumEntryBytes: largest - 1, maximumExpandedBytes: 1_000_000, maximumXMLDepth: 32))
         XCTAssertThrowsError(try parser.parse(url: url, itemId: "book", sourceDocumentId: "source")) {
-            guard case EPUBImportError.archiveLimitExceeded = $0 else { return XCTFail("Unexpected error: \($0)") }
+            XCTAssertEqual($0 as? EPUBImportError, .archiveLimitExceeded("entry_size"))
+        }
+    }
+
+    func testMoreEntriesThanTheEntryCountLimitAreRejected() throws {
+        let entries = validEntries()
+        let url = try makeEPUB(entries: entries)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let exactly = EPUBParser(limits: EPUBParserLimits(maximumEntries: entries.count, maximumEntryBytes: 1_000_000, maximumExpandedBytes: 1_000_000, maximumXMLDepth: 32))
+        XCTAssertNoThrow(try exactly.parse(url: url, itemId: "book", sourceDocumentId: "source"))
+        let oneFewer = EPUBParser(limits: EPUBParserLimits(maximumEntries: entries.count - 1, maximumEntryBytes: 1_000_000, maximumExpandedBytes: 1_000_000, maximumXMLDepth: 32))
+        XCTAssertThrowsError(try oneFewer.parse(url: url, itemId: "book", sourceDocumentId: "source")) {
+            XCTAssertEqual($0 as? EPUBImportError, .archiveLimitExceeded("entry_count"))
+        }
+    }
+
+    // MARK: Paths
+
+    func testAnArchiveEntryOutsideThePackageIsRejectedWhateverTheSlashes() throws {
+        for path in ["../evil.xhtml", "OPS/../../evil.xhtml", "/absolute.xhtml", "..\\evil.xhtml"] {
+            var entries = validEntries()
+            entries[path] = "<html/>"
+            let url = try makeEPUB(entries: entries)
+            defer { try? FileManager.default.removeItem(at: url) }
+            XCTAssertThrowsError(try EPUBParser().parse(url: url, itemId: "book", sourceDocumentId: "source"), path) {
+                XCTAssertEqual($0 as? EPUBImportError, .unsafeArchivePath(path), path)
+            }
+        }
+    }
+
+    func testARootfileOrSpineItemThatClimbsOutOfThePackageIsRejected() throws {
+        var rootfile = validEntries()
+        rootfile["META-INF/container.xml"] = """
+        <?xml version="1.0"?><container><rootfiles><rootfile full-path="../package.opf"/></rootfiles></container>
+        """
+        var spine = validEntries()
+        spine["OPS/package.opf"] = spine["OPS/package.opf"]!.replacingOccurrences(of: "href=\"chapter.xhtml\" media-type", with: "href=\"../../outside.xhtml\" media-type")
+        for (entries, unsafe) in [(rootfile, "../package.opf"), (spine, "OPS/../../outside.xhtml")] {
+            let url = try makeEPUB(entries: entries)
+            defer { try? FileManager.default.removeItem(at: url) }
+            XCTAssertThrowsError(try EPUBParser().parse(url: url, itemId: "book", sourceDocumentId: "source"), unsafe) {
+                XCTAssertEqual($0 as? EPUBImportError, .unsafeArchivePath(unsafe), unsafe)
+            }
+        }
+    }
+
+    // MARK: XML
+
+    func testAChapterNestedDeeperThanTheXMLDepthLimitIsRejected() throws {
+        // html, body and the divs, then a paragraph: the deepest element is `divs + 3` levels down.
+        func chapter(divs: Int) -> String {
+            "<?xml version=\"1.0\"?><html><body>" + String(repeating: "<div>", count: divs) + "<p>Deep.</p>" + String(repeating: "</div>", count: divs) + "</body></html>"
+        }
+        let limits = EPUBParserLimits(maximumEntries: 20, maximumEntryBytes: 1_000_000, maximumExpandedBytes: 1_000_000, maximumXMLDepth: 12)
+        var atTheLimit = validEntries()
+        atTheLimit["OPS/chapter.xhtml"] = chapter(divs: 9)
+        var overTheLimit = validEntries()
+        overTheLimit["OPS/chapter.xhtml"] = chapter(divs: 10)
+
+        let fits = try makeEPUB(entries: atTheLimit)
+        defer { try? FileManager.default.removeItem(at: fits) }
+        XCTAssertEqual(try EPUBParser(limits: limits).parse(url: fits, itemId: "book", sourceDocumentId: "source").package.segments.map(\.text), ["Deep."])
+
+        let tooDeep = try makeEPUB(entries: overTheLimit)
+        defer { try? FileManager.default.removeItem(at: tooDeep) }
+        XCTAssertThrowsError(try EPUBParser(limits: limits).parse(url: tooDeep, itemId: "book", sourceDocumentId: "source")) {
+            XCTAssertEqual($0 as? EPUBImportError, .archiveLimitExceeded("xml_depth"))
+        }
+    }
+
+    // MARK: Encryption
+
+    /// Content encryption (an Adobe or Apple DRM scheme) leaves the chapters unreadable, so the book is
+    /// refused rather than imported as gibberish.
+    func testAnEPUBWhoseChaptersAreEncryptedIsRejected() throws {
+        var entries = validEntries()
+        entries["META-INF/encryption.xml"] = """
+        <?xml version="1.0"?><encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" xmlns:enc="http://www.w3.org/2001/04/xmlenc#"><enc:EncryptedData><enc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes128-cbc"/><enc:CipherData><enc:CipherReference URI="OPS/chapter.xhtml"/></enc:CipherData></enc:EncryptedData></encryption>
+        """
+        let url = try makeEPUB(entries: entries)
+        defer { try? FileManager.default.removeItem(at: url) }
+        XCTAssertThrowsError(try EPUBParser().parse(url: url, itemId: "book", sourceDocumentId: "source")) {
+            XCTAssertEqual($0 as? EPUBImportError, .unsupportedEncryption)
         }
     }
 

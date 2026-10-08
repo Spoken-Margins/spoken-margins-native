@@ -16,8 +16,10 @@ What it does:
   test-plan.md, and a `latest` symlink to the newest good build. Keeps the three newest builds;
   older ones, the temporary worktree and its DerivedData are deleted.
 - test-plan.md lists the listener-facing PRs merged since the build the owner last installed
-  (~/SpokenMargins-phone/installed.txt, written by scripts/install-phone-build.command), each with
-  its issue's "Owner check" line, sized to about ten minutes. Only written checks go in the ten minutes:
+  (~/SpokenMargins-phone/installed.txt, written by scripts/install-phone-build.command; a commit built
+  on the Mac before it reached next still counts), each with
+  its issue's "Owner check" line, sized to about ten minutes. A change whose issues are all closed
+  is left out: the owner has passed it (#1100). Only written checks go in the ten minutes:
   a phone-found bug without one is listed with the other unchecked changes and the run names its issue
   (#847), and a check that names an issue or PR not on the phone yet waits in its own section. A step
   carries the check's own numbered steps, its URLs as links, and the repo files it names (copied to
@@ -235,16 +237,30 @@ def runner_tested(sha: str) -> str | None:
 # ---- test plan -----------------------------------------------------------------------------------
 
 def plan_base(target: str) -> tuple[str | None, str]:
-    """(base commit, how it was chosen) for "what changed since the owner's last install"."""
+    """(base commit, how it was chosen) for "what changed since the owner's last install".
+
+    The installed commit is the base whenever this checkout has it and it isn't ahead of the target, even when
+    it isn't in next's history (a candidate built on this Mac before its changes reached next, #1100):
+    merged_prs then lists what next has that the installed build lacks. A commit this checkout doesn't have,
+    one newer than the target, or no installed.txt falls back to the last TestFlight build.
+    """
     sha = installed_sha()
+
+    def ancestor(older: str, newer: str) -> bool:
+        return subprocess.run(['git', 'merge-base', '--is-ancestor', older, newer], cwd=str(ROOT),
+                              capture_output=True).returncode == 0
     known = sha and subprocess.run(['git', 'cat-file', '-e', f'{sha}^{{commit}}'], cwd=str(ROOT),
                                    capture_output=True).returncode == 0
-    if known and subprocess.run(['git', 'merge-base', '--is-ancestor', sha, target], cwd=str(ROOT),
-                                capture_output=True).returncode == 0:
-        return sha, f'the build you last installed (`{sha[:7]}`, from installed.txt)'
+    behind = bool(known) and ancestor(sha, target)
+    ahead = bool(known) and not behind and ancestor(target, sha)
+    if known and not ahead:
+        return sha, f'the build you last installed (`{sha[:7]}`, from installed.txt' + (
+            ')' if behind else '; it isn\'t part of next\'s history, so this lists what next has beyond it)')
     tags = git('tag', '--list', 'testflight/*', '--sort=-creatordate', '--merged', target, check=False).split()
     if tags:
-        why = 'nothing recorded in installed.txt yet' if not sha else f'installed.txt names `{sha[:7]}`, which isn\'t behind this build'
+        why = ('nothing recorded in installed.txt yet' if not sha else
+               f'installed.txt names `{sha[:7]}`, which is newer than this build' if ahead else
+               f'installed.txt names `{sha[:7]}`, which this checkout doesn\'t have')
         return git('rev-list', '-1', tags[0]), f'the last TestFlight build, `{tags[0]}` ({why})'
     return None, 'no earlier build found'
 
@@ -262,8 +278,8 @@ def merged_prs(base: str | None, target: str) -> dict[int, str]:
 
 COMMENTS = 'comments(last:30){nodes{body}}'  # a check written in a comment (#927)
 PR_FIELDS = '''number title url mergedAt body labels(first:20){nodes{name}} files(first:100){nodes{path}}
-closingIssuesReferences(first:5){nodes{number title url body labels(first:20){nodes{name}} %s}}''' % COMMENTS
-ISSUE_FIELDS = 'number title url body labels(first:20){nodes{name}} ' + COMMENTS
+closingIssuesReferences(first:5){nodes{number title url state body labels(first:20){nodes{name}} %s}}''' % COMMENTS
+ISSUE_FIELDS = 'number title url state body labels(first:20){nodes{name}} ' + COMMENTS  # state: passed_on_phone (#1100)
 
 
 def graphql(fields_by_alias: dict[str, str]) -> dict:
@@ -616,6 +632,16 @@ def found_on_phone(entry: list[dict]) -> bool:
     return any(FIRST_ON_PHONE & labels(issue) for pr in entry for issue in pr['issues'])
 
 
+def passed_on_phone(entry: list[dict]) -> bool:
+    """Every issue the entry fixes is closed, which only happens after the owner's pass, so it never goes on a
+    plan again (#1100). An entry with no linked issue has nothing to close and stays.
+
+    No timestamps: a follow-up PR can merge after its issue closed (#223 closed 10-04, PR #677 merged 10-05) and
+    the owner records the pass as a comment, so closedAt never moves past the merge."""
+    issues = [issue for pr in entry for issue in pr['issues']]
+    return bool(issues) and all(issue.get('state') == 'CLOSED' for issue in issues)
+
+
 def labels(item: dict) -> set[str]:
     return {node['name'] for node in item.get('labels', {}).get('nodes', [])}
 
@@ -791,6 +817,8 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     facing.sort(key=lambda pr: (0 if any(FIRST_ON_PHONE & labels(i) for i in pr['issues']) else 1,
                                 0 if owner_check(pr) else 1))
     entries = plan_entries(facing)
+    passed = [entry for entry in entries if passed_on_phone(entry)]
+    entries = [entry for entry in entries if not any(entry is gone for gone in passed)]
     # Only what the owner can check goes in the ten minutes: a written check (#504). A bug his phone found
     # with none goes with the unchecked changes, and the run names its issues so one gets written (#847);
     # "repeat what you did" sent him back to the issue for his own steps and content.
@@ -846,7 +874,8 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     also_waiting = [fix for fix in fixes if fix not in still]
     if not ordered:
         lines += ['Nothing new since that build: this is the same code, rebuilt.', '']
-    lines += [f'{len(ordered)} pull requests merged; {len(facing)} change something you see or hear.', '',
+    left_out = f' {len(passed)} changes whose issues are already closed are left out.' if passed else ''
+    lines += [f'{len(ordered)} pull requests merged; {len(facing)} change something you see or hear.{left_out}', '',
               '## Try these (about ten minutes)', '']
     if not budget and still:
         lines += ['No change new in this build has a phone check. The fixes below, from earlier builds, '

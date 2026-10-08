@@ -86,10 +86,18 @@ final class NarrationStartupProtectionTests: XCTestCase {
         let ledger = Ledger()
         let protection = ledger.protection(now: { [unowned self] in self.now })
         protection.protectUpcomingStart(eligible: true)
+
+        // The item load and first render happen before the engine publishes "starting", so the protection has to
+        // be open already here, not only once the first status arrives.
+        XCTAssertEqual(ledger.begins, 1, "a fresh start holds background time before it reaches starting")
+        XCTAssertTrue(protection.isProtecting)
+        XCTAssertEqual(protection.outcome, .protected)
+
         protection.statusChanged(to: .starting, eligible: { true })
         protection.statusChanged(to: .starting, eligible: { true })
 
         XCTAssertEqual(ledger.begins, 1, "a fresh start's early protection carries into its starting status")
+        XCTAssertTrue(protection.isProtecting)
         protection.statusChanged(to: .paused, eligible: { true })
         XCTAssertEqual(ledger.ends, 1, "pausing a pending start releases it")
     }
@@ -112,6 +120,11 @@ final class NarrationStartupProtectionTests: XCTestCase {
         let ledger = Ledger()
         let protection = ledger.protection(now: { [unowned self] in self.now })
         protection.protectUpcomingStart(eligible: false)
+
+        XCTAssertEqual(ledger.begins, 0, "narration rendered elsewhere is not protected before it starts")
+        XCTAssertFalse(protection.isProtecting)
+        XCTAssertNil(protection.outcome)
+
         protection.statusChanged(to: .starting, eligible: { false })
 
         XCTAssertEqual(ledger.begins, 0)

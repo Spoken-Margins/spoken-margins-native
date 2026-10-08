@@ -1,6 +1,5 @@
 import XCTest
 @testable import SessionKit
-@testable import SpokenMarginsApp
 
 final class Gate1PlaybackAutoplayQueueTests: XCTestCase {
     func testSourceFinishAllowsQueuedSummaryToAutoplay() {
@@ -76,6 +75,8 @@ final class Gate1PlaybackAutoplayQueueTests: XCTestCase {
         queue.enqueue("turn-summary-001")
         queue.enqueue("turn-response-001")
         queue.enqueue("turn-summary-002")
+        queue.enqueue("turn-summary-001")
+        XCTAssertEqual(queue.pendingTurnIds, ["turn-summary-001", "turn-response-001", "turn-summary-002"])
         var snapshot = SessionSnapshot()
         snapshot.status = .paused
         snapshot.phase = .conversation
@@ -151,6 +152,38 @@ final class Gate1PlaybackAutoplayQueueTests: XCTestCase {
             currentTargetType: TargetType.assistantTurnTTS.rawValue,
             currentTargetId: "turn-response-001"
         ).map(\.id), ["ij-ai"])
+    }
+
+    func testDeletedInterjectionIsNeverEligible() {
+        var deleted = interjection(id: "ij-deleted", targetType: .item, targetId: "item-pill")
+        deleted.status = "deleted"
+        XCTAssertTrue(Gate1SummaryEligibility.unsummarizedInterjections(
+            turns: [],
+            interjections: [deleted],
+            currentTargetType: TargetType.itemTextTTS.rawValue,
+            currentTargetId: "item-pill"
+        ).isEmpty)
+    }
+
+    func testMovedAPINamesAndModelDiagnosticsStayStable() throws {
+        XCTAssertEqual(String(describing: Gate1PlaybackAutoplayQueue.self), "Gate1PlaybackAutoplayQueue")
+        XCTAssertEqual(String(describing: Gate1SummaryEligibility.self), "Gate1SummaryEligibility")
+        var queue = Gate1PlaybackAutoplayQueue()
+        let snapshot = SessionSnapshot()
+        XCTAssertNil(queue.popReadyTurn(snapshot: snapshot, completedCurrentAudio: false))
+        XCTAssertFalse(queue.shouldDeferGeneratedTurnPlayback(snapshot: snapshot, turnId: "turn", completedCurrentAudio: false))
+        XCTAssertTrue(queue.shouldPlayPendingTurnNow(snapshot: snapshot, turnId: "turn", completedCurrentAudio: false))
+        XCTAssertTrue(Gate1SummaryEligibility.unsummarizedInterjections(
+            turns: [], interjections: [], currentTargetType: "item", currentTargetId: nil
+        ).isEmpty)
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let model = try String(contentsOf: root.appendingPathComponent(
+            "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift"
+        ), encoding: .utf8)
+        XCTAssertTrue(model.contains("diagnostics[\"pendingAutoPlayQueue\"]"))
+        XCTAssertTrue(model.contains("diagnostics[\"pendingAutoPlayTurnId\"]"))
     }
 
     private func interjection(id: String, targetType: InterjectionTargetType, targetId: String) -> Interjection {

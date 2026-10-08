@@ -215,6 +215,110 @@ final class WatchCaptureHandoffTests: XCTestCase {
         XCTAssertEqual(handoff.end(captureId: "cap-2", as: .saved, reading: pausedReading), .resumePlayback)
     }
 
+    // MARK: The numbers, as literals
+    //
+    // The tests above compute their inputs from the constants (`lateRequestTolerance + 1`), so a
+    // constant changed to a wrong number moves the input with it. These use the documented values.
+
+    func testALateRequestIsExactUpToOneAndAHalfSecondsAndApproximateAfter() {
+        for (lateBy, expected) in [(1.4, WatchCaptureAnchor.Precision.exact), (1.5, .exact), (1.6, .approximate)] {
+            var handoff = WatchCaptureHandoff()
+            let late = reading(at: lateBy)
+            guard case .start(let ack) = handoff.begin(request(), reading: late, now: late.readAt) else {
+                return XCTFail("expected a start")
+            }
+            XCTAssertEqual(ack.anchor.anchor?.precision, expected, "read \(lateBy) s after the press")
+        }
+    }
+
+    func testAPhoneReadingIsUsedUpToTwoSecondsOldAndStaleAfter() {
+        for (age, usable) in [(1.9, true), (2.0, true), (2.1, false)] {
+            var handoff = WatchCaptureHandoff()
+            guard case .start(let ack) = handoff.begin(request(), reading: reading(at: 0), now: t0.addingTimeInterval(age)) else {
+                return XCTFail("expected a start")
+            }
+            if usable {
+                XCTAssertEqual(ack.anchor.anchor?.positionMs, 61_000, "a reading \(age) s old")
+            } else {
+                XCTAssertEqual(ack.anchor, .unavailable(.staleReading), "a reading \(age) s old")
+            }
+        }
+    }
+
+    func testACaptureStopsHoldingPlaybackTenMinutesAfterItBegan() {
+        var handoff = WatchCaptureHandoff()
+        _ = handoff.begin(request("lost"), reading: reading(), now: t0)
+        XCTAssertEqual(handoff.openCaptureIds(now: t0.addingTimeInterval(599)), ["lost"])
+        XCTAssertEqual(handoff.openCaptureIds(now: t0.addingTimeInterval(600)), ["lost"])
+        XCTAssertEqual(handoff.openCaptureIds(now: t0.addingTimeInterval(601)), [])
+
+        // The same through `end`: a second capture that ends 599 s in still sees the first as open.
+        _ = handoff.begin(request("cap-2"), reading: reading(playing: false, at: 598), now: t0.addingTimeInterval(598))
+        XCTAssertEqual(handoff.end(captureId: "cap-2", as: .saved, reading: reading(playing: false, at: 599)), .leavePlayback(.anotherCaptureOpen))
+    }
+
+    /// Old Watch builds send no playing flag, and "nil counts as running": playback may have run on for
+    /// seconds before it stopped, so a request that arrives late is approximate, not exact.
+    func testARequestFromAnOlderWatchWithNoPlayingFlagCountsAsRunning() {
+        var handoff = WatchCaptureHandoff()
+        let stopped = reading(playing: false, at: 30)
+        guard case .start(let ack) = handoff.begin(request(playing: nil), reading: stopped, now: stopped.readAt) else {
+            return XCTFail("expected a start")
+        }
+        XCTAssertEqual(ack.anchor.anchor?.precision, .approximate)
+        XCTAssertEqual(ack.anchor.anchor?.approximateReason, .requestArrivedLate)
+
+        // The same request while the phone is still within the tolerance stays exact.
+        var prompt = WatchCaptureHandoff()
+        let soon = reading(playing: false, at: 1)
+        guard case .start(let promptAck) = prompt.begin(request(playing: nil), reading: soon, now: soon.readAt) else {
+            return XCTFail("expected a start")
+        }
+        XCTAssertEqual(promptAck.anchor.anchor?.precision, .exact)
+    }
+
+    // MARK: Bounded memory
+
+    /// A retry is answered from the last 64 ended captures. A capture that ended 64 captures ago is
+    /// forgotten, so a retry for it is a new capture; it can't be one that is still recording.
+    func testOnlyTheLast64EndedCapturesAreRemembered() {
+        var handoff = WatchCaptureHandoff()
+        for index in 0..<65 {
+            let id = "cap-\(index)"
+            _ = handoff.begin(request(id, playing: false), reading: reading(playing: false), now: t0)
+            XCTAssertEqual(handoff.end(captureId: id, as: .saved, reading: reading(playing: false, at: 1)), .leavePlayback(.notPausedForCapture), id)
+        }
+        for index in 1..<65 {
+            let id = "cap-\(index)"
+            guard case .duplicate = handoff.begin(request(id, playing: false), reading: reading(playing: false), now: t0) else {
+                return XCTFail("\(id) ended within the last 64 captures and should still be remembered")
+            }
+            XCTAssertEqual(handoff.end(captureId: id, as: .saved, reading: reading(playing: false, at: 2)), .ignored(.alreadyEnded), id)
+        }
+        guard case .start = handoff.begin(request("cap-0", playing: false), reading: reading(playing: false), now: t0) else {
+            return XCTFail("cap-0 ended 64 captures ago and is forgotten, so its retry begins a new capture")
+        }
+    }
+
+    /// Ends that arrive before their start are remembered the same way, so the late start doesn't pause.
+    func testOnlyTheLast64EarlyEndsAreRemembered() {
+        var handoff = WatchCaptureHandoff()
+        for index in 0..<65 {
+            XCTAssertEqual(handoff.end(captureId: "cap-\(index)", as: .saved, reading: reading(at: 9)), .ignored(.endBeforeStart))
+        }
+        for index in 1..<65 {
+            guard case .alreadyEnded(let ack) = handoff.begin(request("cap-\(index)"), reading: reading(at: 9.5), now: t0.addingTimeInterval(9.5)) else {
+                return XCTFail("cap-\(index) ended before it started, within the last 64, and should be remembered")
+            }
+            XCTAssertFalse(ack.pausedPlayback)
+        }
+        XCTAssertNil(handoff.pausedAtTransportGeneration)
+        guard case .start(let ack) = handoff.begin(request("cap-0"), reading: reading(at: 9.5), now: t0.addingTimeInterval(9.5)) else {
+            return XCTFail("cap-0's early end is 64 early ends old and forgotten, so its start begins a new capture")
+        }
+        XCTAssertTrue(ack.pausedPlayback)
+    }
+
     func testMessagesRoundTripAsJSON() throws {
         let ack = WatchCaptureAcknowledgement(
             captureId: "cap-1",

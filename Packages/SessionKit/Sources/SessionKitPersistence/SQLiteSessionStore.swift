@@ -154,6 +154,48 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         try loadBySession(kind: "interjection", sessionId: sessionId)
     }
 
+    /// The Margin rows `deleteItem(id:)` removes with the item: every row filed under it.
+    public func loadInterjections(itemId: String) throws -> [Interjection] {
+        try loadByItem(kind: "interjection", itemId: itemId)
+    }
+
+    /// Every audio path any stored Margin names, read from the stored JSON itself: live rows, rows that no
+    /// longer decode as a Margin, and rows already moved to quarantine. It is the check that no Margin
+    /// still uses a recording before the recording is deleted (#1035), so it fails closed: a row it can't
+    /// read, or a read that doesn't reach the end of the table, throws instead of leaving a reference out.
+    public func allMarginAudioPaths() throws -> [String] {
+        let live = try marginAudioPaths(sql: "SELECT payload FROM records WHERE kind = 'interjection';")
+        let quarantined = try marginAudioPaths(sql: "SELECT payload FROM quarantined_records WHERE kind = 'interjection';")
+        return live + quarantined
+    }
+
+    private func marginAudioPaths(sql: String) throws -> [String] {
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_margin_audio_paths")
+            }
+            defer { sqlite3_finalize(statement) }
+            var paths: [String] = []
+            while true {
+                let step = sqlite3_step(statement)
+                if step == SQLITE_DONE { return paths }
+                guard step == SQLITE_ROW else {
+                    throw SessionKitError.persistenceFailed("step_margin_audio_paths")
+                }
+                guard let raw = sqlite3_column_text(statement, 0),
+                      let object = try? JSONSerialization.jsonObject(with: Data(String(cString: raw).utf8)) as? [String: Any] else {
+                    throw SessionKitError.persistenceFailed("margin_row_unreadable")
+                }
+                switch object["audioPath"] {
+                case nil, is NSNull: continue
+                case let path as String: paths.append(path)
+                default: throw SessionKitError.persistenceFailed("margin_audio_path_unreadable")
+                }
+            }
+        }
+    }
+
     public func saveInterjectionShareRevision(_ revision: InterjectionShareRevision) throws {
         try withTransaction {
             let existing: InterjectionShareRevision? = try loadOptional(
@@ -697,13 +739,24 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     public func deleteItem(id: String) throws {
         try withConnectionLock {
             var statement: OpaquePointer?
-            let sql = "DELETE FROM records WHERE item_id = ? OR (kind = 'item' AND id = ?);"
+            // Turns are saved with a session id and no item id, so they are found through the
+            // item's session rows. One statement: SQLite reads the session rows before it
+            // deletes any, and a failure leaves the item whole.
+            let sql = """
+            DELETE FROM records
+            WHERE item_id = ?
+               OR (kind = 'item' AND id = ?)
+               OR (kind = 'turn' AND session_id IN (
+                    SELECT id FROM records WHERE kind = 'session' AND item_id = ?
+               ));
+            """
             guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_delete_item")
             }
             defer { if statement != nil { sqlite3_finalize(statement) } }
             bind(statement, index: 1, value: id)
             bind(statement, index: 2, value: id)
+            bind(statement, index: 3, value: id)
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw SessionKitError.persistenceFailed("step_delete_item")
             }
