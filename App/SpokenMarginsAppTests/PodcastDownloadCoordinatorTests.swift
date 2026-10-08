@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 import SessionKit
 import SessionKitPersistence
@@ -472,6 +473,111 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         }
     }
 
+    /// #919: a 200 whose body is a sign-in page or an error message is not the episode. It must not
+    /// replace the saved audio, and it must not be marked available offline as a first download either.
+    func testAWebPageDoesNotReplaceAWorkingEpisode() async throws {
+        for (name, body) in Self.responsesThatAreNotAudio {
+            let fixture = try makeFixture()
+            let directory = fixture.support.appending(path: "PodcastAudio")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let wav = Self.wavData()
+            let saved = directory.appending(path: "saved.wav")
+            try wav.write(to: saved)
+            XCTAssertNoThrow(try AVAudioFile(forReading: saved), "\(name): the saved episode plays before the download")
+            try fixture.store.savePodcastDownload(PodcastDownloadRecord(id: "download", itemId: "episode",
+                remoteURL: "https://example.com/audio", localRelativePath: saved.lastPathComponent, state: .downloading,
+                bytesWritten: 0, expectedBytes: Int64(wav.count)))
+            let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
+            let reservation = try await ledger.reserve(ownerId: "podcast-download-episode:page", byteCount: Int64(body.count))
+            let attempt = PodcastDownloadAttempt(itemId: "episode", generation: "page",
+                reservationId: reservation.id, userInitiated: true)
+            let coordinator = try PodcastDownloadCoordinator(store: fixture.store, ledger: ledger,
+                applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false)
+            XCTAssertTrue(coordinator.restoreAttempt(attempt), name)
+            var published = false
+            coordinator.onLocalAssetReady = { _, _ in published = true }
+            let staged = fixture.root.appending(path: "page.mp3")
+            try body.write(to: staged)
+
+            await coordinator.finishDownload(attempt, stagedURL: staged, responseOK: true)
+
+            XCTAssertFalse(published, name)
+            XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline, name)
+            XCTAssertEqual(coordinator.validatedLocalURL(for: "episode"), saved, name)
+            XCTAssertEqual(try Data(contentsOf: saved), wav, "\(name): the saved episode is untouched")
+            XCTAssertNoThrow(try AVAudioFile(forReading: saved), "\(name): and still plays")
+            let reason = coordinator.recordsByItemId["episode"]?.failureReason ?? ""
+            XCTAssertTrue(reason.contains("web page or text"), "\(name): \(reason)")
+            XCTAssertTrue(reason.contains("saved audio is still available"), "\(name): \(reason)")
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), ["saved.wav"],
+                           "\(name): the page was not kept next to the episode")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path), name)
+            XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty, name)
+            XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty, name)
+            coordinator.shutdown()
+        }
+    }
+
+    func testAWebPageIsNotAFirstDownloadEither() async throws {
+        for (name, body) in Self.responsesThatAreNotAudio {
+            let fixture = try makeFixture()
+            let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
+            let reservation = try await ledger.reserve(ownerId: "podcast-download-episode:first", byteCount: Int64(body.count))
+            let attempt = PodcastDownloadAttempt(itemId: "episode", generation: "first",
+                reservationId: reservation.id, userInitiated: true)
+            try fixture.store.savePodcastDownload(PodcastDownloadRecord(id: "download", itemId: "episode",
+                remoteURL: "https://example.com/audio", state: .downloading))
+            let coordinator = try PodcastDownloadCoordinator(store: fixture.store, ledger: ledger,
+                applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false)
+            XCTAssertTrue(coordinator.restoreAttempt(attempt), name)
+            var published = false
+            coordinator.onLocalAssetReady = { _, _ in published = true }
+            let staged = fixture.root.appending(path: "page.mp3")
+            try body.write(to: staged)
+
+            await coordinator.finishDownload(attempt, stagedURL: staged, responseOK: true)
+
+            XCTAssertFalse(published, name)
+            XCTAssertEqual(coordinator.status(itemId: "episode"), .failed, name)
+            XCTAssertNil(coordinator.validatedLocalURL(for: "episode"), name)
+            XCTAssertTrue(coordinator.recordsByItemId["episode"]?.failureReason?.contains("web page or text") == true, name)
+            XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty, name)
+            XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty, name)
+            XCTAssertTrue(try fixture.store.loadAudioAssets(itemId: "episode").isEmpty, name)
+            coordinator.shutdown()
+        }
+    }
+
+    /// The other side of #919: real audio is still adopted. Without this, a check that refuses
+    /// everything would pass the two tests above.
+    func testRealAudioIsStillAdoptedAsADownload() async throws {
+        let fixture = try makeFixture()
+        let wav = Self.wavData()
+        let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
+        let reservation = try await ledger.reserve(ownerId: "podcast-download-episode:audio", byteCount: Int64(wav.count))
+        let attempt = PodcastDownloadAttempt(itemId: "episode", generation: "audio",
+            reservationId: reservation.id, userInitiated: true)
+        try fixture.store.savePodcastDownload(PodcastDownloadRecord(id: "download", itemId: "episode",
+            remoteURL: "https://example.com/audio", state: .downloading))
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, ledger: ledger,
+            applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false)
+        XCTAssertTrue(coordinator.restoreAttempt(attempt))
+        var published: URL?
+        coordinator.onLocalAssetReady = { _, url in published = url }
+        let staged = fixture.root.appending(path: "episode.wav")
+        try wav.write(to: staged)
+
+        await coordinator.finishDownload(attempt, stagedURL: staged, responseOK: true)
+
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline)
+        let local = try XCTUnwrap(coordinator.validatedLocalURL(for: "episode"))
+        XCTAssertEqual(published, local)
+        XCTAssertEqual(try Data(contentsOf: local), wav)
+        XCTAssertNoThrow(try AVAudioFile(forReading: local))
+        XCTAssertNil(coordinator.recordsByItemId["episode"]?.failureReason)
+        coordinator.shutdown()
+    }
+
     func testAdInsertedDownloadLargerThanItsHeadLengthIsKeptWhenItFits() async throws {
         // Omny/Triton served 37,159,200 bytes after HEAD reported 30,886,420, and the download was discarded.
         let fixture = try makeFixture()
@@ -611,6 +717,38 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty)
         XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
         coordinator.shutdown()
+    }
+
+    private static let responsesThatAreNotAudio: [(String, Data)] = [
+        ("hotel sign-in page", Data("<!DOCTYPE html><html><body>Sign in to the guest Wi-Fi</body></html>".utf8)),
+        ("json error", Data(#"{"error":"forbidden","status":403}"#.utf8)),
+        ("xml error", Data(#"<?xml version="1.0"?><Error><Code>AccessDenied</Code></Error>"#.utf8)),
+    ]
+
+    /// A real PCM WAV (8 kHz, 16-bit, mono) that AVFoundation opens, so "a working episode" here is one that plays.
+    private static func wavData(seconds: Double = 0.5) -> Data {
+        let sampleRate: UInt32 = 8_000
+        var samples = Data()
+        for index in 0..<Int(Double(sampleRate) * seconds) {
+            let value = Int16((sin(Double(index) * 2 * .pi * 440 / Double(sampleRate)) * 8_000).rounded())
+            withUnsafeBytes(of: value.littleEndian) { samples.append(contentsOf: $0) }
+        }
+        func le32(_ value: UInt32) -> Data { withUnsafeBytes(of: value.littleEndian) { Data($0) } }
+        func le16(_ value: UInt16) -> Data { withUnsafeBytes(of: value.littleEndian) { Data($0) } }
+        var wav = Data("RIFF".utf8)
+        wav.append(le32(UInt32(36 + samples.count)))
+        wav.append(Data("WAVEfmt ".utf8))
+        wav.append(le32(16))
+        wav.append(le16(1))
+        wav.append(le16(1))
+        wav.append(le32(sampleRate))
+        wav.append(le32(sampleRate * 2))
+        wav.append(le16(2))
+        wav.append(le16(16))
+        wav.append(Data("data".utf8))
+        wav.append(le32(UInt32(samples.count)))
+        wav.append(samples)
+        return wav
     }
 
     private func waitForStarts(_ count: Int, starts: () -> Int) async throws {

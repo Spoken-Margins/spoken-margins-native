@@ -30,6 +30,17 @@ enum PodcastDownloadTransportURLPolicy {
     }
 }
 
+/// Why a finished download was refused. The text becomes the record's failure reason (#919).
+private enum PodcastDownloadFailure: LocalizedError {
+    case notAudio
+
+    var errorDescription: String? {
+        switch self {
+        case .notAudio: "The server sent a web page or text instead of the episode's audio."
+        }
+    }
+}
+
 /// Stored by URLSession with the task, so process reconstruction preserves ownership.
 struct PodcastDownloadAttempt: Codable, Equatable, Sendable {
     let itemId: String
@@ -569,6 +580,10 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             guard responseOK, let stagedURL,
                   let size = try stagedURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else {
                 throw CocoaError(.fileReadCorruptFile)
+            }
+            // A 200 can carry a sign-in page or an error message. Neither may replace a working episode (#919).
+            guard !DownloadedAudioSniffer.looksLikeText(fileAt: stagedURL) else {
+                throw PodcastDownloadFailure.notAudio
             }
             let destination = directory.appending(path: "\(attempt.generation).\(stagedURL.pathExtension)")
             try FileManager.default.moveItem(at: stagedURL, to: destination)
