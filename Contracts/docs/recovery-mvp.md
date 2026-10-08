@@ -81,7 +81,7 @@ Every core flow has three distinct states: `implemented`, `verified`, and `human
 
 The preservation check covers installed-Piper selection, article and podcast playback, AirPod removal/reinsertion, foreground controls, background continuity, and lock-screen play/pause/back/forward. The final daily-driver check adds representative Spotify, Apple Podcasts, RSS, and direct-audio handoffs; Safari-page, Files Markdown, Safari-extension, and Obsidian intake without autoplay or session replacement; typed Add Source intake; playback continuity through Library, Sources, Margins, Item, Settings, and Export; exclusive recording; podcast scrubbing; Now Playing restoration; recoverable deletion and permanent-delete confirmation; deterministic native-text and publisher-chapter Listening Map navigation; mapless podcast fallback; podcast context around a timestamp; scoped local interjection summary; summary playback and interjection; pasted-response import/playback/interjection; Import Inbox retry/delete; AI-handoff export; and proof that remote model calls, on-device AI map generation, and full native-audio transcript disclosure are impossible in the default release profile.
 
-Before requesting either check, provide a build number and SHA, supported device/OS, exact in/out scope, known issues, reset instructions, seeded items, privacy-safe diagnostics, automated evidence, and a pass/fail checklist.
+Before requesting either check, provide a build number and SHA, supported device/OS, exact in/out scope, known issues, reset instructions, seeded items, diagnostics, automated evidence, and a pass/fail checklist.
 
 ## Stopping Rules
 

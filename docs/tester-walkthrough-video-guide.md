@@ -272,13 +272,13 @@ Use a quick montage:
 - Settings showing voice choice, speaking rate, text navigation, and media skip
   intervals.
 - A recoverable Recently Deleted item.
-- **Copy Privacy-Safe Diagnostics**.
+- **Share Diagnostics**.
 
 **Voiceover**
 
 > Spoken Margins also supports Safari and share-sheet intake, offline podcast
 > downloads, selectable voices and navigation units, recoverable deletion, and
-> privacy-safe diagnostics for beta feedback. Help inside the app always
+> diagnostics you can share for beta feedback. Help inside the app always
 > contains the same guided tour and source-specific instructions.
 
 ### 3:45–3:55 — Close
@@ -356,7 +356,7 @@ Replace `[VIDEO URL]` after the YouTube upload.
 > Full walkthrough: [VIDEO URL]
 >
 > For feedback, take a screenshot in TestFlight. When useful, attach Settings →
-> Support & Privacy → Copy Privacy-Safe Diagnostics. Please report the device,
+> Support & Privacy → Share Diagnostics. Please report the device,
 > iOS version, expected result, actual result, and whether it reproduces.
 
 ## Complete Feature-Coverage Checklist
@@ -433,7 +433,7 @@ on a physical device.
 - [ ] Explain that OpenAI response storage is disabled.
 - [ ] Revoke data sharing and delete the key are available in Settings.
 - [ ] Privacy Policy, Terms, Support, and on-device voice legal information.
-- [ ] Copy Privacy-Safe Diagnostics for beta feedback.
+- [ ] Share Diagnostics for beta feedback.
 
 ### Explicitly out of scope for this release — do not advertise
 
