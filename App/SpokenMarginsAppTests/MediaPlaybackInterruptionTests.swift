@@ -361,6 +361,31 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertNil(model.pendingImportedCommentary, "the automatic prompt adds no second cue for the same Margin")
     }
 
+    /// #932 (Codex audit): losing the headphones during the chime must not let their voice start through the
+    /// speaker. The voice waits for Play.
+    func testLosingTheHeadphonesDuringTheChimeHoldsTheVoiceUntilPlay() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, layerIsMuted: false)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id })
+        model.playSharedMarginMoment(row)
+        defer { model.endMarginMoment(); model.pause() }
+        model.playMarginMomentNow()
+        XCTAssertNotNil(model.diagnostics["marginMoment.chime"], "the chime is playing")
+
+        NotificationCenter.default.post(
+            name: AVAudioSession.routeChangeNotification, object: AVAudioSession.sharedInstance(),
+            userInfo: [AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue]
+        )
+        try waitUntil("the Margin is held") { model.marginMomentVoiceIsPaused }
+        RunLoop.main.run(until: Date().addingTimeInterval(1))
+        XCTAssertNil(try fixture.storedRecord()?.firstHeardAt, "their voice didn't start on the new route")
+
+        model.playPause()
+        XCTAssertNotNil(try fixture.storedRecord()?.firstHeardAt, "Play starts their voice")
+    }
+
     /// #866 (found on the phone): Add Margin while a shared Margin's moment plays its voice used to be refused.
     /// It now stops the voice, records at once at the shared Margin's place (not where the source paused a tick
     /// after it), and the source carries on after the save like after any Margin (J3).
