@@ -131,7 +131,8 @@ class ResearchRunnerTests(unittest.TestCase):
             self.assertIn('after 0 tests', none.error)  # discovered nothing: not a pass
 
     def test_caddy_suite_needs_its_checks_to_pass_and_be_counted(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        # The fake scripts below don't use mapfile, so the probe is stubbed: on macOS bash 3.2 it would skip.
+        with tempfile.TemporaryDirectory() as temporary, patch.object(research_tests, 'bash_has_mapfile', return_value=True):
             script = 'research/B4/deploy/test-edit-caddyfile.sh'
             self.write(temporary, script, 'echo "ok   one"\necho "8 checks passed"\n')
             self.assertEqual(research_tests.caddy_suite(Path(temporary)).tests, 8)
@@ -201,17 +202,17 @@ class ResearchRunnerTests(unittest.TestCase):
     def test_bash_without_mapfile_skips_the_caddy_suite_by_name(self):
         # edit-caddyfile.sh uses `mapfile`; macOS /bin/bash 3.2 has none, so the suite would fail there
         # for a reason that says nothing about the filter.
-        real_run = research_tests.run
-
-        def fake(args, cwd, env=None):
-            if args[:2] == ['bash', '-c']:
-                return subprocess.CompletedProcess(args, 1, '', '')
-            return real_run(args, cwd, env)
-
-        with patch.object(research_tests, 'run', side_effect=fake):
+        with patch.object(research_tests, 'bash_has_mapfile', return_value=False):
             result = research_tests.caddy_suite(ROOT)
         self.assertFalse(result.ran)
         self.assertIn('no `mapfile`', result.skipped)
+
+    def test_the_mapfile_probe_asks_the_bash_on_path(self):
+        seen = []
+        with patch.object(research_tests, 'run',
+                          side_effect=lambda args, cwd, env=None: seen.append(args) or subprocess.CompletedProcess(args, 1)):
+            self.assertFalse(research_tests.bash_has_mapfile(ROOT))
+        self.assertEqual(seen, [['bash', '-c', 'type mapfile']])
 
     def test_a_missing_third_party_package_skips_the_suite_but_a_missing_own_module_fails_it(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -136,10 +136,14 @@ def python_suite(root, label, folder, arguments):
     return Result(label, tests=tests)
 
 
+def bash_has_mapfile(root):
+    return run(['bash', '-c', 'type mapfile'], root).returncode == 0
+
+
 def caddy_suite(root):
     label = 'shell research/B4/deploy/test-edit-caddyfile.sh'
     # edit-caddyfile.sh reads the Caddyfile with `mapfile`, which bash 3.2 (macOS /bin/bash) lacks.
-    if run(['bash', '-c', 'type mapfile'], root).returncode:
+    if not bash_has_mapfile(root):
         return Result(label, skipped='the `bash` on PATH has no `mapfile` (macOS /bin/bash is 3.2); '
                                      'the Caddy filter script did not run')
     done = run(['bash', str(root / 'research/B4/deploy/test-edit-caddyfile.sh')], root)
