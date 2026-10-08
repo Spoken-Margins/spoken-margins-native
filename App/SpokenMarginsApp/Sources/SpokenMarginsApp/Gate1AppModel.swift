@@ -7553,48 +7553,33 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func diagnosticsExportText() -> String? {
-        var safe = diagnostics
-            .filter { !Self.diagnosticKeyMayContainUserContent($0.key) }
-            .mapValues(Self.redactedDiagnosticValue)
+        var stored: [String: String] = [:]
         if let store {
-            let stored = PodcastAnchorCaptureDiagnostics.exportEntries(
+            stored = PodcastAnchorCaptureDiagnostics.exportEntries(
                 sessions: (try? store.loadSessions()) ?? [],
                 interjections: { try store.loadInterjections(sessionId: $0) }
             )
-            safe.merge(stored.mapValues(Self.redactedDiagnosticValue)) { _, stored in stored }
         }
-        safe["developerBuild"] = developerDiagnosticBuild
-        safe["developerRecording"] = developerRecording.exportJSON()
-        safe["playbackEvents"] = playbackEventRecording.exportJSON()
-        safe["schemaVersion"] = "spoken-margins.diagnostics.v1"
-        safe["exportedAt"] = ISO8601DateFormatter().string(from: Date())
-        safe["playbackStatus"] = snapshot.status.rawValue
-        safe["sessionPhase"] = snapshot.phase.rawValue
-        safe["targetType"] = snapshot.targetType ?? "none"
-        safe["pendingAIJobs"] = "\(snapshot.pendingAiJobCount)"
+        let entries = DiagnosticsExport.entries(
+            live: diagnostics,
+            stored: stored,
+            fixed: DiagnosticsExport.Fixed(
+                developerBuild: developerDiagnosticBuild,
+                developerRecording: developerRecording.exportJSON(),
+                playbackEvents: playbackEventRecording.exportJSON(),
+                exportedAt: Date(),
+                playbackStatus: snapshot.status.rawValue,
+                sessionPhase: snapshot.phase.rawValue,
+                targetType: snapshot.targetType,
+                pendingAIJobs: snapshot.pendingAiJobCount
+            )
+        )
         do {
-            let data = try JSONSerialization.data(withJSONObject: safe, options: [.prettyPrinted, .sortedKeys])
-            return String(data: data, encoding: .utf8)
+            return try DiagnosticsExport.jsonText(entries)
         } catch {
             reportFailure(error, context: "Diagnostics export failed")
             return nil
         }
-    }
-
-    private static func redactedDiagnosticValue(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: #"https?://[^\s]+"#, with: "<redacted-url>", options: .regularExpression)
-            .replacingOccurrences(of: #"/(?:private|Users|var)/[^\s]+"#, with: "<redacted-path>", options: .regularExpression)
-    }
-
-    private static func diagnosticKeyMayContainUserContent(_ key: String) -> Bool {
-        [
-            "lastStatus",
-            "recentFailure",
-            "quickAccessFolder",
-            "lastSourceLinkClipboardPaste",
-            "lastBrowserTextSource"
-        ].contains(key)
     }
 
     func dispatchGate2CompactCommand(
