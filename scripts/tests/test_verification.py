@@ -58,6 +58,33 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual(step['simulator_crash_report'], crashes[-1])
             self.assertEqual(step['exit_code'], 124)
 
+    def test_a_flood_on_a_desk_pool_device_marks_it_unsafe_before_the_shutdown(self):
+        # #688: the pool erases and reuses its devices, so a device that flooded must be retired, not reused.
+        import json
+        import os
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary) / 'state'
+            state.mkdir()
+            (state / 'desk-simulator-pool.json').write_text(json.dumps({'devices': {'pool-device': {'name': 'SM Lane Desk pool 1'}}}))
+            seen = {}
+
+            def shutdown(command, **kwargs):
+                unsafe = state / 'unsafe-simulators.json'
+                seen['unsafe_at_shutdown'] = json.loads(unsafe.read_text()) if unsafe.exists() else {}
+                return mock.Mock(returncode=0)
+
+            run = verification.Run(Path(temporary) / 'run', 'test')
+            run.manifest['destination'] = {'udid': 'pool-device'}
+            run.crash_baseline = {}
+            crashes = [f'WidgetRenderer_Default-2026-09-24-10000{i}.ips' for i in range(3)]
+            with mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}), \
+                    patch.object(verification, 'new_crash', side_effect=self.crash_reports(*crashes)), \
+                    patch.object(verification.subprocess, 'run', side_effect=shutdown):
+                with self.assertRaises(RuntimeError):
+                    run.command('crash-check', [sys.executable, '-c', 'import time; time.sleep(60)'])
+            self.assertIn('crash flood', seen['unsafe_at_shutdown']['pool-device']['reason'])
+
     def test_a_crash_report_renamed_while_it_is_read_is_skipped(self):
         # integration-4ca9d9c (#767): macOS wrote `.SpokenMarginsApp-….ips`, then renamed it between
         # the scan's glob and its stat, and the whole app run died with FileNotFoundError.
