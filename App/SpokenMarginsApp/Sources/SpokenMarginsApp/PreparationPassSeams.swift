@@ -8,6 +8,8 @@ struct PreparationPassSeams {
     var deviceConditions: @MainActor () -> SpeechEngineConditions = { SupertonicResourcePolicy.currentConditions() }
     /// Nil renders with the shared Supertonic renderer, paced per render (#377).
     var renderer: (@MainActor () throws -> any SupertonicRendering)?
+    /// How a run waits out a heat pause (#905). Tests pass one that returns at once and counts the seconds.
+    var pause: @Sendable (Int) async throws -> Void = { seconds in try await Task.sleep(for: .seconds(seconds)) }
 }
 
 extension Gate1AppModel {

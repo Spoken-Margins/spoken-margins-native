@@ -490,9 +490,9 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
                 evidenceClass: .acousticVerified, localMediaTimeMs: 45_000)))
         try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(id: "projection", itemId: "item",
             recipientEditionSHA256: "old", algorithmVersion: "episode-projection.exact-edition.v1", points: [], intervals: []))
-        try Gate1AppModel.invalidatePodcastEdition(itemId: "item", digest: "old", store: store)
+        try store.invalidateImportedPodcastPlacements(itemId: "item", editionSHA256: "old")
         XCTAssertEqual(try store.loadImportedCommentaryInterjections(layerId: layer.id).first?.resolution.localMediaTimeMs, 45_000)
-        try Gate1AppModel.invalidatePodcastEdition(itemId: "item", digest: "new", store: store)
+        try store.invalidateImportedPodcastPlacements(itemId: "item", editionSHA256: "new")
         let reopened = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
         let note = try XCTUnwrap(reopened.loadImportedCommentaryInterjections(layerId: layer.id).first)
         XCTAssertEqual(note.approvedTranscript, "Preserve my words")

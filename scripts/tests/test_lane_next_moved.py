@@ -62,6 +62,17 @@ class UntestedMovesTests(RealGit):
         self.assertIsNone(commits)
         self.assertIn('App/Shared.swift', why)
 
+    def test_a_file_the_pr_changed_in_an_earlier_commit_still_counts_as_the_pr_s(self):
+        # Every other test has a one-commit PR, where "the PR's files" and "its last commit's files" are the
+        # same set. Here the last commit only adds a doc, and next changes the file the first commit touched.
+        self.pr_head('App/Sharing.swift')
+        head = self.pr_head('docs/notes.md')
+        tested = lane.fetch_base(self.tree, 'next')
+        self.move_next('App/Sharing.swift', text='next side\n')
+        commits, why = self.moves(head, tested)
+        self.assertIsNone(commits)
+        self.assertIn('touch this PR\'s files (App/Sharing.swift)', why)
+
     def test_a_commit_touching_a_build_input_needs_a_re_test(self):
         for name in ('project.yml', 'SpokenMarginsNative.xcodeproj/project.pbxproj', 'Config/Base.xcconfig',
                      'Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved',

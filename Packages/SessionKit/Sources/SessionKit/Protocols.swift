@@ -407,6 +407,20 @@ public protocol RecordingClient {
     func beginRecording() throws
     func finishRecording(audioRef: String?) throws -> String
     func cancelRecording() throws
+    /// What the recorder has actually taken in so far, or nil when it can't tell (#937).
+    func captureReading() -> RecordingCaptureReading?
+    /// Starts a new recorder on a new file after one that never got audio. Throws when it can't.
+    func restartCapture() throws
+    /// Privacy-safe fields about the capture in progress (route, restarts, level), for the diagnostics log.
+    func captureDiagnostics() -> [String: String]
+}
+
+extension RecordingClient {
+    public func captureReading() -> RecordingCaptureReading? { nil }
+    public func restartCapture() throws {
+        throw SessionKitError.persistenceFailed("recording_restart_unsupported")
+    }
+    public func captureDiagnostics() -> [String: String] { [:] }
 }
 
 public protocol TranscriptionClient {

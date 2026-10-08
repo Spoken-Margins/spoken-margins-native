@@ -16,27 +16,6 @@ final class ExportIsolationRegressionTests: XCTestCase {
         XCTAssertTrue(markdown.contains("Written Margin:\n  Keep  this exact thought."))
     }
 
-    func testLegacyMissingAudioExportDoesNotBecomeWritten() throws {
-        let legacy = ExportInterjection(
-            id: "legacy-audio-margin",
-            sessionId: "session",
-            targetType: InterjectionTargetType.item.rawValue,
-            targetId: "item",
-            roughPercent: 0,
-            anchorBefore: "Before.",
-            anchorAfter: "After.",
-            mediaTimeMs: nil,
-            transcriptionStatus: "failed",
-            transcript: nil,
-            audioPath: nil
-        )
-        let encoded = try JSONEncoder().encode(legacy)
-        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-
-        XCTAssertNil(legacy.captureKind)
-        XCTAssertNil(payload["captureKind"])
-    }
-
     func testBuildExportCarriesWrittenKindWhileLegacyMissingAudioRemainsUnset() throws {
         let item = Item(id: "item-export-kind", title: "Export kind", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
         func session(_ id: String) -> Session {
@@ -81,6 +60,9 @@ final class ExportIsolationRegressionTests: XCTestCase {
         XCTAssertEqual(writtenExport.interjections.first?.captureKind, .written)
         XCTAssertEqual(writtenExport.interjections.first?.transcript, "  Exact written text.  ")
         XCTAssertNil(legacyExport.interjections.first?.captureKind)
+        // The wire form says nothing either: no key a reader could take for "written" or "audio".
+        let legacyWire = try JSONSerialization.jsonObject(with: JSONEncoder().encode(try XCTUnwrap(legacyExport.interjections.first)))
+        XCTAssertNil((legacyWire as? [String: Any])?["captureKind"])
     }
 
     func testEqualLengthNotesFromAnotherSessionCannotSubstituteForExportContent() throws {

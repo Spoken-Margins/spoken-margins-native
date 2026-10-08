@@ -59,6 +59,40 @@ final class NarrationVoiceNoticeTests: XCTestCase {
         XCTAssertEqual(notice.chapterLine, "iOS voice for this part", "Resume restores the line without another banner")
     }
 
+    /// Each clause of the guard has to be able to refuse on its own. The test above changes the phase and the
+    /// target together, so a missing phase clause or a missing target clause would still be refused by another one.
+    func testEachGuardClauseRefusesTheNoticeOnItsOwn() {
+        // A reply being played with the item's own id as both the target and the replacement: only the phase differs.
+        var notice = NarrationVoiceNotice()
+        var snapshot = playing("pdf")
+        snapshot.phase = .aiResponsePlayback
+        XCTAssertNil(notice.update(snapshot: snapshot, replacementTargetId: "pdf"), "a reply is not item playback")
+        XCTAssertNil(notice.chapterLine)
+        XCTAssertNotNil(notice.update(snapshot: playing("pdf"), replacementTargetId: "pdf"),
+                        "the refused reply did not use up the item's banner")
+
+        // The replacement is the item's, but the chunk playing is another target: only the target differs.
+        notice = NarrationVoiceNotice()
+        snapshot = playing("pdf")
+        snapshot.targetId = "another-chunk"
+        XCTAssertNil(notice.update(snapshot: snapshot, replacementTargetId: "pdf"), "the playing target must be the replacement")
+        XCTAssertNil(notice.chapterLine)
+        XCTAssertNotNil(notice.update(snapshot: playing("pdf"), replacementTargetId: "pdf"),
+                        "the refused target did not use up the item's banner")
+
+        // The replacement names another item than the one playing: only the replacement differs.
+        notice = NarrationVoiceNotice()
+        snapshot = playing("pdf")
+        XCTAssertNil(notice.update(snapshot: snapshot, replacementTargetId: "another-item"))
+        XCTAssertNil(notice.chapterLine)
+
+        // The item has no id worth announcing.
+        notice = NarrationVoiceNotice()
+        snapshot = playing("")
+        XCTAssertNil(notice.update(snapshot: snapshot, replacementTargetId: ""))
+        XCTAssertNil(notice.chapterLine)
+    }
+
     private func playing(_ itemId: String) -> SessionSnapshot {
         var snapshot = SessionSnapshot()
         snapshot.sessionId = "session-\(itemId)"

@@ -7,6 +7,7 @@ real first lines seen on PRs #344, #366, #374 and #418 on 2026-09-30.
 """
 
 import ast
+import importlib.util
 import json
 import re
 import sys
@@ -203,6 +204,24 @@ class CandidateFilter(unittest.TestCase):
         ok, why = A.evaluate_pr(pr(), FIXTURE["comments_audited_old_head"], lane_pr)
         self.assertEqual((ok, why), (True, "risky: lane"))
 
+    def test_the_audit_s_lane_patterns_follow_the_runner_s_lane_policy(self):
+        # sm_codex_audit.py keeps its own copy of scripts/test-scope.py's LANE_PREFIXES and LANE_FILES. A path the
+        # runner holds "for a Codex audit" that the audit does not call risky would wait for an audit that is never
+        # scheduled, so the policy itself is the source of truth here, not the hand-written LANE_PATHS above.
+        spec = importlib.util.spec_from_file_location(
+            "scope_for_audit_test", Path(__file__).resolve().parents[2] / "scripts" / "test-scope.py")
+        scope = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(scope)
+        held = sorted(scope.LANE_FILES) + [prefix + "example" for prefix in scope.LANE_PREFIXES]
+        self.assertGreaterEqual(len(held), 10)
+        for p in held:
+            self.assertTrue(scope.is_lane_path(p), p)
+            self.assertEqual(A.risky_areas([p]), ["lane"], f"{p} is held for an audit by the runner but not risky here")
+        # and the other way round, on the paths named in these tests: the audit adds no lane path of its own
+        for p in self.LANE_PATHS + ["scripts/tests/test_lane_runner.py", "TestPlans/scripted-journeys.json",
+                                    "scripts/phone-build", "ops/codex/sm_codex_worker.py"]:
+            self.assertEqual("lane" in A.risky_areas([p]), scope.is_lane_path(p), p)
+
     def test_ordinary_paths_stay_off_the_lane(self):
         # The audit count for ordinary PRs must not rise: the lane's tests, the Test Desk's journey list,
         # other scripts, the ops tools and the lane docs don't make a PR risky.
@@ -330,6 +349,86 @@ class Rearm(unittest.TestCase):
     def test_posted_comment_reads_as_clean(self):
         body = A.build_comment(366, HEAD, "No blocking findings.", [366])
         self.assertTrue(self.decide([self.LANE, {"created_at": "2026-09-30T15:40:00Z", "body": body}])[0])
+
+
+class RearmWhileLaneFinishes(unittest.TestCase):
+    def api_response(self, cmd, **kwargs):
+        path = cmd[-1]
+        if 'actions/workflows/lane.yml/runs?' in path:
+            if self.api_error:
+                raise self.api_error
+            runs = [self.active_run] if 'status=in_progress&' in path else []
+            return json.dumps({'total_count': len(runs), 'workflow_runs': runs})
+        if '/actions/runs/100/jobs?' in path:
+            return json.dumps(self.jobs)
+        self.fail(f'unexpected API request: {cmd}')
+
+    def setUp(self):
+        self.armed = pr(**Rearm.ARMED)
+        self.active_run = {'id': 100, 'status': 'in_progress',
+                           'display_title': f'lane pr=366 head={HEAD} lane=false auto=true'}
+        self.jobs = {'total_count': 1, 'jobs': [{'name': 'automerge', 'status': 'in_progress'}]}
+        self.api_error = None
+
+    def test_rearm_waits_without_consuming_it_then_retries_after_completion(self):
+        # A posted PASS but still has labels/cleanup to finish. B would be deduped away.
+        with patch.object(A, 'fetch_open_prs', return_value=[self.armed]), \
+                patch.object(A, 'fetch_comments', return_value=[Rearm.LANE, Rearm.CLEAN]), \
+                patch.object(A, 'fetch_label_events', return_value=[]), \
+                patch.object(A, 'REARMED', set()), patch.object(A, 'log'), \
+                patch.object(A, 'run', return_value=SimpleNamespace(returncode=0)) as edit, \
+                patch('subprocess.check_output', side_effect=self.api_response):
+            for status in ('in_progress', 'queued', None):
+                with self.subTest(status=status):
+                    self.jobs['jobs'] = [{'name': 'automerge', 'status': status}] if status else []
+                    self.jobs['total_count'] = len(self.jobs['jobs'])
+                    A.rearm_pass([self.armed], False)
+                    edit.assert_not_called()
+                    self.assertNotIn(366, A.REARMED)
+            self.jobs = {'total_count': 1, 'jobs': [
+                {'name': 'automerge', 'status': 'completed', 'conclusion': 'success'}]}
+            A.rearm_pass([self.armed], False)
+            self.assertEqual(edit.call_count, 2)
+            self.assertIn('--remove-label', edit.call_args_list[0].args[0])
+            self.assertIn('--add-label', edit.call_args_list[1].args[0])
+            self.assertIn(366, A.REARMED)
+
+    def test_api_doubt_defers_rearm_without_consuming_it(self):
+        with patch.object(A, 'fetch_open_prs', return_value=[self.armed]), \
+                patch.object(A, 'fetch_comments', return_value=[Rearm.LANE, Rearm.CLEAN]), \
+                patch.object(A, 'fetch_label_events', return_value=[]), \
+                patch.object(A, 'REARMED', set()), patch.object(A, 'log'), \
+                patch.object(A, 'run', return_value=SimpleNamespace(returncode=0)) as edit, \
+                patch('subprocess.check_output', side_effect=self.api_response):
+            self.api_error = OSError('offline')
+            A.rearm_pass([self.armed], False)
+            edit.assert_not_called()
+            self.assertNotIn(366, A.REARMED)
+            self.api_error = None
+            self.jobs = {'total_count': 2, 'jobs': []}
+            A.rearm_pass([self.armed], False)
+            edit.assert_not_called()
+            self.assertNotIn(366, A.REARMED)
+
+    def test_unrelated_or_skipped_jobs_do_not_delay_rearm(self):
+        names = [f'lane pr=367 head={HEAD} lane=false auto=true',
+                 f'lane pr=366 head={OLD} lane=false auto=true',
+                 f'lane pr=366 head={HEAD} lane=true auto=false',
+                 self.active_run['display_title']]
+        for name in names:
+            with self.subTest(name=name), \
+                    patch.object(A, 'fetch_open_prs', return_value=[self.armed]), \
+                    patch.object(A, 'fetch_comments', return_value=[Rearm.LANE, Rearm.CLEAN]), \
+                    patch.object(A, 'fetch_label_events', return_value=[]), \
+                    patch.object(A, 'REARMED', set()), patch.object(A, 'log'), \
+                    patch.object(A, 'run', return_value=SimpleNamespace(returncode=0)) as edit, \
+                    patch('subprocess.check_output', side_effect=self.api_response):
+                self.active_run['display_title'] = name
+                self.jobs = {'total_count': 1, 'jobs': [
+                    {'name': 'automerge', 'status': 'completed', 'conclusion': 'skipped'}
+                    if name == names[-1] else {'name': 'automerge', 'status': 'in_progress'}]}
+                A.rearm_pass([self.armed], False)
+                self.assertEqual(edit.call_count, 2)
 
 
 class Batching(unittest.TestCase):

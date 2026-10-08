@@ -6,19 +6,18 @@
 # could silently not run for exactly the merges it should catch. A push run always uses next's own
 # copy of this file, and it also sees a commit pushed to next without any pull request.
 #
-# It runs on a GitHub-hosted runner, so it never queues behind lane jobs on the Mac, and it never
-# reverts anything: it labels and comments.
+# It runs on the owner's VPS runner (sm-vps), so it never queues behind lane jobs on the Mac and
+# uses none of the free GitHub-hosted Linux minutes. It never reverts anything: it labels and comments.
 #
-# Hourly sweep: the lane runner merges with the workflow token (decision 3), and pushes made with
-# that token start no workflow, so a scheduled run audits every PR merged in the last two hours.
-# The overlap is deliberate; flagging is idempotent (an already-labelled PR is left alone).
+# The lane runner's own merges: it merges with the workflow token (decision 3), and pushes made with
+# that token start no workflow, so this file never sees them. lane-runner.py runs
+# `merge_audit.py --sweep-hours 2` itself after each merge it pushes. There is no schedule here:
+# GitHub runs scheduled workflows only from the default branch (main), which doesn't carry this file.
 name: merge-audit
 
 on:
   push:
     branches: [next]
-  schedule:
-    - cron: '23 * * * *'
 
 permissions:
   contents: read
@@ -27,7 +26,7 @@ permissions:
 
 jobs:
   audit:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, sm-vps]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -35,16 +34,9 @@ jobs:
           sparse-checkout: scripts/merge_audit.py
           sparse-checkout-cone-mode: false
       - name: Audit the merge
-        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.event.after }}
         run: python3 scripts/merge_audit.py --before "$BEFORE" --after "$AFTER"
-      - name: Sweep merges made without a push run
-        if: github.event_name == 'schedule'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: python3 scripts/merge_audit.py --sweep-hours 2

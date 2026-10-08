@@ -26,6 +26,35 @@ public enum LibraryOfflineStateFilter: String, Codable, Equatable, CaseIterable,
     case onlineOnly = "online_only"
 }
 
+extension LibraryOfflineStateFilter {
+    /// What a Library row says about listening offline. A podcast's download state decides first; else
+    /// the prepared-audio state; else a native media file counts as ready and anything else as online
+    /// only. Never `.all`, which is only a filter choice.
+    public static func forItem(
+        preparedState: PreparedAudioState?,
+        mediaSourceType: AudioSourceType?,
+        podcastDownloadState: PodcastDownloadState?
+    ) -> LibraryOfflineStateFilter {
+        if let podcastDownloadState {
+            switch podcastDownloadState {
+            case .availableOffline: return .readyOffline
+            case .downloading, .waitingForWiFi: return .preparing
+            case .failed, .evicted: return .needsRepreparation
+            case .streamingOnly: return .onlineOnly
+            }
+        }
+        if let preparedState {
+            switch preparedState {
+            case .preparing, .pausedForThermal: return .preparing
+            case .readyOffline: return .readyOffline
+            case .needsRepreparation, .failed, .stopped: return .needsRepreparation
+            case .notPrepared: return .onlineOnly
+            }
+        }
+        return mediaSourceType == .nativeMediaFile ? .readyOffline : .onlineOnly
+    }
+}
+
 public enum LibrarySort: String, Codable, Equatable, CaseIterable, Sendable {
     case recentlyAdded = "recently_added"
     case recentlyListened = "recently_listened"

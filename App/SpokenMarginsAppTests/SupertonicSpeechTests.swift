@@ -80,6 +80,64 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    /// #1109: the client says what it intends and which voice is speaking in every status. A pause
+    /// that no request explains can then be traced to the client's own intent or to the iOS voice.
+    func testNarrationDiagnosticsFollowTheClientsIntentAndVoice() async throws {
+        let template = try makeTestWAV(duration: 0.2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let fallback = RecordingFallbackAudioClient()
+        let fellBack = expectation(description: "resource fallback")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in }, observesPlayerLifecycle: false,
+            onDeviceRenderingAllowed: { false },
+            fallbackClient: fallback,
+            onFallback: { _, _, _ in fellBack.fulfill() }
+        )
+        XCTAssertEqual(client.narrationDiagnostics(), ["clientIntent": "stopped", "clientVoice": "on_device", "clientStandIn": "false"])
+        _ = try client.prepareSpeechText("The phone refuses to render, so the iOS voice reads this.")
+        try client.play(targetId: "diagnostics")
+        await fulfillment(of: [fellBack], timeout: 2)
+        XCTAssertEqual(client.narrationDiagnostics(), ["clientIntent": "playing", "clientVoice": "system_voice", "clientStandIn": "false"])
+
+        try client.pause()
+        XCTAssertEqual(client.narrationDiagnostics(), ["clientIntent": "paused", "clientVoice": "system_voice", "clientStandIn": "false"])
+
+        try client.stop()
+        XCTAssertEqual(client.narrationDiagnostics(), ["clientIntent": "stopped", "clientVoice": "on_device", "clientStandIn": "false"])
+    }
+
+    /// #1109: the audio session's and the player's fields join a playback.state record only while
+    /// playing, which left a pause with nothing from the client. The client's own fields are always there.
+    func testPlaybackStateRecordKeepsTheClientsFieldsWhenPaused() {
+        var snapshot = SessionSnapshot()
+        snapshot.status = .paused
+        let fields = DeveloperDiagnosticRecording.playbackStateFields(
+            snapshot,
+            player: ["playerRate": "0"],
+            narration: PlaybackDiagnosticFields.narration(intent: "paused", systemVoiceActive: true, standInPassage: false)
+        )
+        XCTAssertEqual(fields["status"], "paused")
+        XCTAssertEqual(fields["clientIntent"], "paused")
+        XCTAssertEqual(fields["clientVoice"], "system_voice")
+        XCTAssertNil(fields["playerRate"], "the player's own fields still join the record only while playing")
+    }
+
+    /// #1109 (Codex audit): with the iOS voice chosen, the client says what it intends in the same words, so
+    /// a pause record from system-voice narration carries the client's state too.
+    func testSystemVoiceClientReportsItsIntentForPlaybackRecords() throws {
+        let client = SystemSpeechPlaybackClient(voiceIdentifier: nil, speechRate: 0.5)
+        XCTAssertEqual(client.diagnosticIntent, "stopped")
+        _ = try client.prepareSpeechText(String(repeating: "The iOS voice reads this long enough to pause. ", count: 20))
+        try client.play(targetId: "system-intent", from: 0)
+        XCTAssertEqual(client.diagnosticIntent, "playing")
+        try client.pause()
+        XCTAssertEqual(client.diagnosticIntent, "paused")
+        try client.stop()
+        XCTAssertEqual(client.diagnosticIntent, "stopped")
+    }
+
     /// A slow render would likely be slow again, so that fallback waits for Retry.
     func testSlowRenderFallbackWaitsForRetryInsteadOfReturningAtTheNextPlay() async throws {
         let template = try makeTestWAV(duration: 0.5)
@@ -2406,6 +2464,51 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    /// #1109 (Codex audit on 834f9d7): the client answers true to a stop even when the iOS voice already
+    /// reads, so a later memory warning must not record a second switch. Only the change of voice records one.
+    func testStoppingGenerationRecordsTheFallbackOnlyWhenTheVoiceChanges() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template, firstRenderDelay: .milliseconds(300))
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionActivator: {},
+            observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient()
+        )
+        _ = try client.prepareSpeechText(String(repeating: "Only a change of voice is worth a record. ", count: 8))
+        try client.play(targetId: "record-once", from: 0)
+        _ = await waitForRenderCount(renderer, minimum: 1)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        XCTAssertFalse(client.isSystemVoiceActive)
+
+        XCTAssertTrue(try model.stopOnDeviceRenderingRecordingFallback(
+            client, code: "listener_stop", reason: .listenerStoppedGeneration
+        ))
+        XCTAssertTrue(client.isSystemVoiceActive)
+        XCTAssertTrue(
+            try model.stopOnDeviceRenderingRecordingFallback(
+                client, returnsAutomatically: true, code: "memory_warning_stop", reason: .memoryWarning
+            ),
+            "the client still answers true when the iOS voice already reads"
+        )
+
+        let file = try XCTUnwrap(model.diagnosticsExportFileURL())
+        defer { try? FileManager.default.removeItem(at: file) }
+        let text = try String(contentsOf: file, encoding: .utf8)
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String])
+        let eventJSON = try XCTUnwrap(payload["playbackEvents"]?.data(using: .utf8))
+        let events = try JSONDecoder().decode(DeveloperDiagnosticRecording.Capture.self, from: eventJSON).events
+        let fallbacks = events.filter { $0.kind == "supertonic.fallback" }
+        XCTAssertEqual(fallbacks.map { $0.fields["code"] }, ["listener_stop"])
+        XCTAssertEqual(fallbacks.first?.fields["reason"], "listener_stopped_generation")
+        try client.stop()
+    }
+
     /// #314 audit: a stop's reason belongs to its item. When the listener plays item B and then
     /// comes back to item A, whose generation they stopped, A must report its own reason, not
     /// lose it to B's rendering (or borrow B's reason if B had stopped too).
@@ -2606,6 +2709,56 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(client.playbackStartStatus(targetId: "media-services-reset"), .confirmed)
         let renderCount = await renderer.renderCount
         XCTAssertEqual(renderCount, 1)
+        try client.stop()
+    }
+
+    // #538: the owner's export showed speech "paused" when he left the app, with no cause. Each
+    // system pause now reports why, whether it paused, and the app's state, for the event log.
+    func testSystemPausesReportTheirCause() async throws {
+        let template = try makeTestWAV(duration: 5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let notificationCenter = NotificationCenter()
+        let pauses = SystemPauseCapture()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionNotificationCenter: notificationCenter,
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient(),
+            onSystemPause: { pauses.record($0, $1) }
+        )
+        _ = try client.prepareSpeechText("Leaving the app should never pause this without saying why.")
+        try client.play(targetId: "system-pause")
+        for _ in 0..<50 where client.playbackStartStatus(targetId: "system-pause") != .confirmed {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(client.playbackStartStatus(targetId: "system-pause"), .confirmed)
+
+        notificationCenter.post(name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), userInfo: [
+            AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue,
+            AVAudioSessionInterruptionReasonKey: UInt(1),
+        ])
+        notificationCenter.post(name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), userInfo: [
+            AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.ended.rawValue,
+            AVAudioSessionInterruptionOptionKey: UInt(0),
+        ])
+        try? await Task.sleep(for: .milliseconds(50))
+
+        let recorded = pauses.values
+        XCTAssertEqual(recorded.map(\.kind), ["speech.interruption_began", "speech.interruption_ended"])
+        XCTAssertEqual(recorded.first?.fields["reason"], "app_was_suspended")
+        XCTAssertEqual(recorded.first?.fields["paused"], "true")
+        XCTAssertNotNil(recorded.first?.fields["appState"])
+        XCTAssertNotNil(recorded.first?.fields["lowPowerMode"])
+        XCTAssertEqual(recorded.last?.fields["shouldResume"], "false")
+        XCTAssertEqual(recorded.last?.fields["resumeRequested"], "false", "no resume without shouldResume")
+        XCTAssertEqual(client.playbackTransportState(targetId: "system-pause"), .paused)
         try client.stop()
     }
 
@@ -3020,6 +3173,15 @@ private final class GenerationStateCapture: @unchecked Sendable {
             recordedValues.append(state)
             if state == .stopped { recordedStopReasons.append(stopReason) }
         }
+    }
+}
+
+private final class SystemPauseCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [(kind: String, fields: [String: String])] = []
+    var values: [(kind: String, fields: [String: String])] { lock.withLock { entries } }
+    func record(_ kind: String, _ fields: [String: String]) {
+        lock.withLock { entries.append((kind, fields)) }
     }
 }
 

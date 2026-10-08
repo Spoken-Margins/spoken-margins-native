@@ -62,6 +62,22 @@ final class LoudnessTests: XCTestCase {
         XCTAssertEqual(LoudnessLeveling.plan(measured), LoudnessLevelingPlan(gainDB: 0, limit: .silent, limiterReductionDB: 0))
     }
 
+    func testRoomNoiseUnderTheAbsoluteGateHasNoLoudnessButASoftVoiceHas() {
+        // Silence reads about -300 LUFS, so it is dropped by any gate. These are the signals the -70 LUFS gate is for:
+        // a stereo 1 kHz sine reads its own dBFS in LUFS, so -80 is room noise and -65 is a very quiet voice.
+        let noise = Self.sine(frequency: 1_000, amplitudeDB: -80, seconds: 5, sampleRate: 48_000)
+        let measuredNoise = LoudnessMeter.measure(channels: [noise, noise], sampleRate: 48_000)
+        XCTAssertNil(measuredNoise.integratedLUFS, "-80 dBFS is under the -70 LUFS absolute gate")
+        XCTAssertGreaterThan(measuredNoise.truePeakDBTP, LoudnessMeter.floorDB, "it is not digital silence")
+        XCTAssertEqual(LoudnessLeveling.plan(measuredNoise), LoudnessLevelingPlan(gainDB: 0, limit: .silent, limiterReductionDB: 0),
+                       "room noise is left as it is, not boosted by the maximum")
+
+        let quiet = Self.sine(frequency: 1_000, amplitudeDB: -65, seconds: 5, sampleRate: 48_000)
+        let measuredQuiet = LoudnessMeter.measure(channels: [quiet, quiet], sampleRate: 48_000)
+        XCTAssertEqual(measuredQuiet.integratedLUFS ?? 0, -65, accuracy: 0.2, "-65 dBFS is over the gate")
+        XCTAssertNotEqual(LoudnessLeveling.plan(measuredQuiet).limit, .silent)
+    }
+
     func testNoiseFloorReadsTheQuietStretchesNotTheSpeech() {
         let recording = Self.speechLike(seconds: 8, noiseDBFS: -62, seed: 7)
         let floor = LoudnessMeter.noiseFloor(channels: [recording], sampleRate: 48_000)

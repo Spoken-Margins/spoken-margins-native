@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import XCTest
 @testable import SessionKit
 import SessionKitPersistence
@@ -73,8 +74,12 @@ final class ItemCollectionStoreTests: XCTestCase {
         }
         XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)
         XCTAssertEqual(SQLiteSessionStore.currentSchemaVersion, 5)
+        // The version number alone would pass a new column or index. The tables and indexes must be
+        // exactly what Build 29 wrote (#1048), read from a database its own code created.
+        XCTAssertEqual(try Self.schemaObjects(atPath: path), try Self.build29SchemaObjects(),
+                       "collections add no table, column or index")
         XCTAssertEqual(existingReads(store), before)
-        XCTAssertEqual(before.count, 43, "every load API the store had before collections")
+        XCTAssertEqual(before.count, 45, "every load API the store had before collections")
         XCTAssertEqual(existingReads(try SQLiteSessionStore(path: path)), before, "and after a reopen")
         XCTAssertEqual(try store.quarantinedRecordCount(), 0)
     }
@@ -122,6 +127,8 @@ final class ItemCollectionStoreTests: XCTestCase {
         }
         return [
             read("item") { try store.loadItem(id: "article") },
+            read("library") { try store.listItems() },
+            read("libraryWithDeleted") { try store.listDeletedItems() },
             read("listeningMap") { try store.loadListeningMap(itemId: "article") as Any },
             read("session") { try store.loadSession(id: "session") as Any },
             read("sessionsForItem") { try store.loadSessions(itemId: "article") },
@@ -165,6 +172,43 @@ final class ItemCollectionStoreTests: XCTestCase {
             read("structuredDocument") { try store.loadStructuredDocument(itemId: "article") as Any },
             read("structuredDocumentIds") { try store.loadStructuredDocumentItemIds() },
         ]
+    }
+
+    /// Every table and index in the database, as SQLite stores its definition.
+    private static func schemaObjects(atPath path: String) throws -> [String] {
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            sqlite3_close(database)
+            throw NSError(domain: "ItemCollectionStoreTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "cannot open \(path)"])
+        }
+        defer { sqlite3_close(database) }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "SELECT type, name, tbl_name, COALESCE(sql, '') FROM sqlite_master ORDER BY type, name;", -1, &statement, nil) == SQLITE_OK else {
+            throw NSError(domain: "ItemCollectionStoreTests", code: 2)
+        }
+        defer { sqlite3_finalize(statement) }
+        var objects: [String] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            objects.append((0..<4).map { column in
+                sqlite3_column_text(statement, Int32(column)).map { String(cString: $0) } ?? ""
+            }.joined(separator: " | "))
+        }
+        return objects
+    }
+
+    /// The schema of Contracts/fixtures/persistence/build29.sqlite, written by Build 29's own code.
+    /// Read from a copy, so opening it leaves no WAL files in the checkout.
+    private static func build29SchemaObjects() throws -> [String] {
+        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        while !FileManager.default.fileExists(atPath: root.appendingPathComponent("Contracts").path) {
+            let parent = root.deletingLastPathComponent()
+            guard parent != root else { throw NSError(domain: "ItemCollectionStoreTests", code: 3) }
+            root = parent
+        }
+        let copy = FileManager.default.temporaryDirectory.appending(path: "build29-schema-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: copy) }
+        try FileManager.default.copyItem(at: root.appendingPathComponent("Contracts/fixtures/persistence/build29.sqlite"), to: copy)
+        return try schemaObjects(atPath: copy.path)
     }
 
     private func date(_ seconds: Double) -> Date { Date(timeIntervalSince1970: 1_790_000_000 + seconds) }

@@ -212,6 +212,9 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
         var interjection = interjection
         // Once heard, a stale copy can't make it new again (#469).
         if interjection.firstHeardAt == nil { interjection.firstHeardAt = importedCommentaryInterjections[interjection.id]?.firstHeardAt }
+        var aliases = importedCommentaryInterjections[interjection.id]?.alsoSharedAs ?? []
+        for identity in interjection.alsoSharedAs ?? [] where !aliases.contains(identity) { aliases.append(identity) }
+        interjection.alsoSharedAs = aliases.isEmpty ? nil : aliases
         importedCommentaryInterjections[interjection.id] = interjection
     }
 
