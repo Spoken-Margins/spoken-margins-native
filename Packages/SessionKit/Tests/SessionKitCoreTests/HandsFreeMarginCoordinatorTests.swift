@@ -201,19 +201,23 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
 
     func testSpeechFromTheFirstSampleThenQuietIsKeptNotFlagged() {
         // #1031: the first half-second is all speech at -30, so it first reads as the room.
-        // The quiet that follows shows what the room really is, and the words are saved.
+        // Half a second of quiet after it shows what the room really is, the words already spoken
+        // then count, and the Margin ends 2.5 s after the last of them (3 s + 2.5 s = 5.5 s).
         startRecording()
         XCTAssertEqual(feed(-30, for: 3), [])
-        XCTAssertEqual(feed(quiet, for: 4), [.finishRecording(.silence)])
+        XCTAssertEqual(feed(quiet, for: 2.4), [])
+        XCTAssertEqual(coordinator.phase, .trailingSilence)
         XCTAssertEqual(coordinator.speechThresholdDB, -47, "re-learned from the quiet")
+        XCTAssertEqual(feed(quiet, for: 0.1), [.finishRecording(.silence)])
+        XCTAssertEqual(coordinator.speechSeconds, 3, accuracy: 0.001, "the first half-second counts too")
     }
 
     func testSpeechFromTheFirstSampleWithPausesIsRecordedToItsEnd() {
-        // Talking at -30 from the first sample, with a short dip between sentences. The dip
-        // shows the room, so the rest counts as speech and the Margin isn't cut at the window.
+        // Talking at -30 from the first sample, with a pause between sentences. The pause shows
+        // the room, so the rest counts as speech and the Margin isn't cut at the window.
         startRecording()
         XCTAssertEqual(feed(-30, for: 2), [])
-        XCTAssertEqual(feed(-50, for: 0.3), [])
+        XCTAssertEqual(feed(-50, for: 0.6), [])
         XCTAssertEqual(feed(-30, for: 8), [], "past the six-second window, still speaking")
         XCTAssertEqual(coordinator.phase, .speaking)
         XCTAssertEqual(feed(quiet, for: 2.5), [.finishRecording(.silence)])
@@ -246,6 +250,33 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         feed(-50, for: 0.1)
         XCTAssertEqual(coordinator.speechThresholdDB, -27)
         XCTAssertEqual(feed(-35, for: 2.5), [.finishRecording(.silence)])
+    }
+
+    func testSteadyNoiseWithAQuietBlipOrShortDipStillMakesAFlag() {
+        // A silent listener in a car at -35: one quiet sample, a glitch, or a dip under half a
+        // second must not teach the threshold a quieter room, or the noise would read as speech.
+        for (name, dip, seconds) in [("one quiet sample", -60.0, 0.1), ("a glitch", -160.0, 0.1), ("a 0.4 s dip", -60.0, 0.4)] {
+            coordinator.abandon()
+            clock.advance(1)
+            startRecording()
+            feed(-35, for: 2)
+            feed(dip, for: seconds)
+            let commands = feed(-35, for: 4)
+            XCTAssertEqual(commands, [.cancelRecording, .requestFlag, .playTone(.flag)], name)
+            XCTAssertEqual(coordinator.speechThresholdDB, -27, name)
+        }
+    }
+
+    func testAQuietRoomWithMeteringJitterStillMakesAFlag() {
+        // A fixed jitter of about 3 dB around -55, longer than the listening window.
+        let jitter: [Double] = [0, 1.5, -1, 2, -1.5, 0.5, 2.5, -0.5, 1, -2, 3, 0, -1, 2, 0.5, -1.5, 1.5, 0, 2, -0.5]
+        startRecording()
+        var commands: [HandsFreeMarginCommand] = []
+        for step in 0..<60 {
+            clock.advance(0.1)
+            commands += coordinator.level(quiet + jitter[step % jitter.count])
+        }
+        XCTAssertEqual(commands, [.cancelRecording, .requestFlag, .playTone(.flag)])
     }
 
     func testAQuietRoomThatWobblesAFewDecibelsStillMakesAFlag() {

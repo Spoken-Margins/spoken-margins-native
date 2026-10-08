@@ -12,8 +12,9 @@ public enum HandsFreeMarginTimings {
     public static let capWarning: TimeInterval = 4 * 60 + 30
     /// A second trigger this soon after the last one is a bounce (the same window as #148).
     public static let bounceWindow: TimeInterval = 0.5
-    /// How long the background level is measured after the microphone opens. Until speech is heard,
-    /// a quieter sample later still lowers it (the listener may have started talking at once).
+    /// How long the background level is measured after the microphone opens. It is also how long a
+    /// quieter level must last, before speech is heard, to replace the first estimate: the listener
+    /// may have started talking at once, so the first half-second was speech, not the room.
     public static let calibration: TimeInterval = 0.5
     /// Speech needed for an interrupted Margin to be kept, marked cut short.
     public static let minimumSpeechToKeep: TimeInterval = 1
@@ -124,6 +125,10 @@ public final class HandsFreeMarginCoordinator {
     private var lastTriggerAt: TimeInterval?
     private var recordingStartedAt: TimeInterval = 0
     private var calibrationLevels: [Double] = []
+    // Every sample from the microphone opening until speech is heard, to replay under a new threshold.
+    private var unspokenSamples: [(at: TimeInterval, decibels: Double)] = []
+    // A run of samples, all quieter than the room estimate: where it began and its loudest sample.
+    private var quieterRun: (since: TimeInterval, loudest: Double)?
     private var lastLevel: (at: TimeInterval, isSpeech: Bool)?
     private var silenceSince: TimeInterval?
     private var warnedOfCap = false
@@ -202,16 +207,24 @@ public final class HandsFreeMarginCoordinator {
     public func level(_ decibels: Double) -> [HandsFreeMarginCommand] {
         let now = clock()
         guard isRecording else { return [] }
+        if phase == .listening { unspokenSamples.append((now, decibels)) }
         if now - recordingStartedAt < HandsFreeMarginTimings.calibration {
             calibrationLevels.append(decibels)
             return timeouts(at: now)
         }
-        let threshold = relearnThreshold(for: decibels) ?? speechThresholdDB ?? learnThreshold()
+        classify(decibels, at: now, threshold: speechThresholdDB ?? learnThreshold())
+        loudestDB = max(loudestDB, decibels)
+        relearnRoomIfQuieter(than: decibels, at: now)
+        return timeouts(at: now)
+    }
+
+    /// Counts one sample as speech or quiet, and moves the phase between listening, speaking and
+    /// trailing silence.
+    private func classify(_ decibels: Double, at now: TimeInterval, threshold: Double) {
         let isSpeech = decibels > threshold
         let lastSpeechAt = lastLevel.flatMap { $0.isSpeech ? $0.at : nil }
         if let lastSpeechAt { speechSeconds += now - lastSpeechAt }
         lastLevel = (now, isSpeech)
-        loudestDB = max(loudestDB, decibels)
         if isSpeech {
             silenceSince = nil
             if phase != .speaking { phase = .speaking }
@@ -220,7 +233,6 @@ public final class HandsFreeMarginCoordinator {
             phase = .trailingSilence
             silenceSince = lastSpeechAt ?? now
         }
-        return timeouts(at: now)
     }
 
     /// Call often while recording (each metering tick does) so the window, silence and cap end on time.
@@ -322,6 +334,8 @@ public final class HandsFreeMarginCoordinator {
         speechThresholdDB = nil
         speechSeconds = 0
         calibrationLevels = []
+        unspokenSamples = []
+        quieterRun = nil
         lastLevel = nil
         silenceSince = nil
         warnedOfCap = false
@@ -340,11 +354,26 @@ public final class HandsFreeMarginCoordinator {
 
     /// A listener who talks the instant the tone ends fills the calibration with speech, so the
     /// first estimate of the room is too loud and the threshold too high. Until speech is heard,
-    /// a quieter sample than the room so far shows the room really is quieter: learn from it.
-    /// Returns the new threshold, or nil when nothing changed. Once speaking, the room is settled.
-    private func relearnThreshold(for decibels: Double) -> Double? {
-        guard phase == .listening, let backgroundDB, decibels < backgroundDB else { return nil }
-        return setBackground(decibels)
+    /// a level that stays below the estimate for the calibration time shows the room really is
+    /// that quiet: learn from it and replay the samples so far under the new threshold, so the
+    /// words already spoken count. One quiet sample or a short dip never does this, or steady
+    /// noise would start to read as speech. Once speaking, the room is settled.
+    private func relearnRoomIfQuieter(than decibels: Double, at now: TimeInterval) {
+        guard phase == .listening, let backgroundDB, decibels < backgroundDB else {
+            quieterRun = nil
+            if phase != .listening { unspokenSamples = [] }
+            return
+        }
+        let run = (since: quieterRun?.since ?? now, loudest: max(quieterRun?.loudest ?? decibels, decibels))
+        quieterRun = run
+        guard now - run.since >= HandsFreeMarginTimings.calibration else { return }
+        quieterRun = nil
+        let threshold = setBackground(run.loudest)
+        lastLevel = nil
+        speechSeconds = 0
+        silenceSince = nil
+        for sample in unspokenSamples { classify(sample.decibels, at: sample.at, threshold: threshold) }
+        if phase != .listening { unspokenSamples = [] }
     }
 
     private func setBackground(_ background: Double) -> Double {
