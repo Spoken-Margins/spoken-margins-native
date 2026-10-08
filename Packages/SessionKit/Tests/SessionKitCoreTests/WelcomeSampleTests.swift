@@ -99,6 +99,14 @@ final class WelcomeSampleTests: XCTestCase {
         XCTAssertEqual(map.chapters.last?.endChar, 2150)
     }
 
+    func testATextWithNoChaptersThrowsTheStoredErrorCode() {
+        XCTAssertThrowsError(try WelcomeSample.build(itemId: itemId, contents: "Only words here, with no headings at all.")) { error in
+            XCTAssertEqual(error as? SessionKitError, .persistenceFailed("welcome_sample_listening_map_missing"))
+        }
+        // The error code is what the app records when seeding fails, so the real sample must not trip it.
+        XCTAssertNoThrow(try WelcomeSample.build(itemId: itemId, contents: WelcomeSample.markdown(remoteProviderExperienceEnabled: false)))
+    }
+
     func testTheItemIdIsWhateverTheCallerSupplies() throws {
         let (item, map) = try WelcomeSample.make(itemId: "another-id", remoteProviderExperienceEnabled: false)
         XCTAssertEqual(item.id, "another-id")
