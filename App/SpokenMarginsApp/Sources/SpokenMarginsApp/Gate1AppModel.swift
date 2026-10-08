@@ -3257,7 +3257,7 @@ final class Gate1AppModel: ObservableObject {
                 return true
             }
             screen = .home
-            reportFailure(sourceLinkFailureMessage(
+            reportFailure(SourceLinkFailureMessage.text(
                 status: snapshot.linkResolutionStatus,
                 reason: snapshot.linkResolutionFailureReason,
                 provider: sourceLinkProvider
@@ -3277,7 +3277,7 @@ final class Gate1AppModel: ObservableObject {
             }
             if !startSession {
                 guard let item = try persistResolvedSourceLinkInBackground(request: request, result: result) else {
-                    reportFailure(sourceLinkFailureMessage(
+                    reportFailure(SourceLinkFailureMessage.text(
                         status: result.status.rawValue,
                         reason: result.failureReason,
                         provider: result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
@@ -3322,7 +3322,7 @@ final class Gate1AppModel: ObservableObject {
                 return true
             }
             screen = .home
-            reportFailure(sourceLinkFailureMessage(
+            reportFailure(SourceLinkFailureMessage.text(
                 status: snapshot.linkResolutionStatus,
                 reason: snapshot.linkResolutionFailureReason,
                 provider: sourceLinkProvider
@@ -3450,7 +3450,7 @@ final class Gate1AppModel: ObservableObject {
             let provider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
             diagnostics["lastSourceLinkFailureCategory"] = result.failureReason
                 ?? result.status.rawValue
-            throw SessionKitError.persistenceFailed(sourceLinkFailureMessage(
+            throw SessionKitError.persistenceFailed(SourceLinkFailureMessage.text(
                 status: result.status.rawValue,
                 reason: result.failureReason,
                 provider: provider
@@ -9793,7 +9793,9 @@ final class Gate1AppModel: ObservableObject {
 
     private func makeEngine(store: SQLiteSessionStore) throws -> SessionEngine {
         let loadedProfile = try loadProfile(id: selectedProfileId)
-        let profile = runtimeProfileForFeatureFlags(loadedProfile)
+        let profile = remoteProviderExperienceEnabled
+            ? loadedProfile
+            : loadedProfile.limitedToOnDeviceAI(foundationModelAvailable: localFoundationModelAvailable)
         let provider: AIProviderClient
         if !remoteProviderExperienceEnabled {
             provider = AppleFoundationAIProvider()
@@ -9810,24 +9812,6 @@ final class Gate1AppModel: ObservableObject {
             aiProvider: provider,
             linkResolver: sourceLinkResolver ?? PublicPodcastLinkResolver(),
             textAudio: try makeTextAudioPreparationClient()
-        )
-    }
-
-    private func runtimeProfileForFeatureFlags(_ profile: RuntimeCapabilityProfile) -> RuntimeCapabilityProfile {
-        guard !remoteProviderExperienceEnabled else { return profile }
-        var capabilities = profile.capabilities
-        let allowedLocalAI = localFoundationModelAvailable
-            ? Set(["generate_listening_map", "summarize_interjections", "cleanup_transcript", "defer_ai_jobs"])
-            : Set(["cleanup_transcript", "defer_ai_jobs"])
-        capabilities["ai"] = capabilities["ai", default: []].filter(allowedLocalAI.contains)
-        return RuntimeCapabilityProfile(
-            id: "\(profile.id)-local-foundation",
-            displayName: "\(profile.displayName) · On-device AI",
-            capabilities: capabilities,
-            forbiddenCapabilities: Array(Set(profile.forbiddenCapabilities).union([
-                "provider_diagnostics",
-                "continue_discussion"
-            ])).sorted()
         )
     }
 
@@ -10327,10 +10311,7 @@ final class Gate1AppModel: ObservableObject {
                         guard let signature = try? await signatureTask.value, let self else { return }
                         guard let store = self.store,
                               let item = try? store.loadItem(id: itemId),
-                              let canonical = Self.canonicalSupertonicPreparedAudio(
-                                prepared,
-                                itemText: item.text
-                              ) else {
+                              let canonical = prepared.canonicalized(toItemText: item.text) else {
                             self.diagnostics["supertonicPreparedCanonicalization:\(itemId)"] = "source_mismatch"
                             return
                         }
@@ -10398,61 +10379,6 @@ final class Gate1AppModel: ObservableObject {
         return SystemSpeechPlaybackClient(
             voiceIdentifier: selectedVoice.isEmpty ? nil : selectedVoice,
             speechRate: Float(speechRate)
-        )
-    }
-
-    static func canonicalSupertonicPreparedAudio(
-        _ prepared: PreparedTextAudio,
-        itemText: String?
-    ) -> PreparedTextAudio? {
-        guard let itemText, !itemText.isEmpty,
-              prepared.normalizedText.hasSuffix(itemText) else {
-            return nil
-        }
-        let prefixLength = prepared.normalizedText.count - itemText.count
-        guard prefixLength > 0 else { return prepared }
-        let itemCharacters = Array(itemText)
-        let segments = prepared.timeline.segments.map { segment -> MediaTimelineSegment in
-            let originalStart = segment.startChar ?? 0
-            let originalEnd = segment.endChar ?? originalStart
-            let start = max(0, min(itemCharacters.count, originalStart - prefixLength))
-            let end = max(start, min(itemCharacters.count, originalEnd - prefixLength))
-            let canonicalText = end > start
-                ? String(itemCharacters[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
-                : segment.text
-            return MediaTimelineSegment(
-                id: segment.id,
-                startMs: segment.startMs,
-                endMs: segment.endMs,
-                startChar: start,
-                endChar: end,
-                text: canonicalText
-            )
-        }
-        let segmentByID = segments.reduce(into: [String: MediaTimelineSegment]()) {
-            $0[$1.id] = $1
-        }
-        let chapters = prepared.timeline.chapters.compactMap { chapter -> MediaTimelineChapter? in
-            guard let segment = segmentByID[chapter.transcriptSegmentId],
-                  (segment.endChar ?? 0) > 0 else { return nil }
-            let titleWords = segment.text.split(separator: " ").prefix(7).joined(separator: " ")
-            return MediaTimelineChapter(
-                id: chapter.id,
-                title: titleWords.isEmpty ? chapter.title : titleWords,
-                description: chapter.description,
-                startMs: chapter.startMs,
-                transcriptSegmentId: chapter.transcriptSegmentId
-            )
-        }
-        return PreparedTextAudio(
-            normalizedText: itemText,
-            media: prepared.media,
-            timeline: TranscriptTimeline(
-                segments: segments,
-                chapters: chapters,
-                durationMs: prepared.timeline.durationMs
-            ),
-            createdAt: prepared.createdAt
         )
     }
 
@@ -10650,7 +10576,7 @@ final class Gate1AppModel: ObservableObject {
                 }
                 return .notPrepared
             }()
-            let offlineState = Self.libraryOfflineState(
+            let offlineState = LibraryOfflineStateFilter.forItem(
                 preparedState: effectivePreparedState,
                 mediaSourceType: item.media?.sourceType,
                 podcastDownloadState: podcastDownloadsByItemId[item.id]?.state
@@ -10726,30 +10652,6 @@ final class Gate1AppModel: ObservableObject {
         return (inTurn, completed, target)
     }
 
-    nonisolated static func libraryOfflineState(
-        preparedState: PreparedAudioState?,
-        mediaSourceType: AudioSourceType?,
-        podcastDownloadState: PodcastDownloadState?
-    ) -> LibraryOfflineStateFilter {
-        if let podcastDownloadState {
-            switch podcastDownloadState {
-            case .availableOffline: return .readyOffline
-            case .downloading, .waitingForWiFi: return .preparing
-            case .failed, .evicted: return .needsRepreparation
-            case .streamingOnly: return .onlineOnly
-            }
-        }
-        if let preparedState {
-            switch preparedState {
-            case .preparing, .pausedForThermal: return .preparing
-            case .readyOffline: return .readyOffline
-            case .needsRepreparation, .failed, .stopped: return .needsRepreparation
-            case .notPrepared: return .onlineOnly
-            }
-        }
-        return mediaSourceType == .nativeMediaFile ? .readyOffline : .onlineOnly
-    }
-
     private func refreshBatchExportRows(store: SQLiteSessionStore) throws {
         let itemsById = Dictionary(uniqueKeysWithValues: try store.listItems().map { ($0.id, $0) })
         batchExportRows = try store.loadSessions().compactMap { session in
@@ -10791,7 +10693,7 @@ final class Gate1AppModel: ObservableObject {
             row.startupAudioState = startup.state
             row.startupAudioCompletedChunkCount = startup.completed
             row.startupAudioTargetChunkCount = startup.target
-            row.offlineState = Self.libraryOfflineState(
+            row.offlineState = LibraryOfflineStateFilter.forItem(
                 preparedState: [.preparing, .pausedForThermal].contains(manifest.state) && job == nil ? .notPrepared : manifest.state,
                 mediaSourceType: item.media?.sourceType, podcastDownloadState: nil)
             if row != libraryItems[index] { libraryItems[index] = row }
@@ -11104,47 +11006,6 @@ final class Gate1AppModel: ObservableObject {
             return browserTextHandoffStore
         }
         return try Gate5BrowserTextHandoffStore.appGroup()
-    }
-
-    private func sourceLinkFailureMessage(status: String?, reason: String?, provider: String?) -> String {
-        switch reason {
-        case "spotify_audio_requires_provider_playback":
-            if provider == "spotify" {
-                return "Spoken Margins could not find a public audio file for this Spotify episode."
-            }
-            return "This provider did not expose a public audio file that Spoken Margins can play yet."
-        case "spotify_metadata_unavailable":
-            return "Spotify did not return enough episode metadata to search for a public copy."
-        case "spotify_specific_episode_required":
-            return "Open the specific episode in Spotify, tap Share, and send its episode link. Show or podcast-page links do not identify one episode."
-        case "spotify_episode_not_found_on_apple":
-            return "I could not find a confident Apple Podcasts match for this Spotify episode. It may be Spotify-only."
-        case "spotify_episode_match_ambiguous":
-            return "I found more than one Apple Podcasts episode with this title, so I did not risk importing the wrong one. Try sharing the specific Apple Podcasts episode or its RSS link."
-        case "apple_episode_id_missing":
-            return "That Apple Podcasts link did not identify a specific episode."
-        case "apple_lookup_empty":
-            return "Apple Podcasts did not return this episode from lookup, and I could not find a public audio stream on the Apple page."
-        case "apple_audio_enclosure_not_found":
-            return "Apple Podcasts did not expose a playable public audio stream for that episode."
-        case "audio_enclosure_not_found":
-            return "I found the page or feed, but not a playable podcast/audio file."
-        case "pdf_document":
-            return "That link is a PDF document, not a podcast or audio file."
-        case "rss_episode_ambiguous":
-            return "I found the feed, but could not identify one episode to play."
-        case "unsupported_link_type":
-            return "That link is not a supported public podcast, RSS feed, or direct audio file."
-        case "apple_lookup_failed":
-            return "Apple Podcasts did not return a playable public audio file for that episode."
-        case .some(let message):
-            return message
-        case .none:
-            if status == LinkResolutionStatus.unsupported.rawValue {
-                return "That link is not playable in Spoken Margins yet."
-            }
-            return "Source link needs review before it can be played."
-        }
     }
 
     private static func firstURL(in text: String) -> URL? {
@@ -13855,7 +13716,7 @@ final class Gate1AppModel: ObservableObject {
             guard let self else { return }
             podcastDownloadRecords[record.itemId] = record
             if let index = libraryItems.firstIndex(where: { $0.id == record.itemId }) {
-                let state = Self.libraryOfflineState(
+                let state = LibraryOfflineStateFilter.forItem(
                     preparedState: nil,
                     mediaSourceType: nil,
                     podcastDownloadState: record.state

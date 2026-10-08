@@ -393,33 +393,6 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertNil(LibraryPresentation.continueItem(in: [], activeItemId: nil))
     }
 
-    func testPodcastDownloadStateDrivesTruthfulLibraryOfflinePresentation() {
-        XCTAssertEqual(
-            Gate1AppModel.libraryOfflineState(
-                preparedState: nil,
-                mediaSourceType: .remoteStream,
-                podcastDownloadState: .availableOffline
-            ),
-            .readyOffline
-        )
-        XCTAssertEqual(
-            Gate1AppModel.libraryOfflineState(
-                preparedState: nil,
-                mediaSourceType: .remoteStream,
-                podcastDownloadState: .downloading
-            ),
-            .preparing
-        )
-        XCTAssertEqual(
-            Gate1AppModel.libraryOfflineState(
-                preparedState: nil,
-                mediaSourceType: .remoteStream,
-                podcastDownloadState: .streamingOnly
-            ),
-            .onlineOnly
-        )
-    }
-
     func testWrittenMediaMarginHasNoAudioRepairOrPendingContextWork() {
         var note = interjection(transcript: "Keep my words.", audioStatus: "discarded", anchorContextStatus: .unavailable)
         note.captureKind = .written
