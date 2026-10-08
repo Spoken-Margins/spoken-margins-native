@@ -137,6 +137,120 @@ final class BackTapWalksBackTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(BackTapWindow.characters(atSpeed: 0.0001), 1)
     }
 
+    // MARK: - The remembered landing is forgotten when anything else moves the position (#1122)
+
+    /// Short sentences, so the next unit starts inside the three-second window of the one before it.
+    private let shortText = "Alpha. Bravo. Charlie. Delta. Echo. Foxtrot."
+
+    private func start(of word: String, in text: String? = nil) -> Int {
+        let text = text ?? shortText
+        return text.distance(from: text.startIndex, to: text.range(of: word)!.lowerBound)
+    }
+
+    func testBackThenForwardThenBackReturnsToTheSentenceBeforeTheOneListenedTo() throws {
+        let (engine, audio) = try playingEngine(text: shortText)
+        audio.currentOffset = start(of: "Delta")
+
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), start(of: "Charlie"))
+        XCTAssertEqual(try tapForward(engine, audio, unit: "sentence"), start(of: "Delta"))
+        XCTAssertEqual(
+            try tapBack(engine, audio, unit: "sentence"), start(of: "Charlie"),
+            "Back from the start of Delta goes to Charlie, not to the sentence before the one Back landed on"
+        )
+    }
+
+    func testBackThenASeekThenBackMeasuresFromWhereTheSeekPutTheListener() throws {
+        let (engine, audio) = try playingEngine(text: shortText)
+        audio.currentOffset = start(of: "Delta")
+
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), start(of: "Charlie"))
+        _ = try engine.seekText(toCharOffset: start(of: "Echo"))
+        audio.currentOffset = start(of: "Echo") + 5
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), start(of: "Delta"))
+    }
+
+    func testBackThenAChapterJumpThenBackMeasuresFromTheChapter() throws {
+        let chapters = [
+            Chapter(id: "ch-1", title: "One", startChar: 0, endChar: start(of: "Echo"), percent: 0),
+            Chapter(id: "ch-2", title: "Two", startChar: start(of: "Echo"), endChar: shortText.count, percent: 68),
+        ]
+        let (engine, audio) = try playingEngine(text: shortText, chapters: chapters)
+        audio.currentOffset = start(of: "Delta")
+
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), start(of: "Charlie"))
+        _ = try engine.jumpToChapter(chapterId: "ch-2")
+        audio.currentOffset = start(of: "Echo") + 5
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), start(of: "Delta"))
+    }
+
+    func testBackThenAChapterSkipForwardThenBackMeasuresFromTheChapter() throws {
+        let chapters = [
+            Chapter(id: "ch-1", title: "One", startChar: 0, endChar: start(of: "Delta"), percent: 0),
+            Chapter(id: "ch-2", title: "Two", startChar: start(of: "Delta"), endChar: shortText.count, percent: 52),
+        ]
+        let (engine, audio) = try playingEngine(text: shortText, chapters: chapters)
+        audio.currentOffset = start(of: "Delta")
+
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), start(of: "Charlie"))
+        XCTAssertEqual(try tapForward(engine, audio, unit: "chapter"), start(of: "Delta"))
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), start(of: "Charlie"))
+    }
+
+    func testBackThenAChapterSkipBackThenBackMeasuresFromTheChapter() throws {
+        let chapters = [
+            Chapter(id: "ch-1", title: "One", startChar: 0, endChar: start(of: "Echo"), percent: 0),
+            Chapter(id: "ch-2", title: "Two", startChar: start(of: "Echo"), endChar: shortText.count, percent: 68),
+        ]
+        let (engine, audio) = try playingEngine(text: shortText, chapters: chapters)
+        audio.currentOffset = start(of: "Echo") + 5
+
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence", creep: 10), start(of: "Delta"))
+        XCTAssertEqual(try tapBack(engine, audio, unit: "chapter"), start(of: "Echo"), "ten characters on, the chapter start is behind")
+        XCTAssertEqual(
+            try tapBack(engine, audio, unit: "sentence"), start(of: "Delta"),
+            "five characters into Echo, the chapter start, Back goes to the sentence before it"
+        )
+    }
+
+    /// Pausing doesn't move the listener, so the tap after a resume still reads as the walk-back it is. Thirty-two
+    /// is four characters into Echo; a landing forgotten at the pause would put Back on Delta, the sentence before.
+    func testPausingAndResumingBetweenBackTapsKeepsTheWalkBackGoing() throws {
+        let (engine, audio) = try playingEngine(text: shortText)
+        audio.currentOffset = start(of: "Echo") + 5
+
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), start(of: "Delta"))
+        _ = try engine.pause()
+        _ = try engine.resumePlayback()
+        audio.currentOffset = start(of: "Delta") + 9
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), start(of: "Charlie"))
+    }
+
+    func testBackThenPlayingTheSourceFromTheBeginningThenBackMeasuresFromThere() throws {
+        let (engine, audio) = try playingEngine(text: shortText)
+        audio.currentOffset = start(of: "Delta")
+
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), start(of: "Charlie"))
+        _ = try engine.playSourceFromBeginning()
+        audio.currentOffset = start(of: "Echo")
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), start(of: "Delta"))
+    }
+
+    /// A Margin saved while playing resumes at the start of its own sentence, which is a move too.
+    func testBackThenASavedMarginThenBackMeasuresFromWhereTheMarginResumed() throws {
+        let (engine, audio) = try playingEngine(text: shortText)
+        audio.currentOffset = start(of: "Delta")
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence", creep: 0), start(of: "Charlie"))
+
+        audio.currentOffset = start(of: "Echo") + 5
+        let capture = try engine.beginWrittenInterjection()
+        XCTAssertTrue(capture.wasPlaying)
+        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "A written thought.")
+        XCTAssertEqual(audio.currentOffset, start(of: "Echo"), "the Margin resumes at the start of Echo")
+
+        audio.currentOffset = start(of: "Echo") + 5
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), start(of: "Delta"))
+    }
+
     // MARK: - Fixture
 
     /// One Back tap, then the player starting where the tap put it and reading a few characters on before the
@@ -148,22 +262,34 @@ final class BackTapWalksBackTests: XCTestCase {
         return landed
     }
 
+    /// One Forward tap, then the player reading a few characters on from where the tap put it.
+    private func tapForward(_ engine: SessionEngine, _ audio: TextSpeechClient, unit: String, creep: Int = 5) throws -> Int {
+        _ = try engine.skipForward(unit: unit)
+        let landed = try XCTUnwrap(engine.currentSession?.position.charOffset)
+        audio.currentOffset = landed + creep
+        return landed
+    }
+
     private func playingEngine(separator: String) throws -> (SessionEngine, TextSpeechClient) {
         try playingEngine(text: sentences.joined(separator: separator))
     }
 
-    private func playingEngine(text: String) throws -> (SessionEngine, TextSpeechClient) {
+    private func playingEngine(text: String, chapters: [Chapter] = []) throws -> (SessionEngine, TextSpeechClient) {
         let item = Item(
             id: "item-back", title: "Back", mediaType: "text",
             text: text, externalReference: nil, status: "ready"
         )
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        if !chapters.isEmpty {
+            repository.mapsByItemId[item.id] = ListeningMap(id: "map-back", itemId: item.id, overview: "", chapters: chapters)
+        }
         let audio = TextSpeechClient()
         let engine = SessionEngine(
             profile: RuntimeCapabilityProfile(
                 id: "phone-tablet-online", displayName: "Phone/Tablet Online",
                 capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"], "timeline": ["chapter_timing"]]
             ),
-            repository: InMemorySessionRepository(items: [item.id: item]),
+            repository: repository,
             audio: audio
         )
         _ = try engine.startSession(itemId: item.id)
