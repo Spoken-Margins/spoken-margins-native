@@ -8716,10 +8716,6 @@ final class Gate1AppModel: ObservableObject {
         return canRetryLocalSummary ? "Retry Summary" : "Summarize Notes"
     }
 
-    var interjectionButtonTitle: String {
-        "Interject"
-    }
-
     var speechVoiceDescription: String {
         if ttsVoiceSelection != .system {
             return "\(ttsVoiceSelection.displayName) (Supertonic \(ttsVoiceSelection.supertonicVoice?.rawValue ?? ""))"
