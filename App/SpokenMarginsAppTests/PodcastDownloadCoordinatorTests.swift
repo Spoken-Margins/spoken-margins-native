@@ -638,6 +638,123 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         coordinator.shutdown()
     }
 
+    // #912: the download needed a HEAD answer with a positive Content-Length, so a host that refuses HEAD
+    // (403, 405) or leaves the length out could never be downloaded. Each row is served by a URLProtocol
+    // that answers audio on GET, and each must download, hold the reservation the host's answer allows,
+    // and keep the file within the storage budget.
+    func testHostsThatRefuseHeadOrLeaveOutTheLengthStillDownloadWithinTheBudget() async throws {
+        let unannouncedBudget: Int64 = 1_000
+        let rows: [(path: String, reserved: Int64, announced: Int64?, requests: [String], note: String)] = [
+            ("/head-405.mp3", 8, 8, ["HEAD /head-405.mp3", "GET /head-405.mp3 range"],
+             "HEAD refused: the size comes from Content-Range on a one-byte ranged GET"),
+            ("/head-no-length.mp3", 8, 8, ["HEAD /head-no-length.mp3", "GET /head-no-length.mp3 range"],
+             "HEAD without a length: a host that ignores the range sends the whole file's length"),
+            ("/head-ok.mp3", 8, 8, ["HEAD /head-ok.mp3"],
+             "HEAD announces the length: no second request"),
+            ("/announces-nothing.mp3", unannouncedBudget, nil, ["HEAD /announces-nothing.mp3", "GET /announces-nothing.mp3 range"],
+             "no size anywhere: reserve the bounded amount, never more than the budget holds"),
+        ]
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DownloadProbeURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        for row in rows {
+            DownloadProbeURLProtocol.reset()
+            let fixture = try makeFixture()
+            try fixture.store.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: unannouncedBudget))
+            var started: [(request: URLRequest, description: String)] = []
+            let coordinator = try PodcastDownloadCoordinator(store: fixture.store,
+                applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false,
+                usesBackgroundSession: false, startDownload: { started.append(($0, $1)) },
+                preflightSession: session)
+            coordinator.setNetworkTransportForTesting(.wifi)
+            coordinator.register(itemId: "episode", remoteURL: URL(string: "https://probe.example.com\(row.path)")!,
+                                 userInitiated: true)
+            let preparation = try XCTUnwrap(coordinator.preparationTasks["episode"], row.note)
+            await preparation.value
+
+            XCTAssertEqual(DownloadProbeURLProtocol.requests, row.requests, row.note)
+            XCTAssertEqual(started.count, 1, "the download starts: \(row.note)")
+            XCTAssertEqual(try fixture.store.loadOfflineStorageReservations().map(\.byteCount), [row.reserved], row.note)
+            XCTAssertEqual(coordinator.recordsByItemId["episode"]?.expectedBytes, row.announced, row.note)
+            XCTAssertEqual(coordinator.status(itemId: "episode"), .downloading, row.note)
+
+            let attempt = try XCTUnwrap(started.first.flatMap { PodcastDownloadAttempt.decode($0.description) }, row.note)
+            let staged = fixture.root.appending(path: "episode.mp3")
+            try Data(repeating: 7, count: 8).write(to: staged)
+            await coordinator.finishDownload(attempt, stagedURL: staged, responseOK: true)
+
+            XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline, row.note)
+            XCTAssertNotNil(coordinator.validatedLocalURL(for: "episode"), row.note)
+            XCTAssertEqual(try fixture.store.loadOwnedOfflineAssets().map(\.byteCount), [8], row.note)
+            XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty, row.note)
+            coordinator.shutdown()
+        }
+    }
+
+    func testAnUnannouncedDownloadLargerThanTheBudgetIsRefusedAndLeavesNothingBehind() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DownloadProbeURLProtocol.self]
+        DownloadProbeURLProtocol.reset()
+        let fixture = try makeFixture()
+        try fixture.store.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 1_000))
+        var started: [String] = []
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store,
+            applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false,
+            usesBackgroundSession: false, startDownload: { started.append($1) },
+            preflightSession: URLSession(configuration: configuration))
+        coordinator.setNetworkTransportForTesting(.wifi)
+        coordinator.register(itemId: "episode", remoteURL: URL(string: "https://probe.example.com/announces-nothing.mp3")!,
+                             userInitiated: true)
+        await coordinator.preparationTasks["episode"]?.value
+        let attempt = try XCTUnwrap(started.first.flatMap { PodcastDownloadAttempt.decode($0) })
+
+        let staged = fixture.root.appending(path: "too-large.mp3")
+        try Data(repeating: 7, count: 2_000).write(to: staged)
+        await coordinator.finishDownload(attempt, stagedURL: staged, responseOK: true)
+
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .failed, "the 2,000 bytes don't fit a 1,000-byte budget")
+        XCTAssertNil(coordinator.validatedLocalURL(for: "episode"))
+        XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty)
+        XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
+        coordinator.shutdown()
+    }
+
+    func testAHostThatRefusesEverythingFailsBeforeReservingRoomThatCouldEvictOtherAudio() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DownloadProbeURLProtocol.self]
+        DownloadProbeURLProtocol.reset()
+        let fixture = try makeFixture()
+        try fixture.store.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 1_000))
+        // Another episode fills most of the budget and could be evicted, as a reservation for this one would require.
+        let audioDirectory = fixture.support.appending(path: "PodcastAudio", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+        let other = audioDirectory.appending(path: "other.mp3")
+        try Data(repeating: 7, count: 900).write(to: other)
+        try fixture.store.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: "podcast-offline-other", itemId: "other", category: .podcast,
+            relativePath: "PodcastAudio/other.mp3", byteCount: 900, isReproducible: true
+        ))
+        var starts = 0
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store,
+            applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false,
+            usesBackgroundSession: false, startDownload: { _, _ in starts += 1 },
+            preflightSession: URLSession(configuration: configuration))
+        coordinator.setNetworkTransportForTesting(.wifi)
+        coordinator.register(itemId: "gone", remoteURL: URL(string: "https://probe.example.com/gone.mp3")!,
+                             userInitiated: true)
+        await coordinator.preparationTasks["gone"]?.value
+
+        XCTAssertEqual(DownloadProbeURLProtocol.requests, ["HEAD /gone.mp3", "GET /gone.mp3 range"])
+        XCTAssertEqual(starts, 0)
+        XCTAssertEqual(coordinator.status(itemId: "gone"), .failed)
+        XCTAssertEqual(coordinator.recordsByItemId["gone"]?.failureReason, "The episode's host refused the download (HTTP 404).")
+        XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty, "nothing was reserved")
+        XCTAssertEqual(try fixture.store.loadOwnedOfflineAssets().map(\.id), ["podcast-offline-other"],
+                       "the other episode was not evicted to make room for one that can't download")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: other.path))
+        coordinator.shutdown()
+    }
+
     private static let responsesThatAreNotAudio: [(String, Data)] = [
         ("hotel sign-in page", Data("<!DOCTYPE html><html><body>Sign in to the guest Wi-Fi</body></html>".utf8)),
         ("json error", Data(#"{"error":"forbidden","status":403}"#.utf8)),
@@ -707,4 +824,63 @@ private final class ReconcileHookFileManager: FileManager, @unchecked Sendable {
         }
         return super.fileExists(atPath: path, isDirectory: isDirectory)
     }
+}
+
+/// Serves episodes on probe.example.com the way the hosts in #912 do. Each path is one host behaviour:
+/// - /head-405.mp3: HEAD is refused (405); a ranged GET answers 206 with the total in Content-Range.
+/// - /head-no-length.mp3: HEAD answers 200 with no Content-Length; GET ignores the range and sends 200
+///   with the whole file's length.
+/// - /head-ok.mp3: HEAD answers 200 with Content-Length: 8.
+/// - /announces-nothing.mp3: HEAD is refused (405); GET answers 200 with no length at all.
+/// - /gone.mp3: every request answers 404.
+private final class DownloadProbeURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var seen: [String] = []
+
+    static func reset() { lock.withLock { seen = [] } }
+    /// "HEAD /path" or "GET /path", with " range" when the request asked for a byte range.
+    static var requests: [String] { lock.withLock { seen } }
+
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "probe.example.com" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url else { return }
+        let method = request.httpMethod ?? "GET"
+        let ranged = request.value(forHTTPHeaderField: "Range") != nil
+        Self.lock.withLock { Self.seen.append("\(method) \(url.path)\(ranged ? " range" : "")") }
+        let audio = Data(repeating: 7, count: 8)
+        let status: Int
+        var headers: [String: String] = ["Content-Type": "audio/mpeg"]
+        var body = Data()
+        switch (url.path, method) {
+        case ("/gone.mp3", _):
+            status = 404
+        case ("/head-ok.mp3", "HEAD"):
+            status = 200
+            headers["Content-Length"] = "8"
+        case ("/head-no-length.mp3", "HEAD"):
+            status = 200
+        case (_, "HEAD"):
+            status = 405
+        case ("/head-405.mp3", _) where ranged:
+            status = 206
+            headers["Content-Range"] = "bytes 0-0/8"
+            headers["Content-Length"] = "1"
+            body = audio.prefix(1)
+        case ("/head-no-length.mp3", _):
+            status = 200
+            headers["Content-Length"] = "8"
+            body = audio
+        default:
+            status = 200
+            body = audio
+        }
+        let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if method != "HEAD" { client?.urlProtocol(self, didLoad: body) }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
