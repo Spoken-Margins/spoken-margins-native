@@ -2,7 +2,7 @@ import Foundation
 import SessionKitPersistence
 
 extension Gate1AppModel {
-    func requireOfflineStorageLedger(
+    func requireOfflineLedger(
         store: SQLiteSessionStore,
         rootDirectory: @autoclosure () throws -> URL
     ) rethrows -> OfflineStorageLedger {

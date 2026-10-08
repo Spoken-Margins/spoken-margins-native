@@ -15,9 +15,9 @@ final class OfflineStorageLedgerTests: XCTestCase {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         XCTAssertNil(model.offlineStorageLedger)
 
-        let ledger = model.requireOfflineStorageLedger(store: store, rootDirectory: root)
+        let ledger = model.requireOfflineLedger(store: store, rootDirectory: root)
         XCTAssertTrue(model.offlineStorageLedger === ledger)
-        XCTAssertTrue(model.requireOfflineStorageLedger(store: store, rootDirectory: root) === ledger)
+        XCTAssertTrue(model.requireOfflineLedger(store: store, rootDirectory: root) === ledger)
         let reservation = try await ledger.reserve(ownerId: "lazy-ledger", byteCount: 3)
         XCTAssertEqual(try store.loadOfflineStorageReservations().map(\.id), [reservation.id])
         let audio = root.appending(path: "PodcastAudio/episode.m4a")
@@ -36,10 +36,10 @@ final class OfflineStorageLedgerTests: XCTestCase {
         model.offlineStorageLedger = configured
         func unavailableDirectory() throws -> URL { throw DirectoryError.unavailable }
 
-        let reused = try model.requireOfflineStorageLedger(store: store, rootDirectory: try unavailableDirectory())
+        let reused = try model.requireOfflineLedger(store: store, rootDirectory: try unavailableDirectory())
         XCTAssertTrue(reused === configured)
         model.offlineStorageLedger = nil
-        XCTAssertThrowsError(try model.requireOfflineStorageLedger(store: store, rootDirectory: try unavailableDirectory()))
+        XCTAssertThrowsError(try model.requireOfflineLedger(store: store, rootDirectory: try unavailableDirectory()))
         XCTAssertNil(model.offlineStorageLedger)
     }
 
