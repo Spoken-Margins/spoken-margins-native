@@ -1471,6 +1471,18 @@ class MainFlowTests(unittest.TestCase):
                 mock.patch.object(lane, 'warm_build_folders', return_value='build folders: warm (SessionKit test)'):
             return lane.main(['--pr', '5', '--event-head', event_head, '--run-id', '42', *extra])
 
+    def test_a_run_for_a_merged_or_closed_pr_tests_nothing(self):
+        # #860: a queued run for a PR that merged meanwhile used to spend a full host-test and build cycle.
+        for state in ('closed', 'merged'):
+            github = FakeGitHub(labels=('automerge',))
+            github.pull = lambda state=state: {'state': 'closed' if state == 'merged' else state,
+                                               'head': {'sha': HEAD}, 'labels': [{'name': 'automerge'}]}
+            with mock.patch.object(lane, 'run_auto') as run_auto, mock.patch.object(lane, 'run_t2') as run_t2:
+                self.assertEqual(self.run_main(github, HEAD, 'PASS', '--mode', 'auto'), 0)
+            run_auto.assert_not_called()
+            run_t2.assert_not_called()
+            self.assertEqual(github.posted, [])
+
     conflicts = []
     role = ''  # the main runner, unless a test says otherwise
     attempt = '1'
