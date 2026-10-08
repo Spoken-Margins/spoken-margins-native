@@ -2356,9 +2356,8 @@ final class Gate1AppModel: ObservableObject {
         foregroundAudioPreparationTask?.cancel()
         if let client = speechPlaybackClient as? SupertonicSpeechPlaybackClient {
             do {
-                if try client.stopOnDeviceRenderingAndUseSystemSpeech(returnsAutomatically: true) {
+                if try stopOnDeviceRenderingRecordingFallback(client, returnsAutomatically: true, code: "memory_warning_stop", reason: .memoryWarning) {
                     speechFallbackReason = .memoryWarning
-                    recordAppFallbackEvent(code: "memory_warning_stop", reason: .memoryWarning)
                     let message = SpeechFallbackReason.memoryWarning.listenerExplanation
                     statusMessage = message
                     presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
@@ -3738,12 +3737,11 @@ final class Gate1AppModel: ObservableObject {
                     itemId: activeItemId
                 )
             }
-            guard try client.stopOnDeviceRenderingAndUseSystemSpeech() else {
+            guard try stopOnDeviceRenderingRecordingFallback(client, code: "listener_stop", reason: .listenerStoppedGeneration) else {
                 reportFailure("There is no active Supertonic generation to stop.")
                 return
             }
             speechFallbackReason = .listenerStoppedGeneration
-            recordAppFallbackEvent(code: "listener_stop", reason: .listenerStoppedGeneration)
             suppressAudioPreparation(itemId: activeItemId)
             if let coordinator = preparedAudioCoordinator,
                let signature = currentSupertonicRenderSignature {

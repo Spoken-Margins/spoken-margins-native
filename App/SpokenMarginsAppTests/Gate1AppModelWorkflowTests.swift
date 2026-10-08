@@ -205,19 +205,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(fallback["conditions"]?.contains("memoryBackoff=true") == true)
     }
 
-    /// #1109 (Codex audit on b36aa4d): the listener's Stop under "On-device voice" switches to the iOS voice
-    /// without a render failure, so the app records the event itself, with the conditions it reads then.
-    func testAppFallbackEventNamesTheListenersStop() throws {
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
-        model.recordAppFallbackEvent(code: "listener_stop", reason: .listenerStoppedGeneration)
-        let fallback = try lastFallbackEventFields(of: model)
-        XCTAssertEqual(fallback["code"], "listener_stop")
-        XCTAssertEqual(fallback["reason"], "listener_stopped_generation")
-        XCTAssertEqual(fallback["offset"], "-1", "no narration is reading, so there is no offset to name")
-        XCTAssertNotNil(fallback["policyBlock"])
-        XCTAssertNotNil(fallback["conditions"])
-    }
-
     /// The fields of the newest `supertonic.fallback` event in the model's diagnostics export.
     private func lastFallbackEventFields(of model: Gate1AppModel) throws -> [String: String] {
         let file = try XCTUnwrap(model.diagnosticsExportFileURL())

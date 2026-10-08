@@ -30,15 +30,26 @@ extension Gate1AppModel {
         SupertonicResourcePolicy.currentConditions(isOnExternalPower: SupertonicResourcePolicy.isOnExternalPower())
     }
 
-    /// Records a switch to the iOS voice that has no render failure code: the stop after a memory warning
-    /// and the listener's own Stop under "On-device voice". The offset is where narration was reading.
-    func recordAppFallbackEvent(code: String, reason: SpeechFallbackReason) {
-        recordSupertonicFallbackEvent(
-            code: code,
-            reason: reason,
-            conditions: currentResourceConditions(),
-            offset: snapshot.currentTextStart ?? -1
-        )
+    /// Stops on-device rendering for the iOS voice, as the app and the listener's Stop do without a render
+    /// failure code, and records the switch. The client also answers true when the iOS voice already
+    /// reads, which only refreshes its stop reason, so an event is recorded only when the voice changed.
+    func stopOnDeviceRenderingRecordingFallback(
+        _ client: SupertonicSpeechPlaybackClient,
+        returnsAutomatically: Bool = false,
+        code: String,
+        reason: SpeechFallbackReason
+    ) throws -> Bool {
+        let wasOnDevice = !client.isSystemVoiceActive
+        guard try client.stopOnDeviceRenderingAndUseSystemSpeech(returnsAutomatically: returnsAutomatically) else { return false }
+        if wasOnDevice {
+            recordSupertonicFallbackEvent(
+                code: code,
+                reason: reason,
+                conditions: currentResourceConditions(),
+                offset: snapshot.currentTextStart ?? -1
+            )
+        }
+        return true
     }
 
     /// Records a switch from the on-device voice to the iOS voice as its own timestamped playback event,
