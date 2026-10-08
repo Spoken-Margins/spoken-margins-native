@@ -4764,51 +4764,11 @@ final class Gate1AppModel: ObservableObject {
         }
         guard let resources = skimResourceContext, let projection = resources.projection else { return nil }
         guard let proposal = resources.proposal else { return nil }
-        let scenes = proposal.scenes.sorted { $0.order < $1.order }
-        guard !scenes.isEmpty else { return nil }
-        let exactIdentityProjection = projection.algorithmVersion == "episode-projection.exact-edition.v1"
-            || (!projection.points.isEmpty && projection.points.allSatisfy {
-                ($0.confidence == .exactEdition || $0.confidence == .verified)
-                    && $0.recipientMediaTimeMs == $0.sourceMediaTimeMs
-            })
-        func projectedTime(_ sourceTimeMs: Int?) -> Int? {
-            guard let sourceTimeMs else { return nil }
-            return projection.projectedRecipientTime(for: sourceTimeMs)
-                ?? (exactIdentityProjection ? sourceTimeMs : nil)
-        }
-        let sceneStarts = scenes.map { projectedTime($0.startAnchor.mediaTimeMs) }
-        guard let currentIndex = scenes.indices.last(where: {
-            guard let start = sceneStarts[$0] else { return false }
-            return start <= recipientMediaTimeMs
-        }) else { return nil }
-
-        let summaryIndex: Int
-        let destinationSceneId: String?
-        let destinationMediaTimeMs: Int
-        switch direction {
-        case .forward:
-            summaryIndex = currentIndex
-            if scenes.indices.contains(currentIndex + 1) {
-                guard let destination = sceneStarts[currentIndex + 1] else { return nil }
-                destinationSceneId = scenes[currentIndex + 1].id
-                destinationMediaTimeMs = destination
-            } else {
-                guard let duration = snapshot.currentPlaybackDurationMs ?? selectedItem.mediaDurationMs else { return nil }
-                destinationSceneId = nil
-                destinationMediaTimeMs = duration
-            }
-        case .backward:
-            guard currentIndex > 0, let destination = sceneStarts[currentIndex] else { return nil }
-            summaryIndex = currentIndex - 1
-            destinationSceneId = scenes[currentIndex].id
-            destinationMediaTimeMs = destination
-        }
-
-        let summaryScene = scenes[summaryIndex]
-        guard summaryScene.eligibility == .eligible,
-              summaryScene.summaryText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-            return nil
-        }
+        guard let plan = SceneStarts(scenes: proposal.scenes, projection: projection).skimPlan(
+            direction: direction, at: recipientMediaTimeMs,
+            durationMs: snapshot.currentPlaybackDurationMs ?? selectedItem.mediaDurationMs
+        ) else { return nil }
+        let summaryScene = plan.summaryScene
         let assetID = summaryBridgeAssetID(
             itemId: activeItemId,
             proposalId: SharedListeningMapPlacement.isSharedProjection(id: projection.id) ? projection.id : proposal.id,
@@ -4825,8 +4785,8 @@ final class Gate1AppModel: ObservableObject {
             itemId: activeItemId,
             originMediaTimeMs: recipientMediaTimeMs,
             summarySceneId: summaryScene.id,
-            destinationSceneId: destinationSceneId,
-            destinationMediaTimeMs: destinationMediaTimeMs,
+            destinationSceneId: plan.destinationSceneId,
+            destinationMediaTimeMs: plan.destinationMediaTimeMs,
             summaryAssetId: assetID,
             summaryAudioURL: url
         )
@@ -14576,30 +14536,7 @@ final class Gate1AppModel: ObservableObject {
         let proposal = SharedListeningMapPlacement.proposal(
             for: projection, committed: try store.loadPortableListeningMapProposals(itemId: id),
             layers: try store.loadImportedCommentaryLayers(itemId: id))
-        let exactIdentityProjection = projection?.algorithmVersion == "episode-projection.exact-edition.v1"
-            || (projection?.points.isEmpty == false
-                && projection?.points.allSatisfy {
-                    ($0.confidence == .exactEdition || $0.confidence == .verified)
-                        && $0.recipientMediaTimeMs == $0.sourceMediaTimeMs
-                } == true)
-        let listeningMapScenes = proposal?.scenes
-            .sorted { $0.order < $1.order }
-            .compactMap { scene -> MediaTimelineChapter? in
-                guard let sourceStartMs = scene.startAnchor.mediaTimeMs,
-                      let startMs = projection?.projectedRecipientTime(for: sourceStartMs)
-                        ?? (exactIdentityProjection ? sourceStartMs : nil) else {
-                    return nil
-                }
-                let title = scene.title?.trimmingCharacters(in: .whitespacesAndNewlines)
-                let displayTitle = title.flatMap { $0.isEmpty ? nil : $0 } ?? "Scene \(scene.order + 1)"
-                return MediaTimelineChapter(
-                    id: scene.id,
-                    title: displayTitle,
-                    description: scene.summaryText?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
-                    startMs: startMs,
-                    transcriptSegmentId: scene.startAnchor.transcriptSegmentId ?? scene.id
-                )
-            }.sorted { $0.startMs < $1.startMs } ?? []
+        let listeningMapScenes = SceneStarts(scenes: proposal?.scenes ?? [], projection: projection).chapters
         let sessions = try store.loadSessions(itemId: id)
         // A snapshot session is valid only for its own item. Without this
         // ownership check, an asynchronous selection bug can display one
