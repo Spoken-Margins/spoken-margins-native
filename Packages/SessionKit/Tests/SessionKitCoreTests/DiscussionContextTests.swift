@@ -128,6 +128,16 @@ final class DiscussionContextTests: XCTestCase {
         XCTAssertEqual((intent["interjections"] as? [[String: Any]])?.count, 1)
     }
 
+    func testTheRequestIsTheFollowUpThatWasBuiltNotTheTypedWords() throws {
+        let note = margin("a", cleaned: "A note.")
+
+        let parsed = try context(followUp: "The built request.", explicit: "What the listener typed.", primary: [note])
+
+        let intent = try XCTUnwrap(parsed["primaryUserIntent"] as? [String: Any])
+        XCTAssertEqual(intent["request"] as? String, "The built request.")
+        XCTAssertEqual(parsed["currentFollowUp"] as? String, "The built request.")
+    }
+
     func testTheIntentSourceFollowsTheExplicitFollowUpAndThePrimaryMargins() throws {
         let note = margin("a", cleaned: "A note.")
         func source(explicit: String?, primary: [Interjection]) throws -> String? {
@@ -246,6 +256,13 @@ final class DiscussionContextTests: XCTestCase {
         XCTAssertEqual(response["targetType"] as? String, "assistant_turn_tts")
         XCTAssertEqual(response["summary"] as? String, "", "a missing summary is an empty string")
         XCTAssertEqual(response["text"] as? String, "Response raw.", "the raw text stands in for a missing text")
+
+        let withText = DiscussionContext.targetContext(
+            currentTargetType: TargetType.assistantTurnTTS.rawValue, currentTargetId: "t-plain",
+            turns: turns + [turn("t-plain", summary: nil, text: "Plain text.", raw: "Plain raw.")],
+            itemTitle: "The Title", overview: "The overview.")
+        XCTAssertEqual(withText["summary"] as? String, "", "the text does not stand in for a missing summary")
+        XCTAssertEqual(withText["text"] as? String, "Plain text.", "the text wins over the raw text")
     }
 
     func testTheTargetFallsBackToTheItemWhenNoTurnMatches() {
@@ -321,7 +338,7 @@ final class DiscussionContextTests: XCTestCase {
     func testTheRequestListsTheMarginsTranscriptsWhenNothingWasTyped() {
         let notes = [
             margin("a", cleaned: "  Cleaned first.  ", transcript: "Raw.", display: "Shown."),
-            margin("b", transcript: "Raw second."),
+            margin("b", transcript: "Raw second.", display: "Shown, but second loses."),
             margin("c", display: "Shown third."),
             margin("d", cleaned: "   ")
         ]
