@@ -697,13 +697,24 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     public func deleteItem(id: String) throws {
         try withConnectionLock {
             var statement: OpaquePointer?
-            let sql = "DELETE FROM records WHERE item_id = ? OR (kind = 'item' AND id = ?);"
+            // Turns are saved with a session id and no item id, so they are found through the
+            // item's session rows. One statement: SQLite reads the session rows before it
+            // deletes any, and a failure leaves the item whole.
+            let sql = """
+            DELETE FROM records
+            WHERE item_id = ?
+               OR (kind = 'item' AND id = ?)
+               OR (kind = 'turn' AND session_id IN (
+                    SELECT id FROM records WHERE kind = 'session' AND item_id = ?
+               ));
+            """
             guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_delete_item")
             }
             defer { if statement != nil { sqlite3_finalize(statement) } }
             bind(statement, index: 1, value: id)
             bind(statement, index: 2, value: id)
+            bind(statement, index: 3, value: id)
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw SessionKitError.persistenceFailed("step_delete_item")
             }
