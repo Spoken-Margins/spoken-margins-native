@@ -237,6 +237,40 @@ final class MarginRejoinTests: XCTestCase {
                        "a closing quote after the stop still ends the sentence")
     }
 
+    /// Articles, EPUBs and transcripts carry typographic quotes, so the stop is often followed by a curly
+    /// closing quote or a bracket before the space. The straight quote above is only one of the six
+    /// closers; without the others a Margin during "Then he left" re-hears the sentence before it.
+    func testEveryClosingQuoteAndBracketAfterTheStopStillEndsTheSentence() {
+        let cases: [(text: String, second: String)] = [
+            ("He said \u{201C}stop.\u{201D} Then he left.", "Then"),
+            ("She said \u{2018}stop.\u{2019} Then she left.", "Then"),
+            ("He said 'stop.' Then he left.", "Then"),
+            ("It works (see note.) Next one.", "Next"),
+            ("It works [see note.] Next one.", "Next"),
+            ("(He said \u{201C}stop.\u{201D}) Then he left.", "Then"),
+            ("He asked \u{201C}really?\u{201D} Then he left.", "Then"),
+            ("He yelled \u{201C}stop!\u{201D} Then he left.", "Then"),
+        ]
+        for (text, second) in cases {
+            let start = text.distance(from: text.startIndex, to: text.range(of: second)!.lowerBound)
+            XCTAssertEqual(MarginRejoin.textResumeOffset(pausedAt: start + 2, in: text), start, text)
+            XCTAssertEqual(MarginRejoin.textResumeOffset(pausedAt: start, in: text), start, "\(text) (a sentence start stays put)")
+            XCTAssertEqual(MarginRejoin.textResumeOffset(pausedAt: text.count - 1, in: text), start, "\(text) (a pause late in the sentence)")
+        }
+    }
+
+    /// "!" and "?" end a sentence like ".", also when a space follows instead of a line break (the
+    /// newline case above resumes at the break whatever the mark was).
+    func testAnExclamationOrQuestionMarkFollowedByASpaceEndsTheSentence() {
+        for text in ["Wow! Next one here.", "Why? Next one here."] {
+            let start = text.distance(from: text.startIndex, to: text.range(of: "Next")!.lowerBound)
+            XCTAssertEqual(MarginRejoin.textResumeOffset(pausedAt: start + 2, in: text), start, text)
+        }
+        // No space after the mark: it is not a sentence end, as with the point in "3.14".
+        let joined = "Wow!Next one here."
+        XCTAssertEqual(MarginRejoin.textResumeOffset(pausedAt: joined.count - 3, in: joined), 0)
+    }
+
     /// A title or short form is not a sentence end: a Margin during "result" in "Intro. Dr. Smith explained
     /// the result." used to resume at "Smith" (Codex audit on dda759c).
     func testAnAbbreviationPeriodIsNotASentenceEnd() {

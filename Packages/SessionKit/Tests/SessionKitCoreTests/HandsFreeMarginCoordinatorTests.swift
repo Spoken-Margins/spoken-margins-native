@@ -42,6 +42,47 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         return commands
     }
 
+    /// Feeds one level sample every 0.1 s, each with its own value.
+    @discardableResult
+    private func feed(samples decibels: [Double]) -> [HandsFreeMarginCommand] {
+        var commands: [HandsFreeMarginCommand] = []
+        for decibel in decibels {
+            clock.advance(0.1)
+            commands += coordinator.level(decibel)
+        }
+        return commands
+    }
+
+    /// The threshold a fresh Margin learns in a room that measures `room` dBFS, on its own clock.
+    private func thresholdLearned(inARoomAt room: Double) -> Double? {
+        let clock = FakeClock()
+        let coordinator = HandsFreeMarginCoordinator(microphonePermission: .granted, clock: { clock.now })
+        _ = coordinator.trigger(from: .headphones)
+        clock.advance(0.3)
+        _ = coordinator.toneFinished(.start)
+        for _ in 0..<5 {
+            clock.advance(0.1)
+            _ = coordinator.level(room)
+        }
+        return coordinator.speechThresholdDB
+    }
+
+    /// Every command after the start tone is requested, up to the end of the listening window, in a room that
+    /// reads `room` dBFS throughout bar one sample at `blip` (0.7 s after the microphone opens), on a fresh
+    /// coordinator.
+    private func commandsThroughTheListeningWindow(room: Double, oneSampleAt blip: Double) -> [HandsFreeMarginCommand] {
+        let clock = FakeClock()
+        let coordinator = HandsFreeMarginCoordinator(microphonePermission: .granted, clock: { clock.now })
+        var commands = coordinator.trigger(from: .headphones)
+        clock.advance(0.3)
+        commands += coordinator.toneFinished(.start)
+        for index in 0..<60 {
+            clock.advance(0.1)
+            commands += coordinator.level(index == 6 ? blip : room)
+        }
+        return Array(commands.dropFirst(2))
+    }
+
     func testTriggerPausesPlaysTheToneThenOpensTheMicrophone() {
         XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)])
         XCTAssertEqual(coordinator.phase, .startTone)
@@ -199,6 +240,38 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         XCTAssertEqual(feed(road, for: 2.5), [.finishRecording(.silence)])
     }
 
+    /// The room is measured over the first half-second: four samples, 0.1 s to 0.4 s, and the threshold
+    /// is learned when the fifth arrives. Every other test feeds one repeated level, so first, last,
+    /// loudest, quietest and mean were the same number. A cough, a click or a breath in that half-second
+    /// must not raise the line speech has to cross.
+    func testTheBackgroundIsTheQuietestSampleOfTheFirstHalfSecond() {
+        startRecording()
+        // First -40, quietest -55 (second), loudest -30, last -45, mean -42.5: each rule gives a different answer.
+        feed(samples: [-40, -55, -30, -45])
+        XCTAssertNil(coordinator.speechThresholdDB, "still measuring the room")
+        feed(samples: [-60])
+        XCTAssertEqual(coordinator.speechThresholdDB, -47, "the quietest sample plus the 8 dB speech margin")
+        XCTAssertEqual(coordinator.phase, .listening)
+
+        // The learned line is the one that counts: -48 is under it, -46 is speech.
+        feed(samples: [-48])
+        XCTAssertEqual(coordinator.phase, .listening)
+        feed(samples: [-46])
+        XCTAssertEqual(coordinator.phase, .speaking)
+    }
+
+    /// Speech has to rise 8 dB over the room, but the line stays between -50 and -25 dBFS: a very quiet
+    /// room must not put it where the microphone's own hiss crosses it, and a loud one must not put it
+    /// out of reach of a normal voice. The edges are literals so a changed constant fails here.
+    func testTheLearnedThresholdStaysBetweenMinus50AndMinus25() {
+        XCTAssertEqual(thresholdLearned(inARoomAt: -80), -50, "a silent room is held at the lowest line")
+        XCTAssertEqual(thresholdLearned(inARoomAt: -58), -50, "the room that lands exactly on the lowest line")
+        XCTAssertEqual(thresholdLearned(inARoomAt: -57), -49, "just inside the range is not moved")
+        XCTAssertEqual(thresholdLearned(inARoomAt: -34), -26, "just inside the range is not moved")
+        XCTAssertEqual(thresholdLearned(inARoomAt: -33), -25, "the room that lands exactly on the highest line")
+        XCTAssertEqual(thresholdLearned(inARoomAt: -10), -25, "a loud room is held at the highest line")
+    }
+
     func testEventsOutsideAMarginDoNothing() {
         XCTAssertEqual(coordinator.level(voice), [])
         XCTAssertEqual(coordinator.tick(), [])
@@ -254,11 +327,129 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.phase, .idle)
     }
 
+    /// A press has already started the save when the headphones come out: no save tone from the phone
+    /// speaker and no resume. (Pulling them out while talking is `testRemovedHeadphonesSaveAnd...`.)
+    func testHeadphonesPulledWhileASaveIsInFlightStillLeaveTheSourcePausedWithNoTone() {
+        startRecording()
+        feed(quiet, for: 0.5)
+        feed(voice, for: 2)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.finishRecording(.press)])
+        XCTAssertEqual(coordinator.headphonesRemoved(), [])
+        XCTAssertEqual(coordinator.saveCompleted(), [], "no save tone and no resume from the phone speaker")
+        XCTAssertEqual(coordinator.phase, .idle)
+        clock.advance(1)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)], "ready for the next one")
+    }
+
+    /// The save tone is already playing when the headphones come out: nothing resumes the source.
+    func testHeadphonesPulledDuringTheClosingToneDoNotResumeTheSource() {
+        startRecording()
+        feed(quiet, for: 0.5)
+        feed(voice, for: 2)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.finishRecording(.press)])
+        XCTAssertEqual(coordinator.saveCompleted(), [.playTone(.saved)])
+        XCTAssertEqual(coordinator.phase, .rejoining)
+        XCTAssertEqual(coordinator.headphonesRemoved(), [])
+        XCTAssertEqual(coordinator.phase, .idle, "nothing is left to wait for")
+        XCTAssertEqual(coordinator.toneFinished(.saved), [], "the headphones are out, so the source stays paused")
+        clock.advance(1)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)], "ready for the next one")
+    }
+
+    /// The call begins after the save was already requested: the save tone, and the resume after it,
+    /// wait for the call to end, whichever of the save and the call ends first.
+    func testACallThatBeginsWhileASaveIsInFlightHoldsTheSaveToneUntilItEnds() {
+        startRecording()
+        feed(quiet, for: 0.5)
+        feed(voice, for: 2)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.finishRecording(.press)])
+        XCTAssertEqual(coordinator.interruptionBegan(), [])
+        XCTAssertEqual(coordinator.saveCompleted(), [], "the save tone would play into the call")
+        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: true), [.playTone(.saved)])
+        XCTAssertEqual(coordinator.toneFinished(.saved), [.resumeSource])
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
+    func testACallThatEndsBeforeTheSaveFinishesStillWaitsForTheSave() {
+        startRecording()
+        feed(quiet, for: 0.5)
+        feed(voice, for: 2)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.finishRecording(.press)])
+        XCTAssertEqual(coordinator.interruptionBegan(), [])
+        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: false), [], "the Margin is not stored yet")
+        XCTAssertEqual(coordinator.saveCompleted(), [.playTone(.saved)])
+        XCTAssertEqual(coordinator.toneFinished(.saved), [], "iOS said not to resume")
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
     func testFaintSpeechTheThresholdMissedIsKeptNotFlagged() {
         startRecording()
         feed(-50, for: 0.5)
         // The threshold is -42; a quiet talker at -44 never crosses it but is clearly not silence.
         XCTAssertEqual(feed(-44, for: 5.5), [.finishRecording(.silence)])
+    }
+
+    /// The faint-speech rule above has only one positive case, a talker 6 dB over the room. These two
+    /// pin the 4 dB margin from both sides: a quiet room whose microphone jitters a few dB must still
+    /// end as a flag, and a talker just over the margin is kept. (Exactly 4.0 dB is left unpinned.)
+    func testAQuietRoomWithAFewDecibelsOfJitterStillEndsAsAFlag() {
+        for blip in [-54.0, -52.0] {
+            XCTAssertEqual(
+                commandsThroughTheListeningWindow(room: quiet, oneSampleAt: blip),
+                [.beginRecording, .cancelRecording, .requestFlag, .playTone(.flag)],
+                "one sample \(blip - quiet) dB over a room at \(quiet) dBFS is jitter, not an attempt to talk"
+            )
+        }
+    }
+
+    func testASampleMoreThanFourDecibelsOverTheRoomIsKeptNotFlagged() {
+        for blip in [-50.5, -45.0] {
+            XCTAssertEqual(
+                commandsThroughTheListeningWindow(room: quiet, oneSampleAt: blip),
+                [.beginRecording, .finishRecording(.silence)],
+                "one sample \(blip - quiet) dB over a room at \(quiet) dBFS is words the threshold missed"
+            )
+        }
+    }
+
+    /// A second press before the microphone opened: nothing to keep, so a flag, and the source resumes.
+    func testASecondPressBeforeTheMicrophoneOpensMakesAFlagAndResumesTheSource() {
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)])
+        clock.advance(0.6)
+        XCTAssertEqual(coordinator.trigger(from: .lockScreen), [.requestFlag, .playTone(.flag)])
+        XCTAssertEqual(coordinator.phase, .rejoining)
+        XCTAssertEqual(coordinator.toneFinished(.start), [], "the start tone ending late must not open the microphone")
+        XCTAssertEqual(coordinator.toneFinished(.flag), [.resumeSource])
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
+    /// The start tone was playing in the headphones when they came out: the phone microphone must not
+    /// open once it ends, and the source stays paused.
+    func testHeadphonesPulledDuringTheStartToneFlagAndNeverOpenTheMicrophone() {
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)])
+        XCTAssertEqual(coordinator.headphonesRemoved(), [.requestFlag])
+        XCTAssertEqual(coordinator.phase, .idle)
+        XCTAssertEqual(coordinator.toneFinished(.start), [], "no recording through the phone microphone")
+        clock.advance(1)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)], "ready for the next one")
+    }
+
+    /// A call arrives while the start tone plays: a flag keeps the spot, the microphone stays closed, and
+    /// the tone and the resume wait for the call to end.
+    func testACallDuringTheStartToneFlagsTheSpotAndResumesOnlyWhenItEnds() {
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)])
+        XCTAssertEqual(coordinator.interruptionBegan(), [.requestFlag])
+        XCTAssertEqual(coordinator.toneFinished(.start), [], "the microphone stays closed during the call")
+        XCTAssertEqual(coordinator.phase, .saving)
+        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: true), [.playTone(.flag)])
+        XCTAssertEqual(coordinator.toneFinished(.flag), [.resumeSource])
+        XCTAssertEqual(coordinator.phase, .idle)
+
+        clock.advance(1)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)])
+        XCTAssertEqual(coordinator.interruptionBegan(), [.requestFlag])
+        XCTAssertEqual(coordinator.interruptionEnded(shouldResume: false), [.playTone(.flag)])
+        XCTAssertEqual(coordinator.toneFinished(.flag), [], "iOS said not to resume")
     }
 
     func testAbandonReturnsToIdle() {
