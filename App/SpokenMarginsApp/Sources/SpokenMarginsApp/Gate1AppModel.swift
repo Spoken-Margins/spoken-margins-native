@@ -2757,10 +2757,6 @@ final class Gate1AppModel: ObservableObject {
         return candidates
     }
 
-    var hasQuickAccessFolder: Bool {
-        UserDefaults.standard.data(forKey: quickAccessFolderBookmarkKey) != nil
-    }
-
     var isRefreshingQuickAddFeed: Bool {
         isRefreshingQuickAccessFolder || isRefreshingFollowedSources
     }
