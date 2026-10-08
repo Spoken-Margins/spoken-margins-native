@@ -8071,7 +8071,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func acquirePodcastForImportedPackage(_ item: SharedItemIdentity) async throws -> String {
         guard let canonicalURL = item.canonicalURL,
-              normalizedSharingURL(canonicalURL) != nil else {
+              SharedPodcastResolutionPolicy.hasReference(item) else {
             throw SessionKitError.persistenceFailed("shared_podcast_item_has_no_reference")
         }
         let request = LinkResolutionRequest(
@@ -8092,77 +8092,22 @@ final class Gate1AppModel: ObservableObject {
             // automated requests even when the packet has the exact enclosure.
             // In that case, use its reference through the same source persistence
             // path; anchor placement still needs recipient evidence.
-            guard let packageResult = packagePodcastLinkResolution(item: item, request: request) else {
+            guard let packageResult = SharedPodcastResolutionPolicy.packageReferenceResolution(item: item, request: request) else {
                 throw error
             }
             diagnostics["lastSharedPodcastAcquisition"] = "package_reference_after_resolution_failure"
             result = packageResult
         }
-        if result.status == .needsReview {
-            // Enclosures match by the file behind their tracking redirects. Duration only breaks ties: shows with
-            // dynamic ads report different lengths for the same episode.
-            let exactEnclosureMatches = result.candidates.filter {
-                PodcastEnclosureIdentity.sameFile($0.audioURL, item.enclosureURL)
-            }
-            let titleMatches = result.candidates.filter {
-                $0.audioURL != nil
-                    && $0.title.compare(item.title, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
-            }
-            let titleDurationMatches = titleMatches.filter { durationIsCompatible($0.durationMs, item.durationMs) }
-            let selected = exactEnclosureMatches.count == 1 ? exactEnclosureMatches.first
-                : titleMatches.count == 1 ? titleMatches.first
-                : titleDurationMatches.count == 1 ? titleDurationMatches.first
-                : nil
-            if let selected {
-                result.status = .playable
-                result.selectedCandidate = selected
-            } else if !result.candidates.contains(where: { $0.audioURL != nil }),
-                      let packageResult = packagePodcastLinkResolution(item: item, request: request) {
-                // The lookup found the page but no audio at all, so there is nothing to confuse the packet's own
-                // enclosure with. Placement still needs recipient evidence.
-                diagnostics["lastSharedPodcastAcquisition"] = "package_reference_after_lookup_without_audio"
-                result = packageResult
-            } else {
-                throw SessionKitError.persistenceFailed("shared_podcast_item_is_ambiguous")
-            }
+        let settled = try SharedPodcastResolutionPolicy.settle(result, item: item, request: request)
+        result = settled.result
+        if let diagnostic = settled.diagnostic {
+            diagnostics["lastSharedPodcastAcquisition"] = diagnostic
         }
         guard result.status == .playable,
               let importedItem = try persistResolvedSourceLinkInBackground(request: request, result: result) else {
             throw SessionKitError.persistenceFailed("shared_podcast_item_not_created")
         }
         return importedItem.id
-    }
-
-    private func packagePodcastLinkResolution(
-        item: SharedItemIdentity,
-        request: LinkResolutionRequest
-    ) -> LinkResolutionResult? {
-        guard item.itemType == .podcast,
-              let canonicalURL = item.canonicalURL,
-              normalizedSharingURL(canonicalURL) != nil,
-              let enclosureURL = item.enclosureURL,
-              normalizedSharingURL(enclosureURL) != nil,
-              !item.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        let sourceLink = SourceLink(
-            url: canonicalURL, provider: "shared_package", title: item.title,
-            role: "package_reference"
-        )
-        let candidate = LinkResolutionCandidate(
-            sourceLink: sourceLink,
-            title: item.title,
-            showTitle: item.showTitle,
-            durationMs: item.durationMs,
-            publishedAt: item.publishedAt,
-            audioURL: enclosureURL,
-            confidence: 1
-        )
-        return LinkResolutionResult(
-            requestId: request.id,
-            status: .playable,
-            originalLink: sourceLink,
-            selectedCandidate: candidate,
-            candidates: [candidate]
-        )
     }
 
     private func importedLayerHasValidItemAssociation(
@@ -8239,11 +8184,6 @@ final class Gate1AppModel: ObservableObject {
 
     private func normalizedSharingURL(_ value: String?) -> String? {
         SharedItemIdentityBuilder.normalizedSharingURL(value)
-    }
-
-    private func durationIsCompatible(_ lhs: Int?, _ rhs: Int?) -> Bool {
-        guard let lhs, let rhs else { return false }
-        return abs(lhs - rhs) <= max(2_000, Int((Double(rhs) * 0.005).rounded()))
     }
 
     func handleIncomingURL(_ url: URL) {
