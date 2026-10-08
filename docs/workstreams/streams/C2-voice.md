@@ -2,7 +2,7 @@
 
 **Outcome.** Narration keeps the voice the listener chose unless there's a real reason to change it. When the app must fall back (heat, low battery, memory), it falls back to a bundled voice that sounds natural rather than robotic, needs no setup, and still renders at least twice as fast as real time on the oldest supported iPhone under thermal and battery stress. The listener can see why it changed, and the chosen voice comes back when the condition clears.
 
-**Why now.** On the owner's iPhone 17 Pro, charging or Low Power Mode drops narration to the system voice. That fallback also pauses at every chunk boundary and multiplies the accessibility speech rate by the app's rate (#183). Piper can be imported but isn't linked, and is too painful to set up.
+**Why now.** On the owner's iPhone 17 Pro, charging or Low Power Mode drops narration to the system voice. That fallback also pauses at every chunk boundary and multiplies the accessibility speech rate by the app's rate (#183). Piper has no import UI, and its renderer is not linked.
 
 **Where.** Voice research and benchmarks in the cloud and on the Mac host. Integration on the Mac. Device checks by the owner.
 
@@ -12,7 +12,7 @@
 
 - The fallback is deliberate policy, not a crash. `SupertonicResourcePolicy.allowsRendering()` (in `SupertonicSpeechPlaybackClient.swift`) refuses to render under Low Power Mode, thermal `.serious` or `.critical`, or within 60 s of a memory warning. The app then calls `activateSystemFallback` to the iOS voice. Thermal state is polled at decision points; nothing observes its change notification.
 - Supertonic 3 INT8 runs on ONNX Runtime, CPU only, 8 steps, 240-character chunks, with a disk cache and a 15 s render-wait limit. The render duration is recorded but no real-time factor is computed anywhere.
-- Piper: an import UI for `.onnx` + `.json` exists, but the renderer is "not linked in this build".
+- Piper: no import UI exists, and the renderer is not linked in this build.
 - **License trap:** many lightweight neural TTS stacks phonemize with espeak-ng, which is GPL. Voice models carry their own licenses too, some non-commercial. Whatever ships must suit App Store distribution.
 - The oldest iPhones iOS 26 supports use the A13 chip (iPhone 11 and SE 2nd generation). The owner doesn't have one, so the budget must be derived: measure on the owner's phone in Low Power Mode while warm, and scale by a documented CPU ratio.
 
