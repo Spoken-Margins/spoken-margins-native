@@ -51,6 +51,8 @@ grep -q '^{$' <(head -1 "${work}/c1") || die "global block not first"
 grep -q 'wrap json' "${work}/c1" || die "log filter missing"
 grep -q 'reverse_proxy 127.0.0.1:8795' "${work}/c1" || die "port not rendered"
 grep -q 'root \* /srv/www/spokenmargins-server' "${work}/c1" || die "server root not rendered"
+grep -q 'handle /l/\*' "${work}/c1" || die "share link routing missing"
+grep -Fq 'request>uri regexp ^(/api/v1/maps|/l)/.* $1/*' "${work}/c1" || die "share link privacy filter missing"
 # Everything outside the two managed blocks is byte-for-byte unchanged.
 diff <(sed -n '/^proximitytoprogress.com {/,/^}/p;/^other.proximitytoprogress.com {/,/^}/p' "${work}/live") \
   <(sed -n '/^proximitytoprogress.com {/,/^}/p;/^other.proximitytoprogress.com {/,/^}/p' "${work}/c1") >/dev/null ||
@@ -99,6 +101,8 @@ if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   [[ "$(code http://127.0.0.1:18443/api/v1/config.json)" == 200 ]] || die "config.json not served while smserver is down"
   [[ "$(code http://127.0.0.1:18443/)" == 200 ]] || die "site root not served"
   curl -s -X POST -H 'X-SM-Key-Id: SECRETKEYID' http://127.0.0.1:18443/api/v1/ping >/dev/null
+  linkid=8badf00d8badf00d8badf00d8badf00d
+  [[ "$(code http://127.0.0.1:18443/l/${linkid})" == 502 ]] || die "link should 502 with smserver down"
   mapkey=5ec2e7a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
   [[ "$(code http://127.0.0.1:18443/api/v1/maps/${mapkey})" == 502 ]] || die "map fetch should 502 with smserver down"
   [[ "$(code http://127.0.0.1:18443/api/v1/health)" == 502 ]] || die "api should 502 with smserver down"
@@ -108,6 +112,8 @@ if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   sleep 0.5
   grep -q 'http.log.error' "${work}/caddy.log" || die "expected a 502 error line to inspect"
   ! grep -qE 'SECRETKEYID|remote_ip|client_ip|"headers"' "${work}/caddy.log" || die "Caddy error log leaked IP or headers"
+  ! grep -q "${linkid}" "${work}/caddy.log" || die "Caddy error log leaked a share link id"
+  grep -q '"uri":"/l/\*"' "${work}/caddy.log" || die "share link not logged as /l/*"
   ! grep -q "${mapkey}" "${work}/caddy.log" || die "Caddy error log leaked an episode key"
   grep -q '"uri":"/api/v1/maps/\*"' "${work}/caddy.log" || die "map fetch not logged as /api/v1/maps/*"
   grep 'http.log.error' "${work}/caddy.log" | head -1 | grep -q '^{' || die "error log is not JSON"

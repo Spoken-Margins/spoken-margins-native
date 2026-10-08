@@ -31,6 +31,7 @@ import (
 	"spokenmargins.dev/bridge/internal/appattest"
 	"spokenmargins.dev/bridge/internal/appattest/fakeattest"
 	"spokenmargins.dev/bridge/internal/config"
+	"spokenmargins.dev/bridge/internal/links"
 	"spokenmargins.dev/bridge/internal/manifest"
 	"spokenmargins.dev/bridge/internal/maps"
 	"spokenmargins.dev/bridge/internal/store"
@@ -64,6 +65,8 @@ func main() {
 		err = publishManifest(args)
 	case "make-test-ca":
 		err = makeTestCA(args)
+	case "takedown":
+		err = takedownLink(args)
 	case "takedown-map":
 		err = takedownMap(args)
 	default:
@@ -76,7 +79,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown-map [flags]")
+	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown|takedown-map [flags]")
 	os.Exit(2)
 }
 
@@ -94,10 +97,20 @@ func serve(args []string) error {
 	allowDev := fs.Bool("allow-development", false, "accept App Attest development-environment keys (debug builds)")
 	behindProxy := fs.Bool("behind-proxy", false, "take the client address from X-Forwarded-For when the peer is loopback")
 	idleDays := fs.Int("idle-days", 90, "delete install records unused for this many days")
+	installURL := fs.String("links-install-url", "", "App Store listing or TestFlight invitation (required for links)")
 	var mf mapsFlags
 	mf.register(fs)
 	fs.Parse(args)
 
+	if *installURL != "" && !links.ValidInstallURL(*installURL) {
+		return errors.New("links: install URL must be an App Store listing or TestFlight invitation")
+	}
+	linkStore, err := links.OpenStore(filepath.Join(*stateDir, "links"))
+	if err != nil {
+		// Optional link storage must not take health or the bridge down.
+		log.Print("links: unavailable")
+		linkStore = nil
+	}
 	rootPEM := appattest.AppleRootPEM()
 	if *rootPath != "" {
 		data, err := os.ReadFile(*rootPath)
@@ -150,6 +163,8 @@ func serve(args []string) error {
 		MapStore:          mapStore,
 		Maps:              mapService,
 		Tokens:            issuer,
+		Links:             linkStore,
+		LinkInstallURL:    *installURL,
 	}
 	httpServer := &http.Server{
 		Addr:              *listen,
@@ -184,6 +199,13 @@ func serve(args []string) error {
 	}
 	go func() {
 		purgeOnce := func() {
+			if linkStore != nil {
+				if n, err := linkStore.Sweep(time.Now()); err != nil {
+					log.Print("links: daily sweep failed")
+				} else if n > 0 {
+					log.Printf("links: swept %d expired packets", n)
+				}
+			}
 			if n, err := st.Purge(time.Now(), *idleDays); err != nil {
 				log.Printf("purge failed: %v", err)
 			} else if n > 0 {
@@ -384,5 +406,23 @@ func takedownMap(args []string) error {
 	} else {
 		fmt.Println("no map was stored; no map will be made for this episode")
 	}
+	return nil
+}
+
+func takedownLink(args []string) error {
+	fs := flag.NewFlagSet("takedown", flag.ExitOnError)
+	state := fs.String("state", "state", "state directory")
+	fs.Parse(args)
+	if fs.NArg() != 1 {
+		return errors.New("usage: smserver takedown -state DIR ID")
+	}
+	st, err := links.OpenStore(filepath.Join(*state, "links"))
+	if err != nil {
+		return err
+	}
+	if err := st.Takedown(fs.Arg(0)); err != nil {
+		return err
+	}
+	fmt.Println("shared link removed")
 	return nil
 }
