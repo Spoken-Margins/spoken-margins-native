@@ -25,12 +25,18 @@ extension Gate1AppModel {
         )
     }
 
-    /// Records the stop that the app makes itself when the system warns about memory (no render failure code exists for it).
-    func recordMemoryWarningFallbackEvent() {
+    /// What the resource policy reads from the phone now: heat, Low Power Mode, power source, memory backoff.
+    func currentResourceConditions() -> SpeechEngineConditions {
+        SupertonicResourcePolicy.currentConditions(isOnExternalPower: SupertonicResourcePolicy.isOnExternalPower())
+    }
+
+    /// Records a switch to the iOS voice that has no render failure code: the stop after a memory warning
+    /// and the listener's own Stop under "On-device voice". The offset is where narration was reading.
+    func recordAppFallbackEvent(code: String, reason: SpeechFallbackReason) {
         recordSupertonicFallbackEvent(
-            code: "memory_warning_stop",
-            reason: .memoryWarning,
-            conditions: SupertonicResourcePolicy.currentConditions(isOnExternalPower: SupertonicResourcePolicy.isOnExternalPower()),
+            code: code,
+            reason: reason,
+            conditions: currentResourceConditions(),
             offset: snapshot.currentTextStart ?? -1
         )
     }

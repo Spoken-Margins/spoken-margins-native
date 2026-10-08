@@ -2473,7 +2473,7 @@ final class Gate1AppModel: ObservableObject {
             do {
                 if try client.stopOnDeviceRenderingAndUseSystemSpeech(returnsAutomatically: true) {
                     speechFallbackReason = .memoryWarning
-                    recordMemoryWarningFallbackEvent()
+                    recordAppFallbackEvent(code: "memory_warning_stop", reason: .memoryWarning)
                     let message = SpeechFallbackReason.memoryWarning.listenerExplanation
                     statusMessage = message
                     presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
@@ -4014,6 +4014,7 @@ final class Gate1AppModel: ObservableObject {
                 return
             }
             speechFallbackReason = .listenerStoppedGeneration
+            recordAppFallbackEvent(code: "listener_stop", reason: .listenerStoppedGeneration)
             suppressAudioPreparation(itemId: activeItemId)
             if let coordinator = preparedAudioCoordinator,
                let signature = currentSupertonicRenderSignature {
@@ -10651,9 +10652,7 @@ final class Gate1AppModel: ObservableObject {
                         }
                         // I14: the reason is shown and logged with the power state beside it,
                         // so a device report shows whether charging or Low Power Mode coincided.
-                        let conditions = SupertonicResourcePolicy.currentConditions(
-                            isOnExternalPower: SupertonicResourcePolicy.isOnExternalPower()
-                        )
+                        let conditions = self.currentResourceConditions()
                         let fallbackReason = SpeechFallbackReason(
                             supertonicCode: reason,
                             resourceBlock: SpeechEnginePolicy.onDeviceRenderingBlock(conditions)

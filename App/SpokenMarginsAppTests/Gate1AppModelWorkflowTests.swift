@@ -197,18 +197,36 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             conditions: SpeechEngineConditions(isRecoveringFromMemoryWarning: true),
             offset: 8_344
         )
+        let fallback = try lastFallbackEventFields(of: model)
+        XCTAssertEqual(fallback["code"], "memory_warning_stop")
+        XCTAssertEqual(fallback["reason"], "memory_warning")
+        XCTAssertEqual(fallback["policyBlock"], "memory_warning")
+        XCTAssertEqual(fallback["offset"], "8344")
+        XCTAssertTrue(fallback["conditions"]?.contains("memoryBackoff=true") == true)
+    }
+
+    /// #1109 (Codex audit on b36aa4d): the listener's Stop under "On-device voice" switches to the iOS voice
+    /// without a render failure, so the app records the event itself, with the conditions it reads then.
+    func testAppFallbackEventNamesTheListenersStop() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.recordAppFallbackEvent(code: "listener_stop", reason: .listenerStoppedGeneration)
+        let fallback = try lastFallbackEventFields(of: model)
+        XCTAssertEqual(fallback["code"], "listener_stop")
+        XCTAssertEqual(fallback["reason"], "listener_stopped_generation")
+        XCTAssertEqual(fallback["offset"], "-1", "no narration is reading, so there is no offset to name")
+        XCTAssertNotNil(fallback["policyBlock"])
+        XCTAssertNotNil(fallback["conditions"])
+    }
+
+    /// The fields of the newest `supertonic.fallback` event in the model's diagnostics export.
+    private func lastFallbackEventFields(of model: Gate1AppModel) throws -> [String: String] {
         let file = try XCTUnwrap(model.diagnosticsExportFileURL())
         defer { try? FileManager.default.removeItem(at: file) }
         let text = try String(contentsOf: file, encoding: .utf8)
         let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String])
         let eventJSON = try XCTUnwrap(payload["playbackEvents"]?.data(using: .utf8))
         let events = try JSONDecoder().decode(DeveloperDiagnosticRecording.Capture.self, from: eventJSON).events
-        let fallback = try XCTUnwrap(events.last { $0.kind == "supertonic.fallback" })
-        XCTAssertEqual(fallback.fields["code"], "memory_warning_stop")
-        XCTAssertEqual(fallback.fields["reason"], "memory_warning")
-        XCTAssertEqual(fallback.fields["policyBlock"], "memory_warning")
-        XCTAssertEqual(fallback.fields["offset"], "8344")
-        XCTAssertTrue(fallback.fields["conditions"]?.contains("memoryBackoff=true") == true)
+        return try XCTUnwrap(events.last { $0.kind == "supertonic.fallback" }).fields
     }
 
     func testLibraryAudioIconUsesPlaybackRepresentationRatherThanFileExtension() {
