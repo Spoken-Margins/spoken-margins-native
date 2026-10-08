@@ -18,10 +18,10 @@ final class RuntimeCapabilityProfileOnDeviceAITests: XCTestCase {
         let local = remote.limitedToOnDeviceAI(foundationModelAvailable: true)
 
         XCTAssertEqual(
-            Set(local.capabilities["ai"] ?? []),
-            ["generate_listening_map", "summarize_interjections", "cleanup_transcript", "defer_ai_jobs"]
+            local.capabilities["ai"],
+            ["generate_listening_map", "summarize_interjections", "cleanup_transcript", "defer_ai_jobs"],
+            "the original list's order is kept and nothing is repeated"
         )
-        XCTAssertEqual(local.capabilities["ai"]?.count, 4, "the order of the original list is kept, nothing is repeated")
     }
 
     func testWithoutTheOnDeviceModelOnlyCleanupAndDeferringStay() {
