@@ -1,6 +1,6 @@
 # Sharing test kit
 
-One set of prepared `.spokenmargins` packets and one fifteen-minute procedure for the owner's phone (ten if he skips the optional parts), so the sharing failure modes get checked together instead of as "repeat what you did" plan steps (#848).
+One set of prepared `.spokenmargins` packets and one procedure for the owner's phone (about twenty minutes, ten on the short path it names), so the sharing failure modes get checked together instead of as "repeat what you did" plan steps (#848).
 
 | File | What it is |
 | --- | --- |

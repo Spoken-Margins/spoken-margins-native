@@ -3,7 +3,7 @@
 
 The kit is described once, in docs/sharing-test-kit/kit.json: three public items (two episodes of one show
 that share a six-second intro, and one web article) and four packets of synthetic Margins. The owner's
-fifteen-minute procedure is docs/sharing-test-kit/procedure.md.
+procedure (about twenty minutes, ten on its short path) is docs/sharing-test-kit/procedure.md.
 
     sharing_kit.py lint                 kit.json and procedure.md agree with each other and with the packet rules (offline)
     sharing_kit.py plans [--work DIR]   write the coop-packet plans (offline)
