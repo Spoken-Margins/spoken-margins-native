@@ -44,13 +44,18 @@ final class SaveMarginRetryTests: XCTestCase {
 
     /// Follows the contract of the phone's `AVAudioRecorder` adapter (`SystemRecordingClient.finishRecording`):
     /// finishing closes the file and forgets it; asked again with no path it throws, and given a path it
-    /// returns that path. Each recording is a real file on disk.
+    /// returns that path. Each recording is a real file on disk. `honoursPassedPath` makes it return a path it is
+    /// given even while recording, as the engine's test doubles do, so a stale path would show up in the Margin.
     private final class ClosingRecorder: RecordingClient {
         let directory: URL
+        let honoursPassedPath: Bool
         private(set) var recordings: [String] = []
         private var active: String?
 
-        init(directory: URL) { self.directory = directory }
+        init(directory: URL, honoursPassedPath: Bool = false) {
+            self.directory = directory
+            self.honoursPassedPath = honoursPassedPath
+        }
 
         func beginRecording() throws {
             let relative = "interjections/margin-\(recordings.count + 1).m4a"
@@ -62,6 +67,7 @@ final class SaveMarginRetryTests: XCTestCase {
         }
 
         func finishRecording(audioRef: String?) throws -> String {
+            if honoursPassedPath, let audioRef { active = nil; return audioRef }
             guard let active else {
                 if let audioRef { return audioRef }
                 throw SessionKitError.invalidCommandForState("finishRecording")
@@ -96,9 +102,10 @@ final class SaveMarginRetryTests: XCTestCase {
     }
 
     private func recordingEngine(
-        transcriber: TranscriptionClient = DeferredTranscriptionClient()
+        transcriber: TranscriptionClient = DeferredTranscriptionClient(),
+        honoursPassedPath: Bool = false
     ) throws -> (SessionEngine, ClosingRecorder) {
-        let recorder = ClosingRecorder(directory: directory)
+        let recorder = ClosingRecorder(directory: directory, honoursPassedPath: honoursPassedPath)
         let engine = SessionEngine(
             profile: profile, repository: store, audio: NoopAudioPlaybackClient(),
             recorder: recorder, transcriber: transcriber
@@ -143,7 +150,7 @@ final class SaveMarginRetryTests: XCTestCase {
     }
 
     func testCancellingAfterAFailedSaveDoesNotReuseTheOldRecordingForTheNextMargin() throws {
-        let (engine, recorder) = try recordingEngine()
+        let (engine, recorder) = try recordingEngine(honoursPassedPath: true)
         _ = try engine.beginInterjection()
         let lock = try WriteLock(path: databasePath)
         XCTAssertThrowsError(try engine.finishInterjection(audioRef: nil))
