@@ -15,38 +15,6 @@ struct WrittenMarginDraft: Equatable {
     var lockedTargetID: String { capture.targetId }
 }
 
-enum MarginCollectionFilter: String, CaseIterable, Equatable, Sendable {
-    case all
-    case starred
-    case attention
-    case shared
-
-    var title: String {
-        switch self {
-        case .all: "Mine"
-        case .starred: "Starred"
-        case .attention: "Needs attention"
-        case .shared: "Shared"
-        }
-    }
-}
-
-struct MarginCollectionQuery: Equatable, Sendable {
-    var text = ""
-    var filter: MarginCollectionFilter = .all
-    var itemID: String? = nil
-
-    func includes(itemID: String?) -> Bool { self.itemID == nil || self.itemID == itemID }
-
-    func matches(_ values: [String]) -> Bool {
-        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-        return query.isEmpty || values.joined(separator: " ")
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            .contains(query)
-    }
-}
-
 enum AppRoot: String, CaseIterable, Identifiable, Hashable, Sendable {
     case library
     case sources
