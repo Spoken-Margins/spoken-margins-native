@@ -447,6 +447,38 @@ class PoolDeviceTests(unittest.TestCase):
         self.assertNotIn(udid, pool.load())
         self.assertFalse([r for r in self.records() if r.get('erase') == udid])
 
+    def test_a_real_watcher_that_has_exited_leaves_its_pid_file_and_the_unsafe_device_is_still_retired(self):
+        # What the journey docs tell the desk after a late crash mark: shut the device down, wait for the watcher
+        # to exit, run --pool. Nothing removes watch-<udid>.pid when a watcher ends (only --done does), so the
+        # docs must not say to wait for the file to go (Codex audit on #1099), and the pool must read an exited
+        # watcher as gone although its file is still there.
+        udid = self.run_real_command('--pool').stdout.strip()
+        pid_file = lane_sim.watch_files(udid)[2]
+        watcher = int(pid_file.read_text())
+        lane_sim.mark_unsafe(udid, 'late crash report for a crash during boot')
+        subprocess.run(lane_sim.simctl() + ['shutdown', udid], capture_output=True)
+        held = self.run_helper('--pool')  # the watcher is still up, so the device is still held
+        self.assertEqual(held.returncode, 0, held.stderr)
+        self.assertIn(udid, pool.load())
+        self.assertNotEqual(held.stdout.strip(), udid)
+        lane_sim.watch_files(udid)[0].write_text('test: end the watcher on its own path\n')
+        for _ in range(100):
+            try:
+                os.kill(watcher, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        else:
+            os.kill(watcher, signal.SIGKILL)
+            self.fail('the watcher did not end')
+        self.assertTrue(pid_file.exists())  # it stays: waiting for it to disappear would never end
+        self.assertFalse(pool.watcher_alive(udid))
+        after = self.run_helper('--pool')
+        self.assertEqual(after.returncode, 0, after.stderr)
+        self.assertNotIn(udid, self.devices())
+        self.assertNotIn(udid, pool.load())
+        self.assertFalse([r for r in self.records() if r.get('erase') == udid])
+
     def test_retire_marks_a_pool_device_unsafe_then_shuts_it_down_and_deletes_it(self):
         udid = self.run_helper('--pool').stdout.strip()
         result = self.run_helper('--retire', udid, 'crash flood: SpringBoard x3')

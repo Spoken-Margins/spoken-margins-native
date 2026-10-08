@@ -233,7 +233,8 @@ Simulators:
   replacement (the guard blocks --done on a device marked unsafe). Never retry a failed boot, and
   never boot a device marked unsafe. If the watcher marks a device unsafe after the boot (a late
   crash report), it keeps running and holds its simulator slot: `xcrun simctl shutdown <udid>`,
-  wait until `watch-<udid>.pid` is gone, and the next --pool deletes it. A device that only fails
+  wait until the watcher has exited (`ps -p $(cat ~/Library/Caches/SpokenMarginsLane/watch-<udid>.pid)` lists no
+  process; the file stays behind, so don't wait for it to go), and the next --pool deletes it. A device that only fails
   to erase stays in the pool and is passed over; the helper prints STOP only when no pool device will erase, so report that on #184.
 - The old standing device, "SM Lane Desk erase-approval" (1330F268-5467-4421-9D55-1FCC3FF5CF8A),
   stays retired: never boot, erase or reuse it. Stay on iOS 26.5: iOS 27's Apple Intelligence
