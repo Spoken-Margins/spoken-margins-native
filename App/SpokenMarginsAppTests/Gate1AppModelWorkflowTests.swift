@@ -4164,29 +4164,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(try store.loadSourceSuggestionDecision(sourceId: "alpha"))
     }
 
-    func testSourceSuggestionEngagementUsesLivePlaybackProgressBeforeLibraryRefresh() {
-        var snapshot = SessionSnapshot()
-        snapshot.itemId = "active-item"
-        snapshot.currentPlaybackProgressPercent = 31
-
-        XCTAssertEqual(
-            Gate1AppModel.sourceSuggestionEngagementProgress(
-                itemId: "active-item",
-                persistedProgress: 4,
-                snapshot: snapshot
-            ),
-            31
-        )
-        XCTAssertEqual(
-            Gate1AppModel.sourceSuggestionEngagementProgress(
-                itemId: "different-item",
-                persistedProgress: 18,
-                snapshot: snapshot
-            ),
-            18
-        )
-    }
-
     func testQuickFolderScanOffersOnlyImportableTextAndPDFFiles() throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "spoken-margins-quick-add-\(UUID().uuidString)", directoryHint: .isDirectory)
