@@ -10,8 +10,8 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 
 | Tier | What runs | Where | Typical cost | Use it for |
 | --- | --- | --- | --- | --- |
-| **T0** | Nothing, or a doc/link check | anywhere | 0 | Docs, research notes, charters, server code with its own tests |
-| **T1** | The tests for the touched module only: `swift test --filter <Suite>` for SessionKit, or the stream's own Python/Node/server suite | Mac host; or Linux for `SessionKitCoreTests` (Core, Persistence, AI, EPUB, Feeds): `scripts/run-sessionkit-linux-tests.sh`, also run on every PR into `next` by `linux-t1.yml` | 1–3 min | Pure logic: parsers, ranking, packet merge, text cleanup, resolvers |
+| **T0** | Nothing, or a doc/link check | anywhere | 0 | Docs, research notes, charters |
+| **T1** | The tests for the touched module only: `swift test --filter <Suite>` for SessionKit, or the stream's own Python/Node/server suite | Mac host; or Linux for `SessionKitCoreTests` (Core, Persistence, AI, EPUB, Feeds): `scripts/run-sessionkit-linux-tests.sh`, also run on every PR into `next` by `linux-t1.yml` | 1–3 min | Pure logic: parsers, ranking, packet merge, text cleanup, resolvers; the share-link and map-upload server and the research code with tests (`research/B4`, `B2`, `D3`, `C1/tools`) |
 | **T2** | Compile the app for simulator **and** device (the two `xcodebuild` commands in `AGENTS.md`), no simulator boot | Mac, build semaphore | 4–10 min | Any change to `App/`, `project.yml`, or a SessionKit public API |
 | **T3** | Targeted app-hosted XCTest (`-only-testing:` the touched test classes) in the Test Runner simulator | Mac, via the lane | 5–15 min | App orchestration: model/coordinator wiring, persistence through the app |
 | **T4** | Named journeys from `docs/journeys.md`, or a one-off scenario the request spells out, driven with real taps and screenshots | Mac, via the lane (Test Desk) | 10–40 min each | A one-off scenario a PR asks for; the named journeys run in the integration run |
@@ -73,8 +73,8 @@ Note for whoever builds the Test Desk: Claude Desktop's iOS Simulator pane curre
 Post as a PR comment. Keep it short; the Test Desk needs intent, not narrative.
 
 **A finished PR needs no request comment.** Label it `automerge` when its "Done when" is met. The runner then runs what the diff needs, by the base branch's `scripts/test-scope.py`, and runs again on every push while the label stays:
-- T0 (docs, research, the server): nothing.
-- T1: `--plan fast`. Besides `scripts/tests`, it runs the tests in each `ops/` folder (`ops/dial`, and `ops/codex` once it has tests), so a diff that only touches `ops/` stops here, with no app build.
+- T0 (docs and research notes): nothing.
+- T1: `--plan fast`. Besides `scripts/tests`, it runs the tests in each `ops/` folder (`ops/dial`, and `ops/codex` once it has tests), so a diff that only touches `ops/` stops here, with no app build. It also runs `scripts/research_tests.py` (`go test` for `research/B4/server`, the research Python tests that need only the standard library, and the Caddy privacy-filter script), so a diff that only touches that code stops here too. A suite the machine can't run (no `go` on PATH) is listed as skipped with its reason in the report, not passed (#1033).
 - T2 or higher: `--plan fast` and both builds.
 Simulator tests (T3) still need a request. The lane check is red only on FAIL, so a project thread wakes for a failure in its own code. INCONCLUSIVE leaves the check green with a warning: read the report, not the check mark. A job that stops before it reports is red too.
 

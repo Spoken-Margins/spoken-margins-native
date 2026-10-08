@@ -22,6 +22,7 @@ import lane_sim
 from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
                         state_dir, SIMULATOR_SLOTS)
 
+from research_tests import TESTED_PREFIXES as RESEARCH_PREFIXES
 from test_inventory import ROOT, plan_tests, swift_tests, target_tests, validate
 
 PLANS = {
@@ -160,7 +161,7 @@ def input_identity():
     for relative in sorted(set(paths)):
         if not (relative.startswith(('App/', 'Packages/', 'Contracts/', 'Config/', 'TestPlans/',
                                      'SpokenMarginsNative.xcodeproj/', 'scripts/', 'validation/',
-                                     'Tools/', 'schemas/', 'ops/'))
+                                     'Tools/', 'schemas/', 'ops/', *RESEARCH_PREFIXES))
                 or relative in ('project.yml', 'package.json', 'package-lock.json')):
             continue
         path = ROOT / relative
@@ -479,6 +480,14 @@ class Run:
             if not entry['executed_count']:
                 errors.append('Browser runner executed zero tests' if name == 'browser'
                               else f'{name} executed zero tests')
+        if name == 'research':
+            match = re.search(r'^research-tests: (\d+) tests in \d+ suites; \d+ skipped$', text, re.M)
+            entry['executed_count'] = int(match[1]) if match else 0
+            entry['skipped'] = re.findall(r'^skipped: (.+)$', text, re.M)
+            for reason in entry['skipped']:
+                print(f'warning: research skipped: {reason}', flush=True)
+            if not entry['executed_count']:
+                errors.append('research executed zero tests')
         # A failing probation test makes xcodebuild exit non-zero; that alone doesn't fail the step.
         probation_only = (tests and not errors and not entry.get('interrupted')
                           and any(status != 'passed' for status in entry.get('probation', {}).values()))
@@ -515,6 +524,9 @@ class Run:
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         self.command('browser', ['npm', 'run', 'test:browser-extraction'])
         self.command('share-link', ['npm', 'run', 'test:share-link'])
+        # The Go server, the research Python tests and the Caddy script (#1033); a suite that can't run
+        # here is reported as skipped with its reason, not passed.
+        self.command('research', [sys.executable, 'scripts/research_tests.py'], timeout=300)
         expected = set()
         for target in ('SessionKitCoreTests', 'SessionKitTests', 'SessionKitTraceTests'):
             expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))
