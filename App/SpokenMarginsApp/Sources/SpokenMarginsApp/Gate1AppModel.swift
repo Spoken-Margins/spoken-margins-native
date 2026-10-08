@@ -6875,23 +6875,7 @@ final class Gate1AppModel: ObservableObject {
               playingImportedCommentary == nil,
               current.itemId == selectedItem.id else { return }
         let prompts = importedCommentaryPrompts(includeAnnounced: false)
-        let crossed = prompts.filter { prompt in
-            if let anchor = prompt.interjection.resolution.localMediaTimeMs,
-               previous.currentMediaTimeMs != nil, current.currentMediaTimeMs != nil {
-                return PlaybackAnchorCrossing.isCrossed(
-                    anchor: anchor, before: previous.currentMediaTimeMs, after: current.currentMediaTimeMs
-                )
-            }
-            if let anchor = prompt.interjection.resolution.localStartChar {
-                return PlaybackAnchorCrossing.isCrossed(
-                    anchor: anchor, before: previous.currentTextStart, after: current.currentTextStart
-                )
-            }
-            return false
-        }.sorted {
-            Self.importedCommentaryPosition($0.interjection)
-                < Self.importedCommentaryPosition($1.interjection)
-        }
+        let crossed = SharedMarginPrompts.crossed(prompts: prompts, previous: previous, current: current)
         guard let prompt = crossed.first else { return }
         crossed.forEach { announcedImportedInterjectionIDs.insert($0.id) }
         guard prompt.layer.revealMode != .fresh else { return }
@@ -6899,32 +6883,12 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func importedCommentaryPrompts(includeAnnounced: Bool) -> [ImportedCommentaryPrompt] {
-        selectedItem.importedCommentaryLayers
-            .filter { layer in
-                Self.isImportedCommentaryLayerPlaybackEligible(
-                    layer,
-                    records: selectedItem.importedCommentaryInterjections[layer.id] ?? []
-                )
-            }
-            .flatMap { layer in
-                let records = (selectedItem.importedCommentaryInterjections[layer.id] ?? [])
-                    .filter { Self.isPlayableImportedCommentaryResolution($0.resolution) }
-                    .sorted { lhs, rhs in
-                        Self.importedCommentaryPosition(lhs) < Self.importedCommentaryPosition(rhs)
-                    }
-                return records.enumerated().compactMap { pair -> ImportedCommentaryPrompt? in
-                    let (offset, record) = pair
-                    guard includeAnnounced || !announcedImportedInterjectionIDs.contains(record.id) else {
-                        return nil
-                    }
-                    return ImportedCommentaryPrompt(
-                        layer: layer,
-                        interjection: record,
-                        index: offset + 1,
-                        count: records.count
-                    )
-                }
-            }
+        SharedMarginPrompts.prompts(
+            layers: selectedItem.importedCommentaryLayers,
+            recordsByLayerID: selectedItem.importedCommentaryInterjections,
+            announcedIDs: announcedImportedInterjectionIDs,
+            includeAnnounced: includeAnnounced
+        )
     }
 
     private func presentImportedCommentaryPrompt(
@@ -6969,16 +6933,8 @@ final class Gate1AppModel: ObservableObject {
         return true
     }
 
-    private nonisolated static func importedCommentaryPosition(
-        _ interjection: ImportedCommentaryInterjection
-    ) -> Int {
-        interjection.resolution.localMediaTimeMs
-            ?? interjection.resolution.localStartChar
-            ?? .max
-    }
-
     nonisolated static func isPlayableImportedCommentaryResolution(_ resolution: ImportedAnchorResolution) -> Bool {
-        SharedMarginPlacementStatus.isPlaced(resolution)
+        SharedMarginPrompts.isPlayable(resolution)
     }
 
     nonisolated static func marginPlaybackRate(itemPlaybackRate: Double) -> Double {
@@ -12767,10 +12723,7 @@ final class Gate1AppModel: ObservableObject {
         _ layer: ImportedCommentaryLayer,
         records: [ImportedCommentaryInterjection]
     ) -> Bool {
-        guard layer.deletedAt == nil,
-              layer.isEnabled,
-              layer.sourceResolutionStatus != .wrongSource else { return false }
-        return records.contains { isPlayableImportedCommentaryResolution($0.resolution) }
+        SharedMarginPrompts.isLayerPlaybackEligible(layer, records: records)
     }
 
     func setImportedCommentaryAutoPlayEnabled(_ enabled: Bool) {
