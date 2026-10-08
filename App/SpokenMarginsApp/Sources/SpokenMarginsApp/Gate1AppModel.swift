@@ -368,20 +368,6 @@ private struct ObsidianImportRequest: Sendable {
     let itemId: String
 }
 
-private struct PreparedObsidianImport: Sendable {
-    let item: Item
-    let listeningMap: ListeningMap?
-    var structuredDocument: StructuredDocument? = nil
-}
-
-private struct ImportedSourceText: Sendable {
-    let text: String
-    let documentStructure: PDFDocumentStructure?
-    /// A PDF's extraction v2 (C1 M3) and the title v1 would have given it.
-    var structuredDocument: StructuredDocument? = nil
-    var title: String? = nil
-}
-
 private struct ObsidianImportBatch: Sendable {
     let prepared: [PreparedObsidianImport]
     let failures: [String]
@@ -2850,43 +2836,9 @@ final class Gate1AppModel: ObservableObject {
         for request in requests {
             do {
                 let imported = try await importableText(from: request.url)
-                if let document = imported.structuredDocument {
-                    let title = imported.title ?? request.url.deletingPathExtension().lastPathComponent
-                    let map = StructuredDocumentImport.listeningMap(for: document, title: title, itemId: request.itemId)
-                    let item = Item(
-                        id: request.itemId,
-                        title: title,
-                        mediaType: "pdf",
-                        text: document.text,
-                        externalReference: request.url.lastPathComponent,
-                        status: map == nil ? "needs_listening_map" : "ready",
-                        externalReferenceType: "file",
-                        createdAt: Date(),
-                        documentStructure: imported.documentStructure
-                    )
-                    prepared.append(PreparedObsidianImport(item: item, listeningMap: map, structuredDocument: document))
-                    continue
-                }
-                let parsed = try ObsidianMarkdownParser.parse(fileName: request.url.lastPathComponent, contents: imported.text)
-                let mapPolicy: DeterministicListeningMapPolicy = request.url.pathExtension.lowercased() == "pdf"
-                    ? .canonicalHeadings
-                    : .adaptiveListeningSections
-                let deterministicMap = parsed.deterministicListeningMap(
-                    itemId: request.itemId,
-                    policy: mapPolicy
-                )
-                let item = Item(
-                    id: request.itemId,
-                    title: parsed.title,
-                    mediaType: request.url.pathExtension.lowercased() == "pdf" ? "pdf" : "text",
-                    text: parsed.text,
-                    externalReference: parsed.source ?? request.url.lastPathComponent,
-                    status: deterministicMap == nil ? "needs_listening_map" : "ready",
-                    externalReferenceType: "file",
-                    createdAt: Date(),
-                    documentStructure: imported.documentStructure
-                )
-                prepared.append(PreparedObsidianImport(item: item, listeningMap: deterministicMap))
+                prepared.append(try SourceFileItemBuilder.prepare(
+                    imported, fileURL: request.url, itemId: request.itemId, createdAt: Date()
+                ))
             } catch {
                 failures.append("\(request.url.lastPathComponent): \(error)")
             }
