@@ -58,6 +58,9 @@ public final class SessionEngine {
     private var playbackURLOverrides: [String: String] = [:]
     private var pinnedMediaTransport: (sessionId: String, targetId: String, playbackURL: String?)?
     private var lastMediaPercentageRepair: (sessionId: String, durationMs: Int)?
+    /// Where the last Back tap in text landed, so the next one can tell it is a repeat (#1102). Only listening on
+    /// from there keeps it: every other change of position calls `forgetBackTapLanding()` (#1122).
+    private var lastBackTapLanding: (targetKey: String, charOffset: Int)?
     private var pendingPlaybackPosition: PendingPlaybackPosition?
     private var pendingWrittenInterjection: WrittenInterjectionCapture?
 
@@ -628,6 +631,7 @@ public final class SessionEngine {
     public func seekMedia(toMediaTimeMs mediaTimeMs: Int) throws -> SessionSnapshot {
         try requireNavigationAllowed("seekMedia")
         try requirePlayback("seekMedia")
+        forgetBackTapLanding()
         guard let session = currentSession,
               session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
             throw SessionKitError.invalidCommandForState("seekMedia")
@@ -669,6 +673,7 @@ public final class SessionEngine {
     public func stagePausedMediaPosition(toMediaTimeMs mediaTimeMs: Int) throws -> SessionSnapshot {
         try requireNavigationAllowed("stagePausedMediaPosition")
         try requirePlayback("stagePausedMediaPosition")
+        forgetBackTapLanding()
         guard snapshot.status == .paused,
               let session = currentSession,
               session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
@@ -688,6 +693,7 @@ public final class SessionEngine {
     public func seekText(toCharOffset charOffset: Int) throws -> SessionSnapshot {
         try requireNavigationAllowed("seekText")
         try requirePlayback("seekText")
+        forgetBackTapLanding()
         if var turnSession = currentSession,
            turnSession.currentTargetType == .assistantTurnTTS || turnSession.currentTargetType == .summaryTurnTTS {
             guard let turn = try repository.loadTurns(sessionId: turnSession.id).first(where: { $0.id == turnSession.currentTargetId }) else {
@@ -1052,6 +1058,7 @@ public final class SessionEngine {
     public func skipForward(unit: String, minimumDistance: Int) throws -> SessionSnapshot {
         try requireNavigationAllowed("skipForward")
         try requirePlayback("skipForward")
+        forgetBackTapLanding()
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("skipForward")
         }
@@ -1103,6 +1110,7 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("skipBack")
         }
         if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
+            forgetBackTapLanding()
             return try skipMediaBack(session: session, unit: unit)
         }
         guard session.currentTargetType == .itemTextTTS else {
@@ -1114,9 +1122,10 @@ public final class SessionEngine {
         session = syncSessionPositionFromAudio(session, item: item)
         let text = item.text ?? ""
         if unit == "chapter" {
+            forgetBackTapLanding()
             session.position.charOffset = previousChapterBoundary(before: session.position.charOffset)
         } else {
-            session.position.charOffset = previousBoundary(before: session.position.charOffset, unit: unit, text: text)
+            session.position.charOffset = backTapBoundary(from: session.position.charOffset, unit: unit, text: text, session: session)
         }
         session.completionPercent = percent(for: session.position.charOffset, text: text)
         session.position.chapterId = chapterId(for: session.position.charOffset)
@@ -1170,7 +1179,7 @@ public final class SessionEngine {
         guard !text.isEmpty else {
             throw SessionKitError.invalidCommandForState("skipBack")
         }
-        updated.position.charOffset = previousBoundary(before: updated.position.charOffset, unit: unit, text: text)
+        updated.position.charOffset = backTapBoundary(from: updated.position.charOffset, unit: unit, text: text, session: updated)
         updated.position.charOffset = max(0, min(updated.position.charOffset, text.count))
         updated.position.chapterId = turn.chapters?.last(where: { $0.startChar <= updated.position.charOffset })?.id
         currentSession = updated
@@ -1191,6 +1200,7 @@ public final class SessionEngine {
         try requireNavigationAllowed("jumpToChapter")
         try require("jumpToChapter", category: "timeline", capabilities: ["chapter_timing"])
         try requirePlayback("jumpToChapter")
+        forgetBackTapLanding()
         if let session = currentSession,
            session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
             stampRequestIfStarting(target: session.currentTargetId)
@@ -1219,6 +1229,7 @@ public final class SessionEngine {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("playSourceFromBeginning")
         try requirePlayback("playSourceFromBeginning")
+        forgetBackTapLanding()
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("playSourceFromBeginning")
         }
@@ -1569,6 +1580,7 @@ public final class SessionEngine {
     public func playInterjectionAnchor(_ interjection: Interjection) throws -> SessionSnapshot {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("playInterjectionAnchor")
+        forgetBackTapLanding()
         let plan = try interjectionAnchorPlaybackPlan(for: interjection)
         let previousSession = currentSession
         let previousItem = currentItem
@@ -1833,6 +1845,7 @@ public final class SessionEngine {
     public func playTurn(turnId: String) throws -> SessionSnapshot {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("playTurn")
+        forgetBackTapLanding()
         externallyStreamedTurnId = nil
         var session = try resolveSession(nil)
         let turns = try repository.loadTurns(sessionId: session.id)
@@ -1952,6 +1965,7 @@ public final class SessionEngine {
     public func jumpToTurnChapter(turnId: String, chapterId: String) throws -> SessionSnapshot {
         stampRequestIfStarting(target: turnId); defer { playbackRequestedAt = nil }
         try requireNavigationAllowed("jumpToTurnChapter")
+        forgetBackTapLanding()
         var session = try resolveSession(nil)
         let turns = try repository.loadTurns(sessionId: session.id)
         guard let turn = turns.first(where: { $0.id == turnId }),
@@ -4329,6 +4343,7 @@ public final class SessionEngine {
     /// persists it and protects it from the player's stale clock. Generated turns, and the Watch's
     /// own rollback, keep their exact resume.
     private func rejoiningAfterSavedMargin(_ session: Session) throws -> Session {
+        forgetBackTapLanding()
         var rejoined = session
         switch session.currentTargetType {
         case .transcriptBackedMedia, .browserOwnedMedia:
@@ -5062,6 +5077,44 @@ public final class SessionEngine {
             index -= 1
         }
         return 0
+    }
+
+    /// Drops the place the last Back tap landed. A position within `BackTapWindow` of it reads as that tap's repeat,
+    /// which holds only while the listener goes on hearing from there; anything else that moves the position within
+    /// a target (Forward, a seek or scrub, a chapter jump, a Margin's rejoin) makes the next Back measure from the
+    /// place the listener is now (#1122). Another session or target is a different `targetKey`, so it needs no call.
+    private func forgetBackTapLanding() {
+        lastBackTapLanding = nil
+    }
+
+    /// Where a Back tap lands, and what the next one measures from (#1102).
+    private func backTapBoundary(from offset: Int, unit: String, text: String, session: Session) -> Int {
+        let targetKey = "\(session.id)|\(session.currentTargetId)"
+        let landing = backTapLanding(
+            from: offset, unit: unit, text: text, window: BackTapWindow.characters(atSpeed: session.playbackRate), targetKey: targetKey
+        )
+        // A section is a fixed step, not a unit with a start, so it never counts as a place to walk back from.
+        lastBackTapLanding = unit == "section" ? nil : (targetKey, landing)
+        return landing
+    }
+
+    /// A position within `BackTapWindow` of where the last Back tap put the listener is that tap's repeat, so it
+    /// goes on to the unit before that, even over a unit shorter than the speech since. Otherwise a position
+    /// within the window of the start of the unit it is in counts as at that start, so Back goes to the unit
+    /// before; further in, it goes to this unit's start.
+    private func backTapLanding(from offset: Int, unit: String, text: String, window: Int, targetKey: String) -> Int {
+        guard unit != "section", offset > 0 else {
+            return previousBoundary(before: offset, unit: unit, text: text)
+        }
+        if let last = lastBackTapLanding, last.targetKey == targetKey,
+           last.charOffset <= offset, offset - last.charOffset < window {
+            return previousBoundary(before: last.charOffset, unit: unit, text: text)
+        }
+        let unitStart = previousBoundary(before: offset + 1, unit: unit, text: text)
+        guard offset - unitStart < window else {
+            return previousBoundary(before: offset, unit: unit, text: text)
+        }
+        return previousBoundary(before: unitStart, unit: unit, text: text)
     }
 
     private func nextParagraphBoundary(after offset: Int, text: String) -> Int {
