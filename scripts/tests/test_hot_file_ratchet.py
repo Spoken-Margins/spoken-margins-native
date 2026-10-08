@@ -7,11 +7,15 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import hot_file_ratchet as ratchet  # noqa: E402
 
-MODEL = ratchet.HOT_FILES[0]
 
 
 class RatchetTests(unittest.TestCase):
-    """The hot-file ceiling is the smallest size on next since the start; a PR may not grow past it."""
+    """The hot-file ceiling is the smallest size on next since the start; a PR may not grow past it.
+
+    Run once for each file in HOT_FILES (the classes made below the test), so the second hot file is judged
+    by the same rules as the first."""
+
+    hot = ratchet.HOT_FILES[0]
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -24,8 +28,8 @@ class RatchetTests(unittest.TestCase):
         return subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-C', str(self.root),
                                *args], check=True, capture_output=True, text=True).stdout.strip()
 
-    def write(self, lines, message, path=MODEL):
-        target = self.root / path
+    def write(self, lines, message, path=None):
+        target = self.root / (path or self.hot)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(''.join(f'line {n}: {message}\n' for n in range(lines)))
         self.git('add', '.')
@@ -41,7 +45,7 @@ class RatchetTests(unittest.TestCase):
     def test_the_ceiling_is_the_smallest_size_since_the_start(self):
         self.write(90, 'a split moved lines out')
         self.write(95, 'a hot-file-ok change grew it')
-        self.assertEqual(ratchet.ceiling(self.root, 'next', MODEL, self.start), 90)
+        self.assertEqual(ratchet.ceiling(self.root, 'next', self.hot, self.start), 90)
 
     def test_a_pr_may_not_grow_the_file_past_its_ceiling(self):
         self.write(90, 'shrunk')
@@ -49,7 +53,7 @@ class RatchetTests(unittest.TestCase):
         self.write(91, 'one more line')
         found = self.check()
         self.assertEqual(len(found), 1)
-        self.assertIn('Gate1AppModel.swift would be 91 lines, above its ceiling of 90', found[0])
+        self.assertIn(f'{Path(self.hot).name} would be 91 lines, above its ceiling of 90', found[0])
         self.assertIn('Move 1 lines out', found[0])
         self.assertEqual(self.check(labels={'hot-file-ok'}), [])
 
@@ -74,15 +78,64 @@ class RatchetTests(unittest.TestCase):
         self.write(102, 'two lines added on an old base')
         self.git('checkout', '-q', 'next')
         self.write(90, 'next shrank meanwhile')
-        self.assertEqual(ratchet.size_after_merge(self.root, 'next', 'pr', MODEL), 92)
+        self.assertEqual(ratchet.size_after_merge(self.root, 'next', 'pr', self.hot), 92)
         self.assertIn('Move 2 lines out', self.check('pr')[0])
         self.git('checkout', '-q', '-b', 'untouched', self.start)
         self.write(5, 'another file only', path='docs/note.md')
         self.assertEqual(self.check('untouched'), [])  # not blamed for next's changes
 
     def test_without_the_start_in_history_the_size_on_next_is_the_ceiling(self):
-        self.assertEqual(ratchet.ceiling(self.root, 'next', MODEL, start='0' * 40), 100)
+        self.assertEqual(ratchet.ceiling(self.root, 'next', self.hot, start='0' * 40), 100)
 
+    def test_the_start_commit_counts_when_it_is_the_smallest_size_the_file_has_had(self):
+        self.write(120, 'grew under hot-file-ok')  # never smaller than at the start
+        self.assertEqual(ratchet.ceiling(self.root, 'next', self.hot, self.start), 100)
+        self.branch('pr')
+        self.write(121, 'one more line')
+        message = self.check()[0]
+        self.assertIn('above its ceiling of 100', message)
+        self.assertIn('next has 120', message)
+
+    def test_the_ceiling_is_the_size_at_the_start_while_the_file_has_not_changed_since(self):
+        self.write(5, 'another file only', path='docs/note.md')
+        self.assertEqual(ratchet.ceiling(self.root, 'next', self.hot, self.start), 100)
+
+
+class HotFileListTests(unittest.TestCase):
+    def test_every_hot_file_exists_in_this_checkout(self):
+        # A renamed or moved hot file would be skipped without a word (`lines_at` finds nothing, so `violations`
+        # continues), and the ratchet would guard nothing.
+        for path in ratchet.HOT_FILES:
+            with self.subTest(path=path):
+                self.assertTrue((ratchet.ROOT / path).is_file(), f'{path} is in HOT_FILES but is not in the repository')
+
+    def test_the_ratchet_checks_every_hot_file_in_one_run(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+
+            def git(*args):
+                return subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-C', str(root),
+                                       *args], check=True, capture_output=True, text=True).stdout.strip()
+
+            def write(lines, message):
+                for path in ratchet.HOT_FILES:
+                    (root / path).parent.mkdir(parents=True, exist_ok=True)
+                    (root / path).write_text('x\n' * lines)
+                git('add', '.')
+                git('commit', '-q', '-m', message)
+
+            git('init', '-q', '-b', 'next')
+            write(10, 'start')
+            start = git('rev-parse', 'HEAD')
+            git('checkout', '-q', '-b', 'pr')
+            write(11, 'every hot file grows')
+            found = ratchet.violations(root, 'next', 'HEAD', (), start=start)
+            self.assertEqual([line.split(' would be ')[0] for line in found], [Path(p).name for p in ratchet.HOT_FILES])
+
+
+for _index, _path in enumerate(ratchet.HOT_FILES[1:], start=1):  # the first is RatchetTests itself
+    globals()[f'RatchetTestsForHotFile{_index}'] = type(f'RatchetTestsForHotFile{_index}', (RatchetTests,), {
+        'hot': _path, '__doc__': f'RatchetTests for {_path}.'})
 
 if __name__ == '__main__':
     unittest.main()
