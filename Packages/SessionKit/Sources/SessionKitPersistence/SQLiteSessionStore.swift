@@ -281,12 +281,12 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         // The lock, not a transaction: markImportedCommentaryInterjectionHeard calls this inside one.
         try withConnectionLock {
             var interjection = interjection
-            if interjection.firstHeardAt == nil {
-                // A copy loaded before the listener heard it (a slow anchor resolution pass)
-                // must not make a heard Margin new again (#469).
-                let stored: ImportedCommentaryInterjection? = try loadOptional(kind: "imported_commentary_interjection", id: interjection.id)
-                interjection.firstHeardAt = stored?.firstHeardAt
-            }
+            let stored: ImportedCommentaryInterjection? = try loadOptional(kind: "imported_commentary_interjection", id: interjection.id)
+            // Slow anchor resolution must preserve additive state saved after its snapshot.
+            if interjection.firstHeardAt == nil { interjection.firstHeardAt = stored?.firstHeardAt }
+            var aliases = stored?.alsoSharedAs ?? []
+            for identity in interjection.alsoSharedAs ?? [] where !aliases.contains(identity) { aliases.append(identity) }
+            interjection.alsoSharedAs = aliases.isEmpty ? nil : aliases
             let layer = try loadImportedCommentaryLayer(id: interjection.layerId)
             try save(
                 kind: "imported_commentary_interjection",

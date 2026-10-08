@@ -2,16 +2,20 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { build } from "esbuild";
 import { parseHTML } from "linkedom";
 import {
   captureReadablePage,
   fallbackReadableMarkdown,
-  normalizeSocialEmbedsForReading
+  normalizeSocialEmbedsForReading,
+  sourceMetadata
 } from "./browserExtractionCore.mjs";
 import {
   capturePage,
   invokeInjectedCapture
 } from "./popupCore.mjs";
+import { BUNDLES, esbuildOptions } from "./bundleConfig.mjs";
+import { browserLikePage } from "./testDocument.mjs";
 
 function articleDocument() {
   const body = "<p>" + "Useful article prose. ".repeat(80) + "</p>";
@@ -131,6 +135,125 @@ test("readable capture falls back to local semantic Markdown when the test DOM c
   assert.match(payload.text, /## First section/i);
   assert.match(payload.text, /### Second section/i);
   assert.doesNotMatch(payload.text, /Navigation noise|Footer noise/);
+  // The rest of the hand-off the app reads: where the page came from, which
+  // schema it is, and that capturing must not start a listening session.
+  assert.deepEqual(payload.source, {
+    url: "https://example.com/guide",
+    title: "Retirement Guide",
+    author: "A. Writer",
+    publishedAt: null
+  });
+  assert.equal(payload.id, "test-id");
+  assert.equal(payload.schemaVersion, "browser-text-handoff.v1");
+  assert.equal(payload.selection, null);
+  assert.deepEqual(payload.requestedContinuation, { startSession: false, preferredPlaybackOwner: "app" });
+});
+
+// The real extractor, not the fallback: the page is a linkedom document with
+// the one browser feature Defuddle's Markdown step needs (testDocument.mjs).
+function withGlobalDocument(document, run) {
+  const previous = globalThis.document;
+  globalThis.document = document;
+  try {
+    return run();
+  } finally {
+    globalThis.document = previous;
+  }
+}
+
+const articleProse = "<p>" + "Useful article prose. ".repeat(40) + "</p>";
+
+test("readable capture hands the app Defuddle's Markdown with the page's source details", () => {
+  const document = browserLikePage({
+    head: `<title>Retirement Guide</title><meta name="author" content="A. Writer">
+      <meta property="article:published_time" content="2026-09-01">`,
+    body: `<nav>Navigation noise</nav><article><h2>First section</h2>${articleProse}
+      <h3>Second section</h3>${articleProse}</article><footer>Footer noise</footer>`
+  });
+  const payload = withGlobalDocument(document, () =>
+    captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: { userAgent: "test-agent" } }, document)
+  );
+
+  assert.equal(payload.id, "test-id");
+  assert.equal(payload.schemaVersion, "browser-text-handoff.v1");
+  assert.equal(payload.captureMode, "readable_page");
+  assert.equal(payload.contentFormat, "markdown");
+  assert.deepEqual(payload.source, {
+    url: "https://example.com/guide",
+    title: "Retirement Guide",
+    author: "A. Writer",
+    publishedAt: "2026-09-01"
+  });
+  assert.equal(payload.selection, null);
+  assert.deepEqual(payload.requestedContinuation, { startSession: false, preferredPlaybackOwner: "app" });
+  assert.match(payload.createdAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+  assert.deepEqual(payload.metadata, {
+    extractor: "defuddle",
+    extractorVersion: "0.19.1",
+    networkFallback: false,
+    userAgent: "test-agent"
+  });
+  assert.match(payload.text, /^## First section\n\nUseful article prose\./);
+  assert.match(payload.text, /\n\n### Second section\n\nUseful article prose\./);
+  assert.doesNotMatch(payload.text, /Navigation noise|Footer noise/);
+});
+
+test("readable capture speaks a social card as a sentence, not as link and view-count markup", () => {
+  const document = browserLikePage({
+    head: "<title>Retirement Guide</title>",
+    body: `<article><h2>First section</h2>${articleProse}
+      <a href="https://x.com/netflix/status/2087192315823538471"><div><p>Netflix@netflix</p></div>
+      <div><p>DANG! A new adult animated series premieres September 8.</p></div>
+      <div>3:00 PM · Aug 11, 2026 · 29.7M Views</div>
+      <div>1.42K Replies · 975 Reposts · 23.3K Likes</div></a>${articleProse}</article>`
+  });
+  const payload = withGlobalDocument(document, () =>
+    captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, document)
+  );
+
+  assert.equal(payload.metadata.extractor, "defuddle");
+  assert.match(payload.text, /\n\nPost from Netflix\. DANG! A new adult animated series premieres September 8\.\n\n/);
+  assert.doesNotMatch(payload.text, /29\.7M|Replies|Reposts|Likes|x\.com|Netflix@netflix|\[|\]/);
+});
+
+test("source details come from the extractor first, then the page's meta tags, then plain defaults", () => {
+  const meta = (name, value) => `<meta ${name.startsWith("og:") || name.startsWith("article:") ? "property" : "name"}="${name}" content="${value}">`;
+  const page = (head, body = "") => browserLikePage({ head, body });
+
+  // Extractor values beat every meta tag; whitespace is collapsed.
+  assert.deepEqual(
+    sourceMetadata(
+      page(`<title>Tab Title</title>${meta("og:title", "OG Title")}${meta("author", "Meta Author")}${meta("date", "2020-01-01")}`),
+      { title: "  Extracted \n Title ", author: " Extracted  Author", published: "2026-01-02" }
+    ),
+    { url: "https://example.com/guide", title: "Extracted Title", author: "Extracted Author", publishedAt: "2026-01-02" }
+  );
+
+  // Title: og:title, then twitter:title, then the tab title, then "Browser Text".
+  assert.equal(sourceMetadata(page(`<title>Tab</title>${meta("og:title", "OG")}${meta("twitter:title", "Tw")}`)).title, "OG");
+  assert.equal(sourceMetadata(page(`<title>Tab</title>${meta("twitter:title", "Tw")}`)).title, "Tw");
+  assert.equal(sourceMetadata(page("<title>  Tab   Title </title>")).title, "Tab Title");
+  assert.equal(sourceMetadata(page("")).title, "Browser Text");
+
+  // Author: name=author, then article:author, then byl; none is null.
+  assert.equal(sourceMetadata(page(`${meta("author", "A")}${meta("article:author", "B")}${meta("byl", "C")}`)).author, "A");
+  assert.equal(sourceMetadata(page(`${meta("article:author", "B")}${meta("byl", "C")}`)).author, "B");
+  assert.equal(sourceMetadata(page(`${meta("byl", "C")}`)).author, "C");
+  assert.equal(sourceMetadata(page("")).author, null);
+
+  // Published: article:published_time, then name=date, then citation_publication_date, then <time datetime>.
+  const published = `${meta("article:published_time", "2026-03-01")}${meta("date", "2026-03-02")}${meta("citation_publication_date", "2026-03-03")}`;
+  assert.equal(sourceMetadata(page(published, `<time datetime="2026-03-04">March</time>`)).publishedAt, "2026-03-01");
+  assert.equal(sourceMetadata(page(`${meta("date", "2026-03-02")}${meta("citation_publication_date", "2026-03-03")}`)).publishedAt, "2026-03-02");
+  assert.equal(sourceMetadata(page(meta("citation_publication_date", "2026-03-03"))).publishedAt, "2026-03-03");
+  assert.equal(sourceMetadata(page("", `<time datetime="2026-03-04">March</time>`)).publishedAt, "2026-03-04");
+  assert.equal(sourceMetadata(page("")).publishedAt, null);
+
+  // Address: location.href, then document.URL, then about:blank.
+  const bare = { querySelector: () => null, title: "" };
+  assert.equal(sourceMetadata({ ...bare, location: { href: "https://a.example/x" }, URL: "https://b.example/y" }).url, "https://a.example/x");
+  assert.equal(sourceMetadata({ ...bare, URL: "https://b.example/y" }).url, "https://b.example/y");
+  assert.equal(sourceMetadata(bare).url, "about:blank");
 });
 
 test("semantic DOM fallback preserves article headings and excludes surrounding navigation", () => {
@@ -465,4 +588,133 @@ test("#271: a web page share never fetches its page again", async () => {
   assert.equal(payload.isPDFDocument, false);
   assert.equal(payload.pdfBase64, undefined);
   assert.equal(fetched, false);
+});
+
+const preprocessorPath = "App/SpokenMarginsShareExtension/Resources/SourceLinkPreprocessor.js";
+
+test("Safari preprocessor hands over an article page as Markdown with its source details", () => {
+  const prose = "<p>" + "Useful article prose. ".repeat(40) + "</p>";
+  const page = browserLikePage({
+    url: "https://example.com/guide",
+    head: `<title>Retirement Guide</title><meta name="author" content="A. Writer">
+      <meta property="article:published_time" content="2026-09-01">
+      <link rel="canonical" href="https://example.com/canonical">`,
+    body: `<nav>Navigation noise</nav><article><h2>First section</h2>${prose}
+      <h3>Second section</h3>${prose}</article><footer>Footer noise</footer>`
+  });
+  Object.defineProperty(page, "contentType", { value: "text/html" });
+  const context = {
+    console,
+    URL,
+    document: page,
+    window: { location: { href: "https://example.com/guide?utm_source=newsletter" } }
+  };
+  vm.runInNewContext(fs.readFileSync(preprocessorPath, "utf8"), context);
+  let payload;
+  context.ExtensionPreprocessingJS.run({ completionFunction: (value) => { payload = JSON.parse(JSON.stringify(value)); } });
+
+  const { markdown, ...rest } = payload;
+  assert.deepEqual(rest, {
+    url: "https://example.com/guide?utm_source=newsletter",
+    documentURL: "https://example.com/guide",
+    canonicalURL: "https://example.com/canonical",
+    contentType: "text/html",
+    isPDFDocument: false,
+    title: "Retirement Guide",
+    author: "A. Writer",
+    publishedAt: "2026-09-01",
+    contentFormat: "markdown",
+    extractor: "defuddle",
+    extractorVersion: "0.19.1",
+    networkFallback: false
+  });
+  assert.match(markdown, /^## First section\n\nUseful article prose\./);
+  assert.match(markdown, /\n\n### Second section\n\nUseful article prose\./);
+  assert.doesNotMatch(markdown, /Navigation noise|Footer noise/);
+});
+
+// Timers that record themselves instead of running; the handle is the record,
+// since the page code treats a falsy handle as "no timer".
+function fakeTimers(timers) {
+  return {
+    setTimeout: (callback, milliseconds) => {
+      const timer = { callback, milliseconds, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout: (timer) => { timer.cleared = true; }
+  };
+}
+
+// A PDF fetch that never answers must not hold the share sheet open: the
+// preprocessor aborts it after eight seconds and hands over the link alone.
+function runPreprocessorWithHungFetch() {
+  const pdfURL = "https://example.com/slow.pdf";
+  const timers = [];
+  const seen = {};
+  const context = {
+    console,
+    btoa,
+    AbortController,
+    ...fakeTimers(timers),
+    fetch: (_url, options) => new Promise((_resolve, reject) => {
+      seen.signal = options.signal;
+      options.signal.addEventListener("abort", () => reject(new Error("aborted")));
+    }),
+    document: { URL: pdfURL, contentType: "application/pdf", title: "slow.pdf", body: null, querySelector: () => null },
+    window: { location: { href: pdfURL } }
+  };
+  vm.runInNewContext(fs.readFileSync(preprocessorPath, "utf8"), context);
+  const done = new Promise((resolve) => context.ExtensionPreprocessingJS.run({ completionFunction: resolve }));
+  return { pdfURL, timers, seen, done };
+}
+
+test("#271: a PDF fetch that never answers is aborted after eight seconds and the link still goes through", async () => {
+  const { pdfURL, timers, seen, done } = runPreprocessorWithHungFetch();
+
+  assert.equal(timers.length, 1, "the fetch has no timeout");
+  assert.equal(timers[0].milliseconds, 8000);
+  assert.ok(seen.signal, "the fetch is not given an abort signal");
+  assert.equal(seen.signal.aborted, false);
+  timers[0].callback();
+  assert.equal(seen.signal.aborted, true);
+
+  const payload = await done;
+  assert.equal(payload.isPDFDocument, true);
+  assert.equal(payload.documentURL, pdfURL);
+  assert.equal(payload.pdfBase64, undefined);
+  assert.equal(timers[0].cleared, true, "the timeout is left running after the fetch ended");
+});
+
+test("#271: the abort timeout is cancelled once the PDF has arrived", async () => {
+  const timers = [];
+  const bytes = new TextEncoder().encode("%PDF-1.7 small");
+  const pdfURL = "https://example.com/quick.pdf";
+  const context = {
+    console,
+    btoa,
+    AbortController,
+    ...fakeTimers(timers),
+    fetch: async () => response(bytes),
+    document: { URL: pdfURL, contentType: "application/pdf", title: "quick.pdf", body: null, querySelector: () => null },
+    window: { location: { href: pdfURL } }
+  };
+  vm.runInNewContext(fs.readFileSync(preprocessorPath, "utf8"), context);
+  const payload = await new Promise((resolve) => context.ExtensionPreprocessingJS.run({ completionFunction: resolve }));
+
+  assert.equal(Buffer.from(payload.pdfBase64, "base64").toString("latin1"), "%PDF-1.7 small");
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].cleared, true);
+});
+
+// The app ships the built scripts, and the tests above that import the
+// sources never see them. A source edit with no rebuild would otherwise pass.
+test("every shipped script is exactly what its source builds to", async () => {
+  for (const configuration of BUNDLES) {
+    const result = await build({ ...esbuildOptions(configuration), write: false });
+    // build.mjs strips trailing whitespace from each line after bundling.
+    const built = result.outputFiles[0].text.split("\n").map((line) => line.replace(/[ \t]+$/g, "")).join("\n");
+    const shipped = fs.readFileSync(configuration.outfile, "utf8");
+    assert.ok(shipped === built, `${configuration.outfile} is stale; run npm run build:browser-extraction`);
+  }
 });

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -52,6 +54,7 @@ type mapsHarness struct {
 	*harness
 	svc      *maps.Service
 	provider *stubProvider
+	dir      string // the maps directory: maps/, transcripts/ and ledger.json
 }
 
 // newMapsHarness is the API harness with maps wired in and switched on.
@@ -75,7 +78,7 @@ func newMapsHarness(t *testing.T) *mapsHarness {
 	if _, err := config.Set(h.configPath, config.ServiceMaps, true); err != nil {
 		t.Fatal(err)
 	}
-	return &mapsHarness{harness: h, svc: svc, provider: p}
+	return &mapsHarness{harness: h, svc: svc, provider: p, dir: dir}
 }
 
 func (h *mapsHarness) post(t *testing.T, body []byte, forwardedFor string) (int, map[string]any) {
@@ -170,8 +173,66 @@ func TestMapUploadAnswers(t *testing.T) {
 	if status, _ := h.get(t, strings.Repeat("0", 64)); status != 404 {
 		t.Fatalf("unknown key: HTTP %d, want 404", status)
 	}
-	if status, _ := h.get(t, "../ledger"); status != 404 {
+	// A slash in the key has to be escaped to reach the handler: a literal
+	// "../ledger" is cleaned by the mux and redirected before getMap runs.
+	// TestMapKeyCannotEscapeTheMapsDirectory covers the traversal properly.
+	if status, _ := h.get(t, "..%2Fledger"); status != 404 {
 		t.Fatalf("path in key: HTTP %d, want 404", status)
+	}
+}
+
+// The key in /api/v1/maps/{key} becomes a file name. A key that decodes to
+// "../ledger" or "../transcripts/<key>" would hand out the spend ledger or a
+// waiting transcript, so the handler must answer not_found for it. The slash
+// is sent escaped (%2F) because a literal "/../" never reaches the handler,
+// and the test checks that the answer is the handler's own JSON, not the
+// mux's "404 page not found". Both private files exist with real content.
+func TestMapKeyCannotEscapeTheMapsDirectory(t *testing.T) {
+	h := newMapsHarness(t)
+	// Map one episode: the worker writes maps/<key>.json and ledger.json.
+	if status, _ := h.postJSON(t, transcriptBody(episodeKey)); status != 202 {
+		t.Fatalf("upload: HTTP %d", status)
+	}
+	h.svc.ProcessWaiting(context.Background())
+	// Queue a second transcript the worker never gets to: transcripts/<key2>.json.
+	const otherKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if status, _ := h.postJSON(t, transcriptBody(otherKey)); status != 202 {
+		t.Fatalf("second upload: HTTP %d", status)
+	}
+
+	ledger, err := os.ReadFile(filepath.Join(h.dir, "ledger.json"))
+	if err != nil || !bytes.Contains(ledger, []byte("spentMicroUSD")) {
+		t.Fatalf("control: ledger file %q, %v", ledger, err)
+	}
+	waiting, err := os.ReadFile(filepath.Join(h.dir, "transcripts", otherKey+".json"))
+	if err != nil || !bytes.Contains(waiting, []byte("alpha")) {
+		t.Fatalf("control: waiting transcript %q, %v", waiting, err)
+	}
+	if status, data := h.get(t, episodeKey); status != 200 || bytes.Contains(data, []byte("alpha")) {
+		t.Fatalf("control: the real map: HTTP %d %s", status, data)
+	}
+
+	for name, key := range map[string]string{
+		"parent directory":         "..%2Fledger",
+		"lower-case escaped dots":  "%2e%2e%2fledger",
+		"lower-case escaped slash": "..%2fledger",
+		"waiting transcript":       "..%2Ftranscripts%2F" + otherKey,
+		"map under a longer path":  "..%2Fmaps%2F" + episodeKey,
+		"upper-case episode key":   strings.ToUpper(episodeKey),
+		"63 characters":            episodeKey[:63],
+		"a .json suffix":           episodeKey + ".json",
+		"trailing escaped newline": episodeKey + "%0A",
+		"escaped NUL after a key":  episodeKey[:60] + "%00ab",
+	} {
+		status, data := h.get(t, key)
+		if status != 404 || !bytes.Contains(data, []byte(`"error":"not_found"`)) {
+			t.Errorf("%s: HTTP %d %q, want the handler's 404 not_found", name, status, data)
+		}
+		for _, secret := range []string{"spentMicroUSD", "alpha", "calls"} {
+			if bytes.Contains(data, []byte(secret)) {
+				t.Errorf("%s: answer contains %q: %s", name, secret, data)
+			}
+		}
 	}
 }
 
@@ -202,6 +263,83 @@ func TestMapUploadRateLimitPerAddress(t *testing.T) {
 	}
 	if status, _ := h.post(t, bad, "198.51.100.2"); status != 400 {
 		t.Fatalf("another address: HTTP %d, want 400", status)
+	}
+}
+
+// postFrom sends one refused (empty-object) upload straight to the handler as
+// if it came from remoteAddr, with the given X-Forwarded-For, and returns the
+// status. Every such upload counts against the sender's hourly limit.
+func postFrom(handler http.Handler, remoteAddr, forwardedFor string) int {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/maps/transcripts", strings.NewReader(`{}`))
+	req.RemoteAddr = remoteAddr
+	if forwardedFor != "" {
+		req.Header.Set("X-Forwarded-For", forwardedFor)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+// The limit is per sender. A sender that can pick its own X-Forwarded-For
+// must not get a fresh allowance by changing it: by default the header is
+// ignored, and behind Caddy only the hop Caddy appended (the last) counts.
+func TestMapUploadLimitIgnoresForwardedForUnlessTrusted(t *testing.T) {
+	h := newMapsHarness(t)
+	handler := h.srv.Handler() // TrustForwardedFor is off
+	for _, peer := range []string{"198.51.100.9:4000", "127.0.0.1:4000"} {
+		for i := 0; i < 30; i++ {
+			if status := postFrom(handler, peer, fmt.Sprintf("10.0.0.%d", i)); status != 400 {
+				t.Fatalf("%s upload %d: HTTP %d, want 400", peer, i+1, status)
+			}
+		}
+		if status := postFrom(handler, peer, "10.0.0.200"); status != 429 {
+			t.Fatalf("%s upload 31 with a new X-Forwarded-For: HTTP %d, want 429", peer, status)
+		}
+	}
+}
+
+func TestMapUploadLimitCountsOnlyTheLastForwardedHop(t *testing.T) {
+	h := newMapsHarness(t)
+	h.srv.TrustForwardedFor = true
+	handler := h.srv.Handler()
+	const caddy = "127.0.0.1:4000"
+	// The sender controls every hop but the last one Caddy appends.
+	for i := 0; i < 30; i++ {
+		if status := postFrom(handler, caddy, fmt.Sprintf("10.9.8.%d, 203.0.113.7", i)); status != 400 {
+			t.Fatalf("upload %d: HTTP %d, want 400", i+1, status)
+		}
+	}
+	for _, header := range []string{"5.6.7.8, 203.0.113.7", "203.0.113.7", " 203.0.113.7 ", "a, b, c, 203.0.113.7"} {
+		if status := postFrom(handler, caddy, header); status != 429 {
+			t.Errorf("X-Forwarded-For %q: HTTP %d, want 429 (the same sender)", header, status)
+		}
+	}
+	if status := postFrom(handler, caddy, "10.9.8.0, 203.0.113.8"); status != 400 {
+		t.Errorf("another last hop: HTTP %d, want 400 (a different sender)", status)
+	}
+	// Without the header the sender is the peer itself, which is not that sender.
+	if status := postFrom(handler, caddy, ""); status != 400 {
+		t.Errorf("no X-Forwarded-For: HTTP %d, want 400", status)
+	}
+}
+
+// Only a loopback peer (Caddy on the same machine) is believed. Anyone who
+// reaches the server directly could otherwise name themselves.
+func TestMapUploadLimitDoesNotTrustForwardedForFromOtherPeers(t *testing.T) {
+	h := newMapsHarness(t)
+	h.srv.TrustForwardedFor = true
+	handler := h.srv.Handler()
+	const stranger = "198.51.100.9:4000"
+	for i := 0; i < 30; i++ {
+		if status := postFrom(handler, stranger, fmt.Sprintf("10.0.0.%d", i)); status != 400 {
+			t.Fatalf("upload %d: HTTP %d, want 400", i+1, status)
+		}
+	}
+	if status := postFrom(handler, stranger, "10.0.0.200"); status != 429 {
+		t.Fatalf("upload 31 with a new X-Forwarded-For: HTTP %d, want 429", status)
+	}
+	if status := postFrom(handler, "198.51.100.10:4000", "10.0.0.1"); status != 400 {
+		t.Fatalf("another peer: HTTP %d, want 400", status)
 	}
 }
 

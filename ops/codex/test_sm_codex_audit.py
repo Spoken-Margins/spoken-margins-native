@@ -7,6 +7,7 @@ real first lines seen on PRs #344, #366, #374 and #418 on 2026-09-30.
 """
 
 import ast
+import importlib.util
 import json
 import re
 import sys
@@ -202,6 +203,24 @@ class CandidateFilter(unittest.TestCase):
         lane_pr = [{"filename": "scripts/lane-runner.py", "additions": 40, "deletions": 3}]
         ok, why = A.evaluate_pr(pr(), FIXTURE["comments_audited_old_head"], lane_pr)
         self.assertEqual((ok, why), (True, "risky: lane"))
+
+    def test_the_audit_s_lane_patterns_follow_the_runner_s_lane_policy(self):
+        # sm_codex_audit.py keeps its own copy of scripts/test-scope.py's LANE_PREFIXES and LANE_FILES. A path the
+        # runner holds "for a Codex audit" that the audit does not call risky would wait for an audit that is never
+        # scheduled, so the policy itself is the source of truth here, not the hand-written LANE_PATHS above.
+        spec = importlib.util.spec_from_file_location(
+            "scope_for_audit_test", Path(__file__).resolve().parents[2] / "scripts" / "test-scope.py")
+        scope = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(scope)
+        held = sorted(scope.LANE_FILES) + [prefix + "example" for prefix in scope.LANE_PREFIXES]
+        self.assertGreaterEqual(len(held), 10)
+        for p in held:
+            self.assertTrue(scope.is_lane_path(p), p)
+            self.assertEqual(A.risky_areas([p]), ["lane"], f"{p} is held for an audit by the runner but not risky here")
+        # and the other way round, on the paths named in these tests: the audit adds no lane path of its own
+        for p in self.LANE_PATHS + ["scripts/tests/test_lane_runner.py", "TestPlans/scripted-journeys.json",
+                                    "scripts/phone-build", "ops/codex/sm_codex_worker.py"]:
+            self.assertEqual("lane" in A.risky_areas([p]), scope.is_lane_path(p), p)
 
     def test_ordinary_paths_stay_off_the_lane(self):
         # The audit count for ordinary PRs must not rise: the lane's tests, the Test Desk's journey list,

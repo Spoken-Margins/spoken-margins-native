@@ -711,6 +711,21 @@ public final class SessionEngine {
             }
             return snapshot
         }
+        // An article's prepared narration plays as media, so a text place (a shared Margin's, or where a Margin
+        // was recorded) is found on its narration timeline (#866). A place the audio doesn't reach still throws.
+        if let session = currentSession, session.currentTargetType == .transcriptBackedMedia,
+           let item = currentItem ?? (try? repository.loadItem(id: session.itemId)),
+           isGeneratedTextMedia(item.media),
+           let timeline = sourceTranscriptTimeline(itemId: item.id),
+           let mediaTimeMs = PreparedNarrationFallback.mediaTimeMs(textOffset: charOffset, timeline: timeline) {
+            do {
+                return try seekMedia(toMediaTimeMs: mediaTimeMs)
+            } catch SessionKitError.invalidCommandForState(let reason)
+                where reason == "media_seek_player_unavailable" && snapshot.status == .paused {
+                // A restored, paused session has no player yet: the next start opens the narration there.
+                return try stagePausedMediaPosition(toMediaTimeMs: mediaTimeMs)
+            }
+        }
         guard var session = currentSession,
               session.currentTargetType == .itemTextTTS,
               let item = currentItem ?? (try? repository.loadItem(id: session.itemId)),
@@ -1308,6 +1323,19 @@ public final class SessionEngine {
         publish(status: .recording, phase: .recordingInterjection)
         return snapshot
     }
+
+    /// What the recorder has taken in so far while a Margin is recording (#937). Nil when it can't tell.
+    public func recordingCaptureReading() -> RecordingCaptureReading? { recorder.captureReading() }
+
+    /// Starts a new recorder after one that never got audio; the session stays in `recordingInterjection`.
+    public func restartRecordingCapture() throws {
+        guard currentSession?.phase == .recordingInterjection else {
+            throw SessionKitError.invalidCommandForState("restartRecordingCapture")
+        }
+        try recorder.restartCapture()
+    }
+
+    public func recordingCaptureDiagnostics() -> [String: String] { recorder.captureDiagnostics() }
 
     @discardableResult
     public func beginWrittenInterjection() throws -> WrittenInterjectionCapture {
@@ -2978,22 +3006,9 @@ public final class SessionEngine {
     private func mediaTimeMs(forTextOffset textOffset: Int, timeline: TranscriptTimeline) -> Int {
         let sortedSegments = timeline.segments.sorted { $0.startMs < $1.startMs }
         guard !sortedSegments.isEmpty else { return 0 }
-        if let segment = sortedSegments.first(where: { segment in
-            guard let start = segment.startChar, let end = segment.endChar else { return false }
-            return start <= textOffset && textOffset < end
-        }) {
-            guard let startChar = segment.startChar,
-                  let endChar = segment.endChar,
-                  endChar > startChar else {
-                return segment.startMs
-            }
-            let fraction = Double(textOffset - startChar) / Double(endChar - startChar)
-            return segment.startMs + Int((Double(segment.endMs - segment.startMs) * max(0, min(1, fraction))).rounded())
-        }
-        if let next = sortedSegments.first(where: { ($0.startChar ?? .max) > textOffset }) {
-            return next.startMs
-        }
-        return timeline.durationMs ?? sortedSegments.last?.endMs ?? 0
+        return PreparedNarrationFallback.mediaTimeMs(textOffset: textOffset, timeline: timeline)
+            ?? sortedSegments.first(where: { ($0.startChar ?? .max) > textOffset })?.startMs
+            ?? timeline.durationMs ?? sortedSegments.last?.endMs ?? 0
     }
 
     private func preferredPublisherChapterCollection(in candidate: LinkResolutionCandidate) -> PublisherChapterCollection? {

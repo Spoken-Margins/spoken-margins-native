@@ -1,3 +1,4 @@
+import contextlib
 import importlib.util
 import json
 import os
@@ -460,6 +461,108 @@ class T3Tests(unittest.TestCase):
             self.assertEqual(lane.run_t3(['NoSuchTestClassAnywhere'], 'r', Path('/tmp'))[0], 'FAIL')
 
 
+FAKE_VERIFY_TESTS = r"""
+import json, os, sys, time
+from pathlib import Path
+
+# Stands in for scripts/verify-tests.py inside a temporary lane ROOT: records how it was launched, then does
+# what scripts/fake-verify-behavior.json says (the test writes that file before each run).
+here = Path(__file__).resolve().parent
+behavior = json.loads((here / 'fake-verify-behavior.json').read_text())
+with (here / 'fake-verify-launches.jsonl').open('a') as record:
+    record.write(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd()}) + '\n')
+output = Path(sys.argv[sys.argv.index('--output') + 1])
+output.mkdir(parents=True, exist_ok=True)
+if behavior.get('manifest') is not None:
+    (output / 'manifest.json').write_text(json.dumps(behavior['manifest']))
+if behavior.get('sleep'):
+    time.sleep(behavior['sleep'])
+"""
+
+
+class T3VerifyTestsLaunchTests(unittest.TestCase):
+    """The command the T3 job runs on the simulator it claimed (`run_plan` in `_t3_on_claimed_device`), and what
+    it makes of what comes back. Every other T3 test hands `run_plans` a fake `run_plan`, so the closure that
+    decides which simulator, which tests and which verdict was never executed: the real child process runs here
+    (a Python stand-in for verify-tests.py in a temporary ROOT); only the simulator calls are replaced."""
+
+    UDID = 'CLAIMED-0000-UDID'
+    RUNTIME = 'com.apple.CoreSimulator.SimRuntime.iOS-26-5'
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name) / 'checkout'
+        (self.root / 'scripts').mkdir(parents=True)
+        (self.root / 'scripts/verify-tests.py').write_text(FAKE_VERIFY_TESTS)
+        self.evidence = Path(temporary.name) / 'evidence'
+        self.evidence.mkdir()
+        patcher = mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(Path(temporary.name) / 'state')})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def behave(self, manifest=None, sleep=0):
+        (self.root / 'scripts/fake-verify-behavior.json').write_text(json.dumps({'manifest': manifest, 'sleep': sleep}))
+
+    def launches(self):
+        log = self.root / 'scripts/fake-verify-launches.jsonl'
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def run_t3(self, grouped, timeout=None):
+        import lane_sim
+        patches = [mock.patch.object(lane, 'ROOT', self.root),
+                   mock.patch.object(lane_sim, 'create_temporary', return_value=self.UDID),
+                   mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release'),
+                   mock.patch.object(lane_sim, 'unsafe_devices', return_value={}),
+                   mock.patch.object(lane_sim, 'is_available', return_value=True),
+                   mock.patch.object(lane_sim, 'back_to_one_simulator', return_value=False),
+                   mock.patch.object(lane, 'first_boot', return_value=(None, {'pressure': 'normal',
+                                                                                'period': 'one-simulator'}))]
+        if timeout is not None:
+            patches.append(mock.patch.object(lane, 'T3_TIMEOUT', timeout))
+        with contextlib.ExitStack() as stack:
+            for patch in patches:
+                stack.enter_context(patch)
+            return lane._t3_on_fresh_device(grouped, 'r7', self.evidence, self.RUNTIME)
+
+    def test_each_plan_runs_verify_tests_on_the_claimed_simulator_with_exactly_its_selectors(self):
+        self.behave({'status': 'verified', 'steps': []})
+        verdict, _, _, _, _, _ = self.run_t3({'app': ['AppTests/AlphaTests', 'AppTests/BetaTests/testOne'],
+                                              'adapters': ['AudioTests/GammaTests']})
+        self.assertEqual(verdict, 'PASS')
+        self.assertEqual([launch['argv'] for launch in self.launches()], [
+            ['--plan', 'app', '--device', self.UDID, '--output', str(self.evidence / 'verify-app'),
+             '--only-testing', 'AppTests/AlphaTests', '--only-testing', 'AppTests/BetaTests/testOne'],
+            ['--plan', 'adapters', '--device', self.UDID, '--output', str(self.evidence / 'verify-adapters'),
+             '--only-testing', 'AudioTests/GammaTests']])
+        # `scripts/verify-tests.py` is a relative path, so the child must start in the checkout
+        self.assertEqual({launch['cwd'] for launch in self.launches()}, {str(self.root.resolve())})
+
+    def test_a_run_that_wrote_no_manifest_is_not_a_pass(self):
+        self.behave(manifest=None)
+        verdict, _, _, details, _, _ = self.run_t3({'app': ['AppTests/AlphaTests']})
+        self.assertEqual(len(self.launches()), 1)  # it did run: the verdict is about what it left behind
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertTrue(any(line.startswith('app: verify-tests.py wrote no manifest.') for line in details), details)
+
+    def test_the_manifest_status_decides_the_verdict(self):
+        failed = {'status': 'failed_or_incomplete', 'steps': [{'name': 'xcode-tests', 'exit_code': 65, 'tests': {
+            'AppTests/AlphaTests/testBad': {'status': 'failed'}}}]}
+        for manifest, expected in (({'status': 'verified', 'steps': []}, 'PASS'), (failed, 'FAIL')):
+            with self.subTest(status=manifest['status']):
+                self.behave(manifest)
+                self.assertEqual(self.run_t3({'app': ['AppTests/AlphaTests']})[0], expected)
+
+    def test_a_run_that_outlasts_the_budget_is_interrupted_and_reported_as_timed_out(self):
+        self.behave(manifest=None, sleep=60)
+        started = time.monotonic()
+        verdict, _, _, details, _, _ = self.run_t3({'app': ['AppTests/AlphaTests']}, timeout=1)
+        self.assertLess(time.monotonic() - started, 30)  # interrupted at the budget, not after the child's sleep
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertTrue(any("the runner's 1s budget for the whole verify-tests.py run" in line for line in details), details)
+        self.assertFalse(any('wrote no manifest' in line for line in details), details)
+
+
 class RunnerDeviceTests(unittest.TestCase):
     """#440 and #411: every lane job swept "SM Lane Runner" simulators when it started, and an automerge job on
     the second runner (sm-lane-mac-2) deleted a T3's live device on the main runner mid-run, four times on
@@ -742,6 +845,26 @@ class AutomergeTests(unittest.TestCase):
                 self.assertEqual(verdict, expected)
 
 
+    def test_the_host_tests_are_verify_tests_py_s_fast_plan_writing_into_the_evidence_folder(self):
+        # The runners above write a verified manifest into whatever --output they get, whatever plan they were
+        # asked for, so none of them could tell the fast plan from a retired one (`--plan ui`).
+        launched = []
+
+        def run(command, log, timeout):
+            launched.append((command, timeout))
+            output = Path(command[command.index('--output') + 1])
+            output.mkdir(parents=True)
+            (output / 'manifest.json').write_text('{"status": "verified"}')
+            return 0
+
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(lane.run_fast(Path(folder), runner=run), ('PASS', []))
+            [(command, timeout)] = launched
+            self.assertEqual(command[1:], ['scripts/verify-tests.py', '--plan', 'fast', '--output',
+                                           str(Path(folder) / 'fast')])
+        self.assertIn(command[0], (str(lane.ROOT / '.venv/bin/python'), sys.executable))
+        self.assertEqual(timeout, lane.FAST_TIMEOUT)
+
 class MergeTests_Runner(unittest.TestCase):
     """The runner merges what it passes (decision 3): blockers, order, retries. Git is faked here;
     PushTests below uses real git."""
@@ -960,6 +1083,17 @@ class MergeTests_Runner(unittest.TestCase):
         self.assertIn('it touches packets and the lane and has no "Codex audit (Astra)" comment yet',
                       lane.merge_blockers(packet_too, [], HEAD))
 
+    def test_audio_persistence_and_packet_changes_are_each_held_for_a_codex_audit(self):
+        # The lane change above is held by its own rule; these kinds come from AUDITED, one entry each.
+        for category, what in (('audio', 'the audio session'), ('persistence', 'persistence'), ('packet', 'packets')):
+            with self.subTest(category=category):
+                scope = {'tier': 'T3', 'why': [], 'lane_paths': [], 'files': [
+                    {'path': 'App/X.swift', 'category': 'app-ui'}, {'path': 'App/Y.swift', 'category': category}]}
+                self.assertEqual(lane.merge_blockers(scope, [], HEAD),
+                                 [f'it touches {what} and has no "Codex audit (Astra)" comment yet'])
+                clean = [comment('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.')]
+                self.assertEqual(lane.merge_blockers(scope, clean, HEAD), [])
+
     def test_an_ordinary_pr_is_not_held_for_an_audit(self):
         scope = {'tier': 'T2', 'why': [], 'lane_paths': [], 'files': [{'path': 'App/X.swift', 'category': 'app-ui'}]}
         self.assertEqual(lane.merge_blockers(scope, [], HEAD), [])
@@ -1112,8 +1246,27 @@ class WarmBuildTests(unittest.TestCase):
     def caches(self):
         return sorted(self.cache.glob('*/sk-*'))
 
-    def test_it_keeps_at_most_two_caches_and_never_goes_below_the_disk_floor(self):
+    def test_a_key_revisited_after_three_other_trees_keeps_its_build_products(self):
+        # #863: two caches evicted an otherwise reusable key as SessionKit PRs interleaved.
+        source = 'Packages/SessionKit/Sources/A.swift'
+        self.commit(source, 'struct Original {}\n')
+        self.warm()
+        original = (self.tree / '.build').resolve()
+        product = original / 'dd-simulator/Build/product'
+        product.parent.mkdir(parents=True)
+        product.write_text('built for Original')
+        os.utime(original.parent, (1, 1))
         for n in range(3):
+            self.commit(source, f'struct Other{n} {{}}\n')
+            self.assertIn('cold, new cache', self.warm())
+            os.utime((self.tree / '.build').resolve().parent, (n + 2, n + 2))
+        self.commit(source, 'struct Original {}\n')
+        self.assertTrue(self.warm().startswith('build folders: warm'))
+        self.assertEqual((self.tree / '.build').resolve(), original)
+        self.assertEqual(product.read_text(), 'built for Original')
+
+    def test_it_keeps_at_most_the_limit_and_never_goes_below_the_disk_floor(self):
+        for n in range(lane.WARM_KEEP + 1):
             self.commit('Packages/SessionKit/Sources/A.swift', f'struct A{n} {{}}\n')
             self.warm()
             time.sleep(0.01)
@@ -1975,6 +2128,44 @@ class MergeTests(unittest.TestCase):
         self.assertIn('Gate1AppModel.swift would be 3 lines, above its ceiling of 2', found[0])
         self.assertEqual(lane.hot_file_violations(self.tree, 'next', {'hot-file-ok'}), [])
 
+    def run_auto_on_the_real_ratchet(self, labels):
+        """run_auto and run_automerge as they are, over a tree whose PR grows a hot file past next's ceiling.
+
+        Every other run_auto test replaces run_automerge, so the `ratchet=` it is handed was never called."""
+        model = 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift'
+        (self.origin / model).parent.mkdir(parents=True)
+        self.commit(self.origin, model, 'one\ntwo\n')
+        (self.origin / 'scripts').mkdir()
+        self.commit(self.origin, 'scripts/hot_file_ratchet.py', (SCRIPTS / 'hot_file_ratchet.py').read_text())
+        subprocess.run(self.git + ['-C', str(self.tree), 'pull', '-q', 'origin', 'next'], check=True)
+        self.commit(self.tree, model, 'one\ntwo\nthree\n')
+        head = subprocess.check_output(['git', '-C', str(self.tree), 'rev-parse', 'HEAD'], text=True).strip()
+        base_sha = lane.fetch_base(self.tree, 'next')
+        docs_only = {'tier': 'T0', 'why': ['docs'], 'files': [{'path': 'docs/x.md', 'category': 'docs'}]}
+        github, pushed = FakeGitHub(labels=('automerge',), head=head), []
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.object(lane, 'ROOT', self.tree), \
+                mock.patch.object(lane, 'TESTED_RECORD', Path(folder) / 'tested.json'), \
+                mock.patch.object(lane, 'build_merge_commit', return_value=('m' * 40, [])), \
+                mock.patch.object(lane, 'push_merge', side_effect=lambda tree, sha, base: pushed.append(sha) or (True, '')), \
+                mock.patch.object(lane, 'sweep_merge_audit'), \
+                mock.patch.object(lane, 'warm_build_folders', return_value='build folders: warm'), \
+                mock.patch.object(lane, 'diff_scope', return_value=docs_only):
+            result = lane.run_auto(github, {'title': 'T'}, 5, 'next', head, base_sha, Path(folder), [],
+                                   labels=labels)
+        return result, github, pushed
+
+    def test_run_auto_refuses_to_merge_a_pr_that_grows_a_hot_file_past_its_ceiling(self):
+        (verdict, where, ran, details), github, pushed = self.run_auto_on_the_real_ratchet(labels=['automerge'])
+        self.assertEqual((verdict, where, ran), ('FAIL', 'no build', 'hot-file ratchet: failed'))
+        self.assertIn('hot-file ratchet — Gate1AppModel.swift would be 3 lines, above its ceiling of 2', details[-1])
+        self.assertEqual((pushed, github.posted), ([], []))  # nothing pushed, no merge check posted
+
+    def test_run_auto_passes_the_pr_s_labels_to_the_ratchet_so_hot_file_ok_still_merges_it(self):
+        (verdict, _, _, details), github, pushed = self.run_auto_on_the_real_ratchet(labels=['automerge', 'hot-file-ok'])
+        self.assertEqual((verdict, pushed), ('PASS', ['m' * 40]), details)
+        self.assertIn('merged into next as mmmmmmm', details[-1])
+
     def test_a_conflict_names_the_files_and_leaves_the_tree_clean(self):
         self.commit(self.tree, 'shared.txt', 'pr side\n')
         self.commit(self.origin, 'shared.txt', 'next side\n')
@@ -2004,6 +2195,103 @@ class OnlyTestingTests(unittest.TestCase):
                     mock.patch.object(verification.Run, 'command', side_effect=AssertionError('nothing should run')):
                 with self.assertRaisesRegex(RuntimeError, 'Not in the AppBehavior test plan: SpokenMarginsAppTests/Nope'):
                     run.xcode('app', None, False, None, ['Nope'])
+
+
+class GhCliTests(unittest.TestCase):
+    """lane.GitHub and lane.Repo against a fake `gh` on PATH that records its argv and prints queued answers.
+
+    Every other test replaces both classes (FakeGitHub, FakeRepo), so the REST paths, the `labels[]` field, the
+    `%3A` label encoding and the `--paginate --jq` flags were never produced: a wrong field name or a label
+    DELETE that missed would leave the PR on `lane:queued` forever with every test green."""
+
+    FAKE_GH = "#!{python}\nimport json, os, sys\n" \
+              "folder = os.environ['FAKE_GH_DIR']\n" \
+              "with open(folder + '/calls.jsonl', 'a') as calls:\n" \
+              "    calls.write(json.dumps(sys.argv[1:]) + '\\n')\n" \
+              "answers = json.load(open(folder + '/answers.json'))\n" \
+              "answer = answers.pop(0) if answers else {{'stdout': '', 'exit': 0}}\n" \
+              "json.dump(answers, open(folder + '/answers.json', 'w'))\n" \
+              "sys.stdout.write(answer['stdout'])\n" \
+              "sys.exit(answer['exit'])\n"
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.folder = Path(temporary.name)
+        (self.folder / 'bin').mkdir()
+        gh = self.folder / 'bin/gh'
+        gh.write_text(self.FAKE_GH.format(python=sys.executable))
+        gh.chmod(0o755)
+        patcher = mock.patch.dict(os.environ, {'PATH': f'{self.folder / "bin"}:{os.environ["PATH"]}',
+                                               'FAKE_GH_DIR': str(self.folder)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.answer()
+
+    def answer(self, *answers):
+        """What the next gh calls print: a string (exit 0) or (string, exit code); then silence, exit 0."""
+        (self.folder / 'answers.json').write_text(json.dumps([
+            {'stdout': a, 'exit': 0} if isinstance(a, str) else {'stdout': a[0], 'exit': a[1]} for a in answers]))
+
+    def calls(self):
+        log = self.folder / 'calls.jsonl'
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def test_pull_comments_and_comment_use_the_pr_s_rest_paths(self):
+        github = lane.GitHub('owner/repo', 5)
+        self.answer('{"head": {"sha": "abc"}, "labels": []}',
+                    json.dumps({'body': 'one'}) + '\n\n' + json.dumps({'body': 'two'}) + '\n',
+                    json.dumps({'html_url': 'https://example.test/c1'}))
+        self.assertEqual(github.pull(), {'head': {'sha': 'abc'}, 'labels': []})
+        self.assertEqual([c['body'] for c in github.comments()], ['one', 'two'])  # blank lines are skipped
+        body = 'Lane report pr5-r1 — PASS\n```text\nran: it\n```'
+        self.assertEqual(github.comment(body), 'https://example.test/c1')
+        self.assertEqual(self.calls(), [
+            ['api', 'repos/owner/repo/pulls/5'],
+            ['api', '--paginate', '--jq', '.[] | @json', 'repos/owner/repo/issues/5/comments'],
+            ['api', 'repos/owner/repo/issues/5/comments', '-f', f'body={body}']])
+
+    def test_relabel_deletes_the_encoded_old_label_then_adds_the_new_one_as_a_labels_field(self):
+        lane.GitHub('owner/repo', 5).relabel('lane:queued', 'lane:running')
+        self.assertEqual(self.calls(), [
+            ['api', '-X', 'DELETE', 'repos/owner/repo/issues/5/labels/lane%3Aqueued'],
+            ['api', '-X', 'POST', 'repos/owner/repo/issues/5/labels', '-f', 'labels[]=lane:running']])
+
+    def test_relabel_with_only_one_side_makes_only_that_call(self):
+        github = lane.GitHub('owner/repo', 5)
+        github.relabel(None, 'lane:done')
+        github.relabel('lane:running', None)
+        self.assertEqual(self.calls(), [
+            ['api', '-X', 'POST', 'repos/owner/repo/issues/5/labels', '-f', 'labels[]=lane:done'],
+            ['api', '-X', 'DELETE', 'repos/owner/repo/issues/5/labels/lane%3Arunning']])
+
+    def test_removing_a_label_the_pr_no_longer_has_does_not_stop_the_new_label_being_added(self):
+        self.answer(('', 1))  # DELETE answers 404 when the label is already gone
+        lane.GitHub('owner/repo', 5).relabel('lane:queued', 'lane:running')
+        self.assertEqual([call[1:3] for call in self.calls()], [['-X', 'DELETE'], ['-X', 'POST']])
+
+    def test_repo_reads_comments_a_page_at_a_time_until_a_short_page(self):
+        repo = lane.Repo('owner/repo')
+        self.answer(json.dumps([{'n': n} for n in range(100)]), json.dumps([{'n': 100}]))
+        self.assertEqual([c['n'] for c in repo.comments_since('2026-10-01T00:00:00Z')], list(range(101)))
+        self.assertEqual(self.calls(), [
+            ['api', 'repos/owner/repo/issues/comments?since=2026-10-01T00:00:00Z&sort=created&direction=asc'
+                    f'&per_page=100&page={page}'] for page in (1, 2)])
+
+    def test_repo_comments_title_and_new_issue_use_the_expected_paths_and_fields(self):
+        repo = lane.Repo('owner/repo')
+        self.answer(json.dumps({'body': 'x'}) + '\n', json.dumps({'html_url': 'https://example.test/c2'}),
+                    json.dumps({'title': 'Change the lane'}), json.dumps({'html_url': 'https://example.test/i9'}))
+        self.assertEqual([c['body'] for c in repo.issue_comments(337)], ['x'])
+        self.assertEqual(repo.comment(337, 'Lane auto-revert: x'), 'https://example.test/c2')
+        self.assertEqual(repo.title(441), 'Change the lane')
+        self.assertEqual(repo.open_issue('Lane broke', 'details', ['lane-fault', 'urgent']), 'https://example.test/i9')
+        self.assertEqual(self.calls(), [
+            ['api', '--paginate', '--jq', '.[] | @json', 'repos/owner/repo/issues/337/comments'],
+            ['api', 'repos/owner/repo/issues/337/comments', '-f', 'body=Lane auto-revert: x'],
+            ['api', 'repos/owner/repo/pulls/441'],
+            ['api', 'repos/owner/repo/issues', '-f', 'title=Lane broke', '-f', 'body=details',
+             '-f', 'labels[]=lane-fault', '-f', 'labels[]=urgent']])
 
 
 class FakeRepo:
@@ -2301,6 +2589,68 @@ class AutoRevertTests(unittest.TestCase):
         flow.run_main(FakeGitHub(comments=[comment('/lane T2')]), HEAD, 'PASS', '--base', 'lane-check/x')
         flow.auto_revert.assert_not_called()  # a lane-check base is for testing lane changes, never reverted
 
+
+
+class BaseScriptsFallbackTests(unittest.TestCase):
+    """#904: next's lane-runner imported lane_slots from a branch that predates it and crashed before reporting."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix='lane-fallback-'))
+        self.addCleanup(subprocess.run, ['rm', '-rf', str(self.dir)])
+        self.tree = self.dir / 'tree'
+        git = ['git', '-C', str(self.tree), '-c', 'user.name=t', '-c', 'user.email=t@example.com']
+        subprocess.run(['git', 'init', '-q', str(self.tree)], check=True)
+        (self.tree / 'scripts').mkdir()
+        (self.tree / 'scripts/old_helper.py').write_text("WHERE = 'base'\n")
+        (self.tree / 'scripts/lane_slots.py').write_text("WHERE = 'base'\n")
+        (self.tree / 'scripts/test-scope.py').write_text("WHERE = 'base'\n")
+        (self.tree / 'scripts/tests').mkdir()
+        (self.tree / 'scripts/tests/test_x.py').write_text('')
+        subprocess.run(git + ['add', '-A'], check=True)
+        subprocess.run(git + ['commit', '-qm', 'next'], check=True)
+        subprocess.run(git + ['update-ref', 'refs/remotes/origin/next', 'HEAD'], check=True)
+        # The PR branch: an old checkout with its own old_helper and no lane_slots.
+        (self.tree / 'scripts/old_helper.py').write_text("WHERE = 'tree'\n")
+        (self.tree / 'scripts/lane_slots.py').unlink()
+        (self.tree / 'scripts/test-scope.py').unlink()
+        self.path = list(sys.path)
+        self.addCleanup(setattr, sys, 'path', self.path)
+
+    def importable(self, *paths):
+        code = 'import lane_slots, old_helper; print(lane_slots.WHERE, old_helper.WHERE)'
+        return subprocess.run([sys.executable, '-I', '-c', f'import sys; sys.path[:0] = {list(map(str, paths))!r}; {code}'],
+                              capture_output=True, text=True)
+
+    def test_branch_without_lane_slots_cannot_import_it(self):
+        self.assertIn("No module named 'lane_slots'", self.importable(self.tree / 'scripts').stderr)
+
+    def test_missing_helpers_come_from_the_base_and_the_tree_keeps_its_own(self):
+        into = lane.base_scripts_fallback(self.tree, 'next', into=self.dir / 'fallback')
+        self.assertEqual(sorted(p.name for p in into.iterdir()), ['lane_slots.py'])
+        self.assertEqual(sys.path[-1], str(into))
+        result = self.importable(self.tree / 'scripts', into)
+        self.assertEqual(result.stdout.split(), ['base', 'tree'], result.stderr)
+
+    def test_nothing_missing_adds_nothing(self):
+        (self.tree / 'scripts/lane_slots.py').write_text("WHERE = 'tree'\n")
+        self.assertIsNone(lane.base_scripts_fallback(self.tree, 'next', into=self.dir / 'fallback'))
+        self.assertEqual(sys.path, self.path)
+
+    def test_unknown_base_raises_for_main_to_log(self):
+        with self.assertRaises(RuntimeError):
+            lane.base_scripts_fallback(self.tree, 'no-such-base', into=self.dir / 'fallback')
+
+    def test_main_sets_it_up_before_any_lane_work(self):
+        class Stop(Exception):
+            pass
+        root = lane.ROOT
+        self.addCleanup(setattr, lane, 'ROOT', root)
+        with mock.patch.dict(os.environ, {'GH_REPO': 'o/r'}), \
+                mock.patch.object(lane, 'GitHub', side_effect=Stop), \
+                mock.patch.object(lane, 'base_scripts_fallback', return_value=None) as fallback:
+            with self.assertRaises(Stop):
+                lane.main(['--pr', '1', '--event-head', HEAD, '--run-id', '1', '--tree', str(self.tree)])
+        fallback.assert_called_once_with(self.tree.resolve(), 'next')
 
 if __name__ == '__main__':
     unittest.main()
