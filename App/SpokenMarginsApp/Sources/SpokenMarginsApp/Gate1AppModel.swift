@@ -1729,8 +1729,9 @@ final class Gate1AppModel: ObservableObject {
             }
             self.listeningSignals.playbackProgress(itemId: updated.itemId, status: updated.status, transport: engine.currentPlaybackTransportState())
             self.updateNarrationVoiceNotice()
-            if previousEngagementProgress < 25,
-               updated.currentPlaybackProgressPercent >= 25,
+            if SourceFollowSuggestionPolicy.crossedEngagementThreshold(
+                previous: previousEngagementProgress, current: updated.currentPlaybackProgressPercent
+            ),
                let itemId = updated.itemId,
                let store = self.store {
                 self.offerFollowSuggestionIfEligible(itemId: itemId, store: store)
@@ -14097,10 +14098,12 @@ final class Gate1AppModel: ObservableObject {
         let persistedProgress = selectedItem.id == itemId
             ? Self.preferredContinuationSession(in: selectedItem.sessions)?.completionPercent
             : libraryItems.first(where: { $0.id == itemId })?.continuationProgressPercent
-        let progress = Self.sourceSuggestionEngagementProgress(
+        let progress = SourceFollowSuggestionPolicy.engagementProgress(
             itemId: itemId, persistedProgress: persistedProgress, snapshot: snapshot
         )
-        guard progress >= 25 || (selectedItem.id == itemId && !selectedItem.interjections.isEmpty) else { return }
+        guard SourceFollowSuggestionPolicy.isEngaged(
+            progress: progress, itemHasMargin: selectedItem.id == itemId && !selectedItem.interjections.isEmpty
+        ) else { return }
         sourceSuggestionChecks.insert(itemId)
         Task { [weak self] in
             guard let self else { return }
@@ -14117,9 +14120,7 @@ final class Gate1AppModel: ObservableObject {
                 guard self.selectedItem.id == itemId,
                       self.screen != .playback || self.snapshot.itemId == itemId,
                       let current = try? store.loadItem(id: itemId),
-                      current.sourceURL == item.sourceURL,
-                      current.externalReference == item.externalReference,
-                      current.media?.url == item.media?.url else {
+                      SourceFollowSuggestionPolicy.hasSameOrigin(item, current) else {
                     self.diagnostics["sourceFollowSuggestion"] = FollowedSourceMatching.stampedDiagnostic("discarded_stale_origin")
                     return
                 }
@@ -14135,14 +14136,8 @@ final class Gate1AppModel: ObservableObject {
                 let now = Date()
                 let eligible = try FollowedSourceMatching.suggestible(unfollowed, now: now) { try store.loadSourceSuggestionDecision(sourceId: $0) }
                 guard !eligible.isEmpty else { return }
-                for candidate in eligible {
-                    try store.saveSourceSuggestionDecision(SourceSuggestionDecision(
-                        id: "suggestion-\(candidate.source.id)",
-                        sourceId: candidate.source.id,
-                        decision: .prompted,
-                        decidedAt: now,
-                        lastPromptAt: now
-                    ))
+                for decision in SourceFollowSuggestionPolicy.promptedDecisions(for: eligible, now: now) {
+                    try store.saveSourceSuggestionDecision(decision)
                 }
                 self.sourceFollowSuggestionItemId = itemId
                 self.storedSourceFollowSuggestionCandidates = eligible
@@ -14179,15 +14174,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    nonisolated static func sourceSuggestionEngagementProgress(
-        itemId: String,
-        persistedProgress: Int?,
-        snapshot: SessionSnapshot
-    ) -> Int {
-        let liveProgress = snapshot.itemId == itemId ? snapshot.currentPlaybackProgressPercent : 0
-        return max(persistedProgress ?? 0, liveProgress)
-    }
-
     func acceptSourceFollowSuggestion(_ candidate: SourceCandidateEvidence) {
         guard sourceFollowSuggestionCandidates.contains(where: { $0.id == candidate.id }) else { return }
         let itemId = sourceFollowSuggestionItemId
@@ -14217,26 +14203,20 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func deferSourceFollowSuggestion() {
-        persistSourceFollowSuggestionDecision(.notNow, suppressFor: 14 * 24 * 60 * 60)
+        persistSourceFollowSuggestionDecision(.notNow)
     }
 
     func rejectSourceFollowSuggestion() {
-        persistSourceFollowSuggestionDecision(.neverSuggest, suppressFor: nil)
+        persistSourceFollowSuggestionDecision(.neverSuggest)
     }
 
-    private func persistSourceFollowSuggestionDecision(_ decision: SourceSuggestionDecisionKind, suppressFor interval: TimeInterval?) {
+    private func persistSourceFollowSuggestionDecision(_ answer: SourceFollowSuggestionPolicy.Answer) {
         guard let store else { return }
-        let now = Date()
-        for candidate in sourceFollowSuggestionCandidates {
-            let prior = try? store.loadSourceSuggestionDecision(sourceId: candidate.source.id)
-            try? store.saveSourceSuggestionDecision(SourceSuggestionDecision(
-                id: "suggestion-\(candidate.source.id)",
-                sourceId: candidate.source.id,
-                decision: decision,
-                decidedAt: now,
-                suppressUntil: interval.map { now.addingTimeInterval($0) },
-                lastPromptAt: prior?.lastPromptAt ?? now
-            ))
+        let decisions = SourceFollowSuggestionPolicy.decisions(
+            for: answer, candidates: sourceFollowSuggestionCandidates, now: Date()
+        ) { try? store.loadSourceSuggestionDecision(sourceId: $0) }
+        for decision in decisions {
+            try? store.saveSourceSuggestionDecision(decision)
         }
         storedSourceFollowSuggestionCandidates = []
     }
