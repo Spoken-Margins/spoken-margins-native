@@ -11629,26 +11629,26 @@ final class Gate1AppModel: ObservableObject {
     #endif
 
     private func podcastAnchorEvidenceDirectory(for request: PostResumeAudioSampleRequest) throws -> URL {
-        try applicationSupportDirectory()
-            .appending(path: "SpokenMargins/AnchorEvidence", directoryHint: .isDirectory)
-            .appending(path: safePodcastEvidenceComponent(request.sessionId), directoryHint: .isDirectory)
-            .appending(path: safePodcastEvidenceComponent(request.interjectionId), directoryHint: .isDirectory)
+        try PodcastAnchorEvidencePaths.directory(
+            applicationSupport: applicationSupportDirectory(),
+            sessionId: request.sessionId,
+            interjectionId: request.interjectionId
+        )
     }
 
     private func podcastAnchorEvidenceID(
         request: PostResumeAudioSampleRequest,
         suffix: String
     ) -> String {
-        "anchor-\(safePodcastEvidenceComponent(request.sessionId))-\(safePodcastEvidenceComponent(request.interjectionId))-\(suffix)"
+        PodcastAnchorEvidencePaths.evidenceID(
+            sessionId: request.sessionId,
+            interjectionId: request.interjectionId,
+            suffix: suffix
+        )
     }
 
     private func safePodcastEvidenceComponent(_ value: String) -> String {
-        let safe = value.replacingOccurrences(
-            of: #"[^A-Za-z0-9._-]"#,
-            with: "-",
-            options: .regularExpression
-        )
-        return safe.isEmpty ? "unknown" : String(safe.prefix(96))
+        PodcastAnchorEvidencePaths.safeComponent(value)
     }
 
     private func storedInterjection(request: PostResumeAudioSampleRequest) -> Interjection? {
@@ -11663,25 +11663,15 @@ final class Gate1AppModel: ObservableObject {
         sourceExactEditionSHA256: String?
     ) throws {
         guard let store,
-              var interjection = try store.loadInterjections(sessionId: request.sessionId)
+              let interjection = try store.loadInterjections(sessionId: request.sessionId)
                 .first(where: { $0.id == request.interjectionId && $0.itemId == request.itemId }) else {
             throw SessionKitError.persistenceFailed("podcast_anchor_interjection_missing")
         }
-        var merged = interjection.podcastAnchorEvidence ?? []
-        for newEvidence in evidence {
-            merged.removeAll {
-                $0.id == newEvidence.id
-                    || ($0.windowRole == newEvidence.windowRole && $0.provenance == newEvidence.provenance)
-            }
-            merged.append(newEvidence)
-        }
-        interjection.podcastAnchorEvidence = merged.sorted { $0.id < $1.id }
-        interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256
-        interjection.podcastAnchorEvidenceCaptureStatus = .ready
-        if interjection.anchorContextStatus == .pending {
-            interjection.anchorContextStatus = .unavailable
-        }
-        try store.saveInterjection(interjection)
+        try store.saveInterjection(PodcastAnchorEvidenceRecord.merging(
+            evidence,
+            sourceExactEditionSHA256: sourceExactEditionSHA256,
+            into: interjection
+        ))
         if activeItemId == request.itemId {
             refreshSelectedItem()
         }
@@ -11693,17 +11683,13 @@ final class Gate1AppModel: ObservableObject {
     ) {
         guard let store,
               let records = try? store.loadInterjections(sessionId: request.sessionId),
-              var interjection = records.first(where: {
+              let stored = records.first(where: {
                   $0.id == request.interjectionId && $0.itemId == request.itemId
               }) else {
             diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", request)] = "unavailable:\(reason)"
             return
         }
-        interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
-        interjection.podcastAnchorEvidenceFailureReason = PodcastAnchorCaptureDiagnostics.appendingFailureReason(
-            reason,
-            to: interjection.podcastAnchorEvidenceFailureReason
-        )
+        let interjection = PodcastAnchorEvidenceRecord.markingUnavailable(stored, reason: reason)
         try? store.saveInterjection(interjection)
         if activeItemId == request.itemId {
             refreshSelectedItem()
@@ -11716,11 +11702,10 @@ final class Gate1AppModel: ObservableObject {
     private func markPodcastAnchorEvidencePendingLocal(request: PostResumeAudioSampleRequest) {
         guard let store,
               let records = try? store.loadInterjections(sessionId: request.sessionId),
-              var interjection = records.first(where: {
+              let stored = records.first(where: {
                   $0.id == request.interjectionId && $0.itemId == request.itemId
               }) else { return }
-        interjection.podcastAnchorEvidenceCaptureStatus = .pendingExactLocalCapture
-        try? store.saveInterjection(interjection)
+        try? store.saveInterjection(PodcastAnchorEvidenceRecord.markingPendingLocalCapture(stored))
         if activeItemId == request.itemId {
             refreshSelectedItem()
         }
@@ -11731,11 +11716,8 @@ final class Gate1AppModel: ObservableObject {
         request: PostResumeAudioSampleRequest,
         reason: String
     ) -> Interjection? {
-        guard var interjection = storedInterjection(request: request) else { return nil }
-        interjection.podcastAnchorEvidenceFailureReason = PodcastAnchorCaptureDiagnostics.appendingFailureReason(
-            reason,
-            to: interjection.podcastAnchorEvidenceFailureReason
-        )
+        guard let stored = storedInterjection(request: request) else { return nil }
+        let interjection = PodcastAnchorEvidenceRecord.recordingFailureReason(reason, on: stored)
         try? store?.saveInterjection(interjection)
         return interjection
     }
