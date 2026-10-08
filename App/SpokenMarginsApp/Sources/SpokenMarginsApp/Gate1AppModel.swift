@@ -6331,6 +6331,10 @@ final class Gate1AppModel: ObservableObject {
         }
         if !snapshot.isRecording {
             recordingPresentationContext = nil
+            // The recorder wouldn't start (#1034). The engine put the source back as it was, so show what the
+            // player is doing and let the streamed voice speak again.
+            if let engine { snapshot = engine.snapshot }
+            streamingSpeechQueue.resumeAfterInterjection()
         }
     }
 
