@@ -14920,7 +14920,7 @@ final class Gate1AppModel: ObservableObject {
                libraryItems.first(where: { $0.id == previous })?.startupAudioState == .preparing { updateLibraryStartupAudioState(itemId: previous, state: .waiting) }
             if libraryItems.first(where: { $0.id == job.itemId })?.startupAudioState == .waiting { updateLibraryStartupAudioState(itemId: job.itemId, state: .preparing) }
             guard var manifest = try store.loadPreparedAudioManifest(id: job.manifestId),
-                  let item = try? store.loadItem(id: job.itemId),
+                  let item = try? store.loadItem(id: job.itemId), item.deletedAt == nil, // a job saved back mid-render for an item since trashed (#883)
                   let sourceText = PreparedSpeechHooks.preparedText(of: item, in: store) else {
                 try store.deleteAudioPreparationJob(id: job.id)
                 diagnostics["backgroundAudioPreparation"] = "discarded_missing_source_job"

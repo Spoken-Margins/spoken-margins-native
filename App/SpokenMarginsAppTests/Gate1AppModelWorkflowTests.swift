@@ -2166,6 +2166,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
                 maximumChunkCount: index.isMultiple(of: 2) ? 2 : nil
             ))
         }
+        try model.refreshLibraryRows(store: store)
         model.refreshAudioPreparationPresentation()
         let itemCount = model.libraryItems.count
         XCTAssertEqual(model.audioPreparationQueue.count, 200)
