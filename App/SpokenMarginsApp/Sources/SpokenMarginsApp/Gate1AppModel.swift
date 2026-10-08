@@ -11977,8 +11977,8 @@ final class Gate1AppModel: ObservableObject {
             if wasInFlight,
                sharingState.drafts[index].currentEditState.automaticCleanupEnabled,
                sharingState.drafts[index].canUndoEdit {
-                sharingState.drafts[index].editHistoryIndex -= 1
-                applyShareEditState(at: index, renderCleanedAudio: false)
+                let hasOriginalAudio = originalAudioURL(forShareDraft: sharingState.drafts[index].id) != nil
+                _ = sharingState.drafts[index].undoEdit(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: false)
             }
         }
         diagnostics["bulkSharePreparation"] = [
@@ -12115,14 +12115,14 @@ final class Gate1AppModel: ObservableObject {
 
     func setShareDraftIncluded(_ id: String, included: Bool) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-        sharingState.drafts[index].isIncluded = included
+        sharingState.drafts[index].setIncluded(included)
     }
 
     func setShareDraftsIncluded(_ ids: [String], included: Bool) {
         let targetIDs = Set(ids)
         guard !targetIDs.isEmpty else { return }
         for index in sharingState.drafts.indices where targetIDs.contains(sharingState.drafts[index].id) {
-            sharingState.drafts[index].isIncluded = included
+            sharingState.drafts[index].setIncluded(included)
         }
     }
 
@@ -12147,8 +12147,7 @@ final class Gate1AppModel: ObservableObject {
         let draftIDs = sharingState.automaticallyCleanedDraftIDs
         for id in draftIDs {
             recordShareEdit(for: id, renderCleanedAudio: false) {
-                $0.automaticCleanupEnabled = false
-                $0.restoredAutomaticDecisionIds.removeAll()
+                $0.disableAutomaticCleanup()
             }
         }
         sharingState.automaticallyCleanedDraftIDs.removeAll()
@@ -12159,19 +12158,18 @@ final class Gate1AppModel: ObservableObject {
 
     func setShareDraftRepresentation(_ id: String, choice: ShareMarginRepresentationChoice) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-        if choice == .cleaned, sharingState.drafts[index].cleanedAudioURL == nil { return }
-        if choice == .original, originalAudioURL(forShareDraft: id) == nil { return }
-        sharingState.drafts[index].representationChoice = choice
+        let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
+        sharingState.drafts[index].setRepresentation(choice, hasOriginalAudio: hasOriginalAudio)
     }
 
     func setShareDraftAnchorBefore(_ id: String, value: String) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-        sharingState.drafts[index].anchorBefore = String(value.suffix(BoundedAnchorContext.maximumCharactersPerSide))
+        sharingState.drafts[index].setAnchorBefore(value)
     }
 
     func setShareDraftAnchorAfter(_ id: String, value: String) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-        sharingState.drafts[index].anchorAfter = String(value.prefix(BoundedAnchorContext.maximumCharactersPerSide))
+        sharingState.drafts[index].setAnchorAfter(value)
     }
 
     func originalAudioURL(forShareDraft id: String) -> URL? {
@@ -12190,71 +12188,47 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func setCleanupDecision(draftID: String, decisionID: String, accepted: Bool) {
-        recordShareEdit(for: draftID) { state in
-            if accepted {
-                state.restoredAutomaticDecisionIds.remove(decisionID)
-            } else {
-                state.restoredAutomaticDecisionIds.insert(decisionID)
-            }
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == draftID }) else { return }
+        let hasOriginalAudio = originalAudioURL(forShareDraft: draftID) != nil
+        if sharingState.drafts[index].setCleanupDecision(decisionID: decisionID, accepted: accepted, hasOriginalAudio: hasOriginalAudio) {
+            renderCleanup(forShareDraft: draftID)
         }
     }
 
     func toggleShareDraftWord(draftID: String, segmentID: String) {
-        guard let draft = sharingState.drafts.first(where: { $0.id == draftID }),
-              let aligned = draft.interjection.alignedTranscript,
-              let segment = aligned.segments.first(where: { $0.id == segmentID }) else { return }
-        let overlappingAccepted = draft.cleanup?.decisions.filter {
-            $0.accepted && $0.kind != .longPause && $0.startMs < segment.endMs && $0.endMs > segment.startMs
-        } ?? []
-        recordShareEdit(for: draftID) { state in
-            if state.manuallyDeletedSegmentIds.contains(segmentID) || !overlappingAccepted.isEmpty {
-                state.manuallyDeletedSegmentIds.remove(segmentID)
-                overlappingAccepted.forEach { state.restoredAutomaticDecisionIds.insert($0.id) }
-            } else {
-                state.manuallyDeletedSegmentIds.insert(segmentID)
-            }
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == draftID }) else { return }
+        let hasOriginalAudio = originalAudioURL(forShareDraft: draftID) != nil
+        if sharingState.drafts[index].toggleWord(segmentID: segmentID, hasOriginalAudio: hasOriginalAudio) {
+            renderCleanup(forShareDraft: draftID)
         }
     }
 
     func isShareDraftWordDeleted(draftID: String, segmentID: String) -> Bool {
-        guard let draft = sharingState.drafts.first(where: { $0.id == draftID }),
-              let segment = draft.interjection.alignedTranscript?.segments.first(where: { $0.id == segmentID }) else {
-            return false
-        }
-        return draft.cleanup?.decisions.contains {
-            $0.accepted && $0.kind != .longPause && $0.startMs < segment.endMs && $0.endMs > segment.startMs
-        } ?? false
+        sharingState.drafts.first(where: { $0.id == draftID })?.isWordDeleted(segmentID: segmentID) ?? false
     }
 
     func undoShareDraftEdit(_ id: String) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
-              sharingState.drafts[index].canUndoEdit else { return }
-        sharingState.drafts[index].editHistoryIndex -= 1
-        applyShareEditState(at: index)
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+        let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
+        if sharingState.drafts[index].undoEdit(hasOriginalAudio: hasOriginalAudio) {
+            renderCleanup(forShareDraft: id)
+        }
     }
 
     func redoShareDraftEdit(_ id: String) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
-              sharingState.drafts[index].canRedoEdit else { return }
-        sharingState.drafts[index].editHistoryIndex += 1
-        applyShareEditState(at: index)
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+        let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
+        if sharingState.drafts[index].redoEdit(hasOriginalAudio: hasOriginalAudio) {
+            renderCleanup(forShareDraft: id)
+        }
     }
 
     func restoreOriginalShareDraft(_ id: String) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         sharingState.automaticallyCleanedDraftIDs.remove(id)
-        let interjection = sharingState.drafts[index].interjection
-        sharingState.drafts[index].editHistory = [.original]
-        sharingState.drafts[index].editHistoryIndex = 0
-        sharingState.drafts[index].cleanup = nil
-        sharingState.drafts[index].cleanedAudioURL = nil
-        sharingState.drafts[index].cleanedAudioDurationMs = nil
-        sharingState.drafts[index].isAnalyzingPauses = false
-        sharingState.drafts[index].isPreparingCleanup = false
-        sharingState.drafts[index].preparationMessage = nil
-        sharingState.drafts[index].approvedTranscript = interjection.transcript ?? interjection.displayText ?? ""
-        sharingState.drafts[index].representationChoice = originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
-        sharingState.drafts[index].warning = SharedMarginTextRequirement.reviewWarning(for: sharingState.drafts[index].approvedTranscript) ?? shareAnchorWarning(for: interjection)
+        let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
+        let anchorWarning = shareAnchorWarning(for: sharingState.drafts[index].interjection)
+        sharingState.drafts[index].restoreOriginal(hasOriginalAudio: hasOriginalAudio, anchorWarning: anchorWarning)
     }
 
     private func recordShareEdit(
@@ -12262,64 +12236,19 @@ final class Gate1AppModel: ObservableObject {
         renderCleanedAudio: Bool = true,
         mutate: (inout ShareMarginEditState) -> Void
     ) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
-              sharingState.drafts[index].interjection.alignedTranscript != nil else { return }
-        var state = sharingState.drafts[index].currentEditState
-        mutate(&state)
-        guard state != sharingState.drafts[index].currentEditState else { return }
-        sharingState.drafts[index].editHistory = Array(
-            sharingState.drafts[index].editHistory.prefix(sharingState.drafts[index].editHistoryIndex + 1)
-        ) + [state]
-        sharingState.drafts[index].editHistoryIndex += 1
-        applyShareEditState(at: index, renderCleanedAudio: renderCleanedAudio)
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+        let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
+        if sharingState.drafts[index].recordEdit(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: renderCleanedAudio, mutate: mutate) {
+            renderCleanup(forShareDraft: id)
+        }
     }
 
     private func applyShareEditState(at index: Int, renderCleanedAudio: Bool = true) {
-        guard sharingState.drafts.indices.contains(index),
-              let aligned = sharingState.drafts[index].interjection.alignedTranscript else { return }
-        let state = sharingState.drafts[index].currentEditState
-        let allAutomatic = DeterministicInterjectionCleanup.propose(aligned).decisions.map(\.id)
-        var restored = state.restoredAutomaticDecisionIds
-        if !state.automaticCleanupEnabled {
-            restored.formUnion(allAutomatic)
-            restored.formUnion(sharingState.drafts[index].acousticPauseDecisions.map(\.id))
-        }
-        let core = DeterministicInterjectionCleanup.propose(
-            aligned,
-            restoredDecisionIds: restored,
-            manuallyDeletedSegmentIds: state.manuallyDeletedSegmentIds
-        )
-        let acoustic = sharingState.drafts[index].acousticPauseDecisions.map { decision in
-            InterjectionCleanupDecision(
-                id: decision.id,
-                kind: decision.kind,
-                startMs: decision.startMs,
-                endMs: decision.endMs,
-                originalText: decision.originalText,
-                accepted: !restored.contains(decision.id)
-            )
-        }
-        let visibleCoreDecisions = acoustic.isEmpty
-            ? core.decisions
-            : core.decisions.filter { $0.kind != .longPause }
-        let hasEdits = visibleCoreDecisions.contains { $0.accepted } || acoustic.contains { $0.accepted }
-        sharingState.drafts[index].cleanup = hasEdits
-            ? InterjectionCleanupResult(
-                policyVersion: core.policyVersion,
-                cleanedTranscript: core.cleanedTranscript,
-                decisions: (visibleCoreDecisions + acoustic).sorted { $0.startMs == $1.startMs ? $0.id < $1.id : $0.startMs < $1.startMs }
-            )
-            : nil
-        sharingState.drafts[index].approvedTranscript = hasEdits
-            ? core.cleanedTranscript
-            : (sharingState.drafts[index].interjection.transcript ?? sharingState.drafts[index].interjection.displayText ?? "")
-        if hasEdits, renderCleanedAudio {
-            renderCleanup(forShareDraft: sharingState.drafts[index].id)
-        } else {
-            sharingState.drafts[index].isPreparingCleanup = false
-            sharingState.drafts[index].cleanedAudioURL = nil
-            sharingState.drafts[index].cleanedAudioDurationMs = nil
-            sharingState.drafts[index].representationChoice = originalAudioURL(forShareDraft: sharingState.drafts[index].id) == nil ? .textOnly : .original
+        guard sharingState.drafts.indices.contains(index) else { return }
+        let id = sharingState.drafts[index].id
+        let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
+        if sharingState.drafts[index].applyEditState(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: renderCleanedAudio) {
+            renderCleanup(forShareDraft: id)
         }
     }
 

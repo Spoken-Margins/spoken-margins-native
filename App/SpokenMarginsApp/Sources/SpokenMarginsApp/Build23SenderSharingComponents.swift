@@ -1,4 +1,5 @@
 import Foundation
+import SessionKitSharing
 import AVFoundation
 import SwiftUI
 
