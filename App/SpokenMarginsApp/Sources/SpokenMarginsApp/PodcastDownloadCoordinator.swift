@@ -100,7 +100,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         usesBackgroundSession: Bool = true,
         contentLength: (@Sendable (URL, Bool) async throws -> Int64)? = nil,
         startDownload: ((URLRequest, String) -> Void)? = nil,
-        preflightSession: URLSession = .shared
+        preflightSession: URLSession = .shared,
+        foregroundSessionConfiguration: URLSessionConfiguration? = nil
     ) throws {
         self.store = store
         self.connectivity = connectivity ?? ConnectivityMonitor()
@@ -129,10 +130,10 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             configuration.sessionSendsLaunchEvents = true
             configuration.isDiscretionary = false
         } else {
-            configuration = .ephemeral
+            configuration = foregroundSessionConfiguration ?? .ephemeral
         }
         #else
-        let configuration = URLSessionConfiguration.default
+        let configuration = foregroundSessionConfiguration ?? URLSessionConfiguration.default
         #endif
         configuration.waitsForConnectivity = true
         session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
