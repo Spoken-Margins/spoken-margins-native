@@ -95,17 +95,17 @@ final class SupertonicSpeechTests: XCTestCase {
             fallbackClient: fallback,
             onFallback: { _, _, _ in fellBack.fulfill() }
         )
-        XCTAssertEqual(client.narrationDiagnostics(), ["clientIntent": "stopped", "clientVoice": "on_device"])
+        XCTAssertEqual(client.narrationDiagnostics(), ["clientIntent": "stopped", "clientVoice": "on_device", "clientStandIn": "false"])
         _ = try client.prepareSpeechText("The phone refuses to render, so the iOS voice reads this.")
         try client.play(targetId: "diagnostics")
         await fulfillment(of: [fellBack], timeout: 2)
-        XCTAssertEqual(client.narrationDiagnostics(), ["clientIntent": "playing", "clientVoice": "system_voice"])
+        XCTAssertEqual(client.narrationDiagnostics(), ["clientIntent": "playing", "clientVoice": "system_voice", "clientStandIn": "false"])
 
         try client.pause()
-        XCTAssertEqual(client.narrationDiagnostics(), ["clientIntent": "paused", "clientVoice": "system_voice"])
+        XCTAssertEqual(client.narrationDiagnostics(), ["clientIntent": "paused", "clientVoice": "system_voice", "clientStandIn": "false"])
 
         try client.stop()
-        XCTAssertEqual(client.narrationDiagnostics(), ["clientIntent": "stopped", "clientVoice": "on_device"])
+        XCTAssertEqual(client.narrationDiagnostics(), ["clientIntent": "stopped", "clientVoice": "on_device", "clientStandIn": "false"])
     }
 
     /// #1109: the audio session's and the player's fields join a playback.state record only while
@@ -116,7 +116,7 @@ final class SupertonicSpeechTests: XCTestCase {
         let fields = DeveloperDiagnosticRecording.playbackStateFields(
             snapshot,
             player: ["playerRate": "0"],
-            narration: PlaybackDiagnosticFields.narration(intent: "paused", systemVoiceActive: true)
+            narration: PlaybackDiagnosticFields.narration(intent: "paused", systemVoiceActive: true, standInPassage: false)
         )
         XCTAssertEqual(fields["status"], "paused")
         XCTAssertEqual(fields["clientIntent"], "paused")

@@ -1755,7 +1755,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// shows which part of the client set it (#1109).
     func narrationDiagnostics() -> [String: String] {
         lock.withLock {
-            PlaybackDiagnosticFields.narration(intent: String(describing: transportIntent), systemVoiceActive: fallbackIsActive)
+            PlaybackDiagnosticFields.narration(
+                intent: String(describing: transportIntent),
+                systemVoiceActive: fallbackIsActive,
+                standInPassage: standInOffsets.contains(currentStartOffset)
+            )
         }
     }
 

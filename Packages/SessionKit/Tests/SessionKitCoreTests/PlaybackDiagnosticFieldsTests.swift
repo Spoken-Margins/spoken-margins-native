@@ -7,12 +7,21 @@ import XCTest
 final class PlaybackDiagnosticFieldsTests: XCTestCase {
     func testNarrationFieldsNameTheClientsIntentAndVoice() {
         XCTAssertEqual(
-            PlaybackDiagnosticFields.narration(intent: "paused", systemVoiceActive: false),
-            ["clientIntent": "paused", "clientVoice": "on_device"]
+            PlaybackDiagnosticFields.narration(intent: "paused", systemVoiceActive: false, standInPassage: false),
+            ["clientIntent": "paused", "clientVoice": "on_device", "clientStandIn": "false"]
         )
         XCTAssertEqual(
-            PlaybackDiagnosticFields.narration(intent: "playing", systemVoiceActive: true),
-            ["clientIntent": "playing", "clientVoice": "system_voice"]
+            PlaybackDiagnosticFields.narration(intent: "playing", systemVoiceActive: true, standInPassage: false),
+            ["clientIntent": "playing", "clientVoice": "system_voice", "clientStandIn": "false"]
+        )
+    }
+
+    /// A short passage the iOS voice read plays through the on-device player: the voice flag alone would
+    /// say on_device while the listener hears the iOS voice.
+    func testAStandInPassageIsNamedEvenThoughTheOnDevicePlayerPlaysIt() {
+        XCTAssertEqual(
+            PlaybackDiagnosticFields.narration(intent: "playing", systemVoiceActive: false, standInPassage: true),
+            ["clientIntent": "playing", "clientVoice": "on_device", "clientStandIn": "true"]
         )
     }
 
@@ -72,7 +81,7 @@ final class PlaybackDiagnosticFieldsTests: XCTestCase {
     func testTheFieldsCarryOnlyStateTokensAndCounters() {
         let keys = Set(PlaybackDiagnosticFields.supertonicFallback(
             code: "c", reason: .playbackFailed, policyBlock: nil, conditions: SpeechEngineConditions(), offset: 0
-        ).keys).union(PlaybackDiagnosticFields.narration(intent: "stopped", systemVoiceActive: false).keys)
-        XCTAssertEqual(keys, ["code", "reason", "policyBlock", "conditions", "offset", "clientIntent", "clientVoice"])
+        ).keys).union(PlaybackDiagnosticFields.narration(intent: "stopped", systemVoiceActive: false, standInPassage: false).keys)
+        XCTAssertEqual(keys, ["code", "reason", "policyBlock", "conditions", "offset", "clientIntent", "clientVoice", "clientStandIn"])
     }
 }

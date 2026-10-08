@@ -6,13 +6,20 @@ public enum PlaybackDiagnosticFields {
     /// Who narrates and what the listener intends, added to every `playback.state` record. The audio session's
     /// and the player's fields join that record only while playing, so a pause used to arrive with nothing from
     /// the narration client: the log showed the status change and not which part of the client had set it.
-    public static func narration(intent: String, systemVoiceActive: Bool) -> [String: String] {
-        ["clientIntent": intent, "clientVoice": systemVoiceActive ? "system_voice" : "on_device"]
+    /// `standInPassage` is true while a short passage read by the iOS voice plays through the on-device
+    /// player: `clientVoice` stays `on_device` then, and the listener still hears the iOS voice.
+    public static func narration(intent: String, systemVoiceActive: Bool, standInPassage: Bool) -> [String: String] {
+        [
+            "clientIntent": intent,
+            "clientVoice": systemVoiceActive ? "system_voice" : "on_device",
+            "clientStandIn": String(standInPassage)
+        ]
     }
 
     /// A fall back to the iOS voice, with the moment it happened. `policyBlock` is what the resource policy read
-    /// when the fallback was recorded. "none" means nothing refused rendering at that moment, so a "too warm"
-    /// reason was the default for a refused render and not a reading of the phone.
+    /// when the app recorded the fallback, which is a moment after the render was refused. "none" means nothing
+    /// refused rendering by then, so a "too warm" reason was the default for a refused render and not a reading
+    /// of the phone (a refusal for memory pressure whose 60-second backoff ended in that gap reads the same).
     public static func supertonicFallback(
         code: String,
         reason: SpeechFallbackReason,
