@@ -25,6 +25,7 @@ final class SpokenMarginsAppDelegate: NSObject, UIApplicationDelegate {
         UNUserNotificationCenter.current().delegate = ListeningReadyNotifications.shared
         #if canImport(BackgroundTasks)
         AudioPreparationBackgroundController.shared.register()
+        ContinuedAudioPreparationController.shared.register()
         #endif
         return true
     }
