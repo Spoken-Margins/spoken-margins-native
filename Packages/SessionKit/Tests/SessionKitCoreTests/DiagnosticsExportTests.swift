@@ -162,13 +162,18 @@ final class DiagnosticsExportTests: XCTestCase {
     // MARK: The file text
 
     func testTheTextIsJSONWithTheKeysInOrderAndEveryEntryIntact() throws {
-        let entries = ["b": "two", "a": "one https://kept.example", "c": "line\nbreak \"quoted\""]
+        // Eight keys, so a dictionary's own order matches the sorted one only once in forty thousand runs.
+        let entries = [
+            "h": "eight", "b": "two", "a": "one https://kept.example", "g": "seven",
+            "c": "line\nbreak \"quoted\"", "f": "six", "d": "four", "e": "five",
+        ]
         let text = try DiagnosticsExport.jsonText(entries)
 
         let parsed = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String])
         XCTAssertEqual(parsed, entries)
-        let positions = try ["\"a\"", "\"b\"", "\"c\""].map { try XCTUnwrap(text.range(of: $0)).lowerBound }
-        XCTAssertEqual(positions, positions.sorted(), "keys come out sorted")
+        let keys = entries.keys.sorted()
+        let positions = try keys.map { try XCTUnwrap(text.range(of: "\"\($0)\" :") ?? text.range(of: "\"\($0)\":")).lowerBound }
+        XCTAssertEqual(positions, positions.sorted(), "keys come out sorted: \(keys)")
         XCTAssertTrue(text.contains("\n"), "pretty-printed")
     }
 
