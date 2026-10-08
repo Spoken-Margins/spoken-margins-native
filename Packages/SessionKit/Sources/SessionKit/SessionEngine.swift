@@ -42,6 +42,9 @@ public final class SessionEngine {
     private var playbackRequestedAt: Date?
     private(set) var recordingAnchor: Anchor?
     private var recordingTargetType: InterjectionTargetType?
+    /// The file the recorder closed for a Margin that isn't saved yet. The recorder forgets it once finished and
+    /// Save passes no path, so a Save that failed once could never be tried again (#911).
+    private var closedRecordingRef: String?
     private var recordingTargetId: String?
     private var priorPhase: SessionPhase?
     /// The Margin being recorded started on a finished source, at its end (#142).
@@ -1327,6 +1330,7 @@ public final class SessionEngine {
         recordingTargetType = target.type
         recordingTargetId = target.id
         recordingAnchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
+        closedRecordingRef = nil
         try recorder.beginRecording()
         session.phase = .recordingInterjection
         currentSession = session
@@ -1642,9 +1646,11 @@ public final class SessionEngine {
               let targetId = recordingTargetId else {
             throw SessionKitError.invalidCommandForState("finishInterjection")
         }
-        let savedAudioRef = try recorder.finishRecording(audioRef: audioRef)
+        let savedAudioRef = try recorder.finishRecording(audioRef: audioRef ?? closedRecordingRef)
+        closedRecordingRef = savedAudioRef
         if profile.has("sync", "queue_offline_events"), let package = currentWatchPackage {
             let event = try queueWatchInterjectionEvent(audioRef: savedAudioRef, session: session, package: package)
+            closedRecordingRef = nil
             lastQueuedWatchSyncEvent = event
             snapshot.lastInterjectionAnchorType = anchor.anchorType
             snapshot.lastInterjectionTargetType = targetType
@@ -1688,6 +1694,7 @@ public final class SessionEngine {
                 : nil
         )
         try repository.saveInterjection(interjection)
+        closedRecordingRef = nil // owned by a Margin now; a later failure must not store it again
         lastMediaPercentageRepair = nil
         if shouldCapturePostResumePodcastEvidence,
            let anchorMediaTimeMs = anchor.mediaTimeMs {
@@ -1754,6 +1761,7 @@ public final class SessionEngine {
         recordingAnchor = nil
         recordingTargetType = nil
         recordingTargetId = nil
+        closedRecordingRef = nil
         if returnsToFinished {
             return try settleFinishedSourceAfterInterjection(session)
         }
@@ -2426,6 +2434,7 @@ public final class SessionEngine {
         recordingAnchor = nil
         recordingTargetType = nil
         recordingTargetId = nil
+        closedRecordingRef = nil
         priorPhase = nil
         recordingOnFinishedSource = false
         // A protected position belongs to the session that just ended. Left set, it would
