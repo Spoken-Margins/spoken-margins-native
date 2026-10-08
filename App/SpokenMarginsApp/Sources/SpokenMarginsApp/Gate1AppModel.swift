@@ -3029,11 +3029,6 @@ final class Gate1AppModel: ObservableObject {
     }
 
     @discardableResult
-    func importSourceLinkFromForm() -> Bool {
-        beginSourceLinkImportFromForm(startSession: !hasActiveSession)
-    }
-
-    @discardableResult
     func beginSourceLinkImportFromForm(startSession: Bool = true) -> Bool {
         guard !isResolvingSourceLink else { return false }
         let submittedURL = sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines)
