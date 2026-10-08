@@ -5885,9 +5885,9 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["lastInterjectionRecordingStartLatencyMs"] = "\(latencyMs)"
             }
         }
-        if !snapshot.isRecording {
-            recordingPresentationContext = nil
-        }
+        guard !snapshot.isRecording else { return }
+        recordingPresentationContext = nil
+        streamingSpeechQueue.resumeAfterInterjection() // the recorder wouldn't start and the engine put the source back (#1034)
     }
 
     /// Publish acknowledgement before synchronous recorder/store finalization.

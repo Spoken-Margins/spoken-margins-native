@@ -1302,6 +1302,7 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("beginInterjection")
         }
         guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
+        let wasPlaying = snapshot.status.isPlaybackActive
         let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
             || session.currentTargetType == .browserOwnedMedia
         recordingOnFinishedSource = isFinishedAtEnd(session)
@@ -1331,12 +1332,46 @@ public final class SessionEngine {
         recordingTargetId = target.id
         recordingAnchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
         closedRecordingRef = nil
-        try recorder.beginRecording()
+        do {
+            try recorder.beginRecording()
+        } catch {
+            try? recorder.cancelRecording() // let go of whatever the failed start grabbed, such as the audio session
+            abandonInterjectionStart(session, wasPlaying: wasPlaying)
+            throw error
+        }
         session.phase = .recordingInterjection
         currentSession = session
         snapshot.recordingTargetId = target.id
         publish(status: .recording, phase: .recordingInterjection)
         return snapshot
+    }
+
+    /// The recorder wouldn't start after the source was paused for it (#1034), so nothing is recording. Forget the
+    /// recording target and put the transport back as the listener left it, the way `cancelInterjection` does:
+    /// a source that was playing plays on, anything else stays stopped, and the snapshot says which.
+    private func abandonInterjectionStart(_ session: Session, wasPlaying: Bool) {
+        let resumes = wasPlaying && !recordingOnFinishedSource
+        recordingAnchor = nil
+        recordingTargetType = nil
+        recordingTargetId = nil
+        priorPhase = nil
+        recordingOnFinishedSource = false
+        guard resumes else {
+            publish(status: .paused, phase: session.phase)
+            return
+        }
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
+        if externallyStreamedTurnId == session.currentTargetId {
+            publish(status: .starting, phase: session.phase)
+            return
+        }
+        do {
+            try playCurrentTarget(session)
+            publishPlaybackStart(for: session, phase: session.phase)
+        } catch {
+            // The player wouldn't restart either; say so rather than claim it plays.
+            publish(status: .paused, phase: session.phase)
+        }
     }
 
     /// What the recorder has taken in so far while a Margin is recording (#937). Nil when it can't tell.
