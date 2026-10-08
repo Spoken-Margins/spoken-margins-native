@@ -7,6 +7,8 @@ import SessionKitPersistence
 /// name, so `Notes on v1.5 release` lost `.5 release`, and its `unquote` took the quotes at the ends.
 /// Item ids come from the title the importer produced before that was fixed, so pages already in the
 /// Library are found again: the ids below were produced by that code (Build 29 and `next` at a0826f06).
+/// Darwin's NSString keeps a dotted suffix containing spaces; Linux Foundation removes it. Freeze
+/// both legacy results instead of changing the production identity rule to match the other platform.
 final class BrowserImportTitleTests: XCTestCase {
     private var root: URL!
     private var store: SQLiteSessionStore!
@@ -33,16 +35,36 @@ final class BrowserImportTitleTests: XCTestCase {
         let title: String
         /// The item id the old importer made for this page and URL.
         let legacyId: String
+        let darwinLegacyId: String?
+
+        init(page: String, url: String, title: String, legacyId: String, darwinLegacyId: String? = nil) {
+            self.page = page
+            self.url = url
+            self.title = title
+            self.legacyId = legacyId
+            self.darwinLegacyId = darwinLegacyId
+        }
+
+        var expectedLegacyId: String {
+            #if canImport(Darwin)
+            darwinLegacyId ?? legacyId
+            #else
+            legacyId
+            #endif
+        }
     }
 
     private static let rows = [
         // The four titles from the issue.
         Row(page: "Why I left Google. Part 2", url: "https://example.com/post-0", title: "Why I left Google. Part 2",
-            legacyId: "item-browser-why-i-left-google-https-example-com-post-0"),
+            legacyId: "item-browser-why-i-left-google-https-example-com-post-0",
+            darwinLegacyId: "item-browser-why-i-left-google-part-2-https-example-com-post-"),
         Row(page: "Notes on v1.5 release", url: "https://example.com/post-1", title: "Notes on v1.5 release",
-            legacyId: "item-browser-notes-on-v1-https-example-com-post-1"),
+            legacyId: "item-browser-notes-on-v1-https-example-com-post-1",
+            darwinLegacyId: "item-browser-notes-on-v1-5-release-https-example-com-post-1"),
         Row(page: "A//B testing. Part 2", url: "https://example.com/post-2", title: "A//B testing. Part 2",
-            legacyId: "item-browser-a-b-testing-https-example-com-post-2"),
+            legacyId: "item-browser-a-b-testing-https-example-com-post-2",
+            darwinLegacyId: "item-browser-a-b-testing-part-2-https-example-com-post-2"),
         Row(page: "Ann Lee on X: \"Hello there\"", url: "https://example.com/post-3", title: "Ann Lee on X: \"Hello there\"",
             legacyId: "item-browser-ann-lee-on-x-hello-there-https-example-com-post-"),
         // Neighbours: dots in other places, quotes at either end, Unicode, a trailing slash, padding.
@@ -63,7 +85,8 @@ final class BrowserImportTitleTests: XCTestCase {
         Row(page: "Plain title", url: "https://example.com/post-11", title: "Plain title",
             legacyId: "item-browser-plain-title-https-example-com-post-11"),
         Row(page: "Dots... and more", url: "https://example.com/post-14", title: "Dots... and more",
-            legacyId: "item-browser-dots-https-example-com-post-14"),
+            legacyId: "item-browser-dots-https-example-com-post-14",
+            darwinLegacyId: "item-browser-dots-and-more-https-example-com-post-14"),
         Row(page: "a.b", url: "https://example.com/post-15", title: "a.b",
             legacyId: "item-browser-a-https-example-com-post-15"),
         Row(page: "  Padded v1.5   ", url: "https://example.com/post-16", title: "Padded v1.5",
@@ -95,19 +118,19 @@ final class BrowserImportTitleTests: XCTestCase {
 
     func testItemIdsStayWhatTheOldImporterMade() throws {
         for row in Self.rows {
-            XCTAssertEqual(try engine.importBrowserTextInBackground(markdownHandoff(row)).id, row.legacyId, "id of \"\(row.page)\"")
+            XCTAssertEqual(try engine.importBrowserTextInBackground(markdownHandoff(row)).id, row.expectedLegacyId, "id of \"\(row.page)\"")
         }
     }
 
     func testReimportingAPageFindsTheItemAlreadyInTheLibrary() throws {
         for row in Self.rows {
             let first = try engine.importBrowserTextInBackground(markdownHandoff(row))
-            XCTAssertEqual(first.id, row.legacyId)
+            XCTAssertEqual(first.id, row.expectedLegacyId)
         }
         let before = try store.listItems(includeDeleted: true).count
         XCTAssertEqual(before, Self.rows.count)
         for row in Self.rows {
-            XCTAssertEqual(try engine.importBrowserTextInBackground(markdownHandoff(row)).id, row.legacyId, "second import of \"\(row.page)\"")
+            XCTAssertEqual(try engine.importBrowserTextInBackground(markdownHandoff(row)).id, row.expectedLegacyId, "second import of \"\(row.page)\"")
         }
         XCTAssertEqual(try store.listItems(includeDeleted: true).count, before, "no duplicates")
     }
