@@ -6,6 +6,43 @@ import XCTest
 @testable import SpokenMarginsApp
 
 final class OfflineStorageLedgerTests: XCTestCase {
+    @MainActor
+    func testModelKeepsFallbackLedgerAndUsesItsStoreAndRoot() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "lazy-ledger-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try SQLiteSessionStore(path: root.appending(path: "library.sqlite").path)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        XCTAssertNil(model.offlineStorageLedger)
+
+        let ledger = model.requireOfflineStorageLedger(store: store, rootDirectory: root)
+        XCTAssertTrue(model.offlineStorageLedger === ledger)
+        XCTAssertTrue(model.requireOfflineStorageLedger(store: store, rootDirectory: root) === ledger)
+        let reservation = try await ledger.reserve(ownerId: "lazy-ledger", byteCount: 3)
+        XCTAssertEqual(try store.loadOfflineStorageReservations().map(\.id), [reservation.id])
+        let audio = root.appending(path: "PodcastAudio/episode.m4a")
+        try FileManager.default.createDirectory(at: audio.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: audio)
+        try await ledger.adoptExistingAssets()
+        XCTAssertEqual(try store.loadOwnedOfflineAssets().map(\.relativePath), ["PodcastAudio/episode.m4a"])
+    }
+
+    @MainActor
+    func testModelReusesConfiguredLedgerWithoutEvaluatingFallbackDirectory() throws {
+        enum DirectoryError: Error { case unavailable }
+        let store = try SQLiteSessionStore(path: ":memory:")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let configured = OfflineStorageLedger(repository: store, rootDirectory: FileManager.default.temporaryDirectory)
+        model.offlineStorageLedger = configured
+        func unavailableDirectory() throws -> URL { throw DirectoryError.unavailable }
+
+        let reused = try model.requireOfflineStorageLedger(store: store, rootDirectory: try unavailableDirectory())
+        XCTAssertTrue(reused === configured)
+        model.offlineStorageLedger = nil
+        XCTAssertThrowsError(try model.requireOfflineStorageLedger(store: store, rootDirectory: try unavailableDirectory()))
+        XCTAssertNil(model.offlineStorageLedger)
+    }
+
     func testReservationPreventsWriterFromExceedingBudget() async throws {
         let fixture = try makeFixture(limit: 10)
         defer { try? FileManager.default.removeItem(at: fixture.root) }
