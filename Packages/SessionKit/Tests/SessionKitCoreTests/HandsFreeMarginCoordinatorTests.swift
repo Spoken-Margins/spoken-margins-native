@@ -199,6 +199,65 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         XCTAssertEqual(feed(road, for: 2.5), [.finishRecording(.silence)])
     }
 
+    func testSpeechFromTheFirstSampleThenQuietIsKeptNotFlagged() {
+        // #1031: the first half-second is all speech at -30, so it first reads as the room.
+        // The quiet that follows shows what the room really is, and the words are saved.
+        startRecording()
+        XCTAssertEqual(feed(-30, for: 3), [])
+        XCTAssertEqual(feed(quiet, for: 4), [.finishRecording(.silence)])
+        XCTAssertEqual(coordinator.speechThresholdDB, -47, "re-learned from the quiet")
+    }
+
+    func testSpeechFromTheFirstSampleWithPausesIsRecordedToItsEnd() {
+        // Talking at -30 from the first sample, with a short dip between sentences. The dip
+        // shows the room, so the rest counts as speech and the Margin isn't cut at the window.
+        startRecording()
+        XCTAssertEqual(feed(-30, for: 2), [])
+        XCTAssertEqual(feed(-50, for: 0.3), [])
+        XCTAssertEqual(feed(-30, for: 8), [], "past the six-second window, still speaking")
+        XCTAssertEqual(coordinator.phase, .speaking)
+        XCTAssertEqual(feed(quiet, for: 2.5), [.finishRecording(.silence)])
+    }
+
+    func testLoudSpeechFromTheFirstSampleIsKept() {
+        // Control: -20 clears the top clamp (-25) even when the first samples read as the room.
+        startRecording()
+        feed(-20, for: 3)
+        XCTAssertEqual(coordinator.phase, .speaking)
+        XCTAssertEqual(feed(quiet, for: 2.5), [.finishRecording(.silence)])
+    }
+
+    func testOneQuietSampleBeforeTheSpeechSetsTheRoom() {
+        // Control: one quiet sample among the first four puts the threshold at -47.
+        startRecording()
+        feed(quiet, for: 0.1)
+        feed(-30, for: 3)
+        XCTAssertEqual(coordinator.speechThresholdDB, -47)
+        XCTAssertEqual(coordinator.phase, .speaking)
+        XCTAssertEqual(feed(quiet, for: 2.5), [.finishRecording(.silence)])
+    }
+
+    func testTheThresholdOnlyRelearnsBeforeSpeechStarts() {
+        // A dip during the Margin must not drag the threshold under the road noise.
+        startRecording()
+        feed(-35, for: 0.5)
+        feed(voice, for: 1)
+        XCTAssertEqual(coordinator.speechThresholdDB, -27)
+        feed(-50, for: 0.1)
+        XCTAssertEqual(coordinator.speechThresholdDB, -27)
+        XCTAssertEqual(feed(-35, for: 2.5), [.finishRecording(.silence)])
+    }
+
+    func testAQuietRoomThatWobblesAFewDecibelsStillMakesAFlag() {
+        startRecording()
+        var commands: [HandsFreeMarginCommand] = []
+        for step in 0..<60 {
+            clock.advance(0.1)
+            commands += coordinator.level(quiet + Double(step % 4) - 1)
+        }
+        XCTAssertEqual(commands, [.cancelRecording, .requestFlag, .playTone(.flag)])
+    }
+
     func testEventsOutsideAMarginDoNothing() {
         XCTAssertEqual(coordinator.level(voice), [])
         XCTAssertEqual(coordinator.tick(), [])

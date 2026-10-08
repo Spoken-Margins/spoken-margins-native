@@ -12,7 +12,8 @@ public enum HandsFreeMarginTimings {
     public static let capWarning: TimeInterval = 4 * 60 + 30
     /// A second trigger this soon after the last one is a bounce (the same window as #148).
     public static let bounceWindow: TimeInterval = 0.5
-    /// How long the background level is measured after the microphone opens.
+    /// How long the background level is measured after the microphone opens. Until speech is heard,
+    /// a quieter sample later still lowers it (the listener may have started talking at once).
     public static let calibration: TimeInterval = 0.5
     /// Speech needed for an interrupted Margin to be kept, marked cut short.
     public static let minimumSpeechToKeep: TimeInterval = 1
@@ -205,7 +206,7 @@ public final class HandsFreeMarginCoordinator {
             calibrationLevels.append(decibels)
             return timeouts(at: now)
         }
-        let threshold = speechThresholdDB ?? learnThreshold()
+        let threshold = relearnThreshold(for: decibels) ?? speechThresholdDB ?? learnThreshold()
         let isSpeech = decibels > threshold
         let lastSpeechAt = lastLevel.flatMap { $0.isSpeech ? $0.at : nil }
         if let lastSpeechAt { speechSeconds += now - lastSpeechAt }
@@ -334,7 +335,19 @@ public final class HandsFreeMarginCoordinator {
 
     /// The background level is the quietest calibration sample; speech sits a margin above it.
     private func learnThreshold() -> Double {
-        let background = calibrationLevels.min() ?? HandsFreeMarginTimings.lowestThresholdDB - HandsFreeMarginTimings.speechMarginDB
+        setBackground(calibrationLevels.min() ?? HandsFreeMarginTimings.lowestThresholdDB - HandsFreeMarginTimings.speechMarginDB)
+    }
+
+    /// A listener who talks the instant the tone ends fills the calibration with speech, so the
+    /// first estimate of the room is too loud and the threshold too high. Until speech is heard,
+    /// a quieter sample than the room so far shows the room really is quieter: learn from it.
+    /// Returns the new threshold, or nil when nothing changed. Once speaking, the room is settled.
+    private func relearnThreshold(for decibels: Double) -> Double? {
+        guard phase == .listening, let backgroundDB, decibels < backgroundDB else { return nil }
+        return setBackground(decibels)
+    }
+
+    private func setBackground(_ background: Double) -> Double {
         backgroundDB = background
         let threshold = min(HandsFreeMarginTimings.highestThresholdDB,
                             max(HandsFreeMarginTimings.lowestThresholdDB, background + HandsFreeMarginTimings.speechMarginDB))
