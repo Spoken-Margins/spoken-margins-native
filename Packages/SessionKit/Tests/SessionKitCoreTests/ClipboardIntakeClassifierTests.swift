@@ -49,6 +49,31 @@ final class ClipboardIntakeClassifierTests: XCTestCase {
         )
     }
 
+    /// A share sheet's "Title https://…" line is the link only while it is short: 280 characters at most,
+    /// counting the title. A longer line is pasted text. (A bare link has no such limit.)
+    func testAShareSheetLineIsTheLinkUpTo280CharactersAndTextBeyond() {
+        func shareLine(ofLength length: Int) -> String {
+            let head = "Listen to this: https://example.com/"
+            return head + String(repeating: "a", count: length - head.count)
+        }
+        for length in [100, 279, 280] {
+            let line = shareLine(ofLength: length)
+            XCTAssertEqual(line.count, length)
+            XCTAssertEqual(
+                ClipboardIntakeClassifier.classify(line),
+                link(String(line.dropFirst("Listen to this: ".count))),
+                "\(length) characters"
+            )
+        }
+        let long = shareLine(ofLength: 281)
+        XCTAssertEqual(long.count, 281)
+        // The title is the first eight words, which here is the whole line.
+        XCTAssertEqual(ClipboardIntakeClassifier.classify(long), .text(title: long, body: long))
+
+        let bareLong = "https://example.com/" + String(repeating: "a", count: 400)
+        XCTAssertEqual(ClipboardIntakeClassifier.classify(bareLong), link(bareLong), "a bare link is a link whatever its length")
+    }
+
     func testABareDomainBecomesAnHTTPSLink() {
         XCTAssertEqual(ClipboardIntakeClassifier.classify("example.com/p/a-post"), link("https://example.com/p/a-post"))
         XCTAssertEqual(ClipboardIntakeClassifier.classify("astralcodexten.com"), link("https://astralcodexten.com"))
@@ -77,15 +102,20 @@ final class ClipboardIntakeClassifierTests: XCTestCase {
     }
 
     func testTextThatMentionsALinkInsideSeveralLinesStaysText() {
-        guard case .text = ClipboardIntakeClassifier.classify("First line\nhttps://example.com/post") else {
-            return XCTFail("a link inside several lines of text is part of the text")
-        }
+        XCTAssertEqual(
+            ClipboardIntakeClassifier.classify("First line\nhttps://example.com/post"),
+            .text(title: "First line", body: "First line\nhttps://example.com/post"),
+            "a link inside several lines of text is part of the text"
+        )
     }
 
     func testASingleLineWithTwoLinksIsText() {
-        guard case .text = ClipboardIntakeClassifier.classify("Compare https://example.com/a with https://example.com/b") else {
-            return XCTFail("two links on one line are ambiguous, so the line is text")
-        }
+        let line = "Compare https://example.com/a with https://example.com/b"
+        XCTAssertEqual(
+            ClipboardIntakeClassifier.classify(line),
+            .text(title: line, body: line),
+            "two links on one line are ambiguous, so the line is text"
+        )
     }
 
     func testAMarkdownHeadingGivesTheTitleWithoutItsMarks() {

@@ -106,6 +106,24 @@ final class SubstackPublicationResolverTests: XCTestCase {
         XCTAssertFalse(resolved?.reason.contains("test-not-a-token") ?? true)
     }
 
+    /// The second private shape is `/feed/private/<token>` on any host, a per-subscriber feed path with its own
+    /// pattern. The Substack podcast link in the test above says nothing about it: that pattern could be
+    /// deleted and the link would be handled as an ordinary page, token and all.
+    func testAPrivateFeedPathOnAnyHostIsAPrivateFeedToo() async throws {
+        let generic = "https://www.example.com/feed/private/abc123"
+        XCTAssertTrue(SubstackPublicationResolver.isPrivateFeedURL(generic))
+        XCTAssertTrue(SubstackPublicationResolver.isPrivateFeedURL("  \(generic)\n"), "whitespace around a pasted link is ignored")
+        XCTAssertFalse(SubstackPublicationResolver.isPrivateFeedURL("https://www.example.com/feed"), "the public feed")
+        XCTAssertFalse(SubstackPublicationResolver.isPrivateFeedURL("https://www.example.com/feed/private"), "a path with no token")
+        XCTAssertFalse(SubstackPublicationResolver.redact(generic).contains("abc123"))
+
+        let fetcher = ReplayFetcher(fixtures: Self.research.appending(path: "fixtures"), aliases: [generic: Self.publicPodcast])
+        let resolved = await SubstackPublicationResolver(fetch: fetcher.fetch).resolve(generic)
+        XCTAssertEqual(resolved?.kind, .privateFeed, "taken as a private feed, not as a page to scrape")
+        XCTAssertEqual(resolved?.isPrivate, true)
+        XCTAssertFalse(resolved?.reason.contains("abc123") ?? true, "no token in the reason")
+    }
+
     /// I1: the resolver plugs into `SourceResolverRegistry` like any other resolver.
     func testResolverAnswersThroughSeamI1() async throws {
         let fetcher = ReplayFetcher(fixtures: Self.research.appending(path: "fixtures"), aliases: [Self.fakePrivate: Self.publicPodcast])

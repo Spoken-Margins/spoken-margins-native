@@ -45,6 +45,29 @@ final class SharedEpisodeFeedMatcherTests: XCTestCase {
         XCTAssertFalse(SharedEpisodeFeedMatcher.isPrivatePodcastSource(article))
     }
 
+    /// Every link the packet can carry is checked on its own: the episode page, the original page, the
+    /// audio file and the show's feed. A private podcast has none of them, so the recipient is asked for
+    /// their feed. A source that drops any one field from the check would ask for a feed the listener
+    /// does not need, or skip asking for one they do.
+    func testAnyOneLinkInThePacketMakesTheSourceReachable() {
+        let links: [(name: String, item: SharedItemIdentity)] = [
+            ("canonicalURL", SharedItemIdentity(itemType: .podcast, canonicalURL: "https://example.com/12", title: "E")),
+            ("originalURL", SharedItemIdentity(itemType: .podcast, originalURL: "https://example.com/12", title: "E")),
+            ("enclosureURL", SharedItemIdentity(itemType: .podcast, title: "E", enclosureURL: "https://cdn.example.com/12.mp3")),
+            ("source.canonicalURL", SharedItemIdentity(
+                itemType: .podcast, title: "E",
+                source: SharedSourceIdentity(sourceType: .podcastFeed, canonicalURL: "https://feeds.example.com/show.xml")))
+        ]
+        for (name, item) in links {
+            XCTAssertFalse(SharedEpisodeFeedMatcher.isPrivatePodcastSource(manifest(item, .recipientSupplied)), "\(name) alone is a link the recipient can open")
+        }
+        let blank = SharedItemIdentity(
+            itemType: .podcast, canonicalURL: "  ", originalURL: "\n", title: "E", enclosureURL: "",
+            source: SharedSourceIdentity(sourceType: .podcastFeed, canonicalURL: " ")
+        )
+        XCTAssertTrue(SharedEpisodeFeedMatcher.isPrivatePodcastSource(manifest(blank, .recipientSupplied)), "links that are only blank do not count")
+    }
+
     // MARK: Matching
 
     func testMatchesByGUIDWhenThePacketHasOne() {
@@ -79,6 +102,51 @@ final class SharedEpisodeFeedMatcherTests: XCTestCase {
 
         let unknownGUID = SharedItemIdentity(itemType: .podcast, title: "Nothing like it", episodeGUID: "guid-404")
         XCTAssertEqual(SharedEpisodeFeedMatcher.match(unknownGUID, in: feed), .none)
+    }
+
+    /// A feed can reissue its GUIDs (a host move, a re-upload). The packet's GUID then matches nothing, and
+    /// the episode must still be found by what describes it. If an unknown GUID ended the search the Margin
+    /// could never be placed, though the episode is in the feed.
+    func testAGUIDThatIsInNoFeedItemFallsThroughToTitleDayAndDuration() {
+        let reissued = SharedItemIdentity(
+            itemType: .podcast, title: "bonus: THE Long Interview", episodeGUID: "reissued-guid",
+            publishedAt: "2026-09-10T08:00:00Z", durationMs: 3_500_000
+        )
+        XCTAssertEqual(SharedEpisodeFeedMatcher.match(reissued, in: feed).matchedID, "guid-2")
+
+        // The fall-through is as strict as a packet with no GUID at all.
+        let wrongDay = SharedItemIdentity(
+            itemType: .podcast, title: "Bonus: The Long Interview", episodeGUID: "reissued-guid", publishedAt: "2026-09-11T08:00:00Z"
+        )
+        XCTAssertEqual(SharedEpisodeFeedMatcher.match(wrongDay, in: feed), .none)
+    }
+
+    /// Two durations are one episode when they are within a fifth of the longer. A feed's length and the
+    /// sender's length differ by a few seconds or a few percent (ads, encodings), never by half. The rows
+    /// sit on both sides of 20%, so neither a looser nor a stricter rule passes.
+    func testDurationsWithinAFifthAgreeAndFurtherApartDoNot() {
+        func match(minutes: Int) -> SharedEpisodeFeedMatcher.Match {
+            SharedEpisodeFeedMatcher.match(
+                SharedItemIdentity(itemType: .podcast, title: "Bonus: The Long Interview", publishedAt: "2026-09-10", durationMs: minutes * 60_000),
+                in: feed
+            )
+        }
+        XCTAssertEqual(match(minutes: 51).matchedID, "guid-2", "51 min against 60 is 15% apart")
+        XCTAssertEqual(match(minutes: 70).matchedID, "guid-2", "70 min against 60 is 14% of the longer")
+        XCTAssertEqual(match(minutes: 42), .none, "42 min against 60 is 30% apart")
+        XCTAssertEqual(match(minutes: 80), .none, "80 min against 60 is 25% of the longer")
+    }
+
+    /// Titles match through case, accents, width and punctuation, but never through a number.
+    func testTitlesMatchThroughAccentsAndWidthButNotThroughNumbers() {
+        func match(_ title: String) -> SharedEpisodeFeedMatcher.Match {
+            SharedEpisodeFeedMatcher.match(SharedItemIdentity(itemType: .podcast, title: title), in: feed)
+        }
+        XCTAssertEqual(match("Épisode 1").matchedID, "guid-1", "an accented capital")
+        XCTAssertEqual(match("ＥＰＩＳＯＤＥ １").matchedID, "guid-1", "full-width letters and digit")
+        XCTAssertEqual(match("episode: 1!").matchedID, "guid-1", "punctuation")
+        XCTAssertEqual(match("Episode 2"), .none, "another episode of the show")
+        XCTAssertEqual(match("Episode 11"), .none, "another episode of the show")
     }
 
     func testTwoSameTitledEpisodesOnTheSameDayAreSeveralNeverAGuess() {
