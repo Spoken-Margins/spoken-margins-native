@@ -164,7 +164,8 @@ final class RenderedSpeechDiskCache: @unchecked Sendable {
                 duration: result.duration,
                 sampleRate: result.sampleRate,
                 renderDuration: result.renderDuration,
-                sessionLoadCount: result.sessionLoadCount
+                sessionLoadCount: result.sessionLoadCount,
+                trimmedSilence: result.trimmedSilence
             )
         }
     }
@@ -212,8 +213,9 @@ final class RenderedSpeechDiskCache: @unchecked Sendable {
         synthesisSteps: Int
     ) -> URL {
         // v2: v1 entries can hold iOS-voice stand-ins cached as Supertonic before #311; they now
-        // miss once and age out under the cache limit (#363 audit).
-        let payload = "supertonic-v2\u{1f}\(voice.rawValue)\u{1f}\(language)\u{1f}\(speed)\u{1f}\(synthesisSteps)\u{1f}\(text)"
+        // miss once and age out under the cache limit (#363 audit). v3: v2 entries still carry the
+        // model's silence before and after the speech, so they miss once and render trimmed (#586).
+        let payload = "supertonic-v3\u{1f}\(voice.rawValue)\u{1f}\(language)\u{1f}\(speed)\u{1f}\(synthesisSteps)\u{1f}\(text)"
         let digest = SHA256.hash(data: Data(payload.utf8))
             .map { String(format: "%02x", $0) }
             .joined()

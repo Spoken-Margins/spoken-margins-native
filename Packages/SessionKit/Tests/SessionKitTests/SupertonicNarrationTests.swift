@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+@testable import SessionKit
 @testable import SessionKitSupertonic
 
 final class SupertonicNarrationTests: XCTestCase {
@@ -85,6 +86,40 @@ final class SupertonicNarrationTests: XCTestCase {
         let live = background.filter { $0.pacing == .whenAppBackgrounded }
         XCTAssertFalse(live.isEmpty)
         XCTAssertTrue(live.allSatisfy { $0.delay > 0 }, "live narration stays paced in the background: \(Array(background))")
+    }
+
+    // #586: the model leaves about 0.6 s of silence before the speech and 0.8 s after it, so every
+    // chunk seam was a stall of more than a second. A real render has to come back trimmed to its
+    // speech and a short pad, and say how much it cut so the output check still judges the model's
+    // own duration.
+    func testRealRenderComesBackTrimmedToItsSpeech() async throws {
+        let repoAssets = SupertonicAssetLocation(rootURL: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "App/SpokenMarginsApp/Resources/Supertonic", directoryHint: .isDirectory))
+        guard (try? repoAssets.validate()) != nil else { throw XCTSkip("Supertonic assets not in this checkout") }
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "supertonic-real-trim-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root)
+        let result = try await renderer.render(
+            text: "The listener hears this sentence now.", voice: .m2, language: "en", speed: 1,
+            synthesisSteps: 5, pacing: .whenAppBackgrounded
+        )
+
+        XCTAssertGreaterThan(result.trimmedSilence, 0.5, "the model's silence before and after the speech was cut")
+        XCTAssertEqual(result.modelDuration, result.duration + result.trimmedSilence, accuracy: 0.000_001)
+
+        // The file is a 44-byte header and 16-bit mono samples. Trimming it again finds nothing to cut.
+        let file = try Data(contentsOf: result.audioURL)
+        let samples = stride(from: 44, to: file.count - 1, by: 2).map { offset -> Float in
+            Float(Int16(littleEndian: file.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: offset, as: Int16.self) })) / 32_767
+        }
+        XCTAssertEqual(Double(samples.count) / Double(result.sampleRate), result.duration, accuracy: 0.01)
+        let window = Int(Double(result.sampleRate) * SpeechSilenceTrim.windowSeconds)
+        let range = try XCTUnwrap(SpeechSilenceTrim.speechRange(in: samples, sampleRate: result.sampleRate))
+        XCTAssertLessThanOrEqual(range.lowerBound, window, "the file starts at its leading pad")
+        XCTAssertLessThanOrEqual(samples.count - range.upperBound, window, "the file ends at its trailing pad")
     }
 
     func testCanonicalVoiceIDsRoundTripWithoutDisplayNames() throws {
