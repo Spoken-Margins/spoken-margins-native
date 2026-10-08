@@ -5722,10 +5722,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func deleteItem(id: String) {
-        moveItemToTrash(id: id)
-    }
-
     func moveItemToTrash(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("move_item_to_trash") else { return }
         do {
