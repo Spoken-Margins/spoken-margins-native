@@ -10242,35 +10242,6 @@ final class Gate1AppModel: ObservableObject {
         libraryItems[index].startupAudioState = state
     }
 
-    private nonisolated static func prepareTextAudioInBackground(
-        itemId: String,
-        title: String,
-        text: String,
-        outputDirectory: URL,
-        voiceIdentifier: String?,
-        speechRate: Float,
-        renderScope: TextAudioPrewarmRenderScope
-    ) async -> Result<PreparedTextAudio?, Error> {
-        await Task.detached(priority: renderScope.priority) {
-            do {
-                let renderer = SystemTextAudioPreparationClient(
-                    outputDirectory: outputDirectory,
-                    voiceIdentifier: voiceIdentifier,
-                    speechRate: speechRate,
-                    allowsSynchronousRendering: true
-                )
-                switch renderScope {
-                case .starter(let targetDurationMs):
-                    return .success(try renderer.prepareStarterTextAudio(itemId: itemId, title: title, text: text, targetDurationMs: targetDurationMs))
-                case .complete:
-                    return .success(try renderer.prepareTextAudio(itemId: itemId, title: title, text: text))
-                }
-            } catch {
-                return .failure(error)
-            }
-        }.value
-    }
-
     @discardableResult
     private func attachPreparedTextAudio(
         _ prepared: PreparedTextAudio,
@@ -10324,13 +10295,6 @@ final class Gate1AppModel: ObservableObject {
         }
         preparedTextAudioStatus = status
         snapshot.preparedTextAudioStatus = status
-    }
-
-    private nonisolated static func preparedTextAudioCoversCompleteText(_ prepared: PreparedTextAudio) -> Bool {
-        guard let endChar = prepared.timeline.segments.compactMap(\.endChar).max() else {
-            return false
-        }
-        return endChar >= prepared.normalizedText.count
     }
 
     private func shouldPrewarmTextAudio(for item: Item) -> Bool {
@@ -10469,20 +10433,6 @@ final class Gate1AppModel: ObservableObject {
             return false
         }
         return true
-    }
-
-    private enum TextAudioPrewarmRenderScope: Sendable {
-        case starter(targetDurationMs: Int)
-        case complete
-
-        var priority: TaskPriority {
-            switch self {
-            case .starter:
-                return .userInitiated
-            case .complete:
-                return .utility
-            }
-        }
     }
 
     private func makeAudioPlaybackClient() throws -> AudioPlaybackClient {
