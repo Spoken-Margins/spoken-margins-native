@@ -68,6 +68,11 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     private var attempts: [String: PodcastDownloadAttempt] = [:]
     private let contentLength: (@Sendable (URL, Bool) async throws -> Int64)?
     private let startDownload: ((URLRequest, String) -> Void)?
+    /// Asks the host how large an episode is before it is downloaded (#912).
+    private let preflightSession: URLSession
+    /// Generations whose host never announced a size and then passed the bound; their cancellation is
+    /// reported as that, not as a dropped connection.
+    private var unannouncedLimitExceeded: Set<String> = []
     private var userInitiatedTaskIds: Set<Int> = []
     private var lastProgressPublishDateByItemId: [String: Date] = [:]
     private var session: URLSession!
@@ -81,12 +86,14 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         connectivity: ConnectivityMonitor? = nil,
         usesBackgroundSession: Bool = true,
         contentLength: (@Sendable (URL, Bool) async throws -> Int64)? = nil,
-        startDownload: ((URLRequest, String) -> Void)? = nil
+        startDownload: ((URLRequest, String) -> Void)? = nil,
+        preflightSession: URLSession = .shared
     ) throws {
         self.store = store
         self.connectivity = connectivity ?? ConnectivityMonitor()
         self.contentLength = contentLength
         self.startDownload = startDownload
+        self.preflightSession = preflightSession
         self.ledger = ledger ?? OfflineStorageLedger(
             repository: store,
             rootDirectory: applicationSupportDirectory
@@ -157,6 +164,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
 
     private func invalidateAttempt(itemId: String) {
         let generation = generations.removeValue(forKey: itemId)
+        if let generation { unannouncedLimitExceeded.remove(generation) }
         userInitiatedByItemId[itemId] = nil
         preparationTasks.removeValue(forKey: itemId)?.cancel()
         activeTaskItemIds.remove(itemId)
@@ -419,11 +427,16 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
                 if self.generations[record.itemId] == generation { self.preparationTasks[record.itemId] = nil }
             }
             do {
-                let length = try await self.expectedContentLength(at: url, userInitiated: userInitiated)
+                let announced = try await self.announcedContentLength(at: url, userInitiated: userInitiated)
                 guard self.generations[record.itemId] == generation else { return }
+                var budgetLimitBytes: Int64 = 0
+                if announced == nil { budgetLimitBytes = try self.store.loadOfflineStorageBudget().limitBytes }
                 let reservation = try await self.ledger.reserve(
                     ownerId: "podcast-download-\(record.itemId):\(generation)",
-                    byteCount: length,
+                    byteCount: PodcastDownloadSizeProbe.reservationBytes(
+                        announcedLength: announced,
+                        budgetLimitBytes: budgetLimitBytes
+                    ),
                     lifetime: 24 * 60 * 60
                 )
                 guard self.generations[record.itemId] == generation else {
@@ -438,7 +451,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
                 request.allowsExpensiveNetworkAccess = userInitiated
                 request.allowsConstrainedNetworkAccess = userInitiated
                 var reserved = updated
-                reserved.expectedBytes = length
+                reserved.expectedBytes = announced
                 self.persist(reserved)
                 if let startDownload = self.startDownload {
                     startDownload(request, attempt.taskDescription)
@@ -456,19 +469,44 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         }
     }
 
-    private func expectedContentLength(at url: URL, userInitiated: Bool) async throws -> Int64 {
+    /// The episode's size when its host says, asked with HEAD and then with a one-byte ranged GET; nil when
+    /// the host says nothing. A host that refuses HEAD or leaves out the length still serves the audio, so
+    /// neither is a failure (#912): a nil size reserves a bounded amount and the download is held to it.
+    private func announcedContentLength(at url: URL, userInitiated: Bool) async throws -> Int64? {
         if let contentLength { return try await contentLength(url, userInitiated) }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 30
-        request.httpMethod = "HEAD"
-        request.allowsCellularAccess = userInitiated
-        let (_, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse,
-              (200..<400).contains(http.statusCode),
-              http.expectedContentLength > 0 else {
-            throw CocoaError(.fileReadUnknown)
+        var head = URLRequest(url: url)
+        head.timeoutInterval = 30
+        head.httpMethod = "HEAD"
+        head.allowsCellularAccess = userInitiated
+        do {
+            let (_, response) = try await preflightSession.data(for: head)
+            if let http = response as? HTTPURLResponse,
+               let length = PodcastDownloadSizeProbe.headLength(
+                   statusCode: http.statusCode,
+                   expectedContentLength: http.expectedContentLength
+               ) {
+                return length
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            throw error
+        } catch {
+            // Some hosts drop the connection on HEAD. The ranged GET below asks again and reports its own error.
         }
-        return http.expectedContentLength
+        var probe = URLRequest(url: url)
+        probe.timeoutInterval = 30
+        probe.allowsCellularAccess = userInitiated
+        probe.setValue("bytes=0-0", forHTTPHeaderField: "Range")
+        let (stream, response) = try await preflightSession.bytes(for: probe)
+        // Only the headers are wanted. A host that ignores the range must not send the whole episode to be measured.
+        stream.task.cancel()
+        guard let http = response as? HTTPURLResponse else { return nil }
+        return PodcastDownloadSizeProbe.rangeProbeLength(
+            statusCode: http.statusCode,
+            contentRange: http.value(forHTTPHeaderField: "Content-Range"),
+            expectedContentLength: http.expectedContentLength
+        )
     }
 
     private func persist(_ record: PodcastDownloadRecord) {
@@ -593,8 +631,12 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         // A successful URLSession completion may precede async file adoption.
         guard let error, owns(attempt) || restoreAttempt(attempt),
               let record = recordsByItemId[attempt.itemId] else { return }
+        let exceededUnannouncedLimit = unannouncedLimitExceeded.contains(attempt.generation)
         invalidateAttempt(itemId: attempt.itemId)
-        if !attempt.userInitiated && networkTransport != .wifi {
+        if exceededUnannouncedLimit {
+            // Not a dropped connection: retrying on Wi-Fi would only write the same bytes again.
+            fail(record, reason: PodcastDownloadSizeProbe.unannouncedLimitMessage)
+        } else if !attempt.userInitiated && networkTransport != .wifi {
             var waiting = record
             waiting.state = networkTransport == .cellular ? .streamingOnly : .waitingForWiFi
             waiting.failureReason = nil
@@ -613,6 +655,15 @@ extension PodcastDownloadCoordinator: URLSessionDownloadDelegate {
         Task { @MainActor [weak self] in
             guard let self, self.owns(attempt) || self.restoreAttempt(attempt),
                   var record = self.recordsByItemId[attempt.itemId] else { return }
+            if PodcastDownloadSizeProbe.exceedsUnannouncedLimit(
+                totalBytesWritten: totalBytesWritten,
+                totalBytesExpectedToWrite: totalBytesExpectedToWrite
+            ) {
+                // The host never said how large this is and it has passed the bound: stop writing (#912).
+                self.unannouncedLimitExceeded.insert(attempt.generation)
+                downloadTask.cancel()
+                return
+            }
             let now = Date()
             let complete = totalBytesExpectedToWrite > 0 && totalBytesWritten >= totalBytesExpectedToWrite
             if !complete, let last = self.lastProgressPublishDateByItemId[attempt.itemId], now.timeIntervalSince(last) < 0.5 { return }
