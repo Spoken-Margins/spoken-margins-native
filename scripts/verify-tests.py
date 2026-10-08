@@ -358,6 +358,11 @@ def stop_process_group(process, grace=10):
 
 PACKAGE_BUILD_TIMEOUT = 900  # SessionKit build with tests; cold, under load
 PACKAGE_TEST_TIMEOUT = 600  # the SessionKit tests alone (#844)
+# The runner's own 631 tests took 164.5 s on a quiet Mac (PR #1103's 0c940ba, 2026-10-08) and 172.3 s in a
+# detached checkout of it, so the 180 s command default left no room: built beside a simulator job, the step
+# was killed (exit 124) and the plan reported "Infrastructure runner executed zero tests", twice on #1103's
+# head (#1110). Its own limit leaves headroom for load and for the suite to keep growing.
+RUNNER_TESTS_TIMEOUT = 600
 
 
 class Run:
@@ -516,7 +521,8 @@ class Run:
         if in_codex_sandbox():
             self.skip('runner-tests')
         else:
-            self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'])
+            self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'],
+                         timeout=RUNNER_TESTS_TIMEOUT)
         self.ops_steps()
         self.command('contracts', [sys.executable, 'scripts/validate-contracts.py'])
         self.command('surfaces', [sys.executable, 'scripts/validate-surface-contracts.py'])
