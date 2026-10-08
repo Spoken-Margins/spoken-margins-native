@@ -1061,20 +1061,11 @@ final class Gate1AppModel: ObservableObject {
         CommandLine.arguments.contains("--ui-testing")
         && ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_FORCE_FIRST_SHARED_SOURCE_MISS"] == "1"
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
-    private var foregroundAudioPreparationTask: Task<Void, Never>?
+    var foregroundAudioPreparationTask: Task<Void, Never>?
     private let libraryAudioRenderGate = SerialWorkGate() // one Library item renders at a time (#281)
-    private var libraryAudioTurns = LibraryAudioPreparationTurns() // which item the two passes are on (#281, #534)
+    var libraryAudioTurns = LibraryAudioPreparationTurns() // which item the two passes are on (#281, #534)
     var libraryAudioPreparingItemId: String? { get { libraryAudioTurns.preparingItemId } set { libraryAudioTurns.preparingItemId = newValue } }
-    // Read and driven by the continued-processing task and the heat wait (#905).
-    var isForegroundAudioPreparationRunning: Bool { foregroundAudioPreparationTask != nil }
-    /// Ends the loop without the restart a plain cancel gets: iOS or the listener ended its background time.
-    func stopForegroundAudioPreparation() {
-        foregroundAudioPreparationTask?.cancel()
-        foregroundAudioPreparationGeneration += 1
-        foregroundAudioPreparationTask = nil
-    }
-    func idleForegroundPreparationTurn() { libraryAudioTurns.stopped(.foreground) }
-    private var foregroundAudioPreparationGeneration = 0
+    var foregroundAudioPreparationGeneration = 0
     private var episodeMapPreparationTask: Task<Void, Never>?
     private var episodeMapPreparationItemId: String?
     private var isUpdatingSkimAvailability = false
@@ -1416,7 +1407,6 @@ final class Gate1AppModel: ObservableObject {
         AudioPreparationBackgroundController.shared.install { [weak self] in
             await self?.performBackgroundPreparationPass() ?? .finished
         } drainEnded: { [weak self] in self?.libraryAudioBackgroundDrainEnded() }
-        installContinuedAudioPreparation()
         #endif
     }
 

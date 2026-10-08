@@ -5,6 +5,18 @@ import SessionKitPersistence
 /// What keeps a Make available offline run going when the listener puts the phone down (#905): a
 /// system progress task while the app is away, and a wait that ends a heat pause by itself.
 extension Gate1AppModel {
+    // Read and driven by the continued-processing task and the heat wait.
+    var isForegroundAudioPreparationRunning: Bool { foregroundAudioPreparationTask != nil }
+
+    /// Ends the loop without the restart a plain cancel gets: iOS or the listener ended its background time.
+    func stopForegroundAudioPreparation() {
+        foregroundAudioPreparationTask?.cancel()
+        foregroundAudioPreparationGeneration += 1
+        foregroundAudioPreparationTask = nil
+    }
+
+    func idleForegroundPreparationTurn() { libraryAudioTurns.stopped(.foreground) }
+
     /// The foreground preparation loop: runs passes while they have work, and after a pass that
     /// rendered nothing waits out a heat pause and goes on. `pass` returns whether it has more work.
     func runForegroundPreparationLoop(pass: () async -> Bool) async {
@@ -82,12 +94,13 @@ extension Gate1AppModel {
     /// background tasks don't exist.
     func requestContinuedAudioPreparationIfNeeded() {
         #if canImport(BackgroundTasks) && canImport(UIKit)
+        installContinuedAudioPreparation() // here, not in init: keeps the hot file's size (#905)
         ContinuedAudioPreparationController.shared.requestIfNeeded()
         #endif
     }
 
     #if canImport(BackgroundTasks) && canImport(UIKit)
-    func installContinuedAudioPreparation() {
+    private func installContinuedAudioPreparation() {
         ContinuedAudioPreparationController.shared.install(
             ContinuedAudioPreparationController.Hooks(
                 jobs: { [weak self] in self?.explicitPreparationJobs() ?? [] },
