@@ -6,13 +6,15 @@ import SessionKitPersistence
 extension Gate1AppModel {
     /// Removes the spoken Margin recordings of Margins whose rows were just deleted (#1035). The rows were
     /// read before the delete; `store` now holds only the Margins that stay. If those can't be read, nothing
-    /// is removed: a recording is only deleted once no remaining Margin is known to use it.
+    /// is removed: a recording is only deleted once no remaining Margin is known to use it. Only files under
+    /// `SpokenMargins/`, where the recorder keeps them, are ever removed.
     func removeMarginRecordings(_ deleted: [Interjection], store: SQLiteSessionStore) {
         guard !deleted.isEmpty,
               let surviving = try? store.loadAllInterjections(),
               let supportDirectory = try? applicationSupportDirectory() else { return }
         MarginRecordingCleanup.removeFiles(
-            deleted: deleted, surviving: surviving, within: supportDirectory,
+            deleted: deleted, surviving: surviving,
+            within: supportDirectory.appending(path: "SpokenMargins", directoryHint: .isDirectory),
             resolve: resolvedInterjectionAudioURL(for:)
         )
     }

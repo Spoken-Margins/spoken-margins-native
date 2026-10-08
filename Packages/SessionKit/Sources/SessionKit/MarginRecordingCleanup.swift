@@ -7,7 +7,7 @@ import Foundation
 /// own voice. The caller reads the item's Margin rows before deleting them and the Margin rows that
 /// stay afterwards; this removes what only the deleted rows named.
 ///
-/// It only ever removes a regular file that lies inside `root` (the app's Application Support folder)
+/// It only ever removes a regular file that lies inside `root` (the folder the app keeps recordings in)
 /// and that no remaining Margin names. A path it can't resolve, a path outside `root`, a folder, and a
 /// file a surviving row still points at are all left alone.
 public enum MarginRecordingCleanup {
