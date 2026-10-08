@@ -117,9 +117,41 @@ final class ListeningSignalRecorderTests: XCTestCase {
         let recorder = ListeningSignalRecorder(fileURL: log, flushDelay: 0.05)
         let (source, item) = Self.podcast
         recorder.record(.share, source: source, item: item)
-        let deadline = Date().addingTimeInterval(5)
-        while !FileManager.default.fileExists(atPath: log.path), Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
-        XCTAssertEqual(ListeningSignalRecorder.read(log).map(\.event), [.share])
+        XCTAssertEqual(Self.signalsOnceWritten(log).map(\.event), [.share])
+    }
+
+    /// #890: the recorder creates an empty log before it appends the first row, so the file existing
+    /// is not the row being written. The wait is for a readable row; a missing, empty or half-written
+    /// log keeps it waiting, and a flush that never runs ends it empty, not early with a stale read.
+    func testWaitingForASignalIgnoresMissingEmptyAndPartialLogs() throws {
+        let log = temporary.appendingPathComponent("i4.jsonl")
+        let line = try Self.encodedShareRow()
+        XCTAssertTrue(Self.signalsOnceWritten(log, timeout: 0.2).isEmpty, "missing")
+        try Data().write(to: log)
+        XCTAssertTrue(Self.signalsOnceWritten(log, timeout: 0.2).isEmpty, "empty")
+        try line.prefix(line.count / 2).write(to: log)
+        XCTAssertTrue(Self.signalsOnceWritten(log, timeout: 0.2).isEmpty, "partial")
+        try line.write(to: log)
+        XCTAssertEqual(Self.signalsOnceWritten(log, timeout: 0.2).map(\.event), [.share], "complete")
+    }
+
+    func testWaitingForASignalOutlastsAnEmptyThenPartialLog() throws {
+        let log = temporary.appendingPathComponent("i4.jsonl")
+        let line = try Self.encodedShareRow()
+        try Data().write(to: log)
+        XCTAssertTrue(ListeningSignalRecorder.read(log).isEmpty, "the file exists but holds no row: the old wait would have stopped here")
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { try? line.prefix(line.count / 2).write(to: log) }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { try? line.write(to: log) }
+        XCTAssertEqual(Self.signalsOnceWritten(log).map(\.event), [.share])
+    }
+
+    func testWaitingForAScheduledFlushThatNeverRunsComesBackEmpty() throws {
+        let log = temporary.appendingPathComponent("i4.jsonl")
+        let recorder = ListeningSignalRecorder(fileURL: log, flushDelay: 60)
+        let (source, item) = Self.podcast
+        recorder.record(.share, source: source, item: item)
+        XCTAssertTrue(Self.signalsOnceWritten(log, timeout: 0.3).isEmpty,
+                      "a recorder whose scheduled write is disabled or late fails the wait")
     }
 
     func testImportOfOwnExportIsNotFromOther() throws {
@@ -388,6 +420,29 @@ final class ListeningSignalRecorderTests: XCTestCase {
 
     private func makeRecorder() -> ListeningSignalRecorder {
         ListeningSignalRecorder(fileURL: temporary.appendingPathComponent("i4-\(UUID().uuidString).jsonl"), flushDelay: 60)
+    }
+
+    /// Polls until at least `count` rows are readable in `log` or `timeout` passes, then returns what
+    /// is readable. File existence is not enough (#890); `read` skips a partly written line.
+    private static func signalsOnceWritten(_ log: URL, count: Int = 1, timeout: TimeInterval = 5) -> [ListeningSignal] {
+        let deadline = Date().addingTimeInterval(timeout)
+        var signals = ListeningSignalRecorder.read(log)
+        while signals.count < count, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.02)
+            signals = ListeningSignalRecorder.read(log)
+        }
+        return signals
+    }
+
+    /// One complete `share` row, newline included, encoded the way the recorder writes it.
+    private static func encodedShareRow() throws -> Data {
+        let (source, item) = podcast
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        encoder.dateEncodingStrategy = .iso8601
+        var data = try encoder.encode(ListeningSignal(event: .share, at: time("2026-09-02T19:00:00Z"), source: source, item: item))
+        data.append(UInt8(ascii: "\n"))
+        return data
     }
 
     private static let podcast = (
