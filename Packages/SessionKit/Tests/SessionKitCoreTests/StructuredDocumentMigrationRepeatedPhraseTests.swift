@@ -16,16 +16,17 @@ final class StructuredDocumentMigrationRepeatedPhraseTests: XCTestCase {
     /// The old extraction repeats the running head between pages.
     private var old: String { one + head + "\n" + two + head + "\n" + three }
 
+    /// `stored: true` gives the Margin the context the app stores (`SessionEngine.textAnchorShoulder`):
+    /// the text before the Margin's start, and the text from its start on, through its own words.
     private func anchor(_ id: String, copy: Int, in text: String, stored: Bool = false) -> Anchor {
         let start = characterOffsets(of: head, in: text)[copy]
         let end = start + head.count
         guard stored else { return Anchor(id: id, start: start, end: end) }
-        // What the Margin kept when it was made: the words around it.
         let characters = Array(text)
         return Anchor(
             id: id, start: start, end: end,
-            before: String(characters[max(0, start - 20)..<start]),
-            after: String(characters[end..<min(characters.count, end + 20)])
+            before: String(characters[max(0, start - 120)..<start]),
+            after: String(characters[start..<min(characters.count, start + 120)])
         )
     }
 
@@ -120,6 +121,50 @@ final class StructuredDocumentMigrationRepeatedPhraseTests: XCTestCase {
             StructuredDocumentMigration.place([anchor("only", copy: 0, in: single)], from: single, into: new),
             .moved(["only": range(of: head, in: new, copy: 0)])
         )
+    }
+
+    // MARK: The context the app stores is cut at the Margin's start, not after its words
+
+    /// A Margin on the title, which also repeats as a running head in the old text; the new
+    /// extraction drops the running heads. Nothing precedes the title, so only the words after it
+    /// can say this is the same copy.
+    func testATitleMarginSurvivesWhenTheRunningHeadsAreDropped() {
+        let title = "Sleep and memory"
+        let old = title + "\nWe measured sleep.\n" + title + "\nResults were clear.\n" + title + "\nEnd."
+        let new = title + "\nWe measured sleep.\nResults were clear.\nEnd."
+        let start = 0
+        for stored in [false, true] {
+            let characters = Array(old)
+            let margin = stored
+                ? Anchor(id: "title", start: start, end: title.count, before: "", after: String(characters[0..<min(120, characters.count)]))
+                : Anchor(id: "title", start: start, end: title.count)
+            XCTAssertEqual(
+                StructuredDocumentMigration.place([margin], from: old, into: new),
+                .moved(["title": 0..<title.count]),
+                "stored context: \(stored)"
+            )
+        }
+    }
+
+    /// Re-extraction often changes only the space or newline in front of a phrase; the words after it still
+    /// say which copy the Margin is on.
+    func testAMarginKeepsItsCopyWhenOnlyTheWhitespaceBeforeItChanges() {
+        let phrase = "The dose was low."
+        let old = "Intro four. " + phrase + " Then more. Later four. " + phrase + " And the end."
+        let new = "Intro four.\n" + phrase + " Then more. Later we saw the end."
+        let characters = Array(old)
+        let start = characterOffsets(of: phrase, in: old)[0]
+        let end = start + phrase.count
+        for stored in [false, true] {
+            let margin = stored
+                ? Anchor(id: "m", start: start, end: end, before: String(characters[max(0, start - 120)..<start]), after: String(characters[start..<min(characters.count, start + 120)]))
+                : Anchor(id: "m", start: start, end: end)
+            XCTAssertEqual(
+                StructuredDocumentMigration.place([margin], from: old, into: new),
+                .moved(["m": range(of: phrase, in: new, copy: 0)]),
+                "stored context: \(stored)"
+            )
+        }
     }
 
     // MARK: A listening position follows the same rule

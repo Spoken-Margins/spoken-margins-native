@@ -80,13 +80,17 @@ public enum StructuredDocumentMigration {
         // The words were also somewhere else in the old text (a running head, a repeated line), so
         // the copy found may be another copy than the Margin's own. It counts only if it looks more
         // like the Margin's own copy than like any other old copy; otherwise the item stays (#1054).
-        let ownScore = score(chosen)
-        for other in occurrences(of: words, in: old) where other != anchor.start {
-            let otherBefore = Array(old[max(0, other - before.count)..<other])
-            let otherAfter = Array(old[(other + words.count)..<min(old.count, other + words.count + after.count)])
-            let otherScore = commonSuffixLength(otherBefore, new[..<chosen])
-                + commonPrefixLength(otherAfter, new[(chosen + words.count)...])
-            if otherScore >= ownScore { return nil }
+        // Every old copy is read the same way, from the old text around it: the context a Margin
+        // stores is cut at the Margin's start and runs through its own words, so it can't be lined
+        // up against the words after another copy.
+        func oldContextScore(at start: Int) -> Int {
+            let end = start + words.count
+            return commonSuffixLength(Array(old[max(0, start - 40)..<start]), new[..<chosen])
+                + commonPrefixLength(Array(old[end..<min(old.count, end + 40)]), new[(chosen + words.count)...])
+        }
+        let ownScore = oldContextScore(at: anchor.start)
+        for other in occurrences(of: words, in: old) where other != anchor.start && oldContextScore(at: other) >= ownScore {
+            return nil
         }
         return chosen..<(chosen + words.count)
     }
