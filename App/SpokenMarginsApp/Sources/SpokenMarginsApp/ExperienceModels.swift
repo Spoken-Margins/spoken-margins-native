@@ -238,31 +238,6 @@ enum LibraryPresentation {
     }
 }
 
-enum OnboardingEvidenceClassifier {
-    static let defaultSeededItemIDs: Set<String> = [
-        "item-spoken-margins-overview",
-        "guided-onboarding"
-    ]
-
-    static func sourceSteps(
-        items: [Item],
-        seededItemIDs: Set<String> = defaultSeededItemIDs
-    ) -> Set<OnboardingStep> {
-        let userItems = items.filter { !seededItemIDs.contains($0.id) }
-        var evidence: Set<OnboardingStep> = []
-        if !userItems.isEmpty {
-            evidence.insert(.addedOwnSource)
-        }
-        if userItems.contains(where: { $0.mediaType == "text" && $0.externalReferenceType == "url" }) {
-            evidence.formUnion([.addedOwnSource, .addedFromSafari])
-        }
-        if userItems.contains(where: { $0.externalReferenceType == "file" }) {
-            evidence.formUnion([.addedOwnSource, .addedFromFiles])
-        }
-        return evidence
-    }
-}
-
 enum TimelineProvenance: String, CaseIterable, Hashable, Sendable {
     case source
     case listeningMap

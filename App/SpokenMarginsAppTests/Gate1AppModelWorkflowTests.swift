@@ -1540,6 +1540,39 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.isOnboardingStepComplete(.addedPodcast))
     }
 
+    /// #1019: the progress is read in the model's declaration and written under the three keys,
+    /// with the value types, that Build 29 used. A listener's tour must survive an update.
+    func testOnboardingProgressIsReadFromAndWrittenToTheKeysEarlierBuildsUsed() {
+        let keys = ["onboardingCompletedStepsV1", "guidedOnboardingStageV1", "onboardingCardDismissedV1"]
+        let prior = keys.map { UserDefaults.standard.object(forKey: $0) }
+        defer { zip(keys, prior).forEach { restoreUserDefault($1, forKey: $0) } }
+        UserDefaults.standard.set(["reviewed_timeline", "not_a_step", "first_interjection"], forKey: keys[0])
+        UserDefaults.standard.set("review_timeline", forKey: keys[1])
+        UserDefaults.standard.set(true, forKey: keys[2])
+
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+
+        XCTAssertTrue(model.isOnboardingStepComplete(.firstInterjection))
+        XCTAssertTrue(model.isOnboardingStepComplete(.reviewedTimeline))
+        XCTAssertEqual(model.guidedOnboardingStage, .reviewTimeline)
+        XCTAssertTrue(model.isOnboardingCardDismissed)
+
+        model.markOnboardingSteps([.exportedSession, .addedPodcast])
+        let stored = UserDefaults.standard.stringArray(forKey: keys[0]) ?? []
+        XCTAssertEqual(stored, stored.sorted(), "steps are stored as a sorted array of raw values")
+        for name in ["first_interjection", "reviewed_timeline", "exported_session", "added_podcast"] {
+            XCTAssertTrue(stored.contains(name), name)
+        }
+        XCTAssertFalse(stored.contains("not_a_step"))
+
+        model.pauseGuidedOnboarding()
+        XCTAssertEqual(UserDefaults.standard.string(forKey: keys[1]), "inactive")
+        model.restoreOnboardingCard()
+        XCTAssertEqual(UserDefaults.standard.object(forKey: keys[2]) as? Bool, false)
+        model.dismissOnboardingCard()
+        XCTAssertEqual(UserDefaults.standard.object(forKey: keys[2]) as? Bool, true)
+    }
+
     func testManualImportClearsEntryFieldsAfterSuccessfulCreate() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

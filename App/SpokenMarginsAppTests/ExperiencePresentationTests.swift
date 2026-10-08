@@ -581,40 +581,12 @@ final class ExperiencePresentationTests: XCTestCase {
         )
     }
 
-    func testSeededOnboardingItemsDoNotCountAsUserSourceEvidence() {
-        let welcome = item(
-            id: "item-spoken-margins-overview",
-            mediaType: "text",
-            externalReferenceType: "url"
-        )
-        let guided = item(
-            id: "guided-onboarding",
-            mediaType: "guided_tour",
-            externalReferenceType: "file"
-        )
-
-        let steps = OnboardingEvidenceClassifier.sourceSteps(items: [welcome, guided])
-
-        XCTAssertTrue(steps.isEmpty)
-    }
-
-    func testUserOwnedSourcesProduceTypedOnboardingEvidence() {
-        let pasted = item(id: "pasted", mediaType: "text", externalReferenceType: nil)
-        let webpage = item(id: "webpage", mediaType: "text", externalReferenceType: "url")
-        let file = item(id: "file", mediaType: "pdf", externalReferenceType: "file")
-
-        XCTAssertEqual(
-            OnboardingEvidenceClassifier.sourceSteps(items: [pasted]),
-            [.addedOwnSource]
-        )
-        XCTAssertEqual(
-            OnboardingEvidenceClassifier.sourceSteps(items: [webpage]),
-            [.addedOwnSource, .addedFromSafari]
-        )
-        XCTAssertEqual(
-            OnboardingEvidenceClassifier.sourceSteps(items: [file]),
-            [.addedOwnSource, .addedFromFiles]
-        )
+    /// The classifier lives in SessionKit with its own copy of the two seeded ids (#1019), so the
+    /// ids this app seeds must be in it, or seeding would count as the listener adding a source.
+    @MainActor
+    func testTheClassifiersSeededIdsIncludeTheSampleAndTourThisAppSeeds() {
+        XCTAssertTrue(OnboardingEvidenceClassifier.defaultSeededItemIDs.contains(Gate1AppModel.welcomeSampleItemId))
+        XCTAssertTrue(OnboardingEvidenceClassifier.defaultSeededItemIDs.contains(Gate1AppModel.guidedOnboardingItemId))
     }
 
     private func libraryRow(
@@ -709,22 +681,6 @@ final class ExperiencePresentationTests: XCTestCase {
             protections: protections,
             lastAccessedAt: Date(timeIntervalSince1970: 1),
             createdAt: Date(timeIntervalSince1970: 1)
-        )
-    }
-
-    private func item(
-        id: String,
-        mediaType: String,
-        externalReferenceType: String?
-    ) -> Item {
-        Item(
-            id: id,
-            title: id,
-            mediaType: mediaType,
-            text: "Source text",
-            externalReference: "source://\(id)",
-            status: "ready",
-            externalReferenceType: externalReferenceType
         )
     }
 }
