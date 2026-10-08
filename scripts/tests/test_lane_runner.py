@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 from unittest import mock
 
@@ -903,10 +904,32 @@ class MergeTests_Runner(unittest.TestCase):
                 mock.patch.object(lane, 'sweep_merge_audit', side_effect=lambda tree, base: events.append('sweep')), \
                 mock.patch.object(lane, 'warm_build_folders', return_value='build folders: warm (SessionKit test)'), \
                 mock.patch.object(lane, 'diff_scope', return_value=scope or self.SCOPE), \
+                mock.patch.object(lane, 'hot_file_violations', return_value=[]), \
                 mock.patch.object(lane, 'run_automerge', side_effect=automerge or (
                     lambda scope, evidence, **_: (verdicts.pop(0), 'x', 'host tests; builds', []))):
             result = lane.run_auto(github, {'title': 'T'}, 5, 'next', HEAD, MERGE, Path(folder), list(comments))
         return result, events
+
+    def test_a_simulated_run_does_not_judge_the_checkout_s_own_hot_files(self):
+        # #1104: run_auto's ratchet read the real checkout's Gate1AppModel.swift, so these simulated runs failed
+        # on any commit above the hot-file ceiling (PR #1103's first commit grew the model by 6 lines, and
+        # phone-build stopped at "host tests failed"). The ratchet's own refusals are tested over fixture
+        # repositories (the hot-file tests below), not here.
+        real_policy, real_automerge = lane.base_policy, lane.run_automerge
+        over_ceiling = types.SimpleNamespace(violations=lambda *args: [
+            'Gate1AppModel.swift would be 99999 lines, above its ceiling of 1 (a checkout that is over it)'])
+
+        def policy(tree, base, path):
+            return over_ceiling if path == 'scripts/hot_file_ratchet.py' else real_policy(tree, base, path)
+
+        def automerge(scope, evidence, **kwargs):
+            return real_automerge(scope, evidence, fast=lambda e: ('PASS', []), **kwargs)
+
+        host_only = {'tier': 'T1', 'why': ['scripts'], 'files': [{'path': 'scripts/x.py', 'category': 'scripts'}]}
+        with mock.patch.object(lane, 'base_policy', side_effect=policy):
+            (verdict, where, _, details), _ = self.run_auto(FakeGitHub(labels=('automerge',)), scope=host_only,
+                                                            automerge=automerge)
+        self.assertEqual((verdict, where), ('PASS', 'host only'), details)
 
     def test_a_pass_posts_the_merge_check_then_pushes_the_tested_commit(self):
         github = FakeGitHub(labels=('automerge',))
