@@ -2020,6 +2020,91 @@ final class SharingTests: XCTestCase {
         )
     }
 
+    // MARK: Crafted descriptors (#913)
+
+    private func voicePackage(in root: URL) throws -> PreparedSpokenMarginsPackage {
+        let audioURL = root.appendingPathComponent("voice.m4a")
+        try writeSilentM4A(to: audioURL)
+        return try SpokenMarginsPackageBuilder.prepare(
+            packageId: "package-voice-001", createdAt: fixedDate, item: articleItem, itemTransportSelection: .reference,
+            selections: [.init(
+                packageScopedId: "margin-voice", revision: approvedRevision(),
+                anchor: .init(anchorType: .text), representation: .originalAudio(sourceURL: audioURL, durationMs: 100)
+            )]
+        )
+    }
+
+    /// Exports `prepared`, rewrites the manifest inside the archive the way a hostile sender could, and reads it back.
+    private func readPacket(
+        tampering prepared: PreparedSpokenMarginsPackage, in root: URL, _ tamper: (inout SpokenMarginsPackageManifest) -> Void
+    ) throws -> VerifiedSpokenMarginsPackage {
+        let goodURL = root.appendingPathComponent("good-\(UUID().uuidString).spokenmargins")
+        _ = try SpokenMarginsPackageArchive.write(prepared, to: goodURL)
+        var entries = try readRawArchive(goodURL)
+        var manifest = try SpokenMarginsPackageArchive.decodeManifest(XCTUnwrap(entries["manifest.json"]))
+        tamper(&manifest)
+        entries["manifest.json"] = try SpokenMarginsPackageArchive.encodeManifest(manifest)
+        let tamperedURL = root.appendingPathComponent("tampered-\(UUID().uuidString).spokenmargins")
+        try writeRawArchive(entries: entries, to: tamperedURL)
+        return try SpokenMarginsPackageArchive.read(
+            from: tamperedURL, extractingAssetsTo: root.appendingPathComponent("assets-\(UUID().uuidString)")
+        )
+    }
+
+    /// The entry check compares a Set, so a path listed twice passes it; building a dictionary from the descriptors
+    /// then trapped and took the app down before the import review appeared.
+    func testAnArtifactPathListedTwiceIsRejectedNotATrap() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        XCTAssertThrowsError(try readPacket(tampering: try textPreparedPackage(), in: root) { manifest in
+            let first = manifest.artifacts[0]
+            manifest.artifacts.append(SpokenMarginsArtifactDescriptor(
+                id: "\(first.id)-again", kind: first.kind, schemaVersion: first.schemaVersion, path: first.path,
+                required: false, byteCount: first.byteCount, sha256: first.sha256
+            ))
+        }) { error in
+            XCTAssertEqual(error as? SpokenMarginsPackageArchiveError, .invalidManifest("descriptor identities are not unique"))
+        }
+    }
+
+    func testAnAssetPathListedTwiceIsRejectedNotATrap() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        XCTAssertThrowsError(try readPacket(tampering: try voicePackage(in: root), in: root) { manifest in
+            let first = manifest.assets[0]
+            manifest.assets.append(SpokenMarginsAssetDescriptor(
+                id: "\(first.id)-again", role: first.role, path: first.path, mimeType: first.mimeType,
+                durationMs: first.durationMs, anchorOffsetMs: first.anchorOffsetMs, provenance: first.provenance,
+                byteCount: first.byteCount, sha256: first.sha256
+            ))
+        }) { error in
+            XCTAssertEqual(error as? SpokenMarginsPackageArchiveError, .invalidManifest("descriptor identities are not unique"))
+        }
+    }
+
+    /// `voice/a` and `voice?a` both became `voice-a.m4a`, so the second recording overwrote the first and both
+    /// Margins played it. A case-insensitive disk does the same to `Voice-a` and `voice-a`.
+    func testAssetIDsThatWouldExtractToOneFileAreRejected() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prepared = try voicePackage(in: root)
+        for (firstID, secondID) in [("voice/a", "voice?a"), ("Voice-a", "voice-a")] {
+            XCTAssertThrowsError(try readPacket(tampering: prepared, in: root) { manifest in
+                let first = manifest.assets[0]
+                func asset(_ id: String, path: String) -> SpokenMarginsAssetDescriptor {
+                    SpokenMarginsAssetDescriptor(
+                        id: id, role: first.role, path: path, mimeType: first.mimeType, durationMs: first.durationMs,
+                        anchorOffsetMs: first.anchorOffsetMs, provenance: first.provenance,
+                        byteCount: first.byteCount, sha256: first.sha256
+                    )
+                }
+                manifest.assets = [asset(firstID, path: first.path), asset(secondID, path: "assets/audio/second.m4a")]
+            }, "\(firstID) and \(secondID)") { error in
+                XCTAssertEqual(error as? SpokenMarginsPackageArchiveError, .invalidManifest("asset ids would extract to the same file"))
+            }
+        }
+    }
+
     /// The shipped build's reader is really in the loop (#317): one manifest key it doesn't know, as a new
     /// packet field would add, is enough for it to refuse a packet it otherwise imports.
     func testTheShippedBuildRejectsAManifestKeyItDoesNotKnow() throws {
