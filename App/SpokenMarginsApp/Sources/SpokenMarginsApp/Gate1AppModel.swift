@@ -1015,11 +1015,11 @@ final class Gate1AppModel: ObservableObject {
         CommandLine.arguments.contains("--ui-testing")
         && ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_FORCE_FIRST_SHARED_SOURCE_MISS"] == "1"
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
-    private var foregroundAudioPreparationTask: Task<Void, Never>?
+    var foregroundAudioPreparationTask: Task<Void, Never>?
     private let libraryAudioRenderGate = SerialWorkGate() // one Library item renders at a time (#281)
-    private var libraryAudioTurns = LibraryAudioPreparationTurns() // which item the two passes are on (#281, #534)
+    var libraryAudioTurns = LibraryAudioPreparationTurns() // which item the two passes are on (#281, #534)
     var libraryAudioPreparingItemId: String? { get { libraryAudioTurns.preparingItemId } set { libraryAudioTurns.preparingItemId = newValue } }
-    private var foregroundAudioPreparationGeneration = 0
+    var foregroundAudioPreparationGeneration = 0
     private var episodeMapPreparationTask: Task<Void, Never>?
     private var episodeMapPreparationItemId: String?
     private var isUpdatingSkimAvailability = false
@@ -1059,6 +1059,7 @@ final class Gate1AppModel: ObservableObject {
     private let preparedTextAudioStarterDurationMs = 30_000
     private static let startupAudioChunkCount = 2
     var preparationSeams = PreparationPassSeams()
+    var isWaitingOutPreparationHeat = false // the foreground loop sleeps until the phone cools (#905)
     private static let lastPreparedAudioNoticeDateKey = "lastPreparedAudioNoticeDateV1"
     private let sourceWindowContextBeforeMs = SourceAnchorContextResolver.windowBeforeMs
     private let sourceWindowContextAfterMs = SourceAnchorContextResolver.windowAfterMs
@@ -13080,14 +13081,13 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func startForegroundAudioPreparationIfNeeded() {
+        requestContinuedAudioPreparationIfNeeded() // before the guard: a loop may already be running when the listener asks (#905)
         guard foregroundAudioPreparationTask == nil else { return }
         foregroundAudioPreparationGeneration += 1
         let generation = foregroundAudioPreparationGeneration
         foregroundAudioPreparationTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            while !Task.isCancelled, await self.performBackgroundAudioPreparationPass(foregroundDemandOnly: true) {
-                await Task.yield()
-            }
+            await self.runForegroundPreparationLoop { await self.performBackgroundAudioPreparationPass(foregroundDemandOnly: true) }
             let ownsLoop = self.foregroundAudioPreparationGeneration == generation
             if ownsLoop || self.foregroundAudioPreparationTask == nil {
                 // Also when cancelled between passes: its item stops showing progress (#281).
