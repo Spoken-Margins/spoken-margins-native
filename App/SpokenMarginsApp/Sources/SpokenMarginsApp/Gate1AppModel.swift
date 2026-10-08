@@ -13798,13 +13798,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func deleteImportedCommentaryLayer(_ layerID: String) {
-        updateImportedCommentaryLayer(layerID) {
-            $0.deletedAt = Date()
-            $0.isEnabled = false
-        }
-    }
-
     private func updateImportedCommentaryLayer(
         _ layerID: String,
         mutation: (inout ImportedCommentaryLayer) -> Void
