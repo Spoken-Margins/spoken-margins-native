@@ -1112,8 +1112,27 @@ class WarmBuildTests(unittest.TestCase):
     def caches(self):
         return sorted(self.cache.glob('*/sk-*'))
 
-    def test_it_keeps_at_most_two_caches_and_never_goes_below_the_disk_floor(self):
+    def test_a_key_revisited_after_three_other_trees_keeps_its_build_products(self):
+        # #863: two caches evicted an otherwise reusable key as SessionKit PRs interleaved.
+        source = 'Packages/SessionKit/Sources/A.swift'
+        self.commit(source, 'struct Original {}\n')
+        self.warm()
+        original = (self.tree / '.build').resolve()
+        product = original / 'dd-simulator/Build/product'
+        product.parent.mkdir(parents=True)
+        product.write_text('built for Original')
+        os.utime(original.parent, (1, 1))
         for n in range(3):
+            self.commit(source, f'struct Other{n} {{}}\n')
+            self.assertIn('cold, new cache', self.warm())
+            os.utime((self.tree / '.build').resolve().parent, (n + 2, n + 2))
+        self.commit(source, 'struct Original {}\n')
+        self.assertTrue(self.warm().startswith('build folders: warm'))
+        self.assertEqual((self.tree / '.build').resolve(), original)
+        self.assertEqual(product.read_text(), 'built for Original')
+
+    def test_it_keeps_at_most_the_limit_and_never_goes_below_the_disk_floor(self):
+        for n in range(lane.WARM_KEEP + 1):
             self.commit('Packages/SessionKit/Sources/A.swift', f'struct A{n} {{}}\n')
             self.warm()
             time.sleep(0.01)
