@@ -339,6 +339,65 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         model.playMarginMomentNow()
         XCTAssertNotNil(try fixture.storedRecord()?.firstHeardAt, "its voice started")
         XCTAssertEqual(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id }?.isNew, false)
+        XCTAssertNil(model.diagnostics["marginMoment.chime"], "a muted layer's Margin plays with no chime (#932)")
+    }
+
+    /// #932 (found on the phone): tapping a friend's Margin in the Timeline started their voice with no chime.
+    /// The moment now plays the chime the automatic prompt has always played, and their voice follows it.
+    func testPlayingASharedMarginsMomentChimesBeforeTheirVoice() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, layerIsMuted: false)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id })
+
+        model.playSharedMarginMoment(row)
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertNil(model.diagnostics["marginMoment.chime"], "the lead-in plays the episode, not the chime")
+        model.playMarginMomentNow()
+        XCTAssertEqual(model.diagnostics["marginMoment.chime"], "played:shared::received::note", "the chime plays first")
+        XCTAssertNil(try fixture.storedRecord()?.firstHeardAt, "their voice waits for the chime")
+        try waitUntil("their voice follows the chime") { try fixture.storedRecord()?.firstHeardAt != nil }
+        XCTAssertNil(model.pendingImportedCommentary, "the automatic prompt adds no second cue for the same Margin")
+    }
+
+    /// #932 (Codex audit): losing the headphones during the chime must not let their voice start through the
+    /// speaker. The voice waits for Play.
+    func testLosingTheHeadphonesDuringTheChimeHoldsTheVoiceUntilPlay() throws {
+        try assertTheChimedVoiceWaitsForPlay(after: [
+            AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue
+        ], posting: AVAudioSession.routeChangeNotification)
+    }
+
+    /// #932 (Codex audit): a call during the chime makes the system refuse the voice that starts after it, and the
+    /// refusal used to consume the Margin as unplayable. The voice waits for Play instead.
+    func testACallDuringTheChimeHoldsTheVoiceUntilPlay() throws {
+        try assertTheChimedVoiceWaitsForPlay(after: [
+            AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue
+        ], posting: AVAudioSession.interruptionNotification)
+    }
+
+    private func assertTheChimedVoiceWaitsForPlay(
+        after userInfo: [AnyHashable: Any], posting name: Notification.Name
+    ) throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, layerIsMuted: false)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id })
+        model.playSharedMarginMoment(row)
+        defer { model.endMarginMoment(); model.pause() }
+        model.playMarginMomentNow()
+        XCTAssertNotNil(model.diagnostics["marginMoment.chime"], "the chime is playing")
+
+        NotificationCenter.default.post(name: name, object: AVAudioSession.sharedInstance(), userInfo: userInfo)
+        try waitUntil("the Margin is held") { model.marginMomentVoiceIsPaused }
+        RunLoop.main.run(until: Date().addingTimeInterval(1))
+        XCTAssertNil(try fixture.storedRecord()?.firstHeardAt, "their voice didn't start by itself")
+        XCTAssertNotNil(model.marginMoment?.playing, "the Margin is still waiting, not consumed")
+
+        model.playPause()
+        XCTAssertNotNil(try fixture.storedRecord()?.firstHeardAt, "Play starts their voice")
     }
 
     /// #866 (found on the phone): Add Margin while a shared Margin's moment plays its voice used to be refused.
@@ -474,7 +533,12 @@ private struct SharedMarginHearingFixture {
     private let root: URL
     private let files: [URL]
 
-    init(itemID: String, makeWAV: (TimeInterval) throws -> URL, recordingClient: RecordingClient? = nil) throws {
+    init(
+        itemID: String,
+        makeWAV: (TimeInterval) throws -> URL,
+        recordingClient: RecordingClient? = nil,
+        layerIsMuted: Bool = true
+    ) throws {
         root = FileManager.default.temporaryDirectory.appending(path: "margin-heard-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let sourceURL = try makeWAV(30)
@@ -493,7 +557,7 @@ private struct SharedMarginHearingFixture {
         layer = ImportedCommentaryLayer(id: "received", itemId: itemID, packageDigest: "digest-\(UUID().uuidString)", packageId: "package",
             itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Source"),
             displayLabel: "Reviewer", importedAt: Date(), sourceResolutionStatus: .resolved,
-            isEnabled: true, isMuted: true, revealMode: .companion)
+            isEnabled: true, isMuted: layerIsMuted, revealMode: .companion)
         record = ImportedCommentaryInterjection(id: "note", layerId: layer.id, packageScopedId: "note", createdAt: Date(),
             anchorEvidence: PortableAnchorEvidence(anchorType: .media),
             approvedTranscript: "Reviewed words", audioPath: voiceURL.path, audioDurationMs: 2_000,

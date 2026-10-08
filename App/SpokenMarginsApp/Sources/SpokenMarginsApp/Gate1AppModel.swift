@@ -2273,6 +2273,9 @@ final class Gate1AppModel: ObservableObject {
             isApproximate: position.isApproximate
         )
         marginMomentConductor?.onVoiceStarted = { [weak self] in if $0 == targetID { self?.markSharedMarginHeard(row.interjection) } }
+        // Their voice gets the same chime as the automatic prompt, unless the layer is muted (#932).
+        marginMomentConductor?.chimedMarginIds = row.layer.isMuted ? [] : [targetID]
+        marginMomentConductor?.onChimeStarted = { [weak self] in self?.diagnostics["marginMoment.chime"] = "played:\($0)" }
         if !snapshot.status.isPlaybackActive { resumePlayback() }
         screen = .playback
     }
@@ -2317,6 +2320,7 @@ final class Gate1AppModel: ObservableObject {
         marginMomentTitle = title
         marginMomentPositionIsApproximate = isApproximate
         conductor.start()
+        diagnostics["marginMoment.chime"] = nil
         diagnostics["marginMoment"] = "started:lead_in_ms=\(target.mediaTimeMs - sequence.startMediaTimeMs);others=\(sequence.unplayed.count - 1);approximate=\(isApproximate)"
     }
 
@@ -7365,11 +7369,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func playImportedCommentaryCue() {
         #if canImport(AVFoundation)
-        do {
-            commentaryCuePlayer = try AVAudioPlayer(data: SharedMarginCue.doubleChimeWAVData())
-            commentaryCuePlayer?.volume = 0.65
-            commentaryCuePlayer?.play()
-        } catch {
+        do { commentaryCuePlayer = try SharedMarginChime.play() } catch {
             diagnostics["importedCommentaryCue"] = "failed:\(error.localizedDescription)"
         }
         #endif
