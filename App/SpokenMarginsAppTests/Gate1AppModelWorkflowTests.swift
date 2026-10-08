@@ -896,6 +896,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let databaseURL = root.appending(path: "library.sqlite")
         let store = try SQLiteSessionStore(path: databaseURL.path)
+        // Jobs for an item that isn't in the Library are dropped on refresh (#883), so each job's item has to exist.
+        for id in ["old", "selected", "new"] {
+            try store.saveItem(Item(id: id, title: id, mediaType: "text", text: "Words to read aloud.", externalReference: nil, status: "ready"))
+        }
         let old = AudioPreparationJob(id: "old", itemId: "old", manifestId: "old", policy: .demandWindow, requestedAt: Date(timeIntervalSince1970: 1), maximumChunkCount: 2)
         let selected = AudioPreparationJob(id: "selected", itemId: "selected", manifestId: "selected", policy: .demandWindow, requestedAt: Date(timeIntervalSince1970: 0), maximumChunkCount: 2)
         try store.saveAudioPreparationJob(old)
