@@ -2464,6 +2464,51 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    /// #1109 (Codex audit on 834f9d7): the client answers true to a stop even when the iOS voice already
+    /// reads, so a later memory warning must not record a second switch. Only the change of voice records one.
+    func testStoppingGenerationRecordsTheFallbackOnlyWhenTheVoiceChanges() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template, firstRenderDelay: .milliseconds(300))
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionActivator: {},
+            observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient()
+        )
+        _ = try client.prepareSpeechText(String(repeating: "Only a change of voice is worth a record. ", count: 8))
+        try client.play(targetId: "record-once", from: 0)
+        _ = await waitForRenderCount(renderer, minimum: 1)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        XCTAssertFalse(client.isSystemVoiceActive)
+
+        XCTAssertTrue(try model.stopOnDeviceRenderingRecordingFallback(
+            client, code: "listener_stop", reason: .listenerStoppedGeneration
+        ))
+        XCTAssertTrue(client.isSystemVoiceActive)
+        XCTAssertTrue(
+            try model.stopOnDeviceRenderingRecordingFallback(
+                client, returnsAutomatically: true, code: "memory_warning_stop", reason: .memoryWarning
+            ),
+            "the client still answers true when the iOS voice already reads"
+        )
+
+        let file = try XCTUnwrap(model.diagnosticsExportFileURL())
+        defer { try? FileManager.default.removeItem(at: file) }
+        let text = try String(contentsOf: file, encoding: .utf8)
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String])
+        let eventJSON = try XCTUnwrap(payload["playbackEvents"]?.data(using: .utf8))
+        let events = try JSONDecoder().decode(DeveloperDiagnosticRecording.Capture.self, from: eventJSON).events
+        let fallbacks = events.filter { $0.kind == "supertonic.fallback" }
+        XCTAssertEqual(fallbacks.map { $0.fields["code"] }, ["listener_stop"])
+        XCTAssertEqual(fallbacks.first?.fields["reason"], "listener_stopped_generation")
+        try client.stop()
+    }
+
     /// #314 audit: a stop's reason belongs to its item. When the listener plays item B and then
     /// comes back to item A, whose generation they stopped, A must report its own reason, not
     /// lose it to B's rendering (or borrow B's reason if B had stopped too).
