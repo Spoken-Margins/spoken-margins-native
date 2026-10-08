@@ -8122,18 +8122,11 @@ final class Gate1AppModel: ObservableObject {
     }
 
     static func isResumableSession(_ session: Session) -> Bool {
-        session.status == "in_progress" && session.phase != .abandoned
+        SessionContinuation.isResumableSession(session)
     }
 
     static func preferredContinuationSession(in sessions: [Session]) -> Session? {
-        sessions.sorted { lhs, rhs in
-            let left = lhs.updatedAt ?? lhs.createdAt ?? .distantPast
-            let right = rhs.updatedAt ?? rhs.createdAt ?? .distantPast
-            return left == right ? lhs.id < rhs.id : left > right
-        }.first { session in
-            isResumableSession(session)
-                || (session.status == "finished" && session.completionPercent >= 100)
-        }
+        SessionContinuation.preferredContinuationSession(in: sessions)
     }
 
     var selectedItemPreferredContinuationSession: Session? {
@@ -8292,7 +8285,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var preparedTextAudioStatusDescription: String {
-        humanReadableStatus(preparedTextAudioStatus)
+        PlaybackStatusWording.humanReadableStatus(preparedTextAudioStatus)
     }
 
     var shouldShowOnDeviceSpeechGenerationStatus: Bool {
@@ -8302,14 +8295,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     static func supportsOnDeviceSpeechGenerationStatus(targetType: String?) -> Bool {
-        switch targetType {
-        case TargetType.itemTextTTS.rawValue,
-             TargetType.summaryTurnTTS.rawValue,
-             TargetType.assistantTurnTTS.rawValue:
-            return true
-        default:
-            return false
-        }
+        PlaybackStatusWording.supportsOnDeviceSpeechGenerationStatus(targetType: targetType)
     }
 
     var canStopOnDeviceSpeechGeneration: Bool {
@@ -8401,34 +8387,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var sourceTranscriptStatusDescription: String {
-        humanReadableStatus(sourceTranscriptStatus)
-    }
-
-    private func humanReadableStatus(_ status: String) -> String {
-        switch status {
-        case "not_started":
-            return "not started"
-        case "rendering":
-            return "preparing"
-        case "starter_ready":
-            return "starter ready"
-        case "ready", "complete":
-            return "ready"
-        case "failed":
-            return "failed"
-        case "live_fallback":
-            return "live fallback"
-        case "queued":
-            return "queued"
-        case "downloading":
-            return "downloading"
-        case "transcribing":
-            return "transcribing"
-        case "unavailable":
-            return "unavailable"
-        default:
-            return status.replacingOccurrences(of: "_", with: " ")
-        }
+        PlaybackStatusWording.humanReadableStatus(sourceTranscriptStatus)
     }
 
     var currentChapter: Chapter? {
@@ -8503,17 +8462,12 @@ final class Gate1AppModel: ObservableObject {
         let mediaDurationMs = snapshot.currentPlaybackDurationMs ?? selectedItem.mediaDurationMs
         let textLength = selectedItem.text.count
         return importedCommentaryPrompts(includeAnnounced: false).compactMap { prompt in
-            let positionPercent: Int?
-            if let mediaTimeMs = prompt.interjection.resolution.localMediaTimeMs,
-               let mediaDurationMs,
-               mediaDurationMs > 0 {
-                positionPercent = Int((Double(mediaTimeMs) / Double(mediaDurationMs) * 100).rounded())
-            } else if let charOffset = prompt.interjection.resolution.localStartChar,
-                      textLength > 0 {
-                positionPercent = Int((Double(charOffset) / Double(textLength) * 100).rounded())
-            } else {
-                positionPercent = nil
-            }
+            let positionPercent = SharedMarginPosition.percent(
+                mediaTimeMs: prompt.interjection.resolution.localMediaTimeMs,
+                mediaDurationMs: mediaDurationMs,
+                charOffset: prompt.interjection.resolution.localStartChar,
+                textLength: textLength
+            )
             guard let positionPercent,
                   positionPercent > currentPercent else { return nil }
             return Gate2LiveActivityNavigationEntry(
