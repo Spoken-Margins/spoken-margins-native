@@ -154,6 +154,16 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         try loadBySession(kind: "interjection", sessionId: sessionId)
     }
 
+    /// The Margin rows `deleteItem(id:)` removes with the item: every row filed under it.
+    public func loadInterjections(itemId: String) throws -> [Interjection] {
+        try loadByItem(kind: "interjection", itemId: itemId)
+    }
+
+    /// Every Margin row of every item, for the check that no Margin still uses a file before it is removed (#1035).
+    public func loadAllInterjections() throws -> [Interjection] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", ["interjection"])
+    }
+
     public func saveInterjectionShareRevision(_ revision: InterjectionShareRevision) throws {
         try withTransaction {
             let existing: InterjectionShareRevision? = try loadOptional(
