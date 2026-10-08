@@ -5003,21 +5003,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func purgeSourceTranscriptionAudioCaches(itemId: String) throws {
-        let caches = try FileManager.default.url(
-            for: .cachesDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        for relative in [
-            "SourceAudioTranscriptionChunksV3/\(itemId)",
-            "SourceAudioTranscriptionWindows/\(itemId)"
-        ] {
-            let url = caches.appending(path: relative, directoryHint: .isDirectory)
-            if FileManager.default.fileExists(atPath: url.path) {
-                try FileManager.default.removeItem(at: url)
-            }
-        }
+        try SourceTranscriptionCaches.purge(itemId: itemId)
     }
 
     private func submitAutomaticEpisodeMapPreparationIfNeeded() {
@@ -12325,7 +12311,7 @@ final class Gate1AppModel: ObservableObject {
                     failure = error.localizedDescription
                 }
                 if let caches = try? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: false) {
-                    try? FileManager.default.removeItem(at: caches.appending(path: "SourceAudioTranscriptionWindows/\(scratchID)"))
+                    try? SourceTranscriptionCaches.remove(.windows, itemId: scratchID, cachesDirectory: caches)
                 }
             }
             if let directory = files.first?.url.deletingLastPathComponent() {
