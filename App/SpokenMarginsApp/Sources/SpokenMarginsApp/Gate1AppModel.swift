@@ -3874,52 +3874,27 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var sleepTimerIsActive: Bool {
-        if case .inactive = sleepTimerState { return false }
-        return true
+        SleepTimerPolicy.isActive(sleepTimerState)
     }
 
     var sleepTimerDescription: String {
-        switch sleepTimerState {
-        case .inactive: return "Sleep Timer"
-        case .armed(let mode, _, _):
-            if mode == .endOfChapter { return "End of Chapter" }
-            guard let seconds = sleepTimerRemainingSeconds else { return "Sleep Timer" }
-            return String(format: "%d:%02d", seconds / 60, seconds % 60)
-        case .expiryDeferred: return "Pauses after recording"
-        }
+        SleepTimerPolicy.description(state: sleepTimerState, remainingSeconds: sleepTimerRemainingSeconds)
     }
 
     var canUseEndOfChapterSleepTimer: Bool {
-        endOfChapterTarget() != nil
+        SleepTimerPolicy.endOfChapterTarget(chapters: selectedItem.mediaChapters, currentMediaTimeMs: snapshot.currentMediaTimeMs) != nil
     }
 
     func armSleepTimer(_ mode: SleepTimerMode) {
-        let deadline: Date?
-        let chapterId: String?
-        switch mode {
-        case .minutes15: deadline = Date().addingTimeInterval(15 * 60); chapterId = nil
-        case .minutes30: deadline = Date().addingTimeInterval(30 * 60); chapterId = nil
-        case .minutes45: deadline = Date().addingTimeInterval(45 * 60); chapterId = nil
-        case .minutes60: deadline = Date().addingTimeInterval(60 * 60); chapterId = nil
-        case .endOfChapter:
-            guard let target = endOfChapterTarget() else { return }
-            deadline = nil
-            chapterId = target.chapterId
-        }
-        sleepTimerState = .armed(mode: mode, deadline: deadline, chapterId: chapterId)
+        guard let state = SleepTimerPolicy.arm(mode, now: Date(), chapters: selectedItem.mediaChapters, currentMediaTimeMs: snapshot.currentMediaTimeMs) else { return }
+        sleepTimerState = state
         startSleepTimerTicker()
         reconcileSleepTimer(now: Date())
     }
 
     func extendSleepTimerBy15Minutes() {
         let now = Date()
-        let deadline: Date
-        switch sleepTimerState {
-        case .armed(_, let current?, _): deadline = max(current, now).addingTimeInterval(15 * 60)
-        case .expiryDeferred: deadline = now.addingTimeInterval(15 * 60)
-        case .inactive, .armed(_, nil, _): deadline = now.addingTimeInterval(15 * 60)
-        }
-        sleepTimerState = .armed(mode: .minutes15, deadline: deadline, chapterId: nil)
+        sleepTimerState = SleepTimerPolicy.extend(sleepTimerState, now: now)
         startSleepTimerTicker()
         reconcileSleepTimer(now: now)
     }
@@ -3943,48 +3918,15 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func reconcileSleepTimer(now: Date) {
-        switch sleepTimerState {
-        case .inactive:
-            sleepTimerRemainingSeconds = nil
-        case .expiryDeferred(let mode):
-            sleepTimerRemainingSeconds = 0
-            if !snapshot.isRecording { expireSleepTimer(mode: mode) }
-        case .armed(let mode, let deadline, let chapterId):
-            if let deadline {
-                let remaining = max(0, Int(ceil(deadline.timeIntervalSince(now))))
-                sleepTimerRemainingSeconds = remaining
-                if remaining == 0 { requestSleepTimerExpiry(mode: mode) }
-            } else if mode == .endOfChapter,
-                      let target = endOfChapterTarget(chapterId: chapterId),
-                      (snapshot.currentMediaTimeMs ?? 0) >= target.endMs {
-                requestSleepTimerExpiry(mode: mode)
-            }
+        if let mode = SleepTimerPolicy.reconcile(
+            state: &sleepTimerState, remainingSeconds: &sleepTimerRemainingSeconds,
+            now: now, isRecording: snapshot.isRecording,
+            currentMediaTimeMs: snapshot.currentMediaTimeMs, chapters: selectedItem.mediaChapters
+        ) {
+            if snapshot.status.isPlaybackActive { pause() }
+            cancelSleepTimer()
+            reportConfirmation(SleepTimerPolicy.expiryConfirmation(mode: mode))
         }
-    }
-
-    private func requestSleepTimerExpiry(mode: SleepTimerMode) {
-        if snapshot.isRecording {
-            sleepTimerState = .expiryDeferred(mode: mode)
-        } else {
-            expireSleepTimer(mode: mode)
-        }
-    }
-
-    private func expireSleepTimer(mode: SleepTimerMode) {
-        if snapshot.status.isPlaybackActive { pause() }
-        cancelSleepTimer()
-        reportConfirmation(mode == .endOfChapter ? "Paused at the end of the chapter." : "Sleep timer paused playback.")
-    }
-
-    private func endOfChapterTarget(chapterId: String? = nil) -> (chapterId: String, endMs: Int)? {
-        let chapters = selectedItem.mediaChapters.sorted { $0.startMs < $1.startMs }
-        guard chapters.count > 1 else { return nil }
-        let currentMs = snapshot.currentMediaTimeMs ?? 0
-        let index: Int
-        if let chapterId, let exact = chapters.firstIndex(where: { $0.id == chapterId }) { index = exact }
-        else { index = chapters.lastIndex(where: { $0.startMs <= currentMs }) ?? 0 }
-        guard chapters.indices.contains(index + 1) else { return nil }
-        return (chapters[index].id, chapters[index + 1].startMs)
     }
 
     func stopOnDeviceSpeechGeneration() {
