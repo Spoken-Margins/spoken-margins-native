@@ -2448,6 +2448,106 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(model.trashUndo)
     }
 
+    /// #1035: "Permanently deleted" has to take the item's spoken Margin recordings off the phone, not
+    /// only their database rows. The recordings are real files in the app's own Application Support folder.
+    func testPermanentDeleteRemovesTheItemsMarginRecordingsAndKeepsALiveItemsOwn() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "permanent-delete-recordings-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let doomedSession = try startAndEndSession(model, itemId: "item-pill")
+        model.importTitle = "Second Item"
+        model.importText = "A second item that stays in the Library."
+        model.importTextItem()
+        let liveID = model.selectedItem.id
+        let liveSession = try startAndEndSession(model, itemId: liveID)
+        let doomed = [
+            try saveSpokenMargin(store: store, itemId: "item-pill", sessionId: doomedSession),
+            try saveSpokenMargin(store: store, itemId: "item-pill", sessionId: doomedSession),
+        ]
+        let live = try saveSpokenMargin(store: store, itemId: liveID, sessionId: liveSession)
+        model.moveItemToTrash(id: "item-pill")
+
+        model.permanentlyDeleteItem(id: "item-pill")
+
+        XCTAssertFalse(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
+        for file in doomed {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "\(file.lastPathComponent) is gone with its item")
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: live.path), "a live item's recording is never touched")
+        XCTAssertEqual(try store.loadAllInterjections().map(\.itemId), [liveID])
+    }
+
+    func testEmptyRecentlyDeletedRemovesEveryTrashedItemsMarginRecordings() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "empty-trash-recordings-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        var sessions: [String: String] = [:]
+        sessions["item-pill"] = try startAndEndSession(model, itemId: "item-pill")
+        var ids = ["item-pill"]
+        for title in ["Second Trashed Item", "Third Item That Stays"] {
+            model.importTitle = title
+            model.importText = "\(title) has its own listening session."
+            model.importTextItem()
+            let id = model.selectedItem.id
+            ids.append(id)
+            sessions[id] = try startAndEndSession(model, itemId: id)
+        }
+        let trashed = Array(ids.prefix(2))
+        let liveID = ids[2]
+        var doomed: [URL] = []
+        for id in trashed {
+            doomed.append(try saveSpokenMargin(store: store, itemId: id, sessionId: sessions[id]!))
+            doomed.append(try saveSpokenMargin(store: store, itemId: id, sessionId: sessions[id]!))
+        }
+        let live = try saveSpokenMargin(store: store, itemId: liveID, sessionId: sessions[liveID]!)
+        trashed.forEach { model.moveItemToTrash(id: $0) }
+        XCTAssertEqual(Set(model.recentlyDeletedItems.map(\.id)), Set(trashed))
+
+        model.permanentlyDeleteRecentlyDeletedItems()
+
+        XCTAssertTrue(model.recentlyDeletedItems.isEmpty)
+        for file in doomed {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "\(file.lastPathComponent) is gone with its item")
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: live.path), "a live item's recording is never touched")
+        XCTAssertEqual(try store.loadAllInterjections().map(\.itemId), [liveID])
+    }
+
+    private func startAndEndSession(_ model: Gate1AppModel, itemId: String) throws -> String {
+        model.startItem(id: itemId)
+        let sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        model.endSession()
+        return sessionId
+    }
+
+    /// A spoken Margin the way the recorder leaves it: an audio file under Application Support and a row
+    /// naming it. The file is removed when the test ends even if the app under test didn't.
+    private func saveSpokenMargin(store: SQLiteSessionStore, itemId: String, sessionId: String) throws -> URL {
+        let folder = try FileManager.default
+            .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            .appending(path: "SpokenMargins/interjections", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appending(path: "test-1035-\(UUID().uuidString).m4a")
+        try Data("a spoken Margin".utf8).write(to: file)
+        addTeardownBlock { try? FileManager.default.removeItem(at: file) }
+        var margin = shareableInterjection(itemId: itemId)
+        margin.sessionId = sessionId
+        margin.audioPath = "SpokenMargins/interjections/\(file.lastPathComponent)"
+        margin.audioStatus = "recorded"
+        try store.saveInterjection(margin)
+        return file
+    }
+
     func testStoppingTextPlaybackKeepsSessionInProgressAndResumable() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

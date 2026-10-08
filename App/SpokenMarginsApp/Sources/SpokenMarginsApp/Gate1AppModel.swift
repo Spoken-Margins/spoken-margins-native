@@ -5837,10 +5837,12 @@ final class Gate1AppModel: ObservableObject {
                 reportFailure("Move the item to Recently Deleted before deleting it permanently.")
                 return
             }
+            let recordings = try store.loadInterjections(itemId: id)
             podcastDownloadCoordinator?.removeItem(id)
             removeDurableGeneratedAudio(for: item)
             removeEpisodeMapArtifacts(itemId: id)
             try store.deleteItem(id: id)
+            removeMarginRecordings(recordings, store: store)
             try refreshLibraryRows(store: store)
             guard !libraryItems.contains(where: { $0.id == id }),
                   !recentlyDeletedItems.contains(where: { $0.id == id }),
@@ -5871,10 +5873,12 @@ final class Gate1AppModel: ObservableObject {
                     throw SessionKitError.persistenceFailed("bulk_delete_requires_trashed_items")
                 }
             }
+            let recordings = try ids.flatMap { try store.loadInterjections(itemId: $0) }
             ids.forEach { podcastDownloadCoordinator?.removeItem($0) }
             items.forEach(removeDurableGeneratedAudio)
             ids.forEach(removeEpisodeMapArtifacts)
             try store.deleteItems(ids: ids)
+            removeMarginRecordings(recordings, store: store)
             try refreshLibraryRows(store: store)
             guard recentlyDeletedItems.isEmpty,
                   ids.allSatisfy({ (try? store.loadItem(id: $0)) == nil }) else {
@@ -9879,7 +9883,7 @@ final class Gate1AppModel: ObservableObject {
     private func stopSpeechPreviews() {}
     #endif
 
-    private func applicationSupportDirectory() throws -> URL {
+    func applicationSupportDirectory() throws -> URL {
         try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -10407,20 +10411,6 @@ final class Gate1AppModel: ObservableObject {
             create: true
         )
         return cachesDirectory.appending(path: "GeneratedTextAudio", directoryHint: .isDirectory)
-    }
-
-    private func removeDurableGeneratedAudio(for item: Item) {
-        guard item.media?.sourceType == .generatedTTSPrerendered,
-              let identifier = item.media?.nativeMediaId ?? item.media?.url,
-              let url = URL(string: identifier),
-              url.isFileURL,
-              let supportDirectory = try? applicationSupportDirectory() else { return }
-        let generatedDirectory = supportDirectory
-            .appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory)
-            .standardizedFileURL
-        let file = url.standardizedFileURL
-        guard file.deletingLastPathComponent() == generatedDirectory else { return }
-        try? FileManager.default.removeItem(at: file)
     }
 
     private func removeEpisodeMapArtifacts(itemId: String) {
