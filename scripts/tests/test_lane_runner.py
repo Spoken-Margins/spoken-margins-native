@@ -906,6 +906,39 @@ class ChangedPathsForTestsTests(unittest.TestCase):
             self.assertIsNone(lane.changed_paths_for_tests(repo / 'nowhere', 'next'))
             self.assertIsNone(lane.changed_paths_for_tests(repo, 'no-such-base'))
 
+    def pr_changing(self, folder, *names):
+        """A repository whose PR branch adds each name, one tracked file per name, on top of origin/next."""
+        def git(*args):
+            subprocess.check_call(['git', '-C', folder, '-c', 'user.name=t', '-c', 'user.email=t@t', *args],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        git('init', '-q', '-b', 'next')
+        git('commit', '-qm', 'base', '--allow-empty')
+        git('update-ref', 'refs/remotes/origin/next', 'HEAD')
+        git('checkout', '-qb', 'pr')
+        for name in names:
+            (Path(folder) / name).parent.mkdir(parents=True, exist_ok=True)
+            (Path(folder) / name).write_text('x\n')
+        git('add', '.')
+        git('commit', '-qm', 'change')
+        return Path(folder)
+
+    def test_names_git_would_quote_come_through_exactly(self):
+        # Audit of #898: git prints scripts/tests/test_café.py as "scripts/tests/test_caf\303\251.py" unless it is
+        # asked for NUL-delimited names; the quoted form doesn't start with scripts/, so the lane's own tests
+        # would have been skipped for a scripts change.
+        names = ['scripts/tests/test_café.py', 'scripts/tab\tname.py', 'scripts/quote"name.py',
+                 'scripts/back\\slash.py', 'docs/note ü.md']
+        with tempfile.TemporaryDirectory() as folder:
+            repo = self.pr_changing(folder, *names)
+            self.assertEqual(lane.changed_paths_for_tests(repo, 'next'), sorted(names))
+
+    def test_a_name_the_one_path_per_line_hand_off_would_change_runs_everything(self):
+        for name in ('scripts/line\nbreak.py', ' scripts/leading-space.py', 'scripts/trailing-space.py '):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as folder:
+                repo = self.pr_changing(folder, 'docs/a.md', name)
+                self.assertIsNone(lane.changed_paths_for_tests(repo, 'next'))
+
 
 class MergeTests_Runner(unittest.TestCase):
     """The runner merges what it passes (decision 3): blockers, order, retries. Git is faked here;

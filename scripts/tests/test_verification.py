@@ -281,6 +281,18 @@ class VerificationTests(unittest.TestCase):
         self.assertTrue(self.ops_ran)
         self.assertEqual(list(self.skipped_steps(manifest)), ['runner-tests'])
 
+    def test_every_runner_test_that_reads_the_repository_outside_scripts_is_covered(self):
+        # The lane's warm-build tests copy the root .gitignore, and next's research and hot-file tests read
+        # research/ and the hot files under App/: a diff to any of them must still reach those tests (audit of #898).
+        self.assertEqual(verification.runner_test_scope(['App/X.swift', '.gitignore'])[0], 'all')
+        for path in ('research/B4/README.md', 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift'):
+            with self.subTest(path=path):
+                scope, why = verification.runner_test_scope([path])
+                self.assertEqual(scope, 'readers')
+        self.assertIn('test_research_tests', verification.RUNNER_TEST_READERS)
+        self.assertIn('test_hot_file_ratchet', verification.RUNNER_TEST_READERS)
+        self.assertEqual(verification.runner_test_scope(['docs/a.md'])[0], 'none')
+
     def test_no_diff_information_runs_every_step(self):
         for changed in (None, []):
             with self.subTest(changed=changed):

@@ -297,14 +297,16 @@ CODEX_SANDBOX_SKIPS = {'runner-tests': 'Codex sandbox: `ps` cannot run here, so 
 # Python tests when nothing they read changed. A run without that list runs every step. Each rule fails
 # safe: a path none of these names (a new top-level folder, say) leaves the suites on.
 # scripts/tests test the lane itself, and the Codex audit reads lane-runner.py: any change under scripts/ or
-# .github/ runs every runner test.
-RUNNER_TEST_TRIGGERS = ('scripts/', '.github/')
-# Four modules also read the repository outside scripts/: the filled-button scans read App/, and the
-# inventory and contract checks read project.yml, Package.swift, TestPlans/, Contracts/ and validation/. A diff
-# that touches those inputs (and no lane path) runs just these modules; the rest of the suite reads only scripts/.
+# .github/ runs every runner test. So does the root .gitignore, which the lane runner's warm-build tests copy.
+RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
+# Some modules also read the repository outside scripts/: the filled-button scans read App/, the inventory and
+# contract checks read project.yml, Package.swift, TestPlans/, Contracts/ and validation/, the hot-file test
+# checks that the hot files exist under App/, and the research harness test reads research/. A diff that
+# touches those inputs (and no lane path) runs just these modules; the rest of the suite reads only scripts/.
+# A new test module that reads the repository outside scripts/ belongs here and in RUNNER_TEST_INPUTS.
 RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels', 'test_verification',
-                       'test_validate_contracts')
-RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'project.yml')
+                       'test_validate_contracts', 'test_hot_file_ratchet', 'test_research_tests')
+RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml')
 # The ops tests read their own folder and scripts/lane-runner.py (the audit's test), test-scope and the release
 # files, so they follow the ops tools and anything the runner tests follow, plus the build inputs.
 OPS_TEST_TRIGGERS = ('ops/', 'scripts/', '.github/', 'project.yml', 'TestPlans/')

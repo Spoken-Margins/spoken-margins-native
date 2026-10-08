@@ -456,9 +456,14 @@ def changed_paths_for_tests(tree: Path, base: str) -> list[str] | None:
     try:
         git = ['git', '-C', str(tree)]
         merge_base = subprocess.check_output(git + ['merge-base', 'HEAD', f'origin/{base}'], text=True).strip()
-        paths = subprocess.check_output(git + ['diff', '--name-only', '--no-renames', merge_base, 'HEAD'],
-                                        text=True).splitlines()
-    except (OSError, subprocess.SubprocessError):
+        # NUL-delimited: git's default output quotes and escapes a name like scripts/tests/test_café.py, which
+        # then no longer starts with scripts/ and would leave the lane's own tests out.
+        raw = subprocess.check_output(git + ['diff', '--name-only', '--no-renames', '-z', merge_base, 'HEAD'])
+        paths = [path.decode() for path in raw.split(b'\0') if path]
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError):
+        return None
+    # The hand-off is one path per line, so a name that line splitting or trimming would change can't be sent.
+    if any(path.splitlines() != [path] or path != path.strip() for path in paths):
         return None
     return sorted(set(paths)) or None
 
