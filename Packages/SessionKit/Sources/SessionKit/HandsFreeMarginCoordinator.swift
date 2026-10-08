@@ -13,8 +13,9 @@ public enum HandsFreeMarginTimings {
     /// A second trigger this soon after the last one is a bounce (the same window as #148).
     public static let bounceWindow: TimeInterval = 0.5
     /// How long the background level is measured after the microphone opens. It is also how long a
-    /// quieter level must last, before speech is heard, to replace the first estimate: the listener
-    /// may have started talking at once, so the first half-second was speech, not the room.
+    /// level a speech margin quieter must last, before speech is heard, to replace the first
+    /// estimate: the listener may have started talking at once, so the first half-second was
+    /// speech, not the room.
     public static let calibration: TimeInterval = 0.5
     /// Speech needed for an interrupted Margin to be kept, marked cut short.
     public static let minimumSpeechToKeep: TimeInterval = 1
@@ -354,12 +355,13 @@ public final class HandsFreeMarginCoordinator {
 
     /// A listener who talks the instant the tone ends fills the calibration with speech, so the
     /// first estimate of the room is too loud and the threshold too high. Until speech is heard,
-    /// a level that stays below the estimate for the calibration time shows the room really is
-    /// that quiet: learn from it and replay the samples so far under the new threshold, so the
-    /// words already spoken count. One quiet sample or a short dip never does this, or steady
+    /// a level that stays a speech margin below the estimate for the calibration time shows the
+    /// room really is that quiet, and what was taken for the room would now count as speech:
+    /// learn from it and replay the samples so far under the new threshold, so the words already
+    /// spoken count. One quiet sample, a short dip or ordinary drift never does this, or steady
     /// noise would start to read as speech. Once speaking, the room is settled.
     private func relearnRoomIfQuieter(than decibels: Double, at now: TimeInterval) {
-        guard phase == .listening, let backgroundDB, decibels < backgroundDB else {
+        guard phase == .listening, let backgroundDB, decibels < backgroundDB - HandsFreeMarginTimings.speechMarginDB else {
             quieterRun = nil
             if phase != .listening { unspokenSamples = [] }
             return

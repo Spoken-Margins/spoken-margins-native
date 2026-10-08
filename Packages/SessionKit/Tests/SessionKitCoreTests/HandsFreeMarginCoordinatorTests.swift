@@ -267,6 +267,21 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         }
     }
 
+    func testAQuietRoomThatDriftsOrClicksStillMakesAFlag() {
+        // Drift of a few dB and a click in the first sample are not speech, and don't teach the room.
+        startRecording()
+        feed(quiet, for: 0.4)
+        feed(quiet + 3, for: 2.1)
+        XCTAssertEqual(feed(quiet - 2, for: 3.5), [.cancelRecording, .requestFlag, .playTone(.flag)], "drift")
+
+        coordinator.abandon()
+        clock.advance(1)
+        startRecording()
+        feed(quiet + 25, for: 0.1)
+        feed(quiet, for: 0.3)
+        XCTAssertEqual(feed(quiet - 1, for: 5.6), [.cancelRecording, .requestFlag, .playTone(.flag)], "click")
+    }
+
     func testAQuietRoomWithMeteringJitterStillMakesAFlag() {
         // A fixed jitter of about 3 dB around -55, longer than the listening window.
         let jitter: [Double] = [0, 1.5, -1, 2, -1.5, 0.5, 2.5, -0.5, 1, -2, 3, 0, -1, 2, 0.5, -1.5, 1.5, 0, 2, -0.5]
