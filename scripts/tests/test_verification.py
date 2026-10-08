@@ -291,6 +291,13 @@ class VerificationTests(unittest.TestCase):
                 self.assertEqual(scope, 'readers')
         self.assertIn('test_research_tests', verification.RUNNER_TEST_READERS)
         self.assertIn('test_hot_file_ratchet', verification.RUNNER_TEST_READERS)
+        # The lane runner's T3 tests plan against the real TestPlans/ and app test sources: renaming an app test
+        # or editing a plan must still reach them (found in review of #898).
+        for name in ('test_lane_runner.ScopeClassTests', 'test_lane_runner.T3Tests',
+                     'test_lane_runner.OnlyTestingTests', 'test_lane_sim.LaneSimTests'):
+            self.assertIn(name, verification.RUNNER_TEST_READERS)
+        for path in ('TestPlans/AudioAdapters.xctestplan', 'App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift'):
+            self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
         self.assertEqual(verification.runner_test_scope(['docs/a.md'])[0], 'none')
 
     def test_no_diff_information_runs_every_step(self):
@@ -302,8 +309,11 @@ class VerificationTests(unittest.TestCase):
                 self.assertFalse(self.skipped_steps(manifest))
 
     def test_the_readers_run_names_modules_that_exist_and_would_catch_an_app_change(self):
-        for module in verification.RUNNER_TEST_READERS:
-            self.assertTrue((SCRIPTS / 'tests' / f'{module}.py').exists(), module)
+        for name in verification.RUNNER_TEST_READERS:
+            module, _, cls = name.partition('.')
+            source = SCRIPTS / 'tests' / f'{module}.py'
+            self.assertTrue(source.exists(), name)
+            self.assertTrue(not cls or f'class {cls}(' in source.read_text(), name)
         calls = []
         with tempfile.TemporaryDirectory() as temporary:
             run = verification.Run(Path(temporary) / 'run', 'fast', ['App/X.swift'])
