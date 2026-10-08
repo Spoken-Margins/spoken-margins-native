@@ -124,6 +124,20 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertNil(fields["playerRate"], "the player's own fields still join the record only while playing")
     }
 
+    /// #1109 (Codex audit): with the iOS voice chosen, the client says what it intends in the same words, so
+    /// a pause record from system-voice narration carries the client's state too.
+    func testSystemVoiceClientReportsItsIntentForPlaybackRecords() throws {
+        let client = SystemSpeechPlaybackClient(voiceIdentifier: nil, speechRate: 0.5)
+        XCTAssertEqual(client.diagnosticIntent, "stopped")
+        _ = try client.prepareSpeechText(String(repeating: "The iOS voice reads this long enough to pause. ", count: 20))
+        try client.play(targetId: "system-intent", from: 0)
+        XCTAssertEqual(client.diagnosticIntent, "playing")
+        try client.pause()
+        XCTAssertEqual(client.diagnosticIntent, "paused")
+        try client.stop()
+        XCTAssertEqual(client.diagnosticIntent, "stopped")
+    }
+
     /// A slow render would likely be slow again, so that fallback waits for Retry.
     func testSlowRenderFallbackWaitsForRetryInsteadOfReturningAtTheNextPlay() async throws {
         let template = try makeTestWAV(duration: 0.5)

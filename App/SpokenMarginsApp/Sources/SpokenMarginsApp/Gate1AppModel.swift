@@ -640,9 +640,10 @@ final class Gate1AppModel: ObservableObject {
             || previous.lastFailure != snapshot.lastFailure
         guard changed || (snapshot.status.isPlaybackActive && now - lastPlaybackEventCheckpoint >= 30) else { return }
         lastPlaybackEventCheckpoint = now
-        let supertonic = speechPlaybackClient as? SupertonicSpeechPlaybackClient
         playbackEventRecording.record("playback.state", DeveloperDiagnosticRecording.playbackStateFields(
-            snapshot, player: supertonic?.playerDiagnostics() ?? [:], narration: supertonic?.narrationDiagnostics() ?? [:]
+            snapshot,
+            player: (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.playerDiagnostics() ?? [:],
+            narration: narrationDiagnostics()
         ))
     }
 
@@ -2476,6 +2477,12 @@ final class Gate1AppModel: ObservableObject {
             do {
                 if try client.stopOnDeviceRenderingAndUseSystemSpeech(returnsAutomatically: true) {
                     speechFallbackReason = .memoryWarning
+                    recordSupertonicFallbackEvent(
+                        code: "memory_warning_stop",
+                        reason: .memoryWarning,
+                        conditions: SupertonicResourcePolicy.currentConditions(isOnExternalPower: SupertonicResourcePolicy.isOnExternalPower()),
+                        offset: snapshot.currentTextStart ?? -1
+                    )
                     let message = SpeechFallbackReason.memoryWarning.listenerExplanation
                     statusMessage = message
                     presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
@@ -10662,11 +10669,11 @@ final class Gate1AppModel: ObservableObject {
                         let conditions = SupertonicResourcePolicy.currentConditions(
                             isOnExternalPower: SupertonicResourcePolicy.isOnExternalPower()
                         )
-                        let policyBlock = SpeechEnginePolicy.onDeviceRenderingBlock(conditions)
-                        let fallbackReason = SpeechFallbackReason(supertonicCode: reason, resourceBlock: policyBlock)
-                        self.recordDeveloperDiagnostic("supertonic.fallback", PlaybackDiagnosticFields.supertonicFallback(
-                            code: reason, reason: fallbackReason, policyBlock: policyBlock, conditions: conditions, offset: offset
-                        ))
+                        let fallbackReason = SpeechFallbackReason(
+                            supertonicCode: reason,
+                            resourceBlock: SpeechEnginePolicy.onDeviceRenderingBlock(conditions)
+                        )
+                        self.recordSupertonicFallbackEvent(code: reason, reason: fallbackReason, conditions: conditions, offset: offset)
                         self.speechFallbackReason = fallbackReason
                         self.diagnostics["supertonicFallback"] = reason
                         self.diagnostics["supertonicFallbackReason"] = fallbackReason.rawValue

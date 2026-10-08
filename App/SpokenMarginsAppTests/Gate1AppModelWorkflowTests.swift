@@ -187,6 +187,31 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.feedbackEvent?.kind, .success)
         XCTAssertEqual(model.feedbackEvent?.message, "Copied privacy-safe diagnostics.")
     }
+
+    /// #1109 (Codex audit): every switch to the iOS voice records its own event, the memory-warning stop
+    /// included, with the reason shown to the listener and what the resource policy reads.
+    func testFallbackEventCarriesTheReasonAndWhatThePolicyReads() throws {
+        let priorClipboard = UIPasteboard.general.items
+        defer { UIPasteboard.general.items = priorClipboard }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.recordSupertonicFallbackEvent(
+            code: "memory_warning_stop",
+            reason: .memoryWarning,
+            conditions: SpeechEngineConditions(isRecoveringFromMemoryWarning: true),
+            offset: 8_344
+        )
+        model.copyDiagnosticsExport()
+        let text = try XCTUnwrap(UIPasteboard.general.string)
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String])
+        let eventJSON = try XCTUnwrap(payload["playbackEvents"]?.data(using: .utf8))
+        let events = try JSONDecoder().decode(DeveloperDiagnosticRecording.Capture.self, from: eventJSON).events
+        let fallback = try XCTUnwrap(events.last { $0.kind == "supertonic.fallback" })
+        XCTAssertEqual(fallback.fields["code"], "memory_warning_stop")
+        XCTAssertEqual(fallback.fields["reason"], "memory_warning")
+        XCTAssertEqual(fallback.fields["policyBlock"], "memory_warning")
+        XCTAssertEqual(fallback.fields["offset"], "8344")
+        XCTAssertTrue(fallback.fields["conditions"]?.contains("memoryBackoff=true") == true)
+    }
     #endif
 
     func testLibraryAudioIconUsesPlaybackRepresentationRatherThanFileExtension() {
