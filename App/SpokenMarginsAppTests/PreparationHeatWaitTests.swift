@@ -20,6 +20,19 @@ final class PreparationHeatWaitTests: XCTestCase {
             if model == nil, store == nil { try? FileManager.default.removeItem(at: root) }
         }
         if queuesJob {
+            // The heat wait refreshes the Library. A job without its item is an orphan
+            // and is correctly removed by the #883 cleanup before the next heat read.
+            let item = Item(id: "item-heat-wait", title: "Heat wait article", mediaType: "text",
+                            text: "Words waiting to be prepared.", externalReference: nil, status: "ready")
+            try store.saveItem(item)
+            try store.savePreparedAudioManifest(PreparedAudioManifest(
+                id: "manifest-heat-wait", itemId: item.id, sourcePackageId: item.id,
+                signature: TTSRenderSignature(engine: "supertonic", modelRevision: "3",
+                    assetManifestHash: "heat-wait-assets", voiceStyleHash: "heat-wait-voice",
+                    synthesisParametersHash: "heat-wait-parameters", normalizationVersion: "1",
+                    chunkingVersion: "1", digest: "heat-wait"),
+                state: .pausedForThermal, plannedChunkCount: 1
+            ))
             try store.saveAudioPreparationJob(
                 AudioPreparationJob(id: "job-heat-wait", itemId: "item-heat-wait", manifestId: "manifest-heat-wait", policy: .explicit)
             )
