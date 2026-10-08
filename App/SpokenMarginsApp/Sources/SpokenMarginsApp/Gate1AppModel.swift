@@ -8740,10 +8740,6 @@ final class Gate1AppModel: ObservableObject {
         max(0.5, min(2.0, ((speechRate / 0.5) * 4).rounded() / 4))
     }
 
-    var mediaPlaybackRateDescription: String {
-        String(format: "%.2fx", mediaPlaybackRate)
-    }
-
     var compactPlaybackRateDescription: String {
         if isMediaPlaybackSnapshot {
             return String(format: "%.2f×", mediaPlaybackRate)
