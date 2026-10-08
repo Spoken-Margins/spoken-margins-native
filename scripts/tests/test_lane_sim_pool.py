@@ -253,8 +253,46 @@ class PoolDeviceTests(unittest.TestCase):
         return json.loads(self.world.read_text())['devices']
 
     def run_helper(self, *arguments, **env):
-        return subprocess.run(self.helper + list(arguments), env=dict(os.environ, **env), capture_output=True,
-                              text=True, timeout=90)
+        """lane-sim-boot's main() in this process, without the real watcher, so a run takes a fraction of a second.
+
+        The whole scripts suite has 180 s in `--plan fast` (verify-tests.py), so these tests can't each pay for a
+        subprocess and a watcher's poll. One test below runs the real command with a real watcher.
+        """
+        module = self.lane_sim_boot_module()
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, env), mock.patch.object(lane_sim, 'start_watcher'), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = module.main(list(arguments))
+        return subprocess.CompletedProcess(arguments, code, out.getvalue(), err.getvalue())
+
+    def run_real_command(self, *arguments):
+        return subprocess.run(self.helper + list(arguments), env=dict(os.environ), capture_output=True, text=True,
+                              timeout=90)
+
+    def test_the_real_command_boots_a_pool_device_with_a_watcher_and_done_keeps_it(self):
+        booted = self.run_real_command('--pool')
+        self.assertEqual(booted.returncode, 0, booted.stderr)
+        udid = booted.stdout.strip()
+        self.assertEqual(booted.stdout, udid + '\n')  # the UDID is the only thing on stdout
+        watcher = int(lane_sim.watch_files(udid)[2].read_text())
+        os.kill(watcher, 0)  # running
+        self.assertEqual(self.devices()[udid]['state'], 'Booted')
+        self.assertNotIn('claimed', pool.load()[udid])  # the Booted state and the watcher hold it from here
+        done = self.run_real_command('--done', udid)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn('kept in the desk pool', done.stderr)
+        for _ in range(50):
+            try:
+                os.kill(watcher, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        else:
+            os.kill(watcher, signal.SIGKILL)
+            self.fail('the watcher outlived --done')
+        self.assertEqual(self.devices()[udid]['state'], 'Shutdown')
+        self.assertIn({'erase': udid, 'state': 'Shutdown'}, self.records())
+        self.assertEqual(list(pool.load()), [udid])
 
     def test_the_second_desk_run_erases_the_first_device_instead_of_creating_another(self):
         first = self.run_helper('--pool')
@@ -438,7 +476,7 @@ class PoolDeviceTests(unittest.TestCase):
         self.assertTrue(holding.wait(10))
         taker = threading.Thread(target=take)
         taker.start()
-        self.assertFalse(finished.wait(1.0), 'take() ran while another run held the pool lock')
+        self.assertFalse(finished.wait(0.5), 'take() ran while another run held the pool lock')
         release_it.set()
         self.assertTrue(finished.wait(30))
         holder.join()
