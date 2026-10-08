@@ -42,6 +42,9 @@ public final class SessionEngine {
     private var playbackRequestedAt: Date?
     private(set) var recordingAnchor: Anchor?
     private var recordingTargetType: InterjectionTargetType?
+    /// The file the recorder closed for a Margin that isn't saved yet. The recorder forgets it once finished and
+    /// Save passes no path, so a Save that failed once could never be tried again (#911).
+    private var closedRecordingRef: String?
     private var recordingTargetId: String?
     private var priorPhase: SessionPhase?
     /// The Margin being recorded started on a finished source, at its end (#142).
@@ -58,6 +61,9 @@ public final class SessionEngine {
     private var playbackURLOverrides: [String: String] = [:]
     private var pinnedMediaTransport: (sessionId: String, targetId: String, playbackURL: String?)?
     private var lastMediaPercentageRepair: (sessionId: String, durationMs: Int)?
+    /// Where the last Back tap in text landed, so the next one can tell it is a repeat (#1102). Only listening on
+    /// from there keeps it: every other change of position calls `forgetBackTapLanding()` (#1122).
+    private var lastBackTapLanding: (targetKey: String, charOffset: Int)?
     private var pendingPlaybackPosition: PendingPlaybackPosition?
     private var pendingWrittenInterjection: WrittenInterjectionCapture?
 
@@ -628,6 +634,7 @@ public final class SessionEngine {
     public func seekMedia(toMediaTimeMs mediaTimeMs: Int) throws -> SessionSnapshot {
         try requireNavigationAllowed("seekMedia")
         try requirePlayback("seekMedia")
+        forgetBackTapLanding()
         guard let session = currentSession,
               session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
             throw SessionKitError.invalidCommandForState("seekMedia")
@@ -669,6 +676,7 @@ public final class SessionEngine {
     public func stagePausedMediaPosition(toMediaTimeMs mediaTimeMs: Int) throws -> SessionSnapshot {
         try requireNavigationAllowed("stagePausedMediaPosition")
         try requirePlayback("stagePausedMediaPosition")
+        forgetBackTapLanding()
         guard snapshot.status == .paused,
               let session = currentSession,
               session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
@@ -688,6 +696,7 @@ public final class SessionEngine {
     public func seekText(toCharOffset charOffset: Int) throws -> SessionSnapshot {
         try requireNavigationAllowed("seekText")
         try requirePlayback("seekText")
+        forgetBackTapLanding()
         if var turnSession = currentSession,
            turnSession.currentTargetType == .assistantTurnTTS || turnSession.currentTargetType == .summaryTurnTTS {
             guard let turn = try repository.loadTurns(sessionId: turnSession.id).first(where: { $0.id == turnSession.currentTargetId }) else {
@@ -710,6 +719,21 @@ public final class SessionEngine {
                 publish(status: .paused, phase: turnSession.phase)
             }
             return snapshot
+        }
+        // An article's prepared narration plays as media, so a text place (a shared Margin's, or where a Margin
+        // was recorded) is found on its narration timeline (#866). A place the audio doesn't reach still throws.
+        if let session = currentSession, session.currentTargetType == .transcriptBackedMedia,
+           let item = currentItem ?? (try? repository.loadItem(id: session.itemId)),
+           isGeneratedTextMedia(item.media),
+           let timeline = sourceTranscriptTimeline(itemId: item.id),
+           let mediaTimeMs = PreparedNarrationFallback.mediaTimeMs(textOffset: charOffset, timeline: timeline) {
+            do {
+                return try seekMedia(toMediaTimeMs: mediaTimeMs)
+            } catch SessionKitError.invalidCommandForState(let reason)
+                where reason == "media_seek_player_unavailable" && snapshot.status == .paused {
+                // A restored, paused session has no player yet: the next start opens the narration there.
+                return try stagePausedMediaPosition(toMediaTimeMs: mediaTimeMs)
+            }
         }
         guard var session = currentSession,
               session.currentTargetType == .itemTextTTS,
@@ -1037,6 +1061,7 @@ public final class SessionEngine {
     public func skipForward(unit: String, minimumDistance: Int) throws -> SessionSnapshot {
         try requireNavigationAllowed("skipForward")
         try requirePlayback("skipForward")
+        forgetBackTapLanding()
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("skipForward")
         }
@@ -1088,6 +1113,7 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("skipBack")
         }
         if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
+            forgetBackTapLanding()
             return try skipMediaBack(session: session, unit: unit)
         }
         guard session.currentTargetType == .itemTextTTS else {
@@ -1099,9 +1125,10 @@ public final class SessionEngine {
         session = syncSessionPositionFromAudio(session, item: item)
         let text = item.text ?? ""
         if unit == "chapter" {
+            forgetBackTapLanding()
             session.position.charOffset = previousChapterBoundary(before: session.position.charOffset)
         } else {
-            session.position.charOffset = previousBoundary(before: session.position.charOffset, unit: unit, text: text)
+            session.position.charOffset = backTapBoundary(from: session.position.charOffset, unit: unit, text: text, session: session)
         }
         session.completionPercent = percent(for: session.position.charOffset, text: text)
         session.position.chapterId = chapterId(for: session.position.charOffset)
@@ -1155,7 +1182,7 @@ public final class SessionEngine {
         guard !text.isEmpty else {
             throw SessionKitError.invalidCommandForState("skipBack")
         }
-        updated.position.charOffset = previousBoundary(before: updated.position.charOffset, unit: unit, text: text)
+        updated.position.charOffset = backTapBoundary(from: updated.position.charOffset, unit: unit, text: text, session: updated)
         updated.position.charOffset = max(0, min(updated.position.charOffset, text.count))
         updated.position.chapterId = turn.chapters?.last(where: { $0.startChar <= updated.position.charOffset })?.id
         currentSession = updated
@@ -1176,6 +1203,7 @@ public final class SessionEngine {
         try requireNavigationAllowed("jumpToChapter")
         try require("jumpToChapter", category: "timeline", capabilities: ["chapter_timing"])
         try requirePlayback("jumpToChapter")
+        forgetBackTapLanding()
         if let session = currentSession,
            session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
             stampRequestIfStarting(target: session.currentTargetId)
@@ -1204,6 +1232,7 @@ public final class SessionEngine {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("playSourceFromBeginning")
         try requirePlayback("playSourceFromBeginning")
+        forgetBackTapLanding()
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("playSourceFromBeginning")
         }
@@ -1273,6 +1302,7 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("beginInterjection")
         }
         guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
+        let wasPlaying = snapshot.status.isPlaybackActive
         let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
             || session.currentTargetType == .browserOwnedMedia
         recordingOnFinishedSource = isFinishedAtEnd(session)
@@ -1301,13 +1331,61 @@ public final class SessionEngine {
         recordingTargetType = target.type
         recordingTargetId = target.id
         recordingAnchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
-        try recorder.beginRecording()
+        closedRecordingRef = nil
+        do {
+            try recorder.beginRecording()
+        } catch {
+            try? recorder.cancelRecording() // let go of whatever the failed start grabbed, such as the audio session
+            abandonInterjectionStart(session, wasPlaying: wasPlaying)
+            throw error
+        }
         session.phase = .recordingInterjection
         currentSession = session
         snapshot.recordingTargetId = target.id
         publish(status: .recording, phase: .recordingInterjection)
         return snapshot
     }
+
+    /// The recorder wouldn't start after the source was paused for it (#1034), so nothing is recording. Forget the
+    /// recording target and put the transport back as the listener left it, the way `cancelInterjection` does:
+    /// a source that was playing plays on, anything else stays stopped, and the snapshot says which.
+    private func abandonInterjectionStart(_ session: Session, wasPlaying: Bool) {
+        let resumes = wasPlaying && !recordingOnFinishedSource
+        recordingAnchor = nil
+        recordingTargetType = nil
+        recordingTargetId = nil
+        priorPhase = nil
+        recordingOnFinishedSource = false
+        guard resumes else {
+            publish(status: .paused, phase: session.phase)
+            return
+        }
+        playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
+        if externallyStreamedTurnId == session.currentTargetId {
+            publish(status: .starting, phase: session.phase)
+            return
+        }
+        do {
+            try playCurrentTarget(session)
+            publishPlaybackStart(for: session, phase: session.phase)
+        } catch {
+            // The player wouldn't restart either; say so rather than claim it plays.
+            publish(status: .paused, phase: session.phase)
+        }
+    }
+
+    /// What the recorder has taken in so far while a Margin is recording (#937). Nil when it can't tell.
+    public func recordingCaptureReading() -> RecordingCaptureReading? { recorder.captureReading() }
+
+    /// Starts a new recorder after one that never got audio; the session stays in `recordingInterjection`.
+    public func restartRecordingCapture() throws {
+        guard currentSession?.phase == .recordingInterjection else {
+            throw SessionKitError.invalidCommandForState("restartRecordingCapture")
+        }
+        try recorder.restartCapture()
+    }
+
+    public func recordingCaptureDiagnostics() -> [String: String] { recorder.captureDiagnostics() }
 
     @discardableResult
     public func beginWrittenInterjection() throws -> WrittenInterjectionCapture {
@@ -1541,6 +1619,7 @@ public final class SessionEngine {
     public func playInterjectionAnchor(_ interjection: Interjection) throws -> SessionSnapshot {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("playInterjectionAnchor")
+        forgetBackTapLanding()
         let plan = try interjectionAnchorPlaybackPlan(for: interjection)
         let previousSession = currentSession
         let previousItem = currentItem
@@ -1602,9 +1681,11 @@ public final class SessionEngine {
               let targetId = recordingTargetId else {
             throw SessionKitError.invalidCommandForState("finishInterjection")
         }
-        let savedAudioRef = try recorder.finishRecording(audioRef: audioRef)
+        let savedAudioRef = try recorder.finishRecording(audioRef: audioRef ?? closedRecordingRef)
+        closedRecordingRef = savedAudioRef
         if profile.has("sync", "queue_offline_events"), let package = currentWatchPackage {
             let event = try queueWatchInterjectionEvent(audioRef: savedAudioRef, session: session, package: package)
+            closedRecordingRef = nil
             lastQueuedWatchSyncEvent = event
             snapshot.lastInterjectionAnchorType = anchor.anchorType
             snapshot.lastInterjectionTargetType = targetType
@@ -1648,6 +1729,7 @@ public final class SessionEngine {
                 : nil
         )
         try repository.saveInterjection(interjection)
+        closedRecordingRef = nil // owned by a Margin now; a later failure must not store it again
         lastMediaPercentageRepair = nil
         if shouldCapturePostResumePodcastEvidence,
            let anchorMediaTimeMs = anchor.mediaTimeMs {
@@ -1714,6 +1796,7 @@ public final class SessionEngine {
         recordingAnchor = nil
         recordingTargetType = nil
         recordingTargetId = nil
+        closedRecordingRef = nil
         if returnsToFinished {
             return try settleFinishedSourceAfterInterjection(session)
         }
@@ -1805,6 +1888,7 @@ public final class SessionEngine {
     public func playTurn(turnId: String) throws -> SessionSnapshot {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try requireNavigationAllowed("playTurn")
+        forgetBackTapLanding()
         externallyStreamedTurnId = nil
         var session = try resolveSession(nil)
         let turns = try repository.loadTurns(sessionId: session.id)
@@ -1924,6 +2008,7 @@ public final class SessionEngine {
     public func jumpToTurnChapter(turnId: String, chapterId: String) throws -> SessionSnapshot {
         stampRequestIfStarting(target: turnId); defer { playbackRequestedAt = nil }
         try requireNavigationAllowed("jumpToTurnChapter")
+        forgetBackTapLanding()
         var session = try resolveSession(nil)
         let turns = try repository.loadTurns(sessionId: session.id)
         guard let turn = turns.first(where: { $0.id == turnId }),
@@ -2384,6 +2469,7 @@ public final class SessionEngine {
         recordingAnchor = nil
         recordingTargetType = nil
         recordingTargetId = nil
+        closedRecordingRef = nil
         priorPhase = nil
         recordingOnFinishedSource = false
         // A protected position belongs to the session that just ended. Left set, it would
@@ -2978,22 +3064,9 @@ public final class SessionEngine {
     private func mediaTimeMs(forTextOffset textOffset: Int, timeline: TranscriptTimeline) -> Int {
         let sortedSegments = timeline.segments.sorted { $0.startMs < $1.startMs }
         guard !sortedSegments.isEmpty else { return 0 }
-        if let segment = sortedSegments.first(where: { segment in
-            guard let start = segment.startChar, let end = segment.endChar else { return false }
-            return start <= textOffset && textOffset < end
-        }) {
-            guard let startChar = segment.startChar,
-                  let endChar = segment.endChar,
-                  endChar > startChar else {
-                return segment.startMs
-            }
-            let fraction = Double(textOffset - startChar) / Double(endChar - startChar)
-            return segment.startMs + Int((Double(segment.endMs - segment.startMs) * max(0, min(1, fraction))).rounded())
-        }
-        if let next = sortedSegments.first(where: { ($0.startChar ?? .max) > textOffset }) {
-            return next.startMs
-        }
-        return timeline.durationMs ?? sortedSegments.last?.endMs ?? 0
+        return PreparedNarrationFallback.mediaTimeMs(textOffset: textOffset, timeline: timeline)
+            ?? sortedSegments.first(where: { ($0.startChar ?? .max) > textOffset })?.startMs
+            ?? timeline.durationMs ?? sortedSegments.last?.endMs ?? 0
     }
 
     private func preferredPublisherChapterCollection(in candidate: LinkResolutionCandidate) -> PublisherChapterCollection? {
@@ -3638,16 +3711,19 @@ public final class SessionEngine {
 
         let parsedMarkdown: ParsedObsidianMarkdown?
         if document == nil, handoff.contentFormat == .markdown {
-            parsedMarkdown = try? ObsidianMarkdownParser.parse(fileName: fallbackTitle, contents: rawText)
+            parsedMarkdown = try? ObsidianMarkdownParser.parse(fileName: fallbackTitle, contents: rawText, fallbackTitle: fallbackTitle)
         } else {
             parsedMarkdown = nil
         }
         let title = parsedMarkdown?.title ?? fallbackTitle
+        // The id keeps the title this importer gave before page titles stopped being read as file
+        // names (#1059), so a page already in the Library is found again on re-import.
+        let idTitle = parsedMarkdown.map { $0.titleIsFallback ? ObsidianMarkdownParser.fileNameTitle(fallbackTitle) : $0.title } ?? fallbackTitle
         let text = document?.text ?? (parsedMarkdown?.text ?? rawText).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
-        var itemId = handoff.itemId ?? browserTextItemId(title: title, url: handoff.source.url)
+        var itemId = handoff.itemId ?? browserTextItemId(title: idTitle, url: handoff.source.url)
         if handoff.itemId == nil, handoff.captureMode == .readablePage || isPDF {
             // A corrected extraction (or a new PDF extractor) must not move existing
             // Margin anchors. Retain the original edition and give changed text its
@@ -3685,9 +3761,15 @@ public final class SessionEngine {
                 policy: mapPolicy
             )
         let source = parsedMarkdown?.source ?? handoff.source.url
+        // A front-matter title or a heading beats the page title; only a title that came from the page
+        // can be a whole X post (#885).
+        let titleCameFromPage = document == nil && (parsedMarkdown.map { $0.metadata["title"] == nil && $0.headings.isEmpty } ?? true)
+        let displayTitle = titleCameFromPage
+            ? BrowserTextTitle.postTitle(pageTitle: fallbackTitle, url: handoff.source.url) ?? title
+            : title
         let item = Item(
             id: itemId,
-            title: title,
+            title: displayTitle,
             mediaType: isPDF || sourceExtension == "pdf" ? "pdf" : "text",
             text: text,
             externalReference: source,
@@ -4314,6 +4396,7 @@ public final class SessionEngine {
     /// persists it and protects it from the player's stale clock. Generated turns, and the Watch's
     /// own rollback, keep their exact resume.
     private func rejoiningAfterSavedMargin(_ session: Session) throws -> Session {
+        forgetBackTapLanding()
         var rejoined = session
         switch session.currentTargetType {
         case .transcriptBackedMedia, .browserOwnedMedia:
@@ -5047,6 +5130,44 @@ public final class SessionEngine {
             index -= 1
         }
         return 0
+    }
+
+    /// Drops the place the last Back tap landed. A position within `BackTapWindow` of it reads as that tap's repeat,
+    /// which holds only while the listener goes on hearing from there; anything else that moves the position within
+    /// a target (Forward, a seek or scrub, a chapter jump, a Margin's rejoin) makes the next Back measure from the
+    /// place the listener is now (#1122). Another session or target is a different `targetKey`, so it needs no call.
+    private func forgetBackTapLanding() {
+        lastBackTapLanding = nil
+    }
+
+    /// Where a Back tap lands, and what the next one measures from (#1102).
+    private func backTapBoundary(from offset: Int, unit: String, text: String, session: Session) -> Int {
+        let targetKey = "\(session.id)|\(session.currentTargetId)"
+        let landing = backTapLanding(
+            from: offset, unit: unit, text: text, window: BackTapWindow.characters(atSpeed: session.playbackRate), targetKey: targetKey
+        )
+        // A section is a fixed step, not a unit with a start, so it never counts as a place to walk back from.
+        lastBackTapLanding = unit == "section" ? nil : (targetKey, landing)
+        return landing
+    }
+
+    /// A position within `BackTapWindow` of where the last Back tap put the listener is that tap's repeat, so it
+    /// goes on to the unit before that, even over a unit shorter than the speech since. Otherwise a position
+    /// within the window of the start of the unit it is in counts as at that start, so Back goes to the unit
+    /// before; further in, it goes to this unit's start.
+    private func backTapLanding(from offset: Int, unit: String, text: String, window: Int, targetKey: String) -> Int {
+        guard unit != "section", offset > 0 else {
+            return previousBoundary(before: offset, unit: unit, text: text)
+        }
+        if let last = lastBackTapLanding, last.targetKey == targetKey,
+           last.charOffset <= offset, offset - last.charOffset < window {
+            return previousBoundary(before: last.charOffset, unit: unit, text: text)
+        }
+        let unitStart = previousBoundary(before: offset + 1, unit: unit, text: text)
+        guard offset - unitStart < window else {
+            return previousBoundary(before: offset, unit: unit, text: text)
+        }
+        return previousBoundary(before: unitStart, unit: unit, text: text)
     }
 
     private func nextParagraphBoundary(after offset: Int, text: String) -> Int {

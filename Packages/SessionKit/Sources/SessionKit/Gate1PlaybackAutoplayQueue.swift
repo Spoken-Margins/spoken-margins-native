@@ -1,23 +1,24 @@
 import Foundation
-import SessionKit
 
-struct Gate1PlaybackAutoplayQueue {
-    private(set) var pendingTurnIds: [String] = []
+public struct Gate1PlaybackAutoplayQueue {
+    public private(set) var pendingTurnIds: [String] = []
 
-    var first: String? {
+    public init() {}
+
+    public var first: String? {
         pendingTurnIds.first
     }
 
-    var count: Int {
+    public var count: Int {
         pendingTurnIds.count
     }
 
-    mutating func enqueue(_ turnId: String) {
+    public mutating func enqueue(_ turnId: String) {
         guard !pendingTurnIds.contains(turnId) else { return }
         pendingTurnIds.append(turnId)
     }
 
-    mutating func clear() {
+    public mutating func clear() {
         pendingTurnIds.removeAll()
     }
 
@@ -25,7 +26,7 @@ struct Gate1PlaybackAutoplayQueue {
         try pendingTurnIds.contains(where: predicate)
     }
 
-    func shouldDeferGeneratedTurnPlayback(snapshot: SessionSnapshot, turnId: String, completedCurrentAudio: Bool = false) -> Bool {
+    public func shouldDeferGeneratedTurnPlayback(snapshot: SessionSnapshot, turnId: String, completedCurrentAudio: Bool = false) -> Bool {
         if isOriginalContentUnfinished(snapshot) {
             return true
         }
@@ -35,7 +36,7 @@ struct Gate1PlaybackAutoplayQueue {
         return snapshot.status.isPlaybackActive && snapshot.targetId != turnId
     }
 
-    func shouldPlayPendingTurnNow(snapshot: SessionSnapshot, turnId: String, completedCurrentAudio: Bool = false) -> Bool {
+    public func shouldPlayPendingTurnNow(snapshot: SessionSnapshot, turnId: String, completedCurrentAudio: Bool = false) -> Bool {
         guard snapshot.targetId != turnId else { return false }
         if isOriginalContentUnfinished(snapshot) {
             return false
@@ -49,7 +50,7 @@ struct Gate1PlaybackAutoplayQueue {
         return !snapshot.status.isPlaybackActive
     }
 
-    mutating func popReadyTurn(snapshot: SessionSnapshot, completedCurrentAudio: Bool = false) -> String? {
+    public mutating func popReadyTurn(snapshot: SessionSnapshot, completedCurrentAudio: Bool = false) -> String? {
         guard let turnId = pendingTurnIds.first,
               shouldPlayPendingTurnNow(snapshot: snapshot, turnId: turnId, completedCurrentAudio: completedCurrentAudio) else {
             return nil

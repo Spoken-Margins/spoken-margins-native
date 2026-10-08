@@ -163,6 +163,43 @@ final class FollowingEditionTests: XCTestCase {
         XCTAssertEqual(build(entries, subscriptions, length: .overAnHour).picks.map(\.id), ["long"])
     }
 
+    /// The buckets meet at exactly 20 and 60 minutes: 20 is "20-60" and not "under 20", 60 is "20-60"
+    /// and not "over an hour". The test above uses 12, 42 and 95, which no boundary change can move.
+    func testTheLengthFilterBucketsMeetAtExactlyTwentyAndSixtyMinutes() {
+        let entries = [entry("e19", show: "a", daysAgo: 0, minutes: 19), entry("e20", show: "b", daysAgo: 0, minutes: 20),
+                       entry("e60", show: "c", daysAgo: 0, minutes: 60), entry("e61", show: "d", daysAgo: 0, minutes: 61)]
+        let subscriptions = [show("a"), show("b"), show("c"), show("d")]
+        func ids(_ length: FollowingLengthFilter) -> [String] { build(entries, subscriptions, length: length).picks.map(\.id).sorted() }
+        XCTAssertEqual(ids(.under20), ["e19"])
+        XCTAssertEqual(ids(.twentyToSixty), ["e20", "e60"])
+        XCTAssertEqual(ids(.overAnHour), ["e61"])
+
+        XCTAssertTrue(FollowingLengthFilter.under20.includes(minutes: 19.99))
+        XCTAssertFalse(FollowingLengthFilter.under20.includes(minutes: 20))
+        XCTAssertFalse(FollowingLengthFilter.twentyToSixty.includes(minutes: 19.99))
+        XCTAssertTrue(FollowingLengthFilter.twentyToSixty.includes(minutes: 20))
+        XCTAssertTrue(FollowingLengthFilter.twentyToSixty.includes(minutes: 60))
+        XCTAssertFalse(FollowingLengthFilter.twentyToSixty.includes(minutes: 60.01))
+        XCTAssertFalse(FollowingLengthFilter.overAnHour.includes(minutes: 60))
+        XCTAssertTrue(FollowingLengthFilter.overAnHour.includes(minutes: 60.01))
+    }
+
+    /// Also new lists the show with the newest waiting episode first. The two-row test above has both shows
+    /// at "0 days ago", so the rows tie on date and fall to the id order, and the date never decides.
+    /// Here the order by date is the opposite of the order by id, and the show's date is the newest of its
+    /// folded episodes, not the oldest.
+    func testAlsoNewListsTheShowWithTheNewestFoldedEpisodeFirst() {
+        let entries = [
+            entry("a-1", show: "a", daysAgo: 10), entry("a-2", show: "a", daysAgo: 12),
+            entry("b-1", show: "b", daysAgo: 2), entry("b-2", show: "b", daysAgo: 5),
+            entry("c-1", show: "c", daysAgo: 1), entry("c-2", show: "c", daysAgo: 4), entry("c-3", show: "c", daysAgo: 20),
+        ]
+        let edition = build(entries, [show("a"), show("b"), show("c")])
+        XCTAssertEqual(edition.picks.map(\.id), ["c-1", "b-1", "a-1"])
+        XCTAssertEqual(edition.alsoNew.map(\.subscriptionID), ["sub-c", "sub-b", "sub-a"])
+        XCTAssertEqual(edition.alsoNew.map(\.count), [2, 1, 1])
+    }
+
     func testARebuildKeepsThePicksAndHoldsNewArrivalsApart() {
         let subscriptions = [show("a"), show("b"), show("c")]
         let first = [entry("a-1", show: "a", daysAgo: 2), entry("b-1", show: "b", daysAgo: 3)]

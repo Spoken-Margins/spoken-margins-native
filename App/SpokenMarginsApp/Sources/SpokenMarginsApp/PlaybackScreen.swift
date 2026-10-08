@@ -563,6 +563,15 @@ struct PlaybackScreen: View {
     private var marginMomentControl: some View {
         if let moment = model.marginMoment {
             VStack(alignment: .leading, spacing: 10) {
+                // A shared Margin still being placed says so for the whole moment (#872); it plays from its
+                // approximate time meanwhile.
+                if let placing = model.sharedMarginRows.first(where: { $0.id == moment.target.marginId })?
+                    .placementStatus.positionDescription {
+                    Text(placing)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .accessibilityIdentifier("marginMoment.placing")
+                }
                 if moment.isPlayingMargin {
                     Label(model.marginMomentVoiceIsPaused ? "\(model.marginMomentTitle) is paused" : "Playing \(model.marginMomentTitle)",
                           systemImage: "waveform")

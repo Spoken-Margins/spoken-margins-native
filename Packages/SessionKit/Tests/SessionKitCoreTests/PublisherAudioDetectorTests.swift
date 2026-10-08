@@ -83,11 +83,33 @@ final class PublisherAudioDetectorTests: XCTestCase {
 
     func testLongNotesOnAnEpisodeWhoseLinkIsItsAudioStayAPodcastEpisode() {
         let audio = "https://media.example.com/show/ep1.mp3"
+        let page = "https://example.com/p/1"
+        // Without the publisher's own word that this is narration, the notes' length decides nothing.
         XCTAssertEqual(PublisherAudioDetector.kind(audioURL: audio, pageURL: audio, bodyWordCount: 5_000), .podcastEpisode)
-        XCTAssertEqual(PublisherAudioDetector.kind(audioURL: audio, pageURL: "https://example.com/p/1", bodyWordCount: 599), .podcastEpisode)
-        XCTAssertEqual(PublisherAudioDetector.kind(audioURL: audio, pageURL: "https://example.com/p/1", bodyWordCount: 600), .podcastEpisode)
-        XCTAssertEqual(PublisherAudioDetector.kind(audioURL: "http://media.example.com/a.mp3", pageURL: "https://example.com/p/1", bodyWordCount: 900), .article,
+        XCTAssertEqual(PublisherAudioDetector.kind(audioURL: audio, pageURL: page, bodyWordCount: 5_000), .podcastEpisode,
+                       "long notes alone are not narration")
+        XCTAssertEqual(PublisherAudioDetector.kind(audioURL: "http://media.example.com/a.mp3", pageURL: page, bodyWordCount: 900), .article,
                        "a non-https enclosure isn't audio the app would play")
+    }
+
+    /// With narration confirmed, the calls above stop at the first guard. These reach the checks
+    /// below it: the body must be long enough, and the post's page must not be the audio itself.
+    func testConfirmedNarrationStillNeedsAFullBodyAndAPageOfItsOwn() {
+        let audio = "https://media.example.com/show/ep1.mp3"
+        let page = "https://example.com/p/1"
+        func kind(audioURL: String = audio, pageURL: String = page, words: Int?) -> FeedEntryMediaKind {
+            PublisherAudioDetector.kind(audioURL: audioURL, pageURL: pageURL, bodyWordCount: words, publisherNarrationConfirmed: true)
+        }
+        XCTAssertEqual(kind(words: PublisherAudioDetector.minimumBodyWords), .articleWithPublisherAudio)
+        XCTAssertEqual(kind(words: 600), .articleWithPublisherAudio, "the line is 600 words and 600 is on the article side")
+        XCTAssertEqual(kind(words: 599), .podcastEpisode, "one word short of a full post")
+        XCTAssertEqual(kind(words: 0), .podcastEpisode)
+        XCTAssertEqual(kind(words: nil), .podcastEpisode, "no body in the feed: nothing to import as an article")
+        XCTAssertEqual(kind(pageURL: audio, words: 5_000), .podcastEpisode, "the page is the audio file itself")
+        XCTAssertEqual(kind(pageURL: " \(audio) ", words: 5_000), .podcastEpisode, "the same link with spaces around it")
+        XCTAssertEqual(kind(pageURL: "http://example.com/p/1", words: 5_000), .podcastEpisode, "a page the app would not open over https")
+        XCTAssertEqual(kind(audioURL: "http://media.example.com/a.mp3", words: 5_000), .article, "an enclosure the app would not play")
+        XCTAssertEqual(kind(audioURL: "", words: 5_000), .article)
     }
 
     func testALongTranscriptWithAnEpisodePageStillImportsAsAPodcast() throws {

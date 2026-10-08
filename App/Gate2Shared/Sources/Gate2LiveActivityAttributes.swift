@@ -1,5 +1,13 @@
 import Foundation
 
+/// Whether the microphone is really taking in sound while a spoken Margin records (#937). The Live
+/// Activity says "REC" only for `capturing`.
+public enum Gate2LiveActivityMicrophone: String, Codable, Hashable, Sendable {
+    case capturing
+    case starting
+    case stopped
+}
+
 #if canImport(ActivityKit)
 import ActivityKit
 
@@ -19,6 +27,8 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
         public var phase: String
         public var progressPercent: Int
         public var isRecording: Bool
+        /// Meaningful only while `isRecording`. Older payloads decode as `capturing`.
+        public var microphone: Gate2LiveActivityMicrophone
         public var availableCommands: [String]
         public var sharedMarginSenderLabel: String?
 
@@ -32,6 +42,7 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             case phase
             case progressPercent
             case isRecording
+            case microphone
             case availableCommands
             case sharedMarginSenderLabel
         }
@@ -46,6 +57,7 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             phase: String,
             progressPercent: Int,
             isRecording: Bool,
+            microphone: Gate2LiveActivityMicrophone = .capturing,
             availableCommands: [String] = [],
             sharedMarginSenderLabel: String? = nil
         ) {
@@ -58,6 +70,7 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             self.phase = phase
             self.progressPercent = progressPercent
             self.isRecording = isRecording
+            self.microphone = microphone
             self.availableCommands = availableCommands
             self.sharedMarginSenderLabel = sharedMarginSenderLabel
         }
@@ -73,6 +86,7 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             phase = try container.decode(String.self, forKey: .phase)
             progressPercent = try container.decode(Int.self, forKey: .progressPercent)
             isRecording = try container.decode(Bool.self, forKey: .isRecording)
+            microphone = try container.decodeIfPresent(Gate2LiveActivityMicrophone.self, forKey: .microphone) ?? .capturing
             availableCommands = try container.decodeIfPresent([String].self, forKey: .availableCommands) ?? []
             sharedMarginSenderLabel = try container.decodeIfPresent(String.self, forKey: .sharedMarginSenderLabel)
         }

@@ -2,13 +2,7 @@
 import BackgroundTasks
 import Foundation
 
-enum BackgroundPreparationWorkResult: Equatable {
-    case finished
-    case continueNow
-    case retryLater
-
-    var hasRemainingWork: Bool { self != .finished }
-}
+import SessionKit
 
 @MainActor
 final class AudioPreparationBackgroundController {

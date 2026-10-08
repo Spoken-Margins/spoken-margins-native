@@ -99,9 +99,15 @@ public enum PodcastAnchorEvidenceGenerator {
         defer { try? handle.close() }
         var hasher = SHA256()
         while true {
-            let data = try handle.read(upToCount: 1_048_576) ?? Data()
-            guard !data.isEmpty else { break }
-            hasher.update(data: data)
+            // FileHandle's reads are autoreleased. Release each buffer here so a synchronous digest (or
+            // several exact-edition resolutions without a suspension) never retains the whole episode.
+            let didRead = try autoreleasepool {
+                let data = try handle.read(upToCount: 1_048_576) ?? Data()
+                guard !data.isEmpty else { return false }
+                hasher.update(data: data)
+                return true
+            }
+            guard didRead else { break }
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
@@ -246,7 +252,9 @@ public enum PodcastAcousticAnchorResolver {
         senderDurationMs: Int?,
         strongSourceIdentity: Bool
     ) async throws -> [String: ImportedAnchorResolution] {
+        try Task.checkCancellation()
         let recipientDigest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: recipientAudioURL)
+        try Task.checkCancellation()
         if let senderExactEditionSHA256, senderExactEditionSHA256 == recipientDigest {
             return Dictionary(uniqueKeysWithValues: queries.map { query in
                 guard let senderMediaTimeMs = query.senderMediaTimeMs else {
@@ -294,10 +302,12 @@ public enum PodcastAcousticAnchorResolver {
         var repeatProbe: RepeatedAudioProbe?
         var repeatProbeTried = false
         for query in queries {
+            try Task.checkCancellation()
             var candidates: [(timeMs: Int, confidence: Double)] = []
             var matchedAnchorOffsets: [Int] = []
             var matchedRepeatedAudio = false
             for evidence in query.evidence {
+                try Task.checkCancellation()
                 let signature: SHSignature
                 do {
                     signature = try SHSignature(dataRepresentation: evidence.signatureData)
@@ -419,6 +429,7 @@ public enum PodcastAcousticAnchorResolver {
         var chunks: [(startMs: Int, lengthMs: Int, signature: SHSignature)] = []
         var startMs = 0
         while startMs < durationMs {
+            try Task.checkCancellation()
             let lengthMs = min(chunkMs, durationMs - startMs)
             let composition = AVMutableComposition()
             guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
@@ -436,6 +447,7 @@ public enum PodcastAcousticAnchorResolver {
                 let signature = try await PodcastAssetSignatureGenerator.signature(from: composition)
                 chunks.append((startMs, lengthMs, signature))
             } catch {
+                try Task.checkCancellation()
                 throw PodcastAnchorEvidenceError.referenceGenerationFailed
             }
             if startMs + lengthMs >= durationMs { break }
