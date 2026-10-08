@@ -162,6 +162,92 @@ final class SubstackPublicationResolverTests: XCTestCase {
         )
         XCTAssertEqual(SubstackPublicationResolver.stripTracking("https://x.com/p/a?utm_medium=email"), "https://x.com/p/a")
     }
+
+    // MARK: - #1051: a private feed link with a query, fragment, trailing slash or http
+
+    /// Both private shapes with what a copied link can pick up: an email's tracking parameters, a
+    /// fragment, a trailing slash, `http://`, capitals, pasted whitespace. Each is the same private
+    /// feed, so each is recognised as private and fetched as a feed, not scraped as a page.
+    private static let genericPrivate = "https://www.example.com/feed/private/AbC123-not-a-token"
+
+    private static func variants(of link: String) -> [String] {
+        let http = "http" + link.dropFirst("https".count)
+        return [
+            link, link + "/", link + "?x=1", link + "?utm_source=email&utm_medium=newsletter", link + "#frag",
+            link + "/?x=1#frag", link + "?x=1#frag", http, http + "/", http + "?utm_source=email",
+            "  " + link + "?utm_source=email\n",
+            "HTTPS" + link.dropFirst("https".count) + "?x=1"
+        ]
+    }
+
+    func testPrivateFeedLinksAreRecognisedWhateverFollowsThem() {
+        for base in [Self.fakePrivate, Self.genericPrivate] {
+            for link in Self.variants(of: base) {
+                XCTAssertTrue(SubstackPublicationResolver.isPrivateFeedURL(link), link)
+                XCTAssertEqual(
+                    SubstackPublicationResolver.canonicalPrivateFeedURL(link), base,
+                    "canonical form drops the query, fragment and trailing slash and is https: \(link)"
+                )
+                let redacted = SubstackPublicationResolver.redact(link)
+                XCTAssertFalse(redacted.contains("not-a-token"), "token masked: \(link)")
+            }
+        }
+        // The token keeps its case: only the scheme and host are case-insensitive.
+        XCTAssertEqual(
+            SubstackPublicationResolver.canonicalPrivateFeedURL("HTTP://WWW.Example.COM/feed/private/AbC123?x=1"),
+            "https://www.example.com/feed/private/AbC123"
+        )
+    }
+
+    /// Links that look a little like a private feed and must stay what they were.
+    func testLookalikesOfPrivateFeedLinksStayPublic() {
+        let notPrivate = [
+            Self.publicPodcast,
+            Self.publicPodcast + "?utm_source=email",
+            "https://www.astralcodexten.com/feed",
+            "https://example.substack.com/p/some-post",
+            "https://example.substack.com/p/private",
+            "https://example.substack.com/p/some-post?next=/feed/private/abc",
+            "https://example.substack.com/p/some-post#/feed/private/abc",
+            "https://www.example.com/feed/private",
+            "https://www.example.com/feed/private/",
+            "https://www.example.com/feed/private?x=1",
+            "https://www.example.com/blog/feed/private/abc",
+            "https://www.example.com/feed/privates/abc",
+            "https://www.example.com/feed/private/abc/more",
+            // The podcast shape is tied to api.substack.com, to digits for the show, a token and .rss.
+            "https://www.example.com/feed/podcast/69345/private/abc.rss",
+            "https://api.substack.com/feed/podcast/69345/private/",
+            "https://api.substack.com/feed/podcast/69345/private/.rss/",
+            "https://api.substack.com/feed/podcast/69345/private/abc.mp3",
+            "https://api.substack.com/feed/podcast/abc/private/abc.rss",
+            "https://api.substack.com:8443/feed/podcast/69345/private/abc.rss",
+            "https://user@api.substack.com/feed/podcast/69345/private/abc.rss",
+            "ftp://api.substack.com/feed/podcast/69345/private/abc.rss",
+            "not a link"
+        ]
+        for link in notPrivate {
+            XCTAssertFalse(SubstackPublicationResolver.isPrivateFeedURL(link), link)
+            XCTAssertNil(SubstackPublicationResolver.canonicalPrivateFeedURL(link), link)
+        }
+    }
+
+    /// `resolve` asks for the canonical https feed once, as a feed. An `http://` link is upgraded:
+    /// the token is never sent over plain http, and the feed is stored under the https link.
+    func testPrivateFeedVariantsAreFetchedOnceAsAnHttpsFeed() async throws {
+        for base in [Self.fakePrivate, Self.genericPrivate] {
+            for link in Self.variants(of: base) {
+                let fetcher = ReplayFetcher(fixtures: Self.research.appending(path: "fixtures"), aliases: [base: Self.publicPodcast])
+                let resolved = await SubstackPublicationResolver(fetch: fetcher.fetch).resolve(link)
+                XCTAssertEqual(resolved?.kind, .privateFeed, link)
+                XCTAssertEqual(resolved?.isPrivate, true, link)
+                XCTAssertEqual(resolved?.feedURL, base, link)
+                XCTAssertEqual(fetcher.requests, ["feed \(base)"], "one https feed request: \(link)")
+                XCTAssertTrue(fetcher.misses.isEmpty, link)
+                XCTAssertFalse(resolved?.reason.contains("not-a-token") ?? true, "no token in the reason: \(link)")
+            }
+        }
+    }
 }
 
 /// Replays research/B2/fixtures: one JSON per request hop, named sha256("<kind> <url>")[:16].
