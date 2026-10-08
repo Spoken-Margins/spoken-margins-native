@@ -7548,18 +7548,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    /// Writes the diagnostics export to a file for the share sheet (#903), or nil after reporting why not.
-    func diagnosticsExportFileURL() -> URL? {
-        guard let text = diagnosticsExportText() else { return nil }
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Diagnostics", isDirectory: true)
-        do {
-            return try DiagnosticsExportFile.write(text, build: developerDiagnosticBuild, exportedAt: Date(), to: directory)
-        } catch {
-            reportFailure(error, context: "Diagnostics export failed")
-            return nil
-        }
-    }
-
     func diagnosticsExportText() -> String? {
         var safe = diagnostics
             .filter { !Self.diagnosticKeyMayContainUserContent($0.key) }
