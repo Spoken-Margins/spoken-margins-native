@@ -416,6 +416,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let maxCharacters: Int
     private let startupBufferChunkCount: Int
     private let renderWaitLimit: Duration
+    private let beginRenderBackgroundTime: NarrationStartupProtection.Begin
+    private var backgroundRenderStopReason: String?
     private var playbackRate: Float
     private var mixesWithOtherAudio = false
     private var lowersBackgroundAudio = false
@@ -547,7 +549,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         stallSampleInterval: Duration = .seconds(1),
         stallRecoveryCooldown: Duration = .seconds(30),
         onResumeDecision: ResumeDecisionHandler? = nil,
-        renderWaitLimit: Duration = .seconds(15)
+        renderWaitLimit: Duration = .seconds(15),
+        beginRenderBackgroundTime: @escaping NarrationStartupProtection.Begin = { name, expired in
+            NarrationStartupBackgroundTime.begin(name, expired: expired)
+        }
     ) {
         self.renderer = renderer
         self.voice = voice
@@ -592,6 +597,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.articleText = articleText
         self.onResumeDecision = onResumeDecision
         self.renderWaitLimit = renderWaitLimit
+        self.beginRenderBackgroundTime = beginRenderBackgroundTime
         super.init()
         installAudioSessionObservers()
     }
@@ -1306,138 +1312,190 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         guard shouldStart else { return }
         reportGenerationState(.rendering)
         let waitLimit = renderWaitLimit
-        let task = Task { [weak self, renderer, voice] in
-            let timeout = Task { @MainActor [weak self] in
-                while !Task.isCancelled {
-                    do { try await Task.sleep(for: waitLimit) } catch { return }
-                    guard let self else { return }
-                    let demand = self.lock.withLock { () -> (current: Bool, waiting: Bool) in
-                        (self.generation == request.generation && self.inFlightOffsets.contains(request.startOffset),
-                         self.transportIntent == .playing && (shouldPlayWhenReady || self.pendingAutoplayOffset == request.startOffset || self.startedTargetId == nil))
-                    }
-                    guard demand.current else { return }
-                    // Slow speculative work must not interrupt audible prepared
-                    // audio. The deadline applies only when the listener waits.
-                    guard demand.waiting else { continue }
-                    self.renderFailed(request: request, shouldPlayWhenReady: shouldPlayWhenReady, reason: "supertonic_render_timeout")
-                    return
-                }
-            }
-            defer { timeout.cancel() }
-            do {
-                try Task.checkCancellation()
-                let preparation = self?.lock.withLock { () -> (String, [PreparedChunkPlan], Bool) in
-                    guard let self else { return ("", [], false) }
-                    let needsPlan = self.onPreparationPlan != nil
-                        && request.startOffset == self.generationRenderOrder.first?.startOffset
-                    let start = self.articleSpokenStart
-                    let plan = needsPlan ? self.generationPlan.compactMap { part in
-                        part.articleIndex.map {
-                            PreparedChunkPlan(index: $0, startOffset: part.startOffset - start, sourceLength: part.sourceLength, text: part.text)
+        let task = Task { @MainActor [weak self, renderer, voice] in
+            guard let begin = self?.beginRenderBackgroundTime else { return }
+            await RenderedSpeechBackgroundProtection.run(begin: begin, onStop: { [weak self] stop in
+                self?.backgroundRenderStopped(request: request, shouldPlayWhenReady: shouldPlayWhenReady, stop: stop)
+                control.cancel()
+            }) {
+                let timeout = Task { @MainActor [weak self] in
+                    while !Task.isCancelled {
+                        do { try await Task.sleep(for: waitLimit) } catch { return }
+                        guard let self else { return }
+                        let demand = self.lock.withLock { () -> (current: Bool, waiting: Bool) in
+                            (self.generation == request.generation && self.inFlightOffsets.contains(request.startOffset),
+                             self.transportIntent == .playing && (shouldPlayWhenReady || self.pendingAutoplayOffset == request.startOffset || self.startedTargetId == nil))
                         }
-                    } : []
-                    return (self.articleIdentity ?? "", plan, needsPlan && self.articleIdentity != nil)
-                }
-                if let preparation, preparation.2 {
-                    await self?.onPreparationPlan?(request.targetId, preparation.0, preparation.1)
-                }
-                try Task.checkCancellation()
-                let result: SupertonicNarrationResult
-                var performedInference = false
-                var ownsResult = false
-                let articleChunk = self?.articleChunkPlan(for: request)
-                if let articleChunk,
-                   let recovered = await self?.preparedChunkLookup?(request.targetId, articleChunk.identity, articleChunk.plan) {
-                    result = SupertonicNarrationResult(
-                        audioURL: recovered.audioURL,
-                        duration: recovered.duration,
-                        sampleRate: 0,
-                        renderDuration: 0,
-                        sessionLoadCount: 0
-                    )
-                } else if let cached = self?.diskCache?.cachedAudio(
-                    text: request.text,
-                    voice: voice,
-                    language: "en",
-                    speed: 1.0,
-                    synthesisSteps: 8
-                ) {
-                    result = cached
-                } else {
-                    guard self?.onDeviceRenderingAllowed() != false else {
-                        await MainActor.run {
-                            self?.renderFailed(request: request, shouldPlayWhenReady: shouldPlayWhenReady,
-                                               reason: "supertonic_resource_pressure")
-                        }
+                        guard demand.current else { return }
+                        // Slow speculative work must not interrupt audible prepared
+                        // audio. The deadline applies only when the listener waits.
+                        guard demand.waiting else { continue }
+                        self.renderFailed(request: request, shouldPlayWhenReady: shouldPlayWhenReady, reason: "supertonic_render_timeout")
                         return
                     }
-                    performedInference = true
-                    let rendered = try await renderer.render(
+                }
+                defer { timeout.cancel() }
+                do {
+                    try Task.checkCancellation()
+                    let preparation = self?.lock.withLock { () -> (String, [PreparedChunkPlan], Bool) in
+                        guard let self else { return ("", [], false) }
+                        let needsPlan = self.onPreparationPlan != nil
+                            && request.startOffset == self.generationRenderOrder.first?.startOffset
+                        let start = self.articleSpokenStart
+                        let plan = needsPlan ? self.generationPlan.compactMap { part in
+                            part.articleIndex.map {
+                                PreparedChunkPlan(index: $0, startOffset: part.startOffset - start, sourceLength: part.sourceLength, text: part.text)
+                            }
+                        } : []
+                        return (self.articleIdentity ?? "", plan, needsPlan && self.articleIdentity != nil)
+                    }
+                    if let preparation, preparation.2 {
+                        await self?.onPreparationPlan?(request.targetId, preparation.0, preparation.1)
+                    }
+                    try Task.checkCancellation()
+                    let result: SupertonicNarrationResult
+                    var performedInference = false
+                    var ownsResult = false
+                    let articleChunk = self?.articleChunkPlan(for: request)
+                    if let articleChunk,
+                       let recovered = await self?.preparedChunkLookup?(request.targetId, articleChunk.identity, articleChunk.plan) {
+                        result = SupertonicNarrationResult(
+                            audioURL: recovered.audioURL,
+                            duration: recovered.duration,
+                            sampleRate: 0,
+                            renderDuration: 0,
+                            sessionLoadCount: 0
+                        )
+                    } else if let cached = self?.diskCache?.cachedAudio(
                         text: request.text,
                         voice: voice,
                         language: "en",
                         speed: 1.0,
                         synthesisSteps: 8
-                    )
-                    // Only Supertonic's own audio is cached under its key. An iOS-voice stand-in
-                    // isn't, so the next play renders Supertonic again and re-checks it (#311).
-                    if rendered.engine == SupertonicNarrationResult.supertonicEngine,
-                       let cache = self?.diskCache,
-                       let retained = try? cache.store(
-                            rendered,
+                    ) {
+                        result = cached
+                    } else {
+                        guard self?.onDeviceRenderingAllowed() != false else {
+                            await MainActor.run {
+                                self?.renderFailed(request: request, shouldPlayWhenReady: shouldPlayWhenReady,
+                                                   reason: "supertonic_resource_pressure")
+                            }
+                            return
+                        }
+                        performedInference = true
+                        let rendered = try await renderer.render(
                             text: request.text,
                             voice: voice,
                             language: "en",
                             speed: 1.0,
                             synthesisSteps: 8
-                       ) {
-                        // The cached copy is what plays. Deleting the temporary original runs on
-                        // the renderer's serial queue, behind any other item's inference, so it
-                        // must not hold back publishing the chunk (#235).
-                        Task { await renderer.discardGeneratedAudio(at: rendered.audioURL) }
-                        result = retained
-                    } else {
-                        result = rendered
-                        ownsResult = true
+                        )
+                        // Only Supertonic's own audio is cached under its key. An iOS-voice stand-in
+                        // isn't, so the next play renders Supertonic again and re-checks it (#311).
+                        if rendered.engine == SupertonicNarrationResult.supertonicEngine,
+                           let cache = self?.diskCache,
+                           let retained = try? cache.store(
+                                rendered,
+                                text: request.text,
+                                voice: voice,
+                                language: "en",
+                                speed: 1.0,
+                                synthesisSteps: 8
+                           ) {
+                            // The cached copy is what plays. Deleting the temporary original runs on
+                            // the renderer's serial queue, behind any other item's inference, so it
+                            // must not hold back publishing the chunk (#235).
+                            Task { await renderer.discardGeneratedAudio(at: rendered.audioURL) }
+                            result = retained
+                        } else {
+                            result = rendered
+                            ownsResult = true
+                        }
                     }
-                }
-                if Task.isCancelled {
-                    // An uncached render (a stand-in, or no disk cache) belongs to nothing else: a
-                    // stop or seek during it must delete it, not leak it (#363 audit).
-                    if ownsResult { Task { await renderer.discardGeneratedAudio(at: result.audioURL) } }
-                    throw CancellationError()
-                }
-                guard !performedInference || self?.onDeviceRenderingAllowed() != false else {
-                    Task { await renderer.discardGeneratedAudio(at: result.audioURL) }
+                    if Task.isCancelled {
+                        // An uncached render (a stand-in, or no disk cache) belongs to nothing else: a
+                        // stop or seek during it must delete it, not leak it (#363 audit).
+                        if ownsResult { Task { await renderer.discardGeneratedAudio(at: result.audioURL) } }
+                        throw CancellationError()
+                    }
+                    guard !performedInference || self?.onDeviceRenderingAllowed() != false else {
+                        Task { await renderer.discardGeneratedAudio(at: result.audioURL) }
+                        await MainActor.run {
+                            self?.renderFailed(
+                                request: request,
+                                shouldPlayWhenReady: shouldPlayWhenReady,
+                                reason: "supertonic_resource_pressure"
+                            )
+                        }
+                        return
+                    }
+                    await self?.renderCompleted(
+                        result: result,
+                        request: request,
+                        shouldPlayWhenReady: shouldPlayWhenReady
+                    )
+                } catch is CancellationError {
+                    await MainActor.run {
+                        self?.renderCancelled(request: request)
+                    }
+                } catch {
                     await MainActor.run {
                         self?.renderFailed(
                             request: request,
                             shouldPlayWhenReady: shouldPlayWhenReady,
-                            reason: "supertonic_resource_pressure"
+                            reason: "supertonic_render_failed:\(type(of: error))"
                         )
                     }
-                    return
-                }
-                await self?.renderCompleted(
-                    result: result,
-                    request: request,
-                    shouldPlayWhenReady: shouldPlayWhenReady
-                )
-            } catch is CancellationError {
-                await MainActor.run {
-                    self?.renderCancelled(request: request)
-                }
-            } catch {
-                await MainActor.run {
-                    self?.renderFailed(
-                        request: request,
-                        shouldPlayWhenReady: shouldPlayWhenReady,
-                        reason: "supertonic_render_failed:\(type(of: error))"
-                    )
                 }
             }
         }
         control.install(task)
+    }
+
+    @MainActor
+    private func backgroundRenderStopped(
+        request: RenderRequest,
+        shouldPlayWhenReady: Bool,
+        stop: RenderedSpeechBackgroundProtection.Stop
+    ) {
+        let state = lock.withLock { () -> (published: Bool, playing: Bool, waiting: Bool)? in
+            guard generation == request.generation else { return nil }
+            return (generationResults[request.startOffset] != nil, transportIntent == .playing,
+                    transportIntent == .playing && (pendingAutoplayOffset != nil || startedTargetId == nil))
+        }
+        guard let state else { return }
+        if state.published {
+            // Publication can await a disk commit before queueing the next render. If that
+            // wait outlives the grant, the render deadline no longer watches this chunk.
+            // Hand off at the observed place rather than leave an unprotected queue gap.
+            recordBackgroundRenderStop(reason: stop.failureCode, waitingForAudio: state.waiting)
+            if state.playing {
+                activateSystemFallback(targetId: request.targetId,
+                    sourceOffset: currentCharOffset() ?? sourceOffset(forSpokenOffset: request.startOffset),
+                    reason: stop.failureCode)
+            } else {
+                reportGenerationState(.stopped, stopReason: stop.failureCode)
+            }
+        } else {
+            // An audible chunk can finish normally. The failed next chunk triggers fallback
+            // at its boundary; an already-waiting listener gets the handoff now.
+            renderFailed(request: request, shouldPlayWhenReady: shouldPlayWhenReady, reason: stop.failureCode)
+        }
+    }
+
+    @MainActor
+    private func recordBackgroundRenderStop(reason: String, waitingForAudio: Bool) {
+        let fields = lock.withLock { () -> [String: String] in
+            backgroundRenderStopReason = reason
+            return [
+                "reason": reason,
+                "appState": Self.applicationStateName(),
+                "lowPowerMode": String(ProcessInfo.processInfo.isLowPowerModeEnabled),
+                "waitingForAudio": String(waitingForAudio),
+                "bufferedChunks": String(renderedCache.count),
+            ]
+        }
+        onSystemPause?("speech.background_render_stopped", fields)
     }
 
     private func renderCancelled(request: RenderRequest) {
@@ -1464,7 +1522,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             totalChunks: Int,
             complete: Bool
         ) in
-            guard generation == request.generation else { return (false, nil, nil, 0, 0, false) }
+            guard generation == request.generation, failedRenderReasons[request.startOffset] == nil else {
+                return (false, nil, nil, 0, 0, false)
+            }
             inFlightOffsets.remove(request.startOffset)
             let cached = CachedAudio(url: result.audioURL, duration: result.duration, request: request)
             if result.engine == SupertonicNarrationResult.supertonicEngine {
@@ -1534,7 +1594,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 result.engine
             )
         }
-        guard lock.withLock({ generation == request.generation }) else { return }
+        guard !Task.isCancelled, lock.withLock({ generation == request.generation }) else { return }
         reportGenerationProgress(
             completedChunks: action.completedChunks,
             totalChunks: action.totalChunks
@@ -1556,6 +1616,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
+    @MainActor
     private func renderFailed(
         request: RenderRequest,
         shouldPlayWhenReady: Bool,
@@ -1575,6 +1636,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             )
         }
         guard outcome.isCurrent else { return }
+        if reason.hasPrefix("supertonic_background_render_") || Self.applicationStateName() == "background" {
+            recordBackgroundRenderStop(reason: reason, waitingForAudio: outcome.shouldFallback)
+        }
         reportGenerationState(.stopped, stopReason: reason)
         guard outcome.shouldFallback else { return }
         let sourceOffset = currentCharOffset()
@@ -1748,7 +1812,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// The player's own state for the playback heartbeat (#288).
     func playerDiagnostics() -> [String: String] {
-        lock.withLock { AudioSessionDiagnostics.fields(for: fallbackIsActive ? nil : player) }
+        lock.withLock {
+            var fields = AudioSessionDiagnostics.fields(for: fallbackIsActive ? nil : player)
+            if let backgroundRenderStopReason { fields["backgroundRenderStopReason"] = backgroundRenderStopReason }
+            return fields
+        }
     }
 
     /// The guard's replacement that is playing now (#306), not a render prepared ahead.

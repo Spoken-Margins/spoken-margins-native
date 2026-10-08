@@ -52,6 +52,7 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
     case memoryWarning = "memory_warning"
     /// The on-device voice couldn't render the next passage in time.
     case renderTooSlow = "render_too_slow"
+    case backgroundRenderingUnavailable = "background_rendering_unavailable"
     case playbackFailed = "playback_failed"
     case listenerStoppedGeneration = "listener_stopped_generation"
 
@@ -61,6 +62,8 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
         switch supertonicCode {
         case "supertonic_resource_pressure": self = resourceBlock ?? .deviceTooWarm
         case "supertonic_render_timeout": self = .renderTooSlow
+        case "supertonic_background_render_expired", "supertonic_background_render_unavailable":
+            self = .backgroundRenderingUnavailable
         default: self = .playbackFailed
         }
     }
@@ -80,6 +83,8 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
             "Using the iOS voice after an iOS memory warning. Your voice comes back the next time you press play, after about a minute."
         case .renderTooSlow:
             "Using the iOS voice because the on-device voice couldn't keep up. Tap Retry to try it again."
+        case .backgroundRenderingUnavailable:
+            "Using the iOS voice because iOS didn't allow the on-device voice to keep preparing in the background. Tap Retry to try it again."
         case .playbackFailed:
             "Using the iOS voice because the on-device voice hit a playback problem. Tap Retry to try it again."
         case .listenerStoppedGeneration:
@@ -121,6 +126,8 @@ public enum SpeechGenerationStopReason {
         switch SpeechFallbackReason(supertonicCode: stopReason, resourceBlock: nil) {
         case .renderTooSlow:
             return "The on-device voice stopped preparing because it couldn't keep up. Tap Retry to try again."
+        case .backgroundRenderingUnavailable:
+            return "The on-device voice stopped preparing because iOS didn't allow background rendering. Tap Retry to try again."
         case .deviceTooWarm, .memoryWarning:
             return "The on-device voice stopped preparing while this iPhone was too warm or low on memory. Tap Retry to try again."
         case .playbackFailed, .listenerStoppedGeneration:

@@ -2312,6 +2312,98 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    // #538: model iOS expiring the next render's execution time while the first chunk
+    // remains audible. The selected voice finishes that chunk, then hands off at its end.
+    func testBackgroundRenderExpiryFallsBackAtNextChunkWithoutRepeatingAudio() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let gate = AsyncStream<Void>.makeStream()
+        defer { gate.continuation.finish() }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template, renderGates: [2: gate.stream])
+        let firstStarted = expectation(description: "first selected-voice chunk started")
+        let fallback = RecordingFallbackAudioClient()
+        let events = StallEventLog()
+        var expirations: [@MainActor () -> Void] = []
+        var activeHolds = 0
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5, maxCharacters: 120,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in firstStarted.fulfill() },
+            observesPlayerLifecycle: false, fallbackClient: fallback,
+            onSystemPause: { events.stall($0, $1) },
+            beginRenderBackgroundTime: { _, expired in
+                activeHolds += 1
+                expirations.append(expired)
+                return { activeHolds -= 1 }
+            }
+        )
+        defer { try? client.stop() }
+        let source = String(repeating: "A distinct passage contains enough ordinary words to make a full narration chunk. ", count: 5)
+        let firstLength = RenderedSpeechChunker.sourceSlice(from: source, startOffset: 0, maxCharacters: 120).sourceLength
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "background-expiry")
+        await fulfillment(of: [firstStarted], timeout: 3)
+        for _ in 0..<100 where expirations.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(expirations.count, 2, "the next render also gets execution time")
+        guard expirations.count == 2 else { return }
+        XCTAssertGreaterThan(activeHolds, 0)
+        expirations[1]()
+        XCTAssertTrue(fallback.playedOffsets.isEmpty, "don't interrupt the audible selected voice")
+        XCTAssertEqual(events.values, ["speech.background_render_stopped"])
+        XCTAssertEqual(events.lastFields["reason"], "supertonic_background_render_expired")
+        client.debugFinishActiveChunk()
+        XCTAssertEqual(fallback.playedOffsets, [firstLength], "continue after the finished passage")
+        XCTAssertEqual(client.playerDiagnostics()["backgroundRenderStopReason"], "supertonic_background_render_expired")
+        // The expiry of the completed first render is stale and cannot interrupt the fallback.
+        expirations[0]()
+        XCTAssertEqual(fallback.playedOffsets, [firstLength])
+    }
+
+    func testBackgroundExpiryDuringChunkCommitCannotLeaveNextRenderUnprotected() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let gate = AsyncStream<Void>.makeStream()
+        defer { gate.continuation.finish() }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let committing = expectation(description: "second rendered chunk is waiting on its disk commit")
+        let fallback = RecordingFallbackAudioClient()
+        let source = String(repeating: "A distinct passage contains enough ordinary words to make a full narration chunk. ", count: 5)
+        let firstLength = RenderedSpeechChunker.sourceSlice(from: source, startOffset: 0, maxCharacters: 120).sourceLength
+        var expirations: [@MainActor () -> Void] = []
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5, maxCharacters: 120,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false, fallbackClient: fallback,
+            onPreparedChunk: { _, _, plan, _, _, _ in
+                if plan.index == 1 {
+                    committing.fulfill()
+                    for await _ in gate.stream {}
+                }
+            },
+            articleText: { _ in source },
+            beginRenderBackgroundTime: { _, expired in
+                expirations.append(expired)
+                return {}
+            }
+        )
+        defer { try? client.stop() }
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "background-commit")
+        await fulfillment(of: [committing], timeout: 3)
+        XCTAssertEqual(expirations.count, 2)
+        guard expirations.count == 2 else { return }
+        client.debugFinishActiveChunk()
+        XCTAssertEqual(client.currentCharOffset(), firstLength)
+        expirations[1]()
+        XCTAssertEqual(fallback.playedOffsets, [firstLength], "the published chunk no longer has a render deadline")
+        XCTAssertEqual(client.playerDiagnostics()["backgroundRenderStopReason"], "supertonic_background_render_expired")
+        gate.continuation.finish()
+        for _ in 0..<10 { await Task.yield() }
+        let count = await renderer.renderCount
+        XCTAssertEqual(count, 2, "the expired publication must not restart the cancelled pump")
+    }
+
     func testBackgroundingDuringInitialRenderPreservesSelectedSupertonicVoice() async throws {
         let template = try makeTestWAV(duration: 0.5)
         defer { try? FileManager.default.removeItem(at: template) }
