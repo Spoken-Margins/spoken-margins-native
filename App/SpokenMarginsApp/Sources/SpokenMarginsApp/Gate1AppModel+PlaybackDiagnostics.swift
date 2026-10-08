@@ -16,6 +16,25 @@ extension Gate1AppModel {
         return [:]
     }
 
+    /// The fields of a `playback.state` record: the session's own state, the on-device player's and the client's.
+    func playbackStateRecordFields() -> [String: String] {
+        DeveloperDiagnosticRecording.playbackStateFields(
+            snapshot,
+            player: (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.playerDiagnostics() ?? [:],
+            narration: narrationDiagnostics()
+        )
+    }
+
+    /// Records the stop that the app makes itself when the system warns about memory (no render failure code exists for it).
+    func recordMemoryWarningFallbackEvent() {
+        recordSupertonicFallbackEvent(
+            code: "memory_warning_stop",
+            reason: .memoryWarning,
+            conditions: SupertonicResourcePolicy.currentConditions(isOnExternalPower: SupertonicResourcePolicy.isOnExternalPower()),
+            offset: snapshot.currentTextStart ?? -1
+        )
+    }
+
     /// Records a switch from the on-device voice to the iOS voice as its own timestamped playback event,
     /// with what the resource policy reads now beside the reason shown to the listener.
     func recordSupertonicFallbackEvent(

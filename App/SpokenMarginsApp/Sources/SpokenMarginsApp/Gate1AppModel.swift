@@ -640,11 +640,7 @@ final class Gate1AppModel: ObservableObject {
             || previous.lastFailure != snapshot.lastFailure
         guard changed || (snapshot.status.isPlaybackActive && now - lastPlaybackEventCheckpoint >= 30) else { return }
         lastPlaybackEventCheckpoint = now
-        playbackEventRecording.record("playback.state", DeveloperDiagnosticRecording.playbackStateFields(
-            snapshot,
-            player: (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.playerDiagnostics() ?? [:],
-            narration: narrationDiagnostics()
-        ))
+        playbackEventRecording.record("playback.state", playbackStateRecordFields())
     }
 
     private func configureDeveloperDiagnosticRecording() {
@@ -2477,12 +2473,7 @@ final class Gate1AppModel: ObservableObject {
             do {
                 if try client.stopOnDeviceRenderingAndUseSystemSpeech(returnsAutomatically: true) {
                     speechFallbackReason = .memoryWarning
-                    recordSupertonicFallbackEvent(
-                        code: "memory_warning_stop",
-                        reason: .memoryWarning,
-                        conditions: SupertonicResourcePolicy.currentConditions(isOnExternalPower: SupertonicResourcePolicy.isOnExternalPower()),
-                        offset: snapshot.currentTextStart ?? -1
-                    )
+                    recordMemoryWarningFallbackEvent()
                     let message = SpeechFallbackReason.memoryWarning.listenerExplanation
                     statusMessage = message
                     presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
