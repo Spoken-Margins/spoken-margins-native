@@ -15844,7 +15844,7 @@ final class Gate1AppModel: ObservableObject {
             guard layer.deletedAt == nil,
                   layer.itemIdentity.itemType == .podcast,
                   let records = try? store.loadImportedCommentaryInterjections(layerId: layer.id),
-                  !records.isEmpty else { return nil }
+                  !records.isEmpty || ImportedMarginResends.hasLayerArtifacts(layer) else { return nil }
             return (layer, records)
         }
         guard !work.isEmpty else { podcastPlacementPassCoordinator.cancel(itemId: itemId); sharedMarginPlacementPasses.end(.matching, itemId: itemId); return }
