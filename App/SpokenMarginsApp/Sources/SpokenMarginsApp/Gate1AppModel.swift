@@ -2763,10 +2763,6 @@ final class Gate1AppModel: ObservableObject {
         return candidates
     }
 
-    var hasQuickAccessFolder: Bool {
-        UserDefaults.standard.data(forKey: quickAccessFolderBookmarkKey) != nil
-    }
-
     var isRefreshingQuickAddFeed: Bool {
         isRefreshingQuickAccessFolder || isRefreshingFollowedSources
     }
@@ -3032,11 +3028,6 @@ final class Gate1AppModel: ObservableObject {
         } catch {
             reportFailure(error, context: "File import failed")
         }
-    }
-
-    @discardableResult
-    func importSourceLinkFromForm() -> Bool {
-        beginSourceLinkImportFromForm(startSession: !hasActiveSession)
     }
 
     @discardableResult
@@ -5728,10 +5719,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func deleteItem(id: String) {
-        moveItemToTrash(id: id)
-    }
-
     func moveItemToTrash(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("move_item_to_trash") else { return }
         do {
@@ -5788,16 +5775,6 @@ final class Gate1AppModel: ObservableObject {
         trashUndoDismissTask?.cancel()
         trashUndoDismissTask = nil
         trashUndo = nil
-    }
-
-    func dismissError() {
-        lastError = nil
-        if feedbackEvent?.kind == .error {
-            feedbackEvent = nil
-        }
-        if statusMessage == "Error" {
-            statusMessage = "Ready."
-        }
     }
 
     func dismissFeedback(id: UUID? = nil) {
@@ -6677,10 +6654,6 @@ final class Gate1AppModel: ObservableObject {
             turnId: turnId,
             completedCurrentAudio: completedCurrentAudio
         )
-    }
-
-    private func shouldPlayPendingTurnNow(turnId: String, completedCurrentAudio: Bool = false) -> Bool {
-        pendingAutoPlayQueue.shouldPlayPendingTurnNow(snapshot: snapshot, turnId: turnId, completedCurrentAudio: completedCurrentAudio)
     }
 
     private func enqueuePendingAutoPlayTurn(_ turnId: String) {
@@ -8682,10 +8655,6 @@ final class Gate1AppModel: ObservableObject {
         pendingPreparedTextStartItemId == activeItemId
     }
 
-    var canFinishInterjection: Bool {
-        snapshot.isRecording
-    }
-
     var canSummarizeInterjections: Bool {
         aiSummaryExperienceAvailable && hasActiveSession && !unsummarizedInterjectionsForCurrentTarget().isEmpty
     }
@@ -8705,10 +8674,6 @@ final class Gate1AppModel: ObservableObject {
     var summaryActionTitle: String {
         if isSummarizingInterjections { return "Summarizing" }
         return canRetryLocalSummary ? "Retry Summary" : "Summarize Notes"
-    }
-
-    var interjectionButtonTitle: String {
-        "Interject"
     }
 
     var speechVoiceDescription: String {
@@ -8733,10 +8698,6 @@ final class Gate1AppModel: ObservableObject {
 
     var speechPlaybackRateMultiplier: Double {
         SpeechRateRule.quarterStepMultiplier(speechRate / 0.5)
-    }
-
-    var mediaPlaybackRateDescription: String {
-        String(format: "%.2fx", mediaPlaybackRate)
     }
 
     var compactPlaybackRateDescription: String {
@@ -10247,35 +10208,6 @@ final class Gate1AppModel: ObservableObject {
         libraryItems[index].startupAudioState = state
     }
 
-    private nonisolated static func prepareTextAudioInBackground(
-        itemId: String,
-        title: String,
-        text: String,
-        outputDirectory: URL,
-        voiceIdentifier: String?,
-        speechRate: Float,
-        renderScope: TextAudioPrewarmRenderScope
-    ) async -> Result<PreparedTextAudio?, Error> {
-        await Task.detached(priority: renderScope.priority) {
-            do {
-                let renderer = SystemTextAudioPreparationClient(
-                    outputDirectory: outputDirectory,
-                    voiceIdentifier: voiceIdentifier,
-                    speechRate: speechRate,
-                    allowsSynchronousRendering: true
-                )
-                switch renderScope {
-                case .starter(let targetDurationMs):
-                    return .success(try renderer.prepareStarterTextAudio(itemId: itemId, title: title, text: text, targetDurationMs: targetDurationMs))
-                case .complete:
-                    return .success(try renderer.prepareTextAudio(itemId: itemId, title: title, text: text))
-                }
-            } catch {
-                return .failure(error)
-            }
-        }.value
-    }
-
     @discardableResult
     private func attachPreparedTextAudio(
         _ prepared: PreparedTextAudio,
@@ -10329,13 +10261,6 @@ final class Gate1AppModel: ObservableObject {
         }
         preparedTextAudioStatus = status
         snapshot.preparedTextAudioStatus = status
-    }
-
-    private nonisolated static func preparedTextAudioCoversCompleteText(_ prepared: PreparedTextAudio) -> Bool {
-        guard let endChar = prepared.timeline.segments.compactMap(\.endChar).max() else {
-            return false
-        }
-        return endChar >= prepared.normalizedText.count
     }
 
     private func shouldPrewarmTextAudio(for item: Item) -> Bool {
@@ -10474,20 +10399,6 @@ final class Gate1AppModel: ObservableObject {
             return false
         }
         return true
-    }
-
-    private enum TextAudioPrewarmRenderScope: Sendable {
-        case starter(targetDurationMs: Int)
-        case complete
-
-        var priority: TaskPriority {
-            switch self {
-            case .starter:
-                return .userInitiated
-            case .complete:
-                return .utility
-            }
-        }
     }
 
     private func makeAudioPlaybackClient() throws -> AudioPlaybackClient {
@@ -11424,10 +11335,6 @@ final class Gate1AppModel: ObservableObject {
         }
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         return detector.matches(in: text, options: [], range: range).compactMap(\.url).first
-    }
-
-    private func isUserImportedItem(_ id: String) -> Bool {
-        id.hasPrefix("item-import-") || id.hasPrefix("item-obsidian-") || id.hasPrefix("item-browser-") || id.hasPrefix("item-source-")
     }
 
     private func submitProviderJobIfNeeded(kind: String, itemId: String, turnId: String, messages: [String], force: Bool = false) {
@@ -13775,13 +13682,6 @@ final class Gate1AppModel: ObservableObject {
                 : "Shared Margins will wait for you to choose Listen or Dismiss.")
         } catch {
             reportFailure(error, context: "Shared Margin auto-play setting could not be saved")
-        }
-    }
-
-    func deleteImportedCommentaryLayer(_ layerID: String) {
-        updateImportedCommentaryLayer(layerID) {
-            $0.deletedAt = Date()
-            $0.isEnabled = false
         }
     }
 
