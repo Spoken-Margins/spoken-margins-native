@@ -1116,7 +1116,7 @@ public final class SessionEngine {
         if unit == "chapter" {
             session.position.charOffset = previousChapterBoundary(before: session.position.charOffset)
         } else {
-            session.position.charOffset = previousBoundary(before: session.position.charOffset, unit: unit, text: text)
+            session.position.charOffset = backTapBoundary(from: session.position.charOffset, unit: unit, text: text, speed: session.playbackRate)
         }
         session.completionPercent = percent(for: session.position.charOffset, text: text)
         session.position.chapterId = chapterId(for: session.position.charOffset)
@@ -1170,7 +1170,7 @@ public final class SessionEngine {
         guard !text.isEmpty else {
             throw SessionKitError.invalidCommandForState("skipBack")
         }
-        updated.position.charOffset = previousBoundary(before: updated.position.charOffset, unit: unit, text: text)
+        updated.position.charOffset = backTapBoundary(from: updated.position.charOffset, unit: unit, text: text, speed: updated.playbackRate)
         updated.position.charOffset = max(0, min(updated.position.charOffset, text.count))
         updated.position.chapterId = turn.chapters?.last(where: { $0.startChar <= updated.position.charOffset })?.id
         currentSession = updated
@@ -5062,6 +5062,20 @@ public final class SessionEngine {
             index -= 1
         }
         return 0
+    }
+
+    /// Where a Back tap lands. A position within `BackTapWindow` of the start of the unit it is in counts as
+    /// at that start, so Back goes to the start of the unit before; further in, it goes to this unit's start
+    /// (#1102). A section is a fixed step, not a unit with a start, so it keeps `previousBoundary`.
+    private func backTapBoundary(from offset: Int, unit: String, text: String, speed: Double) -> Int {
+        guard unit != "section", offset > 0 else {
+            return previousBoundary(before: offset, unit: unit, text: text)
+        }
+        let unitStart = previousBoundary(before: offset + 1, unit: unit, text: text)
+        guard offset - unitStart < BackTapWindow.characters(atSpeed: speed) else {
+            return previousBoundary(before: offset, unit: unit, text: text)
+        }
+        return previousBoundary(before: unitStart, unit: unit, text: text)
     }
 
     private func nextParagraphBoundary(after offset: Int, text: String) -> Int {
