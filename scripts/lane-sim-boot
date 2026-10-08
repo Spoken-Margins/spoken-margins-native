@@ -74,9 +74,11 @@ def main(argv):
         return 0
     if args.done:
         if lane_sim_pool.in_pool(args.done):
-            kept = lane_sim_pool.release(args.done)
-            print(f'[lane] {args.done} released: watcher stopped, shut down, '
-                  + ('erased and kept in the desk pool' if kept else 'marked unsafe, so deleted and dropped from the pool'),
+            outcome = lane_sim_pool.release(args.done)
+            print(f'[lane] {args.done} '
+                  + {'kept': 'released: watcher stopped, shut down, erased and kept in the desk pool',
+                     'retired': 'released: watcher stopped, shut down; marked unsafe, so deleted and dropped from the pool',
+                     'idle': 'is not held by any run (already released), so it was left alone'}[outcome],
                   file=sys.stderr)
             return 0
         lane_sim.release(args.done)
@@ -102,6 +104,8 @@ def main(argv):
         seconds = lane_sim.boot(udid, f'lane-sim-boot {udid}', timeout=args.timeout, info=info,
                                 first_boot=bool(args.fresh or args.pool))
         lane_sim.start_watcher(udid, Path(__file__).resolve(), slot=slot, crash_window=info.get('boot_window'))
+        if pooled:
+            lane_sim_pool.unclaim(pooled)  # from here the Booted state and the watcher keep the device busy
         if info.get('tolerated'):
             print(f'[lane] tolerated one SpringBoard change during the first boot ({info["tolerated"]}); the watcher '
                   'rechecks crash reports for the next few minutes and marks the device unsafe if one names it',
@@ -109,7 +113,7 @@ def main(argv):
     except lane_sim.BootError as error:
         release_handle(slot)
         if pooled:
-            lane_sim_pool.unclaim(pooled)  # marked unsafe, the next --pool retires it; --done does it now
+            lane_sim_pool.unclaim(pooled)  # marked unsafe, the next --pool retires it
         print(f'[lane] STOP: {error}', file=sys.stderr)
         return 3
     except BaseException:

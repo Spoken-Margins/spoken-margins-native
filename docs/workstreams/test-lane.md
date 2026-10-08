@@ -223,14 +223,16 @@ Simulators:
   approves that new device the first time the desk drives it, so say so on #184 and take the
   first run when they are awake. When the job ends:
     scripts/lane-sim-boot --done "$UDID"
-  stops the watcher first, so the shutdown isn't read as a SpringBoard crash, then shuts the
-  device down, erases it and keeps it in the pool. The pool is recorded in
+  (once) stops the watcher first, so the shutdown isn't read as a SpringBoard crash, then shuts the
+  device down, erases it and keeps it in the pool. A device no run holds is left alone, but a
+  device another run has taken since is not: don't repeat --done. The pool is recorded in
   desk-simulator-pool.json in the lane state folder.
 - A device is retired only by the lane's stop rules: one that failed a boot ("Invalid argument"
   and any other failed boot), crashed, or showed a SpringBoard crash is marked unsafe. The next
-  --pool (or --done on it) deletes it, drops it from the pool and, if no other device is free,
-  creates a replacement. Never retry a failed boot, and never boot a device marked unsafe. A
-  device that only fails to erase stays in the pool; the helper prints STOP, so report it on #184.
+  --pool deletes it, drops it from the pool and, if no other device is free, creates a
+  replacement (the guard blocks --done on a device marked unsafe). Never retry a failed boot, and
+  never boot a device marked unsafe. A device that only fails to erase stays in the pool and is
+  passed over; the helper prints STOP only when no pool device will erase, so report that on #184.
 - The old standing device, "SM Lane Desk erase-approval" (1330F268-5467-4421-9D55-1FCC3FF5CF8A),
   stays retired: never boot, erase or reuse it. Stay on iOS 26.5: iOS 27's Apple Intelligence
   services crash-flood on this Mac (#184). `--fresh` still makes a one-off device, for work that

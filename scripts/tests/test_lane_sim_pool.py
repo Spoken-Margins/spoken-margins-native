@@ -1,3 +1,7 @@
+import contextlib
+import importlib.machinery
+import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -5,6 +9,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -67,7 +72,8 @@ elif args[0] == "shutdown":
 elif args[0] == "erase":
     state = world["devices"][args[1]]["state"]
     log({"erase": args[1], "state": state})
-    if state != "Shutdown" or os.environ.get("FAKE_ERASE_FAIL"):
+    failing = os.environ.get("FAKE_ERASE_FAIL", "")
+    if state != "Shutdown" or failing == "1" or args[1] in failing.split(","):
         sys.stderr.write("Unable to erase contents and settings in current state: %s\n" % state)
         sys.exit(163)
 elif args[0] == "delete":
@@ -108,6 +114,14 @@ class ChooseTests(unittest.TestCase):
         entries['C'] = entry('SM Lane Desk pool 3')  # never used
         devices['C'] = device('SM Lane Desk pool 3')
         self.assertEqual(self.choose(entries, devices).udid, 'C')
+
+    def test_a_device_that_failed_an_erase_goes_last_but_stays_in_the_pool(self):
+        entries = {'A': entry('SM Lane Desk pool 1', '2026-10-08T01:00:00+00:00', erase_failed='2026-10-08T02:00:00+00:00'),
+                   'B': entry('SM Lane Desk pool 2', '2026-10-08T03:00:00+00:00')}
+        devices = {'A': device('SM Lane Desk pool 1'), 'B': device('SM Lane Desk pool 2')}
+        plan = self.choose(entries, devices)
+        self.assertEqual((plan.udid, sorted(plan.pool)), ('B', ['A', 'B']))
+        self.assertEqual(self.choose(entries, devices, busy={'B'}).udid, 'A')  # still used when it is all there is
 
     def test_a_busy_device_is_skipped(self):
         entries = {'A': entry('SM Lane Desk pool 1', '2026-10-08T01:00:00+00:00'),
@@ -310,14 +324,30 @@ class PoolDeviceTests(unittest.TestCase):
         self.assertNotIn(OLD_STANDING, pool.load())
         self.assertEqual(self.run_helper('--done', result.stdout.strip()).returncode, 0)
 
-    def test_an_erase_that_fails_stops_without_booting_and_keeps_the_device_in_the_pool(self):
-        self.seed('KEEP-0001', 'SM Lane Desk pool 1')
+    def test_a_device_that_will_not_erase_is_passed_over_and_stays_in_the_pool(self):
+        self.seed('STUCK-01', 'SM Lane Desk pool 1', last_used='2026-10-08T01:00:00+00:00')
+        self.seed('GOOD-002', 'SM Lane Desk pool 2', last_used='2026-10-08T03:00:00+00:00')
+        first = self.run_helper('--pool', FAKE_ERASE_FAIL='STUCK-01')
+        self.assertEqual((first.returncode, first.stdout.strip()), (0, 'GOOD-002'), first.stderr)  # the older one failed
+        self.assertTrue(pool.load()['STUCK-01']['erase_failed'])
+        self.assertFalse([r for r in self.records() if r.get('boot') == 'STUCK-01'])  # never booted unerased
+        self.assertEqual(lane_sim.unsafe_devices(), {})  # an approved device isn't retired over an erase
+        # With GOOD-002 up, the stuck one is all that is free: the pool grows instead of stopping.
+        second = self.run_helper('--pool', FAKE_ERASE_FAIL='STUCK-01')
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(self.devices()[second.stdout.strip()]['name'], 'SM Lane Desk pool 3')
+        for udid in ('GOOD-002', second.stdout.strip()):
+            self.assertEqual(self.run_helper('--done', udid).returncode, 0)
+
+    def test_when_no_device_will_erase_and_the_pool_is_full_the_run_stops_without_booting(self):
+        for number, udid in enumerate(('A-0001', 'B-0002', 'C-0003'), 1):
+            self.seed(udid, f'SM Lane Desk pool {number}')
         result = self.run_helper('--pool', FAKE_ERASE_FAIL='1')
         self.assertEqual(result.returncode, 3)
         self.assertIn('STOP: simctl erase failed', result.stderr)
-        self.assertFalse([r for r in self.records() if 'boot' in r])
-        self.assertEqual(list(pool.load()), ['KEEP-0001'])
-        self.assertEqual(lane_sim.unsafe_devices(), {})  # an approved device isn't retired over an erase
+        self.assertFalse([r for r in self.records() if 'boot' in r or 'create' in r])
+        self.assertEqual(sorted(pool.load()), ['A-0001', 'B-0002', 'C-0003'])
+        self.assertEqual(lane_sim.unsafe_devices(), {})
 
     def test_a_listing_that_fails_does_not_retire_the_pool(self):
         self.seed('KEEP-0001', 'SM Lane Desk pool 1')
@@ -345,6 +375,98 @@ class PoolDeviceTests(unittest.TestCase):
         self.assertIn('claimed', pool.load()['A-0001'])
         pool.unclaim('A-0001')
         self.assertEqual(pool.take('another run', out=self.quiet), 'A-0001')
+
+    def test_a_second_done_leaves_a_released_device_alone(self):
+        udid = self.run_helper('--pool').stdout.strip()
+        self.assertEqual(self.run_helper('--done', udid).returncode, 0)
+        before = self.records()
+        again = self.run_helper('--done', udid)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertIn('left alone', again.stderr)
+        self.assertEqual(self.records(), before)  # no shutdown, no erase
+
+    def test_a_run_cannot_take_a_device_while_done_is_releasing_it(self):
+        udid = self.run_helper('--pool').stdout.strip()
+        taken = []
+        real = lane_sim.release
+
+        def release_then_another_run_takes_one(*args, **kwargs):
+            real(*args, **kwargs)  # the watcher is gone and the device is shut down, but not yet erased:
+            taken.append(pool.take('another run', out=self.quiet))  # only the releasing claim keeps it busy
+
+        with mock.patch.object(lane_sim, 'release', release_then_another_run_takes_one):
+            self.assertEqual(pool.release(udid, out=self.quiet), 'kept')
+        self.assertNotEqual(taken, [udid])
+        self.assertNotIn('claimed', pool.load()[udid])
+        self.assertEqual(pool.load()[taken[0]]['claimed']['label'], 'another run')  # still theirs
+
+    def test_a_device_the_watcher_marks_unsafe_while_done_waits_is_deleted_not_kept(self):
+        udid = self.run_helper('--pool').stdout.strip()
+        real = lane_sim.release
+
+        def release_then_a_late_crash_report(*args, **kwargs):
+            real(*args, **kwargs)
+            lane_sim.mark_unsafe(udid, 'late crash report for a crash during boot')
+
+        with mock.patch.object(lane_sim, 'release', release_then_a_late_crash_report):
+            self.assertEqual(pool.release(udid, out=self.quiet), 'retired')
+        self.assertNotIn(udid, self.devices())
+        self.assertNotIn(udid, pool.load())
+        self.assertFalse([r for r in self.records() if r.get('erase') == udid])
+
+    def test_a_boot_that_worked_leaves_no_claim_for_a_reused_pid_to_keep_alive(self):
+        udid = self.run_helper('--pool').stdout.strip()
+        self.assertNotIn('claimed', pool.load()[udid])
+        self.assertEqual(self.run_helper('--done', udid).returncode, 0)
+
+    def test_the_pool_lock_makes_a_second_run_wait(self):
+        self.seed('A-0001', 'SM Lane Desk pool 1')
+        finished = threading.Event()
+        holding, release_it = threading.Event(), threading.Event()
+
+        def hold():
+            with pool.locked():
+                holding.set()
+                release_it.wait(30)
+
+        def take():
+            pool.take('second run', out=self.quiet)
+            finished.set()
+
+        holder = threading.Thread(target=hold)
+        holder.start()
+        self.assertTrue(holding.wait(10))
+        taker = threading.Thread(target=take)
+        taker.start()
+        self.assertFalse(finished.wait(1.0), 'take() ran while another run held the pool lock')
+        release_it.set()
+        self.assertTrue(finished.wait(30))
+        holder.join()
+        taker.join()
+
+    def lane_sim_boot_module(self):
+        loader = importlib.machinery.SourceFileLoader('lane_sim_boot_for_pool_test', str(SCRIPTS / 'lane-sim-boot'))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        return module
+
+    def boot_through_main(self, *arguments):
+        module = self.lane_sim_boot_module()
+        out = io.StringIO()
+        with mock.patch.object(lane_sim, 'boot', return_value=1.0) as boot, \
+                mock.patch.object(lane_sim, 'start_watcher'), contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(self.quiet):
+            self.assertEqual(module.main(list(arguments)), 0)
+        return boot, out.getvalue().strip()
+
+    def test_a_pool_boot_gets_the_first_boot_tolerance_because_the_device_was_just_erased(self):
+        boot, udid = self.boot_through_main('--pool')
+        self.assertEqual(boot.call_args.kwargs['first_boot'], True)
+        self.assertNotIn('claimed', pool.load()[udid])
+        self.seed('PLAIN-01', 'Some other phone', pooled=False)
+        boot, _ = self.boot_through_main('PLAIN-01')  # an existing device named on the command line: no tolerance
+        self.assertEqual(boot.call_args.kwargs['first_boot'], False)
 
 
 if __name__ == '__main__':

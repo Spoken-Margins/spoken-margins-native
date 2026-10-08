@@ -16,9 +16,11 @@ The boot rules in lane_sim.py are unchanged and still decide whether a device is
 The old standing device (1330F268, AGENTS.md: never boot it) is never adopted.
 
 The pool is recorded in desk-simulator-pool.json in the lane state folder: the devices, when each was
-last used and, while a run holds one, who claimed it. A device is busy while simctl lists it as anything
-but Shutdown, its watcher is running, or a live process claimed it, so two desk runs never get the
-same device. Stdlib only, Python 3.9-compatible.
+last used and, while a process is taking or releasing one, who claimed it. A device is busy while simctl
+lists it as anything but Shutdown, its watcher is running, or a live process claimed it, so two desk
+runs never get the same device. The claim covers the gaps (before the boot, while --done erases); a
+booted device is held by its Booted state and its watcher. A device whose erase fails stays in the pool
+but goes last, and the next free one is used. Stdlib only, Python 3.9-compatible.
 """
 from __future__ import annotations
 
@@ -155,8 +157,9 @@ def choose(entries: dict, devices: dict, unsafe: dict, busy: set, size: int = PO
                 and device['name'].startswith(NAME_PREFIX) and device['major'] == lane_sim.IOS_MAJOR):
             kept[udid] = {'name': device['name']}
     free = [udid for udid in kept if udid not in busy and udid not in unsafe]
-    if free:  # least recently used first, so every device gets used and the wear is even
-        udid = min(free, key=lambda u: (kept[u].get('last_used') or '', kept[u].get('name', ''), u))
+    if free:  # least recently used first, so every device gets used and the wear is even; one that failed an erase last
+        udid = min(free, key=lambda u: (bool(kept[u].get('erase_failed')), kept[u].get('last_used') or '',
+                                        kept[u].get('name', ''), u))
         return Plan('reuse', udid, kept[udid].get('name'), kept, drop)
     if len(kept) < size:
         taken = {entry.get('name') for entry in kept.values()}
@@ -168,9 +171,7 @@ def choose(entries: dict, devices: dict, unsafe: dict, busy: set, size: int = PO
 def retire(udid: str, reason: str, delete: bool, out=sys.stderr) -> None:
     """Drop a device from the pool; shut it down and delete it when delete (only devices the lane made)."""
     if delete:
-        for command in ('shutdown', 'delete'):
-            with contextlib.suppress(OSError, subprocess.SubprocessError):
-                subprocess.run(lane_sim.simctl() + [command, udid], capture_output=True, timeout=120)
+        retire_now(udid)
     lane_sim.record_event(udid, f'left the desk pool: {reason}')
     print(f'[lane] desk pool: {udid} left the pool ({reason}){" and was deleted" if delete else ""}', file=out, flush=True)
 
@@ -191,19 +192,33 @@ def take(label: str, out=sys.stderr) -> str:
     """Pick the desk device for this run, make it clean and claim it. Raises BootError when it can't.
 
     Erases the least recently used free device, or creates one while the pool has room. Retires devices
-    the lane marked unsafe. The caller boots it as a first boot and calls unclaim() if the boot fails.
+    the lane marked unsafe. A device whose erase fails stays in the pool but goes to the back of the
+    line, and the next free one is tried, so one stuck device can't stop every run. The caller boots
+    the device as a first boot and calls unclaim() once it is up or if the boot fails.
     """
     with locked():
         entries = load()
         devices = listed_devices()
-        plan = choose(entries, devices, lane_sim.unsafe_devices(), busy_devices(entries, devices))
+        unsafe = lane_sim.unsafe_devices()
+        busy = busy_devices(entries, devices)
+        plan = choose(entries, devices, unsafe, busy)
         for udid, reason, delete in plan.drop:
             retire(udid, reason, delete, out)
-        pool = plan.pool
+        pool, stuck, errors = plan.pool, set(), []
+        while plan.action == 'reuse':
+            try:
+                erase(plan.udid)
+                pool[plan.udid].pop('erase_failed', None)
+                break
+            except BootError as error:
+                errors.append(str(error))
+                pool[plan.udid]['erase_failed'] = now()
+                stuck.add(plan.udid)
+                plan = choose(pool, devices, unsafe, busy | stuck)
         save(pool)
         if plan.action == 'busy':
-            raise BootError(f'all {len(pool)} desk simulators are in use, so none was booted. Finish a run with '
-                            '--done, or look at desk-simulator-pool.json in the lane state folder.')
+            raise BootError(' '.join(errors) or f'all {len(pool)} desk simulators are in use, so none was booted. '
+                            'Finish a run with --done, or look at desk-simulator-pool.json in the lane state folder.')
         if plan.action == 'create':
             udid = lane_sim.create_temporary(plan.name)
             pool[udid] = {'name': plan.name, 'created': now()}
@@ -211,44 +226,70 @@ def take(label: str, out=sys.stderr) -> str:
                   file=out, flush=True)
         else:
             udid = plan.udid
-            erase(udid)
             print(f'[lane] desk pool: erased {plan.name} ({udid}); its approval stays', file=out, flush=True)
         pool[udid].update(last_used=now(), claimed={'pid': os.getpid(), 'label': label, 'at': now()})
         save(pool)
-        lane_sim.record_event(udid, f'taken from the desk pool as {plan.name} ({plan.action})')
+        lane_sim.record_event(udid, f'taken from the desk pool as {pool[udid]["name"]} ({plan.action})')
         return udid
 
 
-def unclaim(udid: str) -> None:
-    """Hand a device back after a boot that failed, so the next run retires or reuses it."""
+def unclaim(udid: str, pid: int | None = None) -> None:
+    """Drop this process's claim on a device: once its boot has worked (the Booted state and the watcher keep it
+    busy from then on), or after a boot that failed, so the next run retires or reuses it. Another run's claim stays."""
+    pid = os.getpid() if pid is None else pid
     with locked():
         entries = load()
-        if udid in entries:
-            entries[udid].pop('claimed', None)
+        if udid in entries and (entries[udid].get('claimed') or {}).get('pid') == pid:
+            entries[udid].pop('claimed')
             save(entries)
 
 
-def release(udid: str, wait: float = lane_sim.RELEASE_WAIT, out=sys.stderr) -> bool:
-    """`lane-sim-boot --done` for a pool device. Returns True when it stays in the pool.
+def retire_now(udid: str) -> None:
+    for command in ('shutdown', 'delete'):
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            subprocess.run(lane_sim.simctl() + [command, udid], capture_output=True, timeout=120)
 
-    Stops the watcher and shuts the device down, then erases it (the next run erases again, but a
-    shut-down device shouldn't hold a run's app data). A device the lane marked unsafe is retired instead:
-    deleted and dropped from the pool.
+
+def release(udid: str, wait: float = lane_sim.RELEASE_WAIT, out=sys.stderr) -> str:
+    """`lane-sim-boot --done` for a pool device. Returns 'kept', 'retired' or 'idle'.
+
+    Stops the watcher and shuts the device down, then erases it and keeps it (the next run erases again,
+    but a shut-down device shouldn't hold a run's app data). A device the lane marked unsafe, checked after
+    the watcher has stopped because it can still mark one then, is deleted and dropped instead.
+    A device nobody holds is left alone ('idle'): pool devices are reused, so a second --done on one
+    would shut down whoever took it since.
+    While it releases, this process holds the claim, so no other run can take the device half-erased.
     """
-    retired = udid in lane_sim.unsafe_devices()
-    lane_sim.release(udid, wait, keep=not retired)
     with locked():
         entries = load()
-        if retired:
+        entry = entries.get(udid)
+        if entry is None:
+            return 'idle'
+        try:
+            idle = udid not in busy_devices({udid: entry}, listed_devices())
+        except BootError:
+            idle = False  # simctl can't say: release it the way a busy device is
+        if idle and udid not in lane_sim.unsafe_devices():
+            return 'idle'
+        if not idle:
+            entry['claimed'] = {'pid': os.getpid(), 'label': 'releasing', 'at': now()}
+            save(entries)
+    if not idle:
+        lane_sim.release(udid, wait, keep=True)
+    with locked():
+        entries = load()
+        entry = entries.get(udid)
+        if udid in lane_sim.unsafe_devices():
+            retire_now(udid)
             entries.pop(udid, None)
             save(entries)
             lane_sim.record_event(udid, 'left the desk pool: marked unsafe; deleted')
-            return False
-        if udid in entries:
-            entries[udid].pop('claimed', None)
-            save(entries)
+            return 'retired'
         try:
             erase(udid)
         except BootError as error:  # not fatal: take() erases before the next boot
             print(f'[lane] desk pool: {error}', file=out, flush=True)
-        return True
+        if entry is not None and (entry.get('claimed') or {}).get('pid') == os.getpid():
+            entry.pop('claimed')
+            save(entries)
+        return 'kept'
