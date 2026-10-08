@@ -1069,7 +1069,7 @@ final class Gate1AppModel: ObservableObject {
     private var episodeMapPreparationTask: Task<Void, Never>?
     private var episodeMapPreparationItemId: String?
     private var isUpdatingSkimAvailability = false
-    private var backgroundPreparationPrefersEpisodeMap = true
+    private var backgroundPreparationPlanner = BackgroundPreparationPlanner()
     private var sourceImportTask: Task<Void, Never>?
     private var quickAccessRefreshTask: Task<Void, Never>?
     private var quickAccessRefreshID = UUID()
@@ -2372,27 +2372,29 @@ final class Gate1AppModel: ObservableObject {
 
     private func performBackgroundPreparationPass() async -> BackgroundPreparationWorkResult {
         guard let store else { return .finished }
-        let progressBefore = backgroundPreparationProgressToken(store: store)
-        let episodeJobs = ((try? store.loadEpisodeMapPreparationJobs()) ?? [])
-            .filter {
-                !$0.isCancelled
-                    && $0.stage != .completed
-                    && ($0.policy == .explicit || automaticEpisodeMapPreparationPolicy == .whileCharging)
-                    && podcastDownloadCoordinator?.validatedLocalURL(for: $0.itemId) != nil
-            }
-            .sorted {
-                if $0.policy != $1.policy { return $0.policy == .explicit }
-                return $0.requestedAt < $1.requestedAt
-            }
+        let progressToken = {
+            BackgroundPreparationPlanner.progressToken(
+                audioJobs: (try? store.loadAudioPreparationJobs()) ?? [],
+                episodeJobs: (try? store.loadEpisodeMapPreparationJobs()) ?? []
+            )
+        }
+        let progressBefore = progressToken()
+        let episodeJobs = BackgroundPreparationPlanner.eligibleEpisodeJobs(
+            (try? store.loadEpisodeMapPreparationJobs()) ?? [],
+            episodePolicy: automaticEpisodeMapPreparationPolicy,
+            hasLocalAudio: { self.podcastDownloadCoordinator?.validatedLocalURL(for: $0) != nil }
+        )
         let hasAudioWork = ((try? store.loadAudioPreparationJobs()) ?? []).contains { !$0.isCancelled }
-        let shouldRunEpisode = !episodeJobs.isEmpty
-            && (!hasAudioWork || backgroundPreparationPrefersEpisodeMap)
-        if shouldRunEpisode,
-           episodeMapPreparationTask == nil,
-           ProcessInfo.processInfo.thermalState != .serious,
-           ProcessInfo.processInfo.thermalState != .critical,
-           !ProcessInfo.processInfo.isLowPowerModeEnabled,
-           let job = episodeJobs.first {
+        if let job = backgroundPreparationPlanner.plan(
+            hasAudioWork: hasAudioWork,
+            episodeJobs: episodeJobs,
+            environment: .init(
+                thermalIsSerious: ProcessInfo.processInfo.thermalState == .serious
+                    || ProcessInfo.processInfo.thermalState == .critical,
+                lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                episodeTaskIsRunning: episodeMapPreparationTask != nil
+            )
+        ) {
             prepareEpisodeMap(itemId: job.itemId, policy: job.policy)
             if let task = episodeMapPreparationTask {
                 await withTaskCancellationHandler {
@@ -2401,55 +2403,23 @@ final class Gate1AppModel: ObservableObject {
                     task.cancel()
                 }
             }
-            backgroundPreparationPrefersEpisodeMap = false
+            backgroundPreparationPlanner.afterEpisodePass()
             let hasEpisodeWork = ((try? store.loadEpisodeMapPreparationJobs()) ?? []).contains {
                 !$0.isCancelled && $0.stage != .completed
             }
-            return backgroundPreparationResult(
+            return BackgroundPreparationPlanner.result(
                 hasRemainingWork: hasEpisodeWork || hasAudioWork,
-                progressBefore: progressBefore,
-                store: store
+                before: progressBefore,
+                after: progressToken()
             )
         }
         let audioHasMore = await performBackgroundAudioPreparationPass()
-        if hasAudioWork { backgroundPreparationPrefersEpisodeMap = true }
-        if audioHasMore {
-            return backgroundPreparationResult(
-                hasRemainingWork: true,
-                progressBefore: progressBefore,
-                store: store
-            )
-        }
-        if !episodeJobs.isEmpty {
-            backgroundPreparationPrefersEpisodeMap = true
-            return backgroundPreparationResult(
-                hasRemainingWork: true,
-                progressBefore: progressBefore,
-                store: store
-            )
-        }
-        return .finished
-    }
-
-    private func backgroundPreparationResult(
-        hasRemainingWork: Bool,
-        progressBefore: [String],
-        store: SQLiteSessionStore
-    ) -> BackgroundPreparationWorkResult {
-        guard hasRemainingWork else { return .finished }
-        return backgroundPreparationProgressToken(store: store) == progressBefore
-            ? .retryLater
-            : .continueNow
-    }
-
-    private func backgroundPreparationProgressToken(store: SQLiteSessionStore) -> [String] {
-        let audio = ((try? store.loadAudioPreparationJobs()) ?? [])
-            .filter { !$0.isCancelled }
-            .map { "audio:\($0.id):\($0.nextChunkIndex)" }
-        let episode = ((try? store.loadEpisodeMapPreparationJobs()) ?? [])
-            .filter { !$0.isCancelled && $0.stage != .completed }
-            .map { "episode:\($0.id):\($0.stage.rawValue):\($0.nextUnitIndex)" }
-        return (audio + episode).sorted()
+        let hasRemainingWork = backgroundPreparationPlanner.afterAudioPass(
+            audioHasMore: audioHasMore, hadAudioWork: hasAudioWork, hadEpisodeJobs: !episodeJobs.isEmpty
+        )
+        return BackgroundPreparationPlanner.result(
+            hasRemainingWork: hasRemainingWork, before: progressBefore, after: progressToken()
+        )
     }
 
     func handleApplicationWillTerminate() {
