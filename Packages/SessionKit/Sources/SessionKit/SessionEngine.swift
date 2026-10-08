@@ -3647,6 +3647,8 @@ public final class SessionEngine {
         guard !text.isEmpty else {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
+        // The item id keeps coming from `title`, so a post imported before it had a short title is found
+        // again rather than added twice (#885).
         var itemId = handoff.itemId ?? browserTextItemId(title: title, url: handoff.source.url)
         if handoff.itemId == nil, handoff.captureMode == .readablePage || isPDF {
             // A corrected extraction (or a new PDF extractor) must not move existing
@@ -3685,9 +3687,15 @@ public final class SessionEngine {
                 policy: mapPolicy
             )
         let source = parsedMarkdown?.source ?? handoff.source.url
+        // A front-matter title or a heading beats the page title; only a title that came from the page
+        // can be a whole X post (#885).
+        let titleCameFromPage = document == nil && (parsedMarkdown.map { $0.metadata["title"] == nil && $0.headings.isEmpty } ?? true)
+        let displayTitle = titleCameFromPage
+            ? BrowserTextTitle.postTitle(pageTitle: fallbackTitle, url: handoff.source.url) ?? title
+            : title
         let item = Item(
             id: itemId,
-            title: title,
+            title: displayTitle,
             mediaType: isPDF || sourceExtension == "pdf" ? "pdf" : "text",
             text: text,
             externalReference: source,
