@@ -169,6 +169,26 @@ public enum SpeechRateRule {
         return min(multiplierRange.upperBound, max(multiplierRange.lowerBound, multiplier))
     }
 
+    /// The speeds the speed button offers, slowest first: quarter steps from 0.5× to 2×. Each one is
+    /// also a row of `systemRateTable`.
+    public static let supportedMultipliers: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
+
+    /// A speed read from storage or a control, rounded to the nearest quarter step (ties go up) and
+    /// held inside `multiplierRange`.
+    ///
+    /// Unlike `clampedMultiplier`, a value that is not a number lands on a bound instead of 1: NaN and
+    /// +∞ give 2×, −∞ gives 0.5×. The app has always done this, so the saved speeds it reads back
+    /// stay the same; changing it would need its own issue.
+    public static func quarterStepMultiplier(_ multiplier: Double) -> Double {
+        max(multiplierRange.lowerBound, min(multiplierRange.upperBound, (multiplier * 4).rounded() / 4))
+    }
+
+    /// The speed the speed button moves to from `current`: the next one up, wrapping from the top to
+    /// the bottom. A speed within 0.001 of a step counts as that step.
+    public static func next(after current: Double) -> Double {
+        supportedMultipliers.first(where: { $0 > current + 0.001 }) ?? supportedMultipliers[0]
+    }
+
     /// The `AVSpeechUtterance.rate` that speaks at `multiplier` times normal speed.
     public static func systemSpeechRate(forMultiplier multiplier: Double) -> Float {
         let target = clampedMultiplier(multiplier)

@@ -538,7 +538,7 @@ final class Gate1AppModel: ObservableObject {
     private static let suppressedAudioPreparationItemIdsKey = "suppressedAudioPreparationItemIdsV1"
     static let mixedPlaybackVolumeMaximum = 1.0
     static let exportPreviewCharacterLimit = 24_000
-    nonisolated static let supportedPlaybackRates: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
+    nonisolated static let supportedPlaybackRates: [Double] = SpeechRateRule.supportedMultipliers
     static let privateSharingNoteCharacterLimit = 500
     private static var isRunningUnitTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
@@ -888,13 +888,12 @@ final class Gate1AppModel: ObservableObject {
     @Published var speechRate: Double = {
         let stored = UserDefaults.standard.double(forKey: "speechRate")
         let rawRate = stored == 0 ? 0.5 : stored
-        let multiplier = max(0.5, min(2.0, ((rawRate / 0.5) * 4).rounded() / 4))
-        return multiplier * 0.5
+        return SpeechRateRule.quarterStepMultiplier(rawRate / 0.5) * 0.5
     }()
     @Published var mediaPlaybackRate: Double = {
         let stored = UserDefaults.standard.double(forKey: "mediaPlaybackRate")
         let rawRate = stored == 0 ? 1.0 : stored
-        return max(0.5, min(2.0, (rawRate * 4).rounded() / 4))
+        return SpeechRateRule.quarterStepMultiplier(rawRate)
     }()
     @Published var showsMixWithOtherAudioOption = UserDefaults.standard.bool(
         forKey: Gate1AppModel.showsMixWithOtherAudioOptionKey
@@ -1583,7 +1582,7 @@ final class Gate1AppModel: ObservableObject {
         return "Listening Map generation is unavailable."
     }
 
-    static let supportedMediaSkipSeconds = [10, 15, 30, 45, 60]
+    static let supportedMediaSkipSeconds = MediaSkipRule.supportedSeconds
     static let supportedPodcastCacheLimitsGB = PodcastCacheLimitGB.allCases.map(\.rawValue)
     static let supportedRenderedSpeechCacheLimitsMB = [128, 256, 512, 1_024]
 
@@ -1618,8 +1617,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private static func storedMediaSkipSeconds(forKey key: String) -> Int {
-        let value = UserDefaults.standard.integer(forKey: key)
-        return supportedMediaSkipSeconds.contains(value) ? value : 15
+        MediaSkipRule.validated(UserDefaults.standard.integer(forKey: key))
     }
 
     private static func storedRenderedSpeechCacheLimitMB() -> Int {
@@ -5933,8 +5931,8 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func mediaSkipSettingsChanged() {
-        mediaSkipBackSeconds = Self.validatedMediaSkipSeconds(mediaSkipBackSeconds)
-        mediaSkipForwardSeconds = Self.validatedMediaSkipSeconds(mediaSkipForwardSeconds)
+        mediaSkipBackSeconds = MediaSkipRule.validated(mediaSkipBackSeconds)
+        mediaSkipForwardSeconds = MediaSkipRule.validated(mediaSkipForwardSeconds)
         UserDefaults.standard.set(mediaSkipBackSeconds, forKey: "mediaSkipBackSeconds")
         UserDefaults.standard.set(mediaSkipForwardSeconds, forKey: "mediaSkipForwardSeconds")
         mediaPlaybackClient?.setPreferredSkipIntervals(
@@ -5947,7 +5945,7 @@ final class Gate1AppModel: ObservableObject {
 
     func setMediaPlaybackRate(_ rate: Double) {
         guard !rejectNavigationOrSessionMutationWhileRecording("set_media_playback_rate") else { return }
-        let clamped = max(0.5, min(2.0, (rate * 4).rounded() / 4))
+        let clamped = SpeechRateRule.quarterStepMultiplier(rate)
         mediaPlaybackRate = clamped
         UserDefaults.standard.set(clamped, forKey: "mediaPlaybackRate")
         if var bridge = snapshot.skimBridgeState {
@@ -6095,7 +6093,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     nonisolated static func nextPlaybackRate(after current: Double) -> Double {
-        supportedPlaybackRates.first(where: { $0 > current + 0.001 }) ?? supportedPlaybackRates[0]
+        SpeechRateRule.next(after: current)
     }
 
     private func recordMediaSeekEvidence(from engine: SessionEngine) {
@@ -8734,7 +8732,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var speechPlaybackRateMultiplier: Double {
-        max(0.5, min(2.0, ((speechRate / 0.5) * 4).rounded() / 4))
+        SpeechRateRule.quarterStepMultiplier(speechRate / 0.5)
     }
 
     var mediaPlaybackRateDescription: String {
@@ -9463,7 +9461,7 @@ final class Gate1AppModel: ObservableObject {
             .play, .pause, .togglePlayPause, .skipBack, .skipForward, .jumpToChapter
         ]
         let normalizedPlaybackRate = command == .setPlaybackRate
-            ? playbackRate.map { max(0.5, min(2.0, ($0 * 4).rounded() / 4)) }
+            ? playbackRate.map { SpeechRateRule.quarterStepMultiplier($0) }
             : playbackRate
         if command == .beginInterjection || canonicalTransportCommands.contains(command) {
             synchronizeStreamingSpeechAnchorIfNeeded()
