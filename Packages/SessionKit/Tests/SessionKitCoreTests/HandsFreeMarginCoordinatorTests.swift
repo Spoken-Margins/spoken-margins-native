@@ -254,6 +254,57 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.phase, .idle)
     }
 
+    func testAStartToneThatNeverReportsFinishingOpensTheMicrophone() {
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.pauseSource, .playTone(.start)])
+        clock.advance(2.9)
+        XCTAssertEqual(coordinator.tick(), [])
+        XCTAssertEqual(coordinator.phase, .startTone)
+        clock.advance(0.1)
+        XCTAssertEqual(coordinator.tick(), [.beginRecording])
+        XCTAssertEqual(coordinator.phase, .listening)
+        // The Margin carries on as if the tone had finished: it records, then the source resumes.
+        feed(quiet, for: 0.5)
+        feed(voice, for: 1)
+        XCTAssertEqual(feed(quiet, for: 2.5), [.finishRecording(.silence)])
+        XCTAssertEqual(coordinator.saveCompleted(), [.playTone(.saved)])
+        XCTAssertEqual(coordinator.toneFinished(.saved), [.resumeSource])
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
+    func testAStartToneThatNeverReportsFinishingAndNoSpeechStillResumesTheSource() {
+        coordinator.trigger(from: .headphones)
+        clock.advance(60)
+        XCTAssertEqual(coordinator.tick(), [.beginRecording])
+        XCTAssertEqual(feed(quiet, for: 6), [.cancelRecording, .requestFlag, .playTone(.flag)])
+        XCTAssertEqual(coordinator.toneFinished(.flag), [.resumeSource])
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
+    func testTheStartToneReportingFinishingAfterTheTimeoutDoesNotOpenTheMicrophoneTwice() {
+        coordinator.trigger(from: .headphones)
+        clock.advance(3)
+        XCTAssertEqual(coordinator.tick(), [.beginRecording])
+        clock.advance(0.5)
+        XCTAssertEqual(coordinator.toneFinished(.start), [])
+        XCTAssertEqual(coordinator.phase, .listening)
+        // With no tick in between, the late report itself opens the microphone, once.
+        coordinator.abandon()
+        clock.advance(1)
+        coordinator.trigger(from: .headphones)
+        clock.advance(10)
+        XCTAssertEqual(coordinator.toneFinished(.start), [.beginRecording])
+        XCTAssertEqual(coordinator.toneFinished(.start), [])
+        XCTAssertEqual(coordinator.phase, .listening)
+    }
+
+    func testAPressAfterTheStartToneTimedOutFlagsTheSpotAndLeavesNothingOpen() {
+        coordinator.trigger(from: .headphones)
+        clock.advance(3.5)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.beginRecording, .cancelRecording, .requestFlag, .playTone(.flag)])
+        XCTAssertEqual(coordinator.toneFinished(.flag), [.resumeSource])
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
     func testFaintSpeechTheThresholdMissedIsKeptNotFlagged() {
         startRecording()
         feed(-50, for: 0.5)

@@ -25,7 +25,8 @@ public enum HandsFreeMarginTimings {
     /// At the end of the listening window, anything this far above the background counts as an
     /// attempt to talk: the recording is saved, not thrown away for a flag.
     public static let attemptMarginDB: Double = 4
-    /// A closing tone that never reports finishing (a call cut it off) counts as finished after this.
+    /// A tone that never reports finishing (a call cut it off, the player failed) counts as finished
+    /// after this: the start tone opens the microphone, the closing tone resumes the source.
     public static let toneTimeout: TimeInterval = 3
 }
 
@@ -134,6 +135,7 @@ public final class HandsFreeMarginCoordinator {
     private var backgroundDB: Double?
     private var loudestDB: Double = -.infinity
     private var rejoiningSince: TimeInterval = 0
+    private var startToneSince: TimeInterval = 0
 
     /// - Parameter clock: seconds on a monotonic clock. Tests pass a fake one.
     public init(microphonePermission: HandsFreeMicrophonePermission = .undetermined, clock: @escaping () -> TimeInterval) {
@@ -160,6 +162,7 @@ public final class HandsFreeMarginCoordinator {
                 return commands + close(tone: .couldNotRecord, resume: true)
             }
             phase = .startTone
+            startToneSince = now
             commands += [.pauseSource, .playTone(.start)]
         case .startTone:
             // Pressed again before the microphone opened: nothing to keep, so a flag.
@@ -185,9 +188,7 @@ public final class HandsFreeMarginCoordinator {
         var commands = timeouts(at: now)
         switch (phase, tone) {
         case (.startTone, .start):
-            phase = .listening
-            recordingStartedAt = now
-            commands.append(.beginRecording)
+            commands += openMicrophone(at: now)
         case (.rejoining, _) where tone == closingTone:
             phase = .idle
             if resumesAfter { commands.append(.resumeSource) }
@@ -222,7 +223,8 @@ public final class HandsFreeMarginCoordinator {
         return timeouts(at: now)
     }
 
-    /// Call often while recording (each metering tick does) so the window, silence and cap end on time.
+    /// Call often while a Margin is in progress, including while a tone plays (each metering tick
+    /// does while recording), so the tone timeouts, the window, silence and cap end on time.
     public func tick() -> [HandsFreeMarginCommand] {
         timeouts(at: clock())
     }
@@ -342,7 +344,19 @@ public final class HandsFreeMarginCoordinator {
         return threshold
     }
 
+    /// The start tone is over, reported or timed out: the microphone opens and the window starts.
+    private func openMicrophone(at now: TimeInterval) -> [HandsFreeMarginCommand] {
+        phase = .listening
+        recordingStartedAt = now
+        return [.beginRecording]
+    }
+
     private func timeouts(at now: TimeInterval) -> [HandsFreeMarginCommand] {
+        if phase == .startTone, now - startToneSince >= HandsFreeMarginTimings.toneTimeout {
+            // The tone's end was never reported. Carry on as if it had, so the source isn't left
+            // paused with the microphone closed; a late report then finds the phase moved on.
+            return openMicrophone(at: now)
+        }
         if phase == .rejoining, now - rejoiningSince >= HandsFreeMarginTimings.toneTimeout {
             phase = .idle
             return resumesAfter ? [.resumeSource] : []
