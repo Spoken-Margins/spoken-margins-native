@@ -1005,7 +1005,7 @@ final class Gate1AppModel: ObservableObject {
     /// Shared by the podcast downloader and the pre-play offline check (#779).
     let connectivity = ConnectivityMonitor()
     private var requestedPodcastTransportReplacements: Set<String> = []
-    private var offlineStorageLedger: OfflineStorageLedger?
+    var offlineStorageLedger: OfflineStorageLedger?
     private var localSourceImporter: LocalSourceImporter?
     private(set) var followedSourceCoordinator: FollowedSourceCoordinator?
     /// A fresh install: the Library was empty before the welcome sample was added (B1 drawer).
@@ -4302,16 +4302,7 @@ final class Gate1AppModel: ObservableObject {
                 while startMs + PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs <= durationMs {
                     try Task.checkCancellation()
                     let assetID = "episode-signature-\(self.safePodcastEvidenceComponent(item.id))-downloaded-\(gridIndex)"
-                    let ledger: OfflineStorageLedger
-                    if let existingLedger = self.offlineStorageLedger {
-                        ledger = existingLedger
-                    } else {
-                        ledger = OfflineStorageLedger(
-                            repository: store,
-                            rootDirectory: try self.applicationSupportDirectory()
-                        )
-                        self.offlineStorageLedger = ledger
-                    }
+                    let ledger = try self.requireOfflineLedger(store: store, rootDirectory: try self.applicationSupportDirectory())
                     let reservation = try await ledger.reserve(
                         ownerId: "episode-fingerprint-\(item.id)-\(gridIndex)",
                         byteCount: 2 * 1_024 * 1_024
@@ -4379,13 +4370,7 @@ final class Gate1AppModel: ObservableObject {
                     let relativePath = "SpokenMargins/EpisodeMaps/\(safeItemID)/Transient/timeline.json"
                     let transcriptURL = supportDirectory.appending(path: relativePath)
                     try FileManager.default.createDirectory(at: transcriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    let ledger: OfflineStorageLedger
-                    if let existingLedger = self.offlineStorageLedger {
-                        ledger = existingLedger
-                    } else {
-                        ledger = OfflineStorageLedger(repository: store, rootDirectory: supportDirectory)
-                        self.offlineStorageLedger = ledger
-                    }
+                    let ledger = self.requireOfflineLedger(store: store, rootDirectory: supportDirectory)
                     let reservation = try await ledger.reserve(
                         ownerId: "episode-transcript-\(item.id)",
                         byteCount: Int64(transcriptData.count)
@@ -4635,16 +4620,7 @@ final class Gate1AppModel: ObservableObject {
         let directory = try episodeMapDirectory(itemId: itemId)
             .appending(path: "SummaryBridges", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let ledger: OfflineStorageLedger
-        if let existingLedger = offlineStorageLedger {
-            ledger = existingLedger
-        } else {
-            ledger = OfflineStorageLedger(
-                repository: store,
-                rootDirectory: try applicationSupportDirectory()
-            )
-            offlineStorageLedger = ledger
-        }
+        let ledger = try requireOfflineLedger(store: store, rootDirectory: try applicationSupportDirectory())
         let reservation = try await ledger.reserve(
             ownerId: "summary-bridge-\(assetID)",
             byteCount: 64 * 1_024 * 1_024
@@ -7947,7 +7923,7 @@ final class Gate1AppModel: ObservableObject {
         let relativePath = "SpokenMargins/EpisodeMaps/\(safePodcastEvidenceComponent(itemId))/SummaryBridges/\(assetID).m4a"
         let support = try applicationSupportDirectory()
         let destination = support.appending(path: relativePath)
-        let ledger = offlineStorageLedger ?? OfflineStorageLedger(repository: store, rootDirectory: support)
+        let ledger = requireOfflineLedger(store: store, rootDirectory: support)
         let reservation = try await ledger.reserve(ownerId: assetID, byteCount: Int64(byteCount))
         do {
             try await Task.detached(priority: .utility) {
@@ -14287,8 +14263,8 @@ final class Gate1AppModel: ObservableObject {
         let limit = PodcastCacheLimitGB(rawValue: podcastCacheLimitGB) ?? .defaultValue
         let coordinator = try PodcastDownloadCoordinator(
             store: store,
-            ledger: offlineStorageLedger ?? OfflineStorageLedger(
-                repository: store,
+            ledger: try requireOfflineLedger(
+                store: store,
                 rootDirectory: try applicationSupportDirectory()
             ),
             applicationSupportDirectory: try applicationSupportDirectory(),
@@ -14546,8 +14522,7 @@ final class Gate1AppModel: ObservableObject {
                 plan: plan,
                 maximumChunkCount: job.maximumChunkCount
             )
-            let ledger = offlineStorageLedger ?? OfflineStorageLedger(repository: store, rootDirectory: support)
-            offlineStorageLedger = ledger
+            let ledger = requireOfflineLedger(store: store, rootDirectory: support)
             let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
                 repository: store,
                 rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
