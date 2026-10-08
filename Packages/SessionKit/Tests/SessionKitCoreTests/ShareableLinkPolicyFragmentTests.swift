@@ -7,10 +7,13 @@ import XCTest
 /// promise for a private link is that it never leaves the phone.
 ///
 /// Rule chosen for fragments: only credential-looking fragments are refused, because an ordinary
-/// anchor (`#section-2`) is on every public article. A fragment is read three ways:
-/// - as a query string when it holds `=` or `?` (`#token=abc`, `#/episodes?token=abc`): the query rules;
-/// - as a route when it holds `/` (`#/private/abc`, `#!/members/abc`): the path rules;
-/// - otherwise as a bare anchor: refused only when the whole anchor is a long opaque token.
+/// anchor (`#section-2`) is on every public article. A fragment is read every way it is used, and
+/// any one reading is enough:
+/// - as a route when it holds `/` (`#/private/abc`, `#!/members/abc`): the path's marker rules;
+/// - as path segments or a bare anchor: refused when one is a long opaque token;
+/// - as a query string, for every `name=value` pair and every item after a `?`
+///   (`#token=abc`, `#/access_token=abc&x=1`, `#/episodes?token=abc`): the query rules.
+/// Everything from `:~:` on is a browser's text-fragment directive, which quotes the page.
 ///
 /// The path is percent-decoded before the marker and secret checks, until it stops changing, because
 /// some servers and proxies decode twice.
@@ -55,9 +58,17 @@ final class ShareableLinkPolicyFragmentTests: XCTestCase {
             "https://example.com/feed.rss#access_token=abc&token_type=bearer",
             "https://example.com/app#/episodes?token=abc",
             "https://example.com/app#!/members/abc",
+            "https://example.com/app#!members/abc",
+            "https://example.com/app#members/abc",
+            "https://example.com/app#members/abc?x=1",
+            "https://example.com/app#/access_token=\(secret)&token_type=bearer",
+            "https://example.com/app#/token=abc",
+            "https://example.com/app#/auth=abc",
             "https://example.com/app#/episodes/\(secret)",
             "https://example.com/feed.rss#id=\(secret)",
             "https://example.com/feed.rss#\(secret).m4a",
+            "https://example.com/feed.rss#\(secret)==",
+            "https://example.com/feed.rss#\(secret)=",
 
             // A secret or a marker that a single encoded character hides from the plain check.
             "https://example.com/Zk9x%512hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq/episode.mp3",
@@ -111,6 +122,8 @@ final class ShareableLinkPolicyFragmentTests: XCTestCase {
             // A text-fragment directive quotes the page; the quoted words are not a secret.
             "https://example.com/essay#:~:text=Spoken%20Margins",
             "https://example.com/essay#:~:text=the%20key%20idea",
+            "https://example.com/essay#:~:text=Q%26A%20on%20passwords",
+            "https://example.com/essay#section-2:~:text=a%3Dtoken%26b",
 
             // Percent-encoding that decodes to ordinary text.
             "https://example.com/caf%C3%A9/feed.rss",
@@ -137,6 +150,7 @@ final class ShareableLinkPolicyFragmentTests: XCTestCase {
         let slug = "installing-version-2-on-linux-and-macos"
         XCTAssertNil(ShareableLinkPolicy.shareableLink("https://example.com/docs/\(slug)"))
         XCTAssertNil(ShareableLinkPolicy.shareableLink("https://example.com/docs#\(slug)"))
+        XCTAssertNil(ShareableLinkPolicy.shareableLink("https://en.wikipedia.org/wiki/Finance#The_2008_financial_crisis_and_aftermath"))
         XCTAssertNotNil(ShareableLinkPolicy.shareableLink("https://example.com/docs#installing-on-linux"))
     }
 }

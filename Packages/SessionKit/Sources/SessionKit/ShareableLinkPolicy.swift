@@ -86,36 +86,37 @@ public enum ShareableLinkPolicy {
     /// The `#fragment` never reaches a server, but the link is copied into packets, notes, OPML,
     /// Readwise and the community map, so a secret kept there travels with it (#1050). Only a
     /// credential-looking fragment is refused: an ordinary anchor such as `#section-2` is on every
-    /// public article. A fragment is read the way it is usually used:
-    /// - as a query string when it holds `=` (`#token=abc`), or after the `?` of a route (`#/list?auth=abc`),
-    ///   with the query's name and length rules;
-    /// - as a route when it holds `/` (`#/private/abc`, `#!/members/abc`), with the path's marker and length rules;
-    /// - otherwise as a bare anchor, refused only when the whole anchor is a long opaque token.
+    /// public article. A fragment is read every way it is usually used, and any one reading is enough:
+    /// - as a route when it holds `/` (`#/private/abc`, `#!/members/abc`), with the path's marker rules;
+    /// - as path segments or a bare anchor, refused when one is a long opaque token (the path's length rule);
+    /// - as a query string: every `name=value` pair, and every item after a `?`, with the query's
+    ///   name and length rules (`#token=abc`, `#/access_token=abc&x=1`, `#/list?auth=abc`).
     private static func fragmentHoldsCredential(_ percentEncodedFragment: String) -> Bool {
-        let fragment = fullyDecoded(percentEncodedFragment)
-        var route = Substring(fragment)
-        var query = Substring()
-        if fragment.hasPrefix("/") || fragment.hasPrefix("!/") {
-            if let mark = fragment.firstIndex(of: "?") {
-                route = fragment[..<mark]
-                query = fragment[fragment.index(after: mark)...]
-            }
-        } else if fragment.contains("=") {
-            route = ""
-            query = Substring(fragment)
-        }
-        let segments = route.split(separator: "/")
-        if route.contains("/"), segments.contains(where: { privatePathMarkers.contains(stem(of: $0).lowercased()) }) {
+        var fragment = fullyDecoded(percentEncodedFragment)
+        // A browser consumes everything from ":~:" on as a text-fragment directive that quotes the
+        // page (`#:~:text=Q%26A%20on%20passwords`). It holds no credential, and its quoted words
+        // must not be read as names.
+        if let directive = fragment.range(of: ":~:") { fragment = String(fragment[..<directive.lowerBound]) }
+        if fragment.hasPrefix("!") { fragment.removeFirst() }
+        let halves = fragment.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        let head = halves[0]
+        let tail = halves.count > 1 ? halves[1] : ""
+        let segments = head.split(separator: "/")
+        if head.contains("/"), segments.contains(where: { privatePathMarkers.contains(stem(of: $0).lowercased()) }) {
             return true
         }
         if segments.contains(where: { looksLikeSecret(stem(of: $0)) }) { return true }
-        for item in query.split(separator: "&") {
-            let pair = item.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-            let name = pair[0].lowercased()
-            if credentialQueryNameFragments.contains(where: name.contains) { return true }
-            if pair.count > 1, looksLikeSecret(String(pair[1])) { return true }
-        }
+        for item in head.split(separator: "&") where item.contains("=") && queryItemHoldsCredential(item) { return true }
+        for item in tail.split(separator: "&") where queryItemHoldsCredential(item) { return true }
         return false
+    }
+
+    /// One `name=value` item, with the query's rules: a credential-like name, or a value that is a long opaque token.
+    private static func queryItemHoldsCredential(_ item: Substring) -> Bool {
+        let pair = item.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        let name = pair[0].lowercased()
+        if credentialQueryNameFragments.contains(where: name.contains) { return true }
+        return pair.count > 1 && looksLikeSecret(String(pair[1]))
     }
 
     /// The segment up to its first dot: `premium.rss` is the marker `premium`.
