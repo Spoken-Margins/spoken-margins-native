@@ -859,6 +859,66 @@ class PlanGroupingTests(unittest.TestCase):
         self.assertIn('[#547](https://example/issue/547)', waiting)
         self.assertIn('Play publisher audio by default', waiting)
 
+    def test_a_check_that_asks_for_a_file_it_does_not_supply_waits_for_one(self):
+        # The 8065265 plan (#1038): "import a book PDF that has bookmarks" with no PDF; the owner had nothing
+        # to test with. A check with a link or a repo file to attach still goes in.
+        outline = self.pr(376, 'PDF outline chapters', [self.issue(
+            347, 'import a book PDF that has bookmarks but no printed chapter headings.', phone=True)])
+        arxiv = self.pr(758, 'Add arXiv PDFs', [self.issue(
+            759, 'Library > + > Link, paste `https://arxiv.org/pdf/2608.09666`, Add.')])
+        stamp = {'number': 162, 'title': 'PDF download stamp read aloud', 'url': 'https://example/issue/162',
+                 'state': 'OPEN', 'createdAt': '2026-09-25T00:00:00Z', 'milestone': None,
+                 'labels': {'nodes': [{'name': 'status: needs-human-validation'}]},
+                 'body': '**Owner check:** import a PDF whose footer has a download stamp, then listen.\n',
+                 'comments': {'nodes': [{'body': 'Merged in #600.'}]}, 'timelineItems': {'nodes': []}}
+        plan = self.write({376: outline, 758: arxiv}, waiting=[stamp], built_prs={600})
+        ten_minutes = plan.split('## Try these')[1].split('## ')[0]
+        self.assertIn('1. **Add arXiv PDFs**', ten_minutes)
+        self.assertNotIn('bookmarks', ten_minutes)
+        self.assertNotIn('Still waiting on your check', plan)
+        waiting = plan.split('## Waiting on another change or a test file')[1].split('## ')[0]
+        self.assertIn('- PDF outline chapters (found on your phone) ([#376]', waiting)
+        self.assertIn(': needs a test PDF, not supplied yet', waiting)
+        also = plan.split('## Also waiting on your check')[1]
+        self.assertIn('- PDF download stamp read aloud ([#162](https://example/issue/162), [#600]', also)
+        self.assertIn(': needs a test PDF, not supplied yet', also)
+        self.assertIn('#347, #162', self.printed)
+        self.assertNotIn('#759', self.printed)
+
+    def test_which_checks_lack_the_file_they_ask_for(self):
+        with tempfile.TemporaryDirectory() as repo:
+            def git(*args):
+                return subprocess.run(['git', *args], cwd=repo, check=True, capture_output=True,
+                                      text=True).stdout.strip()
+            git('init', '-q')
+            files = Path(repo) / 'TestPlans' / 'phone-files'
+            files.mkdir(parents=True)
+            (files / 'footer-stamp-test.pdf').write_bytes(b'%PDF-1.4')
+            git('add', '-A')
+            git('-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '-m', 'pdf')
+            sha = git('rev-parse', 'HEAD')
+            with unittest.mock.patch.dict(os.environ, {'SM_PHONE_REPO': repo}):
+                module = load_phone_build()
+            rows = [  # (check, the file kind it lacks, or None)
+                ('Import a PDF whose footer has a stamp, then listen.', 'PDF'),
+                ('import two pdfs and compare them', 'PDF'),
+                ('Open the EPUB and play chapter 2.', 'EPUB'),
+                ('Import an audiobook with chapters.', 'audiobook'),
+                ('AirDrop the packet to the phone and import it.', 'packet'),
+                ('open `Hollywood-Was-Cooked.spokenmargins` and tap Import', 'packet'),
+                ('Open `TestPlans/phone-files/footer-stamp-test.pdf` from Files, then listen.', None),
+                ('Open `TestPlans/phone-files/missing.pdf` from Files.', 'PDF'),  # named, but not in the commit
+                ('Open <https://arxiv.org/pdf/2608.09666> in Safari, Share, Spoken Margins.', None),
+                ('Open https://example.org/book.epub in Safari.', None),
+                ('import a PDF once https://github.com/uncomposed/spoken-margins-native/issues/547 lands', 'PDF'),
+                ('Play a podcast and tap Add Margin.', None),
+                ('Read the PDFKit-backed reader page; nothing to import.', None),  # a word, not a file
+                ('', None),
+            ]
+            for check, lacks in rows:
+                with self.subTest(check=check):
+                    self.assertEqual(module.missing_material(check, sha), lacks)
+
     def test_one_unknown_number_does_not_hide_the_others(self):
         # gh fails a whole GraphQL query when one alias names no issue or PR (#847 review).
         module = self.module
