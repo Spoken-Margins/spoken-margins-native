@@ -16,8 +16,9 @@ PACKET_PLAN_SWIFT = ROOT / 'Packages/SessionKit/Sources/CoopPacket/PacketBuilder
 SHARING_MODELS_SWIFT = ROOT / 'Packages/SessionKit/Sources/SessionKit/SharingModels.swift'
 
 
-def swift_lets(path, header, indent):
-    """The stored properties of one Swift struct, name -> type, read from the source so a plan can't drift from it."""
+def swift_lets(path, header, indent, keywords='let'):
+    """The stored properties of one Swift struct, name -> type, read from the source so a plan can't drift from it.
+    `keywords` is `let` or `let|var`; a computed property (its line ends in `{`) is never stored."""
     text = Path(path).read_text(encoding='utf-8')
     start = re.search(header, text)
     assert start, header
@@ -25,8 +26,8 @@ def swift_lets(path, header, indent):
     for line in text[start.end():].splitlines():
         if re.match(r'^' + ' ' * (indent - 4) + r'\}', line):
             break
-        found = re.match(r'^' + ' ' * indent + r'(?:public )?let (\w+): ([^=\n]+)', line)
-        if found:
+        found = re.match(r'^' + ' ' * indent + r'(?:public )?(?:' + keywords + r') (\w+): ([^=\n]+)', line)
+        if found and not line.rstrip().endswith('{'):
             props[found.group(1)] = found.group(2).strip()
     return props
 
@@ -271,10 +272,34 @@ class ProcedureTests(unittest.TestCase):
     def setUp(self):
         self.kit = kit_tool.load_kit()
         self.text = kit_tool.PROCEDURE_FILE.read_text(encoding='utf-8')
+        self.literals = kit_tool.app_literals()
 
     def test_it_names_every_packet_sender_count_and_what_each_margin_says(self):
-        self.assertEqual(kit_tool.procedure_problems(self.kit, self.text), [])
-        self.assertIn('Voice files: 3', self.text)
+        self.assertEqual(kit_tool.procedure_problems(self.kit, self.text, self.literals), [])
+        for packet in self.kit['packets']:
+            self.assertIn(kit_tool.margin_count_phrase(len(packet['margins'])), self.text)
+
+    def test_a_button_or_label_the_app_does_not_have_is_caught(self):
+        self.assertIsNotNone(self.literals, 'the app sources are part of this checkout')
+        problems = kit_tool.procedure_problems(self.kit, self.text + '\nTap **Frobnicate Everything**.\n', self.literals)
+        self.assertTrue(any('Frobnicate Everything' in p for p in problems), problems)
+        renamed = self.text.replace('**Download Now**', '**Fetch It**')
+        self.assertTrue(any('Fetch It' in p for p in kit_tool.procedure_problems(self.kit, renamed, self.literals)))
+
+    def test_wording_of_a_screen_the_app_no_longer_shows_is_caught(self):
+        # SpokenMarginsPackageImportView still holds these strings, but no screen presents it (Gate1RootView shows
+        # Build23RecipientSharingExperience), so the app-label check alone would let them through.
+        for dead in ('Import & Resolve Margins', 'Spoken Margins found this item in your library', 'Voice files: 3'):
+            problems = kit_tool.procedure_problems(self.kit, self.text + f'\n{dead}\n', self.literals)
+            self.assertTrue(any('no longer shows' in p for p in problems), dead)
+
+    def test_the_import_sheet_it_describes_is_the_one_the_root_view_presents(self):
+        root = (ROOT / 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift').read_text(encoding='utf-8')
+        self.assertIn('Build23RecipientSharingHost', root)
+        self.assertNotIn('SpokenMarginsPackageImportView', root)
+        recipient = (ROOT / 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Build23RecipientSharingExperience.swift').read_text(encoding='utf-8')
+        for label in ('Margins', 'Source transport', 'Item contents', 'Import', 'Source reference', 'Item not included in package'):
+            self.assertIn(f'"{label}"', recipient, label)
 
     def test_it_never_tells_the_listener_to_remove_the_app_or_reset_anything(self):
         for word in ('reinstall', 'reset', 'erase', 'delete the app', 'offload'):
@@ -283,7 +308,7 @@ class ProcedureTests(unittest.TestCase):
 
     def test_a_dropped_packet_or_link_is_caught(self):
         self.assertTrue(kit_tool.procedure_problems(self.kit, self.text.replace('kit-3-wrong-cut.spokenmargins', 'x')))
-        self.assertTrue(kit_tool.procedure_problems(self.kit, self.text.replace('4 shared Margins', 'some Margins')))
+        self.assertTrue(kit_tool.procedure_problems(self.kit, self.text.replace(kit_tool.margin_count_phrase(4), 'some Margins')))
         self.assertTrue(kit_tool.procedure_problems(self.kit, self.text.replace(
             self.kit['items']['episode-a']['audio']['url'], 'https://example.com/x.mp3')))
         self.assertTrue(kit_tool.procedure_problems(
@@ -297,58 +322,61 @@ class ProcedureTests(unittest.TestCase):
 
 
 def build_packet(path, kit, packet, mutate=None):
-    """A packet shaped like the ones coop-packet writes, for testing the reader without Swift."""
+    """A packet shaped like the ones coop-packet writes (SpokenMarginsPackageBuilder.prepare and
+    SpokenMarginsPackageArchive.write), for testing the reader without Swift."""
     item = kit['items'][packet['item']]
     identity = item['identity']
     podcast = item['kind'] == 'podcast'
     files, assets, interjections = {}, [], []
-    for margin in packet['margins']:
+    for index, margin in enumerate(packet['margins'], start=1):
         spoken = margin.get('spoken', True)
         representation = {
-            'id': f"representation-{margin['id']}",
+            'id': f"representation-{index:04d}-{'original' if spoken else 'text'}",
             'kind': 'original_audio_and_text' if spoken else 'text_only',
             'approvedTranscript': margin['text'],
             'provenance': 'sender_approved_original' if spoken else 'sender_approved_text_only',
         }
         if spoken:
-            voice = f"assets/audio/{margin['id']}.m4a"
+            voice = f'assets/audio/margin-{index:04d}-original.m4a'
             files[voice] = b'm4a:' + margin['id'].encode()
-            assets.append({'id': f"voice-{margin['id']}", 'role': 'original_voice', 'path': voice, 'mimeType': 'audio/mp4',
+            assets.append({'id': f'asset-{index:04d}-original', 'role': 'original_voice', 'path': voice, 'mimeType': 'audio/mp4',
                            'durationMs': 6000, 'provenance': 'sender_approved_original'})
-            representation['assetId'] = f"voice-{margin['id']}"
+            representation['assetId'] = f'asset-{index:04d}-original'
+        anchor = None
         if podcast:
             anchor = {'anchorType': 'media', 'mediaTimeMs': margin['atMs'], 'machineEvidenceAssetIds': []}
-            for side in ('pre', 'post'):
-                evidence = f"assets/evidence/{margin['id']}-{side}.shazamsignature"
-                files[evidence] = f"sig:{margin['id']}:{side}".encode()
-                assets.append({'id': f"{margin['id']}-{side}", 'role': 'acoustic_signature', 'path': evidence,
-                               'mimeType': 'application/vnd.apple.shazam.signature', 'durationMs': 11000,
-                               'anchorOffsetMs': 11500 if side == 'pre' else -500, 'provenance': 'test'})
-                anchor['machineEvidenceAssetIds'].append(f"{margin['id']}-{side}")
         else:
             anchor = {'anchorType': 'text', 'exactText': margin['quote'], 'machineEvidenceAssetIds': []}
         interjections.append({'packageScopedId': margin['id'], 'createdAt': kit['createdAt'], 'anchor': anchor,
                               'defaultRepresentationId': representation['id'], 'representations': [representation]})
+    if podcast:
+        # The writer lists every voice first, then every fingerprint (a "pre" and a "post" window per Margin).
+        for margin, interjection in zip(packet['margins'], interjections):
+            for side in ('pre', 'post'):
+                evidence_id = f"anchor-synthetic-{margin['id']}-{side}"
+                path_in_archive = f'assets/evidence/{evidence_id}.shazamsignature'
+                files[path_in_archive] = f"sig:{margin['id']}:{side}".encode()
+                assets.append({'id': evidence_id, 'role': 'acoustic_signature', 'path': path_in_archive,
+                               'mimeType': 'application/vnd.apple.shazam.signature', 'durationMs': 11000,
+                               'anchorOffsetMs': 11500 if side == 'pre' else -500, 'provenance': 'exact_local_playback_edition'})
+                interjection['anchor']['machineEvidenceAssetIds'].append(evidence_id)
     layer = {'id': 'commentary-layer', 'schemaVersion': 'spoken-margins.commentary-layer.v1', 'interjections': interjections}
     files['artifacts/commentary-layer.json'] = json.dumps(layer).encode()
-    source = {'sourceType': 'podcast' if podcast else 'article', 'canonicalURL': identity['canonicalURL'], 'title': identity['title']}
-    for field in ('episodeGUID', 'enclosureURL', 'durationMs', 'publisher', 'showTitle', 'publishedAt', 'languageCode'):
-        if field in identity:
-            source[field] = identity[field]
     for descriptor in assets:
         data = files[descriptor['path']]
         descriptor.update(byteCount=len(data), sha256=hashlib.sha256(data).hexdigest())
     layer_bytes = files['artifacts/commentary-layer.json']
     manifest = {
-        'schemaVersion': 'spoken-margins.package.v1', 'packageId': 'package-test', 'createdAt': kit['createdAt'],
-        'contentDigest': '0' * 64, 'senderDisplayLabel': packet['sender'], 'suggestedRevealMode': 'companion',
-        'source': source, 'requiredCapabilities': ['spoken-margins.commentary-layer.v1'],
+        'schemaVersion': 'spoken-margins.package.v1', 'packageId': 'package-synthetic-test', 'createdAt': kit['createdAt'],
+        'contentDigest': '0' * 64, 'item': dict(identity), 'itemTransport': {'kind': 'reference'},
+        'senderDisplayLabel': packet['sender'], 'suggestedRevealMode': 'companion',
+        'requiredCapabilities': ['spoken-margins.commentary-layer.v1'],
         'artifacts': [{'id': 'commentary-layer', 'kind': 'commentary_layer', 'schemaVersion': 'spoken-margins.commentary-layer.v1',
                        'path': 'artifacts/commentary-layer.json', 'required': True, 'byteCount': len(layer_bytes),
                        'sha256': hashlib.sha256(layer_bytes).hexdigest()}],
         'assets': assets,
         'redactions': {name: True for name in (
-            'rawAudioOmitted', 'rawTranscriptOmitted', 'fullSourceTextOmitted', 'sourceAudioOmitted',
+            'rawAudioOmitted', 'rawTranscriptOmitted', 'fullItemOmitted', 'itemAudioOmitted',
             'diagnosticsOmitted', 'filesystemPathsOmitted', 'unrelatedTurnsOmitted', 'privateRepresentationsOmitted')},
     }
     if mutate:
@@ -386,12 +414,64 @@ class PacketLintTests(unittest.TestCase):
         for packet in self.kit['packets']:
             self.assertEqual(self.lint(packet['file']), [], packet['file'])
 
+    def test_the_fixture_uses_the_keys_the_swift_writer_encodes(self):
+        manifest = swift_lets(SHARING_MODELS_SWIFT, r'struct SpokenMarginsPackageManifest: Codable, Equatable, Sendable \{', 4, 'let|var')
+        redactions = swift_lets(SHARING_MODELS_SWIFT, r'struct InterjectionPackageRedactions: Codable, Equatable, Sendable \{', 4)
+        artifact = swift_lets(SHARING_MODELS_SWIFT, r'struct SpokenMarginsArtifactDescriptor: Codable, Equatable, Sendable, Identifiable \{', 4, 'let|var')
+        asset = swift_lets(SHARING_MODELS_SWIFT, r'struct SpokenMarginsAssetDescriptor: Codable, Equatable, Sendable, Identifiable \{', 4, 'let|var')
+        identity = swift_lets(SHARING_MODELS_SWIFT, r'public struct SharedItemIdentity: Codable[^{]*\{', 4)
+        transport = swift_lets(SHARING_MODELS_SWIFT, r'public struct SharedItemTransport: Codable[^{]*\{', 4)
+        self.assertEqual(set(identity), kit_tool.ITEM_KEYS)
+        self.assertEqual(set(transport), kit_tool.TRANSPORT_KEYS)
+        self.assertEqual(set(manifest), kit_tool.MANIFEST_KEYS)
+        self.assertEqual(set(redactions), kit_tool.REDACTION_KEYS)
+        self.assertEqual(set(artifact), kit_tool.ARTIFACT_KEYS)
+        self.assertEqual(set(asset), kit_tool.ASSET_KEYS)
+        path = Path(self.folder.name) / 'kit-1-episode-a.spokenmargins'
+        build_packet(path, self.kit, packet_of(self.kit, 'kit-1-episode-a'))
+        with zipfile.ZipFile(path) as archive:
+            written = json.loads(archive.read('manifest.json'))
+        self.assertEqual(set(written), kit_tool.MANIFEST_KEYS)
+        self.assertEqual(set(written['redactions']), set(redactions))
+
+    def test_the_old_manifest_shape_is_refused(self):
+        # Contracts/schemas/spoken-margins-package.schema.json still describes `source` and `sourceAudioOmitted`.
+        # No build writes them, and Build 29's reader refuses a manifest key it doesn't know.
+        def old_shape(manifest, layer, files):
+            manifest['source'] = {'sourceType': 'podcast', 'canonicalURL': manifest['item']['canonicalURL'], 'title': 't'}
+            manifest['redactions']['sourceAudioOmitted'] = manifest['redactions'].pop('itemAudioOmitted')
+        problems = self.lint('kit-1-episode-a', old_shape)
+        self.assertProblem(problems, "manifest has the key 'source'")
+        self.assertProblem(problems, "redactions has the key 'sourceAudioOmitted'")
+
     def test_a_packet_that_needs_more_than_build_29_reads_is_refused(self):
-        problems = self.lint('kit-1-episode-a', lambda m, l, f: m['requiredCapabilities'].append('spoken-margins.embedded-text-item.v1'))
+        problems = self.lint('kit-1-episode-a', lambda m, l, f: m['requiredCapabilities'].append('spoken-margins.future-thing.v9'))
         self.assertProblem(problems, 'Build 29 cannot read')
 
+    def test_a_kit_packet_that_carries_its_item_is_refused(self):
+        def embed(manifest, layer, files):
+            manifest['requiredCapabilities'].append('spoken-margins.embedded-text-item.v1')
+            manifest['itemTransport'] = {'kind': 'embedded_text', 'embeddedArtifactId': 'embedded-item'}
+        problems = self.lint('kit-4-article', embed)
+        self.assertProblem(problems, 'requiredCapabilities')
+        self.assertProblem(problems, 'shares its item by reference')
+
+    def test_an_extra_artifact_is_refused(self):
+        def add_spine(manifest, layer, files):
+            files['artifacts/edition-fingerprint-spine-0001.json'] = b'{}'
+            manifest['artifacts'].append({'id': 'spine', 'kind': 'edition_fingerprint_spine', 'schemaVersion': 'x',
+                                          'path': 'artifacts/edition-fingerprint-spine-0001.json', 'required': False,
+                                          'byteCount': 2, 'sha256': hashlib.sha256(b'{}').hexdigest()})
+        self.assertProblem(self.lint('kit-1-episode-a', add_spine), 'one commentary_layer and nothing else')
+
+    def test_redactions_that_do_not_all_hold_are_refused(self):
+        self.assertProblem(self.lint('kit-1-episode-a', lambda m, l, f: m['redactions'].update(itemAudioOmitted=False)), 'redactions must list')
+
+    def test_an_asset_with_the_wrong_type_for_its_role_is_refused(self):
+        self.assertProblem(self.lint('kit-1-episode-a', lambda m, l, f: m['assets'][0].update(mimeType='audio/mpeg')), 'a original_voice is')
+
     def test_a_changed_file_no_longer_matches_the_manifest(self):
-        problems = self.lint('kit-1-episode-a', lambda m, l, f: f.update({'assets/audio/a1.m4a': b'changed'}))
+        problems = self.lint('kit-1-episode-a', lambda m, l, f: f.update({'assets/audio/margin-0001-original.m4a': b'changed'}))
         self.assertProblem(problems, 'does not match its size or hash')
 
     def test_a_file_the_manifest_does_not_list_is_found(self):
@@ -413,12 +493,12 @@ class PacketLintTests(unittest.TestCase):
 
     def test_a_text_only_margin_that_carries_a_voice_is_found(self):
         def change(manifest, layer, files):
-            layer['interjections'][3]['representations'][0]['assetId'] = 'voice-a1'
+            layer['interjections'][3]['representations'][0]['assetId'] = 'asset-0001-original'
         self.assertProblem(self.lint('kit-1-episode-a', change), 'carries a voice file')
 
     def test_a_packet_about_another_item_is_found(self):
-        problems = self.lint('kit-1-episode-a', lambda m, l, f: m['source'].update(canonicalURL='https://example.com/other.mp3'))
-        self.assertProblem(problems, 'source.canonicalURL')
+        problems = self.lint('kit-1-episode-a', lambda m, l, f: m['item'].update(canonicalURL='https://example.com/other.mp3'))
+        self.assertProblem(problems, 'item.canonicalURL')
 
     def test_a_sender_label_that_changed_is_found(self):
         problems = self.lint('kit-1-episode-a', lambda m, l, f: m.update(senderDisplayLabel='Someone Else'))
@@ -432,7 +512,7 @@ class PacketLintTests(unittest.TestCase):
         problems = self.lint('kit-3-wrong-cut', lambda m, l, f: l['interjections'].reverse())
         self.assertProblem(problems, 'not the ones in kit.json')
 
-    def test_a_manifest_that_breaks_the_package_schema_is_found(self):
+    def test_a_manifest_without_its_redactions_is_found(self):
         problems = self.lint('kit-1-episode-a', lambda m, l, f: m.pop('redactions'))
         self.assertProblem(problems, 'redactions')
 

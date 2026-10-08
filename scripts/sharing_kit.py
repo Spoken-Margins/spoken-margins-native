@@ -3,13 +3,13 @@
 
 The kit is described once, in docs/sharing-test-kit/kit.json: three public items (two episodes of one show
 that share a six-second intro, and one web article) and four packets of synthetic Margins. The owner's
-ten-minute procedure is docs/sharing-test-kit/procedure.md.
+fifteen-minute procedure is docs/sharing-test-kit/procedure.md.
 
     sharing_kit.py lint                 kit.json and procedure.md agree with each other and with the packet rules (offline)
     sharing_kit.py plans [--work DIR]   write the coop-packet plans (offline)
     sharing_kit.py verify-content       public audio, intro, license and quotes still match kit.json (needs network)
     sharing_kit.py build [--work DIR]   Mac only: fetch audio, write the packets with coop-packet, check them, list their hashes
-    sharing_kit.py lint-packets FILE... read built packets without Swift: schema, hashes, kit.json, Build 29 capability rule
+    sharing_kit.py lint-packets FILE... read built packets without Swift: manifest keys Build 29 accepts, hashes, kit.json, capability rule
     sharing_kit.py stage [--work DIR]   copy checked packets into docs/sharing-test-kit/packets/
 
 Packets are written by `coop-packet` (Packages/SessionKit/Sources/CoopPacket), the same SessionKit code the app uses.
@@ -25,7 +25,6 @@ import subprocess
 import sys
 import tempfile
 import urllib.parse
-import urllib.request
 import uuid
 import zipfile
 
@@ -45,13 +44,40 @@ MAX_VOICE_MS = 10 * 60 * 1000         # a voice asset longer than 10 minutes is 
 MIN_EVIDENCE_MS = 3_000               # PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs
 ANCHOR_GAP_MS = 500                   # PodcastAnchorEvidenceGenerator.anchorGapMs
 FLANK_MS = 11_000                     # about 11 s of sound either side of a Margin (ShazamKit takes at most 12 s)
-# Build 29 reads these and no other; a packet that needs more would not open there.
-BUILD_29_CAPABILITIES = {'spoken-margins.commentary-layer.v1'}
+# The manifest as SpokenMarginsPackageArchive reads it. Build 29's frozen copy of that reader
+# (Packages/SessionKit/Tests/ShippedReader) refuses a key it doesn't list, so a key not listed here fails there.
+PACKAGE_SCHEMA = 'spoken-margins.package.v1'
+COMMENTARY_CAPABILITY = 'spoken-margins.commentary-layer.v1'
+# Build 29 reads these two and no other; a packet that needs more would not open there.
+BUILD_29_CAPABILITIES = {COMMENTARY_CAPABILITY, 'spoken-margins.embedded-text-item.v1'}
+MANIFEST_KEYS = {
+    'schemaVersion', 'packageId', 'createdAt', 'contentDigest', 'item', 'itemTransport', 'senderDisplayLabel',
+    'suggestedRevealMode', 'requiredCapabilities', 'artifacts', 'assets', 'redactions',
+}
+ITEM_KEYS = {
+    'itemType', 'canonicalURL', 'originalURL', 'title', 'author', 'publisher', 'showTitle', 'episodeGUID',
+    'enclosureURL', 'publishedAt', 'durationMs', 'normalizedContentSHA256', 'exactEditionSHA256', 'languageCode',
+    'source',
+}
+TRANSPORT_KEYS = {'kind', 'embeddedArtifactId', 'rightsBasis'}
+REDACTION_KEYS = {
+    'rawAudioOmitted', 'rawTranscriptOmitted', 'fullItemOmitted', 'itemAudioOmitted', 'diagnosticsOmitted',
+    'filesystemPathsOmitted', 'unrelatedTurnsOmitted', 'privateRepresentationsOmitted',
+}
+ARTIFACT_KEYS = {'id', 'kind', 'schemaVersion', 'path', 'required', 'byteCount', 'sha256'}
+ASSET_KEYS = {'id', 'role', 'path', 'mimeType', 'durationMs', 'anchorOffsetMs', 'provenance', 'byteCount', 'sha256'}
 ITEM_TYPES = {'podcast': 'podcast', 'article': 'text'}
-SOURCE_TYPES = {'podcast': 'podcast', 'article': 'article'}
 ASSET_ROLE_VOICE = 'original_voice'
 ASSET_ROLE_SIGNATURE = 'acoustic_signature'
+ASSET_MIME_TYPES = {ASSET_ROLE_VOICE: 'audio/mp4', ASSET_ROLE_SIGNATURE: 'application/vnd.apple.shazam.signature'}
 FORBIDDEN_IN_PROCEDURE = ('reinstall', 'reset', 'erase', 'delete app', 'delete the app', 'offload')
+# Wording of SpokenMarginsPackageImportView, which no screen shows (the live sheet is Build23RecipientSharingExperience).
+DEAD_SCREEN_TEXT = ('Import & Resolve Margins', 'found this item in your library', 'will reconstruct', 'Voice files',
+                    'Acoustic anchor signatures')
+# Names the procedure may put in bold that are not in the app: iOS's own controls.
+SYSTEM_UI_LABELS = {'Control Center', 'Wi-Fi', 'Copy', 'Save to Files', 'Files', 'Spoken Margins'}
+# Bold that is emphasis or a Margin's name, not a label on a screen.
+NOT_A_LABEL = ('You should', 'Nothing in this pass', 'Margin ')
 
 
 class KitError(Exception):
@@ -67,7 +93,8 @@ def packet_file_name(packet):
 
 
 def margin_count_phrase(count):
-    return f"{count} shared Margin{'' if count == 1 else 's'}"
+    """How the procedure says what the import sheet's Margins line holds."""
+    return f"**Margins** says {count}"
 
 
 # --- the shareable-link rule, as SessionKit's ShareableLinkPolicy applies it -----------------------------------
@@ -272,10 +299,49 @@ def _validate_article_packet(packet, margins, problems):
         problems.append(f'{name}: each quote is used once')
 
 
-def procedure_problems(kit, text):
-    """What the owner's procedure must say for the kit to be usable, checked against kit.json."""
+_STRING = re.compile(r'"((?:\\.|[^"\\\n])*)"')
+_INTERPOLATION = re.compile(r'\\\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)')
+
+
+def app_literals(root=ROOT):
+    """Every string literal in the app and SessionKit sources, an interpolation written as N. None when the sources
+    are not here. The procedure quotes screen labels; each must be one of these, or the screen it describes is gone."""
+    folders = [Path(root) / 'App' / 'SpokenMarginsApp' / 'Sources', Path(root) / 'Packages' / 'SessionKit' / 'Sources']
+    if not all(folder.is_dir() for folder in folders):
+        return None
+    found = set()
+    for folder in folders:
+        for source in folder.rglob('*.swift'):
+            for literal in _STRING.findall(source.read_text(encoding='utf-8', errors='replace')):
+                found.add(_INTERPOLATION.sub('N', literal).replace('\\"', '"'))
+    return found
+
+
+def app_label_problems(text, literals):
+    """Bold text in the procedure is a label on a screen. Each one has to be in the app, so a renamed or removed
+    screen shows up here instead of on the owner's phone. Short labels must match a whole string; longer ones may be
+    part of a string, since a label like "Share Margins (N)" sits in a longer literal."""
+    problems = []
+    for span in dict.fromkeys(re.findall(r'\*\*([^*\n]+)\*\*', text)):
+        if span.startswith(NOT_A_LABEL) or span in SYSTEM_UI_LABELS:
+            continue
+        shape = re.sub(r'\d+', 'N', span)
+        if shape in literals or (len(shape) >= 8 and any(shape in literal for literal in literals)):
+            continue
+        problems.append(f'procedure.md names {span!r} in bold, which is not text in the app; fix the label or the screen it describes')
+    return problems
+
+
+def procedure_problems(kit, text, literals=None):
+    """What the owner's procedure must say for the kit to be usable, checked against kit.json and, when the app
+    sources are given as `literals`, against the labels the app really shows."""
     problems = []
     lowered = text.lower()
+    for dead in DEAD_SCREEN_TEXT:
+        if dead.lower() in lowered:
+            problems.append(f'procedure.md quotes {dead!r}, wording of a screen the app no longer shows')
+    if literals is not None:
+        problems += app_label_problems(text, literals)
     for word in FORBIDDEN_IN_PROCEDURE:
         if word in lowered:
             problems.append(f'procedure.md must not tell the listener to "{word}" (nothing deletes the app or his Library)')
@@ -308,7 +374,7 @@ def procedure_problems(kit, text):
 def lint(kit=None, procedure=None):
     kit = kit or load_kit()
     text = procedure if procedure is not None else PROCEDURE_FILE.read_text(encoding='utf-8')
-    return validate_kit(kit) + procedure_problems(kit, text)
+    return validate_kit(kit) + procedure_problems(kit, text, app_literals())
 
 
 # --- coop-packet plans -------------------------------------------------------------------------------------------
@@ -365,6 +431,64 @@ def _schema_problems(validator, document, label):
     return [f"{label}: {'/'.join(map(str, e.absolute_path)) or '(top)'} {e.message}" for e in validator.iter_errors(document)]
 
 
+def _unknown_keys(label, document, allowed):
+    return [f'{label} has the key {key!r}, which Build 29 refuses' for key in sorted(set(document) - allowed)]
+
+
+def _manifest_problems(name, manifest):
+    """The manifest rules of SpokenMarginsPackageArchive, for the packets this kit builds (reference transport,
+    one commentary layer, voices and fingerprints). `Contracts/schemas/spoken-margins-package.schema.json` is not
+    used: it describes an older manifest (`source`, `sourceAudioOmitted`) that no build writes."""
+    problems = _unknown_keys(f'{name}: manifest', manifest, MANIFEST_KEYS)
+    if manifest.get('schemaVersion') != PACKAGE_SCHEMA:
+        problems.append(f"{name}: schemaVersion is {manifest.get('schemaVersion')!r}, not {PACKAGE_SCHEMA!r}")
+    if not 1 <= len(str(manifest.get('packageId', ''))) <= 200:
+        problems.append(f'{name}: packageId is missing or longer than 200 characters')
+    if not re.fullmatch(r'[0-9a-f]{64}', str(manifest.get('contentDigest', ''))):
+        problems.append(f'{name}: contentDigest is not a SHA-256')
+    if not isinstance(manifest.get('createdAt'), str):
+        problems.append(f'{name}: createdAt is missing')
+    for key in ('item', 'itemTransport', 'redactions'):
+        if not isinstance(manifest.get(key), dict):
+            problems.append(f'{name}: manifest has no {key}')
+    problems += _unknown_keys(f'{name}: item', manifest.get('item') or {}, ITEM_KEYS)
+    problems += _unknown_keys(f'{name}: itemTransport', manifest.get('itemTransport') or {}, TRANSPORT_KEYS)
+    redactions = manifest.get('redactions') or {}
+    problems += _unknown_keys(f'{name}: redactions', redactions, REDACTION_KEYS)
+    if set(redactions) != REDACTION_KEYS or not all(value is True for value in redactions.values()):
+        problems.append(f'{name}: redactions must list all of {sorted(REDACTION_KEYS)}, each true (the packet carries '
+                        'no item text, item audio or raw recording)')
+    capabilities = manifest.get('requiredCapabilities')
+    if capabilities != [COMMENTARY_CAPABILITY]:
+        extra = sorted(set(capabilities or []) - BUILD_29_CAPABILITIES)
+        if extra:
+            problems.append(f'{name}: requires {extra}, which Build 29 cannot read')
+        else:
+            problems.append(f'{name}: requiredCapabilities is {capabilities!r}; a kit packet needs only {COMMENTARY_CAPABILITY!r}')
+    artifacts, assets = manifest.get('artifacts') or [], manifest.get('assets') or []
+    for descriptor in artifacts:
+        problems += _unknown_keys(f"{name}: artifact {descriptor.get('id')}", descriptor, ARTIFACT_KEYS)
+    for descriptor in assets:
+        problems += _unknown_keys(f"{name}: asset {descriptor.get('id')}", descriptor, ASSET_KEYS)
+    if [a.get('kind') for a in artifacts] != ['commentary_layer']:
+        problems.append(f"{name}: artifacts are {[a.get('kind') for a in artifacts]}; a kit packet holds one commentary_layer and nothing else")
+    for descriptor in artifacts:
+        if descriptor.get('kind') == 'commentary_layer' and (
+                descriptor.get('schemaVersion') != COMMENTARY_CAPABILITY or descriptor.get('required') is not True):
+            problems.append(f'{name}: the commentary layer must be required and use {COMMENTARY_CAPABILITY}')
+    ids = [a.get('id') for a in artifacts + assets]
+    paths = [a.get('path') for a in artifacts + assets]
+    if len(set(ids)) != len(ids) or len(set(paths)) != len(paths):
+        problems.append(f'{name}: two artifacts or assets share an id or a path')
+    for descriptor in assets:
+        role = descriptor.get('role')
+        if role not in ASSET_MIME_TYPES:
+            problems.append(f"{name}: asset {descriptor.get('id')} has the role {role!r}; a kit packet holds voices and fingerprints")
+        elif descriptor.get('mimeType') != ASSET_MIME_TYPES[role]:
+            problems.append(f"{name}: asset {descriptor.get('id')} is {descriptor.get('mimeType')!r}, a {role} is {ASSET_MIME_TYPES[role]!r}")
+    return problems
+
+
 def lint_packet(path, kit):
     """Problems found by opening a built packet as a zip. The Swift check (`coop-packet check`, which reads the
     packet with the Build 29 reader too) stays the authority; this catches the rest on any machine."""
@@ -389,24 +513,22 @@ def lint_packet(path, kit):
         if 'manifest.json' not in names:
             return problems + [f'{path.name}: no manifest.json']
         manifest = json.loads(archive.read('manifest.json'))
-        problems += _schema_problems(_validator('spoken-margins-package.schema.json'), manifest, 'manifest')
-        listed = {a['path'] for a in manifest.get('artifacts', [])} | {a['path'] for a in manifest.get('assets', [])}
+        problems += _manifest_problems(path.name, manifest)
+        artifacts, assets = manifest.get('artifacts') or [], manifest.get('assets') or []
+        listed = {a.get('path') for a in artifacts + assets}
         for entry in names:
             if entry not in listed and entry not in ('manifest.json', 'preview.md'):
                 problems.append(f'{path.name}: {entry} is in the archive but not in the manifest')
-        for descriptor in manifest.get('artifacts', []) + manifest.get('assets', []):
-            if descriptor['path'] not in names:
-                problems.append(f"{path.name}: {descriptor['path']} is listed but missing")
+        for descriptor in artifacts + assets:
+            if descriptor.get('path') not in names:
+                problems.append(f"{path.name}: {descriptor.get('path')} is listed but missing")
                 continue
             data = archive.read(descriptor['path'])
-            if len(data) != descriptor['byteCount'] or hashlib.sha256(data).hexdigest() != descriptor['sha256']:
+            if len(data) != descriptor.get('byteCount') or hashlib.sha256(data).hexdigest() != descriptor.get('sha256'):
                 problems.append(f"{path.name}: {descriptor['path']} does not match its size or hash in the manifest")
-        extra_capabilities = set(manifest.get('requiredCapabilities', [])) - BUILD_29_CAPABILITIES
-        if extra_capabilities:
-            problems.append(f'{path.name}: requires {sorted(extra_capabilities)}, which Build 29 cannot read')
         layer = None
-        for artifact in manifest.get('artifacts', []):
-            if artifact.get('kind') == 'commentary_layer' and artifact['path'] in names:
+        for artifact in artifacts:
+            if artifact.get('kind') == 'commentary_layer' and artifact.get('path') in names:
                 layer = json.loads(archive.read(artifact['path']))
         if layer is None:
             return problems + [f'{path.name}: no commentary layer']
@@ -419,14 +541,12 @@ def _packet_matches_kit(name, manifest, layer, packet, kit):
     problems = []
     item = kit['items'][packet['item']]
     identity = item['identity']
-    source = manifest.get('source', {})
-    expected = {'sourceType': SOURCE_TYPES[item['kind']], 'canonicalURL': identity['canonicalURL'], 'title': identity['title']}
-    for field in ('episodeGUID', 'enclosureURL', 'durationMs'):
-        if field in identity:
-            expected[field] = identity[field]
-    for field, value in expected.items():
-        if source.get(field) != value:
-            problems.append(f'{name}: source.{field} is {source.get(field)!r}, kit.json says {value!r}')
+    shared = manifest.get('item') or {}
+    for field in sorted(set(identity) | set(shared)):
+        if shared.get(field) != identity.get(field):
+            problems.append(f'{name}: item.{field} is {shared.get(field)!r}, kit.json says {identity.get(field)!r}')
+    if (manifest.get('itemTransport') or {}).get('kind') != 'reference':
+        problems.append(f"{name}: itemTransport is {manifest.get('itemTransport')!r}; a kit packet shares its item by reference")
     if manifest.get('senderDisplayLabel') != packet['sender']:
         problems.append(f"{name}: sender is {manifest.get('senderDisplayLabel')!r}, kit.json says {packet['sender']!r}")
     assets = {a['id']: a for a in manifest.get('assets', [])}
@@ -476,10 +596,9 @@ def sha256_file(path):
 
 
 def download(url, destination):
-    request = urllib.request.Request(url, headers={'User-Agent': 'spoken-margins-sharing-kit'})
-    with urllib.request.urlopen(request, timeout=120) as response, open(destination, 'wb') as out:
-        for chunk in iter(lambda: response.read(1 << 20), b''):
-            out.write(chunk)
+    """curl reads the Mac's own certificate store; Python on a Mac often has none."""
+    subprocess.run(['curl', '--fail', '--silent', '--show-error', '--location', '--max-time', '300',
+                    '--user-agent', 'spoken-margins-sharing-kit', '--output', str(destination), url], check=True)
 
 
 def fetch_audio(kit, audio_dir, fetch=download):
@@ -588,9 +707,10 @@ def _decode(path, seconds=30, sample_rate=8000):
 
 
 def _page_text(url):
-    request = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 spoken-margins-sharing-kit'})
     import html
-    page = urllib.request.urlopen(request, timeout=60).read().decode('utf-8', 'replace')
+    page = subprocess.run(['curl', '--fail', '--silent', '--show-error', '--location', '--max-time', '60',
+                           '--user-agent', 'Mozilla/5.0 spoken-margins-sharing-kit', url],
+                          capture_output=True, check=True).stdout.decode('utf-8', 'replace')
     title = re.search(r'<title>(.*?)</title>', page, re.S)
     body = re.sub(r'(?is)<(script|style).*?</\1>', '', page)
     text = re.sub(r'\s+', ' ', html.unescape(re.sub(r'<[^>]+>', ' ', body)))
