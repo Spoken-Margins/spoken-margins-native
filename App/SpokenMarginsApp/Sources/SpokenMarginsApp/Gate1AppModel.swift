@@ -12933,67 +12933,16 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func sessionContextJSON(
-        interjections: [Interjection],
-        currentFollowUp: String?,
-        explicitFollowUp: String? = nil,
-        primaryInterjections: [Interjection] = []
+        interjections: [Interjection], currentFollowUp: String?,
+        explicitFollowUp: String? = nil, primaryInterjections: [Interjection] = []
     ) -> String {
-        let map: [String: Any] = [
-            "schemaVersion": currentFollowUp == nil ? "session-export.v1" : "conversation-context.v2",
-            "item": [
-                "title": selectedItem.title,
-                "text": selectedItem.text
-            ],
-            "listeningMap": [
-                "overview": selectedItem.overview,
-                "chapters": selectedItem.chapters.map { chapter in
-                    [
-                        "title": chapter.title,
-                        "startChar": chapter.startChar,
-                        "endChar": chapter.endChar
-                    ]
-                }
-            ],
-            "interjections": interjections.map { interjection in
-                [
-                    "targetType": interjection.targetType.rawValue,
-                    "anchorBefore": interjection.anchor.anchorBefore,
-                    "anchorAfter": interjection.anchor.anchorAfter,
-                    "transcriptionStatus": interjection.transcriptionStatus,
-                    "transcript": interjection.cleanedTranscript ?? interjection.transcript ?? "pending"
-                ]
-            },
-            "primaryUserIntent": currentFollowUp.map { followUp in
-                [
-                    "source": Gate1DiscussionContext.primaryIntentSource(
-                        explicitFollowUp: explicitFollowUp ?? "",
-                        currentInterjections: primaryInterjections
-                    ),
-                    "request": followUp,
-                    "targetType": currentPlaybackTargetType,
-                    "target": currentDiscussionTargetContext(),
-                    "interjections": primaryInterjections.map { interjection in
-                        [
-                            "targetType": interjection.targetType.rawValue,
-                            "anchorBefore": interjection.anchor.anchorBefore,
-                            "anchorAfter": interjection.anchor.anchorAfter,
-                            "transcriptionStatus": interjection.transcriptionStatus,
-                            "transcript": interjection.cleanedTranscript ?? interjection.transcript ?? "pending"
-                        ]
-                    }
-                ] as [String: Any]
-            } ?? NSNull(),
-            "recentTurns": selectedItem.turns.suffix(6).map { turn in
-                [
-                    "role": turn.role,
-                    "turnType": turn.turnType,
-                    "text": turn.summary ?? turn.text ?? turn.rawText ?? ""
-                ]
-            },
-            "currentFollowUp": currentFollowUp.map { $0 as Any } ?? NSNull()
-        ]
-        let data = (try? JSONSerialization.data(withJSONObject: map, options: [.prettyPrinted, .sortedKeys])) ?? Data()
-        return String(data: data, encoding: .utf8) ?? "{}"
+        DiscussionContext.contextJSON(
+            itemTitle: selectedItem.title, itemText: selectedItem.text, overview: selectedItem.overview,
+            chapters: selectedItem.chapters, turns: selectedItem.turns,
+            currentTargetType: currentPlaybackTargetType, currentTargetId: currentPlaybackTargetId,
+            interjections: interjections, currentFollowUp: currentFollowUp,
+            explicitFollowUp: explicitFollowUp, primaryInterjections: primaryInterjections
+        )
     }
 
     private func currentDiscussionInterjections() -> [Interjection] {
@@ -13003,30 +12952,6 @@ final class Gate1AppModel: ObservableObject {
             currentTargetId: currentPlaybackTargetId,
             itemId: selectedItem.id
         )
-    }
-
-    private func currentDiscussionTargetContext() -> [String: Any] {
-        let targetType = currentPlaybackTargetType
-        let targetId = currentPlaybackTargetId ?? ""
-        switch targetType {
-        case TargetType.summaryTurnTTS.rawValue, TargetType.assistantTurnTTS.rawValue:
-            if let turn = selectedItem.turns.first(where: { $0.id == targetId }) {
-                return [
-                    "targetType": targetType,
-                    "role": turn.role,
-                    "turnType": turn.turnType,
-                    "summary": turn.summary ?? "",
-                    "text": turn.text ?? turn.rawText ?? ""
-                ]
-            }
-        default:
-            break
-        }
-        return [
-            "targetType": TargetType.itemTextTTS.rawValue,
-            "title": selectedItem.title,
-            "overview": selectedItem.overview
-        ]
     }
 
     private func turnTitleText(_ turn: ConversationTurn) -> String {
