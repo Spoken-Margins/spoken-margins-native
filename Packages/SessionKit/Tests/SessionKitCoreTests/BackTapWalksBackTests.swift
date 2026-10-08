@@ -6,9 +6,9 @@ import XCTest
 /// had moved a few characters on by the next tap, so that start was the nearest boundary again and repeated
 /// taps stayed put. A Back tap near the start of a unit now goes to the start of the unit before it.
 final class BackTapWalksBackTests: XCTestCase {
-    /// Each sentence is far longer than two seconds of speech (about 28 characters at 1×).
+    /// Each sentence is far longer than three seconds of speech (about 42 characters at 1×).
     private let sentences = (0..<8).map {
-        "Sentence number \($0) goes on for a good while, so it takes longer than two seconds to read aloud."
+        "Sentence number \($0) goes on for a good while, so it takes longer than three seconds to read aloud."
     }
 
     private func starts(separator: String) -> [Int] {
@@ -73,19 +73,67 @@ final class BackTapWalksBackTests: XCTestCase {
         let (engine, audio) = try playingEngine(separator: " ")
         let starts = starts(separator: " ")
 
-        audio.currentOffset = starts[5] + 40
-        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), starts[5], "at 1×, 40 characters is more than two seconds in")
+        audio.currentOffset = starts[5] + 60
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), starts[5], "at 1×, 60 characters is more than three seconds in")
 
         _ = try engine.setPlaybackRate(2)
-        audio.currentOffset = starts[5] + 40
-        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), starts[4], "at 2×, 40 characters is under two seconds in")
+        audio.currentOffset = starts[5] + 60
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), starts[4], "at 2×, 60 characters is under three seconds in")
+    }
+
+    /// A heading is a paragraph of a few words. Back landed on it, the speech read past it before the next tap,
+    /// and that tap measured from the paragraph after it: back to the heading again, for good.
+    func testRepeatedBackTapsWalkBackOverAHeadingShorterThanTheSpeechBetweenTaps() throws {
+        let heading = "Why it matters"
+        let paragraphs = [sentences[0], sentences[1], heading, sentences[3], sentences[4]]
+        var starts: [Int] = []
+        var next = 0
+        for paragraph in paragraphs {
+            starts.append(next)
+            next += paragraph.count + 2
+        }
+        let (engine, audio) = try playingEngine(text: paragraphs.joined(separator: "\n\n"))
+
+        audio.currentOffset = starts[3] + 6
+        XCTAssertEqual(try tapBack(engine, audio, unit: "paragraph", creep: 20), starts[2], "the heading")
+        XCTAssertEqual(try tapBack(engine, audio, unit: "paragraph", creep: 20), starts[1], "past the heading, not stuck on it")
+        XCTAssertEqual(try tapBack(engine, audio, unit: "paragraph", creep: 20), starts[0])
+        XCTAssertEqual(try tapBack(engine, audio, unit: "paragraph", creep: 20), 0)
+    }
+
+    /// Abbreviations and ellipses end a "sentence" at every dot, so some units are a character or two long.
+    func testRepeatedBackTapsKeepGoingOverUnitsOnlyACharacterOrTwoLong() throws {
+        let text = "Wait... what happened here. ...Dr. Smith said the U.S. policy was fine... for now, and "
+            + "that ended soon after. Nobody at the meeting could say why the rule had changed so quickly."
+        let (engine, audio) = try playingEngine(text: text)
+
+        audio.currentOffset = text.count - 6
+        var landings: [Int] = []
+        for _ in 0..<40 {
+            landings.append(try tapBack(engine, audio, unit: "sentence"))
+            if landings.last == 0 { break }
+        }
+        XCTAssertEqual(landings.last, 0, "reached the start: \(landings)")
+        XCTAssertEqual(landings, landings.sorted(by: >), "every tap went further back: \(landings)")
+        XCTAssertEqual(Set(landings).count, landings.count, "no tap landed where an earlier one did: \(landings)")
+    }
+
+    func testListeningOnAfterABackTapMakesTheNextTapRestartThatUnitAgain() throws {
+        let (engine, audio) = try playingEngine(separator: " ")
+        let starts = starts(separator: " ")
+
+        audio.currentOffset = starts[5] + 6
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), starts[4])
+        audio.currentOffset = starts[4] + 60
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), starts[4], "well into it again, so Back restarts it")
+        XCTAssertEqual(try tapBack(engine, audio, unit: "sentence"), starts[3], "and the tap after that walks back")
     }
 
     func testTheWindowNeverPassesTheSpeedLimitsOrAnUnusableSpeed() {
-        XCTAssertEqual(BackTapWindow.characters(atSpeed: 1), 28)
-        XCTAssertEqual(BackTapWindow.characters(atSpeed: 2), 56)
-        XCTAssertEqual(BackTapWindow.characters(atSpeed: 0), 28, "no speed counts as normal")
-        XCTAssertEqual(BackTapWindow.characters(atSpeed: .nan), 28)
+        XCTAssertEqual(BackTapWindow.characters(atSpeed: 1), 42)
+        XCTAssertEqual(BackTapWindow.characters(atSpeed: 2), 84)
+        XCTAssertEqual(BackTapWindow.characters(atSpeed: 0), 42, "no speed counts as normal")
+        XCTAssertEqual(BackTapWindow.characters(atSpeed: .nan), 42)
         XCTAssertGreaterThanOrEqual(BackTapWindow.characters(atSpeed: 0.0001), 1)
     }
 
@@ -101,9 +149,13 @@ final class BackTapWalksBackTests: XCTestCase {
     }
 
     private func playingEngine(separator: String) throws -> (SessionEngine, TextSpeechClient) {
+        try playingEngine(text: sentences.joined(separator: separator))
+    }
+
+    private func playingEngine(text: String) throws -> (SessionEngine, TextSpeechClient) {
         let item = Item(
             id: "item-back", title: "Back", mediaType: "text",
-            text: sentences.joined(separator: separator), externalReference: nil, status: "ready"
+            text: text, externalReference: nil, status: "ready"
         )
         let audio = TextSpeechClient()
         let engine = SessionEngine(
