@@ -11387,7 +11387,7 @@ final class Gate1AppModel: ObservableObject {
             return false
         }
         if let storedTimeline = try? store.loadTranscriptTimeline(itemId: item.id)?.timeline,
-           let window = Self.sourceContextWindow(
+           let window = SourceAnchorContextResolver.sourceContextWindow(
                from: storedTimeline,
                anchorMediaTimeMs: anchorMediaTimeMs,
                windowBeforeMs: sourceWindowContextBeforeMs,
@@ -11519,25 +11519,6 @@ final class Gate1AppModel: ObservableObject {
                 scheduleSourceWindowContextIfNeeded(for: interjection)
             }
         }
-    }
-
-    static func sourceContextWindow(
-        from timeline: TranscriptTimeline,
-        anchorMediaTimeMs: Int,
-        windowBeforeMs: Int = 90_000,
-        windowAfterMs: Int = 120_000
-    ) -> TranscriptTimeline? {
-        let startMs = max(0, anchorMediaTimeMs - windowBeforeMs)
-        let endMs = min(timeline.durationMs ?? Int.max, anchorMediaTimeMs + windowAfterMs)
-        let segments = timeline.segments.filter { segment in
-            segment.endMs >= startMs && segment.startMs <= endMs
-        }
-        guard !segments.isEmpty else { return nil }
-        return TranscriptTimeline(
-            segments: segments,
-            chapters: timeline.chapters.filter { $0.startMs >= startMs && $0.startMs <= endMs },
-            durationMs: timeline.durationMs
-        )
     }
 
     func scheduleTranscription(for interjection: Interjection) {
