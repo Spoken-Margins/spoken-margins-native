@@ -305,6 +305,7 @@ schemes:
         - path: TestPlans/AppBehavior.xctestplan
           defaultPlan: true
         - path: TestPlans/AudioAdapters.xctestplan
+        - path: TestPlans/CloudTrial.xctestplan
   SpokenMarginsUISeams:
     build:
       targets:

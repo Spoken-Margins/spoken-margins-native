@@ -37,6 +37,9 @@
          <TestPlanReference
             reference = "container:TestPlans/AudioAdapters.xctestplan">
          </TestPlanReference>
+         <TestPlanReference
+            reference = "container:TestPlans/CloudTrial.xctestplan">
+         </TestPlanReference>
       </TestPlans>
       <MacroExpansion>
          <BuildableReference
