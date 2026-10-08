@@ -8769,44 +8769,23 @@ final class Gate1AppModel: ObservableObject {
         return String(format: "%.2f×", speechPlaybackRateMultiplier)
     }
 
-    var playbackHeaderTitle: String {
-        let itemTitle = selectedItem.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let reportedTitle = (snapshot.chapterTitle ?? snapshot.title ?? itemTitle)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let snapshotTitle = reportedTitle.isEmpty || reportedTitle.caseInsensitiveCompare(itemTitle) == .orderedSame
-            ? (inferredPlaybackChapterTitle ?? itemTitle)
-            : reportedTitle
-        guard !snapshotTitle.isEmpty else { return itemTitle }
-        guard snapshotTitle.caseInsensitiveCompare(itemTitle) != .orderedSame else { return itemTitle }
-
-        let chapterTitles = playbackChapterTitles
-        guard let chapterIndex = chapterTitles.firstIndex(where: {
-            $0.caseInsensitiveCompare(snapshotTitle) == .orderedSame
-        }) else {
-            return snapshotTitle
-        }
-        return ChapterHeaderLabel.title(snapshotTitle, index: chapterIndex)
+    private var playbackChapterContext: PlaybackChapterContext {
+        let session = engine?.currentSession
+        return PlaybackChapterContext(
+            snapshot: snapshot,
+            id: selectedItem.id,
+            title: selectedItem.title,
+            chapters: selectedItem.chapters,
+            mediaChapters: selectedItem.mediaChapters,
+            listeningMapScenes: selectedItem.listeningMapScenes,
+            turns: selectedItem.turns,
+            sessionItemId: session?.itemId,
+            sessionChapterId: session?.position.chapterId
+        )
     }
 
-    private var inferredPlaybackChapterTitle: String? {
-        switch snapshot.targetType {
-        case TargetType.itemTextTTS.rawValue:
-            return currentChapter?.title
-        case TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue:
-            let mediaTimeMs = snapshot.currentMediaTimeMs ?? 0
-            let authoredChapters = selectedItem.mediaChapters
-                .filter { !$0.id.hasPrefix("ch-transcript-") && !$0.id.contains("-ch-transcript-") }
-                .sorted { $0.startMs < $1.startMs }
-            if let title = authoredChapters.last(where: { $0.startMs <= mediaTimeMs })?.title {
-                return title
-            }
-            return selectedItem.listeningMapScenes
-                .sorted { $0.startMs < $1.startMs }
-                .last(where: { $0.startMs <= mediaTimeMs })?
-                .title
-        default:
-            return nil
-        }
+    var playbackHeaderTitle: String {
+        PlaybackChapterLocator.playbackHeaderTitle(playbackChapterContext)
     }
 
     var playbackItemHeaderTitle: String {
@@ -8829,84 +8808,19 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func isCurrentTimelineChapter(_ chapter: Chapter, turnId: String? = nil) -> Bool {
-        if turnId == nil {
-            let sourceTargetTypes = [
-                TargetType.itemTextTTS.rawValue,
-                TargetType.transcriptBackedMedia.rawValue,
-                TargetType.browserOwnedMedia.rawValue
-            ]
-            guard let targetType = snapshot.targetType, sourceTargetTypes.contains(targetType) else { return false }
-            if let currentChapterId = engine?.currentSession?.position.chapterId,
-               selectedItem.chapters.contains(where: { $0.id == currentChapterId }) {
-                return currentChapterId == chapter.id
-            }
-            if let currentTitle = snapshot.chapterTitle,
-               selectedItem.chapters.contains(where: { $0.title.caseInsensitiveCompare(currentTitle) == .orderedSame }) {
-                return currentTitle.caseInsensitiveCompare(chapter.title) == .orderedSame
-            }
-            return currentChapter?.id == chapter.id
-        }
-
-        let expectedTargetType = selectedItem.turns.first(where: { $0.id == turnId })?.turnType == "interjection_summary"
-            ? TargetType.summaryTurnTTS.rawValue
-            : TargetType.assistantTurnTTS.rawValue
-        guard snapshot.targetType == expectedTargetType else { return false }
-        if let turnId, snapshot.targetId != turnId { return false }
-        if let currentChapterId = engine?.currentSession?.position.chapterId {
-            return currentChapterId == chapter.id
-        }
-        return snapshot.chapterTitle?.caseInsensitiveCompare(chapter.title) == .orderedSame
+        PlaybackChapterLocator.isCurrentTimelineChapter(chapter, turnId: turnId, context: playbackChapterContext)
     }
 
     func isCurrentTimelineMediaChapter(_ chapter: MediaTimelineChapter) -> Bool {
-        guard snapshot.targetType == TargetType.transcriptBackedMedia.rawValue
-                || snapshot.targetType == TargetType.browserOwnedMedia.rawValue else {
-            return false
-        }
-        if let currentChapterId = engine?.currentSession?.position.chapterId,
-           selectedItem.mediaChapters.contains(where: { $0.id == currentChapterId }) {
-            return currentChapterId == chapter.id
-        }
-        return snapshot.chapterTitle?.caseInsensitiveCompare(chapter.title) == .orderedSame
+        PlaybackChapterLocator.isCurrentTimelineMediaChapter(chapter, context: playbackChapterContext)
     }
 
     func isCurrentTimelineListeningMapScene(_ scene: MediaTimelineChapter) -> Bool {
-        guard snapshot.targetType == TargetType.transcriptBackedMedia.rawValue
-                || snapshot.targetType == TargetType.browserOwnedMedia.rawValue,
-              let currentTimeMs = snapshot.currentMediaTimeMs else {
-            return false
-        }
-        let scenes = selectedItem.listeningMapScenes.sorted { $0.startMs < $1.startMs }
-        guard let index = scenes.firstIndex(where: { $0.id == scene.id }) else { return false }
-        let endMs = scenes.indices.contains(index + 1) ? scenes[index + 1].startMs : Int.max
-        return currentTimeMs >= scene.startMs && currentTimeMs < endMs
+        PlaybackChapterLocator.isCurrentTimelineListeningMapScene(scene, context: playbackChapterContext)
     }
 
     var hasConfiguredProviderAPIKey: Bool {
         !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var playbackChapterTitles: [String] {
-        switch snapshot.targetType {
-        case TargetType.itemTextTTS.rawValue:
-            return selectedItem.chapters.map(\.title)
-        case TargetType.summaryTurnTTS.rawValue, TargetType.assistantTurnTTS.rawValue:
-            return selectedItem.turns
-                .first(where: { $0.id == snapshot.targetId })?
-                .chapters?
-                .map(\.title) ?? []
-        case TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue:
-            let authoredTitles = selectedItem.mediaChapters
-                .filter { !$0.id.hasPrefix("ch-transcript-") && !$0.id.contains("-ch-transcript-") }
-                .sorted { $0.startMs < $1.startMs }
-                .map(\.title)
-            if !authoredTitles.isEmpty { return authoredTitles }
-            return selectedItem.listeningMapScenes
-                .sorted { $0.startMs < $1.startMs }
-                .map(\.title)
-        default:
-            return []
-        }
     }
 
     var preparedTextAudioStatusDescription: String {
@@ -9050,21 +8964,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var currentChapter: Chapter? {
-        // Multiple short chapters can share one rounded percentage. Prefer
-        // the exact source position so the label cannot jump ahead of audio.
-        if snapshot.targetType == TargetType.itemTextTTS.rawValue,
-           let offset = snapshot.currentTextStart {
-            return selectedItem.chapters.last { $0.startChar <= offset } ?? selectedItem.chapters.first
-        }
-        if let session = engine?.currentSession, session.itemId == selectedItem.id,
-           let chapter = selectedItem.chapters.first(where: { $0.id == session.position.chapterId }) {
-            return chapter
-        }
-        if let title = snapshot.chapterTitle,
-           let chapter = selectedItem.chapters.first(where: { $0.title == title }) {
-            return chapter
-        }
-        return selectedItem.chapters.last { $0.percent <= snapshot.sourceProgressPercent } ?? selectedItem.chapters.first
+        PlaybackChapterLocator.currentChapter(playbackChapterContext)
     }
 
     private func installEngine(_ engine: SessionEngine) {
