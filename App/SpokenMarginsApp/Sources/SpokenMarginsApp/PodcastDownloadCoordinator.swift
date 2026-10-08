@@ -33,10 +33,12 @@ enum PodcastDownloadTransportURLPolicy {
 /// Why a finished download was refused. The text becomes the record's failure reason (#919).
 private enum PodcastDownloadFailure: LocalizedError {
     case notAudio
+    case hostRefused(statusCode: Int)
 
     var errorDescription: String? {
         switch self {
         case .notAudio: "The server sent a web page or text instead of the episode's audio."
+        case .hostRefused(let statusCode): "The episode's host refused the download (HTTP \(statusCode))."
         }
     }
 }
@@ -494,7 +496,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             if let http = response as? HTTPURLResponse,
                let length = PodcastDownloadSizeProbe.headLength(
                    statusCode: http.statusCode,
-                   expectedContentLength: http.expectedContentLength
+                   expectedContentLength: http.expectedContentLength,
+                   contentLengthHeader: http.value(forHTTPHeaderField: "Content-Length")
                ) {
                 return length
             }
@@ -513,11 +516,17 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         // Only the headers are wanted. A host that ignores the range must not send the whole episode to be measured.
         stream.task.cancel()
         guard let http = response as? HTTPURLResponse else { return nil }
-        return PodcastDownloadSizeProbe.rangeProbeLength(
+        switch PodcastDownloadSizeProbe.rangeProbe(
             statusCode: http.statusCode,
             contentRange: http.value(forHTTPHeaderField: "Content-Range"),
-            expectedContentLength: http.expectedContentLength
-        )
+            expectedContentLength: http.expectedContentLength,
+            contentLengthHeader: http.value(forHTTPHeaderField: "Content-Length")
+        ) {
+        case .length(let length): return length
+        case .unannounced: return nil
+        // Fail before reserving: a reservation can evict other episodes, and this download can't succeed.
+        case .refused(let statusCode): throw PodcastDownloadFailure.hostRefused(statusCode: statusCode)
+        }
     }
 
     private func persist(_ record: PodcastDownloadRecord) {
@@ -672,6 +681,7 @@ extension PodcastDownloadCoordinator: URLSessionDownloadDelegate {
                   var record = self.recordsByItemId[attempt.itemId] else { return }
             if PodcastDownloadSizeProbe.exceedsUnannouncedLimit(
                 totalBytesWritten: totalBytesWritten,
+                recordedExpectedBytes: record.expectedBytes,
                 totalBytesExpectedToWrite: totalBytesExpectedToWrite
             ) {
                 // The host never said how large this is and it has passed the bound: stop writing (#912).
@@ -684,7 +694,8 @@ extension PodcastDownloadCoordinator: URLSessionDownloadDelegate {
             if !complete, let last = self.lastProgressPublishDateByItemId[attempt.itemId], now.timeIntervalSince(last) < 0.5 { return }
             self.lastProgressPublishDateByItemId[attempt.itemId] = now
             record.bytesWritten = totalBytesWritten
-            record.expectedBytes = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : nil
+            // A chunked download keeps the size the preflight recorded, so it is still known to be announced (#912).
+            record.expectedBytes = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : record.expectedBytes
             self.persist(record)
         }
     }

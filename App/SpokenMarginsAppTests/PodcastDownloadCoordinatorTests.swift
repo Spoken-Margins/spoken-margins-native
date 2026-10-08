@@ -719,6 +719,42 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         coordinator.shutdown()
     }
 
+    func testAHostThatRefusesEverythingFailsBeforeReservingRoomThatCouldEvictOtherAudio() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DownloadProbeURLProtocol.self]
+        DownloadProbeURLProtocol.reset()
+        let fixture = try makeFixture()
+        try fixture.store.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 1_000))
+        // Another episode fills most of the budget and could be evicted, as a reservation for this one would require.
+        let audioDirectory = fixture.support.appending(path: "PodcastAudio", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+        let other = audioDirectory.appending(path: "other.mp3")
+        try Data(repeating: 7, count: 900).write(to: other)
+        try fixture.store.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: "podcast-offline-other", itemId: "other", category: .podcast,
+            relativePath: "PodcastAudio/other.mp3", byteCount: 900, isReproducible: true
+        ))
+        var starts = 0
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store,
+            applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false,
+            usesBackgroundSession: false, startDownload: { _, _ in starts += 1 },
+            preflightSession: URLSession(configuration: configuration))
+        coordinator.setNetworkTransportForTesting(.wifi)
+        coordinator.register(itemId: "gone", remoteURL: URL(string: "https://probe.example.com/gone.mp3")!,
+                             userInitiated: true)
+        await coordinator.preparationTasks["gone"]?.value
+
+        XCTAssertEqual(DownloadProbeURLProtocol.requests, ["HEAD /gone.mp3", "GET /gone.mp3 range"])
+        XCTAssertEqual(starts, 0)
+        XCTAssertEqual(coordinator.status(itemId: "gone"), .failed)
+        XCTAssertEqual(coordinator.recordsByItemId["gone"]?.failureReason, "The episode's host refused the download (HTTP 404).")
+        XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty, "nothing was reserved")
+        XCTAssertEqual(try fixture.store.loadOwnedOfflineAssets().map(\.id), ["podcast-offline-other"],
+                       "the other episode was not evicted to make room for one that can't download")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: other.path))
+        coordinator.shutdown()
+    }
+
     private static let responsesThatAreNotAudio: [(String, Data)] = [
         ("hotel sign-in page", Data("<!DOCTYPE html><html><body>Sign in to the guest Wi-Fi</body></html>".utf8)),
         ("json error", Data(#"{"error":"forbidden","status":403}"#.utf8)),
@@ -796,6 +832,7 @@ private final class ReconcileHookFileManager: FileManager, @unchecked Sendable {
 ///   with the whole file's length.
 /// - /head-ok.mp3: HEAD answers 200 with Content-Length: 8.
 /// - /announces-nothing.mp3: HEAD is refused (405); GET answers 200 with no length at all.
+/// - /gone.mp3: every request answers 404.
 private final class DownloadProbeURLProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var seen: [String] = []
@@ -817,6 +854,8 @@ private final class DownloadProbeURLProtocol: URLProtocol, @unchecked Sendable {
         var headers: [String: String] = ["Content-Type": "audio/mpeg"]
         var body = Data()
         switch (url.path, method) {
+        case ("/gone.mp3", _):
+            status = 404
         case ("/head-ok.mp3", "HEAD"):
             status = 200
             headers["Content-Length"] = "8"
