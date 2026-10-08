@@ -26,8 +26,8 @@ final class ContinuedAudioPreparationController {
         /// True while the preparation loop is rendering or waiting out a heat pause.
         var isRunning: @MainActor () -> Bool
         var isCoolingDown: @MainActor () -> Bool
-        /// Stops the loop. Queued jobs and committed chunks stay.
-        var cancel: @MainActor () -> Void
+        /// Stops the loop for good, so it doesn't restart itself. Queued jobs and committed chunks stay.
+        var stop: @MainActor () -> Void
         /// A short trail of what happened, for the diagnostics export.
         var report: @MainActor (String) -> Void
     }
@@ -42,6 +42,10 @@ final class ContinuedAudioPreparationController {
     private var requestedAt: Date?
     private var taskIsActive = false
     private var expired = false
+    /// Requests iOS or the listener ended the background time for. They keep their place in the queue
+    /// and carry on while the app is open, but a Dynamic Island cancel is not undone by asking again.
+    /// Tapping Make available offline again is a new request.
+    private var declined: Set<OfflinePreparationRun.RequestKey> = []
     private var lastSubtitle: String?
     private var trail: [String] = []
 
@@ -73,7 +77,7 @@ final class ContinuedAudioPreparationController {
     /// has a long run queued and the app is on screen.
     func requestIfNeeded() {
         guard let hooks else { return }
-        let progress = OfflinePreparationRun.explicitProgress(hooks.jobs())
+        let progress = OfflinePreparationRun.explicitProgress(hooks.jobs(), excluding: declined)
         let alreadyRequested = taskIsActive
             || requestedAt.map { Date().timeIntervalSince($0) < Self.staleRequestSeconds } == true
         guard OfflinePreparationRun.shouldRequestContinuedProcessing(
@@ -138,7 +142,9 @@ final class ContinuedAudioPreparationController {
 
     private func handleExpiration() {
         expired = true
-        hooks?.cancel()
+        guard let hooks else { return }
+        declined.formUnion(OfflinePreparationRun.openExplicitRequests(hooks.jobs()))
+        hooks.stop()
     }
 
     private func note(_ event: String) {

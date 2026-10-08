@@ -76,6 +76,46 @@ final class OfflinePreparationRunTests: XCTestCase {
         XCTAssertFalse(OfflinePreparationRun.shouldRequestContinuedProcessing(progress, alreadyRequested: false, appIsActive: true))
     }
 
+    // MARK: Requests iOS or the listener ended
+
+    private func request(_ id: String, at seconds: TimeInterval, done: Int = 0, of planned: Int = 100) -> OfflinePreparationRun.Job {
+        OfflinePreparationRun.Job(
+            id: id, requestedAt: Date(timeIntervalSince1970: seconds),
+            policy: .explicit, state: .preparing, completedChunks: done, plannedChunks: planned
+        )
+    }
+
+    func testARequestTheBackgroundTimeWasEndedForIsNotAskedForAgain() {
+        let jobs = [request("job-a", at: 1_000, done: 10), request("job-b", at: 2_000, done: 0, of: 50)]
+        let declined = OfflinePreparationRun.openExplicitRequests([jobs[0]])
+        XCTAssertEqual(OfflinePreparationRun.explicitProgress(jobs, excluding: declined), .init(completedChunks: 0, totalChunks: 50))
+        XCTAssertEqual(OfflinePreparationRun.explicitProgress(jobs), .init(completedChunks: 10, totalChunks: 150), "the banner still counts every open job")
+    }
+
+    func testTappingMakeAvailableOfflineAgainIsANewRequest() {
+        let first = request("job-a", at: 1_000, done: 10)
+        let declined = OfflinePreparationRun.openExplicitRequests([first])
+        let tappedAgain = request("job-a", at: 5_000, done: 10)
+        XCTAssertEqual(
+            OfflinePreparationRun.explicitProgress([tappedAgain], excluding: declined),
+            .init(completedChunks: 10, totalChunks: 100),
+            "the same job with a new request time is asked for again"
+        )
+        XCTAssertEqual(OfflinePreparationRun.explicitProgress([first], excluding: declined), .init(completedChunks: 0, totalChunks: 0))
+    }
+
+    func testOnlyOpenExplicitRequestsAreRemembered() {
+        let jobs = [
+            request("job-a", at: 1),
+            OfflinePreparationRun.Job(id: "job-b", requestedAt: Date(timeIntervalSince1970: 2), policy: .demandWindow, state: .preparing, completedChunks: 0, plannedChunks: 2),
+            OfflinePreparationRun.Job(id: "job-c", requestedAt: Date(timeIntervalSince1970: 3), policy: .explicit, state: .failed, completedChunks: 1, plannedChunks: 9)
+        ]
+        XCTAssertEqual(
+            OfflinePreparationRun.openExplicitRequests(jobs),
+            [OfflinePreparationRun.RequestKey(jobId: "job-a", requestedAt: Date(timeIntervalSince1970: 1))]
+        )
+    }
+
     // MARK: Banner words
 
     func testBannerSaysHowFarTheRunIsAndWhenItIsWaitingForTheHeat() {
@@ -169,8 +209,9 @@ final class OfflinePreparationRunTests: XCTestCase {
         while case .wait(let seconds) = OfflinePreparationRun.heatWaitStep(thermal: .serious, waitedSeconds: waited, foregroundWorkWaiting: true) {
             waited += seconds
             rechecks += 1
-            XCTAssertLessThan(rechecks, 100, "the wait must end")
+            if rechecks >= 100 { break }
         }
+        XCTAssertLessThan(rechecks, 100, "the wait must end")
         XCTAssertGreaterThanOrEqual(waited, OfflinePreparationRun.maximumHeatWaitSeconds)
         XCTAssertLessThan(waited, OfflinePreparationRun.maximumHeatWaitSeconds + 60)
         XCTAssertEqual(

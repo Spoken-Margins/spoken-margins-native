@@ -5,6 +5,20 @@ import SessionKitPersistence
 /// What keeps a Make available offline run going when the listener puts the phone down (#905): a
 /// system progress task while the app is away, and a wait that ends a heat pause by itself.
 extension Gate1AppModel {
+    /// The foreground preparation loop: runs passes while they have work, and after a pass that
+    /// rendered nothing waits out a heat pause and goes on. `pass` returns whether it has more work.
+    func runForegroundPreparationLoop(pass: () async -> Bool) async {
+        while !Task.isCancelled {
+            if await pass() {
+                await Task.yield()
+            } else if await waitOutPreparationHeat() {
+                continue // the phone cooled: a heat pause no longer ends the run (#905)
+            } else {
+                break
+            }
+        }
+    }
+
     /// After a pass rendered nothing, waits out a heat pause so the run carries on once the phone
     /// cools. True: it cooled and queued work is waiting, so run the pass again. False: nothing is
     /// waiting, the pass stopped for a reason other than heat, the wait ran out, or the loop was
@@ -54,6 +68,8 @@ extension Gate1AppModel {
     func explicitPreparationJobs() -> [OfflinePreparationRun.Job] {
         audioPreparationQueue.map {
             OfflinePreparationRun.Job(
+                id: $0.id,
+                requestedAt: $0.requestedAt,
                 policy: $0.policy,
                 state: $0.state,
                 completedChunks: $0.completedChunkCount,
@@ -77,7 +93,7 @@ extension Gate1AppModel {
                 jobs: { [weak self] in self?.explicitPreparationJobs() ?? [] },
                 isRunning: { [weak self] in self?.isForegroundAudioPreparationRunning ?? false },
                 isCoolingDown: { [weak self] in self?.isWaitingOutPreparationHeat ?? false },
-                cancel: { [weak self] in self?.cancelForegroundAudioPreparation() },
+                stop: { [weak self] in self?.stopForegroundAudioPreparation() },
                 report: { [weak self] event in
                     guard let self else { return }
                     diagnostics["continuedAudioPreparation"] = event

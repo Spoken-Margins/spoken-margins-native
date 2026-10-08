@@ -97,6 +97,51 @@ final class PreparationHeatWaitTests: XCTestCase {
         XCTAssertFalse(model.isWaitingOutPreparationHeat)
     }
 
+    /// The loop itself: before #905 it ended on the first pass that rendered nothing, so a heat
+    /// pause stopped the run for good.
+    @MainActor
+    func testTheLoopRunsThePassAgainOnceAHeatPauseClears() async throws {
+        let model = try makeModel()
+        let heat = HeatSequence(hotReads: 2)
+        let waits = WaitLog()
+        model.preparationSeams = PreparationPassSeams(
+            deviceConditions: { SpeechEngineConditions(thermal: heat.read()) },
+            pause: { seconds in await waits.add(seconds) }
+        )
+        var answers = [true, false, true, false] // chunk, heat pause, chunk, nothing left
+        var passes = 0
+
+        await model.runForegroundPreparationLoop {
+            passes += 1
+            return answers.removeFirst()
+        }
+
+        XCTAssertEqual(passes, 4, "the pass ran again after the phone cooled")
+        let seconds = await waits.seconds
+        XCTAssertEqual(seconds, [15, 15])
+        XCTAssertFalse(model.isWaitingOutPreparationHeat)
+    }
+
+    @MainActor
+    func testTheLoopEndsWhenAPassHasNoMoreWork() async throws {
+        let model = try makeModel(queuingAnExplicitJob: false)
+        let waits = WaitLog()
+        model.preparationSeams = PreparationPassSeams(
+            deviceConditions: { SpeechEngineConditions(thermal: .nominal) },
+            pause: { seconds in await waits.add(seconds) }
+        )
+        var passes = 0
+
+        await model.runForegroundPreparationLoop {
+            passes += 1
+            return false
+        }
+
+        XCTAssertEqual(passes, 1)
+        let seconds = await waits.seconds
+        XCTAssertEqual(seconds, [], "nothing is waiting, so nothing sleeps")
+    }
+
     @MainActor
     func testCancellingTheLoopEndsTheWaitAtOnce() async throws {
         let model = try makeModel()

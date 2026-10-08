@@ -1067,7 +1067,12 @@ final class Gate1AppModel: ObservableObject {
     var libraryAudioPreparingItemId: String? { get { libraryAudioTurns.preparingItemId } set { libraryAudioTurns.preparingItemId = newValue } }
     // Read and driven by the continued-processing task and the heat wait (#905).
     var isForegroundAudioPreparationRunning: Bool { foregroundAudioPreparationTask != nil }
-    func cancelForegroundAudioPreparation() { foregroundAudioPreparationTask?.cancel() }
+    /// Ends the loop without the restart a plain cancel gets: iOS or the listener ended its background time.
+    func stopForegroundAudioPreparation() {
+        foregroundAudioPreparationTask?.cancel()
+        foregroundAudioPreparationGeneration += 1
+        foregroundAudioPreparationTask = nil
+    }
     func idleForegroundPreparationTurn() { libraryAudioTurns.stopped(.foreground) }
     private var foregroundAudioPreparationGeneration = 0
     private var episodeMapPreparationTask: Task<Void, Never>?
@@ -14820,15 +14825,7 @@ final class Gate1AppModel: ObservableObject {
         let generation = foregroundAudioPreparationGeneration
         foregroundAudioPreparationTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            while !Task.isCancelled {
-                if await self.performBackgroundAudioPreparationPass(foregroundDemandOnly: true) {
-                    await Task.yield()
-                } else if await self.waitOutPreparationHeat() {
-                    continue // the phone cooled: a heat pause no longer ends the run (#905)
-                } else {
-                    break
-                }
-            }
+            await self.runForegroundPreparationLoop { await self.performBackgroundAudioPreparationPass(foregroundDemandOnly: true) }
             let ownsLoop = self.foregroundAudioPreparationGeneration == generation
             if ownsLoop || self.foregroundAudioPreparationTask == nil {
                 // Also when cancelled between passes: its item stops showing progress (#281).

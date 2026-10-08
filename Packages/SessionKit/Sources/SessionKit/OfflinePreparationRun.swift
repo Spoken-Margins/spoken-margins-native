@@ -6,19 +6,44 @@ import Foundation
 /// decide when iOS is asked to keep the app running, what its progress banner says, and how a heat
 /// pause ends. They are pure so host tests pin them; the app only carries them out.
 public enum OfflinePreparationRun {
+    /// One listener request: tapping Make available offline again on the same article is a new request.
+    public struct RequestKey: Hashable, Sendable {
+        public var jobId: String
+        public var requestedAt: Date
+
+        public init(jobId: String, requestedAt: Date) {
+            self.jobId = jobId
+            self.requestedAt = requestedAt
+        }
+    }
+
     /// One queue entry, as far as a run cares.
     public struct Job: Equatable, Sendable {
+        public var id: String
+        public var requestedAt: Date
         public var policy: PreparationJobPolicy
         public var state: PreparedAudioState
         public var completedChunks: Int
         public var plannedChunks: Int
 
-        public init(policy: PreparationJobPolicy, state: PreparedAudioState, completedChunks: Int, plannedChunks: Int) {
+        public init(
+            id: String = "",
+            requestedAt: Date = Date(timeIntervalSince1970: 0),
+            policy: PreparationJobPolicy,
+            state: PreparedAudioState,
+            completedChunks: Int,
+            plannedChunks: Int
+        ) {
+            self.id = id
+            self.requestedAt = requestedAt
             self.policy = policy
             self.state = state
             self.completedChunks = completedChunks
             self.plannedChunks = plannedChunks
         }
+
+        var requestKey: RequestKey { RequestKey(jobId: id, requestedAt: requestedAt) }
+        var isOpenExplicitRequest: Bool { policy == .explicit && OfflinePreparationRun.isOpen(state) }
     }
 
     public struct Progress: Equatable, Sendable {
@@ -36,14 +61,22 @@ public enum OfflinePreparationRun {
     /// What the listener asked for and hasn't got yet: explicit requests that still have chunks to
     /// make. Opening buffers and While Charging work are not the listener's to wait on, so they
     /// never count. A job that failed or was stopped waits for the listener, not for the run.
-    public static func explicitProgress(_ jobs: [Job]) -> Progress {
-        let open = jobs.filter { $0.policy == .explicit && isOpen($0.state) }
+    ///
+    /// `declined` holds requests iOS or the listener already ended the background time for; they
+    /// stay in the queue but don't count here, so the app doesn't ask again for them.
+    public static func explicitProgress(_ jobs: [Job], excluding declined: Set<RequestKey> = []) -> Progress {
+        let open = jobs.filter { $0.isOpenExplicitRequest && !declined.contains($0.requestKey) }
         let total = open.reduce(0) { $0 + max(0, $1.plannedChunks) }
         let completed = open.reduce(0) { $0 + min(max(0, $1.completedChunks), max(0, $1.plannedChunks)) }
         return Progress(completedChunks: completed, totalChunks: total)
     }
 
-    private static func isOpen(_ state: PreparedAudioState) -> Bool {
+    /// The requests that are still open, to remember as declined when the background time ends.
+    public static func openExplicitRequests(_ jobs: [Job]) -> Set<RequestKey> {
+        Set(jobs.filter(\.isOpenExplicitRequest).map(\.requestKey))
+    }
+
+    fileprivate static func isOpen(_ state: PreparedAudioState) -> Bool {
         switch state {
         case .notPrepared, .preparing, .pausedForThermal: true
         case .readyOffline, .needsRepreparation, .stopped, .failed: false
