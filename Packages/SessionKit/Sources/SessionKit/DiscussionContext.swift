@@ -1,6 +1,13 @@
 import Foundation
 
+/// What Discuss and the Margin summary tell the AI provider about the current item, and which Margins the
+/// current conversation change is about.
+///
+/// The provider receives `contextJSON` as text, so a changed key, value or order changes what it sees. The schema
+/// versions are `session-export.v1` (no follow-up yet) and `conversation-context.v2` (a follow-up is being asked).
+/// The model reads its live state (selected item, playback target) and passes it in; nothing here reads an engine.
 public enum DiscussionContext {
+    /// The Margins on whatever is playing now: a summary turn, an AI response turn, or the item itself.
     public static func currentTargetInterjections(
         interjections: [Interjection],
         currentTargetType: String,
@@ -39,10 +46,16 @@ public enum DiscussionContext {
         return currentInterjections.isEmpty ? "conversation_continuation" : "target_interjections"
     }
 
+    /// The pretty-printed, key-sorted JSON the provider prompts embed. `currentFollowUp` nil builds the summary
+    /// context; a value builds the conversation context with a `primaryUserIntent`.
     public static func contextJSON(
-        itemTitle: String, itemText: String, overview: String,
-        chapters: [Chapter], turns: [ConversationTurn],
-        currentTargetType: String, currentTargetId: String?,
+        itemTitle: String,
+        itemText: String,
+        overview: String,
+        chapters: [Chapter],
+        turns: [ConversationTurn],
+        currentTargetType: String,
+        currentTargetId: String?,
         interjections: [Interjection],
         currentFollowUp: String?,
         explicitFollowUp: String? = nil,
@@ -64,36 +77,23 @@ public enum DiscussionContext {
                     ]
                 }
             ],
-            "interjections": interjections.map { interjection in
-                [
-                    "targetType": interjection.targetType.rawValue,
-                    "anchorBefore": interjection.anchor.anchorBefore,
-                    "anchorAfter": interjection.anchor.anchorAfter,
-                    "transcriptionStatus": interjection.transcriptionStatus,
-                    "transcript": interjection.cleanedTranscript ?? interjection.transcript ?? "pending"
-                ]
-            },
+            "interjections": interjections.map(interjectionRecord),
             "primaryUserIntent": currentFollowUp.map { followUp in
                 [
-                    "source": DiscussionContext.primaryIntentSource(
+                    "source": primaryIntentSource(
                         explicitFollowUp: explicitFollowUp ?? "",
                         currentInterjections: primaryInterjections
                     ),
                     "request": followUp,
                     "targetType": currentTargetType,
                     "target": targetContext(
-                        itemTitle: itemTitle, overview: overview, turns: turns,
-                        currentTargetType: currentTargetType, currentTargetId: currentTargetId
+                        currentTargetType: currentTargetType,
+                        currentTargetId: currentTargetId,
+                        turns: turns,
+                        itemTitle: itemTitle,
+                        overview: overview
                     ),
-                    "interjections": primaryInterjections.map { interjection in
-                        [
-                            "targetType": interjection.targetType.rawValue,
-                            "anchorBefore": interjection.anchor.anchorBefore,
-                            "anchorAfter": interjection.anchor.anchorAfter,
-                            "transcriptionStatus": interjection.transcriptionStatus,
-                            "transcript": interjection.cleanedTranscript ?? interjection.transcript ?? "pending"
-                        ]
-                    }
+                    "interjections": primaryInterjections.map(interjectionRecord)
                 ] as [String: Any]
             } ?? NSNull(),
             "recentTurns": turns.suffix(6).map { turn in
@@ -105,22 +105,44 @@ public enum DiscussionContext {
             },
             "currentFollowUp": currentFollowUp.map { $0 as Any } ?? NSNull()
         ]
-        guard let data = try? JSONSerialization.data(withJSONObject: map, options: [.prettyPrinted, .sortedKeys]),
-              let json = String(data: data, encoding: .utf8) else { return "{}" }
-        return json
+        // A serialization error gives empty data and so an empty string; "{}" is only the UTF-8 decoding fallback.
+        // The map holds only strings, integers, arrays and null, so neither branch is reachable today. Kept as it was.
+        let data = (try? JSONSerialization.data(withJSONObject: map, options: [.prettyPrinted, .sortedKeys])) ?? Data()
+        return String(data: data, encoding: .utf8) ?? "{}"
     }
 
+    /// Retain the candidate extraction's public argument order while using the landed implementation.
     public static func targetContext(
-        itemTitle: String, overview: String, turns: [ConversationTurn],
-        currentTargetType: String, currentTargetId: String?
+        itemTitle: String,
+        overview: String,
+        turns: [ConversationTurn],
+        currentTargetType: String,
+        currentTargetId: String?
     ) -> [String: Any] {
-        let targetType = currentTargetType
+        targetContext(
+            currentTargetType: currentTargetType,
+            currentTargetId: currentTargetId,
+            turns: turns,
+            itemTitle: itemTitle,
+            overview: overview
+        )
+    }
+
+    /// What the provider is told is being discussed right now: the summary or response turn when one is playing
+    /// and still in the conversation, otherwise the item itself.
+    static func targetContext(
+        currentTargetType: String,
+        currentTargetId: String?,
+        turns: [ConversationTurn],
+        itemTitle: String,
+        overview: String
+    ) -> [String: Any] {
         let targetId = currentTargetId ?? ""
-        switch targetType {
+        switch currentTargetType {
         case TargetType.summaryTurnTTS.rawValue, TargetType.assistantTurnTTS.rawValue:
             if let turn = turns.first(where: { $0.id == targetId }) {
                 return [
-                    "targetType": targetType,
+                    "targetType": currentTargetType,
                     "role": turn.role,
                     "turnType": turn.turnType,
                     "summary": turn.summary ?? "",
@@ -134,6 +156,16 @@ public enum DiscussionContext {
             "targetType": TargetType.itemTextTTS.rawValue,
             "title": itemTitle,
             "overview": overview
+        ]
+    }
+
+    private static func interjectionRecord(_ interjection: Interjection) -> [String: String] {
+        [
+            "targetType": interjection.targetType.rawValue,
+            "anchorBefore": interjection.anchor.anchorBefore,
+            "anchorAfter": interjection.anchor.anchorAfter,
+            "transcriptionStatus": interjection.transcriptionStatus,
+            "transcript": interjection.cleanedTranscript ?? interjection.transcript ?? "pending"
         ]
     }
 }

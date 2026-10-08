@@ -41,10 +41,12 @@ public enum WelcomeSample {
 
     /// The welcome Item (id `itemId`) and its deterministic Listening Map.
     public static func make(itemId: String, remoteProviderExperienceEnabled: Bool) throws -> (Item, ListeningMap) {
-        let parsed = try ObsidianMarkdownParser.parse(
-            fileName: fileName,
-            contents: markdown(remoteProviderExperienceEnabled: remoteProviderExperienceEnabled)
-        )
+        try build(itemId: itemId, contents: markdown(remoteProviderExperienceEnabled: remoteProviderExperienceEnabled))
+    }
+
+    /// `make` for any Markdown, so a test can reach the error for a text with no chapters.
+    static func build(itemId: String, contents: String) throws -> (Item, ListeningMap) {
+        let parsed = try ObsidianMarkdownParser.parse(fileName: fileName, contents: contents)
         let item = Item(
             id: itemId,
             title: parsed.title,
