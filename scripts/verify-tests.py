@@ -22,7 +22,6 @@ import lane_sim
 from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
                         state_dir, SIMULATOR_SLOTS)
 
-from research_tests import TESTED_PREFIXES as RESEARCH_PREFIXES
 from test_inventory import ROOT, plan_tests, swift_tests, target_tests, validate
 
 PLANS = {
@@ -161,7 +160,7 @@ def input_identity():
     for relative in sorted(set(paths)):
         if not (relative.startswith(('App/', 'Packages/', 'Contracts/', 'Config/', 'TestPlans/',
                                      'SpokenMarginsNative.xcodeproj/', 'scripts/', 'validation/',
-                                     'Tools/', 'schemas/', 'ops/', *RESEARCH_PREFIXES))
+                                     'Tools/', 'schemas/', 'ops/'))
                 or relative in ('project.yml', 'package.json', 'package-lock.json')):
             continue
         path = ROOT / relative
@@ -481,11 +480,13 @@ class Run:
                 errors.append('Browser runner executed zero tests' if name == 'browser'
                               else f'{name} executed zero tests')
         if name == 'research':
-            match = re.search(r'^research-tests: (\d+) tests in \d+ suites; \d+ skipped$', text, re.M)
+            match = re.search(r'^research-tests: (\d+) tests in \d+ suites; \d+ skipped', text, re.M)
             entry['executed_count'] = int(match[1]) if match else 0
             entry['skipped'] = re.findall(r'^skipped: (.+)$', text, re.M)
             for reason in entry['skipped']:
                 print(f'warning: research skipped: {reason}', flush=True)
+            # Name the failing suites and tests in the error, which the lane's report carries.
+            errors.extend(re.findall(r'^(?:FAILED|failed test|failed package): .+$', text, re.M)[:5])
             if not entry['executed_count']:
                 errors.append('research executed zero tests')
         # A failing probation test makes xcodebuild exit non-zero; that alone doesn't fail the step.

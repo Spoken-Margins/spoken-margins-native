@@ -1,7 +1,9 @@
 import contextlib
 import importlib.util
 import io
+import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -23,6 +25,7 @@ def load(name, filename):
 
 scope = load('test_scope', 'test-scope.py')
 verification = load('verification', 'verify-tests.py')
+lane = load('lane_runner', 'lane-runner.py')
 
 
 class ResearchRunnerTests(unittest.TestCase):
@@ -56,7 +59,7 @@ class ResearchRunnerTests(unittest.TestCase):
                      'research/C2/frontend/test_frontend.py', 'research/C1/results/summary.json'):
             self.assertEqual(scope.classify([path], root=ROOT)['tier'], 'T0', path)
 
-    def test_the_fast_plan_runs_the_research_step_and_counts_its_files_as_inputs(self):
+    def test_the_fast_plan_runs_the_research_step(self):
         calls = []
         with tempfile.TemporaryDirectory() as temporary:
             run = verification.Run(Path(temporary) / 'run', 'fast')
@@ -71,16 +74,6 @@ class ResearchRunnerTests(unittest.TestCase):
         steps = {name: (args, kw) for name, args, kw in calls}
         self.assertEqual(steps['research'][0][-1], 'scripts/research_tests.py')
         self.assertGreaterEqual(steps['research'][1]['timeout'], 300)  # a cold Go build on the Mac
-        with patch.object(verification, 'capture', return_value='research/B4/server/main.go\nresearch/G2/x.json\n'), \
-                tempfile.TemporaryDirectory() as temporary, patch.object(verification, 'ROOT', Path(temporary)):
-            for relative in ('research/B4/server/main.go', 'research/G2/x.json'):
-                (Path(temporary) / relative).parent.mkdir(parents=True, exist_ok=True)
-                (Path(temporary) / relative).write_text('one\n')
-            before = verification.input_identity()
-            (Path(temporary) / 'research/G2/x.json').write_text('two\n')
-            self.assertEqual(before, verification.input_identity())  # untested research is not an input
-            (Path(temporary) / 'research/B4/server/main.go').write_text('two\n')
-            self.assertNotEqual(before, verification.input_identity())
 
     def run_step(self, script_output, exit_code=0):
         script = f'import sys; sys.stdout.write({script_output!r}); sys.exit({exit_code})'
@@ -99,7 +92,7 @@ class ResearchRunnerTests(unittest.TestCase):
         step, error, printed = self.run_step(
             'passed: python research/B2 (15 tests)\n'
             'skipped: go research/B4/server - `go` is not on PATH; the server tests did not run\n'
-            'research-tests: 15 tests in 1 suites; 1 skipped\n')
+            'research-tests: 15 tests in 1 suites; 1 skipped; 2 not covered\n')
         self.assertIsNone(error)
         self.assertEqual(step['executed_count'], 15)
         self.assertEqual(step['skipped'], ['go research/B4/server - `go` is not on PATH; the server tests did not run'])
@@ -112,8 +105,9 @@ class ResearchRunnerTests(unittest.TestCase):
         self.assertIn('research executed zero tests', error)
 
     def test_a_failing_suite_fails_the_step(self):
-        step, error, _ = self.run_step('FAILED: go research/B4/server\nresearch-tests: 5 tests in 1 suites; 0 skipped\n', 1)
+        step, error, _ = self.run_step('FAILED: go research/B4/server\nfailed test: example/maps TestTakedownKeepsMapDown\nresearch-tests: 5 tests in 1 suites; 0 skipped; 2 not covered\n', 1)
         self.assertIn('Process exit 1', error)
+        self.assertIn('failed test: example/maps TestTakedownKeepsMapDown', error)  # the lane's report names it
 
     def test_python_suite_counts_tests_and_reports_a_failure_with_its_output(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -180,7 +174,7 @@ class ResearchRunnerTests(unittest.TestCase):
                 func TestGuardIsGone(t *testing.T) { t.Fatal("ValidKey guard missing") }
             """)
             bad = research_tests.go_suite(Path(temporary))
-            self.assertIn('FAIL example.test/server TestGuardIsGone', bad.error)
+            self.assertIn('failed test: example.test/server TestGuardIsGone', bad.error)
             self.assertIn('ValidKey guard missing', bad.error)
             (server / 'bad_test.go').write_text('package server\nfunc broken( {\n')
             self.assertIn('FAIL', research_tests.go_suite(Path(temporary)).error)  # a package that doesn't build
@@ -191,18 +185,76 @@ class ResearchRunnerTests(unittest.TestCase):
         skipped = research_tests.Result('go z', skipped='`go` is not on PATH')
         out = io.StringIO()
         with patch.object(research_tests, 'suites', return_value=[lambda: ran, lambda: skipped]), \
-                patch.object(research_tests, 'HEAVY', ()):
+                patch.object(research_tests, 'NOT_COVERED', ()):
             self.assertEqual(research_tests.main(out=out), 0)
         self.assertIn('passed: python x (3 tests)', out.getvalue())
         self.assertIn('skipped: go z - `go` is not on PATH', out.getvalue())
-        self.assertIn('research-tests: 3 tests in 1 suites; 1 skipped', out.getvalue())
+        self.assertIn('research-tests: 3 tests in 1 suites; 1 skipped; 0 not covered', out.getvalue())
         out = io.StringIO()
         with patch.object(research_tests, 'suites', return_value=[lambda: ran, lambda: failed]), \
-                patch.object(research_tests, 'HEAVY', ()):
+                patch.object(research_tests, 'NOT_COVERED', ()):
             self.assertEqual(research_tests.main(out=out), 1)
         self.assertIn('FAILED: go y\nunittest exited 1', out.getvalue())
-        with patch.object(research_tests, 'suites', return_value=[lambda: skipped]), patch.object(research_tests, 'HEAVY', ()):
+        with patch.object(research_tests, 'suites', return_value=[lambda: skipped]), patch.object(research_tests, 'NOT_COVERED', ()):
             self.assertEqual(research_tests.main(out=io.StringIO()), 1)
+
+    def test_bash_without_mapfile_skips_the_caddy_suite_by_name(self):
+        # edit-caddyfile.sh uses `mapfile`; macOS /bin/bash 3.2 has none, so the suite would fail there
+        # for a reason that says nothing about the filter.
+        real_run = research_tests.run
+
+        def fake(args, cwd, env=None):
+            if args[:2] == ['bash', '-c']:
+                return subprocess.CompletedProcess(args, 1, '', '')
+            return real_run(args, cwd, env)
+
+        with patch.object(research_tests, 'run', side_effect=fake):
+            result = research_tests.caddy_suite(ROOT)
+        self.assertFalse(result.ran)
+        self.assertIn('no `mapfile`', result.skipped)
+
+    def test_a_missing_third_party_package_skips_the_suite_but_a_missing_own_module_fails_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.write(temporary, 'a/test_third_party.py', 'import some_listed_package\nimport unittest\n')
+            self.write(temporary, 'b/test_own.py', 'import module_that_was_renamed\nimport unittest\n')
+            with patch.object(research_tests, 'THIRD_PARTY', ('some_listed_package',)):
+                listed = research_tests.python_suite(Path(temporary), 'a', 'a', ('test_third_party',))
+                own = research_tests.python_suite(Path(temporary), 'b', 'b', ('test_own',))
+        self.assertIn('`some_listed_package` is not installed', listed.skipped)
+        self.assertIsNone(listed.error)
+        self.assertIsNone(own.skipped)  # a broken import of our own code must not hide as a skip
+        self.assertIn('module_that_was_renamed', own.error)
+
+    @unittest.skipUnless(research_tests.find_go(), 'needs the Go toolchain')
+    def test_a_go_package_that_does_not_build_shows_the_compiler_message(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.write(temporary, 'research/B4/server/go.mod', 'module example.test/server\n\ngo 1.21\n')
+            self.write(temporary, 'research/B4/server/broken_test.go',
+                       'package server\nimport "testing"\nfunc TestX(t *testing.T) { undefinedThing() }\n')
+            result = research_tests.go_suite(Path(temporary))
+        self.assertIn('failed package: example.test/server', result.error)
+        self.assertIn('undefined: undefinedThing', result.error)
+
+    def test_a_passing_lane_run_lists_the_suites_the_machine_could_not_run(self):
+        # Done when 3 (#1033): the PASS report, not only the log on the Mac, says a suite was skipped.
+        def runner_writing(steps):
+            def run(command, log, timeout):
+                output = Path(command[command.index('--output') + 1])
+                output.mkdir(parents=True, exist_ok=True)
+                (output / 'manifest.json').write_text(json.dumps({'status': 'verified', 'steps': steps}))
+                return 0
+            return run
+
+        steps = [{'name': 'runner-tests', 'skipped': 'Codex sandbox: `ps` cannot run here'},  # a string, not a list
+                 {'name': 'research', 'skipped': ['go research/B4/server - `go` is not on PATH']}]
+        with tempfile.TemporaryDirectory() as folder:
+            verdict, details = lane.run_fast(Path(folder), runner=runner_writing(steps))
+        self.assertEqual(verdict, 'PASS')
+        self.assertEqual(details, ['research skipped: go research/B4/server - `go` is not on PATH'])
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(lane.run_fast(Path(folder), runner=runner_writing([{'name': 'research'}])),
+                             ('PASS', []))
+
 
 
 if __name__ == '__main__':
