@@ -1,4 +1,5 @@
 import SwiftUI
+import SessionKit
 
 struct ExperienceMarginsScreen: View {
     private struct MarginGroup: Identifiable {

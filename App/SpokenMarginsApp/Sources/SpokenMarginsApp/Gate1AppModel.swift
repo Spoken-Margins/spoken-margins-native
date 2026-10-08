@@ -2059,37 +2059,18 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             // Library rows refresh asynchronously on navigation. Retrieval must
             // use durable membership so freshly imported items are not omitted.
-            let activeItems = Dictionary(uniqueKeysWithValues: try store.listItems()
-                .filter { $0.deletedAt == nil }.map { ($0.id, $0.title) })
-            let rows = try store.loadSessions().flatMap { session -> [MarginRow] in
-                guard let itemTitle = activeItems[session.itemId] else { return [] }
-                return try store.loadInterjections(sessionId: session.id)
-                    .filter { $0.status == "active" }
-                    .map {
-                        MarginRow(
-                            interjection: $0,
-                            itemTitle: itemTitle,
-                            sessionDate: session.updatedAt ?? session.createdAt
-                        )
-                    }
+            let entries = try MarginCollection.build(
+                items: store.listItems(), sessions: store.loadSessions(),
+                loadInterjections: { try store.loadInterjections(sessionId: $0) },
+                loadImportedLayers: { try store.loadImportedCommentaryLayers() },
+                loadImportedInterjections: { try store.loadImportedCommentaryInterjections(layerId: $0) }
+            )
+            sharedMarginRows = entries.sharedRows.map {
+                SharedMarginRow(interjection: $0.interjection, layer: $0.layer, itemTitle: $0.itemTitle,
+                                placement: sharedMarginPlacementPasses.pass(itemId: $0.layer.itemId))
             }
-            sharedMarginRows = try store.loadImportedCommentaryLayers()
-                .filter { $0.deletedAt == nil && ($0.itemId == nil || activeItems[$0.itemId ?? ""] != nil) }
-                .flatMap { layer in
-                    try store.loadImportedCommentaryInterjections(layerId: layer.id).map {
-                        SharedMarginRow(interjection: $0, layer: layer, itemTitle: activeItems[layer.itemId ?? ""] ?? layer.itemIdentity.title,
-                                        placement: sharedMarginPlacementPasses.pass(itemId: layer.itemId))
-                    }
-                }
-                .sorted { $0.interjection.createdAt > $1.interjection.createdAt }
-            marginRows = rows.sorted { lhs, rhs in
-                let leftSessionDate = lhs.sessionDate ?? .distantPast
-                let rightSessionDate = rhs.sessionDate ?? .distantPast
-                if leftSessionDate != rightSessionDate { return leftSessionDate > rightSessionDate }
-                if lhs.interjection.createdAt != rhs.interjection.createdAt {
-                    return lhs.interjection.createdAt > rhs.interjection.createdAt
-                }
-                return lhs.id < rhs.id
+            marginRows = entries.privateRows.map {
+                MarginRow(interjection: $0.interjection, itemTitle: $0.itemTitle, sessionDate: $0.sessionDate)
             }
             marginNotesDelivery.deliverSoon() // A Margin or its transcript may be new (#171).
         } catch {
@@ -2123,11 +2104,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func marginSourceContext(_ row: MarginRow) -> String? {
-        // The saved bounded anchor belongs to this Margin's source or generated target.
-        let parts = [row.interjection.anchor.anchorBefore, row.interjection.anchor.anchorAfter]
-            .compactMap { $0 }.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        guard !parts.isEmpty else { return nil }
-        return String(parts.joined(separator: " … ").prefix(600))
+        MarginCollection.sourceContext(anchorBefore: row.interjection.anchor.anchorBefore, anchorAfter: row.interjection.anchor.anchorAfter)
     }
 
     /// Opens the Margin a notes-folder link names (#171).
