@@ -78,6 +78,8 @@ public final class MarginMomentConductor {
                 // Paused during the chime: the voice hasn't started yet, so resuming is its first start.
                 waiting.task.cancel()
                 voiceAwaitingChime = nil
+                chime?.stop()
+                chime = nil
                 isVoicePaused = false
                 beginVoice(voice, marginId: waiting.marginId)
                 onChange?()
