@@ -244,6 +244,16 @@ def unclaim(udid: str, pid: int | None = None) -> None:
             save(entries)
 
 
+def retire_after_flood(udid: str, reason: str) -> bool:
+    """Mark a pool device unsafe after a crash flood (verify-tests.py, `lane-sim-boot --retire`), before it is shut
+    down, so the next --pool deletes it instead of erasing and booting it. Other devices are left to their callers."""
+    if not in_pool(udid):
+        return False
+    lane_sim.mark_unsafe(udid, reason)
+    lane_sim.record_event(udid, f'marked unsafe: {reason}')
+    return True
+
+
 def retire_now(udid: str) -> None:
     for command in ('shutdown', 'delete'):
         with contextlib.suppress(OSError, subprocess.SubprocessError):

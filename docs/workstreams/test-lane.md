@@ -231,8 +231,10 @@ Simulators:
   and any other failed boot), crashed, or showed a SpringBoard crash is marked unsafe. The next
   --pool deletes it, drops it from the pool and, if no other device is free, creates a
   replacement (the guard blocks --done on a device marked unsafe). Never retry a failed boot, and
-  never boot a device marked unsafe. A device that only fails to erase stays in the pool and is
-  passed over; the helper prints STOP only when no pool device will erase, so report that on #184.
+  never boot a device marked unsafe. If the watcher marks a device unsafe after the boot (a late
+  crash report), it keeps running and holds its simulator slot: `xcrun simctl shutdown <udid>`,
+  wait until `watch-<udid>.pid` is gone, and the next --pool deletes it. A device that only fails
+  to erase stays in the pool and is passed over; the helper prints STOP only when no pool device will erase, so report that on #184.
 - The old standing device, "SM Lane Desk erase-approval" (1330F268-5467-4421-9D55-1FCC3FF5CF8A),
   stays retired: never boot, erase or reuse it. Stay on iOS 26.5: iOS 27's Apple Intelligence
   services crash-flood on this Mac (#184). `--fresh` still makes a one-off device, for work that
@@ -250,8 +252,10 @@ Simulators:
   their Library, or main.
 
 Crashes: after every journey step, check ~/Library/Logs/DiagnosticReports for new .ips
-files. Three crashes of one process within a minute is a flood: stop, shut that
-simulator down, report on #184, and wait for the owner.
+files. Three crashes of one process within a minute is a flood: stop, retire that
+simulator with `scripts/lane-sim-boot --retire <udid> "crash flood: <process>"` (it marks
+the device unsafe, so the pool never reuses it, then shuts it down and deletes it),
+report on #184, and wait for the owner.
 
 Disk: check df -h / before each build or journey. Below 10 GB free, report
 INCONCLUSIVE ("disk below 10 GB") on #184 and stop. After posting each report, delete

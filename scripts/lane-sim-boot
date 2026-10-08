@@ -5,6 +5,7 @@
   scripts/lane-sim-boot --fresh "SM Lane Desk pr220"   create a fresh iOS 26 iPhone, boot it, print its UDID
   scripts/lane-sim-boot <udid>                          boot an existing device
   scripts/lane-sim-boot --done <udid>                   stop its watcher, shut it down, delete it (a pool device is erased and kept)
+  scripts/lane-sim-boot --retire <udid> <reason>        after a crash flood: mark it unsafe, stop its watcher, shut it down, delete it
   scripts/lane-sim-boot --second-slot status|on|off [reason]   the second simulator slot's switch
 
 It first takes a simulator slot and the device's background watcher keeps it until --done. A job can
@@ -45,6 +46,8 @@ def main(argv):
     target.add_argument('--pool', action='store_true',
                         help="take one of the Test Desk's pool devices, erased and ready to boot (or create it while the pool has room)")
     target.add_argument('--done', metavar='UDID', help='stop the watcher and shut the device down, then delete it (a pool device is erased and kept)')
+    target.add_argument('--retire', nargs='+', metavar=('UDID', 'REASON'),
+                        help='mark the device unsafe (say why), then stop its watcher, shut it down and delete it; for a crash flood')
     target.add_argument('--watch', metavar='UDID', help=argparse.SUPPRESS)  # the background watcher itself
     target.add_argument('--second-slot', nargs='+', metavar=('status|on|off', 'REASON'),
                         help='show or switch the second simulator slot; "off" needs a reason')
@@ -72,6 +75,11 @@ def main(argv):
         window = tuple(args.crash_window) if args.crash_window else None
         print(f'[lane] watcher for {args.watch} ended: {lane_sim.watch(args.watch, crash_window=window)}', flush=True)
         return 0
+    if args.retire:
+        udid, reason = args.retire[0], ' '.join(args.retire[1:]) or 'retired by hand'
+        lane_sim.mark_unsafe(udid, reason)  # first, so nothing erases or boots it again; the lane guard blocks it after
+        lane_sim.record_event(udid, f'marked unsafe by --retire: {reason}')
+        args.done = udid
     if args.done:
         if lane_sim_pool.in_pool(args.done):
             outcome = lane_sim_pool.release(args.done)

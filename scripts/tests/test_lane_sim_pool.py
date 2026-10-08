@@ -414,6 +414,57 @@ class PoolDeviceTests(unittest.TestCase):
         pool.unclaim('A-0001')
         self.assertEqual(pool.take('another run', out=self.quiet), 'A-0001')
 
+    def test_retire_after_flood_marks_a_pool_device_unsafe_and_leaves_other_devices_alone(self):
+        self.seed('POOL-001', 'SM Lane Desk pool 1')
+        self.assertTrue(pool.retire_after_flood('POOL-001', 'crash flood during app-tests'))
+        self.assertIn('crash flood', lane_sim.unsafe_devices()['POOL-001']['reason'])
+        self.assertFalse(pool.retire_after_flood('RUNNER-01', 'crash flood'))  # not ours: its caller decides
+        self.assertEqual(list(lane_sim.unsafe_devices()), ['POOL-001'])
+
+    def test_a_pool_device_that_flooded_is_deleted_by_the_next_run_not_erased_and_booted_again(self):
+        udid = self.run_helper('--pool').stdout.strip()
+        pool.retire_after_flood(udid, 'crash flood during app-tests')  # what verify-tests.py does ...
+        subprocess.run(lane_sim.simctl() + ['shutdown', udid], capture_output=True)  # ... before it shuts the device down
+        again = self.run_helper('--pool')
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertNotEqual(again.stdout.strip(), udid)
+        self.assertNotIn(udid, self.devices())
+        self.assertNotIn(udid, pool.load())
+        self.assertFalse([r for r in self.records() if r.get('erase') == udid])
+        self.assertEqual([r['boot'] for r in self.records() if 'boot' in r].count(udid), 1)  # booted once, ever
+
+    def test_a_device_marked_unsafe_while_still_up_is_retired_once_it_is_shut_down(self):
+        udid = self.run_helper('--pool').stdout.strip()
+        lane_sim.mark_unsafe(udid, 'late crash report for a crash during boot')  # the watcher's late mark: still booted
+        other = self.run_helper('--pool')
+        self.assertEqual(other.returncode, 0, other.stderr)
+        self.assertIn(udid, self.devices())  # not pulled out from under the run that may still hold it
+        self.assertIn(udid, pool.load())
+        subprocess.run(lane_sim.simctl() + ['shutdown', udid], capture_output=True)  # the guard-permitted shutdown
+        third = self.run_helper('--pool')
+        self.assertEqual(third.returncode, 0, third.stderr)
+        self.assertNotIn(udid, self.devices())
+        self.assertNotIn(udid, pool.load())
+        self.assertFalse([r for r in self.records() if r.get('erase') == udid])
+
+    def test_retire_marks_a_pool_device_unsafe_then_shuts_it_down_and_deletes_it(self):
+        udid = self.run_helper('--pool').stdout.strip()
+        result = self.run_helper('--retire', udid, 'crash flood: SpringBoard x3')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('crash flood: SpringBoard x3', lane_sim.unsafe_devices()[udid]['reason'])
+        self.assertNotIn(udid, self.devices())
+        self.assertNotIn(udid, pool.load())
+        order = [next(k for k in r if k in ('shutdown', 'delete', 'erase')) for r in self.records()
+                 if r.get('shutdown') == udid or r.get('delete') == udid or r.get('erase') == udid]
+        self.assertEqual((order[0], order[-1], 'erase' in order), ('shutdown', 'delete', False))  # never erased on the way out
+
+    def test_retire_also_works_on_a_device_that_is_not_in_the_pool(self):
+        self.seed('ONEOFF-1', 'SM Lane Desk one-off', 'Booted', pooled=False)
+        result = self.run_helper('--retire', 'ONEOFF-1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(lane_sim.unsafe_devices()['ONEOFF-1']['reason'], 'retired by hand')
+        self.assertNotIn('ONEOFF-1', self.devices())
+
     def test_a_second_done_leaves_a_released_device_alone(self):
         udid = self.run_helper('--pool').stdout.strip()
         self.assertEqual(self.run_helper('--done', udid).returncode, 0)

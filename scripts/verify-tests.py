@@ -19,6 +19,7 @@ from lane_xcresult_attachments import export_failed_attachments
 
 from check_posterboard_repair import crash_snapshot, new_crash
 import lane_sim
+import lane_sim_pool
 from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
                         state_dir, SIMULATOR_SLOTS)
 
@@ -434,6 +435,8 @@ class Run:
                 stop_process_group(process)
                 result = 124
                 if entry.get('simulator_crash_report'):
+                    # A pool device that flooded is retired, not erased and reused (#688): mark it first.
+                    lane_sim_pool.retire_after_flood(device, f'crash flood during {name}: {entry["simulator_crash_report"]}')
                     shutdown = subprocess.run(['xcrun', 'simctl', 'shutdown', device],
                                               stdout=log, stderr=subprocess.STDOUT, timeout=20)
                     entry['simulator_shutdown_exit'] = shutdown.returncode
