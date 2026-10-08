@@ -572,6 +572,8 @@ final class Gate1AppModel: ObservableObject {
     @Published var snapshot = SessionSnapshot() {
         didSet {
             recordPlaybackEventState(previous: oldValue)
+            if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
+            if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
             settleSpeechInterruptionResume()
             listeningSignals.snapshotChanged(from: oldValue, to: snapshot)
             updateNarrationVoiceNotice()
@@ -765,6 +767,8 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var offlineStorageSnapshot = OfflineStorageSnapshot()
     @Published private(set) var recordingPresentationContext: RecordingPresentationContext?
     @Published private(set) var isRequestingRecordingPermission = false
+    @Published var recordingCaptureHealth: MarginCaptureSupervisor.Health = .capturing // written by Gate1AppModel+MarginCapture only
+    var captureWatcher = MarginCaptureWatcher()
     /// #783: the line shown before iOS's first microphone prompt.
     @Published private(set) var microphonePrimer = MicrophonePrimer()
     @Published private(set) var isFinishingInterjection = false
@@ -973,11 +977,11 @@ final class Gate1AppModel: ObservableObject {
         "Source link, public podcast, and share-extension intake are experimental until they have their own human validation record."
     ]
 
-    private var engine: SessionEngine?
+    private(set) var engine: SessionEngine?
     private(set) var store: SQLiteSessionStore?
     lazy var listeningSignals = ListeningSignalsCoordinator(repository: { [weak self] in self?.store })
     private var databaseURLOverride: URL?
-    private let gate2CompactControls: Gate2CompactControlController
+    let gate2CompactControls: Gate2CompactControlController
     private let featureFlags: SpokenMarginsFeatureFlags
     private let localFoundationModelClient: any LocalFoundationModelClient
     #if SPOKEN_MARGINS_WATCH
@@ -6201,23 +6205,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func skipUnitForCurrentTarget() -> String {
-        switch snapshot.targetType {
-        case TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue:
-            return mediaSkipUnit(seconds: mediaSkipForwardSeconds)
-        default:
-            return skipUnit
-        }
-    }
-
-    private func mediaSkipUnit(seconds: Int) -> String {
-        "time_\(Self.validatedMediaSkipSeconds(seconds))s"
-    }
-
-    private static func validatedMediaSkipSeconds(_ seconds: Int) -> Int {
-        supportedMediaSkipSeconds.contains(seconds) ? seconds : 15
-    }
-
     func beginInterjection() {
         guard !isFinishingInterjection, !isMarginCaptureCoolingDown else { return }
         guard snapshot.skimBridgeState == nil else {
@@ -6336,7 +6323,6 @@ final class Gate1AppModel: ObservableObject {
                 )
                 let latencyMs = max(0, Int(Date().timeIntervalSince(requestedAt) * 1000))
                 diagnostics["lastInterjectionRecordingStartLatencyMs"] = "\(latencyMs)"
-                reportSuccess("Recording Margin.")
             }
         }
         if !snapshot.isRecording {
@@ -6361,14 +6347,14 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func finishInterjection() {
-        guard snapshot.isRecording else { return }
+        guard snapshot.isRecording, let verdict = verdictForSavingRecording() else { return }
         run { engine in
             defer { recordSpokenMarginSavedBeforeFailure(engine.lastScheduledTranscriptionInterjectionId) }
             snapshot = try engine.finishInterjection(audioRef: nil)
             refreshSelectedItem()
             recordSavedInterjectionForOnboarding()
             transcribeAndRecordSavedSpokenMargin()
-            reportConfirmation("Margin saved. Transcription is continuing in the background.")
+            reportMarginSaved(verdict)
         }
         if !snapshot.isRecording {
             recordingPresentationContext = nil
@@ -6377,7 +6363,7 @@ final class Gate1AppModel: ObservableObject {
         streamingSpeechQueue.resumeAfterInterjection()
     }
 
-    private func recordSavedInterjectionForOnboarding() {
+    func recordSavedInterjectionForOnboarding() {
         markOnboardingSteps([.firstInterjection])
         if guidedOnboardingStage == .practiceInterjection {
             setGuidedOnboardingStage(.reviewTimeline)
@@ -6392,6 +6378,7 @@ final class Gate1AppModel: ObservableObject {
             recordingPresentationContext = nil
             return
         }
+        recordFinalCaptureDiagnostics("cancelled")
         run { engine in
             snapshot = try engine.cancelInterjection()
             refreshSelectedItem()
@@ -9505,6 +9492,7 @@ final class Gate1AppModel: ObservableObject {
         if command == .beginInterjection {
             streamingSpeechQueue.pauseForInterjection()
         }
+        guard let captureVerdict = verdictForCompactCommand(command) else { return }
         do {
             let result = try gate2CompactControls.dispatch(
                 command,
@@ -9554,6 +9542,7 @@ final class Gate1AppModel: ObservableObject {
                 streamingSpeechQueue.relinquishToCanonicalPlayback()
             }
             reportSuccess("Compact control \(command.rawValue) \(result.delegatedToCanonicalRuntime ? "delegated" : "handled").")
+            if command == .finishInterjection, captureVerdict == .saveCutShort { reportMarginSaved(captureVerdict) }
         } catch {
             if command == .finishInterjection { recordSpokenMarginSavedBeforeFailure(engine?.lastScheduledTranscriptionInterjectionId) }
             if command == .beginInterjection || command == .finishInterjection || command == .cancelInterjection {
@@ -14473,7 +14462,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Presents degraded-but-successful behavior without styling it as either a
     /// normal confirmation or a failure.
-    private func reportWarning(_ message: String) {
+    func reportWarning(_ message: String) {
         statusMessage = message
         lastError = nil
         presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
