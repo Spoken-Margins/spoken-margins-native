@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Boot a lane simulator under the lane's rules, watch it, and remove it (scripts/lane_sim.py).
 
+  scripts/lane-sim-boot --pool                          take a Test Desk pool device (erased, or new while the pool has room), boot it, print its UDID
   scripts/lane-sim-boot --fresh "SM Lane Desk pr220"   create a fresh iOS 26 iPhone, boot it, print its UDID
   scripts/lane-sim-boot <udid>                          boot an existing device
-  scripts/lane-sim-boot --done <udid>                   stop its watcher, shut it down, delete it
+  scripts/lane-sim-boot --done <udid>                   stop its watcher, shut it down, delete it (a pool device is erased and kept)
   scripts/lane-sim-boot --second-slot status|on|off [reason]   the second simulator slot's switch
 
 It first takes a simulator slot and the device's background watcher keeps it until --done. A job can
@@ -15,7 +16,12 @@ One boot at a time Mac-wide, no builds while it boots, never a retry after a fai
 at the first SpringBoard crash. After the boot, the watcher keeps watching SpringBoard and shuts the
 device down (and marks it unsafe) at the first crash; its log is next to the lane's state
 (~/Library/Caches/SpokenMarginsLane/watch-<udid>.log). A device that failed is marked unsafe: remove
-it with --done and start again with --fresh. Journeys use a fresh device per request.
+it with --done and start again (--pool or --fresh).
+The Test Desk uses --pool: up to three devices named "SM Lane Desk pool N" that the owner approves once
+in the simulator panel (the approval survives an erase). Each run erases the least recently used free one
+instead of creating a device; --done shuts it down, erases it and keeps it. A device marked unsafe is
+retired instead (deleted and dropped), and a replacement is created when the next run needs one
+(scripts/lane_sim_pool.py, #688). --fresh stays for one-off devices.
 Always finish with --done: until then the device keeps the simulator slot.
 Exit 0 when ready; the UDID is the only thing printed on stdout.
 """
@@ -25,6 +31,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lane_sim  # noqa: E402
+import lane_sim_pool  # noqa: E402
 from lane_slots import acquire_simulator_slot, release_handle  # noqa: E402
 
 SLOT_WAIT = 7200
@@ -35,7 +42,9 @@ def main(argv):
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument('udid', nargs='?')
     target.add_argument('--fresh', metavar='NAME', help='create a fresh temporary device with this name first')
-    target.add_argument('--done', metavar='UDID', help='stop the watcher, shut the device down and delete it')
+    target.add_argument('--pool', action='store_true',
+                        help="take one of the Test Desk's pool devices, erased and ready to boot (or create it while the pool has room)")
+    target.add_argument('--done', metavar='UDID', help='stop the watcher and shut the device down, then delete it (a pool device is erased and kept)')
     target.add_argument('--watch', metavar='UDID', help=argparse.SUPPRESS)  # the background watcher itself
     target.add_argument('--second-slot', nargs='+', metavar=('status|on|off', 'REASON'),
                         help='show or switch the second simulator slot; "off" needs a reason')
@@ -64,23 +73,34 @@ def main(argv):
         print(f'[lane] watcher for {args.watch} ended: {lane_sim.watch(args.watch, crash_window=window)}', flush=True)
         return 0
     if args.done:
+        if lane_sim_pool.in_pool(args.done):
+            kept = lane_sim_pool.release(args.done)
+            print(f'[lane] {args.done} released: watcher stopped, shut down, '
+                  + ('erased and kept in the desk pool' if kept else 'marked unsafe, so deleted and dropped from the pool'),
+                  file=sys.stderr)
+            return 0
         lane_sim.release(args.done)
         print(f'[lane] {args.done} released: watcher stopped, shut down, deleted', file=sys.stderr)
         return 0
-    name = args.fresh or args.udid
+    name = args.fresh or args.udid or 'a desk pool device'
     try:
         slot = acquire_simulator_slot(f'lane-sim-boot {name} (its watcher holds it until --done)',
                                       max_wait=SLOT_WAIT)
     except TimeoutError as error:
         print(f'[lane] STOP: the simulator slot stayed busy: {error}', file=sys.stderr)
         return 4
+    pooled = None
     try:
-        udid = lane_sim.create_temporary(args.fresh) if args.fresh else args.udid
+        if args.pool:
+            udid = pooled = lane_sim_pool.take('lane-sim-boot --pool')
+        else:
+            udid = lane_sim.create_temporary(args.fresh) if args.fresh else args.udid
         if args.fresh:
             print(f'[lane] created {args.fresh}: {udid}', file=sys.stderr)
         info = {}
+        # An erased pool device migrates its data like a new one, so its first boot gets the same tolerance.
         seconds = lane_sim.boot(udid, f'lane-sim-boot {udid}', timeout=args.timeout, info=info,
-                                first_boot=bool(args.fresh))
+                                first_boot=bool(args.fresh or args.pool))
         lane_sim.start_watcher(udid, Path(__file__).resolve(), slot=slot, crash_window=info.get('boot_window'))
         if info.get('tolerated'):
             print(f'[lane] tolerated one SpringBoard change during the first boot ({info["tolerated"]}); the watcher '
@@ -88,10 +108,14 @@ def main(argv):
                   file=sys.stderr)
     except lane_sim.BootError as error:
         release_handle(slot)
+        if pooled:
+            lane_sim_pool.unclaim(pooled)  # marked unsafe, the next --pool retires it; --done does it now
         print(f'[lane] STOP: {error}', file=sys.stderr)
         return 3
     except BaseException:
         release_handle(slot)
+        if pooled:
+            lane_sim_pool.unclaim(pooled)
         raise
     slot.close()  # the watcher inherited the slot and holds it, holder note included, until --done
     print(f'[lane] {udid} is ready after {seconds:.0f}s; its watcher holds the simulator slot until --done',

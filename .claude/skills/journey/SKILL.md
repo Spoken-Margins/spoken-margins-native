@@ -23,21 +23,21 @@ The Test Desk takes **T4 and T5** requests. T2 and T3 go to the self-hosted runn
 2. **Build** there with the wrapper, which queues for a Mac-wide build slot and uses `.build/dd` in that worktree:
    `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS Simulator' build`
    The app is then at `.build/dd/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app`.
-3. **Simulator: a fresh device for every request.**
+3. **Simulator: a pool device, erased for every request.**
 
    ```bash
-   UDID=$(scripts/lane-sim-boot --fresh "SM Lane Desk <id>")
+   UDID=$(scripts/lane-sim-boot --pool)
    ```
 
-   This creates an iPhone 17 on iOS 26.5 and boots it under the lane's boot rules. It returns once the device is ready; a first boot migrates data for 3–6 minutes. There is no standing lane device. Two SpringBoard crash floods came from re-booting one (#184), and iOS 27's Apple Intelligence services crash-flood on this Mac.
+   This takes the least recently used free device from the desk pool (up to three iPhone 17s on iOS 26.5 named `SM Lane Desk pool N`), erases it and boots it under the lane's boot rules. It returns once the device is ready; the first boot after an erase migrates data for 3–6 minutes. The owner approves each pool device once in the simulator panel and the approval survives an erase, so reusing devices spares them a click per run (#688). It creates a device only when none is free and the pool has room: say so on #184, because the owner has to approve that one the first time you drive it. Two SpringBoard crash floods came from retrying a boot that had failed on the same device (#184), and iOS 27's Apple Intelligence services crash-flood on this Mac; a device that fails or crashes is retired, never reused (see below). The old standing device 1330F268 stays retired.
    - **At most two simulator jobs on this Mac, the second only while memory pressure is normal.** The helper first takes a Mac-wide simulator slot. If the runner's T3 or another job already has a simulator, it joins only while pressure is normal and the second slot is on (`scripts/lane-sim-boot --second-slot status`); otherwise it waits. The device's watcher then holds the slot until `--done`. Two simulators plus builds once pushed this 16 GB Mac's load to about 690 and filled swap (#184). While any slot is held, builds get one slot instead of two, so **always finish with `--done`**.
    - The boot rules (`scripts/lane_sim.py`) are shared with the runner and `verify-tests.py`: one boot at a time, no builds while a simulator boots, no retry, and a crash watch.
-   - **If the helper prints `STOP`, stop.** A failed boot or a crash during boot shuts the device down and marks it unsafe. Don't retry it, and don't boot it any other way; the guard blocks every command that names it except delete and shutdown. Delete it, and report on #184 before trying a fresh one if it happens twice.
-   - J5 needs two devices. Run them one after the other, so the second slot stays free for the runner: run the sender, keep its packet, `--done` it, then boot the recipient; or mark J5 for the owner's device pass.
+   - **If the helper prints `STOP`, stop.** A failed boot or a crash during boot shuts the device down and marks it unsafe. Don't retry it, and don't boot it any other way; the guard blocks every command that names it except delete and shutdown. The pool retires it for you: `scripts/lane-sim-boot --done <udid>` (or the next `--pool`) deletes it and drops it from the pool, and a replacement is created when no other device is free. Report on #184 before taking another device if it happens twice. A `STOP` for a failed erase leaves the device in the pool; report that too.
+   - J5 needs two devices. Run them one after the other, so the second slot stays free for the runner: run the sender, keep its packet, `--done` it, then take the recipient's device; or mark J5 for the owner's device pass.
    - Only run `xcodebuild` or `verify-tests.py --device` against a device the helper booted. The guard sends a raw `simctl boot` to the helper.
    - After the boot, a background watcher checks the device's SpringBoard process every second. At the first SpringBoard crash it shuts the device down and marks it unsafe. Crash report files arrive about 80 s late, so they can't catch a flood in time. **If the device shuts down on its own, stop and report**; its reason is in `~/Library/Caches/SpokenMarginsLane/watch-<udid>.log`.
-   - When the request is done: `scripts/lane-sim-boot --done "$UDID"`. It stops the watcher first, so the shutdown isn't counted as a crash, then shuts the device down and deletes it.
-4. **Install the build.** A fresh device starts with an empty Library, so a lane journey builds the history it needs within the job (J2, J3 and J5 do this). J4 installs the previous shipped build first. Journeys over real long-lived history belong to the owner's device pass.
+   - When the request is done: `scripts/lane-sim-boot --done "$UDID"`. It stops the watcher first, so the shutdown isn't counted as a crash, then shuts the device down, erases it and keeps it in the pool (a device marked unsafe is deleted instead).
+4. **Install the build.** An erased device starts with an empty Library, so a lane journey builds the history it needs within the job (J2, J3 and J5 do this). J4 installs the previous shipped build first. Journeys over real long-lived history belong to the owner's device pass.
 5. Evidence goes in `artifacts/lane/<id>/` in the main checkout. It is git-ignored, so the PR gets paths, not images.
 
 ## Driving
@@ -68,5 +68,5 @@ Don't reboot in a loop or switch devices. A single crash is noted in the report 
 ## Report and clean up
 
 1. Post the report on the PR in the test-lane.md format (PASS / FAIL / INCONCLUSIVE, per-step observations, evidence paths, crashes, what's not verified), then change the label from `lane:queued` to `lane:done`.
-2. Remove the fresh device or devices with `scripts/lane-sim-boot --done <udid>`.
+2. Give the pool device or devices back with `scripts/lane-sim-boot --done <udid>`.
 3. Remove the worktree with `git worktree remove .claude/worktrees/lane-<id>`, which also deletes its DerivedData. Disk space on this Mac is tight.
