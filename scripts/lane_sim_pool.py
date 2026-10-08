@@ -254,10 +254,20 @@ def retire_after_flood(udid: str, reason: str) -> bool:
     return True
 
 
+def simctl_quietly(command: str, udid: str) -> None:
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
+        subprocess.run(lane_sim.simctl() + [command, udid], capture_output=True, timeout=120)
+
+
+def shut_down(udid: str) -> None:
+    """Shut a device down without the pool lock. `--retire` does this first: a crash flood must stop at once,
+    and release() may wait for the lock behind another run's erase (up to ERASE_TIMEOUT)."""
+    simctl_quietly('shutdown', udid)
+
+
 def retire_now(udid: str) -> None:
-    for command in ('shutdown', 'delete'):
-        with contextlib.suppress(OSError, subprocess.SubprocessError):
-            subprocess.run(lane_sim.simctl() + [command, udid], capture_output=True, timeout=120)
+    shut_down(udid)
+    simctl_quietly('delete', udid)
 
 
 def release(udid: str, wait: float = lane_sim.RELEASE_WAIT, out=sys.stderr) -> str:

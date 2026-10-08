@@ -60,7 +60,7 @@ Simulator pitfalls (from docs/journeys.md, which wins if they differ):
 If one process crashes three or more times within a minute:
 
 1. Stop.
-2. `scripts/lane-sim-boot --retire <udid> "crash flood: <process>"`. It marks the device unsafe first, so the pool never erases and boots it again, then stops its watcher, shuts it down and deletes it. (A flood that `verify-tests.py` catches does the same for a pool device by itself.)
+2. `scripts/lane-sim-boot --retire <udid> "crash flood: <process>"`. It marks the device unsafe first, so the pool never erases and boots it again, then shuts it down at once (it doesn't wait for another run's erase), stops its watcher and deletes it. (A flood that `verify-tests.py` catches does the same for a pool device by itself.)
 3. Report INCONCLUSIVE with the crash names, and notify the owner.
 
 Don't reboot in a loop or switch devices. A single crash is noted in the report and the run continues.

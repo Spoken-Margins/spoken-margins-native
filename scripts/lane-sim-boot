@@ -5,7 +5,7 @@
   scripts/lane-sim-boot --fresh "SM Lane Desk pr220"   create a fresh iOS 26 iPhone, boot it, print its UDID
   scripts/lane-sim-boot <udid>                          boot an existing device
   scripts/lane-sim-boot --done <udid>                   stop its watcher, shut it down, delete it (a pool device is erased and kept)
-  scripts/lane-sim-boot --retire <udid> <reason>        after a crash flood: mark it unsafe, stop its watcher, shut it down, delete it
+  scripts/lane-sim-boot --retire <udid> <reason>        after a crash flood: mark it unsafe, shut it down at once, stop its watcher, delete it
   scripts/lane-sim-boot --second-slot status|on|off [reason]   the second simulator slot's switch
 
 It first takes a simulator slot and the device's background watcher keeps it until --done. A job can
@@ -79,6 +79,7 @@ def main(argv):
         udid, reason = args.retire[0], ' '.join(args.retire[1:]) or 'retired by hand'
         lane_sim.mark_unsafe(udid, reason)  # first, so nothing erases or boots it again; the lane guard blocks it after
         lane_sim.record_event(udid, f'marked unsafe by --retire: {reason}')
+        lane_sim_pool.shut_down(udid)  # at once: --done below can wait for the pool lock behind another run's erase
         args.done = udid
     if args.done:
         if lane_sim_pool.in_pool(args.done):

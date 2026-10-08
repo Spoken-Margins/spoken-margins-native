@@ -565,6 +565,33 @@ class PoolDeviceTests(unittest.TestCase):
         holder.join()
         taker.join()
 
+    def test_retire_shuts_the_device_down_before_it_waits_for_the_pool_lock(self):
+        # Another run's erase can hold the pool lock for minutes (ERASE_TIMEOUT). A crash flood must stop first
+        # (Codex audit on #1099): the device is down while the lock is still held, and only then deleted.
+        udid = self.run_helper('--pool').stdout.strip()
+        retired = []
+        with pool.locked():
+            retirer = threading.Thread(target=lambda: retired.append(self.run_helper('--retire', udid, 'crash flood')))
+            retirer.start()
+            self.addCleanup(retirer.join, 30)  # a failed assertion must not leave it running past the test
+            state = None
+            for _ in range(100):
+                try:
+                    state = self.devices().get(udid, {}).get('state')
+                except ValueError:  # the fake simctl rewrites its world file in place
+                    pass
+                if state == 'Shutdown':
+                    break
+                time.sleep(0.1)
+            self.assertEqual(state, 'Shutdown', 'retire waited for the pool lock before shutting the device down')
+            self.assertTrue(retirer.is_alive())  # still waiting for the lock
+            self.assertIn(udid, pool.load())
+            self.assertIn('crash flood', lane_sim.unsafe_devices()[udid]['reason'])
+        retirer.join(30)
+        self.assertEqual(retired[0].returncode, 0, retired[0].stderr)
+        self.assertNotIn(udid, self.devices())
+        self.assertNotIn(udid, pool.load())
+
     def lane_sim_boot_module(self):
         loader = importlib.machinery.SourceFileLoader('lane_sim_boot_for_pool_test', str(SCRIPTS / 'lane-sim-boot'))
         spec = importlib.util.spec_from_loader(loader.name, loader)
